@@ -90,7 +90,7 @@ When implementing a new feature, the PR should contain tests *committed before o
 
 ## Current Implementation Status
 
-**Completed (Steps 1-7 of PLAN.md):**
+**Completed (Steps 1-10 of PLAN.md):**
 - Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
 - Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
 - Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
@@ -98,10 +98,13 @@ When implementing a new feature, the PR should contain tests *committed before o
 - Step 5: ConnectionService — CRUD with encrypted credentials, soft delete, org isolation, basic test_connection validation
 - Step 6: PipelineService — CRUD with dlt_config validation (write_disposition, merge requires primary_key), connection direction enforcement, PipelineConfigError
 - Step 7: Pipeline execution — ExecutionService (run lifecycle: create/start/complete/fail/cancel), run_pipeline function with mocked dlt, Celery task wrapper
+- Step 8: TransformationService — CRUD with sql_body/schema_name/tests_config validation, soft delete, org isolation, TransformationConfigError
+- Step 9: ScheduleService — CRUD with cron validation (5 fields), target validation (pipeline/transformation existence), toggle active, ScheduleConfigError
+- Step 10: Minimal Reflex UI — sidebar layout, 6 pages (dashboard, connections, pipelines, transformations, schedules, runs), state classes with rx.Base data models, hardcoded org_id=1
 
-**Test suite: 170 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks)
+**Test suite: 229 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 23 transformation service + 26 schedule service + 10 UI state models)
 
-**Next up: Phase 3 (Steps 8-10: Transformation service, Schedule service, Reflex UI)**
+**Next up: Phase 4 (Steps 11+: Real auth integration, dbt execution, APScheduler integration, etc.)**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)

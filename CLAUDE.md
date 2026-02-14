@@ -35,9 +35,9 @@ uv run ruff format etlfabric tests
 
 # Tests
 uv run pytest tests/
-uv run pytest tests/test_models/test_user.py          # single file
-uv run pytest -k "auth" tests/                         # pattern match
-uv run pytest tests/ --cov=etlfabric --cov-report=html # with coverage
+uv run pytest tests/test_models/test_all_models.py     # single file
+uv run pytest -k "auth" tests/                          # pattern match
+uv run pytest tests/ --cov=etlfabric --cov-report=html  # with coverage
 
 # Migrations
 uv run alembic revision --autogenerate -m "description"
@@ -48,18 +48,20 @@ uv run alembic upgrade head
 
 ### Multi-Tenancy (schema-per-tenant)
 - `public` schema: users, orgs, memberships (shared app metadata)
-- `tenant_{org_id}`: per-org pipeline configs, connections, schedules
-- `tenant_{org_id}_raw/staging/marts`: per-org pipeline data (dlt loads → dbt transforms)
+- `tenant_{org_id}`: per-org config schema (created by TenantService)
+- Data destination schemas (raw, staging, dds, etc.) are **user-configured** per pipeline/transformation — not hardcoded
 - Tenant context is injected from JWT token via middleware
 
 ### Data Flow
-Sources → **dlt** (extract+load into `_raw` schema) → **dbt** (transform into `_staging`/`_marts` schemas) → Analytics
+Sources → **dlt** (extract+load into user-chosen schema) → **dbt** (transform into user-chosen schema) → Analytics
 
 ### Key Patterns
 - **Async DB everywhere**: SQLAlchemy 2.0+ with `asyncpg`, use `async with` sessions from `db.get_session()`
-- **ORM models**: Inherit from `Base` + `TimestampMixin` + `TenantMixin`. Use `Mapped[type]` annotations, UUID primary keys
+- **ORM models**: Inherit from `Base` + `TimestampMixin` + `TenantMixin`. Use `Mapped[type]` annotations, **integer autoincrement primary keys** (PostgreSQL IDENTITY — no UUIDs for PKs)
+- **Soft delete**: All timestamped models have `deleted_at` (nullable) via `TimestampMixin`
 - **Config**: Pydantic Settings from `.env` — access via `from etlfabric.config import settings`
-- **Credentials**: Encrypted at rest with `cryptography.fernet` (key in env var)
+- **Auth**: `AuthService` — bcrypt password hashing (direct, not passlib), JWT access+refresh tokens via python-jose, RBAC with 4 roles (owner > admin > editor > viewer)
+- **Credentials**: `EncryptionService` — Fernet encrypt/decrypt for connection credentials stored in DB
 - **Long-running work**: Celery tasks (JSON serializer, Redis broker). Tasks named `etlfabric.{action}_{entity}`
 - **Reflex UI**: Pages are functions returning `rx.Component`, state classes manage reactive data, entry point is `etlfabric/etlfabric.py`
 
@@ -86,6 +88,24 @@ Test placement mirrors source layout:
 
 When implementing a new feature, the PR should contain tests *committed before or alongside* the implementation — never implementation without tests.
 
+## Current Implementation Status
+
+**Completed (Steps 1-3 of PLAN.md):**
+- Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
+- Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
+- Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
+
+**Test suite: 77 tests, all passing** (51 model tests + 18 auth tests + 6 encryption tests + 2 tenant tests)
+
+**Next up: Step 4 (Alembic migrations with multi-tenant awareness), then Phase 2 (Steps 5-7: Connection management UI, Pipeline builder, Pipeline execution via Celery)**
+
+## Important Decisions Made
+- **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)
+- **No UUIDs for PKs** — all primary keys are integer autoincrement, managed by PostgreSQL as IDENTITY columns
+- **Tenant data schemas are user-defined** — TenantService only creates config schema `tenant_{org_id}`, data schemas (raw/staging/dds/refined/etc.) are chosen by user per pipeline/transformation
+- **SQLite for tests** — model tests use in-memory SQLite for speed; PK columns use `mapped_column(primary_key=True, autoincrement=True)` without explicit BigInteger to stay SQLite-compatible
+- **FK columns use BigInteger** — non-PK foreign key columns and polymorphic reference columns use `BigInteger` explicitly
+
 ## Code Style
 
-Ruff enforces: line length 100, Python 3.11+ target, rules `E,F,I,N,UP,B,SIM`. Pytest uses `asyncio_mode = "auto"`.
+Ruff enforces: line length 100, Python 3.12+ target, rules `E,F,I,N,UP,B,SIM`. Pytest uses `asyncio_mode = "auto"`.

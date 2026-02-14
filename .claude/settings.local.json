@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:dlthub.com)",
+      "WebFetch(domain:docs.getdbt.com)",
+      "Bash(git -C \"D:\\\\Projects\\\\ET\\\\etlfabric\" log --oneline --all)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv pip install:*)"
+    ]
+  }
+}

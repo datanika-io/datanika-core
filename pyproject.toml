@@ -1,0 +1,58 @@
+[project]
+name = "etlfabric"
+version = "0.1.0"
+description = "Multi-tenant data pipeline management platform with dlt + dbt"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    # Data pipeline
+    "dlt[postgres]>=1.5",
+    "dbt-core>=1.9",
+    "dbt-postgres>=1.9",
+
+    # Web framework
+    "reflex>=0.7",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+
+    # Auth
+    "passlib[bcrypt]>=1.7",
+    "python-jose[cryptography]>=3.3",
+
+    # Task queue & scheduling
+    "celery[redis]>=5.4",
+    "redis>=5.0",
+    "apscheduler>=3.10",
+
+    # Config & utilities
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "cryptography>=44.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.9",
+    "httpx>=0.28",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

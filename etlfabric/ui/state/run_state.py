@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from etlfabric.models.dependency import NodeType
 from etlfabric.models.run import RunStatus
 from etlfabric.services.execution_service import ExecutionService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
@@ -21,12 +22,20 @@ class RunItem(rx.Base):
 class RunState(BaseState):
     runs: list[RunItem] = []
     filter_status: str = ""
+    filter_target_type: str = ""
 
     def load_runs(self):
         svc = ExecutionService()
         status_filter = RunStatus(self.filter_status) if self.filter_status else None
+        target_type_filter = NodeType(self.filter_target_type) if self.filter_target_type else None
         with get_sync_session() as session:
-            rows = svc.list_runs(session, self.org_id, status=status_filter, limit=100)
+            rows = svc.list_runs(
+                session,
+                self.org_id,
+                status=status_filter,
+                target_type=target_type_filter,
+                limit=100,
+            )
             self.runs = [
                 RunItem(
                     id=r.id,
@@ -44,4 +53,8 @@ class RunState(BaseState):
 
     def set_filter(self, status: str):
         self.filter_status = status
+        self.load_runs()
+
+    def set_target_type_filter(self, target_type: str):
+        self.filter_target_type = target_type
         self.load_runs()

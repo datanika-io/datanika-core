@@ -1,4 +1,4 @@
-"""Runs page — list with status filter."""
+"""Runs page — list with status and target_type filters."""
 
 import reflex as rx
 
@@ -6,13 +6,20 @@ from etlfabric.ui.components.layout import page_layout
 from etlfabric.ui.state.run_state import RunState
 
 
-def status_filter() -> rx.Component:
+def filters_bar() -> rx.Component:
     return rx.hstack(
-        rx.text("Filter by status:", size="2"),
+        rx.text("Status:", size="2"),
         rx.select(
             ["", "pending", "running", "success", "failed", "cancelled"],
             value=RunState.filter_status,
             on_change=RunState.set_filter,
+            placeholder="All",
+        ),
+        rx.text("Target type:", size="2"),
+        rx.select(
+            ["", "pipeline", "transformation"],
+            value=RunState.filter_target_type,
+            on_change=RunState.set_target_type_filter,
             placeholder="All",
         ),
         spacing="3",
@@ -78,6 +85,6 @@ def runs_table() -> rx.Component:
 
 def runs_page() -> rx.Component:
     return page_layout(
-        rx.vstack(status_filter(), runs_table(), spacing="6", width="100%"),
+        rx.vstack(filters_bar(), runs_table(), spacing="6", width="100%"),
         title="Runs",
     )

@@ -90,7 +90,7 @@ When implementing a new feature, the PR should contain tests *committed before o
 
 ## Current Implementation Status
 
-**Completed (Steps 1-10 of PLAN.md):**
+**Completed (Steps 1-13 of PLAN.md):**
 - Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
 - Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
 - Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
@@ -101,10 +101,13 @@ When implementing a new feature, the PR should contain tests *committed before o
 - Step 8: TransformationService — CRUD with sql_body/schema_name/tests_config validation, soft delete, org isolation, TransformationConfigError
 - Step 9: ScheduleService — CRUD with cron validation (5 fields), target validation (pipeline/transformation existence), toggle active, ScheduleConfigError
 - Step 10: Minimal Reflex UI — sidebar layout, 6 pages (dashboard, connections, pipelines, transformations, schedules, runs), state classes with rx.Base data models, hardcoded org_id=1
+- Step 11: DependencyService — CRUD with validation (self-reference/duplicate rejection, upstream/downstream node existence), get_upstream/get_downstream queries, soft delete, org isolation, DependencyConfigError
+- Step 12: Transformation execution — run_transformation function with mocked dbt, Celery task wrapper, same dual-mode pattern as run_pipeline (external session for tests, internal for Celery)
+- Step 13: Enhanced UI — DashboardState with dynamic stats (pipeline/transformation/schedule counts, recent runs), DagState with dependency CRUD, /dag page with edge table + add/remove form, runs page target_type filter, sidebar Dependencies link
 
-**Test suite: 229 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 23 transformation service + 26 schedule service + 10 UI state models)
+**Test suite: 260 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 23 transformation service + 26 schedule service + 15 UI state models)
 
-**Next up: Phase 4 (Steps 11+: Real auth integration, dbt execution, APScheduler integration, etc.)**
+**Next up: Phase 5 (Steps 14+: Real auth integration, real dlt/dbt execution, APScheduler integration, etc.)**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)

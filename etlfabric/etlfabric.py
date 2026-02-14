@@ -1,19 +1,27 @@
 import reflex as rx
 
 from etlfabric.ui.pages.connections import connections_page
+from etlfabric.ui.pages.dag import dag_page
 from etlfabric.ui.pages.dashboard import dashboard_page
 from etlfabric.ui.pages.pipelines import pipelines_page
 from etlfabric.ui.pages.runs import runs_page
 from etlfabric.ui.pages.schedules import schedules_page
 from etlfabric.ui.pages.transformations import transformations_page
 from etlfabric.ui.state.connection_state import ConnectionState
+from etlfabric.ui.state.dag_state import DagState
+from etlfabric.ui.state.dashboard_state import DashboardState
 from etlfabric.ui.state.pipeline_state import PipelineState
 from etlfabric.ui.state.run_state import RunState
 from etlfabric.ui.state.schedule_state import ScheduleState
 from etlfabric.ui.state.transformation_state import TransformationState
 
 app = rx.App()
-app.add_page(dashboard_page, route="/", title="Dashboard | ETL Fabric")
+app.add_page(
+    dashboard_page,
+    route="/",
+    title="Dashboard | ETL Fabric",
+    on_load=DashboardState.load_dashboard,
+)
 app.add_page(
     connections_page,
     route="/connections",
@@ -43,4 +51,10 @@ app.add_page(
     route="/runs",
     title="Runs | ETL Fabric",
     on_load=RunState.load_runs,
+)
+app.add_page(
+    dag_page,
+    route="/dag",
+    title="Dependencies | ETL Fabric",
+    on_load=DagState.load_dependencies,
 )

@@ -1,8 +1,67 @@
-"""Dashboard page — overview."""
+"""Dashboard page — dynamic stats and recent runs."""
 
 import reflex as rx
 
 from etlfabric.ui.components.layout import page_layout
+from etlfabric.ui.state.dashboard_state import DashboardState
+
+
+def _status_color(status: rx.Var[str]) -> rx.Var[str]:
+    return rx.cond(
+        status == "success",
+        "green",
+        rx.cond(
+            status == "failed",
+            "red",
+            rx.cond(status == "running", "blue", "gray"),
+        ),
+    )
+
+
+def stat_card(title: str, value: rx.Var, icon: str) -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.icon(icon, size=24),
+            rx.text(title, weight="bold"),
+            rx.heading(value, size="6"),
+            align="center",
+            spacing="2",
+        ),
+        width="180px",
+    )
+
+
+def recent_runs_table() -> rx.Component:
+    return rx.box(
+        rx.heading("Recent Runs", size="4"),
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("ID"),
+                    rx.table.column_header_cell("Target"),
+                    rx.table.column_header_cell("Status"),
+                    rx.table.column_header_cell("Started"),
+                    rx.table.column_header_cell("Rows"),
+                ),
+            ),
+            rx.table.body(
+                rx.foreach(
+                    DashboardState.recent_runs,
+                    lambda r: rx.table.row(
+                        rx.table.cell(r.id),
+                        rx.table.cell(rx.text(f"{r.target_type} #{r.target_id}")),
+                        rx.table.cell(
+                            rx.badge(r.status, color_scheme=_status_color(r.status)),
+                        ),
+                        rx.table.cell(r.started_at),
+                        rx.table.cell(r.rows_loaded),
+                    ),
+                ),
+            ),
+            width="100%",
+        ),
+        width="100%",
+    )
 
 
 def dashboard_page() -> rx.Component:
@@ -17,45 +76,35 @@ def dashboard_page() -> rx.Component:
                 width="100%",
             ),
             rx.hstack(
-                rx.card(
-                    rx.vstack(
-                        rx.icon("plug", size=24),
-                        rx.text("Connections", weight="bold"),
-                        rx.text("Manage data sources and destinations", size="2", color="gray"),
-                        align="center",
-                    ),
-                    width="200px",
+                stat_card(
+                    "Pipelines",
+                    DashboardState.stats.total_pipelines,
+                    "git-branch",
                 ),
-                rx.card(
-                    rx.vstack(
-                        rx.icon("git-branch", size=24),
-                        rx.text("Pipelines", weight="bold"),
-                        rx.text("Extract and load data with dlt", size="2", color="gray"),
-                        align="center",
-                    ),
-                    width="200px",
+                stat_card(
+                    "Transformations",
+                    DashboardState.stats.total_transformations,
+                    "code",
                 ),
-                rx.card(
-                    rx.vstack(
-                        rx.icon("code", size=24),
-                        rx.text("Transformations", weight="bold"),
-                        rx.text("Transform data with dbt", size="2", color="gray"),
-                        align="center",
-                    ),
-                    width="200px",
+                stat_card(
+                    "Schedules",
+                    DashboardState.stats.total_schedules,
+                    "clock",
                 ),
-                rx.card(
-                    rx.vstack(
-                        rx.icon("clock", size=24),
-                        rx.text("Schedules", weight="bold"),
-                        rx.text("Automate pipeline runs", size="2", color="gray"),
-                        align="center",
-                    ),
-                    width="200px",
+                stat_card(
+                    "Runs (OK)",
+                    DashboardState.stats.recent_runs_success,
+                    "check-circle",
+                ),
+                stat_card(
+                    "Runs (Fail)",
+                    DashboardState.stats.recent_runs_failed,
+                    "x-circle",
                 ),
                 spacing="4",
                 wrap="wrap",
             ),
+            recent_runs_table(),
             spacing="6",
             width="100%",
         ),

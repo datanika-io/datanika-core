@@ -91,9 +91,3 @@ def run_pipeline(
 def run_pipeline_task(self, run_id: int, org_id: int):
     """Celery entry point for pipeline execution."""
     run_pipeline(run_id=run_id, org_id=org_id)
-
-
-@celery_app.task(bind=True, name="etlfabric.run_transformation")
-def run_transformation(self, transformation_id: str, org_id: str):
-    """Execute a dbt transformation. Implementation in Phase 3."""
-    raise NotImplementedError("Transformation execution will be implemented in Step 10")

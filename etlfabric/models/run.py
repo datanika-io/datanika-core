@@ -1,11 +1,10 @@
 import enum
-import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Integer, Text
+from sqlalchemy import BigInteger, DateTime, Enum, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin, UUIDType
+from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 from etlfabric.models.dependency import NodeType
 
 
@@ -20,13 +19,11 @@ class RunStatus(str, enum.Enum):
 class Run(Base, TenantMixin, TimestampMixin):
     __tablename__ = "runs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     target_type: Mapped[NodeType] = mapped_column(
         Enum(NodeType, native_enum=False, length=20), nullable=False
     )
-    target_id: Mapped[uuid.UUID] = mapped_column(UUIDType(), nullable=False)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus, native_enum=False, length=20),
         nullable=False,

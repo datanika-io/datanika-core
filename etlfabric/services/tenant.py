@@ -1,32 +1,21 @@
-import uuid
-
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class TenantService:
-    def _schema_names(self, org_id: uuid.UUID) -> dict[str, str]:
-        """Generate deterministic schema names for a tenant.
-        Uses first 12 hex chars of org UUID for readability."""
-        short_id = org_id.hex[:12]
-        return {
-            "config": f"tenant_{short_id}",
-            "raw": f"tenant_{short_id}_raw",
-            "staging": f"tenant_{short_id}_staging",
-            "marts": f"tenant_{short_id}_marts",
-        }
+    def config_schema_name(self, org_id: int) -> str:
+        """Generate the config schema name for a tenant."""
+        return f"tenant_{org_id}"
 
-    async def provision_tenant(self, session: AsyncSession, org_id: uuid.UUID) -> dict[str, str]:
-        """Create all schemas for a new tenant. Returns the schema name mapping."""
-        schemas = self._schema_names(org_id)
-        for schema_name in schemas.values():
-            await session.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"'))
+    async def provision_tenant(self, session: AsyncSession, org_id: int) -> str:
+        """Create the config schema for a new tenant. Returns the schema name."""
+        schema = self.config_schema_name(org_id)
+        await session.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         await session.commit()
-        return schemas
+        return schema
 
-    async def drop_tenant(self, session: AsyncSession, org_id: uuid.UUID) -> None:
-        """Drop all schemas for a tenant. Use with extreme caution."""
-        schemas = self._schema_names(org_id)
-        for schema_name in schemas.values():
-            await session.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+    async def drop_tenant(self, session: AsyncSession, org_id: int) -> None:
+        """Drop the config schema for a tenant. Use with extreme caution."""
+        schema = self.config_schema_name(org_id)
+        await session.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         await session.commit()

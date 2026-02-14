@@ -1,11 +1,8 @@
 """TDD tests for all database models. Written BEFORE implementation."""
 
-import enum
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
-from sqlalchemy import inspect
 
 from etlfabric.models.base import Base
 
@@ -24,6 +21,11 @@ def _has_fk_to(table_name: str, col_name: str, target_table: str) -> bool:
     return any(fk.column.table.name == target_table for fk in col.foreign_keys)
 
 
+def _pk_is_autoincrement(table_name: str) -> bool:
+    cols = _columns(table_name)
+    return cols["id"].autoincrement is not False
+
+
 # ===========================================================================
 # Organization
 # ===========================================================================
@@ -39,6 +41,9 @@ class TestOrganization:
         assert "created_at" in cols
         assert "updated_at" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("organizations")
+
     def test_slug_is_unique(self):
         cols = _columns("organizations")
         assert cols["slug"].unique
@@ -50,7 +55,7 @@ class TestOrganization:
         db_session.add(org)
         db_session.flush()
 
-        assert org.id is not None
+        assert isinstance(org.id, int)
         assert org.name == "Acme Corp"
         assert org.slug == "acme-corp"
         assert isinstance(org.created_at, datetime)
@@ -73,6 +78,9 @@ class TestUser:
         assert "created_at" in cols
         assert "updated_at" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("users")
+
     def test_email_is_unique(self):
         cols = _columns("users")
         assert cols["email"].unique
@@ -88,7 +96,7 @@ class TestUser:
         db_session.add(user)
         db_session.flush()
 
-        assert user.id is not None
+        assert isinstance(user.id, int)
         assert user.email == "alice@example.com"
         assert user.is_active is True
 
@@ -106,6 +114,9 @@ class TestMembership:
         assert "user_id" in cols
         assert "org_id" in cols
         assert "role" in cols
+
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("memberships")
 
     def test_foreign_keys(self):
         assert _has_fk_to("memberships", "user_id", "users")
@@ -133,7 +144,7 @@ class TestMembership:
         db_session.add(membership)
         db_session.flush()
 
-        assert membership.id is not None
+        assert isinstance(membership.id, int)
         assert membership.role == MemberRole.ADMIN
 
 
@@ -155,9 +166,11 @@ class TestConnection:
         assert "created_at" in cols
         assert "updated_at" in cols
 
-    def test_has_tenant_mixin(self):
-        cols = _columns("connections")
-        assert "org_id" in cols
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("connections")
+
+    def test_org_id_fk(self):
+        assert _has_fk_to("connections", "org_id", "organizations")
 
     def test_enums(self):
         from etlfabric.models.connection import ConnectionDirection, ConnectionType
@@ -192,7 +205,7 @@ class TestConnection:
         db_session.add(conn)
         db_session.flush()
 
-        assert conn.id is not None
+        assert isinstance(conn.id, int)
         assert conn.connection_type == ConnectionType.POSTGRES
 
 
@@ -216,7 +229,11 @@ class TestPipeline:
         assert "created_at" in cols
         assert "updated_at" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("pipelines")
+
     def test_foreign_keys(self):
+        assert _has_fk_to("pipelines", "org_id", "organizations")
         assert _has_fk_to("pipelines", "source_connection_id", "connections")
         assert _has_fk_to("pipelines", "destination_connection_id", "connections")
 
@@ -268,7 +285,7 @@ class TestPipeline:
         db_session.add(pipeline)
         db_session.flush()
 
-        assert pipeline.id is not None
+        assert isinstance(pipeline.id, int)
         assert pipeline.status == PipelineStatus.DRAFT
 
 
@@ -291,6 +308,12 @@ class TestTransformation:
         assert "tests_config" in cols
         assert "created_at" in cols
         assert "updated_at" in cols
+
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("transformations")
+
+    def test_org_id_fk(self):
+        assert _has_fk_to("transformations", "org_id", "organizations")
 
     def test_materialization_enum(self):
         from etlfabric.models.transformation import Materialization
@@ -322,7 +345,7 @@ class TestTransformation:
         db_session.add(txf)
         db_session.flush()
 
-        assert txf.id is not None
+        assert isinstance(txf.id, int)
         assert txf.materialization == Materialization.VIEW
 
 
@@ -342,30 +365,61 @@ class TestDependency:
         assert "downstream_type" in cols
         assert "downstream_id" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("dependencies")
+
     def test_node_type_enum(self):
         from etlfabric.models.dependency import NodeType
 
         assert set(NodeType) == {NodeType.PIPELINE, NodeType.TRANSFORMATION}
 
     def test_create_dependency(self, db_session):
+        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
         from etlfabric.models.dependency import Dependency, NodeType
+        from etlfabric.models.pipeline import Pipeline, PipelineStatus
+        from etlfabric.models.transformation import Materialization, Transformation
         from etlfabric.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-dep")
         db_session.add(org)
         db_session.flush()
 
+        # Create a real pipeline and transformation to reference
+        src = Connection(
+            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+        )
+        dst = Connection(
+            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+        )
+        db_session.add_all([src, dst])
+        db_session.flush()
+
+        pipe = Pipeline(
+            org_id=org.id, name="p", source_connection_id=src.id,
+            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+        )
+        txf = Transformation(
+            org_id=org.id, name="t", sql_body="SELECT 1",
+            materialization=Materialization.VIEW, schema_name="staging",
+        )
+        db_session.add_all([pipe, txf])
+        db_session.flush()
+
         dep = Dependency(
             org_id=org.id,
             upstream_type=NodeType.PIPELINE,
-            upstream_id=uuid.uuid4(),
+            upstream_id=pipe.id,
             downstream_type=NodeType.TRANSFORMATION,
-            downstream_id=uuid.uuid4(),
+            downstream_id=txf.id,
         )
         db_session.add(dep)
         db_session.flush()
 
-        assert dep.id is not None
+        assert isinstance(dep.id, int)
+        assert dep.upstream_id == pipe.id
+        assert dep.downstream_id == txf.id
 
 
 # ===========================================================================
@@ -387,8 +441,13 @@ class TestSchedule:
         assert "created_at" in cols
         assert "updated_at" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("schedules")
+
     def test_create_schedule(self, db_session):
+        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
         from etlfabric.models.dependency import NodeType
+        from etlfabric.models.pipeline import Pipeline, PipelineStatus
         from etlfabric.models.schedule import Schedule
         from etlfabric.models.user import Organization
 
@@ -396,10 +455,28 @@ class TestSchedule:
         db_session.add(org)
         db_session.flush()
 
+        src = Connection(
+            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+        )
+        dst = Connection(
+            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+        )
+        db_session.add_all([src, dst])
+        db_session.flush()
+
+        pipe = Pipeline(
+            org_id=org.id, name="p", source_connection_id=src.id,
+            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+        )
+        db_session.add(pipe)
+        db_session.flush()
+
         sched = Schedule(
             org_id=org.id,
             target_type=NodeType.PIPELINE,
-            target_id=uuid.uuid4(),
+            target_id=pipe.id,
             cron_expression="0 3 * * *",
             timezone="UTC",
             is_active=True,
@@ -407,8 +484,9 @@ class TestSchedule:
         db_session.add(sched)
         db_session.flush()
 
-        assert sched.id is not None
+        assert isinstance(sched.id, int)
         assert sched.is_active is True
+        assert sched.target_id == pipe.id
 
 
 # ===========================================================================
@@ -433,6 +511,9 @@ class TestRun:
         assert "created_at" in cols
         assert "updated_at" in cols
 
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("runs")
+
     def test_run_status_enum(self):
         from etlfabric.models.run import RunStatus
 
@@ -445,7 +526,9 @@ class TestRun:
         }
 
     def test_create_run(self, db_session):
+        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
         from etlfabric.models.dependency import NodeType
+        from etlfabric.models.pipeline import Pipeline, PipelineStatus
         from etlfabric.models.run import Run, RunStatus
         from etlfabric.models.user import Organization
 
@@ -453,16 +536,34 @@ class TestRun:
         db_session.add(org)
         db_session.flush()
 
+        src = Connection(
+            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+        )
+        dst = Connection(
+            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+        )
+        db_session.add_all([src, dst])
+        db_session.flush()
+
+        pipe = Pipeline(
+            org_id=org.id, name="p", source_connection_id=src.id,
+            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+        )
+        db_session.add(pipe)
+        db_session.flush()
+
         run = Run(
             org_id=org.id,
             target_type=NodeType.PIPELINE,
-            target_id=uuid.uuid4(),
+            target_id=pipe.id,
             status=RunStatus.PENDING,
         )
         db_session.add(run)
         db_session.flush()
 
-        assert run.id is not None
+        assert isinstance(run.id, int)
         assert run.status == RunStatus.PENDING
         assert run.started_at is None
         assert run.finished_at is None

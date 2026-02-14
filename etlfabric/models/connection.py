@@ -1,10 +1,9 @@
 import enum
-import uuid
 
-from sqlalchemy import Enum, String, Text
+from sqlalchemy import BigInteger, Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin, UUIDType
+from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
 class ConnectionType(str, enum.Enum):
@@ -31,9 +30,7 @@ class ConnectionDirection(str, enum.Enum):
 class Connection(Base, TenantMixin, TimestampMixin):
     __tablename__ = "connections"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     connection_type: Mapped[ConnectionType] = mapped_column(
         Enum(ConnectionType, native_enum=False, length=30), nullable=False

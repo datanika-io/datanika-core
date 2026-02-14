@@ -1,11 +1,10 @@
 import enum
-import uuid
 
-from sqlalchemy import Enum, String, Text
+from sqlalchemy import BigInteger, Enum, String, Text
 from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin, UUIDType
+from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
 class Materialization(str, enum.Enum):
@@ -18,9 +17,7 @@ class Materialization(str, enum.Enum):
 class Transformation(Base, TenantMixin, TimestampMixin):
     __tablename__ = "transformations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     sql_body: Mapped[str] = mapped_column(Text, nullable=False)

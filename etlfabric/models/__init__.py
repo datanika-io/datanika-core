@@ -1,4 +1,4 @@
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin, UUIDType
+from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
 from etlfabric.models.dependency import Dependency, NodeType
 from etlfabric.models.pipeline import Pipeline, PipelineStatus
@@ -11,7 +11,6 @@ __all__ = [
     "Base",
     "TimestampMixin",
     "TenantMixin",
-    "UUIDType",
     "Organization",
     "User",
     "Membership",

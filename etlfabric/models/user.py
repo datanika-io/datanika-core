@@ -1,11 +1,10 @@
 import enum
-import uuid
-from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, String
+from sqlalchemy.schema import Identity
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from etlfabric.models.base import Base, TimestampMixin, UUIDType
+from etlfabric.models.base import Base, TimestampMixin
 
 
 class MemberRole(str, enum.Enum):
@@ -18,9 +17,7 @@ class MemberRole(str, enum.Enum):
 class Organization(Base, TimestampMixin):
     __tablename__ = "organizations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
 
@@ -30,9 +27,7 @@ class Organization(Base, TimestampMixin):
 class User(Base, TimestampMixin):
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -44,14 +39,12 @@ class User(Base, TimestampMixin):
 class Membership(Base, TimestampMixin):
     __tablename__ = "memberships"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), primary_key=True, default=uuid.uuid4
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id"), nullable=False
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), ForeignKey("users.id"), nullable=False
-    )
-    org_id: Mapped[uuid.UUID] = mapped_column(
-        UUIDType(), ForeignKey("organizations.id"), nullable=False
+    org_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("organizations.id"), nullable=False
     )
     role: Mapped[MemberRole] = mapped_column(
         Enum(MemberRole, native_enum=False, length=20), nullable=False

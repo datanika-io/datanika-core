@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
-class NodeType(str, enum.Enum):
+class NodeType(enum.StrEnum):
     PIPELINE = "pipeline"
     TRANSFORMATION = "transformation"
 

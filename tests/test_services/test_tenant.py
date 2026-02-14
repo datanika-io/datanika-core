@@ -1,7 +1,5 @@
 """TDD tests for tenant service (schema-per-tenant management)."""
 
-import pytest
-
 from etlfabric.services.tenant import TenantService
 
 

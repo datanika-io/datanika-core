@@ -1,7 +1,6 @@
 """TDD tests for credential encryption service."""
 
-import json
-
+import cryptography.fernet
 import pytest
 from cryptography.fernet import Fernet
 
@@ -34,7 +33,7 @@ class TestEncryptionService:
         encrypted = encryption.encrypt({"key": "value"})
         other_key = Fernet.generate_key().decode()
         other = EncryptionService(other_key)
-        with pytest.raises(Exception):
+        with pytest.raises(cryptography.fernet.InvalidToken):
             other.decrypt(encrypted)
 
     def test_encrypt_empty_dict(self, encryption):

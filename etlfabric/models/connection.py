@@ -1,12 +1,12 @@
 import enum
 
-from sqlalchemy import BigInteger, Enum, String, Text
+from sqlalchemy import Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
-class ConnectionType(str, enum.Enum):
+class ConnectionType(enum.StrEnum):
     POSTGRES = "postgres"
     MYSQL = "mysql"
     MSSQL = "mssql"
@@ -21,7 +21,7 @@ class ConnectionType(str, enum.Enum):
     PARQUET = "parquet"
 
 
-class ConnectionDirection(str, enum.Enum):
+class ConnectionDirection(enum.StrEnum):
     SOURCE = "source"
     DESTINATION = "destination"
     BOTH = "both"

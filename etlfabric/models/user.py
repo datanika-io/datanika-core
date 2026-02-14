@@ -1,13 +1,12 @@
 import enum
 
 from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, String
-from sqlalchemy.schema import Identity
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from etlfabric.models.base import Base, TimestampMixin
 
 
-class MemberRole(str, enum.Enum):
+class MemberRole(enum.StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
     EDITOR = "editor"
@@ -40,12 +39,8 @@ class Membership(Base, TimestampMixin):
     __tablename__ = "memberships"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("users.id"), nullable=False
-    )
-    org_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("organizations.id"), nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
+    org_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("organizations.id"), nullable=False)
     role: Mapped[MemberRole] = mapped_column(
         Enum(MemberRole, native_enum=False, length=20), nullable=False
     )

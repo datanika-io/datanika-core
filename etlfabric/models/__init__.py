@@ -5,7 +5,7 @@ from etlfabric.models.pipeline import Pipeline, PipelineStatus
 from etlfabric.models.run import Run, RunStatus
 from etlfabric.models.schedule import Schedule
 from etlfabric.models.transformation import Materialization, Transformation
-from etlfabric.models.user import Membership, MemberRole, Organization, User
+from etlfabric.models.user import MemberRole, Membership, Organization, User
 
 __all__ = [
     "Base",

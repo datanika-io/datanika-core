@@ -90,14 +90,18 @@ When implementing a new feature, the PR should contain tests *committed before o
 
 ## Current Implementation Status
 
-**Completed (Steps 1-3 of PLAN.md):**
+**Completed (Steps 1-7 of PLAN.md):**
 - Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
 - Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
 - Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
+- Step 4: Multi-tenant Alembic — migration helpers (PUBLIC_TABLES, is_public_table, is_tenant_table), two-phase env.py (public then tenant schemas), TenantService creates tenant tables on provisioning
+- Step 5: ConnectionService — CRUD with encrypted credentials, soft delete, org isolation, basic test_connection validation
+- Step 6: PipelineService — CRUD with dlt_config validation (write_disposition, merge requires primary_key), connection direction enforcement, PipelineConfigError
+- Step 7: Pipeline execution — ExecutionService (run lifecycle: create/start/complete/fail/cancel), run_pipeline function with mocked dlt, Celery task wrapper
 
-**Test suite: 77 tests, all passing** (51 model tests + 18 auth tests + 6 encryption tests + 2 tenant tests)
+**Test suite: 170 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks)
 
-**Next up: Step 4 (Alembic migrations with multi-tenant awareness), then Phase 2 (Steps 5-7: Connection management UI, Pipeline builder, Pipeline execution via Celery)**
+**Next up: Phase 3 (Steps 8-10: Transformation service, Schedule service, Reflex UI)**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)

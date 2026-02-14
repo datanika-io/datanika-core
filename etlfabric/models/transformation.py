@@ -1,13 +1,13 @@
 import enum
 
-from sqlalchemy import BigInteger, Enum, String, Text
-from sqlalchemy.types import JSON
+from sqlalchemy import Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
-class Materialization(str, enum.Enum):
+class Materialization(enum.StrEnum):
     VIEW = "view"
     TABLE = "table"
     INCREMENTAL = "incremental"

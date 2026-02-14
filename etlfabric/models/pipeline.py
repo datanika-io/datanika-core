@@ -1,13 +1,13 @@
 import enum
 
 from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text
-from sqlalchemy.types import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import JSON
 
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
 
-class PipelineStatus(str, enum.Enum):
+class PipelineStatus(enum.StrEnum):
     DRAFT = "draft"
     ACTIVE = "active"
     PAUSED = "paused"

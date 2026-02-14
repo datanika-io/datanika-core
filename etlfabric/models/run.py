@@ -8,7 +8,7 @@ from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 from etlfabric.models.dependency import NodeType
 
 
-class RunStatus(str, enum.Enum):
+class RunStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCESS = "success"

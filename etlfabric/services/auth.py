@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from jose import JWTError, jwt
@@ -28,10 +28,8 @@ class AuthService:
 
     # -- JWT tokens --
 
-    def create_access_token(
-        self, user_id: int, org_id: int, expires_minutes: int = 15
-    ) -> str:
-        now = datetime.now(timezone.utc)
+    def create_access_token(self, user_id: int, org_id: int, expires_minutes: int = 15) -> str:
+        now = datetime.now(UTC)
         payload = {
             "user_id": user_id,
             "org_id": org_id,
@@ -42,7 +40,7 @@ class AuthService:
         return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
     def create_refresh_token(self, user_id: int, expires_days: int = 7) -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         payload = {
             "user_id": user_id,
             "type": "refresh",

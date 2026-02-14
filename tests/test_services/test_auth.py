@@ -1,6 +1,6 @@
 """TDD tests for authentication service."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -55,9 +55,11 @@ class TestAccessToken:
         from jose import jwt as _jwt
 
         payload = {
-            "user_id": 1, "org_id": 1, "type": "access",
-            "exp": datetime(2020, 1, 1, tzinfo=timezone.utc),
-            "iat": datetime(2020, 1, 1, tzinfo=timezone.utc),
+            "user_id": 1,
+            "org_id": 1,
+            "type": "access",
+            "exp": datetime(2020, 1, 1, tzinfo=UTC),
+            "iat": datetime(2020, 1, 1, tzinfo=UTC),
         }
         token = _jwt.encode(payload, "test-secret-key-for-jwt-signing-only", algorithm="HS256")
         assert auth.decode_token(token) is None
@@ -89,9 +91,10 @@ class TestRefreshToken:
         from jose import jwt as _jwt
 
         payload = {
-            "user_id": 1, "type": "refresh",
-            "exp": datetime(2020, 1, 1, tzinfo=timezone.utc),
-            "iat": datetime(2020, 1, 1, tzinfo=timezone.utc),
+            "user_id": 1,
+            "type": "refresh",
+            "exp": datetime(2020, 1, 1, tzinfo=UTC),
+            "iat": datetime(2020, 1, 1, tzinfo=UTC),
         }
         token = _jwt.encode(payload, "test-secret-key-for-jwt-signing-only", algorithm="HS256")
         assert auth.decode_token(token) is None

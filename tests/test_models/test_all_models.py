@@ -2,8 +2,6 @@
 
 from datetime import datetime
 
-import pytest
-
 from etlfabric.models.base import Base
 
 
@@ -133,7 +131,7 @@ class TestMembership:
         }
 
     def test_create_membership(self, db_session):
-        from etlfabric.models.user import Membership, MemberRole, Organization, User
+        from etlfabric.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme")
         user = User(email="bob@example.com", password_hash="h", full_name="Bob")
@@ -386,23 +384,36 @@ class TestDependency:
 
         # Create a real pipeline and transformation to reference
         src = Connection(
-            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+            org_id=org.id,
+            name="s",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE,
+            config_encrypted="x",
         )
         dst = Connection(
-            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+            org_id=org.id,
+            name="d",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
         )
         db_session.add_all([src, dst])
         db_session.flush()
 
         pipe = Pipeline(
-            org_id=org.id, name="p", source_connection_id=src.id,
-            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+            org_id=org.id,
+            name="p",
+            source_connection_id=src.id,
+            destination_connection_id=dst.id,
+            dlt_config={},
+            status=PipelineStatus.DRAFT,
         )
         txf = Transformation(
-            org_id=org.id, name="t", sql_body="SELECT 1",
-            materialization=Materialization.VIEW, schema_name="staging",
+            org_id=org.id,
+            name="t",
+            sql_body="SELECT 1",
+            materialization=Materialization.VIEW,
+            schema_name="staging",
         )
         db_session.add_all([pipe, txf])
         db_session.flush()
@@ -456,19 +467,29 @@ class TestSchedule:
         db_session.flush()
 
         src = Connection(
-            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+            org_id=org.id,
+            name="s",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE,
+            config_encrypted="x",
         )
         dst = Connection(
-            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+            org_id=org.id,
+            name="d",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
         )
         db_session.add_all([src, dst])
         db_session.flush()
 
         pipe = Pipeline(
-            org_id=org.id, name="p", source_connection_id=src.id,
-            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+            org_id=org.id,
+            name="p",
+            source_connection_id=src.id,
+            destination_connection_id=dst.id,
+            dlt_config={},
+            status=PipelineStatus.DRAFT,
         )
         db_session.add(pipe)
         db_session.flush()
@@ -537,19 +558,29 @@ class TestRun:
         db_session.flush()
 
         src = Connection(
-            org_id=org.id, name="s", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.SOURCE, config_encrypted="x",
+            org_id=org.id,
+            name="s",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE,
+            config_encrypted="x",
         )
         dst = Connection(
-            org_id=org.id, name="d", connection_type=ConnectionType.POSTGRES,
-            direction=ConnectionDirection.DESTINATION, config_encrypted="y",
+            org_id=org.id,
+            name="d",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
         )
         db_session.add_all([src, dst])
         db_session.flush()
 
         pipe = Pipeline(
-            org_id=org.id, name="p", source_connection_id=src.id,
-            destination_connection_id=dst.id, dlt_config={}, status=PipelineStatus.DRAFT,
+            org_id=org.id,
+            name="p",
+            source_connection_id=src.id,
+            destination_connection_id=dst.id,
+            dlt_config={},
+            status=PipelineStatus.DRAFT,
         )
         db_session.add(pipe)
         db_session.flush()
@@ -575,7 +606,7 @@ class TestRun:
 # ===========================================================================
 class TestRelationships:
     def test_user_memberships_relationship(self, db_session):
-        from etlfabric.models.user import Membership, MemberRole, Organization, User
+        from etlfabric.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme-rel")
         user = User(email="rel@example.com", password_hash="h", full_name="Rel Test")
@@ -591,7 +622,7 @@ class TestRelationships:
         assert user.memberships[0].org_id == org.id
 
     def test_org_memberships_relationship(self, db_session):
-        from etlfabric.models.user import Membership, MemberRole, Organization, User
+        from etlfabric.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme-rel2")
         user = User(email="rel2@example.com", password_hash="h", full_name="Rel Test2")

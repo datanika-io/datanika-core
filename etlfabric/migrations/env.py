@@ -63,6 +63,8 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
+        # SQLAlchemy 2.0 requires explicit commit for DDL to persist
+        connection.commit()
 
         # Phase 2: each tenant schema
         tenant_schemas = get_tenant_schemas(connection)
@@ -76,6 +78,7 @@ def run_migrations_online() -> None:
             )
             with context.begin_transaction():
                 context.run_migrations()
+            connection.commit()
 
 
 if context.is_offline_mode():

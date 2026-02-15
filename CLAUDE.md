@@ -46,9 +46,10 @@ uv run alembic upgrade head
 
 ## Architecture
 
-### Multi-Tenancy (schema-per-tenant)
-- `public` schema: users, orgs, memberships (shared app metadata)
-- `tenant_{org_id}`: per-org config schema (created by TenantService)
+### Multi-Tenancy (org_id isolation in public schema)
+- **All tables live in `public` schema** — `PUBLIC_TABLES` in `migrations/helpers.py` must include every model table
+- Tenant isolation is via `org_id` column (TenantMixin), not per-tenant schemas
+- `tenant_{org_id}` schemas are reserved for future data isolation only (not config tables)
 - Data destination schemas (raw, staging, dds, etc.) are **user-configured** per pipeline/transformation — not hardcoded
 - Tenant context is injected from JWT token via middleware
 
@@ -88,6 +89,8 @@ Test placement mirrors source layout:
 
 When implementing a new feature, the PR should contain tests *committed before or alongside* the implementation — never implementation without tests.
 
+**Bug fixes require a regression test.** Every bug fix must include a test that would have caught the bug — this prevents regressions and documents the fix. Write the test first (red), then fix the bug (green).
+
 ## Current Implementation Status
 
 **Completed (Steps 1-23, 28-29, 33 of PLAN.md):**
@@ -118,16 +121,25 @@ When implementing a new feature, the PR should contain tests *committed before o
 - Step 29: Audit logging — AuditLog model (org_id, user_id, action, resource_type, resource_id, old_values, new_values, ip_address), AuditAction enum (create/update/delete/login/logout/run), AuditService (log_action, list_logs with action/resource_type/user_id/limit filters)
 - Step 33: Data quality filters — filters validation in PipelineService (list of {column, op, value} dicts, 8 ops: eq/ne/gt/gte/lt/lte/in/not_in), DltRunnerService applies source.add_filter() with operator functions, filters in INTERNAL_CONFIG_KEYS
 
-**Test suite: 497 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 64 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 36 transformation service + 26 schedule service + 15 UI state models + 48 user service + 12 auth state + 8 settings state + 38 dlt runner + 35 dbt project + 20 scheduler integration + 19 api key service + 11 audit service)
+**Also completed (Steps 24-27, 30-32 of PLAN.md):**
+- Step 24: REST API source — `_build_rest_api_source()` with base_url, resources, headers, auth, paginator
+- Step 25: File sources — `_build_file_source()` for CSV/JSON/Parquet/S3 via dlt filesystem
+- Step 26: Cloud warehouse destinations — BigQuery/Snowflake/Redshift in build_destination + adapter-specific dbt profiles
+- Step 27: SSO / Social Login — OAuthService + Starlette callback routes + auth_complete page + login OAuth buttons
+- Step 30: dbt snapshots — write_snapshot/run_snapshot/remove_snapshot with timestamp/check strategies
+- Step 31: Source freshness — write_sources_yml + check_freshness, Connection.freshness_config
+- Step 32: dbt packages — write_packages_yml + install_packages (dbt deps)
 
-**Next up: Steps 24-27, 30-32 (REST API source, file sources, cloud destinations, SSO, dbt snapshots, source freshness, dbt packages)**
+**Test suite: 584 tests, all passing**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)
 - **No UUIDs for PKs** — all primary keys are integer autoincrement, managed by PostgreSQL as IDENTITY columns
-- **Tenant data schemas are user-defined** — TenantService only creates config schema `tenant_{org_id}`, data schemas (raw/staging/dds/refined/etc.) are chosen by user per pipeline/transformation
+- **All tables in public schema** — originally designed as schema-per-tenant for config tables, changed to public schema with org_id filtering after discovering services don't set search_path. `PUBLIC_TABLES` must include every model table or Alembic won't create them.
+- **Alembic env.py requires explicit connection.commit()** — SQLAlchemy 2.0 autobegin doesn't auto-commit DDL after `context.begin_transaction()`. Without explicit commit, migrations log as successful but tables don't persist.
 - **SQLite for tests** — model tests use in-memory SQLite for speed; PK columns use `mapped_column(primary_key=True, autoincrement=True)` without explicit BigInteger to stay SQLite-compatible
 - **FK columns use BigInteger** — non-PK foreign key columns and polymorphic reference columns use `BigInteger` explicitly
+- **Reflex 0.8.x uses Starlette, not FastAPI** — custom API routes use `starlette.routing.Route` and are appended to `app._api.routes`, not FastAPI router
 
 ## Code Style
 

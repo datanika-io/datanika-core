@@ -7,7 +7,19 @@ two-phase Alembic migrations: public schema first, then each tenant schema.
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-PUBLIC_TABLES: set[str] = {"organizations", "users", "memberships"}
+PUBLIC_TABLES: set[str] = {
+    "organizations",
+    "users",
+    "memberships",
+    "connections",
+    "pipelines",
+    "transformations",
+    "dependencies",
+    "runs",
+    "schedules",
+    "api_keys",
+    "audit_logs",
+}
 
 # Tables managed by Alembic but not belonging to either category
 _INTERNAL_TABLES: set[str] = {"alembic_version"}

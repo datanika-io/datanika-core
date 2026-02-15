@@ -5,6 +5,7 @@ from etlfabric.migrations.helpers import (
     is_public_table,
     is_tenant_table,
 )
+from etlfabric.models.base import Base
 
 
 class TestPublicTablesSet:
@@ -17,17 +18,13 @@ class TestPublicTablesSet:
     def test_contains_memberships(self):
         assert "memberships" in PUBLIC_TABLES
 
-    def test_does_not_contain_tenant_tables(self):
-        tenant_tables = [
-            "connections",
-            "pipelines",
-            "transformations",
-            "dependencies",
-            "schedules",
-            "runs",
-        ]
-        for t in tenant_tables:
-            assert t not in PUBLIC_TABLES
+    def test_contains_all_model_tables(self):
+        """All model tables must be in PUBLIC_TABLES so Alembic creates them
+        in the public schema. Services use org_id for tenant isolation, not
+        per-tenant schemas. Regression test for 'relation does not exist' bug."""
+        model_tables = {t.name for t in Base.metadata.sorted_tables}
+        missing = model_tables - PUBLIC_TABLES
+        assert missing == set(), f"Tables missing from PUBLIC_TABLES: {missing}"
 
 
 class TestIsPublicTable:
@@ -40,35 +37,17 @@ class TestIsPublicTable:
     def test_memberships_is_public(self):
         assert is_public_table("memberships") is True
 
-    def test_connections_is_not_public(self):
-        assert is_public_table("connections") is False
+    def test_connections_is_public(self):
+        assert is_public_table("connections") is True
 
-    def test_pipelines_is_not_public(self):
-        assert is_public_table("pipelines") is False
+    def test_pipelines_is_public(self):
+        assert is_public_table("pipelines") is True
 
     def test_alembic_version_is_not_public(self):
         assert is_public_table("alembic_version") is False
 
 
 class TestIsTenantTable:
-    def test_connections_is_tenant(self):
-        assert is_tenant_table("connections") is True
-
-    def test_pipelines_is_tenant(self):
-        assert is_tenant_table("pipelines") is True
-
-    def test_transformations_is_tenant(self):
-        assert is_tenant_table("transformations") is True
-
-    def test_dependencies_is_tenant(self):
-        assert is_tenant_table("dependencies") is True
-
-    def test_schedules_is_tenant(self):
-        assert is_tenant_table("schedules") is True
-
-    def test_runs_is_tenant(self):
-        assert is_tenant_table("runs") is True
-
     def test_organizations_is_not_tenant(self):
         assert is_tenant_table("organizations") is False
 
@@ -77,3 +56,11 @@ class TestIsTenantTable:
 
     def test_alembic_version_is_not_tenant(self):
         assert is_tenant_table("alembic_version") is False
+
+    def test_no_model_table_is_tenant(self):
+        """Since all model tables are in PUBLIC_TABLES, none should be
+        classified as tenant tables. This ensures Alembic creates them
+        in public, not in per-tenant schemas."""
+        model_tables = {t.name for t in Base.metadata.sorted_tables}
+        tenant_classified = {t for t in model_tables if is_tenant_table(t)}
+        assert tenant_classified == set()

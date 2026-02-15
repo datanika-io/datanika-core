@@ -37,28 +37,7 @@ class AuthState(rx.State):
     current_org: OrgInfo = OrgInfo()
     user_orgs: list[OrgInfo] = []
 
-    # Form fields
-    login_email: str = ""
-    login_password: str = ""
-    signup_email: str = ""
-    signup_password: str = ""
-    signup_full_name: str = ""
     auth_error: str = ""
-
-    def set_login_email(self, value: str):
-        self.login_email = value
-
-    def set_login_password(self, value: str):
-        self.login_password = value
-
-    def set_signup_email(self, value: str):
-        self.signup_email = value
-
-    def set_signup_password(self, value: str):
-        self.signup_password = value
-
-    def set_signup_full_name(self, value: str):
-        self.signup_full_name = value
 
     def clear_auth_error(self):
         self.auth_error = ""
@@ -75,11 +54,13 @@ class AuthState(rx.State):
         auth = AuthService(settings.secret_key)
         return UserService(auth)
 
-    def login(self):
+    def login(self, form_data: dict):
         self.auth_error = ""
+        email = form_data.get("email", "")
+        password = form_data.get("password", "")
         svc = self._get_user_service()
         with get_sync_session() as session:
-            result = svc.authenticate(session, self.login_email, self.login_password)
+            result = svc.authenticate(session, email, password)
             if result is None:
                 self.auth_error = "Invalid email or password"
                 return
@@ -102,23 +83,19 @@ class AuthState(rx.State):
                 if o.id == org_id:
                     self.current_org = o
                     break
-        self.login_email = ""
-        self.login_password = ""
         return rx.redirect("/")
 
-    def signup(self):
+    def signup(self, form_data: dict):
         self.auth_error = ""
+        email = form_data.get("email", "")
+        password = form_data.get("password", "")
+        full_name = form_data.get("full_name", "")
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
-                user = svc.register_user(
-                    session,
-                    self.signup_email,
-                    self.signup_password,
-                    self.signup_full_name,
-                )
-                org_name = f"{self.signup_full_name}'s Org"
-                org_slug = _slugify(self.signup_full_name)
+                user = svc.register_user(session, email, password, full_name)
+                org_name = f"{full_name}'s Org"
+                org_slug = _slugify(full_name)
                 org = svc.create_org(session, org_name, org_slug, user.id)
                 # Capture id before commit expires ORM attributes
                 org_id = org.id
@@ -126,7 +103,7 @@ class AuthState(rx.State):
 
             # Now authenticate to get tokens
             with get_sync_session() as session:
-                result = svc.authenticate(session, self.signup_email, self.signup_password)
+                result = svc.authenticate(session, email, password)
                 if result is None:
                     self.auth_error = "Signup succeeded but login failed"
                     return
@@ -142,9 +119,6 @@ class AuthState(rx.State):
         except Exception as e:
             self.auth_error = str(e)
             return
-        self.signup_email = ""
-        self.signup_password = ""
-        self.signup_full_name = ""
         return rx.redirect("/")
 
     def logout(self):

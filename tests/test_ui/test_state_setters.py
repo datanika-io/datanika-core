@@ -4,32 +4,22 @@ import inspect
 
 
 class TestAuthStateSetters:
-    def test_all_setters_exist(self):
+    def test_clear_auth_error_exists(self):
         from etlfabric.ui.state.auth_state import AuthState
 
-        expected = [
-            "set_login_email",
-            "set_login_password",
-            "set_signup_email",
-            "set_signup_password",
-            "set_signup_full_name",
-        ]
-        for name in expected:
-            method = getattr(AuthState, name, None)
-            assert method is not None, f"AuthState missing {name}"
-            assert callable(method), f"AuthState.{name} is not callable"
+        method = getattr(AuthState, "clear_auth_error", None)
+        assert method is not None, "AuthState missing clear_auth_error"
+        assert callable(method)
 
-    def test_setter_signatures(self):
+    def test_form_handlers_accept_form_data(self):
         from etlfabric.ui.state.auth_state import AuthState
 
-        for name in ["set_login_email", "set_login_password"]:
+        for name in ["login", "signup"]:
             handler = getattr(AuthState, name)
-            # Reflex wraps methods in EventHandler; inspect the underlying fn
             fn = handler.fn if hasattr(handler, "fn") else handler
             sig = inspect.signature(fn)
             params = list(sig.parameters.keys())
-            assert "self" in params
-            assert "value" in params
+            assert "form_data" in params, f"AuthState.{name} should accept form_data"
 
 
 class TestConnectionStateSetters:

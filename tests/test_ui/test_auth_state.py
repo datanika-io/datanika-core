@@ -52,16 +52,23 @@ class TestAuthStateFields:
 
 
 class TestAuthStateFormFields:
-    def test_login_email_default(self):
-        assert AuthState.__fields__["login_email"].default == ""
-
-    def test_login_password_default(self):
-        assert AuthState.__fields__["login_password"].default == ""
-
-    def test_signup_fields_default(self):
-        assert AuthState.__fields__["signup_email"].default == ""
-        assert AuthState.__fields__["signup_password"].default == ""
-        assert AuthState.__fields__["signup_full_name"].default == ""
-
     def test_auth_error_default(self):
         assert AuthState.__fields__["auth_error"].default == ""
+
+    def test_login_accepts_form_data(self):
+        """login() accepts a form_data dict (from rx.form on_submit)."""
+        import inspect
+
+        fn = AuthState.login.fn if hasattr(AuthState.login, "fn") else AuthState.login
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.keys())
+        assert "form_data" in params
+
+    def test_signup_accepts_form_data(self):
+        """signup() accepts a form_data dict (from rx.form on_submit)."""
+        import inspect
+
+        fn = AuthState.signup.fn if hasattr(AuthState.signup, "fn") else AuthState.signup
+        sig = inspect.signature(fn)
+        params = list(sig.parameters.keys())
+        assert "form_data" in params

@@ -533,3 +533,113 @@ All completed. 589 tests total (81 new).
 | 30 | dbt snapshots (SCD Type 2, `write_snapshot`/`run_snapshot`) | DONE | 11 |
 | 31 | Source freshness (`write_sources_yml` + `check_freshness`) | DONE | 9 |
 | 27 | SSO / Social Login (Google + GitHub OAuth2) | DONE | 21 |
+
+---
+
+## Phase 8: Security & Internationalization (Steps 34-35)
+
+### Step 34: CAPTCHA Protection
+
+**What:** Add CAPTCHA verification to login, signup, and other public-facing forms to prevent brute-force attacks and automated abuse.
+
+**Approach:** Use Google reCAPTCHA v3 (invisible, score-based) — no user friction, works behind the scenes.
+
+**Config (`etlfabric/config.py`):**
+- `recaptcha_site_key: str = ""` — public key for frontend widget
+- `recaptcha_secret_key: str = ""` — server-side verification key
+- CAPTCHA is **disabled** when keys are empty (development mode)
+
+**Backend — `etlfabric/services/captcha_service.py` (NEW):**
+- `CaptchaService`:
+  - `verify(token: str, action: str, min_score: float = 0.5) -> bool`
+  - Posts token to `https://www.google.com/recaptcha/api/siteverify`
+  - Validates `action` matches expected and `score >= min_score`
+  - Returns `True` when keys are empty (disabled / dev mode)
+
+**Integration:**
+- `AuthState.login(form_data)` and `AuthState.signup(form_data)` extract `captcha_token` from form data, call `CaptchaService.verify()` before proceeding
+- `oauth_routes.py` — optional CAPTCHA check on `/api/auth/login/{provider}` (query param)
+- Login/signup pages include reCAPTCHA v3 script tag and hidden token field via `rx.script` + `rx.el.input(type="hidden", name="captcha_token")`
+
+**Tests (~8):**
+- `test_verify_valid_token` / `test_verify_invalid_token` — mock HTTP call
+- `test_verify_low_score_rejected` / `test_verify_wrong_action_rejected`
+- `test_disabled_when_keys_empty` — returns True without HTTP call
+- `test_login_rejects_bad_captcha` / `test_signup_rejects_bad_captcha`
+- `test_network_error_handled`
+
+---
+
+### Step 35: Multi-Language Internationalization (i18n)
+
+**What:** Add UI translations with language switching. Supported languages: English (en), Russian (ru), Greek (el), German (de), French (fr), Spanish (es).
+
+**Approach:** JSON translation files + Reflex state for language switching. All user-facing text goes through a translation lookup.
+
+**Translation files — `etlfabric/ui/i18n/` (NEW):**
+```
+i18n/
+├── __init__.py          # load_translations(), t() lookup helper
+├── en.json              # English (default/fallback)
+├── ru.json              # Russian
+├── el.json              # Greek
+├── de.json              # German
+├── fr.json              # French
+└── es.json              # Spanish
+```
+
+Each JSON file has flat dot-notation keys:
+```json
+{
+  "app.name": "ETL Fabric",
+  "auth.sign_in": "Sign In",
+  "auth.sign_up": "Sign Up",
+  "auth.email": "Email",
+  "auth.password": "Password",
+  "auth.full_name": "Full Name",
+  "auth.error_invalid": "Invalid email or password",
+  "nav.dashboard": "Dashboard",
+  "nav.connections": "Connections",
+  "nav.pipelines": "Pipelines",
+  "nav.transformations": "Transformations",
+  "nav.schedules": "Schedules",
+  "nav.runs": "Runs",
+  "nav.dependencies": "Dependencies",
+  "nav.settings": "Settings",
+  "dashboard.title": "Dashboard",
+  "pipeline.create": "New Pipeline",
+  "pipeline.run": "Run",
+  "pipeline.delete": "Delete",
+  "common.save": "Save",
+  "common.cancel": "Cancel",
+  "common.loading": "Loading..."
+}
+```
+
+**State — `etlfabric/ui/state/i18n_state.py` (NEW):**
+- `I18nState(rx.State)`:
+  - `locale: str = "en"` — current language code
+  - `set_locale(locale: str)` — switch language, persists to browser localStorage
+  - `@rx.var translations: dict` — returns the full dict for current locale
+  - `t(key: str) -> str` computed var or helper that pages use for text lookup
+
+**UI integration:**
+- Language switcher component in sidebar/header — dropdown with flag icons or language names
+- All pages replace hardcoded strings with `I18nState` lookups: `I18nState.translations["auth.sign_in"]`
+- Fallback to English when a key is missing in the selected language
+
+**Pages to update:**
+- `login.py`, `signup.py`, `auth_complete.py`
+- `dashboard.py`, `connections.py`, `pipelines.py`, `transformations.py`
+- `schedules.py`, `runs.py`, `dag.py`, `settings.py`
+- `components/layout.py` (sidebar navigation labels + language switcher)
+
+**Tests (~10):**
+- `test_load_all_locales` — all 6 JSON files parse without error
+- `test_all_locales_have_same_keys` — no missing translations
+- `test_fallback_to_english` — missing key in ru returns English value
+- `test_default_locale_is_english`
+- `test_set_locale_changes_translations`
+- `test_t_returns_correct_value` for each supported locale
+- `test_language_switcher_options` — all 6 languages available
+- `test_unknown_locale_falls_back`

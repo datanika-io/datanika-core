@@ -1,13 +1,10 @@
-"""Base state with hardcoded org_id and sync session helper."""
+"""Base state with auth-based org_id and sync session helper."""
 
 import reflex as rx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from etlfabric.config import settings
-
-# Hardcoded org_id — real auth deferred to later phase
-ORG_ID = 1
 
 _engine = create_engine(settings.database_url_sync)
 
@@ -18,10 +15,13 @@ def get_sync_session() -> Session:
 
 
 class BaseState(rx.State):
-    """Base state with org_id available to all substates."""
+    """Base state with org_id from AuthState available to all substates."""
 
     error_message: str = ""
 
     @property
     def org_id(self) -> int:
-        return ORG_ID
+        from etlfabric.ui.state.auth_state import AuthState
+
+        auth = self.get_state(AuthState)
+        return auth.current_org.id if auth.current_org.id else 0

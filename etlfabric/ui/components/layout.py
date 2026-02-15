@@ -2,6 +2,8 @@
 
 import reflex as rx
 
+from etlfabric.ui.state.auth_state import AuthState
+
 
 def sidebar_link(text: str, href: str, icon: str) -> rx.Component:
     return rx.link(
@@ -22,6 +24,34 @@ def sidebar_link(text: str, href: str, icon: str) -> rx.Component:
     )
 
 
+def sidebar_user_section() -> rx.Component:
+    return rx.vstack(
+        rx.separator(),
+        sidebar_link("Settings", "/settings", "settings"),
+        rx.hstack(
+            rx.vstack(
+                rx.text(AuthState.current_user.full_name, size="2", weight="medium"),
+                rx.text(AuthState.current_org.name, size="1", color="gray"),
+                spacing="0",
+            ),
+            rx.spacer(),
+            rx.icon_button(
+                rx.icon("log-out", size=16),
+                on_click=AuthState.logout,
+                variant="ghost",
+                size="1",
+            ),
+            width="100%",
+            padding_x="12px",
+            padding_y="8px",
+            align="center",
+        ),
+        spacing="1",
+        width="100%",
+        padding="8px",
+    )
+
+
 def sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
@@ -39,6 +69,8 @@ def sidebar() -> rx.Component:
                 width="100%",
                 padding="8px",
             ),
+            rx.spacer(),
+            sidebar_user_section(),
             spacing="0",
             height="100vh",
         ),

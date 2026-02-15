@@ -22,6 +22,175 @@ class TestAuthStateSetters:
             assert "form_data" in params, f"AuthState.{name} should accept form_data"
 
 
+class TestConnectionFormValidation:
+    """Tests for _validate_connection_form required-field checks."""
+
+    def _validate(self, **kwargs):
+        from etlfabric.ui.state.connection_state import _validate_connection_form
+
+        return _validate_connection_form(**kwargs)
+
+    # -- Connection name always required --
+
+    def test_empty_name_rejected(self):
+        err = self._validate(name="", conn_type="postgres", use_raw_json=False)
+        assert "name is required" in err.lower()
+
+    def test_whitespace_name_rejected(self):
+        err = self._validate(name="   ", conn_type="postgres", use_raw_json=False)
+        assert "name is required" in err.lower()
+
+    # -- Raw JSON skips type-specific checks --
+
+    def test_raw_json_skips_field_checks(self):
+        err = self._validate(name="My Conn", conn_type="postgres", use_raw_json=True)
+        assert err == ""
+
+    # -- DB types (postgres, mysql, mssql, redshift) --
+
+    def test_db_missing_host(self):
+        for t in ("postgres", "mysql", "mssql", "redshift"):
+            err = self._validate(
+                name="X", conn_type=t, use_raw_json=False,
+                host="", port="5432", database="db",
+            )
+            assert "Host is required" in err, f"Failed for {t}"
+
+    def test_db_missing_port(self):
+        err = self._validate(
+            name="X", conn_type="postgres", use_raw_json=False,
+            host="localhost", port="", database="db",
+        )
+        assert "Port is required" in err
+
+    def test_db_missing_database(self):
+        err = self._validate(
+            name="X", conn_type="mysql", use_raw_json=False,
+            host="localhost", port="3306", database="",
+        )
+        assert "Database is required" in err
+
+    def test_db_valid(self):
+        err = self._validate(
+            name="X", conn_type="postgres", use_raw_json=False,
+            host="localhost", port="5432", database="mydb",
+        )
+        assert err == ""
+
+    # -- SQLite --
+
+    def test_sqlite_missing_path(self):
+        err = self._validate(
+            name="X", conn_type="sqlite", use_raw_json=False, path="",
+        )
+        assert "path is required" in err.lower()
+
+    def test_sqlite_valid(self):
+        err = self._validate(
+            name="X", conn_type="sqlite", use_raw_json=False, path="/data/my.db",
+        )
+        assert err == ""
+
+    # -- BigQuery --
+
+    def test_bigquery_missing_project(self):
+        err = self._validate(
+            name="X", conn_type="bigquery", use_raw_json=False,
+            project="", dataset="raw",
+        )
+        assert "Project ID is required" in err
+
+    def test_bigquery_missing_dataset(self):
+        err = self._validate(
+            name="X", conn_type="bigquery", use_raw_json=False,
+            project="proj", dataset="",
+        )
+        assert "Dataset is required" in err
+
+    def test_bigquery_valid(self):
+        err = self._validate(
+            name="X", conn_type="bigquery", use_raw_json=False,
+            project="proj", dataset="raw",
+        )
+        assert err == ""
+
+    # -- Snowflake --
+
+    def test_snowflake_missing_account(self):
+        err = self._validate(
+            name="X", conn_type="snowflake", use_raw_json=False,
+            account="", user="u", database="db",
+        )
+        assert "Account is required" in err
+
+    def test_snowflake_missing_user(self):
+        err = self._validate(
+            name="X", conn_type="snowflake", use_raw_json=False,
+            account="acct", user="", database="db",
+        )
+        assert "User is required" in err
+
+    def test_snowflake_missing_database(self):
+        err = self._validate(
+            name="X", conn_type="snowflake", use_raw_json=False,
+            account="acct", user="u", database="",
+        )
+        assert "Database is required" in err
+
+    def test_snowflake_valid(self):
+        err = self._validate(
+            name="X", conn_type="snowflake", use_raw_json=False,
+            account="acct", user="u", database="db",
+        )
+        assert err == ""
+
+    # -- S3 --
+
+    def test_s3_missing_bucket_url(self):
+        err = self._validate(
+            name="X", conn_type="s3", use_raw_json=False, bucket_url="",
+        )
+        assert "Bucket URL is required" in err
+
+    def test_s3_valid(self):
+        err = self._validate(
+            name="X", conn_type="s3", use_raw_json=False,
+            bucket_url="s3://my-bucket",
+        )
+        assert err == ""
+
+    # -- File types (csv, json, parquet) --
+
+    def test_file_type_missing_path(self):
+        for t in ("csv", "json", "parquet"):
+            err = self._validate(
+                name="X", conn_type=t, use_raw_json=False, bucket_url="",
+            )
+            assert "path is required" in err.lower(), f"Failed for {t}"
+
+    def test_file_type_valid(self):
+        err = self._validate(
+            name="X", conn_type="csv", use_raw_json=False,
+            bucket_url="/data/files",
+        )
+        assert err == ""
+
+    # -- REST API --
+
+    def test_rest_api_missing_base_url(self):
+        err = self._validate(
+            name="X", conn_type="rest_api", use_raw_json=False, base_url="",
+        )
+        assert "Base URL is required" in err
+
+    def test_rest_api_valid(self):
+        err = self._validate(
+            name="X", conn_type="rest_api", use_raw_json=False,
+            base_url="https://api.example.com",
+        )
+        assert err == ""
+
+
 class TestConnectionStateTestMethods:
     def test_test_connection_from_form_exists(self):
         from etlfabric.ui.state.connection_state import ConnectionState

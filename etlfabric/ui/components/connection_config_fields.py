@@ -8,18 +8,20 @@ from etlfabric.ui.state.connection_state import ConnectionState
 def db_fields() -> rx.Component:
     """Fields for postgres / mysql / mssql / redshift."""
     return rx.vstack(
-        rx.text("Host", size="2", weight="bold"),
+        rx.text("Host *", size="2", weight="bold"),
         rx.input(
             placeholder="localhost",
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
+            required=True,
             width="100%",
         ),
-        rx.text("Port", size="2", weight="bold"),
+        rx.text("Port *", size="2", weight="bold"),
         rx.input(
             placeholder="5432",
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
+            required=True,
             width="100%",
         ),
         rx.text("User", size="2", weight="bold"),
@@ -37,11 +39,12 @@ def db_fields() -> rx.Component:
             type="password",
             width="100%",
         ),
-        rx.text("Database", size="2", weight="bold"),
+        rx.text("Database *", size="2", weight="bold"),
         rx.input(
             placeholder="mydb",
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
+            required=True,
             width="100%",
         ),
         rx.text("Schema (optional)", size="2", weight="bold"),
@@ -59,11 +62,12 @@ def db_fields() -> rx.Component:
 def sqlite_fields() -> rx.Component:
     """Fields for sqlite."""
     return rx.vstack(
-        rx.text("Database Path", size="2", weight="bold"),
+        rx.text("Database Path *", size="2", weight="bold"),
         rx.input(
             placeholder="/data/my.db",
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
+            required=True,
             width="100%",
         ),
         spacing="2",
@@ -74,18 +78,20 @@ def sqlite_fields() -> rx.Component:
 def bigquery_fields() -> rx.Component:
     """Fields for bigquery."""
     return rx.vstack(
-        rx.text("GCP Project ID", size="2", weight="bold"),
+        rx.text("GCP Project ID *", size="2", weight="bold"),
         rx.input(
             placeholder="my-gcp-project",
             value=ConnectionState.form_project,
             on_change=ConnectionState.set_form_project,
+            required=True,
             width="100%",
         ),
-        rx.text("Dataset", size="2", weight="bold"),
+        rx.text("Dataset *", size="2", weight="bold"),
         rx.input(
             placeholder="raw_data",
             value=ConnectionState.form_dataset,
             on_change=ConnectionState.set_form_dataset,
+            required=True,
             width="100%",
         ),
         rx.text("Service Account JSON (optional)", size="2", weight="bold"),
@@ -103,18 +109,20 @@ def bigquery_fields() -> rx.Component:
 def snowflake_fields() -> rx.Component:
     """Fields for snowflake."""
     return rx.vstack(
-        rx.text("Account", size="2", weight="bold"),
+        rx.text("Account *", size="2", weight="bold"),
         rx.input(
             placeholder="abc123.us-east-1",
             value=ConnectionState.form_account,
             on_change=ConnectionState.set_form_account,
+            required=True,
             width="100%",
         ),
-        rx.text("User", size="2", weight="bold"),
+        rx.text("User *", size="2", weight="bold"),
         rx.input(
             placeholder="SNOW_USER",
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
+            required=True,
             width="100%",
         ),
         rx.text("Password", size="2", weight="bold"),
@@ -125,11 +133,12 @@ def snowflake_fields() -> rx.Component:
             type="password",
             width="100%",
         ),
-        rx.text("Database", size="2", weight="bold"),
+        rx.text("Database *", size="2", weight="bold"),
         rx.input(
             placeholder="ANALYTICS",
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
+            required=True,
             width="100%",
         ),
         rx.text("Warehouse", size="2", weight="bold"),
@@ -161,11 +170,12 @@ def snowflake_fields() -> rx.Component:
 def s3_fields() -> rx.Component:
     """Fields for s3."""
     return rx.vstack(
-        rx.text("Bucket URL", size="2", weight="bold"),
+        rx.text("Bucket URL *", size="2", weight="bold"),
         rx.input(
             placeholder="s3://my-bucket/path",
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
+            required=True,
             width="100%",
         ),
         rx.text("AWS Access Key ID", size="2", weight="bold"),
@@ -205,11 +215,12 @@ def s3_fields() -> rx.Component:
 def local_file_fields() -> rx.Component:
     """Fields for csv / json / parquet."""
     return rx.vstack(
-        rx.text("File Path", size="2", weight="bold"),
+        rx.text("File Path *", size="2", weight="bold"),
         rx.input(
             placeholder="/data/files",
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
+            required=True,
             width="100%",
         ),
         spacing="2",
@@ -220,11 +231,12 @@ def local_file_fields() -> rx.Component:
 def rest_api_fields() -> rx.Component:
     """Fields for rest_api."""
     return rx.vstack(
-        rx.text("Base URL", size="2", weight="bold"),
+        rx.text("Base URL *", size="2", weight="bold"),
         rx.input(
             placeholder="https://api.example.com",
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
+            required=True,
             width="100%",
         ),
         rx.text("API Key (optional)", size="2", weight="bold"),

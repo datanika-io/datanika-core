@@ -11,10 +11,12 @@ def connection_form() -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.heading("New Connection", size="4"),
+            rx.text("Connection Name *", size="2", weight="bold"),
             rx.input(
                 placeholder="Connection name",
                 value=ConnectionState.form_name,
                 on_change=ConnectionState.set_form_name,
+                required=True,
                 size="3",
                 width="100%",
             ),
@@ -105,11 +107,21 @@ def connections_table() -> rx.Component:
                     rx.table.cell(conn.connection_type),
                     rx.table.cell(
                         rx.hstack(
+                            rx.cond(
+                                conn.test_status == "ok",
+                                rx.icon("circle-check", color="green", size=16),
+                            ),
+                            rx.cond(
+                                conn.test_status == "fail",
+                                rx.icon("circle-x", color="red", size=16),
+                            ),
                             rx.button(
                                 "Test",
                                 variant="outline",
                                 size="1",
-                                on_click=ConnectionState.test_saved_connection(conn.id),
+                                on_click=ConnectionState.test_saved_connection(
+                                    conn.id
+                                ),
                             ),
                             rx.button(
                                 "Delete",
@@ -118,6 +130,7 @@ def connections_table() -> rx.Component:
                                 on_click=ConnectionState.delete_connection(conn.id),
                             ),
                             spacing="2",
+                            align="center",
                         ),
                     ),
                 ),

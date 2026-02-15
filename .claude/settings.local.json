@@ -32,7 +32,11 @@
       "Bash(uv pip list:*)",
       "Bash(wc:*)",
       "Bash(docker exec:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(docker build:*)",
+      "Bash(docker run:*)",
+      "Bash(docker port:*)"
     ]
   }
 }

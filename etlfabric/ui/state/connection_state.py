@@ -27,6 +27,63 @@ _DEFAULT_PORTS: dict[str, str] = {
 _DB_TYPES = {"postgres", "mysql", "mssql", "redshift"}
 
 
+def _validate_connection_form(
+    name: str,
+    conn_type: str,
+    use_raw_json: bool,
+    *,
+    host: str = "",
+    port: str = "",
+    database: str = "",
+    path: str = "",
+    project: str = "",
+    dataset: str = "",
+    account: str = "",
+    user: str = "",
+    bucket_url: str = "",
+    base_url: str = "",
+) -> str:
+    """Return an error message if required fields are missing, or '' if valid."""
+    if not name.strip():
+        return "Connection name is required"
+
+    if use_raw_json:
+        return ""
+
+    if conn_type in _DB_TYPES:
+        if not host.strip():
+            return "Host is required"
+        if not port.strip():
+            return "Port is required"
+        if not database.strip():
+            return "Database is required"
+    elif conn_type == "sqlite":
+        if not path.strip():
+            return "Database path is required"
+    elif conn_type == "bigquery":
+        if not project.strip():
+            return "GCP Project ID is required"
+        if not dataset.strip():
+            return "Dataset is required"
+    elif conn_type == "snowflake":
+        if not account.strip():
+            return "Account is required"
+        if not user.strip():
+            return "User is required"
+        if not database.strip():
+            return "Database is required"
+    elif conn_type == "s3":
+        if not bucket_url.strip():
+            return "Bucket URL is required"
+    elif conn_type in ("csv", "json", "parquet"):
+        if not bucket_url.strip():
+            return "File path is required"
+    elif conn_type == "rest_api":
+        if not base_url.strip():
+            return "Base URL is required"
+    return ""
+
+
 def _infer_direction(connection_type: str) -> ConnectionDirection:
     """Infer direction from connection type."""
     is_source = connection_type in SOURCE_TYPES
@@ -42,6 +99,7 @@ class ConnectionItem(BaseModel):
     id: int = 0
     name: str = ""
     connection_type: str = ""
+    test_status: str = ""  # "" = untested, "ok" = success, "fail" = failure
 
 
 class ConnectionState(BaseState):
@@ -164,6 +222,24 @@ class ConnectionState(BaseState):
     def set_form_extra_headers(self, value: str):
         self.form_extra_headers = value
 
+    def _validate_form(self) -> str:
+        """Return an error message if required fields are missing, or '' if valid."""
+        return _validate_connection_form(
+            name=self.form_name,
+            conn_type=self.form_type,
+            use_raw_json=self.form_use_raw_json,
+            host=self.form_host,
+            port=self.form_port,
+            database=self.form_database,
+            path=self.form_path,
+            project=self.form_project,
+            dataset=self.form_dataset,
+            account=self.form_account,
+            user=self.form_user,
+            bucket_url=self.form_bucket_url,
+            base_url=self.form_base_url,
+        )
+
     def _build_config(self) -> dict:
         """Build connection config dict from structured form fields."""
         if self.form_use_raw_json:
@@ -285,6 +361,10 @@ class ConnectionState(BaseState):
         self.error_message = ""
 
     async def create_connection(self):
+        validation_error = self._validate_form()
+        if validation_error:
+            self.error_message = validation_error
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
@@ -322,6 +402,11 @@ class ConnectionState(BaseState):
 
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""
+        validation_error = self._validate_form()
+        if validation_error:
+            self.test_success = False
+            self.test_message = validation_error
+            return
         try:
             config = self._build_config()
         except (json.JSONDecodeError, ValueError) as e:
@@ -339,17 +424,18 @@ class ConnectionState(BaseState):
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
             config = svc.get_connection_config(session, org_id, conn_id)
-        if config is None:
-            self.test_success = False
-            self.test_message = "Connection not found"
-            return
-        conn = None
-        with get_sync_session() as session:
             conn = svc.get_connection(session, org_id, conn_id)
-        if conn is None:
-            self.test_success = False
-            self.test_message = "Connection not found"
+        if config is None or conn is None:
+            self._set_row_test_status(conn_id, "fail")
             return
-        ok, msg = ConnectionService.test_connection(config, conn.connection_type)
-        self.test_success = ok
-        self.test_message = msg
+        ok, _msg = ConnectionService.test_connection(config, conn.connection_type)
+        self._set_row_test_status(conn_id, "ok" if ok else "fail")
+
+    def _set_row_test_status(self, conn_id: int, status: str):
+        """Update test_status for a specific connection row."""
+        self.connections = [
+            item.model_copy(update={"test_status": status})
+            if item.id == conn_id
+            else item
+            for item in self.connections
+        ]

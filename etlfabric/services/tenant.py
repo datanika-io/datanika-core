@@ -1,5 +1,6 @@
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from etlfabric.migrations.helpers import is_tenant_table
 from etlfabric.models.base import Base
@@ -30,6 +31,23 @@ class TenantService:
             table for table in Base.metadata.sorted_tables if is_tenant_table(table.name)
         ]
         Base.metadata.create_all(sync_conn.engine, tables=tenant_tables, checkfirst=True)
+
+    def provision_tenant_sync(self, session: Session, org_id: int) -> str:
+        """Sync version of provision_tenant for use in Reflex event handlers."""
+        schema = self.config_schema_name(org_id)
+        session.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+
+        tenant_tables = [
+            table for table in Base.metadata.sorted_tables if is_tenant_table(table.name)
+        ]
+        for table in tenant_tables:
+            table.schema = schema
+        Base.metadata.create_all(session.get_bind(), tables=tenant_tables, checkfirst=True)
+        for table in tenant_tables:
+            table.schema = None
+
+        session.commit()
+        return schema
 
     async def drop_tenant(self, session: AsyncSession, org_id: int) -> None:
         """Drop the config schema for a tenant. Use with extreme caution."""

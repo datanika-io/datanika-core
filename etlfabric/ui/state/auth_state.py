@@ -119,6 +119,11 @@ class AuthState(rx.State):
                 org = svc.create_org(session, org_name, org_slug, user.id)
                 session.commit()
 
+                # Provision tenant schema + tables for the new org
+                from etlfabric.services.tenant import TenantService
+
+                TenantService().provision_tenant_sync(session, org.id)
+
             # Now authenticate to get tokens
             with get_sync_session() as session:
                 result = svc.authenticate(session, self.signup_email, self.signup_password)

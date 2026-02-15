@@ -11,6 +11,7 @@ from etlfabric.services.encryption import EncryptionService
 from etlfabric.services.execution_service import ExecutionService
 from etlfabric.services.pipeline_service import PipelineService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from etlfabric.ui.state.connection_state import DESTINATION_TYPES, SOURCE_TYPES
 
 
 class PipelineItem(BaseModel):
@@ -24,6 +25,8 @@ class PipelineItem(BaseModel):
 
 class PipelineState(BaseState):
     pipelines: list[PipelineItem] = []
+    source_conn_options: list[str] = []
+    dest_conn_options: list[str] = []
     form_name: str = ""
     form_description: str = ""
     form_source_id: str = ""
@@ -164,7 +167,7 @@ class PipelineState(BaseState):
 
     async def load_pipelines(self):
         org_id = await self._get_org_id()
-        pipe_svc, _ = self._get_services()
+        pipe_svc, conn_svc = self._get_services()
         with get_sync_session() as session:
             rows = pipe_svc.list_pipelines(session, org_id)
             self.pipelines = [
@@ -178,6 +181,18 @@ class PipelineState(BaseState):
                 )
                 for p in rows
             ]
+            # Load connections filtered by capability
+            conns = conn_svc.list_connections(session, org_id)
+            self.source_conn_options = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in SOURCE_TYPES
+            ]
+            self.dest_conn_options = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in DESTINATION_TYPES
+            ]
         self.error_message = ""
 
     async def create_pipeline(self):
@@ -189,10 +204,10 @@ class PipelineState(BaseState):
             self.error_message = f"Invalid config: {e}"
             return
         try:
-            src_id = int(self.form_source_id)
-            dst_id = int(self.form_dest_id)
-        except ValueError:
-            self.error_message = "Source and destination IDs must be integers"
+            src_id = int(self.form_source_id.split(" — ")[0])
+            dst_id = int(self.form_dest_id.split(" — ")[0])
+        except (ValueError, IndexError):
+            self.error_message = "Please select source and destination connections"
             return
         try:
             with get_sync_session() as session:

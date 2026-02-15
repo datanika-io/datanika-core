@@ -29,13 +29,44 @@ class TestConnectionStateSetters:
         expected = [
             "set_form_name",
             "set_form_type",
-            "set_form_direction",
             "set_form_config",
+            "set_form_host",
+            "set_form_port",
+            "set_form_user",
+            "set_form_password",
+            "set_form_database",
+            "set_form_schema",
+            "set_form_path",
+            "set_form_project",
+            "set_form_dataset",
+            "set_form_keyfile_json",
+            "set_form_account",
+            "set_form_warehouse",
+            "set_form_role",
+            "set_form_bucket_url",
+            "set_form_aws_access_key_id",
+            "set_form_aws_secret_access_key",
+            "set_form_region_name",
+            "set_form_endpoint_url",
+            "set_form_base_url",
+            "set_form_api_key",
+            "set_form_extra_headers",
+            "set_form_use_raw_json",
         ]
         for name in expected:
             method = getattr(ConnectionState, name, None)
             assert method is not None, f"ConnectionState missing {name}"
             assert callable(method)
+
+    def test_bool_setter_signature(self):
+        from etlfabric.ui.state.connection_state import ConnectionState
+
+        handler = ConnectionState.set_form_use_raw_json
+        fn = handler.fn if hasattr(handler, "fn") else handler
+        sig = inspect.signature(fn)
+        params = sig.parameters
+        assert "value" in params
+        assert params["value"].annotation is bool
 
 
 class TestPipelineStateSetters:

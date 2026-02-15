@@ -74,15 +74,17 @@ def pipeline_form() -> rx.Component:
                 value=PipelineState.form_description,
                 on_change=PipelineState.set_form_description,
             ),
-            rx.input(
-                placeholder="Source connection ID",
+            rx.select(
+                PipelineState.source_conn_options,
                 value=PipelineState.form_source_id,
                 on_change=PipelineState.set_form_source_id,
+                placeholder="Source connection",
             ),
-            rx.input(
-                placeholder="Destination connection ID",
+            rx.select(
+                PipelineState.dest_conn_options,
                 value=PipelineState.form_dest_id,
                 on_change=PipelineState.set_form_dest_id,
+                placeholder="Destination connection",
             ),
             # Mode selection
             rx.select(

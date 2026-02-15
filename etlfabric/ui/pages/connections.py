@@ -1,7 +1,8 @@
-"""Connections page — list + create form."""
+"""Connections page — list + create form with dynamic config fields."""
 
 import reflex as rx
 
+from etlfabric.ui.components.connection_config_fields import type_fields
 from etlfabric.ui.components.layout import page_layout
 from etlfabric.ui.state.connection_state import ConnectionState
 
@@ -14,6 +15,8 @@ def connection_form() -> rx.Component:
                 placeholder="Connection name",
                 value=ConnectionState.form_name,
                 on_change=ConnectionState.set_form_name,
+                size="3",
+                width="100%",
             ),
             rx.select(
                 [
@@ -32,16 +35,26 @@ def connection_form() -> rx.Component:
                 ],
                 value=ConnectionState.form_type,
                 on_change=ConnectionState.set_form_type,
+                placeholder="Connection type",
             ),
-            rx.select(
-                ["source", "destination", "both"],
-                value=ConnectionState.form_direction,
-                on_change=ConnectionState.set_form_direction,
+            # Dynamic config fields (hidden when raw JSON is active)
+            rx.cond(
+                ~ConnectionState.form_use_raw_json,
+                type_fields(),
             ),
-            rx.text_area(
-                placeholder='{"host": "localhost", "port": 5432}',
-                value=ConnectionState.form_config,
-                on_change=ConnectionState.set_form_config,
+            # Raw JSON toggle
+            rx.checkbox(
+                "Use raw JSON config",
+                checked=ConnectionState.form_use_raw_json,
+                on_change=ConnectionState.set_form_use_raw_json,
+            ),
+            rx.cond(
+                ConnectionState.form_use_raw_json,
+                rx.text_area(
+                    placeholder='{"host": "localhost", "port": 5432}',
+                    value=ConnectionState.form_config,
+                    on_change=ConnectionState.set_form_config,
+                ),
             ),
             rx.cond(
                 ConnectionState.error_message,
@@ -64,7 +77,6 @@ def connections_table() -> rx.Component:
                 rx.table.column_header_cell("ID"),
                 rx.table.column_header_cell("Name"),
                 rx.table.column_header_cell("Type"),
-                rx.table.column_header_cell("Direction"),
                 rx.table.column_header_cell("Actions"),
             ),
         ),
@@ -75,7 +87,6 @@ def connections_table() -> rx.Component:
                     rx.table.cell(conn.id),
                     rx.table.cell(conn.name),
                     rx.table.cell(conn.connection_type),
-                    rx.table.cell(conn.direction),
                     rx.table.cell(
                         rx.button(
                             "Delete",

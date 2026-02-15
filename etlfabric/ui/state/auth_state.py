@@ -58,31 +58,40 @@ class AuthState(rx.State):
         self.auth_error = ""
         email = form_data.get("email", "")
         password = form_data.get("password", "")
+        if not email or not password:
+            self.auth_error = "Email and password are required"
+            return
         svc = self._get_user_service()
-        with get_sync_session() as session:
-            result = svc.authenticate(session, email, password)
-            if result is None:
-                self.auth_error = "Invalid email or password"
-                return
-            user = result["user"]
-            self.access_token = result["access_token"]
-            self.refresh_token = result["refresh_token"]
-            self.current_user = UserInfo(
-                id=user.id,
-                email=user.email,
-                full_name=user.full_name,
-            )
-            # Decode token to get org_id
-            auth = AuthService(settings.secret_key)
-            payload = auth.decode_token(self.access_token)
-            org_id = payload["org_id"]
-            # Load org info
-            orgs = svc.get_user_orgs(session, user.id)
-            self.user_orgs = [OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs]
-            for o in self.user_orgs:
-                if o.id == org_id:
-                    self.current_org = o
-                    break
+        try:
+            with get_sync_session() as session:
+                result = svc.authenticate(session, email, password)
+                if result is None:
+                    self.auth_error = "Invalid email or password"
+                    return
+                user = result["user"]
+                self.access_token = result["access_token"]
+                self.refresh_token = result["refresh_token"]
+                self.current_user = UserInfo(
+                    id=user.id,
+                    email=user.email,
+                    full_name=user.full_name,
+                )
+                # Decode token to get org_id
+                auth = AuthService(settings.secret_key)
+                payload = auth.decode_token(self.access_token)
+                org_id = payload["org_id"]
+                # Load org info
+                orgs = svc.get_user_orgs(session, user.id)
+                self.user_orgs = [
+                    OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs
+                ]
+                for o in self.user_orgs:
+                    if o.id == org_id:
+                        self.current_org = o
+                        break
+        except Exception as e:
+            self.auth_error = f"Login failed: {e}"
+            return
         return rx.redirect("/")
 
     def signup(self, form_data: dict):

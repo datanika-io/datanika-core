@@ -48,7 +48,6 @@ def login_page() -> rx.Component:
                     width="100%",
                 ),
                 on_submit=AuthState.login,
-                reset_on_submit=True,
             ),
             rx.divider(),
             rx.text("or continue with", size="2", color="gray", text_align="center"),

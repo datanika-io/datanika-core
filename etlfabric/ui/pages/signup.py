@@ -51,7 +51,6 @@ def signup_page() -> rx.Component:
                     width="100%",
                 ),
                 on_submit=AuthState.signup,
-                reset_on_submit=True,
             ),
             rx.text(
                 "Already have an account? ",

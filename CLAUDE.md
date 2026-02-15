@@ -90,7 +90,7 @@ When implementing a new feature, the PR should contain tests *committed before o
 
 ## Current Implementation Status
 
-**Completed (Steps 1-16 of PLAN.md):**
+**Completed (Steps 1-19 of PLAN.md):**
 - Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
 - Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
 - Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
@@ -107,10 +107,13 @@ When implementing a new feature, the PR should contain tests *committed before o
 - Step 14: UserService — User/Org/Membership CRUD, registration with email lowering, authenticate with JWT scoped to first org, authenticate_for_org, last-owner protection on remove/demote, UserServiceError
 - Step 15: Auth UI integration — AuthState (login/signup/logout/switch_org/check_auth), BaseState.org_id reads from AuthState via get_state(), login/signup pages, auth guards on all protected routes, sidebar user info + logout
 - Step 16: Settings page — SettingsState with org profile editing and member management (invite/role change/remove), /settings page with org card + members table
+- Step 17: DltRunnerService — dlt pipeline/source/destination factory with batch processing (build_destination, build_source, build_pipeline, execute), supports postgres/mysql/mssql/sqlite, configurable batch_size, log_callback for progress; pipeline_tasks.py uses DltRunnerService instead of inline dlt calls
+- Step 18: DbtProjectService — per-tenant dbt project scaffolding (ensure_project, write_model, generate_profiles_yml, run_model, remove_model), dbt_project.yml/profiles.yml generation, dbtRunner API execution; transformation_tasks.py uses DbtProjectService instead of _execute_dbt stub
+- Step 19: SchedulerIntegrationService — APScheduler bridge with PostgreSQL job store (sync_schedule, remove_schedule, sync_all, get_job, _dispatch_target), CronTrigger from 5-field cron, coalesce/max_instances/misfire_grace_time config; ScheduleService accepts optional scheduler_integration for auto-sync on create/update/delete/toggle
 
-**Test suite: 328 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 23 transformation service + 26 schedule service + 15 UI state models + 48 user service + 12 auth state + 8 settings state)
+**Test suite: 392 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 23 transformation service + 26 schedule service + 15 UI state models + 48 user service + 12 auth state + 8 settings state + 22 dlt runner + 22 dbt project + 20 scheduler integration)
 
-**Next up: Phase 6 (Steps 17+: Real dlt/dbt execution, APScheduler integration, etc.)**
+**Next up: Phase 7 (Steps 20+: End-to-end integration, monitoring, etc.)**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)

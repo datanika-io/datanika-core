@@ -1,6 +1,9 @@
 """Schedule management service — CRUD with cron validation and target validation."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +12,9 @@ from etlfabric.models.dependency import NodeType
 from etlfabric.models.schedule import Schedule
 from etlfabric.services.pipeline_service import PipelineService
 from etlfabric.services.transformation_service import TransformationService
+
+if TYPE_CHECKING:
+    from etlfabric.services.scheduler_integration import SchedulerIntegrationService
 
 
 class ScheduleConfigError(ValueError):
@@ -20,9 +26,11 @@ class ScheduleService:
         self,
         pipeline_service: PipelineService,
         transformation_service: TransformationService,
+        scheduler_integration: SchedulerIntegrationService | None = None,
     ):
         self._pipe_svc = pipeline_service
         self._transform_svc = transformation_service
+        self._scheduler = scheduler_integration
 
     def create_schedule(
         self,
@@ -47,6 +55,10 @@ class ScheduleService:
         )
         session.add(schedule)
         session.flush()
+
+        if self._scheduler is not None:
+            self._scheduler.sync_schedule(schedule)
+
         return schedule
 
     def get_schedule(self, session: Session, org_id: int, schedule_id: int) -> Schedule | None:
@@ -81,6 +93,10 @@ class ScheduleService:
             schedule.is_active = kwargs["is_active"]
 
         session.flush()
+
+        if self._scheduler is not None:
+            self._scheduler.sync_schedule(schedule)
+
         return schedule
 
     def delete_schedule(self, session: Session, org_id: int, schedule_id: int) -> bool:
@@ -89,6 +105,10 @@ class ScheduleService:
             return False
         schedule.deleted_at = datetime.now(UTC)
         session.flush()
+
+        if self._scheduler is not None:
+            self._scheduler.remove_schedule(schedule_id)
+
         return True
 
     def toggle_active(self, session: Session, org_id: int, schedule_id: int) -> Schedule | None:
@@ -97,6 +117,10 @@ class ScheduleService:
             return None
         schedule.is_active = not schedule.is_active
         session.flush()
+
+        if self._scheduler is not None:
+            self._scheduler.sync_schedule(schedule)
+
         return schedule
 
     @staticmethod

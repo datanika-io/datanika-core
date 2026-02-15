@@ -2,13 +2,13 @@
 
 import traceback
 
-import dlt
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from etlfabric.models.connection import Connection
 from etlfabric.models.pipeline import Pipeline
 from etlfabric.models.run import Run
+from etlfabric.services.dlt_runner import DEFAULT_BATCH_SIZE, DltRunnerService
 from etlfabric.services.encryption import EncryptionService
 from etlfabric.services.execution_service import ExecutionService
 from etlfabric.tasks.celery_app import celery_app
@@ -59,14 +59,21 @@ def run_pipeline(
         src_config = encryption.decrypt(src_conn.config_encrypted)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
-        dlt_pipeline = dlt.pipeline(
-            pipeline_name=f"pipeline_{pipeline.id}",
-            destination=dst_config,
+        runner = DltRunnerService()
+        batch_size = pipeline.dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
+        result = runner.execute(
+            pipeline_id=pipeline.id,
+            source_type=src_conn.connection_type.value,
+            source_config=src_config,
+            destination_type=dst_conn.connection_type.value,
+            destination_config=dst_config,
+            dlt_config={k: v for k, v in pipeline.dlt_config.items() if k != "batch_size"},
+            batch_size=batch_size,
         )
-        result = dlt_pipeline.run(src_config, **pipeline.dlt_config)
+        rows = result["rows_loaded"]
+        logs = str(result["load_info"])
 
-        rows = getattr(result, "loads_count", 0) or 0
-        execution_service.complete_run(session, run_id, rows_loaded=rows, logs="")
+        execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
         if own_session:
             session.commit()
 

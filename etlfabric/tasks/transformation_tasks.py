@@ -1,4 +1,4 @@
-"""Transformation execution Celery tasks (mocked dbt)."""
+"""Transformation execution Celery tasks."""
 
 import traceback
 
@@ -7,15 +7,11 @@ from sqlalchemy.orm import Session
 
 from etlfabric.models.run import Run
 from etlfabric.models.transformation import Transformation
+from etlfabric.services.dbt_project import DbtProjectService
 from etlfabric.services.execution_service import ExecutionService
 from etlfabric.tasks.celery_app import celery_app
 
 execution_service = ExecutionService()
-
-
-def _execute_dbt(transformation: Transformation) -> int:
-    """Placeholder for real dbt execution — returns mocked row count."""
-    return 0
 
 
 def run_transformation(
@@ -57,9 +53,22 @@ def run_transformation(
                 f"Transformation not found: target_id={run.target_id}, org_id={org_id}"
             )
 
-        rows = _execute_dbt(transformation)
+        from etlfabric.config import settings
 
-        execution_service.complete_run(session, run_id, rows_loaded=rows, logs="")
+        dbt_svc = DbtProjectService(settings.dbt_projects_dir)
+        dbt_svc.ensure_project(org_id)
+        dbt_svc.write_model(
+            org_id,
+            transformation.name,
+            transformation.sql_body,
+            schema_name=transformation.schema_name,
+            materialization=transformation.materialization.value,
+        )
+        result = dbt_svc.run_model(org_id, transformation.name)
+        rows = result["rows_affected"]
+        logs = result["logs"]
+
+        execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
         if own_session:
             session.commit()
 

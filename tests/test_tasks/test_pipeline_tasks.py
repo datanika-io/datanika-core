@@ -1,6 +1,6 @@
 """TDD tests for pipeline Celery tasks (mocked dlt)."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -77,15 +77,20 @@ def setup_pipeline(pipe_svc, conn_svc, exec_svc, db_session, encryption):
     return org, pipeline, run, encryption
 
 
+def _mock_dlt_runner():
+    """Return a patch context that mocks DltRunnerService.execute for pipeline task tests."""
+    return patch("etlfabric.tasks.pipeline_tasks.DltRunnerService")
+
+
 class TestRunPipelineTask:
     def test_transitions_to_running(self, db_session, setup_pipeline):
         org, pipeline, run, encryption = setup_pipeline
-        with patch("etlfabric.tasks.pipeline_tasks.dlt") as mock_dlt:
-            mock_pipeline = MagicMock()
-            mock_pipeline.run.return_value = MagicMock(
-                loads_count=42, asdict=MagicMock(return_value={})
-            )
-            mock_dlt.pipeline.return_value = mock_pipeline
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 42,
+                "load_info": "mock_load_info",
+            }
 
             run_pipeline(
                 run_id=run.id,
@@ -100,12 +105,12 @@ class TestRunPipelineTask:
 
     def test_completes_on_success(self, db_session, setup_pipeline):
         org, pipeline, run, encryption = setup_pipeline
-        with patch("etlfabric.tasks.pipeline_tasks.dlt") as mock_dlt:
-            mock_pipeline = MagicMock()
-            mock_pipeline.run.return_value = MagicMock(
-                loads_count=100, asdict=MagicMock(return_value={})
-            )
-            mock_dlt.pipeline.return_value = mock_pipeline
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 100,
+                "load_info": "mock_load_info",
+            }
 
             run_pipeline(
                 run_id=run.id,
@@ -121,10 +126,9 @@ class TestRunPipelineTask:
 
     def test_fails_on_error(self, db_session, setup_pipeline):
         org, pipeline, run, encryption = setup_pipeline
-        with patch("etlfabric.tasks.pipeline_tasks.dlt") as mock_dlt:
-            mock_pipeline = MagicMock()
-            mock_pipeline.run.side_effect = RuntimeError("dlt exploded")
-            mock_dlt.pipeline.return_value = mock_pipeline
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.side_effect = RuntimeError("dlt exploded")
 
             run_pipeline(
                 run_id=run.id,

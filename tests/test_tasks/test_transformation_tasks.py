@@ -1,4 +1,4 @@
-"""TDD tests for transformation Celery tasks (mocked dbt)."""
+"""TDD tests for transformation Celery tasks."""
 
 from unittest.mock import patch
 
@@ -53,37 +53,54 @@ def setup_transformation(transform_svc, exec_svc, db_session):
     return org, transformation, run
 
 
+def _mock_dbt_project():
+    """Return a patch context that mocks DbtProjectService for transformation task tests."""
+    return patch("etlfabric.tasks.transformation_tasks.DbtProjectService")
+
+
 class TestRunTransformationTask:
     def test_transitions_to_running_then_success(self, db_session, setup_transformation):
         org, transformation, run = setup_transformation
-        run_transformation(
-            run_id=run.id,
-            org_id=org.id,
-            session=db_session,
-        )
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+            }
+            run_transformation(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+            )
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
         assert run.started_at is not None
 
     def test_completes_with_row_count(self, db_session, setup_transformation):
         org, transformation, run = setup_transformation
-        run_transformation(
-            run_id=run.id,
-            org_id=org.id,
-            session=db_session,
-        )
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 42,
+                "logs": "ok",
+            }
+            run_transformation(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+            )
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
         assert run.finished_at is not None
-        assert run.rows_loaded is not None
-        assert run.rows_loaded >= 0
+        assert run.rows_loaded == 42
 
     def test_fails_on_error(self, db_session, setup_transformation):
         org, transformation, run = setup_transformation
-        with patch(
-            "etlfabric.tasks.transformation_tasks._execute_dbt",
-            side_effect=RuntimeError("dbt exploded"),
-        ):
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.side_effect = RuntimeError("dbt exploded")
             run_transformation(
                 run_id=run.id,
                 org_id=org.id,

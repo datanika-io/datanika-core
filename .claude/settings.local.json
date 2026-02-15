@@ -6,7 +6,16 @@
       "WebFetch(domain:docs.getdbt.com)",
       "Bash(git -C \"D:\\\\Projects\\\\ET\\\\etlfabric\" log --oneline --all)",
       "Bash(uv run pytest:*)",
-      "Bash(uv pip install:*)"
+      "Bash(uv pip install:*)",
+      "Bash(uv run ruff:*)",
+      "Bash(git add:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(.venv/Scripts/python.exe -m pytest:*)",
+      "Bash(git status:*)",
+      "Bash(uv run python:*)",
+      "Read(D:\\Projects\\ET\\etlfabric\\*)",
+      "Grep(path:D:\\Projects\\ET\\etlfabric\\*)",
+      "Glob(path:D:\\Projects\\ET\\etlfabric\\*)"
     ]
   }
 }

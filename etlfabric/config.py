@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     # Encryption
     credential_encryption_key: str = "change-me-generate-with-fernet"
 
+    # OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    github_client_id: str = ""
+    github_client_secret: str = ""
+    oauth_redirect_base_url: str = "http://localhost:8000"
+
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 

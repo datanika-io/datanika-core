@@ -147,6 +147,66 @@ class TestGenerateProfilesYml:
         profile = content["tenant_1"]["outputs"]["default"]
         assert profile["type"] == "mysql"
 
+    def test_bigquery_profile(self, svc):
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "bigquery",
+            {
+                "project": "my-gcp-project",
+                "dataset": "analytics",
+                "keyfile_json": {"type": "service_account"},
+            },
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["type"] == "bigquery"
+        assert profile["project"] == "my-gcp-project"
+        assert profile["dataset"] == "analytics"
+        assert profile["method"] == "service-account-json"
+
+    def test_snowflake_profile(self, svc):
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "snowflake",
+            {
+                "account": "abc123.us-east-1",
+                "user": "loader",
+                "password": "secret",
+                "database": "RAW",
+                "warehouse": "LOADING_WH",
+                "role": "LOADER",
+                "schema": "PUBLIC",
+            },
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["type"] == "snowflake"
+        assert profile["account"] == "abc123.us-east-1"
+        assert profile["warehouse"] == "LOADING_WH"
+        assert profile["role"] == "LOADER"
+
+    def test_redshift_profile(self, svc):
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "redshift",
+            {
+                "host": "cluster.redshift.amazonaws.com",
+                "port": 5439,
+                "user": "admin",
+                "password": "secret",
+                "database": "analytics",
+                "schema": "public",
+            },
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["type"] == "redshift"
+        assert profile["host"] == "cluster.redshift.amazonaws.com"
+        assert profile["port"] == 5439
+
     def test_unsupported_type_raises(self, svc):
         svc.ensure_project(1)
         with pytest.raises(DbtProjectError, match="Unsupported dbt adapter"):
@@ -450,3 +510,309 @@ class TestCompileModel:
     def test_project_not_found_raises(self, svc):
         with pytest.raises(DbtProjectError, match="project not found"):
             svc.compile_model(999, "nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# write_packages_yml (Step 32)
+# ---------------------------------------------------------------------------
+class TestWritePackagesYml:
+    def test_writes_packages_yml(self, svc):
+        svc.ensure_project(1)
+        packages = [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}]
+        path = svc.write_packages_yml(1, packages)
+        assert path.exists()
+        assert path.name == "packages.yml"
+        content = yaml.safe_load(path.read_text())
+        assert content["packages"] == packages
+
+    def test_hub_package_format(self, svc):
+        svc.ensure_project(1)
+        packages = [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}]
+        path = svc.write_packages_yml(1, packages)
+        content = yaml.safe_load(path.read_text())
+        pkg = content["packages"][0]
+        assert pkg["package"] == "dbt-labs/dbt_utils"
+        assert pkg["version"] == "1.3.0"
+
+    def test_git_package_format(self, svc):
+        svc.ensure_project(1)
+        packages = [{"git": "https://github.com/org/repo.git", "revision": "main"}]
+        path = svc.write_packages_yml(1, packages)
+        content = yaml.safe_load(path.read_text())
+        pkg = content["packages"][0]
+        assert pkg["git"] == "https://github.com/org/repo.git"
+        assert pkg["revision"] == "main"
+
+    def test_overwrites_existing(self, svc):
+        svc.ensure_project(1)
+        svc.write_packages_yml(1, [{"package": "old/pkg", "version": "1.0"}])
+        path = svc.write_packages_yml(1, [{"package": "new/pkg", "version": "2.0"}])
+        content = yaml.safe_load(path.read_text())
+        assert len(content["packages"]) == 1
+        assert content["packages"][0]["package"] == "new/pkg"
+
+    def test_empty_packages_list(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_packages_yml(1, [])
+        content = yaml.safe_load(path.read_text())
+        assert content["packages"] == []
+
+
+# ---------------------------------------------------------------------------
+# install_packages (Step 32)
+# ---------------------------------------------------------------------------
+class TestInstallPackages:
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_success_returns_result(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        svc.write_packages_yml(1, [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}])
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = "Installed packages"
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.install_packages(1)
+        assert result["success"] is True
+        assert "logs" in result
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_invokes_dbt_deps(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        svc.write_packages_yml(1, [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}])
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = ""
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.install_packages(1)
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert invoke_args[0] == "deps"
+        assert "--project-dir" in invoke_args
+
+    def test_project_not_found_raises(self, svc):
+        with pytest.raises(DbtProjectError, match="project not found"):
+            svc.install_packages(999)
+
+    def test_no_packages_yml_raises(self, svc):
+        svc.ensure_project(1)
+        with pytest.raises(DbtProjectError, match="packages.yml not found"):
+            svc.install_packages(1)
+
+
+# ---------------------------------------------------------------------------
+# write_snapshot (Step 30)
+# ---------------------------------------------------------------------------
+class TestWriteSnapshot:
+    def test_creates_snapshot_file(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_snapshot(
+            1, "customers_snapshot", "SELECT * FROM raw.customers", unique_key="id"
+        )
+        assert path.exists()
+        assert path.name == "customers_snapshot.sql"
+        assert "snapshots" in str(path.parent)
+
+    def test_timestamp_strategy(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_snapshot(
+            1,
+            "snap",
+            "SELECT * FROM t",
+            unique_key="id",
+            strategy="timestamp",
+            updated_at="updated_at",
+        )
+        content = path.read_text()
+        assert "{% snapshot snap %}" in content
+        assert "strategy='timestamp'" in content
+        assert "updated_at='updated_at'" in content
+        assert "unique_key='id'" in content
+        assert "{% endsnapshot %}" in content
+
+    def test_check_strategy(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_snapshot(
+            1,
+            "snap",
+            "SELECT * FROM t",
+            unique_key="id",
+            strategy="check",
+            check_cols=["name", "email"],
+        )
+        content = path.read_text()
+        assert "strategy='check'" in content
+        assert "check_cols=" in content
+
+    def test_target_schema_in_config(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_snapshot(
+            1, "snap", "SELECT 1", unique_key="id", target_schema="history"
+        )
+        content = path.read_text()
+        assert "target_schema='history'" in content
+
+    def test_overwrites_existing(self, svc):
+        svc.ensure_project(1)
+        svc.write_snapshot(1, "snap", "SELECT 1", unique_key="id")
+        path = svc.write_snapshot(1, "snap", "SELECT 2", unique_key="id")
+        assert "SELECT 2" in path.read_text()
+
+    def test_ensure_project_creates_snapshots_dir(self, svc):
+        path = svc.ensure_project(1)
+        assert (path / "snapshots").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# run_snapshot (Step 30)
+# ---------------------------------------------------------------------------
+class TestRunSnapshot:
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_success_returns_results(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [MagicMock(adapter_response=MagicMock(rows_affected=5))]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.run_snapshot(1, "snap")
+        assert result["success"] is True
+        assert result["rows_affected"] == 5
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_invokes_dbt_snapshot_command(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = []
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.run_snapshot(1, "snap")
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert invoke_args[0] == "snapshot"
+        assert "--select" in invoke_args
+        idx = invoke_args.index("--select")
+        assert invoke_args[idx + 1] == "snap"
+
+    def test_project_not_found_raises(self, svc):
+        with pytest.raises(DbtProjectError, match="project not found"):
+            svc.run_snapshot(999, "snap")
+
+
+# ---------------------------------------------------------------------------
+# remove_snapshot (Step 30)
+# ---------------------------------------------------------------------------
+class TestRemoveSnapshot:
+    def test_removes_existing_file(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_snapshot(1, "snap", "SELECT 1", unique_key="id")
+        assert path.exists()
+        result = svc.remove_snapshot(1, "snap")
+        assert result is True
+        assert not path.exists()
+
+    def test_returns_false_for_nonexistent(self, svc):
+        svc.ensure_project(1)
+        result = svc.remove_snapshot(1, "nonexistent")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# write_sources_yml (Step 31)
+# ---------------------------------------------------------------------------
+class TestWriteSourcesYml:
+    def test_writes_sources_yml(self, svc):
+        svc.ensure_project(1)
+        tables = [{"name": "customers"}, {"name": "orders"}]
+        path = svc.write_sources_yml(1, "raw_data", "raw", tables)
+        assert path.exists()
+        content = yaml.safe_load(path.read_text())
+        assert content["version"] == 2
+        source = content["sources"][0]
+        assert source["name"] == "raw_data"
+        assert source["schema"] == "raw"
+        assert len(source["tables"]) == 2
+
+    def test_sources_yml_with_freshness(self, svc):
+        svc.ensure_project(1)
+        tables = [{"name": "customers", "loaded_at_field": "_dlt_load_time"}]
+        freshness = {
+            "warn_after": {"count": 12, "period": "hour"},
+            "error_after": {"count": 24, "period": "hour"},
+        }
+        path = svc.write_sources_yml(1, "raw", "raw_schema", tables, freshness_config=freshness)
+        content = yaml.safe_load(path.read_text())
+        source = content["sources"][0]
+        assert source["freshness"]["warn_after"]["count"] == 12
+        assert source["freshness"]["error_after"]["period"] == "hour"
+
+    def test_multiple_tables(self, svc):
+        svc.ensure_project(1)
+        tables = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+        path = svc.write_sources_yml(1, "src", "public", tables)
+        content = yaml.safe_load(path.read_text())
+        table_names = [t["name"] for t in content["sources"][0]["tables"]]
+        assert table_names == ["a", "b", "c"]
+
+    def test_loaded_at_field_per_table(self, svc):
+        svc.ensure_project(1)
+        tables = [{"name": "t1", "loaded_at_field": "loaded_at"}]
+        path = svc.write_sources_yml(1, "src", "public", tables)
+        content = yaml.safe_load(path.read_text())
+        table = content["sources"][0]["tables"][0]
+        assert table["loaded_at_field"] == "loaded_at"
+
+    def test_overwrites_existing(self, svc):
+        svc.ensure_project(1)
+        svc.write_sources_yml(1, "old", "old_schema", [{"name": "old_table"}])
+        path = svc.write_sources_yml(1, "new", "new_schema", [{"name": "new_table"}])
+        content = yaml.safe_load(path.read_text())
+        assert content["sources"][0]["name"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# check_freshness (Step 31)
+# ---------------------------------------------------------------------------
+class TestCheckFreshness:
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_success_returns_results(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = "All sources fresh"
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.check_freshness(1)
+        assert result["success"] is True
+        assert "logs" in result
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_select_specific_source(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = ""
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.check_freshness(1, source_name="raw_data")
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert "--select" in invoke_args
+        idx = invoke_args.index("--select")
+        assert invoke_args[idx + 1] == "source:raw_data"
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_check_all_sources(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = ""
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.check_freshness(1)
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert invoke_args[0] == "source"
+        assert invoke_args[1] == "freshness"
+        assert "--select" not in invoke_args
+
+    def test_project_not_found_raises(self, svc):
+        with pytest.raises(DbtProjectError, match="project not found"):
+            svc.check_freshness(999)

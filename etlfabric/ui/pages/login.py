@@ -45,6 +45,32 @@ def login_page() -> rx.Component:
                 spacing="3",
                 width="100%",
             ),
+            rx.divider(),
+            rx.text("or continue with", size="2", color="gray", text_align="center"),
+            rx.hstack(
+                rx.link(
+                    rx.button(
+                        "Google",
+                        variant="outline",
+                        size="3",
+                        width="100%",
+                    ),
+                    href="/api/auth/login/google",
+                    width="100%",
+                ),
+                rx.link(
+                    rx.button(
+                        "GitHub",
+                        variant="outline",
+                        size="3",
+                        width="100%",
+                    ),
+                    href="/api/auth/login/github",
+                    width="100%",
+                ),
+                width="100%",
+                spacing="3",
+            ),
             rx.text(
                 "Don't have an account? ",
                 rx.link("Sign up", href="/signup"),

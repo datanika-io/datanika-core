@@ -1,5 +1,6 @@
 import reflex as rx
 
+from etlfabric.ui.pages.auth_complete import auth_complete_page
 from etlfabric.ui.pages.connections import connections_page
 from etlfabric.ui.pages.dag import dag_page
 from etlfabric.ui.pages.dashboard import dashboard_page
@@ -83,3 +84,17 @@ app.add_page(
     title="Settings | ETL Fabric",
     on_load=[AuthState.check_auth, SettingsState.load_settings],
 )
+
+# OAuth completion page (public — picks up tokens from URL after OAuth callback)
+app.add_page(
+    auth_complete_page,
+    route="/auth/complete",
+    title="Signing In... | ETL Fabric",
+    on_load=[AuthState.handle_oauth_complete],
+)
+
+# Mount OAuth API routes on the Starlette backend
+from etlfabric.services.oauth_routes import oauth_routes  # noqa: E402
+
+for _route in oauth_routes:
+    app._api.routes.append(_route)

@@ -65,6 +65,27 @@ class TestBuildDestination:
         with pytest.raises(DltRunnerError, match="Unsupported destination type"):
             svc.build_destination("oracle", {})
 
+    @patch("etlfabric.services.dlt_runner.dlt")
+    def test_bigquery_returns_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.bigquery.return_value = "bq_dest"
+        result = svc.build_destination("bigquery", {"project": "my-proj"})
+        mock_dlt.destinations.bigquery.assert_called_once_with(credentials={"project": "my-proj"})
+        assert result == "bq_dest"
+
+    @patch("etlfabric.services.dlt_runner.dlt")
+    def test_snowflake_returns_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.snowflake.return_value = "sf_dest"
+        result = svc.build_destination("snowflake", {"account": "abc"})
+        mock_dlt.destinations.snowflake.assert_called_once_with(credentials={"account": "abc"})
+        assert result == "sf_dest"
+
+    @patch("etlfabric.services.dlt_runner.dlt")
+    def test_redshift_returns_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.redshift.return_value = "rs_dest"
+        result = svc.build_destination("redshift", {"host": "rs-host"})
+        mock_dlt.destinations.redshift.assert_called_once_with(credentials={"host": "rs-host"})
+        assert result == "rs_dest"
+
 
 # ---------------------------------------------------------------------------
 # build_source
@@ -99,11 +120,240 @@ class TestBuildSource:
         with pytest.raises(DltRunnerError, match="Unsupported source type"):
             svc.build_source("oracle", {}, {})
 
+    def test_bigquery_not_valid_as_source(self, svc):
+        with pytest.raises(DltRunnerError, match="Unsupported source type"):
+            svc.build_source("bigquery", {}, {})
+
+    def test_snowflake_not_valid_as_source(self, svc):
+        with pytest.raises(DltRunnerError, match="Unsupported source type"):
+            svc.build_source("snowflake", {}, {})
+
+    def test_redshift_not_valid_as_source(self, svc):
+        with pytest.raises(DltRunnerError, match="Unsupported source type"):
+            svc.build_source("redshift", {}, {})
+
     @patch("etlfabric.services.dlt_runner.sql_database")
     def test_passes_chunk_size(self, mock_sql_db, svc):
         svc.build_source("postgres", {"host": "localhost"}, {}, batch_size=5000)
         kwargs = mock_sql_db.call_args
         assert kwargs[1]["chunk_size"] == 5000
+
+    def test_csv_not_in_sql_source_types(self, svc):
+        """csv should route to file source, not SQL — test via unsupported SQL error."""
+        assert "csv" not in svc.SUPPORTED_SOURCE_TYPES
+
+    def test_s3_not_in_sql_source_types(self, svc):
+        assert "s3" not in svc.SUPPORTED_SOURCE_TYPES
+
+
+# ---------------------------------------------------------------------------
+# build_source — file types (Step 25)
+# ---------------------------------------------------------------------------
+class TestBuildFileSource:
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_csv_source_uses_filesystem(self, mock_fs, svc):
+        mock_fs.return_value = "csv_src"
+        result = svc.build_source("csv", {}, {"bucket_url": "/data"})
+        mock_fs.assert_called_once()
+        assert result == "csv_src"
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["bucket_url"] == "/data"
+        assert kwargs["file_glob"] == "*.csv"
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_json_source_default_glob(self, mock_fs, svc):
+        mock_fs.return_value = "json_src"
+        svc.build_source("json", {}, {"bucket_url": "/data"})
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["file_glob"] == "*.json"
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_parquet_source_default_glob(self, mock_fs, svc):
+        mock_fs.return_value = "pq_src"
+        svc.build_source("parquet", {}, {"bucket_url": "/data"})
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["file_glob"] == "*.parquet"
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_s3_source_passes_credentials(self, mock_fs, svc):
+        mock_fs.return_value = "s3_src"
+        config = {
+            "aws_access_key_id": "AKID",
+            "aws_secret_access_key": "secret",
+            "region_name": "us-east-1",
+            "bucket_url": "s3://my-bucket",
+        }
+        svc.build_source("s3", config, {})
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["bucket_url"] == "s3://my-bucket"
+        assert kwargs["file_glob"] == "*"
+        assert kwargs["credentials"]["aws_access_key_id"] == "AKID"
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_custom_file_glob_overrides_default(self, mock_fs, svc):
+        mock_fs.return_value = "src"
+        svc.build_source("csv", {}, {"bucket_url": "/data", "file_glob": "reports_*.csv"})
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["file_glob"] == "reports_*.csv"
+
+    def test_missing_bucket_url_raises(self, svc):
+        with pytest.raises(DltRunnerError, match="bucket_url"):
+            svc.build_source("csv", {}, {})
+
+    def test_file_type_not_valid_as_destination(self, svc):
+        for t in ("csv", "json", "parquet", "s3"):
+            with pytest.raises(DltRunnerError, match="Unsupported destination type"):
+                svc.build_destination(t, {})
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    def test_bucket_url_from_config(self, mock_fs, svc):
+        """bucket_url can come from connection config instead of dlt_config."""
+        mock_fs.return_value = "src"
+        svc.build_source("csv", {"bucket_url": "/from/config"}, {})
+        kwargs = mock_fs.call_args[1]
+        assert kwargs["bucket_url"] == "/from/config"
+
+    @patch("etlfabric.services.dlt_runner.filesystem")
+    @patch("etlfabric.services.dlt_runner.dlt")
+    def test_execute_with_file_source(self, mock_dlt, mock_fs, svc):
+        mock_pipeline = MagicMock()
+        load_info = MagicMock()
+        load_info.loads_count = 50
+        mock_pipeline.run.return_value = load_info
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+        mock_fs.return_value = MagicMock()
+
+        result = svc.execute(
+            pipeline_id=1,
+            source_type="csv",
+            source_config={"bucket_url": "/data"},
+            destination_type="postgres",
+            destination_config={"host": "h"},
+            dlt_config={"write_disposition": "append"},
+        )
+        assert result["rows_loaded"] == 50
+        mock_fs.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# build_source — REST API (Step 24)
+# ---------------------------------------------------------------------------
+class TestBuildRestApiSource:
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_source_calls_rest_api_source(self, mock_rest, svc):
+        mock_rest.return_value = "rest_src"
+        result = svc.build_source(
+            "rest_api",
+            {"base_url": "https://api.example.com"},
+            {"resources": [{"name": "users", "endpoint": {"path": "/users"}}]},
+        )
+        mock_rest.assert_called_once()
+        assert result == "rest_src"
+
+    def test_rest_api_requires_base_url(self, svc):
+        with pytest.raises(DltRunnerError, match="base_url"):
+            svc.build_source("rest_api", {}, {"resources": [{"name": "x"}]})
+
+    def test_rest_api_requires_resources(self, svc):
+        with pytest.raises(DltRunnerError, match="resources"):
+            svc.build_source("rest_api", {"base_url": "https://api.test.com"}, {})
+
+    def test_rest_api_empty_resources_raises(self, svc):
+        with pytest.raises(DltRunnerError, match="resources"):
+            svc.build_source("rest_api", {"base_url": "https://api.test.com"}, {"resources": []})
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_base_url_from_config(self, mock_rest, svc):
+        mock_rest.return_value = "src"
+        svc.build_source(
+            "rest_api",
+            {"base_url": "https://from-config.com"},
+            {"resources": [{"name": "x"}]},
+        )
+        config = mock_rest.call_args[0][0]
+        assert config["client"]["base_url"] == "https://from-config.com"
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_base_url_from_dlt_config(self, mock_rest, svc):
+        mock_rest.return_value = "src"
+        svc.build_source(
+            "rest_api",
+            {},
+            {"base_url": "https://from-dlt.com", "resources": [{"name": "x"}]},
+        )
+        config = mock_rest.call_args[0][0]
+        assert config["client"]["base_url"] == "https://from-dlt.com"
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_headers_passed(self, mock_rest, svc):
+        mock_rest.return_value = "src"
+        svc.build_source(
+            "rest_api",
+            {"base_url": "https://api.test.com", "headers": {"X-Key": "val"}},
+            {"resources": [{"name": "x"}]},
+        )
+        config = mock_rest.call_args[0][0]
+        assert config["client"]["headers"] == {"X-Key": "val"}
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_auth_passed(self, mock_rest, svc):
+        mock_rest.return_value = "src"
+        auth = {"type": "bearer", "token": "abc"}
+        svc.build_source(
+            "rest_api",
+            {"base_url": "https://api.test.com", "auth": auth},
+            {"resources": [{"name": "x"}]},
+        )
+        config = mock_rest.call_args[0][0]
+        assert config["client"]["auth"] == auth
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    def test_rest_api_paginator_passed(self, mock_rest, svc):
+        mock_rest.return_value = "src"
+        svc.build_source(
+            "rest_api",
+            {"base_url": "https://api.test.com"},
+            {
+                "resources": [{"name": "x"}],
+                "paginator": {"type": "offset", "limit": 100},
+            },
+        )
+        config = mock_rest.call_args[0][0]
+        assert config["client"]["paginator"] == {"type": "offset", "limit": 100}
+
+    def test_rest_api_not_valid_as_destination(self, svc):
+        with pytest.raises(DltRunnerError, match="Unsupported destination type"):
+            svc.build_destination("rest_api", {})
+
+    @patch("etlfabric.services.dlt_runner.rest_api_source")
+    @patch("etlfabric.services.dlt_runner.dlt")
+    def test_execute_with_rest_api_source(self, mock_dlt, mock_rest, svc):
+        mock_pipeline = MagicMock()
+        load_info = MagicMock()
+        load_info.loads_count = 25
+        mock_pipeline.run.return_value = load_info
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+        mock_rest.return_value = MagicMock()
+
+        result = svc.execute(
+            pipeline_id=1,
+            source_type="rest_api",
+            source_config={"base_url": "https://api.test.com"},
+            destination_type="postgres",
+            destination_config={"host": "h"},
+            dlt_config={
+                "resources": [{"name": "users", "endpoint": {"path": "/users"}}],
+                "write_disposition": "append",
+            },
+        )
+        assert result["rows_loaded"] == 25
+        mock_rest.assert_called_once()
+        # REST internal keys should not pass to pipeline.run()
+        run_kwargs = mock_pipeline.run.call_args[1]
+        assert "resources" not in run_kwargs
+        assert "base_url" not in run_kwargs
 
 
 class TestBuildSourceModes:

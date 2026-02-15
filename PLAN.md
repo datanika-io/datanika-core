@@ -501,3 +501,35 @@ Organization (tenant)
 6. **dbt projects on disk** — dbt requires a project directory with `.sql` files. Each tenant gets a directory. These can be stored in a volume mount or object storage in production.
 
 7. **Encrypted credentials** — All connection credentials encrypted with Fernet symmetric encryption before storage. Key managed via environment variable.
+
+---
+
+## Phase 6: Advanced Pipeline & dbt Features (Steps 20-23, 28-29, 33) — DONE
+
+All completed. 508 tests total.
+
+| Step | Feature | Status | Tests |
+|------|---------|--------|-------|
+| 20 | Pipeline load modes (single_table/full_database) | DONE | 30 |
+| 21 | dbt tests from UI (write_tests_config/run_test) | DONE | 22 |
+| 22 | dbt compile (SQL preview) | DONE | 4 |
+| 23 | Schema contract (evolve/freeze/discard) | DONE | 8 |
+| 28 | API keys & service accounts | DONE | 19 |
+| 29 | Audit logging | DONE | 11 |
+| 33 | Data quality filters | DONE | 12 |
+
+---
+
+## Phase 7: Extended Sources, Destinations & Enterprise (Steps 24-27, 30-32) — DONE
+
+All completed. 589 tests total (81 new).
+
+| Step | Feature | Status | Tests |
+|------|---------|--------|-------|
+| 26 | Cloud warehouse destinations (BigQuery/Snowflake/Redshift) | DONE | 9 |
+| 25 | File sources (CSV/JSON/Parquet/S3 via `filesystem`) | DONE | 10 |
+| 24 | REST API source (`rest_api_source`) | DONE | 12 |
+| 32 | dbt packages (`packages.yml` + `dbt deps`) | DONE | 9 |
+| 30 | dbt snapshots (SCD Type 2, `write_snapshot`/`run_snapshot`) | DONE | 11 |
+| 31 | Source freshness (`write_sources_yml` + `check_freshness`) | DONE | 9 |
+| 27 | SSO / Social Login (Google + GitHub OAuth2) | DONE | 21 |

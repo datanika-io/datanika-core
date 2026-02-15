@@ -10,7 +10,7 @@ class DbtProjectError(ValueError):
     """Raised when dbt project operations fail."""
 
 
-SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite"}
+SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
 
 
 class DbtProjectService:
@@ -30,6 +30,7 @@ class DbtProjectService:
         (project_path / "models").mkdir(exist_ok=True)
         (project_path / "macros").mkdir(exist_ok=True)
         (project_path / "tests").mkdir(exist_ok=True)
+        (project_path / "snapshots").mkdir(exist_ok=True)
 
         yml_path = project_path / "dbt_project.yml"
         if not yml_path.exists():
@@ -42,6 +43,7 @@ class DbtProjectService:
                 "model-paths": ["models"],
                 "macro-paths": ["macros"],
                 "test-paths": ["tests"],
+                "snapshot-paths": ["snapshots"],
             }
             yml_path.write_text(yaml.dump(content, default_flow_style=False))
 
@@ -97,27 +99,56 @@ class DbtProjectService:
         project_path = self.get_project_path(org_id)
         profile_name = f"tenant_{org_id}"
 
+        output = self._build_profile_output(connection_type, connection_config)
+
         profile = {
             profile_name: {
                 "target": "default",
-                "outputs": {
-                    "default": {
-                        "type": connection_type,
-                        "host": connection_config.get("host", ""),
-                        "port": connection_config.get("port", 5432),
-                        "user": connection_config.get("user", ""),
-                        "password": connection_config.get("password", ""),
-                        "dbname": connection_config.get("database", ""),
-                        "schema": connection_config.get("schema", "public"),
-                        "threads": 4,
-                    }
-                },
+                "outputs": {"default": output},
             }
         }
 
         profiles_path = project_path / "profiles.yml"
         profiles_path.write_text(yaml.dump(profile, default_flow_style=False))
         return profiles_path
+
+    @staticmethod
+    def _build_profile_output(connection_type: str, config: dict) -> dict:
+        """Build adapter-specific dbt profile output dict."""
+        if connection_type == "bigquery":
+            output = {
+                "type": "bigquery",
+                "method": "service-account-json",
+                "project": config.get("project", ""),
+                "dataset": config.get("dataset", ""),
+                "threads": 4,
+            }
+            if "keyfile_json" in config:
+                output["keyfile_json"] = config["keyfile_json"]
+            return output
+        if connection_type == "snowflake":
+            return {
+                "type": "snowflake",
+                "account": config.get("account", ""),
+                "user": config.get("user", ""),
+                "password": config.get("password", ""),
+                "database": config.get("database", ""),
+                "warehouse": config.get("warehouse", ""),
+                "role": config.get("role", ""),
+                "schema": config.get("schema", "PUBLIC"),
+                "threads": 4,
+            }
+        # postgres, mysql, mssql, sqlite, redshift — same shape
+        return {
+            "type": connection_type,
+            "host": config.get("host", ""),
+            "port": config.get("port", 5432),
+            "user": config.get("user", ""),
+            "password": config.get("password", ""),
+            "dbname": config.get("database", ""),
+            "schema": config.get("schema", "public"),
+            "threads": 4,
+        }
 
     def run_model(self, org_id: int, model_name: str) -> dict:
         """Execute `dbt run --select model_name` for the tenant project.
@@ -282,3 +313,158 @@ class DbtProjectService:
             sql_path.unlink()
             return True
         return False
+
+    def write_packages_yml(self, org_id: int, packages: list[dict]) -> Path:
+        """Write packages.yml for the tenant project. Returns path."""
+        project_path = self.get_project_path(org_id)
+        packages_path = project_path / "packages.yml"
+        content = {"packages": packages}
+        packages_path.write_text(yaml.dump(content, default_flow_style=False))
+        return packages_path
+
+    def install_packages(self, org_id: int) -> dict:
+        """Run `dbt deps` to install packages. Returns {"success": bool, "logs": str}."""
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        packages_path = project_path / "packages.yml"
+        if not packages_path.exists():
+            raise DbtProjectError(f"packages.yml not found for org {org_id}")
+
+        runner = dbtRunner()
+        result = runner.invoke(
+            ["deps", "--project-dir", str(project_path), "--profiles-dir", str(project_path)]
+        )
+
+        logs = str(result.result) if result.result else ""
+        return {"success": result.success, "logs": logs}
+
+    def write_snapshot(
+        self,
+        org_id: int,
+        snapshot_name: str,
+        sql_body: str,
+        unique_key: str,
+        strategy: str = "timestamp",
+        updated_at: str | None = None,
+        check_cols: list[str] | None = None,
+        target_schema: str = "snapshots",
+    ) -> Path:
+        """Write a dbt snapshot file. Returns path to the .sql file."""
+        project_path = self.get_project_path(org_id)
+        snapshots_dir = project_path / "snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+
+        config_lines = [
+            f"        target_schema='{target_schema}',",
+            f"        unique_key='{unique_key}',",
+            f"        strategy='{strategy}',",
+        ]
+        if strategy == "timestamp" and updated_at:
+            config_lines.append(f"        updated_at='{updated_at}',")
+        if strategy == "check" and check_cols:
+            config_lines.append(f"        check_cols={check_cols!r},")
+
+        config_block = "\n".join(config_lines)
+        content = (
+            f"{{% snapshot {snapshot_name} %}}\n"
+            f"{{{{\n"
+            f"    config(\n"
+            f"{config_block}\n"
+            f"    )\n"
+            f"}}}}\n"
+            f"{sql_body}\n"
+            f"{{% endsnapshot %}}\n"
+        )
+
+        sql_path = snapshots_dir / f"{snapshot_name}.sql"
+        sql_path.write_text(content)
+        return sql_path
+
+    def run_snapshot(self, org_id: int, snapshot_name: str) -> dict:
+        """Execute `dbt snapshot --select snapshot_name`. Returns result dict."""
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        runner = dbtRunner()
+        result = runner.invoke(
+            [
+                "snapshot",
+                "--select",
+                snapshot_name,
+                "--project-dir",
+                str(project_path),
+                "--profiles-dir",
+                str(project_path),
+            ]
+        )
+
+        rows_affected = 0
+        if result.result:
+            for node_result in result.result:
+                resp = getattr(node_result, "adapter_response", None)
+                if resp and hasattr(resp, "rows_affected"):
+                    rows_affected += resp.rows_affected or 0
+
+        logs = str(result.result) if result.result else ""
+        return {"success": result.success, "rows_affected": rows_affected, "logs": logs}
+
+    def remove_snapshot(self, org_id: int, snapshot_name: str) -> bool:
+        """Delete a snapshot .sql file. Returns True if file existed."""
+        project_path = self.get_project_path(org_id)
+        sql_path = project_path / "snapshots" / f"{snapshot_name}.sql"
+        if sql_path.exists():
+            sql_path.unlink()
+            return True
+        return False
+
+    def write_sources_yml(
+        self,
+        org_id: int,
+        source_name: str,
+        schema_name: str,
+        tables: list[dict],
+        freshness_config: dict | None = None,
+    ) -> Path:
+        """Write sources.yml with optional freshness config. Returns path."""
+        project_path = self.get_project_path(org_id)
+        models_dir = project_path / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+
+        source_def: dict = {
+            "name": source_name,
+            "schema": schema_name,
+            "tables": tables,
+        }
+        if freshness_config:
+            source_def["freshness"] = freshness_config
+
+        content = {"version": 2, "sources": [source_def]}
+        sources_path = models_dir / "sources.yml"
+        sources_path.write_text(yaml.dump(content, default_flow_style=False))
+        return sources_path
+
+    def check_freshness(self, org_id: int, source_name: str | None = None) -> dict:
+        """Run `dbt source freshness`. Returns {"success": bool, "logs": str}."""
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        cmd = [
+            "source",
+            "freshness",
+            "--project-dir",
+            str(project_path),
+            "--profiles-dir",
+            str(project_path),
+        ]
+        if source_name:
+            cmd.extend(["--select", f"source:{source_name}"])
+
+        runner = dbtRunner()
+        result = runner.invoke(cmd)
+
+        logs = str(result.result) if result.result else ""
+        return {"success": result.success, "logs": logs}

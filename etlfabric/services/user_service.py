@@ -1,5 +1,7 @@
 """User, Organization, and Membership management service."""
 
+import re
+import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -241,6 +243,52 @@ class UserService:
             Membership.deleted_at.is_(None),
         )
         return session.execute(stmt).scalar_one_or_none()
+
+    # -- OAuth --
+
+    def find_or_create_oauth_user(
+        self,
+        session: Session,
+        email: str,
+        full_name: str,
+        oauth_provider: str,
+        oauth_provider_id: str,
+    ) -> tuple[User, bool]:
+        """Find existing user by email or create for OAuth. Returns (user, is_new)."""
+        email = email.strip().lower()
+        user = self.get_user_by_email(session, email)
+        if user is not None:
+            # Update OAuth fields if not set
+            if not user.oauth_provider:
+                user.oauth_provider = oauth_provider
+                user.oauth_provider_id = oauth_provider_id
+                session.flush()
+            return user, False
+
+        # Create new user with random password (OAuth users don't need one)
+        random_hash = self._auth.hash_password(secrets.token_urlsafe(32))
+        user = User(
+            email=email,
+            password_hash=random_hash,
+            full_name=full_name or email.split("@")[0],
+            oauth_provider=oauth_provider,
+            oauth_provider_id=oauth_provider_id,
+        )
+        session.add(user)
+        session.flush()
+
+        # Create default org
+        slug = re.sub(r"[^a-z0-9]+", "-", full_name.lower()).strip("-") or "org"
+        org_name = f"{full_name}'s Org"
+        org = Organization(name=org_name, slug=f"{slug}-{user.id}")
+        session.add(org)
+        session.flush()
+
+        membership = Membership(user_id=user.id, org_id=org.id, role=MemberRole.OWNER)
+        session.add(membership)
+        session.flush()
+
+        return user, True
 
     # -- Helpers --
 

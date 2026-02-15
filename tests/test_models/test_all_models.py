@@ -321,6 +321,7 @@ class TestTransformation:
             Materialization.TABLE,
             Materialization.INCREMENTAL,
             Materialization.EPHEMERAL,
+            Materialization.SNAPSHOT,
         }
 
     def test_create_transformation(self, db_session):

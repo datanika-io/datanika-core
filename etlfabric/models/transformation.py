@@ -12,6 +12,7 @@ class Materialization(enum.StrEnum):
     TABLE = "table"
     INCREMENTAL = "incremental"
     EPHEMERAL = "ephemeral"
+    SNAPSHOT = "snapshot"
 
 
 class Transformation(Base, TenantMixin, TimestampMixin):

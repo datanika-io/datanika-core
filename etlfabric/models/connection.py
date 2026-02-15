@@ -2,6 +2,7 @@ import enum
 
 from sqlalchemy import Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 
@@ -39,3 +40,4 @@ class Connection(Base, TenantMixin, TimestampMixin):
         Enum(ConnectionDirection, native_enum=False, length=20), nullable=False
     )
     config_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    freshness_config: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)

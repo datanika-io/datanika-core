@@ -1,6 +1,6 @@
 """Dashboard state — stats and recent runs."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.models.run import RunStatus
@@ -14,7 +14,7 @@ from etlfabric.ui.state.base_state import BaseState, get_sync_session
 from etlfabric.ui.state.run_state import RunItem
 
 
-class DashboardStats(rx.Base):
+class DashboardStats(BaseModel):
     total_pipelines: int = 0
     total_transformations: int = 0
     total_schedules: int = 0
@@ -27,7 +27,8 @@ class DashboardState(BaseState):
     stats: DashboardStats = DashboardStats()
     recent_runs: list[RunItem] = []
 
-    def load_dashboard(self):
+    async def load_dashboard(self):
+        org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
         pipe_svc = PipelineService(conn_svc)
@@ -36,11 +37,11 @@ class DashboardState(BaseState):
         exec_svc = ExecutionService()
 
         with get_sync_session() as session:
-            pipelines = pipe_svc.list_pipelines(session, self.org_id)
-            transformations = transform_svc.list_transformations(session, self.org_id)
-            schedules = schedule_svc.list_schedules(session, self.org_id)
+            pipelines = pipe_svc.list_pipelines(session, org_id)
+            transformations = transform_svc.list_transformations(session, org_id)
+            schedules = schedule_svc.list_schedules(session, org_id)
 
-            recent = exec_svc.list_runs(session, self.org_id, limit=10)
+            recent = exec_svc.list_runs(session, org_id, limit=10)
             success_count = sum(1 for r in recent if r.status == RunStatus.SUCCESS)
             failed_count = sum(1 for r in recent if r.status == RunStatus.FAILED)
 

@@ -1,6 +1,6 @@
 """Run state for Reflex UI."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.models.dependency import NodeType
 from etlfabric.models.run import RunStatus
@@ -8,7 +8,7 @@ from etlfabric.services.execution_service import ExecutionService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class RunItem(rx.Base):
+class RunItem(BaseModel):
     id: int = 0
     target_type: str = ""
     target_id: int = 0
@@ -24,14 +24,15 @@ class RunState(BaseState):
     filter_status: str = ""
     filter_target_type: str = ""
 
-    def load_runs(self):
+    async def load_runs(self):
+        org_id = await self._get_org_id()
         svc = ExecutionService()
         status_filter = RunStatus(self.filter_status) if self.filter_status else None
         target_type_filter = NodeType(self.filter_target_type) if self.filter_target_type else None
         with get_sync_session() as session:
             rows = svc.list_runs(
                 session,
-                self.org_id,
+                org_id,
                 status=status_filter,
                 target_type=target_type_filter,
                 limit=100,
@@ -51,10 +52,10 @@ class RunState(BaseState):
             ]
         self.error_message = ""
 
-    def set_filter(self, status: str):
+    async def set_filter(self, status: str):
         self.filter_status = status
-        self.load_runs()
+        await self.load_runs()
 
-    def set_target_type_filter(self, target_type: str):
+    async def set_target_type_filter(self, target_type: str):
         self.filter_target_type = target_type
-        self.load_runs()
+        await self.load_runs()

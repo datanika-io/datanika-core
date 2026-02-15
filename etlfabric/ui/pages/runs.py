@@ -70,7 +70,7 @@ def runs_table() -> rx.Component:
                         rx.cond(
                             r.error_message,
                             rx.tooltip(
-                                rx.icon("alert-circle", size=16, color="red"),
+                                rx.icon("circle_alert", size=16, color="red"),
                                 content=r.error_message,
                             ),
                             rx.text(""),

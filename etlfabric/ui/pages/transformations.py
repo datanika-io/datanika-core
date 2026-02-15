@@ -47,7 +47,7 @@ def transformation_form() -> rx.Component:
                 TransformationState.error_message,
                 rx.callout(
                     TransformationState.error_message,
-                    icon="alert-triangle",
+                    icon="triangle_alert",
                     color_scheme="red",
                 ),
             ),

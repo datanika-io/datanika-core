@@ -32,7 +32,7 @@ def schedule_form() -> rx.Component:
             ),
             rx.cond(
                 ScheduleState.error_message,
-                rx.callout(ScheduleState.error_message, icon="alert-triangle", color_scheme="red"),
+                rx.callout(ScheduleState.error_message, icon="triangle_alert", color_scheme="red"),
             ),
             rx.button("Create Schedule", on_click=ScheduleState.create_schedule),
             spacing="3",

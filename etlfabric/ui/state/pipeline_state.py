@@ -2,7 +2,7 @@
 
 import json
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.models.dependency import NodeType
@@ -13,7 +13,7 @@ from etlfabric.services.pipeline_service import PipelineService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class PipelineItem(rx.Base):
+class PipelineItem(BaseModel):
     id: int = 0
     name: str = ""
     description: str = ""
@@ -47,6 +47,66 @@ class PipelineState(BaseState):
     # Raw JSON fallback
     form_config: str = "{}"
     form_use_raw_json: bool = False
+
+    def set_form_name(self, value: str):
+        self.form_name = value
+
+    def set_form_description(self, value: str):
+        self.form_description = value
+
+    def set_form_source_id(self, value: str):
+        self.form_source_id = value
+
+    def set_form_dest_id(self, value: str):
+        self.form_dest_id = value
+
+    def set_form_mode(self, value: str):
+        self.form_mode = value
+
+    def set_form_write_disposition(self, value: str):
+        self.form_write_disposition = value
+
+    def set_form_primary_key(self, value: str):
+        self.form_primary_key = value
+
+    def set_form_table(self, value: str):
+        self.form_table = value
+
+    def set_form_source_schema(self, value: str):
+        self.form_source_schema = value
+
+    def set_form_table_names(self, value: str):
+        self.form_table_names = value
+
+    def set_form_batch_size(self, value: str):
+        self.form_batch_size = value
+
+    def set_form_enable_incremental(self, value: bool):
+        self.form_enable_incremental = value
+
+    def set_form_cursor_path(self, value: str):
+        self.form_cursor_path = value
+
+    def set_form_initial_value(self, value: str):
+        self.form_initial_value = value
+
+    def set_form_row_order(self, value: str):
+        self.form_row_order = value
+
+    def set_form_sc_tables(self, value: str):
+        self.form_sc_tables = value
+
+    def set_form_sc_columns(self, value: str):
+        self.form_sc_columns = value
+
+    def set_form_sc_data_type(self, value: str):
+        self.form_sc_data_type = value
+
+    def set_form_config(self, value: str):
+        self.form_config = value
+
+    def set_form_use_raw_json(self, value: bool):
+        self.form_use_raw_json = value
 
     def _get_services(self):
         encryption = EncryptionService(settings.credential_encryption_key)
@@ -102,10 +162,11 @@ class PipelineState(BaseState):
 
         return config
 
-    def load_pipelines(self):
+    async def load_pipelines(self):
+        org_id = await self._get_org_id()
         pipe_svc, _ = self._get_services()
         with get_sync_session() as session:
-            rows = pipe_svc.list_pipelines(session, self.org_id)
+            rows = pipe_svc.list_pipelines(session, org_id)
             self.pipelines = [
                 PipelineItem(
                     id=p.id,
@@ -119,7 +180,8 @@ class PipelineState(BaseState):
             ]
         self.error_message = ""
 
-    def create_pipeline(self):
+    async def create_pipeline(self):
+        org_id = await self._get_org_id()
         pipe_svc, _ = self._get_services()
         try:
             config = self._build_config()
@@ -136,7 +198,7 @@ class PipelineState(BaseState):
             with get_sync_session() as session:
                 pipe_svc.create_pipeline(
                     session,
-                    self.org_id,
+                    org_id,
                     self.form_name,
                     self.form_description or None,
                     src_id,
@@ -148,7 +210,7 @@ class PipelineState(BaseState):
             self.error_message = str(e)
             return
         self._reset_form()
-        self.load_pipelines()
+        await self.load_pipelines()
 
     def _reset_form(self):
         self.form_name = ""
@@ -173,16 +235,18 @@ class PipelineState(BaseState):
         self.form_use_raw_json = False
         self.error_message = ""
 
-    def delete_pipeline(self, pipeline_id: int):
+    async def delete_pipeline(self, pipeline_id: int):
+        org_id = await self._get_org_id()
         pipe_svc, _ = self._get_services()
         with get_sync_session() as session:
-            pipe_svc.delete_pipeline(session, self.org_id, pipeline_id)
+            pipe_svc.delete_pipeline(session, org_id, pipeline_id)
             session.commit()
-        self.load_pipelines()
+        await self.load_pipelines()
 
-    def run_pipeline(self, pipeline_id: int):
+    async def run_pipeline(self, pipeline_id: int):
+        org_id = await self._get_org_id()
         exec_svc = ExecutionService()
         with get_sync_session() as session:
-            exec_svc.create_run(session, self.org_id, NodeType.PIPELINE, pipeline_id)
+            exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
             session.commit()
         self.error_message = ""

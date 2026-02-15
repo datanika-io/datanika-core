@@ -1,6 +1,6 @@
 """Schedule state for Reflex UI."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.models.dependency import NodeType
@@ -12,7 +12,7 @@ from etlfabric.services.transformation_service import TransformationService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class ScheduleItem(rx.Base):
+class ScheduleItem(BaseModel):
     id: int = 0
     target_type: str = ""
     target_id: int = 0
@@ -28,6 +28,18 @@ class ScheduleState(BaseState):
     form_cron: str = ""
     form_timezone: str = "UTC"
 
+    def set_form_target_type(self, value: str):
+        self.form_target_type = value
+
+    def set_form_target_id(self, value: str):
+        self.form_target_id = value
+
+    def set_form_cron(self, value: str):
+        self.form_cron = value
+
+    def set_form_timezone(self, value: str):
+        self.form_timezone = value
+
     def _get_service(self) -> ScheduleService:
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
@@ -35,10 +47,11 @@ class ScheduleState(BaseState):
         transform_svc = TransformationService()
         return ScheduleService(pipe_svc, transform_svc)
 
-    def load_schedules(self):
+    async def load_schedules(self):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
-            rows = svc.list_schedules(session, self.org_id)
+            rows = svc.list_schedules(session, org_id)
             self.schedules = [
                 ScheduleItem(
                     id=s.id,
@@ -52,7 +65,8 @@ class ScheduleState(BaseState):
             ]
         self.error_message = ""
 
-    def create_schedule(self):
+    async def create_schedule(self):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         try:
             target_id = int(self.form_target_id)
@@ -63,7 +77,7 @@ class ScheduleState(BaseState):
             with get_sync_session() as session:
                 svc.create_schedule(
                     session,
-                    self.org_id,
+                    org_id,
                     NodeType(self.form_target_type),
                     target_id,
                     self.form_cron,
@@ -77,18 +91,20 @@ class ScheduleState(BaseState):
         self.form_cron = ""
         self.form_timezone = "UTC"
         self.error_message = ""
-        self.load_schedules()
+        await self.load_schedules()
 
-    def toggle_schedule(self, schedule_id: int):
+    async def toggle_schedule(self, schedule_id: int):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
-            svc.toggle_active(session, self.org_id, schedule_id)
+            svc.toggle_active(session, org_id, schedule_id)
             session.commit()
-        self.load_schedules()
+        await self.load_schedules()
 
-    def delete_schedule(self, schedule_id: int):
+    async def delete_schedule(self, schedule_id: int):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
-            svc.delete_schedule(session, self.org_id, schedule_id)
+            svc.delete_schedule(session, org_id, schedule_id)
             session.commit()
-        self.load_schedules()
+        await self.load_schedules()

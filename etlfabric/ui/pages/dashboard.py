@@ -94,12 +94,12 @@ def dashboard_page() -> rx.Component:
                 stat_card(
                     "Runs (OK)",
                     DashboardState.stats.recent_runs_success,
-                    "check-circle",
+                    "circle_check",
                 ),
                 stat_card(
                     "Runs (Fail)",
                     DashboardState.stats.recent_runs_failed,
-                    "x-circle",
+                    "circle_x",
                 ),
                 spacing="4",
                 wrap="wrap",

@@ -3,6 +3,7 @@
 import re
 
 import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.services.auth import AuthService
@@ -10,13 +11,13 @@ from etlfabric.services.user_service import UserService
 from etlfabric.ui.state.base_state import get_sync_session
 
 
-class UserInfo(rx.Base):
+class UserInfo(BaseModel):
     id: int = 0
     email: str = ""
     full_name: str = ""
 
 
-class OrgInfo(rx.Base):
+class OrgInfo(BaseModel):
     id: int = 0
     name: str = ""
     slug: str = ""
@@ -29,6 +30,7 @@ def _slugify(text: str) -> str:
 
 
 class AuthState(rx.State):
+
     access_token: str = ""
     refresh_token: str = ""
     current_user: UserInfo = UserInfo()
@@ -42,6 +44,21 @@ class AuthState(rx.State):
     signup_password: str = ""
     signup_full_name: str = ""
     auth_error: str = ""
+
+    def set_login_email(self, value: str):
+        self.login_email = value
+
+    def set_login_password(self, value: str):
+        self.login_password = value
+
+    def set_signup_email(self, value: str):
+        self.signup_email = value
+
+    def set_signup_password(self, value: str):
+        self.signup_password = value
+
+    def set_signup_full_name(self, value: str):
+        self.signup_full_name = value
 
     @rx.var
     def is_authenticated(self) -> bool:

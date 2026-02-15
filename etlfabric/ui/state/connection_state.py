@@ -1,6 +1,6 @@
 """Connection state for Reflex UI."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.models.connection import ConnectionDirection, ConnectionType
@@ -9,7 +9,7 @@ from etlfabric.services.encryption import EncryptionService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class ConnectionItem(rx.Base):
+class ConnectionItem(BaseModel):
     id: int = 0
     name: str = ""
     connection_type: str = ""
@@ -23,11 +23,24 @@ class ConnectionState(BaseState):
     form_direction: str = "source"
     form_config: str = "{}"
 
-    def load_connections(self):
+    def set_form_name(self, value: str):
+        self.form_name = value
+
+    def set_form_type(self, value: str):
+        self.form_type = value
+
+    def set_form_direction(self, value: str):
+        self.form_direction = value
+
+    def set_form_config(self, value: str):
+        self.form_config = value
+
+    async def load_connections(self):
+        org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
-            rows = svc.list_connections(session, self.org_id)
+            rows = svc.list_connections(session, org_id)
             self.connections = [
                 ConnectionItem(
                     id=c.id,
@@ -39,9 +52,10 @@ class ConnectionState(BaseState):
             ]
         self.error_message = ""
 
-    def create_connection(self):
+    async def create_connection(self):
         import json
 
+        org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         try:
@@ -53,7 +67,7 @@ class ConnectionState(BaseState):
             with get_sync_session() as session:
                 svc.create_connection(
                     session,
-                    self.org_id,
+                    org_id,
                     self.form_name,
                     ConnectionType(self.form_type),
                     ConnectionDirection(self.form_direction),
@@ -66,12 +80,13 @@ class ConnectionState(BaseState):
         self.form_name = ""
         self.form_config = "{}"
         self.error_message = ""
-        self.load_connections()
+        await self.load_connections()
 
-    def delete_connection(self, conn_id: int):
+    async def delete_connection(self, conn_id: int):
+        org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
-            svc.delete_connection(session, self.org_id, conn_id)
+            svc.delete_connection(session, org_id, conn_id)
             session.commit()
-        self.load_connections()
+        await self.load_connections()

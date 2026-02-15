@@ -46,7 +46,7 @@ def connection_form() -> rx.Component:
             rx.cond(
                 ConnectionState.error_message,
                 rx.callout(
-                    ConnectionState.error_message, icon="alert-triangle", color_scheme="red"
+                    ConnectionState.error_message, icon="triangle_alert", color_scheme="red"
                 ),
             ),
             rx.button("Create Connection", on_click=ConnectionState.create_connection),

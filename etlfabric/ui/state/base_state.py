@@ -19,9 +19,8 @@ class BaseState(rx.State):
 
     error_message: str = ""
 
-    @property
-    def org_id(self) -> int:
+    async def _get_org_id(self) -> int:
         from etlfabric.ui.state.auth_state import AuthState
 
-        auth = self.get_state(AuthState)
+        auth = await self.get_state(AuthState)
         return auth.current_org.id if auth.current_org.id else 0

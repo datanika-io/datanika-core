@@ -1,6 +1,6 @@
 """Settings state — org profile and member management."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings as app_settings
 from etlfabric.services.auth import AuthService
@@ -9,7 +9,7 @@ from etlfabric.ui.state.auth_state import AuthState
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class MemberItem(rx.Base):
+class MemberItem(BaseModel):
     id: int = 0
     user_id: int = 0
     email: str = ""
@@ -26,12 +26,24 @@ class SettingsState(BaseState):
     edit_org_name: str = ""
     edit_org_slug: str = ""
 
+    def set_edit_org_name(self, value: str):
+        self.edit_org_name = value
+
+    def set_edit_org_slug(self, value: str):
+        self.edit_org_slug = value
+
+    def set_invite_email(self, value: str):
+        self.invite_email = value
+
+    def set_invite_role(self, value: str):
+        self.invite_role = value
+
     def _get_user_service(self) -> UserService:
         auth = AuthService(app_settings.secret_key)
         return UserService(auth)
 
-    def load_settings(self):
-        auth_state = self.get_state(AuthState)
+    async def load_settings(self):
+        auth_state = await self.get_state(AuthState)
         if not auth_state.current_org.id:
             return
         svc = self._get_user_service()
@@ -57,8 +69,8 @@ class SettingsState(BaseState):
                 )
         self.error_message = ""
 
-    def update_org(self):
-        auth_state = self.get_state(AuthState)
+    async def update_org(self):
+        auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
@@ -84,8 +96,8 @@ class SettingsState(BaseState):
         )
         self.error_message = ""
 
-    def add_member_by_email(self):
-        auth_state = self.get_state(AuthState)
+    async def add_member_by_email(self):
+        auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
@@ -107,10 +119,10 @@ class SettingsState(BaseState):
             return
         self.invite_email = ""
         self.error_message = ""
-        self.load_settings()
+        await self.load_settings()
 
-    def change_member_role(self, membership_id: int, new_role: str):
-        auth_state = self.get_state(AuthState)
+    async def change_member_role(self, membership_id: int, new_role: str):
+        auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
@@ -127,10 +139,10 @@ class SettingsState(BaseState):
             self.error_message = str(e)
             return
         self.error_message = ""
-        self.load_settings()
+        await self.load_settings()
 
-    def remove_member(self, membership_id: int):
-        auth_state = self.get_state(AuthState)
+    async def remove_member(self, membership_id: int):
+        auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
@@ -140,4 +152,4 @@ class SettingsState(BaseState):
             self.error_message = str(e)
             return
         self.error_message = ""
-        self.load_settings()
+        await self.load_settings()

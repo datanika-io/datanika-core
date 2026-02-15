@@ -56,7 +56,7 @@ def add_dependency_form() -> rx.Component:
             ),
             rx.cond(
                 DagState.error_message,
-                rx.callout(DagState.error_message, icon="alert_triangle", color_scheme="red"),
+                rx.callout(DagState.error_message, icon="triangle_alert", color_scheme="red"),
                 rx.fragment(),
             ),
             spacing="3",

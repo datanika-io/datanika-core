@@ -1,6 +1,6 @@
 """DAG (dependency) state for Reflex UI."""
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.config import settings
 from etlfabric.models.dependency import NodeType
@@ -12,7 +12,7 @@ from etlfabric.services.transformation_service import TransformationService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class DependencyItem(rx.Base):
+class DependencyItem(BaseModel):
     id: int = 0
     upstream_type: str = ""
     upstream_id: int = 0
@@ -27,6 +27,18 @@ class DagState(BaseState):
     form_downstream_type: str = "transformation"
     form_downstream_id: str = ""
 
+    def set_form_upstream_type(self, value: str):
+        self.form_upstream_type = value
+
+    def set_form_upstream_id(self, value: str):
+        self.form_upstream_id = value
+
+    def set_form_downstream_type(self, value: str):
+        self.form_downstream_type = value
+
+    def set_form_downstream_id(self, value: str):
+        self.form_downstream_id = value
+
     def _get_service(self) -> DependencyService:
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
@@ -34,10 +46,11 @@ class DagState(BaseState):
         transform_svc = TransformationService()
         return DependencyService(pipe_svc, transform_svc)
 
-    def load_dependencies(self):
+    async def load_dependencies(self):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
-            rows = svc.list_dependencies(session, self.org_id)
+            rows = svc.list_dependencies(session, org_id)
             self.dependencies = [
                 DependencyItem(
                     id=d.id,
@@ -50,7 +63,8 @@ class DagState(BaseState):
             ]
         self.error_message = ""
 
-    def add_dependency(self):
+    async def add_dependency(self):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         try:
             upstream_id = int(self.form_upstream_id)
@@ -62,7 +76,7 @@ class DagState(BaseState):
             with get_sync_session() as session:
                 svc.add_dependency(
                     session,
-                    self.org_id,
+                    org_id,
                     NodeType(self.form_upstream_type),
                     upstream_id,
                     NodeType(self.form_downstream_type),
@@ -75,11 +89,12 @@ class DagState(BaseState):
         self.form_upstream_id = ""
         self.form_downstream_id = ""
         self.error_message = ""
-        self.load_dependencies()
+        await self.load_dependencies()
 
-    def remove_dependency(self, dep_id: int):
+    async def remove_dependency(self, dep_id: int):
+        org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
-            svc.remove_dependency(session, self.org_id, dep_id)
+            svc.remove_dependency(session, org_id, dep_id)
             session.commit()
-        self.load_dependencies()
+        await self.load_dependencies()

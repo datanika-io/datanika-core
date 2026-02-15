@@ -2,14 +2,14 @@
 
 import json
 
-import reflex as rx
+from pydantic import BaseModel
 
 from etlfabric.models.transformation import Materialization
 from etlfabric.services.transformation_service import TransformationService
 from etlfabric.ui.state.base_state import BaseState, get_sync_session
 
 
-class TransformationItem(rx.Base):
+class TransformationItem(BaseModel):
     id: int = 0
     name: str = ""
     description: str = ""
@@ -31,10 +31,29 @@ class TransformationState(BaseState):
     # SQL preview
     preview_sql: str = ""
 
-    def load_transformations(self):
+    def set_form_name(self, value: str):
+        self.form_name = value
+
+    def set_form_sql_body(self, value: str):
+        self.form_sql_body = value
+
+    def set_form_materialization(self, value: str):
+        self.form_materialization = value
+
+    def set_form_description(self, value: str):
+        self.form_description = value
+
+    def set_form_schema_name(self, value: str):
+        self.form_schema_name = value
+
+    def set_form_tests_config(self, value: str):
+        self.form_tests_config = value
+
+    async def load_transformations(self):
+        org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:
-            rows = svc.list_transformations(session, self.org_id)
+            rows = svc.list_transformations(session, org_id)
             self.transformations = [
                 TransformationItem(
                     id=t.id,
@@ -47,7 +66,8 @@ class TransformationState(BaseState):
             ]
         self.error_message = ""
 
-    def create_transformation(self):
+    async def create_transformation(self):
+        org_id = await self._get_org_id()
         svc = TransformationService()
         try:
             tests_config = json.loads(self.form_tests_config)
@@ -58,7 +78,7 @@ class TransformationState(BaseState):
             with get_sync_session() as session:
                 svc.create_transformation(
                     session,
-                    self.org_id,
+                    org_id,
                     self.form_name,
                     self.form_sql_body,
                     Materialization(self.form_materialization),
@@ -76,23 +96,25 @@ class TransformationState(BaseState):
         self.form_schema_name = "staging"
         self.form_tests_config = "{}"
         self.error_message = ""
-        self.load_transformations()
+        await self.load_transformations()
 
-    def delete_transformation(self, transformation_id: int):
+    async def delete_transformation(self, transformation_id: int):
+        org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:
-            svc.delete_transformation(session, self.org_id, transformation_id)
+            svc.delete_transformation(session, org_id, transformation_id)
             session.commit()
-        self.load_transformations()
+        await self.load_transformations()
 
-    def run_tests(self, transformation_id: int):
+    async def run_tests(self, transformation_id: int):
         """Run dbt tests for a transformation."""
         from etlfabric.config import settings
         from etlfabric.services.dbt_project import DbtProjectService
 
+        org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:
-            t = svc.get_transformation(session, self.org_id, transformation_id)
+            t = svc.get_transformation(session, org_id, transformation_id)
             if t is None:
                 self.test_result_message = "Transformation not found"
                 return
@@ -105,8 +127,8 @@ class TransformationState(BaseState):
 
         try:
             dbt_svc = DbtProjectService(settings.dbt_projects_dir)
-            dbt_svc.write_tests_config(self.org_id, model_name, tests_config)
-            result = dbt_svc.run_test(self.org_id, model_name)
+            dbt_svc.write_tests_config(org_id, model_name, tests_config)
+            result = dbt_svc.run_test(org_id, model_name)
             if result["success"]:
                 self.test_result_message = f"Tests passed for {model_name}"
             else:
@@ -114,14 +136,15 @@ class TransformationState(BaseState):
         except Exception as e:
             self.test_result_message = f"Error running tests: {e}"
 
-    def preview_compiled_sql(self, transformation_id: int):
+    async def preview_compiled_sql(self, transformation_id: int):
         """Compile dbt model and show compiled SQL."""
         from etlfabric.config import settings
         from etlfabric.services.dbt_project import DbtProjectService
 
+        org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:
-            t = svc.get_transformation(session, self.org_id, transformation_id)
+            t = svc.get_transformation(session, org_id, transformation_id)
             if t is None:
                 self.preview_sql = "Transformation not found"
                 return
@@ -129,7 +152,7 @@ class TransformationState(BaseState):
 
         try:
             dbt_svc = DbtProjectService(settings.dbt_projects_dir)
-            result = dbt_svc.compile_model(self.org_id, model_name)
+            result = dbt_svc.compile_model(org_id, model_name)
             if result["success"] and result["compiled_sql"]:
                 self.preview_sql = result["compiled_sql"]
             else:

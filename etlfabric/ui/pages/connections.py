@@ -118,7 +118,7 @@ def connections_table() -> rx.Component:
                 rx.table.column_header_cell("ID"),
                 rx.table.column_header_cell("Name"),
                 rx.table.column_header_cell("Type"),
-                rx.table.column_header_cell("Actions"),
+                rx.table.column_header_cell("Actions", padding_left="34px"),
             ),
         ),
         rx.table.body(

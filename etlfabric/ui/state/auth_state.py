@@ -60,6 +60,9 @@ class AuthState(rx.State):
     def set_signup_full_name(self, value: str):
         self.signup_full_name = value
 
+    def clear_auth_error(self):
+        self.auth_error = ""
+
     @rx.var
     def is_authenticated(self) -> bool:
         return self.access_token != ""

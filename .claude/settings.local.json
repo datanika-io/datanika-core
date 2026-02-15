@@ -24,7 +24,12 @@
       "Bash(docker-compose run:*)",
       "Bash(curl:*)",
       "Bash(docker-compose exec:*)",
-      "Bash(docker ps:*)"
+      "Bash(docker ps:*)",
+      "Bash(grep:*)",
+      "Bash(done)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(uv run:*)",
+      "Bash(uv pip list:*)"
     ]
   }
 }

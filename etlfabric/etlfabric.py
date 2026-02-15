@@ -28,11 +28,13 @@ app.add_page(
     login_page,
     route="/login",
     title="Login | ETL Fabric",
+    on_load=[AuthState.clear_auth_error],
 )
 app.add_page(
     signup_page,
     route="/signup",
     title="Sign Up | ETL Fabric",
+    on_load=[AuthState.clear_auth_error],
 )
 
 # Protected pages

@@ -10,7 +10,14 @@ from etlfabric.ui.state.connection_state import ConnectionState
 def connection_form() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("New Connection", size="4"),
+            rx.heading(
+                rx.cond(
+                    ConnectionState.editing_conn_id > 0,
+                    "Edit Connection",
+                    "New Connection",
+                ),
+                size="4",
+            ),
             rx.text("Connection Name *", size="2", weight="bold"),
             rx.input(
                 placeholder="Connection name",
@@ -73,11 +80,27 @@ def connection_form() -> rx.Component:
                 ),
             ),
             rx.hstack(
-                rx.button("Create Connection", on_click=ConnectionState.create_connection),
+                rx.button(
+                    rx.cond(
+                        ConnectionState.editing_conn_id > 0,
+                        "Save Changes",
+                        "Create Connection",
+                    ),
+                    on_click=ConnectionState.save_connection,
+                ),
                 rx.button(
                     "Test Connection",
                     variant="outline",
                     on_click=ConnectionState.test_connection_from_form,
+                ),
+                rx.cond(
+                    ConnectionState.editing_conn_id > 0,
+                    rx.button(
+                        "Cancel",
+                        variant="soft",
+                        color_scheme="gray",
+                        on_click=ConnectionState.cancel_edit,
+                    ),
                 ),
                 spacing="3",
             ),
@@ -107,13 +130,23 @@ def connections_table() -> rx.Component:
                     rx.table.cell(conn.connection_type),
                     rx.table.cell(
                         rx.hstack(
-                            rx.cond(
-                                conn.test_status == "ok",
-                                rx.icon("circle-check", color="green", size=16),
-                            ),
-                            rx.cond(
-                                conn.test_status == "fail",
-                                rx.icon("circle-x", color="red", size=16),
+                            rx.icon(
+                                rx.cond(
+                                    conn.test_status == "ok",
+                                    "circle-check",
+                                    "circle-x",
+                                ),
+                                color=rx.cond(
+                                    conn.test_status == "ok",
+                                    "green",
+                                    "red",
+                                ),
+                                size=16,
+                                visibility=rx.cond(
+                                    conn.test_status != "",
+                                    "visible",
+                                    "hidden",
+                                ),
                             ),
                             rx.button(
                                 "Test",
@@ -122,6 +155,18 @@ def connections_table() -> rx.Component:
                                 on_click=ConnectionState.test_saved_connection(
                                     conn.id
                                 ),
+                            ),
+                            rx.button(
+                                "Edit",
+                                variant="outline",
+                                size="1",
+                                on_click=ConnectionState.edit_connection(conn.id),
+                            ),
+                            rx.button(
+                                "Copy",
+                                variant="outline",
+                                size="1",
+                                on_click=ConnectionState.copy_connection(conn.id),
                             ),
                             rx.button(
                                 "Delete",

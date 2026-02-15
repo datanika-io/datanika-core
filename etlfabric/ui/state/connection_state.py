@@ -109,6 +109,9 @@ class ConnectionState(BaseState):
     form_config: str = "{}"
     form_use_raw_json: bool = False
 
+    # 0 = creating new, >0 = editing existing connection
+    editing_conn_id: int = 0
+
     # Test connection feedback
     test_message: str = ""
     test_success: bool = False
@@ -317,12 +320,14 @@ class ConnectionState(BaseState):
         return config
 
     def _reset_form_fields(self):
-        """Clear all typed form fields after successful creation."""
+        """Clear all typed form fields and exit edit mode."""
+        self.editing_conn_id = 0
         self.form_name = ""
+        self.form_type = "postgres"
         self.form_config = "{}"
         self.form_use_raw_json = False
         self.form_host = ""
-        self.form_port = _DEFAULT_PORTS.get(self.form_type, "")
+        self.form_port = _DEFAULT_PORTS.get("postgres", "")
         self.form_user = ""
         self.form_password = ""
         self.form_database = ""
@@ -343,6 +348,73 @@ class ConnectionState(BaseState):
         self.form_api_key = ""
         self.form_extra_headers = ""
         self.error_message = ""
+        self.test_message = ""
+        self.test_success = False
+
+    def _populate_form_from_config(self, name: str, conn_type: str, config: dict):
+        """Fill form fields from a decrypted config dict."""
+        self.form_name = name
+        self.form_type = conn_type
+        self.form_use_raw_json = False
+        self.error_message = ""
+        self.test_message = ""
+
+        # Reset all type-specific fields first
+        self.form_host = ""
+        self.form_port = _DEFAULT_PORTS.get(conn_type, "")
+        self.form_user = ""
+        self.form_password = ""
+        self.form_database = ""
+        self.form_schema = ""
+        self.form_path = ""
+        self.form_project = ""
+        self.form_dataset = ""
+        self.form_keyfile_json = ""
+        self.form_account = ""
+        self.form_warehouse = ""
+        self.form_role = ""
+        self.form_bucket_url = ""
+        self.form_aws_access_key_id = ""
+        self.form_aws_secret_access_key = ""
+        self.form_region_name = ""
+        self.form_endpoint_url = ""
+        self.form_base_url = ""
+        self.form_api_key = ""
+        self.form_extra_headers = ""
+
+        if conn_type in _DB_TYPES:
+            self.form_host = config.get("host", "")
+            self.form_port = str(config.get("port", _DEFAULT_PORTS.get(conn_type, "")))
+            self.form_user = config.get("user", "")
+            self.form_password = config.get("password", "")
+            self.form_database = config.get("database", "")
+            self.form_schema = config.get("schema", "")
+        elif conn_type == "sqlite":
+            self.form_path = config.get("path", "")
+        elif conn_type == "bigquery":
+            self.form_project = config.get("project", "")
+            self.form_dataset = config.get("dataset", "")
+            self.form_keyfile_json = config.get("keyfile_json", "")
+        elif conn_type == "snowflake":
+            self.form_account = config.get("account", "")
+            self.form_user = config.get("user", "")
+            self.form_password = config.get("password", "")
+            self.form_database = config.get("database", "")
+            self.form_warehouse = config.get("warehouse", "")
+            self.form_role = config.get("role", "")
+            self.form_schema = config.get("schema", "")
+        elif conn_type == "s3":
+            self.form_bucket_url = config.get("bucket_url", "")
+            self.form_aws_access_key_id = config.get("aws_access_key_id", "")
+            self.form_aws_secret_access_key = config.get("aws_secret_access_key", "")
+            self.form_region_name = config.get("region_name", "")
+            self.form_endpoint_url = config.get("endpoint_url", "")
+        elif conn_type in ("csv", "json", "parquet"):
+            self.form_bucket_url = config.get("bucket_url", "")
+        elif conn_type == "rest_api":
+            self.form_base_url = config.get("base_url", "")
+            self.form_api_key = config.get("api_key", "")
+            self.form_extra_headers = config.get("extra_headers", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()
@@ -360,7 +432,8 @@ class ConnectionState(BaseState):
             ]
         self.error_message = ""
 
-    async def create_connection(self):
+    async def save_connection(self):
+        """Create a new connection or update an existing one."""
         validation_error = self._validate_form()
         if validation_error:
             self.error_message = validation_error
@@ -373,23 +446,67 @@ class ConnectionState(BaseState):
         except (json.JSONDecodeError, ValueError) as e:
             self.error_message = f"Invalid config: {e}"
             return
-        direction = _infer_direction(self.form_type)
         try:
             with get_sync_session() as session:
-                svc.create_connection(
-                    session,
-                    org_id,
-                    self.form_name,
-                    ConnectionType(self.form_type),
-                    direction,
-                    config,
-                )
+                if self.editing_conn_id:
+                    svc.update_connection(
+                        session,
+                        org_id,
+                        self.editing_conn_id,
+                        name=self.form_name,
+                        connection_type=ConnectionType(self.form_type),
+                        direction=_infer_direction(self.form_type),
+                        config=config,
+                    )
+                else:
+                    svc.create_connection(
+                        session,
+                        org_id,
+                        self.form_name,
+                        ConnectionType(self.form_type),
+                        _infer_direction(self.form_type),
+                        config,
+                    )
                 session.commit()
         except Exception as e:
             self.error_message = str(e)
             return
         self._reset_form_fields()
         await self.load_connections()
+
+    async def edit_connection(self, conn_id: int):
+        """Load a saved connection into the form for editing."""
+        org_id = await self._get_org_id()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        svc = ConnectionService(encryption)
+        with get_sync_session() as session:
+            conn = svc.get_connection(session, org_id, conn_id)
+            config = svc.get_connection_config(session, org_id, conn_id)
+        if conn is None or config is None:
+            self.error_message = "Connection not found"
+            return
+        self._populate_form_from_config(conn.name, conn.connection_type.value, config)
+        self.editing_conn_id = conn_id
+
+    async def copy_connection(self, conn_id: int):
+        """Load a saved connection into the form as a new copy."""
+        org_id = await self._get_org_id()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        svc = ConnectionService(encryption)
+        with get_sync_session() as session:
+            conn = svc.get_connection(session, org_id, conn_id)
+            config = svc.get_connection_config(session, org_id, conn_id)
+        if conn is None or config is None:
+            self.error_message = "Connection not found"
+            return
+        self._populate_form_from_config(
+            f"{conn.name} (copy)", conn.connection_type.value, config
+        )
+        self.editing_conn_id = 0
+
+    def cancel_edit(self):
+        """Cancel editing and reset the form."""
+        self._reset_form_fields()
 
     async def delete_connection(self, conn_id: int):
         org_id = await self._get_org_id()

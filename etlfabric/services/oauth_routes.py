@@ -15,7 +15,6 @@ from etlfabric.services.oauth_service import (
     github_provider,
     google_provider,
 )
-from etlfabric.services.tenant import TenantService
 from etlfabric.services.user_service import UserService
 
 
@@ -85,12 +84,6 @@ async def oauth_callback(request: Request) -> RedirectResponse:
                 providers[provider], code, redirect_uri, session
             )
             session.commit()
-
-            # Provision tenant schema for new OAuth users
-            if result["is_new"]:
-                auth = AuthService(settings.secret_key)
-                payload = auth.decode_token(result["access_token"])
-                TenantService().provision_tenant_sync(session, payload["org_id"])
         except Exception:
             return RedirectResponse(
                 url=_frontend("/login?error=OAuth+authentication+failed"), status_code=302

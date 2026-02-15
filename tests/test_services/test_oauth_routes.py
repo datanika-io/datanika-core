@@ -77,13 +77,11 @@ class TestOAuthCallback:
             assert "token=jwt_tok" in location
             assert "refresh=jwt_ref" in location
 
-    def test_new_user_provisions_tenant(self, client):
+    def test_new_user_redirects_to_complete(self, client):
         with (
             patch("etlfabric.services.oauth_routes._get_providers") as prov_mock,
             patch("etlfabric.services.oauth_routes._get_service") as svc_mock,
             patch("etlfabric.services.oauth_routes._get_session") as sess_mock,
-            patch("etlfabric.services.oauth_routes.AuthService") as auth_cls,
-            patch("etlfabric.services.oauth_routes.TenantService") as tenant_cls,
         ):
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
@@ -100,17 +98,10 @@ class TestOAuthCallback:
             sess_mock.return_value.__enter__ = MagicMock(return_value=mock_session)
             sess_mock.return_value.__exit__ = MagicMock(return_value=False)
 
-            mock_auth = MagicMock()
-            mock_auth.decode_token.return_value = {"user_id": 2, "org_id": 10}
-            auth_cls.return_value = mock_auth
-
-            mock_tenant = MagicMock()
-            tenant_cls.return_value = mock_tenant
-
             resp = client.get("/api/auth/callback/google?code=newcode")
             assert resp.status_code == 302
             assert "/auth/complete" in resp.headers["location"]
-            mock_tenant.provision_tenant_sync.assert_called_once_with(mock_session, 10)
+            assert "is_new=1" in resp.headers["location"]
 
     def test_missing_code_redirects_to_login(self, client):
         with patch("etlfabric.services.oauth_routes._get_providers") as mock:

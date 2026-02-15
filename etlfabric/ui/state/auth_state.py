@@ -117,12 +117,9 @@ class AuthState(rx.State):
                 org_name = f"{self.signup_full_name}'s Org"
                 org_slug = _slugify(self.signup_full_name)
                 org = svc.create_org(session, org_name, org_slug, user.id)
+                # Capture id before commit expires ORM attributes
+                org_id = org.id
                 session.commit()
-
-                # Provision tenant schema + tables for the new org
-                from etlfabric.services.tenant import TenantService
-
-                TenantService().provision_tenant_sync(session, org.id)
 
             # Now authenticate to get tokens
             with get_sync_session() as session:
@@ -137,7 +134,7 @@ class AuthState(rx.State):
                     email=result["user"].email,
                     full_name=result["user"].full_name,
                 )
-                self.current_org = OrgInfo(id=org.id, name=org_name, slug=org_slug)
+                self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
         except Exception as e:
             self.auth_error = str(e)

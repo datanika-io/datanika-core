@@ -2,7 +2,10 @@
 
 import reflex as rx
 
+from etlfabric.config import settings
 from etlfabric.ui.state.auth_state import AuthState
+
+_backend = settings.oauth_redirect_base_url
 
 
 def login_page() -> rx.Component:
@@ -55,7 +58,7 @@ def login_page() -> rx.Component:
                         size="3",
                         width="100%",
                     ),
-                    href="/api/auth/login/google",
+                    href=f"{_backend}/api/auth/login/google",
                     width="100%",
                 ),
                 rx.link(
@@ -65,7 +68,7 @@ def login_page() -> rx.Component:
                         size="3",
                         width="100%",
                     ),
-                    href="/api/auth/login/github",
+                    href=f"{_backend}/api/auth/login/github",
                     width="100%",
                 ),
                 width="100%",

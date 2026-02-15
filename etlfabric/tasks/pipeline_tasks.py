@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from etlfabric.models.connection import Connection
 from etlfabric.models.pipeline import Pipeline
 from etlfabric.models.run import Run
-from etlfabric.services.dlt_runner import DEFAULT_BATCH_SIZE, DltRunnerService
+from etlfabric.services.dlt_runner import DltRunnerService
 from etlfabric.services.encryption import EncryptionService
 from etlfabric.services.execution_service import ExecutionService
 from etlfabric.tasks.celery_app import celery_app
@@ -60,15 +60,13 @@ def run_pipeline(
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
         runner = DltRunnerService()
-        batch_size = pipeline.dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
         result = runner.execute(
             pipeline_id=pipeline.id,
             source_type=src_conn.connection_type.value,
             source_config=src_config,
             destination_type=dst_conn.connection_type.value,
             destination_config=dst_config,
-            dlt_config={k: v for k, v in pipeline.dlt_config.items() if k != "batch_size"},
-            batch_size=batch_size,
+            dlt_config=pipeline.dlt_config,
         )
         rows = result["rows_loaded"]
         logs = str(result["load_info"])

@@ -90,7 +90,7 @@ When implementing a new feature, the PR should contain tests *committed before o
 
 ## Current Implementation Status
 
-**Completed (Steps 1-19 of PLAN.md):**
+**Completed (Steps 1-23, 28-29, 33 of PLAN.md):**
 - Step 1: Project setup — pyproject.toml, docker-compose, .env, rxconfig, Alembic, Celery config
 - Step 2: Database models — 9 tables (Organization, User, Membership, Connection, Pipeline, Transformation, Dependency, Schedule, Run) with integer PKs, TenantMixin, TimestampMixin with soft-delete
 - Step 3: Auth & encryption — AuthService (bcrypt + JWT + RBAC), EncryptionService (Fernet)
@@ -110,10 +110,17 @@ When implementing a new feature, the PR should contain tests *committed before o
 - Step 17: DltRunnerService — dlt pipeline/source/destination factory with batch processing (build_destination, build_source, build_pipeline, execute), supports postgres/mysql/mssql/sqlite, configurable batch_size, log_callback for progress; pipeline_tasks.py uses DltRunnerService instead of inline dlt calls
 - Step 18: DbtProjectService — per-tenant dbt project scaffolding (ensure_project, write_model, generate_profiles_yml, run_model, remove_model), dbt_project.yml/profiles.yml generation, dbtRunner API execution; transformation_tasks.py uses DbtProjectService instead of _execute_dbt stub
 - Step 19: SchedulerIntegrationService — APScheduler bridge with PostgreSQL job store (sync_schedule, remove_schedule, sync_all, get_job, _dispatch_target), CronTrigger from 5-field cron, coalesce/max_instances/misfire_grace_time config; ScheduleService accepts optional scheduler_integration for auto-sync on create/update/delete/toggle
+- Step 20: Pipeline load modes & source filtering — two modes (single_table with sql_table+incremental, full_database with sql_database+table_names filter), dlt_config validation (mode, table, table_names, incremental, batch_size, source_schema), DltRunnerService branches build_source on mode, execute() filters INTERNAL_CONFIG_KEYS and extracts batch_size, structured UI form with mode dropdown/conditional fields/raw JSON fallback
+- Step 21: dbt tests from UI — structured tests_config validation (not_null/unique/accepted_values/relationships per column), DbtProjectService.write_tests_config() generates schema.yml test entries, DbtProjectService.run_test() invokes dbt test, TransformationState.run_tests() action, Run Tests button in UI
+- Step 22: dbt compile (SQL preview) — DbtProjectService.compile_model() invokes dbt compile and returns compiled SQL, TransformationState.preview_compiled_sql() action, Preview SQL button + code block display in UI
+- Step 23: Schema contract / evolution control — schema_contract validation in PipelineService (tables/columns/data_type entities, evolve/freeze/discard_value/discard_row values), passes through to dlt pipeline.run(), UI dropdowns for each entity
+- Step 28: API keys & service accounts — ApiKey model (org_id, user_id, name, key_hash, scopes, expires_at, last_used_at, soft delete), ApiKeyService (create with etf_ prefix + sha256 hash, authenticate with expiry/scope check + last_used tracking, list, revoke)
+- Step 29: Audit logging — AuditLog model (org_id, user_id, action, resource_type, resource_id, old_values, new_values, ip_address), AuditAction enum (create/update/delete/login/logout/run), AuditService (log_action, list_logs with action/resource_type/user_id/limit filters)
+- Step 33: Data quality filters — filters validation in PipelineService (list of {column, op, value} dicts, 8 ops: eq/ne/gt/gte/lt/lte/in/not_in), DltRunnerService applies source.add_filter() with operator functions, filters in INTERNAL_CONFIG_KEYS
 
-**Test suite: 392 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 28 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 23 transformation service + 26 schedule service + 15 UI state models + 48 user service + 12 auth state + 8 settings state + 22 dlt runner + 22 dbt project + 20 scheduler integration)
+**Test suite: 497 tests, all passing** (51 model + 18 auth + 6 encryption + 2 tenant + 19 migration helpers + 23 connection service + 64 pipeline service + 20 execution service + 3 pipeline tasks + 21 dependency service + 5 transformation tasks + 36 transformation service + 26 schedule service + 15 UI state models + 48 user service + 12 auth state + 8 settings state + 38 dlt runner + 35 dbt project + 20 scheduler integration + 19 api key service + 11 audit service)
 
-**Next up: Phase 7 (Steps 20+: End-to-end integration, monitoring, etc.)**
+**Next up: Steps 24-27, 30-32 (REST API source, file sources, cloud destinations, SSO, dbt snapshots, source freshness, dbt packages)**
 
 ## Important Decisions Made
 - **No passlib** — uses `bcrypt` library directly (passlib has compatibility issues with newer bcrypt versions)

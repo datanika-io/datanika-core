@@ -1,3 +1,5 @@
+from etlfabric.models.api_key import ApiKey
+from etlfabric.models.audit_log import AuditAction, AuditLog
 from etlfabric.models.base import Base, TenantMixin, TimestampMixin
 from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
 from etlfabric.models.dependency import Dependency, NodeType
@@ -27,4 +29,7 @@ __all__ = [
     "Schedule",
     "Run",
     "RunStatus",
+    "ApiKey",
+    "AuditLog",
+    "AuditAction",
 ]

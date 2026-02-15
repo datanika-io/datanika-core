@@ -1,4 +1,4 @@
-"""Transformations page — list + create form."""
+"""Transformations page — list + create form + test config."""
 
 import reflex as rx
 
@@ -36,6 +36,13 @@ def transformation_form() -> rx.Component:
                 value=TransformationState.form_schema_name,
                 on_change=TransformationState.set_form_schema_name,
             ),
+            rx.text("Tests Config (JSON)", size="2", weight="bold"),
+            rx.text_area(
+                placeholder='{"columns": {"id": ["not_null", "unique"]}}',
+                value=TransformationState.form_tests_config,
+                on_change=TransformationState.set_form_tests_config,
+                min_height="80px",
+            ),
             rx.cond(
                 TransformationState.error_message,
                 rx.callout(
@@ -56,35 +63,77 @@ def transformation_form() -> rx.Component:
 
 
 def transformations_table() -> rx.Component:
-    return rx.table.root(
-        rx.table.header(
-            rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Name"),
-                rx.table.column_header_cell("Materialization"),
-                rx.table.column_header_cell("Schema"),
-                rx.table.column_header_cell("Actions"),
+    return rx.vstack(
+        rx.cond(
+            TransformationState.test_result_message,
+            rx.callout(
+                TransformationState.test_result_message,
+                icon="flask-conical",
+                color_scheme="blue",
             ),
         ),
-        rx.table.body(
-            rx.foreach(
-                TransformationState.transformations,
-                lambda t: rx.table.row(
-                    rx.table.cell(t.id),
-                    rx.table.cell(t.name),
-                    rx.table.cell(rx.badge(t.materialization)),
-                    rx.table.cell(t.schema_name),
-                    rx.table.cell(
-                        rx.button(
-                            "Delete",
-                            color_scheme="red",
-                            size="1",
-                            on_click=TransformationState.delete_transformation(t.id),
+        rx.cond(
+            TransformationState.preview_sql,
+            rx.card(
+                rx.vstack(
+                    rx.heading("Compiled SQL Preview", size="3"),
+                    rx.code_block(
+                        TransformationState.preview_sql,
+                        language="sql",
+                        width="100%",
+                    ),
+                    spacing="2",
+                ),
+                width="100%",
+            ),
+        ),
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell("ID"),
+                    rx.table.column_header_cell("Name"),
+                    rx.table.column_header_cell("Materialization"),
+                    rx.table.column_header_cell("Schema"),
+                    rx.table.column_header_cell("Actions"),
+                ),
+            ),
+            rx.table.body(
+                rx.foreach(
+                    TransformationState.transformations,
+                    lambda t: rx.table.row(
+                        rx.table.cell(t.id),
+                        rx.table.cell(t.name),
+                        rx.table.cell(rx.badge(t.materialization)),
+                        rx.table.cell(t.schema_name),
+                        rx.table.cell(
+                            rx.hstack(
+                                rx.button(
+                                    "Preview SQL",
+                                    size="1",
+                                    variant="outline",
+                                    on_click=TransformationState.preview_compiled_sql(t.id),
+                                ),
+                                rx.button(
+                                    "Run Tests",
+                                    size="1",
+                                    variant="outline",
+                                    on_click=TransformationState.run_tests(t.id),
+                                ),
+                                rx.button(
+                                    "Delete",
+                                    color_scheme="red",
+                                    size="1",
+                                    on_click=TransformationState.delete_transformation(t.id),
+                                ),
+                                spacing="2",
+                            ),
                         ),
                     ),
                 ),
             ),
+            width="100%",
         ),
+        spacing="3",
         width="100%",
     )
 

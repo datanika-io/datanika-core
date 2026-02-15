@@ -156,6 +156,124 @@ class DbtProjectService:
             "logs": logs,
         }
 
+    def write_tests_config(
+        self,
+        org_id: int,
+        model_name: str,
+        tests_config: dict,
+        schema_name: str = "staging",
+    ) -> Path:
+        """Write column tests into schema.yml for the given model. Returns schema.yml path."""
+        project_path = self.get_project_path(org_id)
+        schema_dir = project_path / "models" / schema_name
+        schema_yml_path = schema_dir / "schema.yml"
+
+        if schema_yml_path.exists():
+            schema_config = yaml.safe_load(schema_yml_path.read_text()) or {}
+        else:
+            schema_config = {"version": 2, "models": []}
+
+        if "models" not in schema_config:
+            schema_config["models"] = []
+
+        # Find or create model entry
+        existing = [m for m in schema_config["models"] if m.get("name") == model_name]
+        if existing:
+            model_entry = existing[0]
+        else:
+            model_entry = {"name": model_name}
+            schema_config["models"].append(model_entry)
+
+        # Build column entries from tests_config
+        columns_cfg = tests_config.get("columns", {})
+        columns_list = []
+        for col_name, col_tests in columns_cfg.items():
+            tests = []
+            if isinstance(col_tests, list):
+                tests = list(col_tests)
+            elif isinstance(col_tests, dict):
+                for test_name, test_cfg in col_tests.items():
+                    if test_name in ("not_null", "unique"):
+                        tests.append(test_name)
+                    elif test_name == "accepted_values":
+                        tests.append({"accepted_values": {"values": test_cfg}})
+                    elif test_name == "relationships":
+                        tests.append({"relationships": test_cfg})
+            columns_list.append({"name": col_name, "tests": tests})
+
+        if columns_list:
+            model_entry["columns"] = columns_list
+        else:
+            model_entry.pop("columns", None)
+
+        schema_yml_path.write_text(yaml.dump(schema_config, default_flow_style=False))
+        return schema_yml_path
+
+    def run_test(self, org_id: int, model_name: str) -> dict:
+        """Execute `dbt test --select model_name` for the tenant project.
+
+        Returns {"success": bool, "logs": str}.
+        """
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        runner = dbtRunner()
+        result = runner.invoke(
+            [
+                "test",
+                "--select",
+                model_name,
+                "--project-dir",
+                str(project_path),
+                "--profiles-dir",
+                str(project_path),
+            ]
+        )
+
+        logs = str(result.result) if result.result else ""
+        return {
+            "success": result.success,
+            "logs": logs,
+        }
+
+    def compile_model(self, org_id: int, model_name: str) -> dict:
+        """Execute `dbt compile --select model_name` for the tenant project.
+
+        Returns {"success": bool, "compiled_sql": str, "logs": str}.
+        """
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        runner = dbtRunner()
+        result = runner.invoke(
+            [
+                "compile",
+                "--select",
+                model_name,
+                "--project-dir",
+                str(project_path),
+                "--profiles-dir",
+                str(project_path),
+            ]
+        )
+
+        compiled_sql = ""
+        if result.success and result.result:
+            for node_result in result.result:
+                code = getattr(node_result, "compiled_code", None)
+                if code:
+                    compiled_sql = code
+                    break
+
+        logs = str(result.result) if result.result else ""
+        return {
+            "success": result.success,
+            "compiled_sql": compiled_sql,
+            "logs": logs,
+        }
+
     def remove_model(self, org_id: int, model_name: str, schema_name: str = "staging") -> bool:
         """Delete a model .sql file. Returns True if file existed."""
         project_path = self.get_project_path(org_id)

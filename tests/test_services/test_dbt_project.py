@@ -280,3 +280,173 @@ class TestRemoveModel:
         svc.ensure_project(1)
         result = svc.remove_model(1, "model", schema_name="nonexistent_schema")
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# write_tests_config (Step 21)
+# ---------------------------------------------------------------------------
+class TestWriteTestsConfig:
+    def test_writes_simple_tests_to_schema_yml(self, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 1 AS id")
+        svc.write_tests_config(
+            1, "my_model", {"columns": {"id": ["not_null", "unique"]}}, schema_name="staging"
+        )
+        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
+        content = yaml.safe_load(schema_path.read_text())
+        model = [m for m in content["models"] if m["name"] == "my_model"][0]
+        col = [c for c in model["columns"] if c["name"] == "id"][0]
+        test_names = [t if isinstance(t, str) else list(t.keys())[0] for t in col["tests"]]
+        assert "not_null" in test_names
+        assert "unique" in test_names
+
+    def test_writes_accepted_values_test(self, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 'active' AS status")
+        svc.write_tests_config(
+            1,
+            "my_model",
+            {"columns": {"status": {"accepted_values": ["active", "inactive"]}}},
+        )
+        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
+        content = yaml.safe_load(schema_path.read_text())
+        model = [m for m in content["models"] if m["name"] == "my_model"][0]
+        col = [c for c in model["columns"] if c["name"] == "status"][0]
+        av_test = [t for t in col["tests"] if isinstance(t, dict) and "accepted_values" in t][0]
+        assert "active" in av_test["accepted_values"]["values"]
+
+    def test_writes_relationships_test(self, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 1 AS user_id")
+        svc.write_tests_config(
+            1,
+            "my_model",
+            {"columns": {"user_id": {"relationships": {"to": "ref('users')", "field": "id"}}}},
+        )
+        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
+        content = yaml.safe_load(schema_path.read_text())
+        model = [m for m in content["models"] if m["name"] == "my_model"][0]
+        col = [c for c in model["columns"] if c["name"] == "user_id"][0]
+        rel_test = [t for t in col["tests"] if isinstance(t, dict) and "relationships" in t][0]
+        assert rel_test["relationships"]["to"] == "ref('users')"
+        assert rel_test["relationships"]["field"] == "id"
+
+    def test_empty_columns_clears_tests(self, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 1 AS id")
+        svc.write_tests_config(1, "my_model", {"columns": {}})
+        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
+        content = yaml.safe_load(schema_path.read_text())
+        model = [m for m in content["models"] if m["name"] == "my_model"][0]
+        assert "columns" not in model or model.get("columns") == []
+
+    def test_overwrites_existing_tests(self, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 1 AS id")
+        svc.write_tests_config(1, "my_model", {"columns": {"id": ["not_null"]}})
+        svc.write_tests_config(1, "my_model", {"columns": {"id": ["unique"]}})
+        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
+        content = yaml.safe_load(schema_path.read_text())
+        model = [m for m in content["models"] if m["name"] == "my_model"][0]
+        col = [c for c in model["columns"] if c["name"] == "id"][0]
+        test_names = [t if isinstance(t, str) else list(t.keys())[0] for t in col["tests"]]
+        assert "unique" in test_names
+        assert "not_null" not in test_names
+
+
+# ---------------------------------------------------------------------------
+# run_test (Step 21)
+# ---------------------------------------------------------------------------
+class TestRunTest:
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_success_returns_results(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [MagicMock(status="pass")]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.run_test(1, "my_model")
+        assert result["success"] is True
+        assert "logs" in result
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_failure_returns_success_false(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_result.result = [MagicMock(status="fail")]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.run_test(1, "my_model")
+        assert result["success"] is False
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_invokes_dbt_test_command(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = []
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.run_test(1, "my_model")
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert invoke_args[0] == "test"
+        assert "--select" in invoke_args
+        idx = invoke_args.index("--select")
+        assert invoke_args[idx + 1] == "my_model"
+
+    def test_project_not_found_raises(self, svc):
+        with pytest.raises(DbtProjectError, match="project not found"):
+            svc.run_test(999, "nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# compile_model (Step 22)
+# ---------------------------------------------------------------------------
+class TestCompileModel:
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_success_returns_compiled_sql(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT * FROM {{ ref('source') }}")
+        mock_node = MagicMock()
+        mock_node.compiled_code = "SELECT * FROM source_table"
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [mock_node]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.compile_model(1, "my_model")
+        assert result["success"] is True
+        assert result["compiled_sql"] == "SELECT * FROM source_table"
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_failure_returns_success_false(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = False
+        mock_result.result = []
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.compile_model(1, "my_model")
+        assert result["success"] is False
+        assert result["compiled_sql"] == ""
+
+    @patch("etlfabric.services.dbt_project.dbtRunner")
+    def test_invokes_dbt_compile_command(self, mock_runner_cls, svc):
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = []
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        svc.compile_model(1, "my_model")
+        invoke_args = mock_runner_cls.return_value.invoke.call_args[0][0]
+        assert invoke_args[0] == "compile"
+        assert "--select" in invoke_args
+        idx = invoke_args.index("--select")
+        assert invoke_args[idx + 1] == "my_model"
+
+    def test_project_not_found_raises(self, svc):
+        with pytest.raises(DbtProjectError, match="project not found"):
+            svc.compile_model(999, "nonexistent")

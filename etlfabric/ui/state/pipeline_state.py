@@ -1,5 +1,7 @@
 """Pipeline state for Reflex UI."""
 
+import json
+
 import reflex as rx
 
 from etlfabric.config import settings
@@ -26,13 +28,79 @@ class PipelineState(BaseState):
     form_description: str = ""
     form_source_id: str = ""
     form_dest_id: str = ""
+    # Structured mode fields
+    form_mode: str = "full_database"
+    form_write_disposition: str = "append"
+    form_primary_key: str = ""
+    form_table: str = ""
+    form_source_schema: str = ""
+    form_table_names: str = ""
+    form_batch_size: str = ""
+    form_enable_incremental: bool = False
+    form_cursor_path: str = ""
+    form_initial_value: str = ""
+    form_row_order: str = ""
+    # Schema contract
+    form_sc_tables: str = ""
+    form_sc_columns: str = ""
+    form_sc_data_type: str = ""
+    # Raw JSON fallback
     form_config: str = "{}"
+    form_use_raw_json: bool = False
 
     def _get_services(self):
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
         pipe_svc = PipelineService(conn_svc)
         return pipe_svc, conn_svc
+
+    def _build_config(self) -> dict:
+        """Build dlt_config from structured form fields."""
+        if self.form_use_raw_json:
+            return json.loads(self.form_config)
+
+        config: dict = {}
+        config["mode"] = self.form_mode
+
+        if self.form_write_disposition:
+            config["write_disposition"] = self.form_write_disposition
+        if self.form_write_disposition == "merge" and self.form_primary_key:
+            config["primary_key"] = self.form_primary_key
+
+        if self.form_source_schema:
+            config["source_schema"] = self.form_source_schema
+
+        if self.form_batch_size:
+            config["batch_size"] = int(self.form_batch_size)
+
+        if self.form_mode == "single_table":
+            if self.form_table:
+                config["table"] = self.form_table
+            if self.form_enable_incremental and self.form_cursor_path:
+                inc: dict = {"cursor_path": self.form_cursor_path}
+                if self.form_initial_value:
+                    inc["initial_value"] = self.form_initial_value
+                if self.form_row_order:
+                    inc["row_order"] = self.form_row_order
+                config["incremental"] = inc
+        else:  # full_database
+            if self.form_table_names:
+                names = [t.strip() for t in self.form_table_names.split(",") if t.strip()]
+                if names:
+                    config["table_names"] = names
+
+        # Schema contract
+        sc: dict = {}
+        if self.form_sc_tables:
+            sc["tables"] = self.form_sc_tables
+        if self.form_sc_columns:
+            sc["columns"] = self.form_sc_columns
+        if self.form_sc_data_type:
+            sc["data_type"] = self.form_sc_data_type
+        if sc:
+            config["schema_contract"] = sc
+
+        return config
 
     def load_pipelines(self):
         pipe_svc, _ = self._get_services()
@@ -52,13 +120,11 @@ class PipelineState(BaseState):
         self.error_message = ""
 
     def create_pipeline(self):
-        import json
-
         pipe_svc, _ = self._get_services()
         try:
-            config = json.loads(self.form_config)
-        except json.JSONDecodeError:
-            self.error_message = "Invalid JSON in config"
+            config = self._build_config()
+        except (json.JSONDecodeError, ValueError) as e:
+            self.error_message = f"Invalid config: {e}"
             return
         try:
             src_id = int(self.form_source_id)
@@ -81,13 +147,31 @@ class PipelineState(BaseState):
         except Exception as e:
             self.error_message = str(e)
             return
+        self._reset_form()
+        self.load_pipelines()
+
+    def _reset_form(self):
         self.form_name = ""
         self.form_description = ""
         self.form_source_id = ""
         self.form_dest_id = ""
+        self.form_mode = "full_database"
+        self.form_write_disposition = "append"
+        self.form_primary_key = ""
+        self.form_table = ""
+        self.form_source_schema = ""
+        self.form_table_names = ""
+        self.form_batch_size = ""
+        self.form_enable_incremental = False
+        self.form_cursor_path = ""
+        self.form_initial_value = ""
+        self.form_row_order = ""
+        self.form_sc_tables = ""
+        self.form_sc_columns = ""
+        self.form_sc_data_type = ""
         self.form_config = "{}"
+        self.form_use_raw_json = False
         self.error_message = ""
-        self.load_pipelines()
 
     def delete_pipeline(self, pipeline_id: int):
         pipe_svc, _ = self._get_services()

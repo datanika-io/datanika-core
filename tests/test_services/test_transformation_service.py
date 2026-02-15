@@ -195,3 +195,77 @@ class TestValidation:
             tests_config=None,
         )
         assert t.tests_config == {}
+
+
+class TestValidateTestsConfig:
+    """Step 21: validate_tests_config structured column tests."""
+
+    VALID_GENERIC_TESTS = {"not_null", "unique", "accepted_values", "relationships"}
+
+    def test_empty_columns_valid(self):
+        TransformationService.validate_tests_config({"columns": {}})
+
+    def test_column_with_simple_tests_list(self):
+        TransformationService.validate_tests_config({"columns": {"id": ["not_null", "unique"]}})
+
+    def test_column_with_accepted_values_dict(self):
+        TransformationService.validate_tests_config(
+            {"columns": {"status": {"accepted_values": ["active", "inactive"]}}}
+        )
+
+    def test_column_with_relationships_dict(self):
+        TransformationService.validate_tests_config(
+            {"columns": {"user_id": {"relationships": {"to": "ref('users')", "field": "id"}}}}
+        )
+
+    def test_column_with_mixed_tests(self):
+        TransformationService.validate_tests_config(
+            {
+                "columns": {
+                    "id": ["not_null", "unique"],
+                    "status": {"accepted_values": ["a", "b"]},
+                }
+            }
+        )
+
+    def test_columns_must_be_dict(self):
+        with pytest.raises(TransformationConfigError, match="columns"):
+            TransformationService.validate_tests_config({"columns": "bad"})
+
+    def test_column_tests_must_be_list_or_dict(self):
+        with pytest.raises(TransformationConfigError, match="list or dict"):
+            TransformationService.validate_tests_config({"columns": {"id": "not_null"}})
+
+    def test_invalid_test_name_in_list(self):
+        with pytest.raises(TransformationConfigError, match="Unknown test"):
+            TransformationService.validate_tests_config(
+                {"columns": {"id": ["not_null", "nonexistent_test"]}}
+            )
+
+    def test_invalid_test_name_in_dict(self):
+        with pytest.raises(TransformationConfigError, match="Unknown test"):
+            TransformationService.validate_tests_config(
+                {"columns": {"id": {"nonexistent_test": []}}}
+            )
+
+    def test_accepted_values_must_be_list(self):
+        with pytest.raises(TransformationConfigError, match="accepted_values"):
+            TransformationService.validate_tests_config(
+                {"columns": {"status": {"accepted_values": "bad"}}}
+            )
+
+    def test_relationships_must_be_dict(self):
+        with pytest.raises(TransformationConfigError, match="relationships"):
+            TransformationService.validate_tests_config(
+                {"columns": {"fk": {"relationships": "bad"}}}
+            )
+
+    def test_relationships_requires_to_and_field(self):
+        with pytest.raises(TransformationConfigError, match="to.*field"):
+            TransformationService.validate_tests_config(
+                {"columns": {"fk": {"relationships": {"to": "ref('x')"}}}}
+            )
+
+    def test_unknown_top_level_key_ignored(self):
+        """Extra top-level keys besides 'columns' are ignored (forward compatible)."""
+        TransformationService.validate_tests_config({"columns": {}, "extra": True})

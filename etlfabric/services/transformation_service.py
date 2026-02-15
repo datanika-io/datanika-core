@@ -105,7 +105,44 @@ class TransformationService:
         if not schema_name or not schema_name.strip():
             raise TransformationConfigError("schema_name must not be empty or whitespace")
 
+    VALID_GENERIC_TESTS = {"not_null", "unique", "accepted_values", "relationships"}
+
     @staticmethod
     def validate_tests_config(tests_config) -> None:
         if not isinstance(tests_config, dict):
             raise TransformationConfigError("tests_config must be a dict")
+
+        columns = tests_config.get("columns")
+        if columns is None:
+            return  # no column tests is valid
+
+        if not isinstance(columns, dict):
+            raise TransformationConfigError("columns must be a dict")
+
+        valid = TransformationService.VALID_GENERIC_TESTS
+        for col_name, col_tests in columns.items():
+            if isinstance(col_tests, list):
+                for test_name in col_tests:
+                    if test_name not in valid:
+                        raise TransformationConfigError(
+                            f"Unknown test '{test_name}' on column '{col_name}'"
+                        )
+            elif isinstance(col_tests, dict):
+                for test_name, test_cfg in col_tests.items():
+                    if test_name not in valid:
+                        raise TransformationConfigError(
+                            f"Unknown test '{test_name}' on column '{col_name}'"
+                        )
+                    if test_name == "accepted_values" and not isinstance(test_cfg, list):
+                        raise TransformationConfigError("accepted_values must be a list")
+                    if test_name == "relationships":
+                        if not isinstance(test_cfg, dict):
+                            raise TransformationConfigError("relationships must be a dict")
+                        if "to" not in test_cfg or "field" not in test_cfg:
+                            raise TransformationConfigError(
+                                "relationships requires 'to' and 'field' keys"
+                            )
+            else:
+                raise TransformationConfigError(
+                    f"Tests for column '{col_name}' must be a list or dict"
+                )

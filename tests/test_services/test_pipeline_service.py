@@ -407,3 +407,210 @@ class TestValidatePipelineConfig:
     def test_non_dict_raises(self):
         with pytest.raises(PipelineConfigError):
             PipelineService.validate_pipeline_config("not a dict")
+
+
+class TestValidatePipelineConfigModes:
+    """Validate mode-specific dlt_config rules (Step 20)."""
+
+    # -- mode field --
+
+    def test_invalid_mode_raises(self):
+        with pytest.raises(PipelineConfigError, match="mode"):
+            PipelineService.validate_pipeline_config({"mode": "unknown"})
+
+    def test_full_database_explicit(self):
+        PipelineService.validate_pipeline_config({"mode": "full_database"})
+
+    def test_single_table_with_table(self):
+        PipelineService.validate_pipeline_config({"mode": "single_table", "table": "customers"})
+
+    def test_legacy_no_mode_accepted(self):
+        """Configs without mode are treated as full_database — no error."""
+        PipelineService.validate_pipeline_config({"write_disposition": "append"})
+
+    # -- single_table rules --
+
+    def test_single_table_requires_table(self):
+        with pytest.raises(PipelineConfigError, match="table"):
+            PipelineService.validate_pipeline_config({"mode": "single_table"})
+
+    def test_single_table_rejects_table_names(self):
+        with pytest.raises(PipelineConfigError, match="table_names"):
+            PipelineService.validate_pipeline_config(
+                {"mode": "single_table", "table": "x", "table_names": ["x"]}
+            )
+
+    # -- full_database rules --
+
+    def test_full_database_rejects_table(self):
+        with pytest.raises(PipelineConfigError, match="table"):
+            PipelineService.validate_pipeline_config({"mode": "full_database", "table": "x"})
+
+    def test_full_database_rejects_incremental(self):
+        with pytest.raises(PipelineConfigError, match="incremental"):
+            PipelineService.validate_pipeline_config(
+                {"mode": "full_database", "incremental": {"cursor_path": "updated_at"}}
+            )
+
+    def test_full_database_accepts_table_names(self):
+        PipelineService.validate_pipeline_config(
+            {"mode": "full_database", "table_names": ["a", "b"]}
+        )
+
+    def test_full_database_table_names_must_be_list(self):
+        with pytest.raises(PipelineConfigError, match="table_names"):
+            PipelineService.validate_pipeline_config(
+                {"mode": "full_database", "table_names": "customers"}
+            )
+
+    # -- incremental (single_table) --
+
+    def test_incremental_requires_cursor_path(self):
+        with pytest.raises(PipelineConfigError, match="cursor_path"):
+            PipelineService.validate_pipeline_config(
+                {"mode": "single_table", "table": "t", "incremental": {}}
+            )
+
+    def test_incremental_valid(self):
+        PipelineService.validate_pipeline_config(
+            {
+                "mode": "single_table",
+                "table": "t",
+                "incremental": {
+                    "cursor_path": "updated_at",
+                    "initial_value": "2024-01-01",
+                    "row_order": "asc",
+                },
+            }
+        )
+
+    def test_incremental_invalid_row_order(self):
+        with pytest.raises(PipelineConfigError, match="row_order"):
+            PipelineService.validate_pipeline_config(
+                {
+                    "mode": "single_table",
+                    "table": "t",
+                    "incremental": {"cursor_path": "id", "row_order": "random"},
+                }
+            )
+
+    # -- batch_size --
+
+    def test_batch_size_positive_int(self):
+        PipelineService.validate_pipeline_config({"batch_size": 5000})
+
+    def test_batch_size_zero_raises(self):
+        with pytest.raises(PipelineConfigError, match="batch_size"):
+            PipelineService.validate_pipeline_config({"batch_size": 0})
+
+    def test_batch_size_negative_raises(self):
+        with pytest.raises(PipelineConfigError, match="batch_size"):
+            PipelineService.validate_pipeline_config({"batch_size": -1})
+
+    def test_batch_size_non_int_raises(self):
+        with pytest.raises(PipelineConfigError, match="batch_size"):
+            PipelineService.validate_pipeline_config({"batch_size": "big"})
+
+    # -- source_schema --
+
+    def test_source_schema_string(self):
+        PipelineService.validate_pipeline_config(
+            {"mode": "full_database", "source_schema": "public"}
+        )
+
+    def test_source_schema_non_string_raises(self):
+        with pytest.raises(PipelineConfigError, match="source_schema"):
+            PipelineService.validate_pipeline_config({"source_schema": 123})
+
+
+class TestValidateSchemaContract:
+    """Step 23: schema_contract validation."""
+
+    def test_valid_schema_contract(self):
+        PipelineService.validate_pipeline_config(
+            {
+                "schema_contract": {
+                    "tables": "evolve",
+                    "columns": "freeze",
+                    "data_type": "discard_value",
+                }
+            }
+        )
+
+    def test_schema_contract_all_options(self):
+        for option in ("evolve", "freeze", "discard_value", "discard_row"):
+            PipelineService.validate_pipeline_config({"schema_contract": {"tables": option}})
+
+    def test_schema_contract_must_be_dict(self):
+        with pytest.raises(PipelineConfigError, match="schema_contract"):
+            PipelineService.validate_pipeline_config({"schema_contract": "evolve"})
+
+    def test_schema_contract_invalid_entity(self):
+        with pytest.raises(PipelineConfigError, match="schema_contract"):
+            PipelineService.validate_pipeline_config({"schema_contract": {"invalid_key": "evolve"}})
+
+    def test_schema_contract_invalid_value(self):
+        with pytest.raises(PipelineConfigError, match="schema_contract"):
+            PipelineService.validate_pipeline_config(
+                {"schema_contract": {"tables": "invalid_value"}}
+            )
+
+    def test_schema_contract_empty_dict_valid(self):
+        PipelineService.validate_pipeline_config({"schema_contract": {}})
+
+    def test_schema_contract_partial_valid(self):
+        PipelineService.validate_pipeline_config({"schema_contract": {"columns": "discard_row"}})
+
+
+class TestValidateFilters:
+    """Step 33: data quality filters validation."""
+
+    def test_valid_filter(self):
+        PipelineService.validate_pipeline_config(
+            {"filters": [{"column": "status", "op": "eq", "value": "active"}]}
+        )
+
+    def test_multiple_filters(self):
+        PipelineService.validate_pipeline_config(
+            {
+                "filters": [
+                    {"column": "status", "op": "eq", "value": "active"},
+                    {"column": "age", "op": "gt", "value": 18},
+                ]
+            }
+        )
+
+    def test_filters_must_be_list(self):
+        with pytest.raises(PipelineConfigError, match="filters"):
+            PipelineService.validate_pipeline_config({"filters": "bad"})
+
+    def test_filter_must_be_dict(self):
+        with pytest.raises(PipelineConfigError, match="filter.*dict"):
+            PipelineService.validate_pipeline_config({"filters": ["bad"]})
+
+    def test_filter_requires_column(self):
+        with pytest.raises(PipelineConfigError, match="column"):
+            PipelineService.validate_pipeline_config({"filters": [{"op": "eq", "value": "x"}]})
+
+    def test_filter_requires_op(self):
+        with pytest.raises(PipelineConfigError, match="op"):
+            PipelineService.validate_pipeline_config({"filters": [{"column": "c", "value": "x"}]})
+
+    def test_filter_requires_value(self):
+        with pytest.raises(PipelineConfigError, match="value"):
+            PipelineService.validate_pipeline_config({"filters": [{"column": "c", "op": "eq"}]})
+
+    def test_invalid_op(self):
+        with pytest.raises(PipelineConfigError, match="op"):
+            PipelineService.validate_pipeline_config(
+                {"filters": [{"column": "c", "op": "invalid", "value": 1}]}
+            )
+
+    def test_all_valid_ops(self):
+        for op in ("eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in"):
+            PipelineService.validate_pipeline_config(
+                {"filters": [{"column": "c", "op": op, "value": 1}]}
+            )
+
+    def test_empty_filters_list_valid(self):
+        PipelineService.validate_pipeline_config({"filters": []})

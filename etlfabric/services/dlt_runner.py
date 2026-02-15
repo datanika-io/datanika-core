@@ -1,9 +1,30 @@
 """DltRunnerService — builds dlt pipeline/source/destination and executes pipelines."""
 
 import dlt
-from dlt.sources.sql_database import sql_database
+from dlt.sources.sql_database import sql_database, sql_table
 
 DEFAULT_BATCH_SIZE = 10_000
+
+INTERNAL_CONFIG_KEYS = {
+    "mode",
+    "table",
+    "source_schema",
+    "table_names",
+    "incremental",
+    "batch_size",
+    "filters",
+}
+
+FILTER_OPS = {
+    "eq": lambda col, val: lambda row: row.get(col) == val,
+    "ne": lambda col, val: lambda row: row.get(col) != val,
+    "gt": lambda col, val: lambda row: row.get(col) is not None and row.get(col) > val,
+    "gte": lambda col, val: lambda row: row.get(col) is not None and row.get(col) >= val,
+    "lt": lambda col, val: lambda row: row.get(col) is not None and row.get(col) < val,
+    "lte": lambda col, val: lambda row: row.get(col) is not None and row.get(col) <= val,
+    "in": lambda col, val: lambda row: row.get(col) in val,
+    "not_in": lambda col, val: lambda row: row.get(col) not in val,
+}
 
 
 class DltRunnerError(ValueError):
@@ -34,16 +55,41 @@ class DltRunnerService:
         dlt_config: dict,
         batch_size: int = DEFAULT_BATCH_SIZE,
     ):
-        """Build a dlt sql_database source from connection config.
+        """Build a dlt source from connection config.
 
-        Uses dlt's sql_database verified source for all DB types.
-        Sets chunk_size=batch_size on the source to stream rows in batches.
+        Branches on dlt_config mode:
+        - single_table → sql_table() with optional incremental
+        - full_database (default) → sql_database() with optional table_names filter
+
         Raises DltRunnerError for unsupported types.
         """
         if connection_type not in self.SUPPORTED_DB_TYPES:
             raise DltRunnerError(f"Unsupported source type: {connection_type}")
 
-        return sql_database(credentials=config, chunk_size=batch_size)
+        mode = dlt_config.get("mode", "full_database")
+        schema = dlt_config.get("source_schema")
+
+        if mode == "single_table":
+            kwargs = {"credentials": config, "table": dlt_config["table"], "chunk_size": batch_size}
+            if schema is not None:
+                kwargs["schema"] = schema
+            incremental_cfg = dlt_config.get("incremental")
+            if incremental_cfg is not None:
+                inc_kwargs = {"cursor_path": incremental_cfg["cursor_path"]}
+                if "initial_value" in incremental_cfg:
+                    inc_kwargs["initial_value"] = incremental_cfg["initial_value"]
+                if "row_order" in incremental_cfg:
+                    inc_kwargs["row_order"] = incremental_cfg["row_order"]
+                kwargs["incremental"] = dlt.sources.incremental(**inc_kwargs)
+            return sql_table(**kwargs)
+        else:
+            kwargs = {"credentials": config, "chunk_size": batch_size}
+            if schema is not None:
+                kwargs["schema"] = schema
+            table_names = dlt_config.get("table_names")
+            if table_names is not None:
+                kwargs["table_names"] = table_names
+            return sql_database(**kwargs)
 
     def build_pipeline(
         self,
@@ -70,19 +116,30 @@ class DltRunnerService:
         destination_type: str,
         destination_config: dict,
         dlt_config: dict,
-        batch_size: int = DEFAULT_BATCH_SIZE,
+        batch_size: int | None = None,
     ) -> dict:
         """Execute a dlt pipeline.
 
-        Chunking is handled internally by dlt via chunk_size on the source —
-        rows stream in batches without loading full tables into memory.
+        Extracts batch_size from dlt_config if not passed explicitly.
+        Filters INTERNAL_CONFIG_KEYS before passing to pipeline.run().
 
         Returns {"rows_loaded": int, "load_info": LoadInfo}.
         """
+        if batch_size is None:
+            batch_size = dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
+
         pipeline = self.build_pipeline(pipeline_id, destination_type, destination_config)
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 
-        load_info = pipeline.run(source, **dlt_config)
+        # Apply row-level filters
+        filters_cfg = dlt_config.get("filters")
+        if filters_cfg:
+            for f in filters_cfg:
+                filter_fn = FILTER_OPS[f["op"]](f["column"], f["value"])
+                source.add_filter(filter_fn)
+
+        run_kwargs = {k: v for k, v in dlt_config.items() if k not in INTERNAL_CONFIG_KEYS}
+        load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = getattr(load_info, "loads_count", 0) or 0
 
         return {

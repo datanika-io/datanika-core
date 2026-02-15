@@ -1,9 +1,63 @@
-"""Pipelines page — list + create form + run button."""
+"""Pipelines page — list + create form with structured mode fields + run button."""
 
 import reflex as rx
 
 from etlfabric.ui.components.layout import page_layout
 from etlfabric.ui.state.pipeline_state import PipelineState
+
+
+def _mode_fields() -> rx.Component:
+    """Conditional fields that depend on selected mode."""
+    return rx.fragment(
+        # single_table fields
+        rx.cond(
+            PipelineState.form_mode == "single_table",
+            rx.fragment(
+                rx.input(
+                    placeholder="Table name (e.g. customers)",
+                    value=PipelineState.form_table,
+                    on_change=PipelineState.set_form_table,
+                ),
+                rx.checkbox(
+                    "Enable incremental loading",
+                    checked=PipelineState.form_enable_incremental,
+                    on_change=PipelineState.set_form_enable_incremental,
+                ),
+                rx.cond(
+                    PipelineState.form_enable_incremental,
+                    rx.vstack(
+                        rx.input(
+                            placeholder="Cursor path (e.g. updated_at)",
+                            value=PipelineState.form_cursor_path,
+                            on_change=PipelineState.set_form_cursor_path,
+                        ),
+                        rx.input(
+                            placeholder="Initial value (optional)",
+                            value=PipelineState.form_initial_value,
+                            on_change=PipelineState.set_form_initial_value,
+                        ),
+                        rx.select(
+                            ["", "asc", "desc"],
+                            value=PipelineState.form_row_order,
+                            on_change=PipelineState.set_form_row_order,
+                            placeholder="Row order (optional)",
+                        ),
+                        spacing="2",
+                        width="100%",
+                    ),
+                ),
+            ),
+        ),
+        # full_database fields
+        rx.cond(
+            PipelineState.form_mode == "full_database",
+            rx.input(
+                placeholder="Table names (comma-separated, optional)",
+                value=PipelineState.form_table_names,
+                on_change=PipelineState.set_form_table_names,
+            ),
+        ),
+    )
 
 
 def pipeline_form() -> rx.Component:
@@ -30,10 +84,78 @@ def pipeline_form() -> rx.Component:
                 value=PipelineState.form_dest_id,
                 on_change=PipelineState.set_form_dest_id,
             ),
-            rx.text_area(
-                placeholder='{"write_disposition": "append"}',
-                value=PipelineState.form_config,
-                on_change=PipelineState.set_form_config,
+            # Mode selection
+            rx.select(
+                ["full_database", "single_table"],
+                value=PipelineState.form_mode,
+                on_change=PipelineState.set_form_mode,
+            ),
+            # Write disposition
+            rx.select(
+                ["append", "replace", "merge"],
+                value=PipelineState.form_write_disposition,
+                on_change=PipelineState.set_form_write_disposition,
+            ),
+            # Primary key (merge only)
+            rx.cond(
+                PipelineState.form_write_disposition == "merge",
+                rx.input(
+                    placeholder="Primary key (required for merge)",
+                    value=PipelineState.form_primary_key,
+                    on_change=PipelineState.set_form_primary_key,
+                ),
+            ),
+            # Source schema
+            rx.input(
+                placeholder="Source schema (optional, e.g. public)",
+                value=PipelineState.form_source_schema,
+                on_change=PipelineState.set_form_source_schema,
+            ),
+            # Mode-specific fields
+            _mode_fields(),
+            # Batch size
+            rx.input(
+                placeholder="Batch size (optional, default 10000)",
+                value=PipelineState.form_batch_size,
+                on_change=PipelineState.set_form_batch_size,
+            ),
+            # Schema contract
+            rx.text("Schema Contract (optional)", size="2", weight="bold"),
+            rx.hstack(
+                rx.select(
+                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    value=PipelineState.form_sc_tables,
+                    on_change=PipelineState.set_form_sc_tables,
+                    placeholder="Tables",
+                ),
+                rx.select(
+                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    value=PipelineState.form_sc_columns,
+                    on_change=PipelineState.set_form_sc_columns,
+                    placeholder="Columns",
+                ),
+                rx.select(
+                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    value=PipelineState.form_sc_data_type,
+                    on_change=PipelineState.set_form_sc_data_type,
+                    placeholder="Data type",
+                ),
+                spacing="2",
+                width="100%",
+            ),
+            # Raw JSON toggle
+            rx.checkbox(
+                "Use raw JSON config",
+                checked=PipelineState.form_use_raw_json,
+                on_change=PipelineState.set_form_use_raw_json,
+            ),
+            rx.cond(
+                PipelineState.form_use_raw_json,
+                rx.text_area(
+                    placeholder='{"write_disposition": "append"}',
+                    value=PipelineState.form_config,
+                    on_change=PipelineState.set_form_config,
+                ),
             ),
             rx.cond(
                 PipelineState.error_message,

@@ -37,7 +37,7 @@ def _mode_fields() -> rx.Component:
                             on_change=PipelineState.set_form_initial_value,
                         ),
                         rx.select(
-                            ["", "asc", "desc"],
+                            ["asc", "desc"],
                             value=PipelineState.form_row_order,
                             on_change=PipelineState.set_form_row_order,
                             placeholder="Row order (optional)",
@@ -123,19 +123,19 @@ def pipeline_form() -> rx.Component:
             rx.text("Schema Contract (optional)", size="2", weight="bold"),
             rx.hstack(
                 rx.select(
-                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_tables,
                     on_change=PipelineState.set_form_sc_tables,
                     placeholder="Tables",
                 ),
                 rx.select(
-                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_columns,
                     on_change=PipelineState.set_form_sc_columns,
                     placeholder="Columns",
                 ),
                 rx.select(
-                    ["", "evolve", "freeze", "discard_value", "discard_row"],
+                    ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_data_type,
                     on_change=PipelineState.set_form_sc_data_type,
                     placeholder="Data type",

@@ -10,14 +10,14 @@ def filters_bar() -> rx.Component:
     return rx.hstack(
         rx.text("Status:", size="2"),
         rx.select(
-            ["", "pending", "running", "success", "failed", "cancelled"],
+            ["pending", "running", "success", "failed", "cancelled"],
             value=RunState.filter_status,
             on_change=RunState.set_filter,
             placeholder="All",
         ),
         rx.text("Target type:", size="2"),
         rx.select(
-            ["", "pipeline", "transformation"],
+            ["pipeline", "transformation"],
             value=RunState.filter_target_type,
             on_change=RunState.set_target_type_filter,
             placeholder="All",

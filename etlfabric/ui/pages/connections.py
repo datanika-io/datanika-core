@@ -62,7 +62,23 @@ def connection_form() -> rx.Component:
                     ConnectionState.error_message, icon="triangle_alert", color_scheme="red"
                 ),
             ),
-            rx.button("Create Connection", on_click=ConnectionState.create_connection),
+            rx.cond(
+                ConnectionState.test_message,
+                rx.callout(
+                    ConnectionState.test_message,
+                    icon=rx.cond(ConnectionState.test_success, "check", "triangle_alert"),
+                    color_scheme=rx.cond(ConnectionState.test_success, "green", "red"),
+                ),
+            ),
+            rx.hstack(
+                rx.button("Create Connection", on_click=ConnectionState.create_connection),
+                rx.button(
+                    "Test Connection",
+                    variant="outline",
+                    on_click=ConnectionState.test_connection_from_form,
+                ),
+                spacing="3",
+            ),
             spacing="3",
             width="100%",
         ),
@@ -88,11 +104,20 @@ def connections_table() -> rx.Component:
                     rx.table.cell(conn.name),
                     rx.table.cell(conn.connection_type),
                     rx.table.cell(
-                        rx.button(
-                            "Delete",
-                            color_scheme="red",
-                            size="1",
-                            on_click=ConnectionState.delete_connection(conn.id),
+                        rx.hstack(
+                            rx.button(
+                                "Test",
+                                variant="outline",
+                                size="1",
+                                on_click=ConnectionState.test_saved_connection(conn.id),
+                            ),
+                            rx.button(
+                                "Delete",
+                                color_scheme="red",
+                                size="1",
+                                on_click=ConnectionState.delete_connection(conn.id),
+                            ),
+                            spacing="2",
                         ),
                     ),
                 ),

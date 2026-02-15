@@ -6,9 +6,18 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # Data pipeline
-    "dlt[postgres]>=1.5",
+    "dlt[postgres,snowflake,bigquery,mssql]>=1.5",
     "dbt-core>=1.9",
     "dbt-postgres>=1.9",
+    "dbt-snowflake>=1.9",
+    "dbt-bigquery>=1.9",
+    "dbt-redshift>=1.9",
+
+    # SQL drivers
+    "pymysql>=1.1",
+    "pymssql>=2.2",
+    "snowflake-sqlalchemy>=1.7",
+    "sqlalchemy-bigquery>=1.11",
 
     # Web framework
     "reflex>=0.7",

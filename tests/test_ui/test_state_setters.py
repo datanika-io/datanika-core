@@ -22,6 +22,31 @@ class TestAuthStateSetters:
             assert "form_data" in params, f"AuthState.{name} should accept form_data"
 
 
+class TestConnectionStateTestMethods:
+    def test_test_connection_from_form_exists(self):
+        from etlfabric.ui.state.connection_state import ConnectionState
+
+        method = getattr(ConnectionState, "test_connection_from_form", None)
+        assert method is not None, "ConnectionState missing test_connection_from_form"
+        fn = method.fn if hasattr(method, "fn") else method
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_test_saved_connection_exists(self):
+        from etlfabric.ui.state.connection_state import ConnectionState
+
+        method = getattr(ConnectionState, "test_saved_connection", None)
+        assert method is not None, "ConnectionState missing test_saved_connection"
+        fn = method.fn if hasattr(method, "fn") else method
+        assert inspect.iscoroutinefunction(fn)
+
+    def test_test_state_vars_exist(self):
+        from etlfabric.ui.state.connection_state import ConnectionState
+
+        fields = ConnectionState.get_fields()
+        assert "test_message" in fields, "ConnectionState missing test_message"
+        assert "test_success" in fields, "ConnectionState missing test_success"
+
+
 class TestConnectionStateSetters:
     def test_all_setters_exist(self):
         from etlfabric.ui.state.connection_state import ConnectionState

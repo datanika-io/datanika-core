@@ -29,7 +29,10 @@
       "Bash(done)",
       "Bash(.venv/Scripts/python:*)",
       "Bash(uv run:*)",
-      "Bash(uv pip list:*)"
+      "Bash(uv pip list:*)",
+      "Bash(wc:*)",
+      "Bash(docker exec:*)",
+      "Bash(python3:*)"
     ]
   }
 }

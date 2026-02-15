@@ -12,12 +12,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Auth
-    secret_key: str = "change-me-to-a-random-secret-key"
+    secret_key: str = "XEOMryjw0MylWx2uNX_4c7xvPzl9T5dBxxhCUmsQc8A"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
     # Encryption
-    credential_encryption_key: str = "change-me-generate-with-fernet"
+    credential_encryption_key: str = "XEOMryjw0MylWx2uNX_4c7xvPzl9T5dBxxhCUmsQc8A"
 
     # OAuth
     google_client_id: str = ""

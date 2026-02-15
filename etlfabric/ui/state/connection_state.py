@@ -51,6 +51,10 @@ class ConnectionState(BaseState):
     form_config: str = "{}"
     form_use_raw_json: bool = False
 
+    # Test connection feedback
+    test_message: str = ""
+    test_success: bool = False
+
     # SQL database fields (postgres, mysql, mssql, redshift)
     form_host: str = ""
     form_port: str = "5432"
@@ -315,3 +319,37 @@ class ConnectionState(BaseState):
             svc.delete_connection(session, org_id, conn_id)
             session.commit()
         await self.load_connections()
+
+    async def test_connection_from_form(self):
+        """Test connectivity using the current form fields (before saving)."""
+        try:
+            config = self._build_config()
+        except (json.JSONDecodeError, ValueError) as e:
+            self.test_success = False
+            self.test_message = f"Invalid config: {e}"
+            return
+        ok, msg = ConnectionService.test_connection(config, ConnectionType(self.form_type))
+        self.test_success = ok
+        self.test_message = msg
+
+    async def test_saved_connection(self, conn_id: int):
+        """Test connectivity for an already-saved connection."""
+        org_id = await self._get_org_id()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        svc = ConnectionService(encryption)
+        with get_sync_session() as session:
+            config = svc.get_connection_config(session, org_id, conn_id)
+        if config is None:
+            self.test_success = False
+            self.test_message = "Connection not found"
+            return
+        conn = None
+        with get_sync_session() as session:
+            conn = svc.get_connection(session, org_id, conn_id)
+        if conn is None:
+            self.test_success = False
+            self.test_message = "Connection not found"
+            return
+        ok, msg = ConnectionService.test_connection(config, conn.connection_type)
+        self.test_success = ok
+        self.test_message = msg

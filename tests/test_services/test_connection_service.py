@@ -304,14 +304,190 @@ class TestDeleteConnection:
 
 
 class TestTestConnection:
-    def test_basic_validation_success(self, svc):
-        ok, msg = svc.test_connection(
-            {"host": "localhost", "port": 5432},
-            ConnectionType.POSTGRES,
-        )
-        assert ok is True
-
     def test_empty_config_fails(self, svc):
         ok, msg = svc.test_connection({}, ConnectionType.POSTGRES)
         assert ok is False
+        assert "empty" in msg.lower()
+
+    def test_sqlite_real_connection(self, svc):
+        """Real in-memory SQLite — no mocks needed."""
+        ok, msg = svc.test_connection({"path": ":memory:"}, ConnectionType.SQLITE)
+        assert ok is True
+        assert msg == "Connected successfully"
+
+    def test_postgres_connection_mocked(self, svc):
+        """Mock create_engine to verify SELECT 1 is executed."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "etlfabric.services.connection_service.create_engine", return_value=mock_engine
+        ):
+            ok, msg = svc.test_connection(
+                {"host": "localhost", "port": 5432, "user": "u", "password": "p", "database": "d"},
+                ConnectionType.POSTGRES,
+            )
+        assert ok is True
+        assert msg == "Connected successfully"
+        mock_conn.execute.assert_called_once()
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "SELECT 1" in executed_sql
+
+    def test_connection_failure(self, svc):
+        """Mock engine raising OperationalError."""
+        from unittest.mock import MagicMock, patch
+
+        from sqlalchemy.exc import OperationalError
+
+        mock_engine = MagicMock()
+        mock_engine.connect.side_effect = OperationalError("stmt", {}, Exception("refused"))
+
+        with patch(
+            "etlfabric.services.connection_service.create_engine", return_value=mock_engine
+        ):
+            ok, msg = svc.test_connection(
+                {"host": "badhost", "user": "u", "password": "p", "database": "d"},
+                ConnectionType.POSTGRES,
+            )
+        assert ok is False
         assert len(msg) > 0
+
+    def test_missing_driver(self, svc):
+        """Mock create_engine raising ImportError."""
+        from unittest.mock import patch
+
+        with patch(
+            "etlfabric.services.connection_service.create_engine",
+            side_effect=ImportError("No module named 'pymysql'"),
+        ):
+            ok, msg = svc.test_connection(
+                {"host": "localhost", "user": "u", "password": "p", "database": "d"},
+                ConnectionType.MYSQL,
+            )
+        assert ok is False
+        assert "Driver not installed" in msg
+
+    def test_non_db_type_skipped_s3(self, svc):
+        ok, msg = svc.test_connection({"bucket_url": "s3://my-bucket"}, ConnectionType.S3)
+        assert ok is True
+        assert "not applicable" in msg.lower()
+
+    def test_non_db_type_skipped_csv(self, svc):
+        ok, msg = svc.test_connection({"bucket_url": "/data"}, ConnectionType.CSV)
+        assert ok is True
+        assert "not applicable" in msg.lower()
+
+    def test_non_db_type_skipped_rest_api(self, svc):
+        config = {"base_url": "https://api.example.com"}
+        ok, msg = svc.test_connection(config, ConnectionType.REST_API)
+        assert ok is True
+        assert "not applicable" in msg.lower()
+
+
+class TestBuildSaUrl:
+    def test_postgres_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        config = {
+            "host": "db.example.com", "port": 5432,
+            "user": "admin", "password": "s3c", "database": "mydb",
+        }
+        url = _build_sa_url(config, ConnectionType.POSTGRES)
+        assert url.startswith("postgresql+psycopg2://")
+        assert "admin" in url
+        assert "db.example.com" in url
+        assert "5432" in url
+        assert "mydb" in url
+
+    def test_redshift_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        config = {
+            "host": "cluster.redshift.amazonaws.com",
+            "user": "u", "password": "p", "database": "dw",
+        }
+        url = _build_sa_url(config, ConnectionType.REDSHIFT)
+        assert url.startswith("postgresql+psycopg2://")
+        assert "5439" in url  # default redshift port
+
+    def test_mysql_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url(
+            {"host": "mysql.local", "user": "root", "password": "pw", "database": "app"},
+            ConnectionType.MYSQL,
+        )
+        assert url.startswith("mysql+pymysql://")
+        assert "3306" in url
+
+    def test_mssql_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url(
+            {"host": "sql.local", "user": "sa", "password": "pw", "database": "master"},
+            ConnectionType.MSSQL,
+        )
+        assert url.startswith("mssql+pymssql://")
+        assert "1433" in url
+
+    def test_sqlite_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url({"path": "/tmp/test.db"}, ConnectionType.SQLITE)
+        assert url == "sqlite:////tmp/test.db"
+
+    def test_sqlite_memory_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url({"path": ":memory:"}, ConnectionType.SQLITE)
+        assert url == "sqlite:///:memory:"
+
+    def test_snowflake_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url(
+            {
+                "account": "xy12345.us-east-1",
+                "user": "etl_user",
+                "password": "secret",
+                "database": "ANALYTICS",
+                "schema": "PUBLIC",
+                "warehouse": "COMPUTE_WH",
+                "role": "LOADER",
+            },
+            ConnectionType.SNOWFLAKE,
+        )
+        assert url.startswith("snowflake://")
+        assert "xy12345.us-east-1" in url
+        assert "warehouse=COMPUTE_WH" in url
+        assert "role=LOADER" in url
+
+    def test_bigquery_url(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        url = _build_sa_url(
+            {"project": "my-project", "dataset": "raw_data"},
+            ConnectionType.BIGQUERY,
+        )
+        assert url == "bigquery://my-project/raw_data"
+
+    def test_special_chars_encoded(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        config = {
+            "host": "db.example.com", "user": "admin@corp",
+            "password": "p@ss/word!", "database": "db",
+        }
+        url = _build_sa_url(config, ConnectionType.POSTGRES)
+        assert "admin%40corp" in url
+        assert "p%40ss%2Fword%21" in url
+
+    def test_unsupported_type_raises(self):
+        from etlfabric.services.connection_service import _build_sa_url
+
+        with pytest.raises(ValueError, match="Unsupported"):
+            _build_sa_url({"bucket": "x"}, ConnectionType.S3)

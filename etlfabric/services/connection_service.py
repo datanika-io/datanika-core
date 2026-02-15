@@ -1,12 +1,81 @@
 """Connection management service — CRUD with encrypted credentials."""
 
 from datetime import UTC, datetime
+from urllib.parse import quote_plus
 
-from sqlalchemy import select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
 from etlfabric.services.encryption import EncryptionService
+
+# Connection types that don't support SELECT 1 testing
+_NON_DB_TYPES = {
+    ConnectionType.S3,
+    ConnectionType.CSV,
+    ConnectionType.JSON,
+    ConnectionType.PARQUET,
+    ConnectionType.REST_API,
+}
+
+
+def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
+    """Build a SQLAlchemy connection URL from config dict and connection type."""
+    if connection_type in (ConnectionType.POSTGRES, ConnectionType.REDSHIFT):
+        driver = "postgresql+psycopg2"
+        port = config.get("port", 5432 if connection_type == ConnectionType.POSTGRES else 5439)
+        return (
+            f"{driver}://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
+        )
+
+    if connection_type == ConnectionType.MYSQL:
+        port = config.get("port", 3306)
+        return (
+            f"mysql+pymysql://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
+        )
+
+    if connection_type == ConnectionType.MSSQL:
+        port = config.get("port", 1433)
+        return (
+            f"mssql+pymssql://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
+        )
+
+    if connection_type == ConnectionType.SQLITE:
+        path = config.get("path", ":memory:")
+        return f"sqlite:///{path}"
+
+    if connection_type == ConnectionType.SNOWFLAKE:
+        url = (
+            f"snowflake://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('account', '')}"
+            f"/{config.get('database', '')}"
+            f"/{config.get('schema', '')}"
+        )
+        params = []
+        if config.get("warehouse"):
+            params.append(f"warehouse={quote_plus(config['warehouse'])}")
+        if config.get("role"):
+            params.append(f"role={quote_plus(config['role'])}")
+        if params:
+            url += "?" + "&".join(params)
+        return url
+
+    if connection_type == ConnectionType.BIGQUERY:
+        project = config.get("project", "")
+        dataset = config.get("dataset", "")
+        return f"bigquery://{project}/{dataset}"
+
+    raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
 
 
 class ConnectionService:
@@ -84,7 +153,32 @@ class ConnectionService:
 
     @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
-        """Basic connectivity validation. Returns (success, message)."""
+        """Test real database connectivity via SELECT 1. Returns (success, message)."""
         if not config:
             return False, "Configuration is empty"
-        return True, "Connection parameters look valid"
+
+        if connection_type in _NON_DB_TYPES:
+            return True, "Test not applicable for this type"
+
+        try:
+            url = _build_sa_url(config, connection_type)
+        except ValueError as e:
+            return False, str(e)
+
+        try:
+            engine = create_engine(url, connect_args={"connect_timeout": 5}
+                                   if connection_type not in (ConnectionType.SQLITE,)
+                                   else {})
+        except ImportError:
+            return False, f"Driver not installed for {connection_type.value}"
+
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return True, "Connected successfully"
+        except ImportError:
+            return False, f"Driver not installed for {connection_type.value}"
+        except Exception as e:
+            return False, str(e)
+        finally:
+            engine.dispose()

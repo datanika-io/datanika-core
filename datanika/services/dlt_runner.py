@@ -49,11 +49,44 @@ class DltRunnerError(ValueError):
     """Raised when dlt runner encounters an unsupported configuration."""
 
 
+DRIVERNAME_MAP = {
+    "postgres": "postgresql",
+    "mysql": "mysql+pymysql",
+    "mssql": "mssql+pymssql",
+    "sqlite": "sqlite",
+    "redshift": "redshift+redshift_connector",
+}
+
+# Types where user→username renaming is needed
+_RENAME_USER_TYPES = {"postgres", "mysql", "mssql", "sqlite", "redshift", "snowflake"}
+
+
 class DltRunnerService:
     """Builds dlt pipeline objects from connection configs and pipeline settings."""
 
     SUPPORTED_SOURCE_TYPES = {"postgres", "mysql", "mssql", "sqlite"}
     SUPPORTED_DESTINATION_TYPES = SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift"}
+
+    @staticmethod
+    def _to_dlt_credentials(connection_type: str, config: dict) -> dict:
+        """Convert stored connection config to dlt-compatible credentials.
+
+        Adds drivername for SQL types, renames user→username.
+        """
+        creds = dict(config)
+
+        # Rename user → username for SQL and Snowflake types
+        if connection_type in _RENAME_USER_TYPES and "user" in creds:
+            creds["username"] = creds.pop("user")
+
+        drivername = DRIVERNAME_MAP.get(connection_type)
+        if drivername:
+            creds["drivername"] = drivername
+            # SQLite: path stored as "path", dlt expects "database"
+            if connection_type == "sqlite" and "path" in creds:
+                creds["database"] = creds.pop("path")
+
+        return creds
 
     def build_destination(self, connection_type: str, config: dict):
         """Map ConnectionType to a dlt destination factory.
@@ -65,7 +98,7 @@ class DltRunnerService:
             raise DltRunnerError(f"Unsupported destination type: {connection_type}")
 
         factory = getattr(dlt.destinations, connection_type)
-        return factory(credentials=config)
+        return factory(credentials=self._to_dlt_credentials(connection_type, config))
 
     def build_source(
         self,
@@ -94,8 +127,10 @@ class DltRunnerService:
         mode = dlt_config.get("mode", "full_database")
         schema = dlt_config.get("source_schema")
 
+        creds = self._to_dlt_credentials(connection_type, config)
+
         if mode == "single_table":
-            kwargs = {"credentials": config, "table": dlt_config["table"], "chunk_size": batch_size}
+            kwargs = {"credentials": creds, "table": dlt_config["table"], "chunk_size": batch_size}
             if schema is not None:
                 kwargs["schema"] = schema
             incremental_cfg = dlt_config.get("incremental")
@@ -108,7 +143,7 @@ class DltRunnerService:
                 kwargs["incremental"] = dlt.sources.incremental(**inc_kwargs)
             return sql_table(**kwargs)
         else:
-            kwargs = {"credentials": config, "chunk_size": batch_size}
+            kwargs = {"credentials": creds, "chunk_size": batch_size}
             if schema is not None:
                 kwargs["schema"] = schema
             table_names = dlt_config.get("table_names")

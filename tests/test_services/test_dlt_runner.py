@@ -18,6 +18,62 @@ def svc():
 
 
 # ---------------------------------------------------------------------------
+# _to_dlt_credentials
+# ---------------------------------------------------------------------------
+class TestToDltCredentials:
+    """Regression: dlt requires drivername + username, our config stores user."""
+
+    def test_postgres_adds_drivername(self, svc):
+        creds = svc._to_dlt_credentials("postgres", {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "db"})
+        assert creds["drivername"] == "postgresql"
+
+    def test_mysql_adds_drivername(self, svc):
+        creds = svc._to_dlt_credentials("mysql", {"host": "h", "port": 3306, "user": "u", "database": "db"})
+        assert creds["drivername"] == "mysql+pymysql"
+
+    def test_mssql_adds_drivername(self, svc):
+        creds = svc._to_dlt_credentials("mssql", {"host": "h", "port": 1433, "user": "u", "database": "db"})
+        assert creds["drivername"] == "mssql+pymssql"
+
+    def test_sqlite_adds_drivername(self, svc):
+        creds = svc._to_dlt_credentials("sqlite", {"path": "/data/my.db"})
+        assert creds["drivername"] == "sqlite"
+        assert creds["database"] == "/data/my.db"
+
+    def test_redshift_adds_drivername(self, svc):
+        creds = svc._to_dlt_credentials("redshift", {"host": "h", "port": 5439, "user": "u", "database": "db"})
+        assert creds["drivername"] == "redshift+redshift_connector"
+
+    def test_renames_user_to_username(self, svc):
+        creds = svc._to_dlt_credentials("postgres", {"host": "h", "user": "myuser", "database": "db"})
+        assert creds["username"] == "myuser"
+        assert "user" not in creds
+
+    def test_preserves_existing_username(self, svc):
+        creds = svc._to_dlt_credentials("postgres", {"host": "h", "username": "myuser", "database": "db"})
+        assert creds["username"] == "myuser"
+
+    def test_preserves_other_fields(self, svc):
+        creds = svc._to_dlt_credentials("postgres", {"host": "h", "port": 5432, "password": "s", "database": "db", "schema": "public"})
+        assert creds["host"] == "h"
+        assert creds["port"] == 5432
+        assert creds["password"] == "s"
+        assert creds["database"] == "db"
+        assert creds["schema"] == "public"
+
+    def test_passthrough_for_unknown_types(self, svc):
+        """bigquery/snowflake credentials pass through unchanged."""
+        config = {"project": "proj", "dataset": "ds"}
+        creds = svc._to_dlt_credentials("bigquery", config)
+        assert creds == config
+
+    def test_snowflake_renames_user_to_username(self, svc):
+        creds = svc._to_dlt_credentials("snowflake", {"account": "a", "user": "u", "database": "db"})
+        assert creds["username"] == "u"
+        assert "user" not in creds
+
+
+# ---------------------------------------------------------------------------
 # DltRunnerError
 # ---------------------------------------------------------------------------
 class TestDltRunnerError:
@@ -37,28 +93,34 @@ class TestBuildDestination:
     def test_postgres_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.postgres.return_value = "pg_dest"
         result = svc.build_destination("postgres", {"host": "localhost"})
-        mock_dlt.destinations.postgres.assert_called_once_with(credentials={"host": "localhost"})
+        call_creds = mock_dlt.destinations.postgres.call_args[1]["credentials"]
+        assert call_creds["drivername"] == "postgresql"
+        assert call_creds["host"] == "localhost"
         assert result == "pg_dest"
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_mysql_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.mysql.return_value = "mysql_dest"
         result = svc.build_destination("mysql", {"host": "localhost"})
-        mock_dlt.destinations.mysql.assert_called_once_with(credentials={"host": "localhost"})
+        call_creds = mock_dlt.destinations.mysql.call_args[1]["credentials"]
+        assert call_creds["drivername"] == "mysql+pymysql"
         assert result == "mysql_dest"
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_mssql_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.mssql.return_value = "mssql_dest"
         result = svc.build_destination("mssql", {"host": "localhost"})
-        mock_dlt.destinations.mssql.assert_called_once_with(credentials={"host": "localhost"})
+        call_creds = mock_dlt.destinations.mssql.call_args[1]["credentials"]
+        assert call_creds["drivername"] == "mssql+pymssql"
         assert result == "mssql_dest"
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_sqlite_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.sqlite.return_value = "sqlite_dest"
         result = svc.build_destination("sqlite", {"path": "db.sqlite"})
-        mock_dlt.destinations.sqlite.assert_called_once_with(credentials={"path": "db.sqlite"})
+        call_creds = mock_dlt.destinations.sqlite.call_args[1]["credentials"]
+        assert call_creds["drivername"] == "sqlite"
+        assert call_creds["database"] == "db.sqlite"
         assert result == "sqlite_dest"
 
     def test_unsupported_type_raises(self, svc):
@@ -75,15 +137,18 @@ class TestBuildDestination:
     @patch("datanika.services.dlt_runner.dlt")
     def test_snowflake_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.snowflake.return_value = "sf_dest"
-        result = svc.build_destination("snowflake", {"account": "abc"})
-        mock_dlt.destinations.snowflake.assert_called_once_with(credentials={"account": "abc"})
+        result = svc.build_destination("snowflake", {"account": "abc", "user": "u"})
+        call_creds = mock_dlt.destinations.snowflake.call_args[1]["credentials"]
+        assert call_creds["username"] == "u"
+        assert "user" not in call_creds
         assert result == "sf_dest"
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_redshift_returns_destination(self, mock_dlt, svc):
         mock_dlt.destinations.redshift.return_value = "rs_dest"
         result = svc.build_destination("redshift", {"host": "rs-host"})
-        mock_dlt.destinations.redshift.assert_called_once_with(credentials={"host": "rs-host"})
+        call_creds = mock_dlt.destinations.redshift.call_args[1]["credentials"]
+        assert call_creds["drivername"] == "redshift+redshift_connector"
         assert result == "rs_dest"
 
 

@@ -3,19 +3,19 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool, text
 
-from etlfabric.migrations.helpers import (
+from datanika.migrations.helpers import (
     get_tenant_schemas,
     is_public_table,
     is_tenant_table,
 )
-from etlfabric.models.base import Base
+from datanika.models.base import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Override sqlalchemy.url from app settings (respects DATABASE_URL_SYNC env var)
-from etlfabric.config import settings  # noqa: E402
+from datanika.config import settings  # noqa: E402
 
 config.set_main_option("sqlalchemy.url", settings.database_url_sync)
 

@@ -7,11 +7,11 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SyncSession
 
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.schedule import Schedule
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.tasks.pipeline_tasks import run_pipeline_task
-from etlfabric.tasks.transformation_tasks import run_transformation_task
+from datanika.models.dependency import NodeType
+from datanika.models.schedule import Schedule
+from datanika.services.execution_service import ExecutionService
+from datanika.tasks.pipeline_tasks import run_pipeline_task
+from datanika.tasks.transformation_tasks import run_transformation_task
 
 
 class SchedulerIntegrationService:
@@ -117,7 +117,7 @@ class SchedulerIntegrationService:
     @staticmethod
     def _dispatch_target(org_id: int, target_type: str, target_id: int) -> None:
         """Callback for APScheduler: create Run + dispatch Celery task."""
-        from etlfabric.config import settings
+        from datanika.config import settings
 
         engine = create_engine(settings.database_url_sync)
         session = SyncSession(engine)

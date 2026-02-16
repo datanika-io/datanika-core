@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.dependency import Dependency, NodeType
-from etlfabric.services.pipeline_service import PipelineService
-from etlfabric.services.transformation_service import TransformationService
+from datanika.models.dependency import Dependency, NodeType
+from datanika.services.pipeline_service import PipelineService
+from datanika.services.transformation_service import TransformationService
 
 
 class DependencyConfigError(ValueError):

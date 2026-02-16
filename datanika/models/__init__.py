@@ -1,13 +1,13 @@
-from etlfabric.models.api_key import ApiKey
-from etlfabric.models.audit_log import AuditAction, AuditLog
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
-from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-from etlfabric.models.dependency import Dependency, NodeType
-from etlfabric.models.pipeline import Pipeline, PipelineStatus
-from etlfabric.models.run import Run, RunStatus
-from etlfabric.models.schedule import Schedule
-from etlfabric.models.transformation import Materialization, Transformation
-from etlfabric.models.user import MemberRole, Membership, Organization, User
+from datanika.models.api_key import ApiKey
+from datanika.models.audit_log import AuditAction, AuditLog
+from datanika.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.models.dependency import Dependency, NodeType
+from datanika.models.pipeline import Pipeline, PipelineStatus
+from datanika.models.run import Run, RunStatus
+from datanika.models.schedule import Schedule
+from datanika.models.transformation import Materialization, Transformation
+from datanika.models.user import MemberRole, Membership, Organization, User
 
 __all__ = [
     "Base",

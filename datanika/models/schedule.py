@@ -1,8 +1,8 @@
 from sqlalchemy import BigInteger, Boolean, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
-from etlfabric.models.dependency import NodeType
+from datanika.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.dependency import NodeType
 
 
 class Schedule(Base, TenantMixin, TimestampMixin):

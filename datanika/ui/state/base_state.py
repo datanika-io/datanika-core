@@ -4,7 +4,7 @@ import reflex as rx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from etlfabric.config import settings
+from datanika.config import settings
 
 _engine = create_engine(settings.database_url_sync)
 
@@ -20,7 +20,7 @@ class BaseState(rx.State):
     error_message: str = ""
 
     async def _get_org_id(self) -> int:
-        from etlfabric.ui.state.auth_state import AuthState
+        from datanika.ui.state.auth_state import AuthState
 
         auth = await self.get_state(AuthState)
         return auth.current_org.id if auth.current_org.id else 0

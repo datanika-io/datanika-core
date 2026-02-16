@@ -6,8 +6,8 @@ from urllib.parse import quote_plus
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
-from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-from etlfabric.services.encryption import EncryptionService
+from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.services.encryption import EncryptionService
 
 # Connection types that don't support SELECT 1 testing
 _NON_DB_TYPES = {

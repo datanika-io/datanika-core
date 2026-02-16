@@ -6,8 +6,8 @@ from urllib.parse import urlencode
 import httpx
 from sqlalchemy.orm import Session
 
-from etlfabric.services.auth import AuthService
-from etlfabric.services.user_service import UserService
+from datanika.services.auth import AuthService
+from datanika.services.user_service import UserService
 
 
 class OAuthError(ValueError):

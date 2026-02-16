@@ -2,9 +2,9 @@
 
 import pytest
 
-from etlfabric.models.audit_log import AuditAction, AuditLog
-from etlfabric.models.user import Organization, User
-from etlfabric.services.audit_service import AuditService
+from datanika.models.audit_log import AuditAction, AuditLog
+from datanika.models.user import Organization, User
+from datanika.services.audit_service import AuditService
 
 
 @pytest.fixture

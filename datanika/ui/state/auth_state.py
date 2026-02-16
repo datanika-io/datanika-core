@@ -5,10 +5,10 @@ import re
 import reflex as rx
 from pydantic import BaseModel
 
-from etlfabric.config import settings
-from etlfabric.services.auth import AuthService
-from etlfabric.services.user_service import UserService
-from etlfabric.ui.state.base_state import get_sync_session
+from datanika.config import settings
+from datanika.services.auth import AuthService
+from datanika.services.user_service import UserService
+from datanika.ui.state.base_state import get_sync_session
 
 
 class UserInfo(BaseModel):
@@ -56,8 +56,8 @@ class AuthState(rx.State):
 
     def login(self, form_data: dict):
         self.auth_error = ""
-        email = form_data.get("email", "")
-        password = form_data.get("password", "")
+        email = (form_data.get("email") or "").strip()
+        password = form_data.get("password") or ""
         if not email or not password:
             self.auth_error = "Email and password are required"
             return

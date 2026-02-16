@@ -1,8 +1,8 @@
-# ETL Fabric - Implementation Plan
+# Datanika - Implementation Plan
 
 ## Project Overview
 
-**ETL Fabric** is a multi-tenant data pipeline management platform built with:
+**Datanika** is a multi-tenant data pipeline management platform built with:
 - **dlt** (data load tool) for Extract + Load
 - **dbt-core** for Transform
 - **Reflex** for the full-stack Python UI
@@ -43,13 +43,13 @@
 ## Project Structure
 
 ```
-etlfabric/
+datanika/
 ├── pyproject.toml                  # Project dependencies (uv/poetry)
 ├── alembic.ini                     # DB migrations config
 ├── docker-compose.yml              # PostgreSQL + Redis for dev
 ├── .env.example                    # Environment variables template
 │
-├── etlfabric/                      # Main Python package
+├── datanika/                      # Main Python package
 │   ├── __init__.py
 │   │
 │   ├── models/                     # SQLAlchemy ORM models (app metadata)
@@ -91,7 +91,7 @@ etlfabric/
 │   │
 │   └── ui/                         # Reflex UI pages & components
 │       ├── __init__.py
-│       ├── etlfabric.py            # Reflex app entry point (rx.App)
+│       ├── datanika.py            # Reflex app entry point (rx.App)
 │       ├── state/                  # Reflex state classes
 │       │   ├── __init__.py
 │       │   ├── auth_state.py       # Login/signup/session state
@@ -544,12 +544,12 @@ All completed. 589 tests total (81 new).
 
 **Approach:** Use Google reCAPTCHA v3 (invisible, score-based) — no user friction, works behind the scenes.
 
-**Config (`etlfabric/config.py`):**
+**Config (`datanika/config.py`):**
 - `recaptcha_site_key: str = ""` — public key for frontend widget
 - `recaptcha_secret_key: str = ""` — server-side verification key
 - CAPTCHA is **disabled** when keys are empty (development mode)
 
-**Backend — `etlfabric/services/captcha_service.py` (NEW):**
+**Backend — `datanika/services/captcha_service.py` (NEW):**
 - `CaptchaService`:
   - `verify(token: str, action: str, min_score: float = 0.5) -> bool`
   - Posts token to `https://www.google.com/recaptcha/api/siteverify`
@@ -576,7 +576,7 @@ All completed. 589 tests total (81 new).
 
 **Approach:** JSON translation files + Reflex state for language switching. All user-facing text goes through a translation lookup.
 
-**Translation files — `etlfabric/ui/i18n/` (NEW):**
+**Translation files — `datanika/ui/i18n/` (NEW):**
 ```
 i18n/
 ├── __init__.py          # load_translations(), t() lookup helper
@@ -591,7 +591,7 @@ i18n/
 Each JSON file has flat dot-notation keys:
 ```json
 {
-  "app.name": "ETL Fabric",
+  "app.name": "Datanika",
   "auth.sign_in": "Sign In",
   "auth.sign_up": "Sign Up",
   "auth.email": "Email",
@@ -616,7 +616,7 @@ Each JSON file has flat dot-notation keys:
 }
 ```
 
-**State — `etlfabric/ui/state/i18n_state.py` (NEW):**
+**State — `datanika/ui/state/i18n_state.py` (NEW):**
 - `I18nState(rx.State)`:
   - `locale: str = "en"` — current language code
   - `set_locale(locale: str)` — switch language, persists to browser localStorage

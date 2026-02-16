@@ -5,15 +5,15 @@ from unittest.mock import patch
 import pytest
 from cryptography.fernet import Fernet
 
-from etlfabric.models.connection import ConnectionDirection, ConnectionType
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.run import RunStatus
-from etlfabric.models.user import Organization
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.services.pipeline_service import PipelineService
-from etlfabric.tasks.pipeline_tasks import run_pipeline
+from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.dependency import NodeType
+from datanika.models.run import RunStatus
+from datanika.models.user import Organization
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
+from datanika.services.pipeline_service import PipelineService
+from datanika.tasks.pipeline_tasks import run_pipeline
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def setup_pipeline(pipe_svc, conn_svc, exec_svc, db_session, encryption):
 
 def _mock_dlt_runner():
     """Return a patch context that mocks DltRunnerService.execute for pipeline task tests."""
-    return patch("etlfabric.tasks.pipeline_tasks.DltRunnerService")
+    return patch("datanika.tasks.pipeline_tasks.DltRunnerService")
 
 
 class TestRunPipelineTask:

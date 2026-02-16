@@ -2,9 +2,9 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.connection_config_fields import type_fields
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.connection_state import ConnectionState
+from datanika.ui.components.connection_config_fields import type_fields
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.connection_state import ConnectionState
 
 
 def connection_form() -> rx.Component:

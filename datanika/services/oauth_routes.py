@@ -7,15 +7,15 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
 
-from etlfabric.config import settings
-from etlfabric.services.auth import AuthService
-from etlfabric.services.oauth_service import (
+from datanika.config import settings
+from datanika.services.auth import AuthService
+from datanika.services.oauth_service import (
     OAuthProvider,
     OAuthService,
     github_provider,
     google_provider,
 )
-from etlfabric.services.user_service import UserService
+from datanika.services.user_service import UserService
 
 
 def _get_providers() -> dict[str, OAuthProvider]:

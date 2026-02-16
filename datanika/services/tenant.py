@@ -2,8 +2,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from etlfabric.migrations.helpers import is_tenant_table
-from etlfabric.models.base import Base
+from datanika.migrations.helpers import is_tenant_table
+from datanika.models.base import Base
 
 
 class TenantService:

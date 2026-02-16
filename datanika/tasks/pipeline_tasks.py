@@ -5,13 +5,13 @@ import traceback
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.connection import Connection
-from etlfabric.models.pipeline import Pipeline
-from etlfabric.models.run import Run
-from etlfabric.services.dlt_runner import DltRunnerService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.tasks.celery_app import celery_app
+from datanika.models.connection import Connection
+from datanika.models.pipeline import Pipeline
+from datanika.models.run import Run
+from datanika.services.dlt_runner import DltRunnerService
+from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
+from datanika.tasks.celery_app import celery_app
 
 execution_service = ExecutionService()
 
@@ -33,13 +33,13 @@ def run_pipeline(
         from sqlalchemy import create_engine
         from sqlalchemy.orm import Session as SyncSession
 
-        from etlfabric.config import settings
+        from datanika.config import settings
 
         engine = create_engine(settings.database_url_sync)
         session = SyncSession(engine)
 
     if encryption is None:
-        from etlfabric.config import settings
+        from datanika.config import settings
 
         encryption = EncryptionService(settings.credential_encryption_key)
 
@@ -92,7 +92,7 @@ def run_pipeline(
             session.close()
 
 
-@celery_app.task(bind=True, name="etlfabric.run_pipeline")
+@celery_app.task(bind=True, name="datanika.run_pipeline")
 def run_pipeline_task(self, run_id: int, org_id: int):
     """Celery entry point for pipeline execution."""
     run_pipeline(run_id=run_id, org_id=org_id)

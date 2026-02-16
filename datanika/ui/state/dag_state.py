@@ -2,14 +2,14 @@
 
 from pydantic import BaseModel
 
-from etlfabric.config import settings
-from etlfabric.models.dependency import NodeType
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.dependency_service import DependencyService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.pipeline_service import PipelineService
-from etlfabric.services.transformation_service import TransformationService
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from datanika.config import settings
+from datanika.models.dependency import NodeType
+from datanika.services.connection_service import ConnectionService
+from datanika.services.dependency_service import DependencyService
+from datanika.services.encryption import EncryptionService
+from datanika.services.pipeline_service import PipelineService
+from datanika.services.transformation_service import TransformationService
+from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
 class DependencyItem(BaseModel):

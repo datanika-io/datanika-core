@@ -2,9 +2,9 @@
 
 import pytest
 
-from etlfabric.models.transformation import Materialization, Transformation
-from etlfabric.models.user import Organization
-from etlfabric.services.transformation_service import (
+from datanika.models.transformation import Materialization, Transformation
+from datanika.models.user import Organization
+from datanika.services.transformation_service import (
     TransformationConfigError,
     TransformationService,
 )

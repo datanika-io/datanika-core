@@ -5,8 +5,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Database
-    database_url: str = "postgresql+asyncpg://etlfabric:etlfabric@localhost:5432/etlfabric"
-    database_url_sync: str = "postgresql://etlfabric:etlfabric@localhost:5432/etlfabric"
+    database_url: str = "postgresql+asyncpg://datanika:datanika@localhost:5432/datanika"
+    database_url_sync: str = "postgresql://datanika:datanika@localhost:5432/datanika"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     dbt_projects_dir: str = "./dbt_projects"
 
     # App
-    app_name: str = "ETL Fabric"
+    app_name: str = "Datanika"
     debug: bool = True
 
 

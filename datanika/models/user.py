@@ -3,7 +3,7 @@ import enum
 from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from etlfabric.models.base import Base, TimestampMixin
+from datanika.models.base import Base, TimestampMixin
 
 
 class MemberRole(enum.StrEnum):

@@ -3,10 +3,10 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-from etlfabric.models.user import Organization
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.encryption import EncryptionService
+from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.models.user import Organization
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
 
 
 @pytest.fixture
@@ -325,7 +325,7 @@ class TestTestConnection:
         mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch(
-            "etlfabric.services.connection_service.create_engine", return_value=mock_engine
+            "datanika.services.connection_service.create_engine", return_value=mock_engine
         ):
             ok, msg = svc.test_connection(
                 {"host": "localhost", "port": 5432, "user": "u", "password": "p", "database": "d"},
@@ -347,7 +347,7 @@ class TestTestConnection:
         mock_engine.connect.side_effect = OperationalError("stmt", {}, Exception("refused"))
 
         with patch(
-            "etlfabric.services.connection_service.create_engine", return_value=mock_engine
+            "datanika.services.connection_service.create_engine", return_value=mock_engine
         ):
             ok, msg = svc.test_connection(
                 {"host": "badhost", "user": "u", "password": "p", "database": "d"},
@@ -361,7 +361,7 @@ class TestTestConnection:
         from unittest.mock import patch
 
         with patch(
-            "etlfabric.services.connection_service.create_engine",
+            "datanika.services.connection_service.create_engine",
             side_effect=ImportError("No module named 'pymysql'"),
         ):
             ok, msg = svc.test_connection(
@@ -390,7 +390,7 @@ class TestTestConnection:
 
 class TestBuildSaUrl:
     def test_postgres_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         config = {
             "host": "db.example.com", "port": 5432,
@@ -404,7 +404,7 @@ class TestBuildSaUrl:
         assert "mydb" in url
 
     def test_redshift_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         config = {
             "host": "cluster.redshift.amazonaws.com",
@@ -415,7 +415,7 @@ class TestBuildSaUrl:
         assert "5439" in url  # default redshift port
 
     def test_mysql_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url(
             {"host": "mysql.local", "user": "root", "password": "pw", "database": "app"},
@@ -425,7 +425,7 @@ class TestBuildSaUrl:
         assert "3306" in url
 
     def test_mssql_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url(
             {"host": "sql.local", "user": "sa", "password": "pw", "database": "master"},
@@ -435,19 +435,19 @@ class TestBuildSaUrl:
         assert "1433" in url
 
     def test_sqlite_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url({"path": "/tmp/test.db"}, ConnectionType.SQLITE)
         assert url == "sqlite:////tmp/test.db"
 
     def test_sqlite_memory_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url({"path": ":memory:"}, ConnectionType.SQLITE)
         assert url == "sqlite:///:memory:"
 
     def test_snowflake_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url(
             {
@@ -467,7 +467,7 @@ class TestBuildSaUrl:
         assert "role=LOADER" in url
 
     def test_bigquery_url(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         url = _build_sa_url(
             {"project": "my-project", "dataset": "raw_data"},
@@ -476,7 +476,7 @@ class TestBuildSaUrl:
         assert url == "bigquery://my-project/raw_data"
 
     def test_special_chars_encoded(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         config = {
             "host": "db.example.com", "user": "admin@corp",
@@ -487,7 +487,7 @@ class TestBuildSaUrl:
         assert "p%40ss%2Fword%21" in url
 
     def test_unsupported_type_raises(self):
-        from etlfabric.services.connection_service import _build_sa_url
+        from datanika.services.connection_service import _build_sa_url
 
         with pytest.raises(ValueError, match="Unsupported"):
             _build_sa_url({"bucket": "x"}, ConnectionType.S3)

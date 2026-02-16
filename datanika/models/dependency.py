@@ -3,7 +3,7 @@ import enum
 from sqlalchemy import BigInteger, Enum
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.base import Base, TenantMixin, TimestampMixin
 
 
 class NodeType(enum.StrEnum):

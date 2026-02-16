@@ -14,7 +14,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 
 # Stub the package so uv sync can resolve it without full source
-RUN mkdir -p etlfabric && touch etlfabric/__init__.py
+RUN mkdir -p datanika && touch datanika/__init__.py
 
 # Install dependencies (no dev deps in production image)
 RUN uv sync --frozen --no-dev

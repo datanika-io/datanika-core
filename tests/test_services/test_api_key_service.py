@@ -4,9 +4,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from etlfabric.models.api_key import ApiKey
-from etlfabric.models.user import Organization, User
-from etlfabric.services.api_key_service import ApiKeyService
+from datanika.models.api_key import ApiKey
+from datanika.models.user import Organization, User
+from datanika.services.api_key_service import ApiKeyService
 
 
 @pytest.fixture

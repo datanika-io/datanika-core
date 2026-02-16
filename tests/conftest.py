@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from etlfabric.models.base import Base
+from datanika.models.base import Base
 
 
 @pytest.fixture

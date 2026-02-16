@@ -36,7 +36,12 @@
       "Bash(ls:*)",
       "Bash(docker build:*)",
       "Bash(docker run:*)",
-      "Bash(docker port:*)"
+      "Bash(docker port:*)",
+      "Bash(git mv:*)",
+      "Bash(find:*)",
+      "Bash(gh repo rename:*)",
+      "Bash(where:*)",
+      "Bash(git remote set-url:*)"
     ]
   }
 }

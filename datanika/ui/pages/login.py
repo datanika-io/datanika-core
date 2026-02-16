@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.config import settings
-from etlfabric.ui.state.auth_state import AuthState
+from datanika.config import settings
+from datanika.ui.state.auth_state import AuthState
 
 _backend = settings.oauth_redirect_base_url
 
@@ -11,7 +11,7 @@ _backend = settings.oauth_redirect_base_url
 def login_page() -> rx.Component:
     return rx.center(
         rx.vstack(
-            rx.heading("ETL Fabric", size="7"),
+            rx.heading("Datanika", size="7"),
             rx.text("Sign in to your account", size="3", color="gray"),
             rx.cond(
                 AuthState.auth_error != "",
@@ -28,7 +28,6 @@ def login_page() -> rx.Component:
                     rx.input(
                         placeholder="you@example.com",
                         name="email",
-                        type="email",
                         width="100%",
                     ),
                     rx.text("Password", size="2", weight="medium"),
@@ -77,7 +76,11 @@ def login_page() -> rx.Component:
             ),
             rx.text(
                 "Don't have an account? ",
-                rx.link("Sign up", href="/signup"),
+                rx.link(
+                    "Sign up",
+                    href="/signup",
+                    on_click=AuthState.clear_auth_error,
+                ),
                 size="2",
                 color="gray",
             ),

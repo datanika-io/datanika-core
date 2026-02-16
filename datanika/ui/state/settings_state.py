@@ -2,11 +2,11 @@
 
 from pydantic import BaseModel
 
-from etlfabric.config import settings as app_settings
-from etlfabric.services.auth import AuthService
-from etlfabric.services.user_service import UserService
-from etlfabric.ui.state.auth_state import AuthState
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from datanika.config import settings as app_settings
+from datanika.services.auth import AuthService
+from datanika.services.user_service import UserService
+from datanika.ui.state.auth_state import AuthState
+from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
 class MemberItem(BaseModel):
@@ -87,7 +87,7 @@ class SettingsState(BaseState):
         self.org_name = self.edit_org_name
         self.org_slug = self.edit_org_slug
         # Update AuthState's current_org
-        from etlfabric.ui.state.auth_state import OrgInfo
+        from datanika.ui.state.auth_state import OrgInfo
 
         auth_state.current_org = OrgInfo(
             id=auth_state.current_org.id,
@@ -105,7 +105,7 @@ class SettingsState(BaseState):
                 if user is None:
                     self.error_message = "User not found"
                     return
-                from etlfabric.models.user import MemberRole
+                from datanika.models.user import MemberRole
 
                 svc.add_member(
                     session,
@@ -126,7 +126,7 @@ class SettingsState(BaseState):
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
-                from etlfabric.models.user import MemberRole
+                from datanika.models.user import MemberRole
 
                 svc.change_role(
                     session,

@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.dag_state import DagState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.dag_state import DagState
 
 
 def add_dependency_form() -> rx.Component:

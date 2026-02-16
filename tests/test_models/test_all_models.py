@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from etlfabric.models.base import Base
+from datanika.models.base import Base
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +47,7 @@ class TestOrganization:
         assert cols["slug"].unique
 
     def test_create_organization(self, db_session):
-        from etlfabric.models.user import Organization
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme Corp", slug="acme-corp")
         db_session.add(org)
@@ -84,7 +84,7 @@ class TestUser:
         assert cols["email"].unique
 
     def test_create_user(self, db_session):
-        from etlfabric.models.user import User
+        from datanika.models.user import User
 
         user = User(
             email="alice@example.com",
@@ -121,7 +121,7 @@ class TestMembership:
         assert _has_fk_to("memberships", "org_id", "organizations")
 
     def test_role_enum_values(self):
-        from etlfabric.models.user import MemberRole
+        from datanika.models.user import MemberRole
 
         assert set(MemberRole) == {
             MemberRole.OWNER,
@@ -131,7 +131,7 @@ class TestMembership:
         }
 
     def test_create_membership(self, db_session):
-        from etlfabric.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme")
         user = User(email="bob@example.com", password_hash="h", full_name="Bob")
@@ -171,7 +171,7 @@ class TestConnection:
         assert _has_fk_to("connections", "org_id", "organizations")
 
     def test_enums(self):
-        from etlfabric.models.connection import ConnectionDirection, ConnectionType
+        from datanika.models.connection import ConnectionDirection, ConnectionType
 
         assert ConnectionType.POSTGRES in ConnectionType
         assert ConnectionType.MYSQL in ConnectionType
@@ -186,8 +186,8 @@ class TestConnection:
         assert ConnectionDirection.BOTH in ConnectionDirection
 
     def test_create_connection(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-conn")
         db_session.add(org)
@@ -236,7 +236,7 @@ class TestPipeline:
         assert _has_fk_to("pipelines", "destination_connection_id", "connections")
 
     def test_status_enum(self):
-        from etlfabric.models.pipeline import PipelineStatus
+        from datanika.models.pipeline import PipelineStatus
 
         assert set(PipelineStatus) == {
             PipelineStatus.DRAFT,
@@ -246,9 +246,9 @@ class TestPipeline:
         }
 
     def test_create_pipeline(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.pipeline import Pipeline, PipelineStatus
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-pipe")
         db_session.add(org)
@@ -314,7 +314,7 @@ class TestTransformation:
         assert _has_fk_to("transformations", "org_id", "organizations")
 
     def test_materialization_enum(self):
-        from etlfabric.models.transformation import Materialization
+        from datanika.models.transformation import Materialization
 
         assert set(Materialization) == {
             Materialization.VIEW,
@@ -325,8 +325,8 @@ class TestTransformation:
         }
 
     def test_create_transformation(self, db_session):
-        from etlfabric.models.transformation import Materialization, Transformation
-        from etlfabric.models.user import Organization
+        from datanika.models.transformation import Materialization, Transformation
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-txf")
         db_session.add(org)
@@ -368,16 +368,16 @@ class TestDependency:
         assert _pk_is_autoincrement("dependencies")
 
     def test_node_type_enum(self):
-        from etlfabric.models.dependency import NodeType
+        from datanika.models.dependency import NodeType
 
         assert set(NodeType) == {NodeType.PIPELINE, NodeType.TRANSFORMATION}
 
     def test_create_dependency(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.dependency import Dependency, NodeType
-        from etlfabric.models.pipeline import Pipeline, PipelineStatus
-        from etlfabric.models.transformation import Materialization, Transformation
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.dependency import Dependency, NodeType
+        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.transformation import Materialization, Transformation
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-dep")
         db_session.add(org)
@@ -457,11 +457,11 @@ class TestSchedule:
         assert _pk_is_autoincrement("schedules")
 
     def test_create_schedule(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.dependency import NodeType
-        from etlfabric.models.pipeline import Pipeline, PipelineStatus
-        from etlfabric.models.schedule import Schedule
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.dependency import NodeType
+        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.schedule import Schedule
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-sched")
         db_session.add(org)
@@ -537,7 +537,7 @@ class TestRun:
         assert _pk_is_autoincrement("runs")
 
     def test_run_status_enum(self):
-        from etlfabric.models.run import RunStatus
+        from datanika.models.run import RunStatus
 
         assert set(RunStatus) == {
             RunStatus.PENDING,
@@ -548,11 +548,11 @@ class TestRun:
         }
 
     def test_create_run(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.dependency import NodeType
-        from etlfabric.models.pipeline import Pipeline, PipelineStatus
-        from etlfabric.models.run import Run, RunStatus
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.dependency import NodeType
+        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.run import Run, RunStatus
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-run")
         db_session.add(org)
@@ -607,7 +607,7 @@ class TestRun:
 # ===========================================================================
 class TestRelationships:
     def test_user_memberships_relationship(self, db_session):
-        from etlfabric.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme-rel")
         user = User(email="rel@example.com", password_hash="h", full_name="Rel Test")
@@ -623,7 +623,7 @@ class TestRelationships:
         assert user.memberships[0].org_id == org.id
 
     def test_org_memberships_relationship(self, db_session):
-        from etlfabric.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization, User
 
         org = Organization(name="Acme", slug="acme-rel2")
         user = User(email="rel2@example.com", password_hash="h", full_name="Rel Test2")
@@ -638,9 +638,9 @@ class TestRelationships:
         assert len(org.memberships) == 1
 
     def test_pipeline_connection_relationships(self, db_session):
-        from etlfabric.models.connection import Connection, ConnectionDirection, ConnectionType
-        from etlfabric.models.pipeline import Pipeline, PipelineStatus
-        from etlfabric.models.user import Organization
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-rel3")
         db_session.add(org)

@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.settings_state import MemberItem, SettingsState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.settings_state import MemberItem, SettingsState
 
 
 def org_profile_card() -> rx.Component:

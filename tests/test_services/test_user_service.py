@@ -2,9 +2,9 @@
 
 import pytest
 
-from etlfabric.models.user import MemberRole, Membership, Organization, User
-from etlfabric.services.auth import AuthService
-from etlfabric.services.user_service import UserService, UserServiceError
+from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.services.auth import AuthService
+from datanika.services.user_service import UserService, UserServiceError
 
 
 @pytest.fixture

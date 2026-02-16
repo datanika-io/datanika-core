@@ -1,6 +1,6 @@
 """Tests for settings-related rx.Base data model classes and SettingsState fields."""
 
-from etlfabric.ui.state.settings_state import MemberItem, SettingsState
+from datanika.ui.state.settings_state import MemberItem, SettingsState
 
 
 class TestMemberItem:

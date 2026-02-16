@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.transformation import Materialization, Transformation
+from datanika.models.transformation import Materialization, Transformation
 
 
 class TransformationConfigError(ValueError):

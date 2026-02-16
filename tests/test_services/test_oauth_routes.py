@@ -6,8 +6,8 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from etlfabric.services.oauth_routes import oauth_routes
-from etlfabric.services.oauth_service import github_provider, google_provider
+from datanika.services.oauth_routes import oauth_routes
+from datanika.services.oauth_service import github_provider, google_provider
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def client():
 # ---------------------------------------------------------------------------
 class TestOAuthLogin:
     def test_google_redirects_to_provider(self, client):
-        with patch("etlfabric.services.oauth_routes._get_providers") as mock:
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             resp = client.get("/api/auth/login/google")
             assert resp.status_code == 302
@@ -31,14 +31,14 @@ class TestOAuthLogin:
             assert "response_type=code" in location
 
     def test_github_redirects_to_provider(self, client):
-        with patch("etlfabric.services.oauth_routes._get_providers") as mock:
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"github": github_provider("ghid", "ghsecret")}
             resp = client.get("/api/auth/login/github")
             assert resp.status_code == 302
             assert "github.com" in resp.headers["location"]
 
     def test_unknown_provider_redirects_to_login(self, client):
-        with patch("etlfabric.services.oauth_routes._get_providers") as mock:
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {}
             resp = client.get("/api/auth/login/unknown")
             assert resp.status_code == 302
@@ -51,9 +51,9 @@ class TestOAuthLogin:
 class TestOAuthCallback:
     def test_exchanges_code_and_redirects(self, client):
         with (
-            patch("etlfabric.services.oauth_routes._get_providers") as prov_mock,
-            patch("etlfabric.services.oauth_routes._get_service") as svc_mock,
-            patch("etlfabric.services.oauth_routes._get_session") as sess_mock,
+            patch("datanika.services.oauth_routes._get_providers") as prov_mock,
+            patch("datanika.services.oauth_routes._get_service") as svc_mock,
+            patch("datanika.services.oauth_routes._get_session") as sess_mock,
         ):
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
@@ -79,9 +79,9 @@ class TestOAuthCallback:
 
     def test_new_user_redirects_to_complete(self, client):
         with (
-            patch("etlfabric.services.oauth_routes._get_providers") as prov_mock,
-            patch("etlfabric.services.oauth_routes._get_service") as svc_mock,
-            patch("etlfabric.services.oauth_routes._get_session") as sess_mock,
+            patch("datanika.services.oauth_routes._get_providers") as prov_mock,
+            patch("datanika.services.oauth_routes._get_service") as svc_mock,
+            patch("datanika.services.oauth_routes._get_session") as sess_mock,
         ):
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
@@ -104,14 +104,14 @@ class TestOAuthCallback:
             assert "is_new=1" in resp.headers["location"]
 
     def test_missing_code_redirects_to_login(self, client):
-        with patch("etlfabric.services.oauth_routes._get_providers") as mock:
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             resp = client.get("/api/auth/callback/google")
             assert resp.status_code == 302
             assert "/login" in resp.headers["location"]
 
     def test_unknown_provider_redirects_to_login(self, client):
-        with patch("etlfabric.services.oauth_routes._get_providers") as mock:
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {}
             resp = client.get("/api/auth/callback/unknown?code=abc")
             assert resp.status_code == 302
@@ -119,9 +119,9 @@ class TestOAuthCallback:
 
     def test_service_error_redirects_to_login(self, client):
         with (
-            patch("etlfabric.services.oauth_routes._get_providers") as prov_mock,
-            patch("etlfabric.services.oauth_routes._get_service") as svc_mock,
-            patch("etlfabric.services.oauth_routes._get_session") as sess_mock,
+            patch("datanika.services.oauth_routes._get_providers") as prov_mock,
+            patch("datanika.services.oauth_routes._get_service") as svc_mock,
+            patch("datanika.services.oauth_routes._get_session") as sess_mock,
         ):
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 

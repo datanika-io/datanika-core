@@ -4,7 +4,7 @@ from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.base import Base, TenantMixin, TimestampMixin
 
 
 class PipelineStatus(enum.StrEnum):

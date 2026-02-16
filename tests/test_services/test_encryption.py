@@ -4,7 +4,7 @@ import cryptography.fernet
 import pytest
 from cryptography.fernet import Fernet
 
-from etlfabric.services.encryption import EncryptionService
+from datanika.services.encryption import EncryptionService
 
 
 @pytest.fixture

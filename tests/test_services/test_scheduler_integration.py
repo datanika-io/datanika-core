@@ -5,13 +5,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from apscheduler.triggers.cron import CronTrigger
 
-from etlfabric.services.scheduler_integration import SchedulerIntegrationService
+from datanika.services.scheduler_integration import SchedulerIntegrationService
 
 
 @pytest.fixture
 def mock_scheduler():
     """Return a mock BackgroundScheduler."""
-    with patch("etlfabric.services.scheduler_integration.BackgroundScheduler") as mock_cls:
+    with patch("datanika.services.scheduler_integration.BackgroundScheduler") as mock_cls:
         scheduler_instance = mock_cls.return_value
         scheduler_instance.running = False
         scheduler_instance.get_job.return_value = None
@@ -184,8 +184,8 @@ class TestGetJob:
 # _dispatch_target
 # ---------------------------------------------------------------------------
 class TestDispatchTarget:
-    @patch("etlfabric.services.scheduler_integration.run_pipeline_task")
-    @patch("etlfabric.services.scheduler_integration.ExecutionService")
+    @patch("datanika.services.scheduler_integration.run_pipeline_task")
+    @patch("datanika.services.scheduler_integration.ExecutionService")
     def test_creates_run_for_pipeline(self, mock_exec_cls, mock_pipeline_task):
         mock_svc = mock_exec_cls.return_value
         mock_run = MagicMock()
@@ -193,16 +193,16 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("etlfabric.services.scheduler_integration.create_engine"),
-            patch("etlfabric.services.scheduler_integration.SyncSession"),
+            patch("datanika.services.scheduler_integration.create_engine"),
+            patch("datanika.services.scheduler_integration.SyncSession"),
         ):
             SchedulerIntegrationService._dispatch_target(1, "pipeline", 10)
 
         mock_svc.create_run.assert_called_once()
         mock_pipeline_task.delay.assert_called_once()
 
-    @patch("etlfabric.services.scheduler_integration.run_transformation_task")
-    @patch("etlfabric.services.scheduler_integration.ExecutionService")
+    @patch("datanika.services.scheduler_integration.run_transformation_task")
+    @patch("datanika.services.scheduler_integration.ExecutionService")
     def test_creates_run_for_transformation(self, mock_exec_cls, mock_transform_task):
         mock_svc = mock_exec_cls.return_value
         mock_run = MagicMock()
@@ -210,16 +210,16 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("etlfabric.services.scheduler_integration.create_engine"),
-            patch("etlfabric.services.scheduler_integration.SyncSession"),
+            patch("datanika.services.scheduler_integration.create_engine"),
+            patch("datanika.services.scheduler_integration.SyncSession"),
         ):
             SchedulerIntegrationService._dispatch_target(1, "transformation", 20)
 
         mock_svc.create_run.assert_called_once()
         mock_transform_task.delay.assert_called_once()
 
-    @patch("etlfabric.services.scheduler_integration.run_pipeline_task")
-    @patch("etlfabric.services.scheduler_integration.ExecutionService")
+    @patch("datanika.services.scheduler_integration.run_pipeline_task")
+    @patch("datanika.services.scheduler_integration.ExecutionService")
     def test_dispatches_correct_celery_task(self, mock_exec_cls, mock_pipeline_task):
         mock_svc = mock_exec_cls.return_value
         mock_run = MagicMock()
@@ -227,8 +227,8 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("etlfabric.services.scheduler_integration.create_engine"),
-            patch("etlfabric.services.scheduler_integration.SyncSession"),
+            patch("datanika.services.scheduler_integration.create_engine"),
+            patch("datanika.services.scheduler_integration.SyncSession"),
         ):
             SchedulerIntegrationService._dispatch_target(3, "pipeline", 7)
 

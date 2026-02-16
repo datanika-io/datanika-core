@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from etlfabric.ui.state.connection_state import ConnectionState
+from datanika.ui.state.connection_state import ConnectionState
 
 
 def db_fields() -> rx.Component:

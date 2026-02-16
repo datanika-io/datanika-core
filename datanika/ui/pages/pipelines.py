@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.pipeline_state import PipelineState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.pipeline_state import PipelineState
 
 
 def _mode_fields() -> rx.Component:

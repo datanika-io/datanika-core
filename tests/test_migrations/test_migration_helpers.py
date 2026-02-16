@@ -1,11 +1,11 @@
 """TDD tests for multi-tenant migration helpers."""
 
-from etlfabric.migrations.helpers import (
+from datanika.migrations.helpers import (
     PUBLIC_TABLES,
     is_public_table,
     is_tenant_table,
 )
-from etlfabric.models.base import Base
+from datanika.models.base import Base
 
 
 class TestPublicTablesSet:

@@ -4,7 +4,7 @@ from sqlalchemy import Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.base import Base, TenantMixin, TimestampMixin
 
 
 class Materialization(enum.StrEnum):

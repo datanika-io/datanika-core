@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.schedule_state import ScheduleState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.schedule_state import ScheduleState
 
 
 def schedule_form() -> rx.Component:

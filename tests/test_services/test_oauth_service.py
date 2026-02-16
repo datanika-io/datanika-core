@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from etlfabric.services.oauth_service import (
+from datanika.services.oauth_service import (
     OAuthError,
     OAuthService,
     github_provider,

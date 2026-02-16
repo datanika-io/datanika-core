@@ -1,24 +1,24 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: etlfabric-postgres
+    container_name: datanika-postgres
     environment:
-      POSTGRES_USER: etlfabric
-      POSTGRES_PASSWORD: etlfabric
-      POSTGRES_DB: etlfabric
+      POSTGRES_USER: datanika
+      POSTGRES_PASSWORD: datanika
+      POSTGRES_DB: datanika
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U etlfabric"]
+      test: ["CMD-SHELL", "pg_isready -U datanika"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: etlfabric-redis
+    container_name: datanika-redis
     ports:
       - "6379:6379"
     volumes:
@@ -31,7 +31,7 @@ services:
 
   app:
     build: .
-    container_name: etlfabric-app
+    container_name: datanika-app
     ports:
       - "3000:3000"
       - "8000:8000"
@@ -50,7 +50,7 @@ services:
 
   celery:
     build: .
-    container_name: etlfabric-celery
+    container_name: datanika-celery
     env_file:
       - .env.docker
     depends_on:
@@ -60,7 +60,7 @@ services:
         condition: service_healthy
     volumes:
       - dbt_projects:/app/dbt_projects
-    command: uv run celery -A etlfabric.tasks.celery_app:celery_app worker -l info
+    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
 
 volumes:
   pgdata:

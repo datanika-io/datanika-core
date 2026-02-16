@@ -2,10 +2,10 @@
 
 from pydantic import BaseModel
 
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.run import RunStatus
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from datanika.models.dependency import NodeType
+from datanika.models.run import RunStatus
+from datanika.services.execution_service import ExecutionService
+from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
 class RunItem(BaseModel):

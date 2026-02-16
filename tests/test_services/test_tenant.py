@@ -1,6 +1,6 @@
 """TDD tests for tenant service (schema-per-tenant management)."""
 
-from etlfabric.services.tenant import TenantService
+from datanika.services.tenant import TenantService
 
 
 class TestTenantService:

@@ -4,8 +4,8 @@ from datetime import datetime
 from sqlalchemy import BigInteger, DateTime, Enum, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
-from etlfabric.models.dependency import NodeType
+from datanika.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.dependency import NodeType
 
 
 class RunStatus(enum.StrEnum):

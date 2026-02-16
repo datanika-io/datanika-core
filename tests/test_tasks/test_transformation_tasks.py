@@ -5,14 +5,14 @@ from unittest.mock import patch
 import pytest
 from cryptography.fernet import Fernet
 
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.run import RunStatus
-from etlfabric.models.transformation import Materialization
-from etlfabric.models.user import Organization
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.services.transformation_service import TransformationService
-from etlfabric.tasks.transformation_tasks import run_transformation
+from datanika.models.dependency import NodeType
+from datanika.models.run import RunStatus
+from datanika.models.transformation import Materialization
+from datanika.models.user import Organization
+from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
+from datanika.services.transformation_service import TransformationService
+from datanika.tasks.transformation_tasks import run_transformation
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def setup_transformation(transform_svc, exec_svc, db_session):
 
 def _mock_dbt_project():
     """Return a patch context that mocks DbtProjectService for transformation task tests."""
-    return patch("etlfabric.tasks.transformation_tasks.DbtProjectService")
+    return patch("datanika.tasks.transformation_tasks.DbtProjectService")
 
 
 class TestRunTransformationTask:
@@ -129,6 +129,6 @@ class TestRunTransformationTask:
         assert "not found" in run.error_message.lower()
 
     def test_celery_task_exists(self):
-        from etlfabric.tasks.transformation_tasks import run_transformation_task
+        from datanika.tasks.transformation_tasks import run_transformation_task
 
-        assert run_transformation_task.name == "etlfabric.run_transformation"
+        assert run_transformation_task.name == "datanika.run_transformation"

@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.schedule import Schedule
-from etlfabric.services.pipeline_service import PipelineService
-from etlfabric.services.transformation_service import TransformationService
+from datanika.models.dependency import NodeType
+from datanika.models.schedule import Schedule
+from datanika.services.pipeline_service import PipelineService
+from datanika.services.transformation_service import TransformationService
 
 if TYPE_CHECKING:
-    from etlfabric.services.scheduler_integration import SchedulerIntegrationService
+    from datanika.services.scheduler_integration import SchedulerIntegrationService
 
 
 class ScheduleConfigError(ValueError):

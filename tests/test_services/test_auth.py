@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from etlfabric.services.auth import AuthService
+from datanika.services.auth import AuthService
 
 
 @pytest.fixture

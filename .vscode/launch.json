@@ -16,7 +16,7 @@
       "type": "debugpy",
       "request": "launch",
       "module": "celery",
-      "args": ["-A", "etlfabric.tasks", "worker", "-l", "info", "-P", "solo"],
+      "args": ["-A", "datanika.tasks", "worker", "-l", "info", "-P", "solo"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "justMyCode": false

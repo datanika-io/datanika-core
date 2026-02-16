@@ -1,6 +1,6 @@
 """Tests for auth-related rx.Base data model classes and AuthState fields."""
 
-from etlfabric.ui.state.auth_state import AuthState, OrgInfo, UserInfo
+from datanika.ui.state.auth_state import AuthState, OrgInfo, UserInfo
 
 
 class TestUserInfo:

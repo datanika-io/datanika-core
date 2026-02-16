@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-ETL Fabric — a multi-tenant data pipeline management platform. Uses dlt (Extract+Load) and dbt-core (Transform) with a Reflex (Python→React) UI, PostgreSQL, Celery+Redis task queue, and APScheduler.
+Datanika — a multi-tenant data pipeline management platform. Uses dlt (Extract+Load) and dbt-core (Transform) with a Reflex (Python→React) UI, PostgreSQL, Celery+Redis task queue, and APScheduler.
 
 ## Commands
 
@@ -27,17 +27,17 @@ docker-compose up -d
 uv run reflex run
 
 # Celery worker (separate terminal)
-uv run celery -A etlfabric.tasks worker -l info
+uv run celery -A datanika.tasks worker -l info
 
 # Lint
-uv run ruff check etlfabric tests
-uv run ruff format etlfabric tests
+uv run ruff check datanika tests
+uv run ruff format datanika tests
 
 # Tests
 uv run pytest tests/
 uv run pytest tests/test_models/test_all_models.py     # single file
 uv run pytest -k "auth" tests/                          # pattern match
-uv run pytest tests/ --cov=etlfabric --cov-report=html  # with coverage
+uv run pytest tests/ --cov=datanika --cov-report=html  # with coverage
 
 # Migrations
 uv run alembic revision --autogenerate -m "description"
@@ -60,11 +60,11 @@ Sources → **dlt** (extract+load into user-chosen schema) → **dbt** (transfor
 - **Async DB everywhere**: SQLAlchemy 2.0+ with `asyncpg`, use `async with` sessions from `db.get_session()`
 - **ORM models**: Inherit from `Base` + `TimestampMixin` + `TenantMixin`. Use `Mapped[type]` annotations, **integer autoincrement primary keys** (PostgreSQL IDENTITY — no UUIDs for PKs)
 - **Soft delete**: All timestamped models have `deleted_at` (nullable) via `TimestampMixin`
-- **Config**: Pydantic Settings from `.env` — access via `from etlfabric.config import settings`
+- **Config**: Pydantic Settings from `.env` — access via `from datanika.config import settings`
 - **Auth**: `AuthService` — bcrypt password hashing (direct, not passlib), JWT access+refresh tokens via python-jose, RBAC with 4 roles (owner > admin > editor > viewer)
 - **Credentials**: `EncryptionService` — Fernet encrypt/decrypt for connection credentials stored in DB
-- **Long-running work**: Celery tasks (JSON serializer, Redis broker). Tasks named `etlfabric.{action}_{entity}`
-- **Reflex UI**: Pages are functions returning `rx.Component`, state classes manage reactive data, entry point is `etlfabric/etlfabric.py`
+- **Long-running work**: Celery tasks (JSON serializer, Redis broker). Tasks named `datanika.{action}_{entity}`
+- **Reflex UI**: Pages are functions returning `rx.Component`, state classes manage reactive data, entry point is `datanika/datanika.py`
 
 ### Layer Responsibilities
 - `models/` — SQLAlchemy ORM (data shape only, no logic)
@@ -83,9 +83,9 @@ Follow test-driven development for all new code:
 3. **Refactor** — clean up while keeping tests green.
 
 Test placement mirrors source layout:
-- `etlfabric/models/user.py` → `tests/test_models/test_user.py`
-- `etlfabric/services/pipeline_service.py` → `tests/test_services/test_pipeline_service.py`
-- `etlfabric/tasks/pipeline_tasks.py` → `tests/test_tasks/test_pipeline_tasks.py`
+- `datanika/models/user.py` → `tests/test_models/test_user.py`
+- `datanika/services/pipeline_service.py` → `tests/test_services/test_pipeline_service.py`
+- `datanika/tasks/pipeline_tasks.py` → `tests/test_tasks/test_pipeline_tasks.py`
 
 When implementing a new feature, the PR should contain tests *committed before or alongside* the implementation — never implementation without tests.
 

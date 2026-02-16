@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.user import MemberRole, Membership, Organization, User
-from etlfabric.services.auth import AuthService
+from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.services.auth import AuthService
 
 
 class UserServiceError(ValueError):

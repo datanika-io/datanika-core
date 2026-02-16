@@ -3,12 +3,12 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from etlfabric.models.connection import ConnectionDirection, ConnectionType
-from etlfabric.models.pipeline import Pipeline, PipelineStatus
-from etlfabric.models.user import Organization
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.pipeline_service import PipelineConfigError, PipelineService
+from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.pipeline import Pipeline, PipelineStatus
+from datanika.models.user import Organization
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
+from datanika.services.pipeline_service import PipelineConfigError, PipelineService
 
 
 @pytest.fixture

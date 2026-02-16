@@ -2,7 +2,7 @@
 
 import reflex as rx
 
-from etlfabric.ui.state.auth_state import AuthState
+from datanika.ui.state.auth_state import AuthState
 
 
 def sidebar_link(text: str, href: str, icon: str) -> rx.Component:
@@ -55,7 +55,7 @@ def sidebar_user_section() -> rx.Component:
 def sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
-            rx.heading("ETL Fabric", size="5", padding="16px"),
+            rx.heading("Datanika", size="5", padding="16px"),
             rx.separator(),
             rx.vstack(
                 sidebar_link("Dashboard", "/", "layout-dashboard"),

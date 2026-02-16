@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.audit_log import AuditAction, AuditLog
+from datanika.models.audit_log import AuditAction, AuditLog
 
 
 class AuditService:

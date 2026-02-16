@@ -2,16 +2,16 @@
 
 from pydantic import BaseModel
 
-from etlfabric.config import settings
-from etlfabric.models.run import RunStatus
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.services.pipeline_service import PipelineService
-from etlfabric.services.schedule_service import ScheduleService
-from etlfabric.services.transformation_service import TransformationService
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
-from etlfabric.ui.state.run_state import RunItem
+from datanika.config import settings
+from datanika.models.run import RunStatus
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
+from datanika.services.pipeline_service import PipelineService
+from datanika.services.schedule_service import ScheduleService
+from datanika.services.transformation_service import TransformationService
+from datanika.ui.state.base_state import BaseState, get_sync_session
+from datanika.ui.state.run_state import RunItem
 
 
 class DashboardStats(BaseModel):

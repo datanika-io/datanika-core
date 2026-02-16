@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.dashboard_state import DashboardState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.dashboard_state import DashboardState
 
 
 def _status_color(status: rx.Var[str]) -> rx.Var[str]:
@@ -68,7 +68,7 @@ def dashboard_page() -> rx.Component:
     return page_layout(
         rx.vstack(
             rx.card(
-                rx.text("Welcome to ETL Fabric", size="4"),
+                rx.text("Welcome to Datanika", size="4"),
                 rx.text(
                     "Manage your data pipelines, transformations, and schedules.",
                     color="gray",

@@ -2,13 +2,13 @@
 
 import reflex as rx
 
-from etlfabric.ui.state.auth_state import AuthState
+from datanika.ui.state.auth_state import AuthState
 
 
 def signup_page() -> rx.Component:
     return rx.center(
         rx.vstack(
-            rx.heading("ETL Fabric", size="7"),
+            rx.heading("Datanika", size="7"),
             rx.text("Create your account", size="3", color="gray"),
             rx.cond(
                 AuthState.auth_error != "",
@@ -31,7 +31,6 @@ def signup_page() -> rx.Component:
                     rx.input(
                         placeholder="you@example.com",
                         name="email",
-                        type="email",
                         width="100%",
                     ),
                     rx.text("Password", size="2", weight="medium"),
@@ -54,7 +53,11 @@ def signup_page() -> rx.Component:
             ),
             rx.text(
                 "Already have an account? ",
-                rx.link("Sign in", href="/login"),
+                rx.link(
+                    "Sign in",
+                    href="/login",
+                    on_click=AuthState.clear_auth_error,
+                ),
                 size="2",
                 color="gray",
             ),

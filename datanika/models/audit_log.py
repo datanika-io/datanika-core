@@ -7,7 +7,7 @@ from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin
+from datanika.models.base import Base, TenantMixin
 
 
 class AuditAction(enum.StrEnum):

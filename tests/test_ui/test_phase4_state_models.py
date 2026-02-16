@@ -1,8 +1,8 @@
 """Tests for Phase 4 rx.Base data model classes used in UI state."""
 
-from etlfabric.ui.state.dag_state import DependencyItem
-from etlfabric.ui.state.dashboard_state import DashboardStats
-from etlfabric.ui.state.run_state import RunState
+from datanika.ui.state.dag_state import DependencyItem
+from datanika.ui.state.dashboard_state import DashboardStats
+from datanika.ui.state.run_state import RunState
 
 
 class TestDashboardStats:

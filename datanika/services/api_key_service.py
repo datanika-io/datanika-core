@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.api_key import ApiKey
+from datanika.models.api_key import ApiKey
 
 KEY_PREFIX = "etf_"
 KEY_BYTES = 32

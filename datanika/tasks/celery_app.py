@@ -1,9 +1,9 @@
 from celery import Celery
 
-from etlfabric.config import settings
+from datanika.config import settings
 
 celery_app = Celery(
-    "etlfabric",
+    "datanika",
     broker=settings.redis_url,
     backend=settings.redis_url,
 )
@@ -19,4 +19,4 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-celery_app.autodiscover_tasks(["etlfabric.tasks"])
+celery_app.autodiscover_tasks(["datanika.tasks"])

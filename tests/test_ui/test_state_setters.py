@@ -5,14 +5,14 @@ import inspect
 
 class TestAuthStateSetters:
     def test_clear_auth_error_exists(self):
-        from etlfabric.ui.state.auth_state import AuthState
+        from datanika.ui.state.auth_state import AuthState
 
         method = getattr(AuthState, "clear_auth_error", None)
         assert method is not None, "AuthState missing clear_auth_error"
         assert callable(method)
 
     def test_form_handlers_accept_form_data(self):
-        from etlfabric.ui.state.auth_state import AuthState
+        from datanika.ui.state.auth_state import AuthState
 
         for name in ["login", "signup"]:
             handler = getattr(AuthState, name)
@@ -26,7 +26,7 @@ class TestConnectionFormValidation:
     """Tests for _validate_connection_form required-field checks."""
 
     def _validate(self, **kwargs):
-        from etlfabric.ui.state.connection_state import _validate_connection_form
+        from datanika.ui.state.connection_state import _validate_connection_form
 
         return _validate_connection_form(**kwargs)
 
@@ -193,7 +193,7 @@ class TestConnectionFormValidation:
 
 class TestConnectionStateTestMethods:
     def test_test_connection_from_form_exists(self):
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         method = getattr(ConnectionState, "test_connection_from_form", None)
         assert method is not None, "ConnectionState missing test_connection_from_form"
@@ -201,7 +201,7 @@ class TestConnectionStateTestMethods:
         assert inspect.iscoroutinefunction(fn)
 
     def test_test_saved_connection_exists(self):
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         method = getattr(ConnectionState, "test_saved_connection", None)
         assert method is not None, "ConnectionState missing test_saved_connection"
@@ -209,7 +209,7 @@ class TestConnectionStateTestMethods:
         assert inspect.iscoroutinefunction(fn)
 
     def test_test_state_vars_exist(self):
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         fields = ConnectionState.get_fields()
         assert "test_message" in fields, "ConnectionState missing test_message"
@@ -218,7 +218,7 @@ class TestConnectionStateTestMethods:
 
 class TestConnectionStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         expected = [
             "set_form_name",
@@ -253,7 +253,7 @@ class TestConnectionStateSetters:
             assert callable(method)
 
     def test_bool_setter_signature(self):
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         handler = ConnectionState.set_form_use_raw_json
         fn = handler.fn if hasattr(handler, "fn") else handler
@@ -265,7 +265,7 @@ class TestConnectionStateSetters:
 
 class TestPipelineStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.pipeline_state import PipelineState
+        from datanika.ui.state.pipeline_state import PipelineState
 
         expected = [
             "set_form_name",
@@ -295,7 +295,7 @@ class TestPipelineStateSetters:
             assert callable(method)
 
     def test_bool_setter_signatures(self):
-        from etlfabric.ui.state.pipeline_state import PipelineState
+        from datanika.ui.state.pipeline_state import PipelineState
 
         for name in ["set_form_enable_incremental", "set_form_use_raw_json"]:
             handler = getattr(PipelineState, name)
@@ -308,7 +308,7 @@ class TestPipelineStateSetters:
 
 class TestTransformationStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.transformation_state import TransformationState
+        from datanika.ui.state.transformation_state import TransformationState
 
         expected = [
             "set_form_name",
@@ -326,7 +326,7 @@ class TestTransformationStateSetters:
 
 class TestScheduleStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.schedule_state import ScheduleState
+        from datanika.ui.state.schedule_state import ScheduleState
 
         expected = [
             "set_form_target_type",
@@ -342,7 +342,7 @@ class TestScheduleStateSetters:
 
 class TestDagStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.dag_state import DagState
+        from datanika.ui.state.dag_state import DagState
 
         expected = [
             "set_form_upstream_type",
@@ -358,7 +358,7 @@ class TestDagStateSetters:
 
 class TestSettingsStateSetters:
     def test_all_setters_exist(self):
-        from etlfabric.ui.state.settings_state import SettingsState
+        from datanika.ui.state.settings_state import SettingsState
 
         expected = [
             "set_edit_org_name",
@@ -374,7 +374,7 @@ class TestSettingsStateSetters:
 
 class TestRunStateSetters:
     def test_filter_setters_exist(self):
-        from etlfabric.ui.state.run_state import RunState
+        from datanika.ui.state.run_state import RunState
 
         expected = [
             "set_filter",
@@ -386,7 +386,7 @@ class TestRunStateSetters:
             assert callable(method)
 
     def test_filter_setters_are_async(self):
-        from etlfabric.ui.state.run_state import RunState
+        from datanika.ui.state.run_state import RunState
 
         for name in ["set_filter", "set_target_type_filter"]:
             handler = getattr(RunState, name)

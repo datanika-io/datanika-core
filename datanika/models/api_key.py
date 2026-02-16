@@ -6,7 +6,7 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
-from etlfabric.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.base import Base, TenantMixin, TimestampMixin
 
 
 class ApiKey(Base, TimestampMixin, TenantMixin):

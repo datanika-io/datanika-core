@@ -4,9 +4,9 @@ import json
 
 from pydantic import BaseModel
 
-from etlfabric.models.transformation import Materialization
-from etlfabric.services.transformation_service import TransformationService
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from datanika.models.transformation import Materialization
+from datanika.services.transformation_service import TransformationService
+from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
 class TransformationItem(BaseModel):
@@ -108,8 +108,8 @@ class TransformationState(BaseState):
 
     async def run_tests(self, transformation_id: int):
         """Run dbt tests for a transformation."""
-        from etlfabric.config import settings
-        from etlfabric.services.dbt_project import DbtProjectService
+        from datanika.config import settings
+        from datanika.services.dbt_project import DbtProjectService
 
         org_id = await self._get_org_id()
         svc = TransformationService()
@@ -138,8 +138,8 @@ class TransformationState(BaseState):
 
     async def preview_compiled_sql(self, transformation_id: int):
         """Compile dbt model and show compiled SQL."""
-        from etlfabric.config import settings
-        from etlfabric.services.dbt_project import DbtProjectService
+        from datanika.config import settings
+        from datanika.services.dbt_project import DbtProjectService
 
         org_id = await self._get_org_id()
         svc = TransformationService()

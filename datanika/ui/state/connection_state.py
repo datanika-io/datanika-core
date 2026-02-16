@@ -4,11 +4,11 @@ import json
 
 from pydantic import BaseModel
 
-from etlfabric.config import settings
-from etlfabric.models.connection import ConnectionDirection, ConnectionType
-from etlfabric.services.connection_service import ConnectionService
-from etlfabric.services.encryption import EncryptionService
-from etlfabric.ui.state.base_state import BaseState, get_sync_session
+from datanika.config import settings
+from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
+from datanika.ui.state.base_state import BaseState, get_sync_session
 
 # Types that can serve as sources (databases + files + rest_api)
 SOURCE_TYPES = {"postgres", "mysql", "mssql", "sqlite", "rest_api", "s3", "csv", "json", "parquet"}

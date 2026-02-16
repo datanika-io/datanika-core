@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.connection import ConnectionDirection
-from etlfabric.models.pipeline import Pipeline, PipelineStatus
-from etlfabric.services.connection_service import ConnectionService
+from datanika.models.connection import ConnectionDirection
+from datanika.models.pipeline import Pipeline, PipelineStatus
+from datanika.services.connection_service import ConnectionService
 
 VALID_WRITE_DISPOSITIONS = {"append", "replace", "merge"}
 VALID_MODES = {"single_table", "full_database"}

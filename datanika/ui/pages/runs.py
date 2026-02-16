@@ -2,8 +2,8 @@
 
 import reflex as rx
 
-from etlfabric.ui.components.layout import page_layout
-from etlfabric.ui.state.run_state import RunState
+from datanika.ui.components.layout import page_layout
+from datanika.ui.state.run_state import RunState
 
 
 def filters_bar() -> rx.Component:

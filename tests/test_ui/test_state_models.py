@@ -1,11 +1,11 @@
 """Tests for rx.Base data model classes used in UI state."""
 
-from etlfabric.models.connection import ConnectionDirection
-from etlfabric.ui.state.connection_state import ConnectionItem, _infer_direction
-from etlfabric.ui.state.pipeline_state import PipelineItem
-from etlfabric.ui.state.run_state import RunItem
-from etlfabric.ui.state.schedule_state import ScheduleItem
-from etlfabric.ui.state.transformation_state import TransformationItem
+from datanika.models.connection import ConnectionDirection
+from datanika.ui.state.connection_state import ConnectionItem, _infer_direction
+from datanika.ui.state.pipeline_state import PipelineItem
+from datanika.ui.state.run_state import RunItem
+from datanika.ui.state.schedule_state import ScheduleItem
+from datanika.ui.state.transformation_state import TransformationItem
 
 
 class TestConnectionItem:
@@ -105,7 +105,7 @@ class TestConnectionBuildConfig:
 
     def _make_state(self, **overrides):
         """Create a ConnectionState-like object with form fields for _build_config."""
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         defaults = {
             "form_type": "postgres",
@@ -324,7 +324,7 @@ class TestConnectionBuildConfig:
 
     def _call_set_form_type(self, state, value):
         """Call the underlying set_form_type function, bypassing Reflex EventHandler."""
-        from etlfabric.ui.state.connection_state import ConnectionState
+        from datanika.ui.state.connection_state import ConnectionState
 
         fn = ConnectionState.set_form_type.fn
         fn(state, value)

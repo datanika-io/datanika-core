@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.dependency import NodeType
-from etlfabric.models.run import Run, RunStatus
+from datanika.models.dependency import NodeType
+from datanika.models.run import Run, RunStatus
 
 
 class ExecutionService:

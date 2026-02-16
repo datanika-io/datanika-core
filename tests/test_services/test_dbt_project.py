@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from etlfabric.services.dbt_project import DbtProjectError, DbtProjectService
+from datanika.services.dbt_project import DbtProjectError, DbtProjectService
 
 
 @pytest.fixture
@@ -234,7 +234,7 @@ class TestGenerateProfilesYml:
 # run_model
 # ---------------------------------------------------------------------------
 class TestRunModel:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_results_dict(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_model(1, "test_model", "SELECT 1")
@@ -261,7 +261,7 @@ class TestRunModel:
         assert result["rows_affected"] == 10
         assert "logs" in result
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_failure_returns_success_false(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_model(1, "test_model", "SELECT 1")
@@ -286,7 +286,7 @@ class TestRunModel:
         result = svc.run_model(1, "test_model")
         assert result["success"] is False
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_passes_correct_select_flag(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_model(1, "test_model", "SELECT 1")
@@ -418,7 +418,7 @@ class TestWriteTestsConfig:
 # run_test (Step 21)
 # ---------------------------------------------------------------------------
 class TestRunTest:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_results(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -430,7 +430,7 @@ class TestRunTest:
         assert result["success"] is True
         assert "logs" in result
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_failure_returns_success_false(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -441,7 +441,7 @@ class TestRunTest:
         result = svc.run_test(1, "my_model")
         assert result["success"] is False
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_invokes_dbt_test_command(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -465,7 +465,7 @@ class TestRunTest:
 # compile_model (Step 22)
 # ---------------------------------------------------------------------------
 class TestCompileModel:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_compiled_sql(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_model(1, "my_model", "SELECT * FROM {{ ref('source') }}")
@@ -480,7 +480,7 @@ class TestCompileModel:
         assert result["success"] is True
         assert result["compiled_sql"] == "SELECT * FROM source_table"
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_failure_returns_success_false(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -492,7 +492,7 @@ class TestCompileModel:
         assert result["success"] is False
         assert result["compiled_sql"] == ""
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_invokes_dbt_compile_command(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -562,7 +562,7 @@ class TestWritePackagesYml:
 # install_packages (Step 32)
 # ---------------------------------------------------------------------------
 class TestInstallPackages:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_result(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_packages_yml(1, [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}])
@@ -575,7 +575,7 @@ class TestInstallPackages:
         assert result["success"] is True
         assert "logs" in result
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_invokes_dbt_deps(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         svc.write_packages_yml(1, [{"package": "dbt-labs/dbt_utils", "version": "1.3.0"}])
@@ -666,7 +666,7 @@ class TestWriteSnapshot:
 # run_snapshot (Step 30)
 # ---------------------------------------------------------------------------
 class TestRunSnapshot:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_results(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -678,7 +678,7 @@ class TestRunSnapshot:
         assert result["success"] is True
         assert result["rows_affected"] == 5
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_invokes_dbt_snapshot_command(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -773,7 +773,7 @@ class TestWriteSourcesYml:
 # check_freshness (Step 31)
 # ---------------------------------------------------------------------------
 class TestCheckFreshness:
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_success_returns_results(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -785,7 +785,7 @@ class TestCheckFreshness:
         assert result["success"] is True
         assert "logs" in result
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_select_specific_source(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()
@@ -799,7 +799,7 @@ class TestCheckFreshness:
         idx = invoke_args.index("--select")
         assert invoke_args[idx + 1] == "source:raw_data"
 
-    @patch("etlfabric.services.dbt_project.dbtRunner")
+    @patch("datanika.services.dbt_project.dbtRunner")
     def test_check_all_sources(self, mock_runner_cls, svc):
         svc.ensure_project(1)
         mock_result = MagicMock()

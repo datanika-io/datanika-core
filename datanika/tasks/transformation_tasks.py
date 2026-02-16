@@ -5,11 +5,11 @@ import traceback
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from etlfabric.models.run import Run
-from etlfabric.models.transformation import Transformation
-from etlfabric.services.dbt_project import DbtProjectService
-from etlfabric.services.execution_service import ExecutionService
-from etlfabric.tasks.celery_app import celery_app
+from datanika.models.run import Run
+from datanika.models.transformation import Transformation
+from datanika.services.dbt_project import DbtProjectService
+from datanika.services.execution_service import ExecutionService
+from datanika.tasks.celery_app import celery_app
 
 execution_service = ExecutionService()
 
@@ -30,7 +30,7 @@ def run_transformation(
         from sqlalchemy import create_engine
         from sqlalchemy.orm import Session as SyncSession
 
-        from etlfabric.config import settings
+        from datanika.config import settings
 
         engine = create_engine(settings.database_url_sync)
         session = SyncSession(engine)
@@ -53,7 +53,7 @@ def run_transformation(
                 f"Transformation not found: target_id={run.target_id}, org_id={org_id}"
             )
 
-        from etlfabric.config import settings
+        from datanika.config import settings
 
         dbt_svc = DbtProjectService(settings.dbt_projects_dir)
         dbt_svc.ensure_project(org_id)
@@ -89,7 +89,7 @@ def run_transformation(
             session.close()
 
 
-@celery_app.task(bind=True, name="etlfabric.run_transformation")
+@celery_app.task(bind=True, name="datanika.run_transformation")
 def run_transformation_task(self, run_id: int, org_id: int):
     """Celery entry point for transformation execution."""
     run_transformation(run_id=run_id, org_id=org_id)

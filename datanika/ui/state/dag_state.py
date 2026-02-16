@@ -16,8 +16,10 @@ class DependencyItem(BaseModel):
     id: int = 0
     upstream_type: str = ""
     upstream_id: int = 0
+    upstream_name: str = ""
     downstream_type: str = ""
     downstream_id: int = 0
+    downstream_name: str = ""
 
 
 class DagState(BaseState):
@@ -46,18 +48,46 @@ class DagState(BaseState):
         transform_svc = TransformationService()
         return DependencyService(pipe_svc, transform_svc)
 
+    @staticmethod
+    def _resolve_node_name(
+        node_type: str, node_id: int, pipe_names: dict, trans_names: dict
+    ) -> str:
+        if node_type == "pipeline":
+            name = pipe_names.get(node_id, f"#{node_id}")
+            return f"pipeline: {name}"
+        name = trans_names.get(node_id, f"#{node_id}")
+        return f"transformation: {name}"
+
     async def load_dependencies(self):
         org_id = await self._get_org_id()
         svc = self._get_service()
+
+        # Build name lookups
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
+        pipe_svc = PipelineService(conn_svc)
+        transform_svc = TransformationService()
+
         with get_sync_session() as session:
+            pipelines = pipe_svc.list_pipelines(session, org_id)
+            pipe_names = {p.id: p.name for p in pipelines}
+            transformations = transform_svc.list_transformations(session, org_id)
+            trans_names = {t.id: t.name for t in transformations}
+
             rows = svc.list_dependencies(session, org_id)
             self.dependencies = [
                 DependencyItem(
                     id=d.id,
                     upstream_type=d.upstream_type.value,
                     upstream_id=d.upstream_id,
+                    upstream_name=self._resolve_node_name(
+                        d.upstream_type.value, d.upstream_id, pipe_names, trans_names
+                    ),
                     downstream_type=d.downstream_type.value,
                     downstream_id=d.downstream_id,
+                    downstream_name=self._resolve_node_name(
+                        d.downstream_type.value, d.downstream_id, pipe_names, trans_names
+                    ),
                 )
                 for d in rows
             ]

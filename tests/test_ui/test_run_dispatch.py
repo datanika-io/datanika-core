@@ -66,11 +66,11 @@ class TestPipelineRunDispatchesCeleryTask:
 
 
 class TestScheduleStateUsesSchedulerIntegration:
-    """Bug: ScheduleState._get_service() created ScheduleService without
+    """Bug: ScheduleState._get_schedule_service() created ScheduleService without
     scheduler_integration, so schedules were never synced to APScheduler."""
 
     def test_get_service_passes_scheduler_integration(self):
-        """_get_service() must pass the scheduler_integration singleton."""
+        """_get_schedule_service() must pass the scheduler_integration singleton."""
         from datanika.ui.state.schedule_state import ScheduleState
 
         state = MagicMock()
@@ -79,6 +79,6 @@ class TestScheduleStateUsesSchedulerIntegration:
             patch("datanika.scheduler.scheduler_integration") as mock_sched,
             patch("datanika.ui.state.schedule_state.EncryptionService"),
         ):
-            svc = ScheduleState._get_service(state)
+            svc = ScheduleState._get_schedule_service(state)
 
         assert svc._scheduler is mock_sched

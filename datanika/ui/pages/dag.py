@@ -84,13 +84,9 @@ def dependency_table() -> rx.Component:
                 DagState.dependencies,
                 lambda d: rx.table.row(
                     rx.table.cell(d.id),
-                    rx.table.cell(
-                        rx.text(f"{d.upstream_type} #{d.upstream_id}"),
-                    ),
+                    rx.table.cell(rx.text(d.upstream_name)),
                     rx.table.cell(rx.icon("arrow-right", size=14)),
-                    rx.table.cell(
-                        rx.text(f"{d.downstream_type} #{d.downstream_id}"),
-                    ),
+                    rx.table.cell(rx.text(d.downstream_name)),
                     rx.table.cell(
                         rx.button(
                             rx.icon("trash-2", size=14),

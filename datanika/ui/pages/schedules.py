@@ -1,4 +1,4 @@
-"""Schedules page — list + create form + toggle."""
+"""Schedules page — list + create/edit form + toggle."""
 
 import reflex as rx
 
@@ -9,7 +9,14 @@ from datanika.ui.state.schedule_state import ScheduleState
 def schedule_form() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("New Schedule", size="4"),
+            rx.heading(
+                rx.cond(
+                    ScheduleState.editing_schedule_id,
+                    "Edit Schedule",
+                    "New Schedule",
+                ),
+                size="4",
+            ),
             rx.select(
                 ["pipeline", "transformation"],
                 value=ScheduleState.form_target_type,
@@ -38,7 +45,25 @@ def schedule_form() -> rx.Component:
                 ScheduleState.error_message,
                 rx.callout(ScheduleState.error_message, icon="triangle_alert", color_scheme="red"),
             ),
-            rx.button("Create Schedule", on_click=ScheduleState.create_schedule),
+            rx.hstack(
+                rx.button(
+                    rx.cond(
+                        ScheduleState.editing_schedule_id,
+                        "Save Changes",
+                        "Create Schedule",
+                    ),
+                    on_click=ScheduleState.save_schedule,
+                ),
+                rx.cond(
+                    ScheduleState.editing_schedule_id,
+                    rx.button(
+                        "Cancel",
+                        variant="outline",
+                        on_click=ScheduleState.cancel_edit,
+                    ),
+                ),
+                spacing="2",
+            ),
             spacing="3",
             width="100%",
         ),
@@ -63,9 +88,7 @@ def schedules_table() -> rx.Component:
                 ScheduleState.schedules,
                 lambda s: rx.table.row(
                     rx.table.cell(s.id),
-                    rx.table.cell(
-                        rx.text(f"{s.target_type} #{s.target_id}"),
-                    ),
+                    rx.table.cell(rx.text(s.target_name)),
                     rx.table.cell(rx.code(s.cron_expression)),
                     rx.table.cell(s.timezone),
                     rx.table.cell(
@@ -76,6 +99,18 @@ def schedules_table() -> rx.Component:
                     ),
                     rx.table.cell(
                         rx.hstack(
+                            rx.button(
+                                "Edit",
+                                size="1",
+                                variant="outline",
+                                on_click=ScheduleState.edit_schedule(s.id),
+                            ),
+                            rx.button(
+                                "Copy",
+                                size="1",
+                                variant="outline",
+                                on_click=ScheduleState.copy_schedule(s.id),
+                            ),
                             rx.button(
                                 rx.cond(s.is_active, "Pause", "Resume"),
                                 size="1",

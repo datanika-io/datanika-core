@@ -22,6 +22,8 @@ class PipelineItem(BaseModel):
     status: str = ""
     source_connection_id: int = 0
     destination_connection_id: int = 0
+    source_connection_name: str = ""
+    destination_connection_name: str = ""
 
 
 class PipelineState(BaseState):
@@ -51,6 +53,8 @@ class PipelineState(BaseState):
     # Raw JSON fallback
     form_config: str = "{}"
     form_use_raw_json: bool = False
+    # 0 = creating new, >0 = editing existing pipeline
+    editing_pipeline_id: int = 0
 
     def set_form_name(self, value: str):
         self.form_name = value
@@ -170,6 +174,8 @@ class PipelineState(BaseState):
         org_id = await self._get_org_id()
         pipe_svc, conn_svc = self._get_services()
         with get_sync_session() as session:
+            conns = conn_svc.list_connections(session, org_id)
+            conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in conns}
             rows = pipe_svc.list_pipelines(session, org_id)
             self.pipelines = [
                 PipelineItem(
@@ -179,11 +185,16 @@ class PipelineState(BaseState):
                     status=p.status.value,
                     source_connection_id=p.source_connection_id,
                     destination_connection_id=p.destination_connection_id,
+                    source_connection_name=conn_names.get(
+                        p.source_connection_id, f"#{p.source_connection_id}"
+                    ),
+                    destination_connection_name=conn_names.get(
+                        p.destination_connection_id, f"#{p.destination_connection_id}"
+                    ),
                 )
                 for p in rows
             ]
             # Load connections filtered by capability
-            conns = conn_svc.list_connections(session, org_id)
             self.source_conn_options = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns
@@ -196,7 +207,7 @@ class PipelineState(BaseState):
             ]
         self.error_message = ""
 
-    async def create_pipeline(self):
+    async def save_pipeline(self):
         org_id = await self._get_org_id()
         pipe_svc, _ = self._get_services()
         try:
@@ -212,15 +223,27 @@ class PipelineState(BaseState):
             return
         try:
             with get_sync_session() as session:
-                pipe_svc.create_pipeline(
-                    session,
-                    org_id,
-                    self.form_name,
-                    self.form_description or None,
-                    src_id,
-                    dst_id,
-                    config,
-                )
+                if self.editing_pipeline_id:
+                    pipe_svc.update_pipeline(
+                        session,
+                        org_id,
+                        self.editing_pipeline_id,
+                        name=self.form_name,
+                        description=self.form_description or None,
+                        source_connection_id=src_id,
+                        destination_connection_id=dst_id,
+                        dlt_config=config,
+                    )
+                else:
+                    pipe_svc.create_pipeline(
+                        session,
+                        org_id,
+                        self.form_name,
+                        self.form_description or None,
+                        src_id,
+                        dst_id,
+                        config,
+                    )
                 session.commit()
         except Exception as e:
             self.error_message = str(e)
@@ -229,6 +252,7 @@ class PipelineState(BaseState):
         await self.load_pipelines()
 
     def _reset_form(self):
+        self.editing_pipeline_id = 0
         self.form_name = ""
         self.form_description = ""
         self.form_source_id = ""
@@ -250,6 +274,103 @@ class PipelineState(BaseState):
         self.form_config = "{}"
         self.form_use_raw_json = False
         self.error_message = ""
+
+    def _populate_form_from_pipeline(self, pipeline, conn_options_src, conn_options_dst):
+        """Fill form fields from a pipeline object."""
+        self.form_name = pipeline.name
+        self.form_description = pipeline.description or ""
+        self.error_message = ""
+
+        # Find matching connection option strings
+        src_prefix = f"{pipeline.source_connection_id} — "
+        self.form_source_id = next(
+            (o for o in conn_options_src if o.startswith(src_prefix)), ""
+        )
+        dst_prefix = f"{pipeline.destination_connection_id} — "
+        self.form_dest_id = next(
+            (o for o in conn_options_dst if o.startswith(dst_prefix)), ""
+        )
+
+        # Populate from dlt_config
+        config = pipeline.dlt_config or {}
+        self.form_mode = config.get("mode", "full_database")
+        self.form_write_disposition = config.get("write_disposition", "append")
+        self.form_primary_key = config.get("primary_key", "")
+        self.form_source_schema = config.get("source_schema", "")
+        self.form_batch_size = str(config["batch_size"]) if "batch_size" in config else ""
+        self.form_table = config.get("table", "")
+        table_names = config.get("table_names", [])
+        self.form_table_names = ", ".join(table_names) if table_names else ""
+
+        inc = config.get("incremental", {})
+        self.form_enable_incremental = bool(inc)
+        self.form_cursor_path = inc.get("cursor_path", "") if inc else ""
+        self.form_initial_value = inc.get("initial_value", "") if inc else ""
+        self.form_row_order = inc.get("row_order", "") if inc else ""
+
+        sc = config.get("schema_contract", {})
+        self.form_sc_tables = sc.get("tables", "") if sc else ""
+        self.form_sc_columns = sc.get("columns", "") if sc else ""
+        self.form_sc_data_type = sc.get("data_type", "") if sc else ""
+
+        self.form_use_raw_json = False
+        self.form_config = "{}"
+
+    async def edit_pipeline(self, pipeline_id: int):
+        """Load a pipeline into the form for editing."""
+        org_id = await self._get_org_id()
+        pipe_svc, conn_svc = self._get_services()
+        with get_sync_session() as session:
+            pipeline = pipe_svc.get_pipeline(session, org_id, pipeline_id)
+            if pipeline is None:
+                self.error_message = "Pipeline not found"
+                return
+            # Ensure connection options are loaded
+            conns = conn_svc.list_connections(session, org_id)
+            src_opts = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in SOURCE_TYPES
+            ]
+            dst_opts = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in DESTINATION_TYPES
+            ]
+            self.source_conn_options = src_opts
+            self.dest_conn_options = dst_opts
+            self._populate_form_from_pipeline(pipeline, src_opts, dst_opts)
+        self.editing_pipeline_id = pipeline_id
+
+    async def copy_pipeline(self, pipeline_id: int):
+        """Load a pipeline into the form as a new copy."""
+        org_id = await self._get_org_id()
+        pipe_svc, conn_svc = self._get_services()
+        with get_sync_session() as session:
+            pipeline = pipe_svc.get_pipeline(session, org_id, pipeline_id)
+            if pipeline is None:
+                self.error_message = "Pipeline not found"
+                return
+            conns = conn_svc.list_connections(session, org_id)
+            src_opts = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in SOURCE_TYPES
+            ]
+            dst_opts = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in DESTINATION_TYPES
+            ]
+            self.source_conn_options = src_opts
+            self.dest_conn_options = dst_opts
+            self._populate_form_from_pipeline(pipeline, src_opts, dst_opts)
+        self.form_name = f"{self.form_name} (copy)"
+        self.editing_pipeline_id = 0
+
+    def cancel_edit(self):
+        """Cancel editing and reset the form."""
+        self._reset_form()
 
     async def delete_pipeline(self, pipeline_id: int):
         org_id = await self._get_org_id()

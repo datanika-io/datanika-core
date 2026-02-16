@@ -1,4 +1,4 @@
-"""Pipelines page — list + create form with structured mode fields + run button."""
+"""Pipelines page — list + create/edit form with structured mode fields + run button."""
 
 import reflex as rx
 
@@ -68,7 +68,14 @@ def _mode_fields() -> rx.Component:
 def pipeline_form() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("New Pipeline", size="4"),
+            rx.heading(
+                rx.cond(
+                    PipelineState.editing_pipeline_id,
+                    "Edit Pipeline",
+                    "New Pipeline",
+                ),
+                size="4",
+            ),
             rx.input(
                 placeholder="Pipeline name",
                 value=PipelineState.form_name,
@@ -188,7 +195,25 @@ def pipeline_form() -> rx.Component:
                 PipelineState.error_message,
                 rx.callout(PipelineState.error_message, icon="triangle_alert", color_scheme="red"),
             ),
-            rx.button("Create Pipeline", on_click=PipelineState.create_pipeline),
+            rx.hstack(
+                rx.button(
+                    rx.cond(
+                        PipelineState.editing_pipeline_id,
+                        "Save Changes",
+                        "Create Pipeline",
+                    ),
+                    on_click=PipelineState.save_pipeline,
+                ),
+                rx.cond(
+                    PipelineState.editing_pipeline_id,
+                    rx.button(
+                        "Cancel",
+                        variant="outline",
+                        on_click=PipelineState.cancel_edit,
+                    ),
+                ),
+                spacing="2",
+            ),
             spacing="3",
             width="100%",
         ),
@@ -220,10 +245,22 @@ def pipelines_table() -> rx.Component:
                             color_scheme=rx.cond(pipe.status == "active", "green", "gray"),
                         ),
                     ),
-                    rx.table.cell(pipe.source_connection_id),
-                    rx.table.cell(pipe.destination_connection_id),
+                    rx.table.cell(pipe.source_connection_name),
+                    rx.table.cell(pipe.destination_connection_name),
                     rx.table.cell(
                         rx.hstack(
+                            rx.button(
+                                "Edit",
+                                size="1",
+                                variant="outline",
+                                on_click=PipelineState.edit_pipeline(pipe.id),
+                            ),
+                            rx.button(
+                                "Copy",
+                                size="1",
+                                variant="outline",
+                                on_click=PipelineState.copy_pipeline(pipe.id),
+                            ),
                             rx.button(
                                 "Run",
                                 size="1",

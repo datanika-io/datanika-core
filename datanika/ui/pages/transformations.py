@@ -1,4 +1,4 @@
-"""Transformations page — list + create form + test config."""
+"""Transformations page — list + create/edit form + test config."""
 
 import reflex as rx
 
@@ -9,7 +9,14 @@ from datanika.ui.state.transformation_state import TransformationState
 def transformation_form() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("New Transformation", size="4"),
+            rx.heading(
+                rx.cond(
+                    TransformationState.editing_transformation_id,
+                    "Edit Transformation",
+                    "New Transformation",
+                ),
+                size="4",
+            ),
             rx.input(
                 placeholder="Model name",
                 value=TransformationState.form_name,
@@ -57,9 +64,24 @@ def transformation_form() -> rx.Component:
                     color_scheme="red",
                 ),
             ),
-            rx.button(
-                "Create Transformation",
-                on_click=TransformationState.create_transformation,
+            rx.hstack(
+                rx.button(
+                    rx.cond(
+                        TransformationState.editing_transformation_id,
+                        "Save Changes",
+                        "Create Transformation",
+                    ),
+                    on_click=TransformationState.save_transformation,
+                ),
+                rx.cond(
+                    TransformationState.editing_transformation_id,
+                    rx.button(
+                        "Cancel",
+                        variant="outline",
+                        on_click=TransformationState.cancel_edit,
+                    ),
+                ),
+                spacing="2",
             ),
             spacing="3",
             width="100%",
@@ -113,6 +135,18 @@ def transformations_table() -> rx.Component:
                         rx.table.cell(t.schema_name),
                         rx.table.cell(
                             rx.hstack(
+                                rx.button(
+                                    "Edit",
+                                    size="1",
+                                    variant="outline",
+                                    on_click=TransformationState.edit_transformation(t.id),
+                                ),
+                                rx.button(
+                                    "Copy",
+                                    size="1",
+                                    variant="outline",
+                                    on_click=TransformationState.copy_transformation(t.id),
+                                ),
                                 rx.button(
                                     "Preview SQL",
                                     size="1",

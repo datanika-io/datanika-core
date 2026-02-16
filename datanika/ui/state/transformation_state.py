@@ -30,6 +30,8 @@ class TransformationState(BaseState):
     test_result_message: str = ""
     # SQL preview
     preview_sql: str = ""
+    # 0 = creating new, >0 = editing existing transformation
+    editing_transformation_id: int = 0
 
     def set_form_name(self, value: str):
         self.form_name = value
@@ -49,6 +51,16 @@ class TransformationState(BaseState):
     def set_form_tests_config(self, value: str):
         self.form_tests_config = value
 
+    def _reset_form(self):
+        self.editing_transformation_id = 0
+        self.form_name = ""
+        self.form_sql_body = ""
+        self.form_materialization = "view"
+        self.form_description = ""
+        self.form_schema_name = "staging"
+        self.form_tests_config = "{}"
+        self.error_message = ""
+
     async def load_transformations(self):
         org_id = await self._get_org_id()
         svc = TransformationService()
@@ -66,7 +78,7 @@ class TransformationState(BaseState):
             ]
         self.error_message = ""
 
-    async def create_transformation(self):
+    async def save_transformation(self):
         org_id = await self._get_org_id()
         svc = TransformationService()
         try:
@@ -76,27 +88,75 @@ class TransformationState(BaseState):
             return
         try:
             with get_sync_session() as session:
-                svc.create_transformation(
-                    session,
-                    org_id,
-                    self.form_name,
-                    self.form_sql_body,
-                    Materialization(self.form_materialization),
-                    description=self.form_description or None,
-                    schema_name=self.form_schema_name,
-                    tests_config=tests_config if tests_config else None,
-                )
+                if self.editing_transformation_id:
+                    svc.update_transformation(
+                        session,
+                        org_id,
+                        self.editing_transformation_id,
+                        name=self.form_name,
+                        sql_body=self.form_sql_body,
+                        materialization=Materialization(self.form_materialization),
+                        description=self.form_description or None,
+                        schema_name=self.form_schema_name,
+                        tests_config=tests_config if tests_config else None,
+                    )
+                else:
+                    svc.create_transformation(
+                        session,
+                        org_id,
+                        self.form_name,
+                        self.form_sql_body,
+                        Materialization(self.form_materialization),
+                        description=self.form_description or None,
+                        schema_name=self.form_schema_name,
+                        tests_config=tests_config if tests_config else None,
+                    )
                 session.commit()
         except Exception as e:
             self.error_message = str(e)
             return
-        self.form_name = ""
-        self.form_sql_body = ""
-        self.form_description = ""
-        self.form_schema_name = "staging"
-        self.form_tests_config = "{}"
-        self.error_message = ""
+        self._reset_form()
         await self.load_transformations()
+
+    async def edit_transformation(self, transformation_id: int):
+        """Load a transformation into the form for editing."""
+        org_id = await self._get_org_id()
+        svc = TransformationService()
+        with get_sync_session() as session:
+            t = svc.get_transformation(session, org_id, transformation_id)
+            if t is None:
+                self.error_message = "Transformation not found"
+                return
+            self.form_name = t.name
+            self.form_sql_body = t.sql_body
+            self.form_materialization = t.materialization.value
+            self.form_description = t.description or ""
+            self.form_schema_name = t.schema_name
+            self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
+        self.editing_transformation_id = transformation_id
+        self.error_message = ""
+
+    async def copy_transformation(self, transformation_id: int):
+        """Load a transformation into the form as a new copy."""
+        org_id = await self._get_org_id()
+        svc = TransformationService()
+        with get_sync_session() as session:
+            t = svc.get_transformation(session, org_id, transformation_id)
+            if t is None:
+                self.error_message = "Transformation not found"
+                return
+            self.form_name = f"{t.name} (copy)"
+            self.form_sql_body = t.sql_body
+            self.form_materialization = t.materialization.value
+            self.form_description = t.description or ""
+            self.form_schema_name = t.schema_name
+            self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
+        self.editing_transformation_id = 0
+        self.error_message = ""
+
+    def cancel_edit(self):
+        """Cancel editing and reset the form."""
+        self._reset_form()
 
     async def delete_transformation(self, transformation_id: int):
         org_id = await self._get_org_id()

@@ -19,4 +19,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
-celery_app.autodiscover_tasks(["datanika.tasks"])
+celery_app.conf.include = [
+    "datanika.tasks.pipeline_tasks",
+    "datanika.tasks.transformation_tasks",
+]

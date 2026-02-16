@@ -61,37 +61,46 @@ class AuthState(rx.State):
         if not email or not password:
             self.auth_error = "Email and password are required"
             return
+
+        # Authenticate against DB
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
                 result = svc.authenticate(session, email, password)
-                if result is None:
-                    self.auth_error = "Invalid email or password"
-                    return
-                user = result["user"]
-                self.access_token = result["access_token"]
-                self.refresh_token = result["refresh_token"]
-                self.current_user = UserInfo(
-                    id=user.id,
-                    email=user.email,
-                    full_name=user.full_name,
-                )
-                # Decode token to get org_id
-                auth = AuthService(settings.secret_key)
-                payload = auth.decode_token(self.access_token)
-                org_id = payload["org_id"]
-                # Load org info
-                orgs = svc.get_user_orgs(session, user.id)
-                self.user_orgs = [
-                    OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs
-                ]
-                for o in self.user_orgs:
-                    if o.id == org_id:
-                        self.current_org = o
-                        break
+                if result is not None:
+                    user = result["user"]
+                    user_id = user.id
+                    user_email = user.email
+                    user_name = user.full_name
+                    access_token = result["access_token"]
+                    refresh_token = result["refresh_token"]
+                    orgs = [
+                        OrgInfo(id=o.id, name=o.name, slug=o.slug)
+                        for o in svc.get_user_orgs(session, user.id)
+                    ]
         except Exception as e:
             self.auth_error = f"Login failed: {e}"
             return
+
+        if result is None:
+            self.auth_error = "Invalid email or password"
+            return
+
+        # Apply auth state
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.current_user = UserInfo(
+            id=user_id, email=user_email, full_name=user_name
+        )
+        self.user_orgs = orgs
+
+        auth = AuthService(settings.secret_key)
+        payload = auth.decode_token(access_token)
+        org_id = payload["org_id"]
+        for o in self.user_orgs:
+            if o.id == org_id:
+                self.current_org = o
+                break
         return rx.redirect("/")
 
     def signup(self, form_data: dict):

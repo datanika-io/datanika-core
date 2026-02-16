@@ -17,6 +17,7 @@ def _mode_fields() -> rx.Component:
                     placeholder="Table name (e.g. customers)",
                     value=PipelineState.form_table,
                     on_change=PipelineState.set_form_table,
+                    width="100%",
                 ),
                 rx.checkbox(
                     "Enable incremental loading",
@@ -30,17 +31,20 @@ def _mode_fields() -> rx.Component:
                             placeholder="Cursor path (e.g. updated_at)",
                             value=PipelineState.form_cursor_path,
                             on_change=PipelineState.set_form_cursor_path,
+                            width="100%",
                         ),
                         rx.input(
                             placeholder="Initial value (optional)",
                             value=PipelineState.form_initial_value,
                             on_change=PipelineState.set_form_initial_value,
+                            width="100%",
                         ),
                         rx.select(
                             ["asc", "desc"],
                             value=PipelineState.form_row_order,
                             on_change=PipelineState.set_form_row_order,
                             placeholder="Row order (optional)",
+                            width="100%",
                         ),
                         spacing="2",
                         width="100%",
@@ -55,6 +59,7 @@ def _mode_fields() -> rx.Component:
                 placeholder="Table names (comma-separated, optional)",
                 value=PipelineState.form_table_names,
                 on_change=PipelineState.set_form_table_names,
+                width="100%",
             ),
         ),
     )
@@ -68,35 +73,41 @@ def pipeline_form() -> rx.Component:
                 placeholder="Pipeline name",
                 value=PipelineState.form_name,
                 on_change=PipelineState.set_form_name,
+                width="100%",
             ),
             rx.input(
                 placeholder="Description",
                 value=PipelineState.form_description,
                 on_change=PipelineState.set_form_description,
+                width="100%",
             ),
             rx.select(
                 PipelineState.source_conn_options,
                 value=PipelineState.form_source_id,
                 on_change=PipelineState.set_form_source_id,
                 placeholder="Source connection",
+                width="100%",
             ),
             rx.select(
                 PipelineState.dest_conn_options,
                 value=PipelineState.form_dest_id,
                 on_change=PipelineState.set_form_dest_id,
                 placeholder="Destination connection",
+                width="100%",
             ),
             # Mode selection
             rx.select(
                 ["full_database", "single_table"],
                 value=PipelineState.form_mode,
                 on_change=PipelineState.set_form_mode,
+                width="100%",
             ),
             # Write disposition
             rx.select(
                 ["append", "replace", "merge"],
                 value=PipelineState.form_write_disposition,
                 on_change=PipelineState.set_form_write_disposition,
+                width="100%",
             ),
             # Primary key (merge only)
             rx.cond(
@@ -105,6 +116,7 @@ def pipeline_form() -> rx.Component:
                     placeholder="Primary key (required for merge)",
                     value=PipelineState.form_primary_key,
                     on_change=PipelineState.set_form_primary_key,
+                    width="100%",
                 ),
             ),
             # Source schema
@@ -112,6 +124,7 @@ def pipeline_form() -> rx.Component:
                 placeholder="Source schema (optional, e.g. public)",
                 value=PipelineState.form_source_schema,
                 on_change=PipelineState.set_form_source_schema,
+                width="100%",
             ),
             # Mode-specific fields
             _mode_fields(),
@@ -120,27 +133,38 @@ def pipeline_form() -> rx.Component:
                 placeholder="Batch size (optional, default 10000)",
                 value=PipelineState.form_batch_size,
                 on_change=PipelineState.set_form_batch_size,
+                width="100%",
             ),
             # Schema contract
             rx.text("Schema Contract (optional)", size="2", weight="bold"),
+            rx.hstack(
+                rx.text("Tables", size="2", weight="bold", width="33%"),
+                rx.text("Columns", size="2", weight="bold", width="33%"),
+                rx.text("Data Type", size="2", weight="bold", width="33%"),
+                spacing="2",
+                width="100%",
+            ),
             rx.hstack(
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_tables,
                     on_change=PipelineState.set_form_sc_tables,
                     placeholder="Tables",
+                    width="33%",
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_columns,
                     on_change=PipelineState.set_form_sc_columns,
                     placeholder="Columns",
+                    width="33%",
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=PipelineState.form_sc_data_type,
                     on_change=PipelineState.set_form_sc_data_type,
                     placeholder="Data type",
+                    width="33%",
                 ),
                 spacing="2",
                 width="100%",
@@ -157,6 +181,7 @@ def pipeline_form() -> rx.Component:
                     placeholder='{"write_disposition": "append"}',
                     value=PipelineState.form_config,
                     on_change=PipelineState.set_form_config,
+                    width="100%",
                 ),
             ),
             rx.cond(

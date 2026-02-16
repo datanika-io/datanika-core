@@ -14,6 +14,7 @@ def filters_bar() -> rx.Component:
             value=RunState.filter_status,
             on_change=RunState.set_filter,
             placeholder="All",
+            width="100%",
         ),
         rx.text("Target type:", size="2"),
         rx.select(
@@ -21,6 +22,7 @@ def filters_bar() -> rx.Component:
             value=RunState.filter_target_type,
             on_change=RunState.set_target_type_filter,
             placeholder="All",
+            width="100%",
         ),
         spacing="3",
         align="center",

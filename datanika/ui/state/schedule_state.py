@@ -45,7 +45,9 @@ class ScheduleState(BaseState):
         conn_svc = ConnectionService(encryption)
         pipe_svc = PipelineService(conn_svc)
         transform_svc = TransformationService()
-        return ScheduleService(pipe_svc, transform_svc)
+        from datanika.scheduler import scheduler_integration
+
+        return ScheduleService(pipe_svc, transform_svc, scheduler_integration)
 
     async def load_schedules(self):
         org_id = await self._get_org_id()

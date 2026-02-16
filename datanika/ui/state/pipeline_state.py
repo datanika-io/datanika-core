@@ -10,6 +10,7 @@ from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
+from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import DESTINATION_TYPES, SOURCE_TYPES
 
@@ -262,6 +263,8 @@ class PipelineState(BaseState):
         org_id = await self._get_org_id()
         exec_svc = ExecutionService()
         with get_sync_session() as session:
-            exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
+            run = exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
             session.commit()
+            run_id = run.id
+        run_pipeline_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""

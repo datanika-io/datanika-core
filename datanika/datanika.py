@@ -23,6 +23,14 @@ from datanika.ui.state.transformation_state import TransformationState
 
 app = rx.App()
 
+# Start APScheduler and sync all active schedules from DB
+from datanika.scheduler import scheduler_integration
+from datanika.ui.state.base_state import get_sync_session
+
+scheduler_integration.start()
+with get_sync_session() as _session:
+    scheduler_integration.sync_all(_session)
+
 # Public pages
 app.add_page(
     login_page,

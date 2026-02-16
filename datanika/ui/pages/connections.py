@@ -45,6 +45,7 @@ def connection_form() -> rx.Component:
                 value=ConnectionState.form_type,
                 on_change=ConnectionState.set_form_type,
                 placeholder="Connection type",
+                width="100%",
             ),
             # Dynamic config fields (hidden when raw JSON is active)
             rx.cond(
@@ -63,6 +64,7 @@ def connection_form() -> rx.Component:
                     placeholder='{"host": "localhost", "port": 5432}',
                     value=ConnectionState.form_config,
                     on_change=ConnectionState.set_form_config,
+                    width="100%",
                 ),
             ),
             rx.cond(

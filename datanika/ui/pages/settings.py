@@ -44,6 +44,7 @@ def member_row(member: MemberItem) -> rx.Component:
                 value=member.role,
                 on_change=lambda val: SettingsState.change_member_role(member.id, val),
                 size="1",
+                width="100%",
             ),
         ),
         rx.table.cell(
@@ -83,12 +84,14 @@ def members_card() -> rx.Component:
                     placeholder="Email address",
                     value=SettingsState.invite_email,
                     on_change=SettingsState.set_invite_email,
+                    width="100%",
                 ),
                 rx.select(
                     ["owner", "admin", "editor", "viewer"],
                     value=SettingsState.invite_role,
                     on_change=SettingsState.set_invite_role,
                     size="2",
+                    width="100%",
                 ),
                 rx.button("Add", on_click=SettingsState.add_member_by_email, size="2"),
                 spacing="2",

@@ -14,27 +14,32 @@ def transformation_form() -> rx.Component:
                 placeholder="Model name",
                 value=TransformationState.form_name,
                 on_change=TransformationState.set_form_name,
+                width="100%",
             ),
             rx.input(
                 placeholder="Description",
                 value=TransformationState.form_description,
                 on_change=TransformationState.set_form_description,
+                width="100%",
             ),
             rx.text_area(
                 placeholder="SELECT * FROM ...",
                 value=TransformationState.form_sql_body,
                 on_change=TransformationState.set_form_sql_body,
                 min_height="120px",
+                width="100%",
             ),
             rx.select(
                 ["view", "table", "incremental", "ephemeral"],
                 value=TransformationState.form_materialization,
                 on_change=TransformationState.set_form_materialization,
+                width="100%",
             ),
             rx.input(
                 placeholder="Schema name (default: staging)",
                 value=TransformationState.form_schema_name,
                 on_change=TransformationState.set_form_schema_name,
+                width="100%",
             ),
             rx.text("Tests Config (JSON)", size="2", weight="bold"),
             rx.text_area(
@@ -42,6 +47,7 @@ def transformation_form() -> rx.Component:
                 value=TransformationState.form_tests_config,
                 on_change=TransformationState.set_form_tests_config,
                 min_height="80px",
+                width="100%",
             ),
             rx.cond(
                 TransformationState.error_message,

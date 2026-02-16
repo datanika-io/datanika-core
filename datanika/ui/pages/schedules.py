@@ -14,21 +14,25 @@ def schedule_form() -> rx.Component:
                 ["pipeline", "transformation"],
                 value=ScheduleState.form_target_type,
                 on_change=ScheduleState.set_form_target_type,
+                width="100%",
             ),
             rx.input(
                 placeholder="Target ID",
                 value=ScheduleState.form_target_id,
                 on_change=ScheduleState.set_form_target_id,
+                width="100%",
             ),
             rx.input(
                 placeholder="Cron expression (e.g. 0 * * * *)",
                 value=ScheduleState.form_cron,
                 on_change=ScheduleState.set_form_cron,
+                width="100%",
             ),
             rx.input(
                 placeholder="Timezone (default: UTC)",
                 value=ScheduleState.form_timezone,
                 on_change=ScheduleState.set_form_timezone,
+                width="100%",
             ),
             rx.cond(
                 ScheduleState.error_message,

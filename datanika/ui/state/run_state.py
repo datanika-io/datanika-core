@@ -23,12 +23,15 @@ class RunItem(BaseModel):
     finished_at: str = ""
     rows_loaded: int = 0
     error_message: str = ""
+    logs: str = ""
 
 
 class RunState(BaseState):
     runs: list[RunItem] = []
     filter_status: str = ""
     filter_target_type: str = ""
+    selected_run_logs: str = ""
+    selected_run_id: int = 0
 
     async def load_runs(self):
         org_id = await self._get_org_id()
@@ -68,6 +71,7 @@ class RunState(BaseState):
                     finished_at=str(r.finished_at) if r.finished_at else "",
                     rows_loaded=r.rows_loaded or 0,
                     error_message=r.error_message or "",
+                    logs=r.logs or "",
                 )
                 for r in rows
             ]
@@ -90,3 +94,16 @@ class RunState(BaseState):
     async def set_target_type_filter(self, target_type: str):
         self.filter_target_type = target_type
         await self.load_runs()
+
+    def view_logs(self, run_id: int):
+        for r in self.runs:
+            if r.id == run_id:
+                self.selected_run_id = run_id
+                self.selected_run_logs = r.logs or "(no logs)"
+                return
+        self.selected_run_id = 0
+        self.selected_run_logs = ""
+
+    def close_logs(self):
+        self.selected_run_id = 0
+        self.selected_run_logs = ""

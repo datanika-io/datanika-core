@@ -1,4 +1,4 @@
-"""Runs page — list with status and target_type filters."""
+"""Runs page — list with status and target_type filters + logs viewer."""
 
 import reflex as rx
 
@@ -52,6 +52,7 @@ def runs_table() -> rx.Component:
                 rx.table.column_header_cell("Finished"),
                 rx.table.column_header_cell("Rows"),
                 rx.table.column_header_cell("Error"),
+                rx.table.column_header_cell("Logs"),
             ),
         ),
         rx.table.body(
@@ -76,6 +77,14 @@ def runs_table() -> rx.Component:
                             rx.text(""),
                         ),
                     ),
+                    rx.table.cell(
+                        rx.icon_button(
+                            rx.icon("file_text", size=16),
+                            size="1",
+                            variant="ghost",
+                            on_click=RunState.view_logs(r.id),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -83,8 +92,42 @@ def runs_table() -> rx.Component:
     )
 
 
+def logs_panel() -> rx.Component:
+    return rx.cond(
+        RunState.selected_run_id > 0,
+        rx.card(
+            rx.vstack(
+                rx.hstack(
+                    rx.heading(
+                        f"Logs — Run #{RunState.selected_run_id}",
+                        size="4",
+                    ),
+                    rx.spacer(),
+                    rx.icon_button(
+                        rx.icon("x", size=16),
+                        size="1",
+                        variant="ghost",
+                        on_click=RunState.close_logs,
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                rx.code_block(
+                    RunState.selected_run_logs,
+                    language="log",
+                    width="100%",
+                    wrap_long_lines=True,
+                ),
+                spacing="4",
+                width="100%",
+            ),
+            width="100%",
+        ),
+    )
+
+
 def runs_page() -> rx.Component:
     return page_layout(
-        rx.vstack(filters_bar(), runs_table(), spacing="6", width="100%"),
+        rx.vstack(filters_bar(), runs_table(), logs_panel(), spacing="6", width="100%"),
         title="Runs",
     )

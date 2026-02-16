@@ -9,12 +9,67 @@ from datanika.services.dlt_runner import (
     INTERNAL_CONFIG_KEYS,
     DltRunnerError,
     DltRunnerService,
+    _extract_rows_loaded,
 )
 
 
 @pytest.fixture
 def svc():
     return DltRunnerService()
+
+
+def _make_load_info(job_counts: list[list[int]]):
+    """Build a mock LoadInfo with metrics.
+
+    job_counts is a list of packages, each a list of items_count per job.
+    e.g. [[100, 200], [50]] → 2 load_ids, first has 2 jobs, second has 1.
+    """
+    metrics = {}
+    for pkg_idx, jobs in enumerate(job_counts):
+        load_id = f"load_{pkg_idx}"
+        job_metrics = {}
+        for job_idx, count in enumerate(jobs):
+            jm = MagicMock()
+            jm.items_count = count
+            job_metrics[f"job_{job_idx}"] = jm
+        metrics[load_id] = [{"job_metrics": job_metrics}]
+    mock = MagicMock()
+    mock.metrics = metrics
+    return mock
+
+
+# ---------------------------------------------------------------------------
+# _extract_rows_loaded
+# ---------------------------------------------------------------------------
+class TestExtractRowsLoaded:
+    def test_empty_metrics(self):
+        mock = MagicMock()
+        mock.metrics = {}
+        assert _extract_rows_loaded(mock) == 0
+
+    def test_single_job(self):
+        load_info = _make_load_info([[100]])
+        assert _extract_rows_loaded(load_info) == 100
+
+    def test_multiple_jobs_single_package(self):
+        load_info = _make_load_info([[100, 200, 50]])
+        assert _extract_rows_loaded(load_info) == 350
+
+    def test_multiple_packages(self):
+        load_info = _make_load_info([[100, 200], [50, 25]])
+        assert _extract_rows_loaded(load_info) == 375
+
+    def test_missing_items_count_defaults_zero(self):
+        """job metric without items_count attr → treated as 0."""
+        mock = MagicMock()
+        jm = MagicMock(spec=[])  # no attributes
+        mock.metrics = {"load_0": [{"job_metrics": {"j0": jm}}]}
+        assert _extract_rows_loaded(mock) == 0
+
+    def test_empty_job_metrics(self):
+        mock = MagicMock()
+        mock.metrics = {"load_0": [{"job_metrics": {}}]}
+        assert _extract_rows_loaded(mock) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -282,8 +337,7 @@ class TestBuildFileSource:
     @patch("datanika.services.dlt_runner.dlt")
     def test_execute_with_file_source(self, mock_dlt, mock_fs, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 50
+        load_info = _make_load_info([[50]])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -395,8 +449,7 @@ class TestBuildRestApiSource:
     @patch("datanika.services.dlt_runner.dlt")
     def test_execute_with_rest_api_source(self, mock_dlt, mock_rest, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 25
+        load_info = _make_load_info([[25]])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -552,8 +605,7 @@ class TestExecute:
     @patch("datanika.services.dlt_runner.dlt")
     def test_success_returns_rows_and_load_info(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 100
+        load_info = _make_load_info([[60, 40]])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -593,8 +645,7 @@ class TestExecute:
     @patch("datanika.services.dlt_runner.dlt")
     def test_passes_dlt_config_to_run(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -616,8 +667,7 @@ class TestExecute:
     @patch("datanika.services.dlt_runner.dlt")
     def test_uses_correct_source_destination_types(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.mysql.return_value = "mysql_dest"
@@ -638,8 +688,7 @@ class TestExecute:
     @patch("datanika.services.dlt_runner.dlt")
     def test_default_batch_size(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -660,8 +709,7 @@ class TestExecute:
     @patch("datanika.services.dlt_runner.dlt")
     def test_custom_batch_size_passed_through(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -687,8 +735,7 @@ class TestExecuteModes:
     @patch("datanika.services.dlt_runner.dlt")
     def test_filters_internal_keys_from_run_kwargs(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 5
+        load_info = _make_load_info([[5]])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -719,8 +766,7 @@ class TestExecuteModes:
     @patch("datanika.services.dlt_runner.dlt")
     def test_extracts_batch_size_from_dlt_config(self, mock_dlt, mock_sql_db, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -741,8 +787,7 @@ class TestExecuteModes:
     @patch("datanika.services.dlt_runner.dlt")
     def test_execute_single_table_mode(self, mock_dlt, mock_sql_table, svc):
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 42
+        load_info = _make_load_info([[42]])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -774,8 +819,7 @@ class TestExecuteModes:
     def test_schema_contract_passes_through(self, mock_dlt, mock_sql_db, svc):
         """schema_contract is NOT an internal key — it should pass to pipeline.run()."""
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -798,8 +842,7 @@ class TestExecuteModes:
     def test_filters_not_passed_to_run(self, mock_dlt, mock_sql_db, svc):
         """filters is an internal key — should NOT pass to pipeline.run()."""
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
@@ -825,8 +868,7 @@ class TestExecuteModes:
     def test_filters_applied_to_source(self, mock_dlt, mock_sql_db, svc):
         """Filters should result in add_filter being called on the source."""
         mock_pipeline = MagicMock()
-        load_info = MagicMock()
-        load_info.loads_count = 0
+        load_info = _make_load_info([])
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"

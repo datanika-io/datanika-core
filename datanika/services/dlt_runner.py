@@ -45,6 +45,16 @@ FILTER_OPS = {
 }
 
 
+def _extract_rows_loaded(load_info) -> int:
+    """Sum items_count across all job metrics in a dlt LoadInfo."""
+    total = 0
+    for metrics_list in load_info.metrics.values():
+        for metrics in metrics_list:
+            for jm in metrics.get("job_metrics", {}).values():
+                total += getattr(jm, "items_count", 0)
+    return total
+
+
 class DltRunnerError(ValueError):
     """Raised when dlt runner encounters an unsupported configuration."""
 
@@ -249,7 +259,7 @@ class DltRunnerService:
 
         run_kwargs = {k: v for k, v in dlt_config.items() if k not in INTERNAL_CONFIG_KEYS}
         load_info = pipeline.run(source, **run_kwargs)
-        rows_loaded = getattr(load_info, "loads_count", 0) or 0
+        rows_loaded = _extract_rows_loaded(load_info)
 
         return {
             "rows_loaded": rows_loaded,

@@ -112,8 +112,8 @@ Sources -> dlt (extract + load into user-chosen schema)
 **Prerequisites:** Docker, Python 3.12+, [uv](https://docs.astral.sh/uv/)
 
 ```bash
-# 1. Start infrastructure
-docker-compose up -d   # PostgreSQL 16 + Redis 7
+# 1. Start infrastructure (PostgreSQL 16 + Redis 7 only)
+docker-compose up -d postgres redis
 
 # 2. Create venv and install
 uv venv
@@ -134,6 +134,12 @@ uv run reflex run
 
 # 6. Start Celery worker (separate terminal)
 uv run celery -A datanika.tasks worker -l info
+```
+
+To run everything in Docker instead (app + celery + infra):
+
+```bash
+docker-compose up -d --build
 ```
 
 ## Configuration

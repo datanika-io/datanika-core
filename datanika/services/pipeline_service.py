@@ -1,5 +1,6 @@
 """Pipeline management service — CRUD with dlt_config validation."""
 
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -26,6 +27,25 @@ INTERNAL_CONFIG_KEYS = {
 }
 
 
+_PIPELINE_NAME_RE = re.compile(r"^[a-zA-Z0-9 ]+$")
+
+
+def validate_pipeline_name(name: str) -> None:
+    """Validate pipeline name: non-empty, alphanumeric + spaces only."""
+    stripped = name.strip()
+    if not stripped:
+        raise ValueError("Pipeline name cannot be empty")
+    if not _PIPELINE_NAME_RE.match(stripped):
+        raise ValueError(
+            "Pipeline name must contain only alphanumeric characters and spaces"
+        )
+
+
+def to_dataset_name(name: str) -> str:
+    """Convert pipeline name to a dataset name (snake_case)."""
+    return re.sub(r"\s+", "_", name.strip()).lower()
+
+
 class PipelineConfigError(ValueError):
     """Raised when pipeline dlt_config fails validation."""
 
@@ -44,6 +64,8 @@ class PipelineService:
         destination_connection_id: int,
         dlt_config: dict,
     ) -> Pipeline:
+        validate_pipeline_name(name)
+
         # Validate source connection
         src = self._conn_svc.get_connection(session, org_id, source_connection_id)
         if src is None or src.direction not in (
@@ -108,6 +130,7 @@ class PipelineService:
             self.validate_pipeline_config(kwargs["dlt_config"])
             pipeline.dlt_config = kwargs["dlt_config"]
         if "name" in kwargs:
+            validate_pipeline_name(kwargs["name"])
             pipeline.name = kwargs["name"]
         if "description" in kwargs:
             pipeline.description = kwargs["description"]

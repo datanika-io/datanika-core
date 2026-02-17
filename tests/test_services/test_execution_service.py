@@ -71,7 +71,7 @@ def pipeline(pipe_svc, conn_svc, db_session, org):
     return pipe_svc.create_pipeline(
         db_session,
         org.id,
-        "test_pipe",
+        "test pipe",
         "desc",
         src.id,
         dst.id,

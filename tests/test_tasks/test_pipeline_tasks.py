@@ -141,3 +141,58 @@ class TestRunPipelineTask:
         assert run.status == RunStatus.FAILED
         assert run.finished_at is not None
         assert "dlt exploded" in run.error_message
+
+    def test_passes_dataset_name_derived_from_pipeline_name(self, db_session, setup_pipeline):
+        org, pipeline, run, encryption = setup_pipeline
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 10,
+                "load_info": "mock_load_info",
+            }
+
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+            call_kwargs = instance.execute.call_args[1]
+            assert call_kwargs["dataset_name"] == "test"
+
+    def test_dataset_name_converts_spaces_to_underscores(
+        self, pipe_svc, conn_svc, exec_svc, db_session, encryption
+    ):
+        import uuid
+
+        slug = f"acme-ds-{uuid.uuid4().hex[:8]}"
+        org = Organization(name="Acme", slug=slug)
+        db_session.add(org)
+        db_session.flush()
+        src = conn_svc.create_connection(
+            db_session, org.id, "S", ConnectionType.POSTGRES,
+            ConnectionDirection.SOURCE, {"host": "src", "port": 5432},
+        )
+        dst = conn_svc.create_connection(
+            db_session, org.id, "D", ConnectionType.POSTGRES,
+            ConnectionDirection.DESTINATION, {"host": "dst", "port": 5432},
+        )
+        pipeline = pipe_svc.create_pipeline(
+            db_session, org.id, "My Sales Pipeline", "desc",
+            src.id, dst.id, {"write_disposition": "append"},
+        )
+        run = exec_svc.create_run(db_session, org.id, NodeType.PIPELINE, pipeline.id)
+
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 10,
+                "load_info": "mock_load_info",
+            }
+            run_pipeline(
+                run_id=run.id, org_id=org.id,
+                session=db_session, encryption=encryption,
+            )
+            call_kwargs = instance.execute.call_args[1]
+            assert call_kwargs["dataset_name"] == "my_sales_pipeline"

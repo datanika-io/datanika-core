@@ -11,6 +11,7 @@ from datanika.models.run import Run
 from datanika.services.dlt_runner import DltRunnerService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
+from datanika.services.pipeline_service import to_dataset_name
 from datanika.tasks.celery_app import celery_app
 
 execution_service = ExecutionService()
@@ -60,6 +61,7 @@ def run_pipeline(
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
         runner = DltRunnerService()
+        dataset_name = to_dataset_name(pipeline.name)
         result = runner.execute(
             pipeline_id=pipeline.id,
             source_type=src_conn.connection_type.value,
@@ -67,6 +69,7 @@ def run_pipeline(
             destination_type=dst_conn.connection_type.value,
             destination_config=dst_config,
             dlt_config=pipeline.dlt_config,
+            dataset_name=dataset_name,
         )
         rows = result["rows_loaded"]
         logs = str(result["load_info"])

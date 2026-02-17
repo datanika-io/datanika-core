@@ -886,3 +886,48 @@ class TestExecuteModes:
             },
         )
         mock_source.add_filter.assert_called_once()
+
+
+class TestExecuteDatasetName:
+    @patch("datanika.services.dlt_runner.sql_database")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_execute_passes_dataset_name_to_build_pipeline(self, mock_dlt, mock_sql_db, svc):
+        mock_pipeline = MagicMock()
+        load_info = _make_load_info([[10]])
+        mock_pipeline.run.return_value = load_info
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+        mock_sql_db.return_value = "source"
+
+        svc.execute(
+            pipeline_id=1,
+            source_type="postgres",
+            source_config={},
+            destination_type="postgres",
+            destination_config={},
+            dlt_config={},
+            dataset_name="my_sales_pipeline",
+        )
+        pipeline_kwargs = mock_dlt.pipeline.call_args[1]
+        assert pipeline_kwargs["dataset_name"] == "my_sales_pipeline"
+
+    @patch("datanika.services.dlt_runner.sql_database")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_execute_without_dataset_name_omits_it(self, mock_dlt, mock_sql_db, svc):
+        mock_pipeline = MagicMock()
+        load_info = _make_load_info([[10]])
+        mock_pipeline.run.return_value = load_info
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+        mock_sql_db.return_value = "source"
+
+        svc.execute(
+            pipeline_id=1,
+            source_type="postgres",
+            source_config={},
+            destination_type="postgres",
+            destination_config={},
+            dlt_config={},
+        )
+        pipeline_kwargs = mock_dlt.pipeline.call_args[1]
+        assert "dataset_name" not in pipeline_kwargs

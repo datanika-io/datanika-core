@@ -8,7 +8,12 @@ from datanika.models.pipeline import Pipeline, PipelineStatus
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
-from datanika.services.pipeline_service import PipelineConfigError, PipelineService
+from datanika.services.pipeline_service import (
+    PipelineConfigError,
+    PipelineService,
+    to_dataset_name,
+    validate_pipeline_name,
+)
 
 
 @pytest.fixture
@@ -84,7 +89,7 @@ class TestCreatePipeline:
         pipe = svc.create_pipeline(
             db_session,
             org.id,
-            "my_pipe",
+            "my pipe",
             "desc",
             source_conn.id,
             dest_conn.id,
@@ -92,7 +97,7 @@ class TestCreatePipeline:
         )
         assert isinstance(pipe, Pipeline)
         assert isinstance(pipe.id, int)
-        assert pipe.name == "my_pipe"
+        assert pipe.name == "my pipe"
         assert pipe.status == PipelineStatus.DRAFT
 
     def test_with_config(self, svc, db_session, org, source_conn, dest_conn):
@@ -614,3 +619,91 @@ class TestValidateFilters:
 
     def test_empty_filters_list_valid(self):
         PipelineService.validate_pipeline_config({"filters": []})
+
+
+class TestValidatePipelineName:
+    def test_valid_simple_name(self):
+        validate_pipeline_name("My Pipeline")
+
+    def test_valid_alphanumeric(self):
+        validate_pipeline_name("Sales2024")
+
+    def test_valid_with_spaces(self):
+        validate_pipeline_name("My Sales Pipeline 2024")
+
+    def test_empty_name_raises(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_pipeline_name("")
+
+    def test_whitespace_only_raises(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_pipeline_name("   ")
+
+    def test_special_chars_raises(self):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            validate_pipeline_name("my-pipeline")
+
+    def test_underscore_raises(self):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            validate_pipeline_name("my_pipeline")
+
+    def test_dots_raises(self):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            validate_pipeline_name("my.pipeline")
+
+    def test_at_sign_raises(self):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            validate_pipeline_name("user@pipeline")
+
+    def test_strips_whitespace(self):
+        validate_pipeline_name("  My Pipeline  ")
+
+
+class TestToDatasetName:
+    def test_simple_name(self):
+        assert to_dataset_name("My Sales Pipeline") == "my_sales_pipeline"
+
+    def test_already_lowercase(self):
+        assert to_dataset_name("sales") == "sales"
+
+    def test_multiple_spaces(self):
+        assert to_dataset_name("My   Sales   Pipeline") == "my_sales_pipeline"
+
+    def test_leading_trailing_spaces(self):
+        assert to_dataset_name("  My Pipeline  ") == "my_pipeline"
+
+    def test_single_word(self):
+        assert to_dataset_name("Sales") == "sales"
+
+    def test_mixed_case_with_numbers(self):
+        assert to_dataset_name("Sales 2024 Q1") == "sales_2024_q1"
+
+
+class TestCreatePipelineNameValidation:
+    def test_rejects_special_chars(self, svc, db_session, org, source_conn, dest_conn):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            svc.create_pipeline(
+                db_session, org.id, "my-pipe!", "d", source_conn.id, dest_conn.id, {}
+            )
+
+    def test_rejects_empty_name(self, svc, db_session, org, source_conn, dest_conn):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            svc.create_pipeline(
+                db_session, org.id, "", "d", source_conn.id, dest_conn.id, {}
+            )
+
+
+class TestUpdatePipelineNameValidation:
+    def test_rejects_special_chars(self, svc, db_session, org, source_conn, dest_conn):
+        created = svc.create_pipeline(
+            db_session, org.id, "Valid Name", "d", source_conn.id, dest_conn.id, {}
+        )
+        with pytest.raises(ValueError, match="alphanumeric"):
+            svc.update_pipeline(db_session, org.id, created.id, name="bad-name!")
+
+    def test_accepts_valid_name(self, svc, db_session, org, source_conn, dest_conn):
+        created = svc.create_pipeline(
+            db_session, org.id, "Old Name", "d", source_conn.id, dest_conn.id, {}
+        )
+        updated = svc.update_pipeline(db_session, org.id, created.id, name="New Name 2")
+        assert updated.name == "New Name 2"

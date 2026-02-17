@@ -236,6 +236,7 @@ class DltRunnerService:
         destination_config: dict,
         dlt_config: dict,
         batch_size: int | None = None,
+        dataset_name: str | None = None,
     ) -> dict:
         """Execute a dlt pipeline.
 
@@ -247,7 +248,9 @@ class DltRunnerService:
         if batch_size is None:
             batch_size = dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
 
-        pipeline = self.build_pipeline(pipeline_id, destination_type, destination_config)
+        pipeline = self.build_pipeline(
+            pipeline_id, destination_type, destination_config, dataset_name=dataset_name
+        )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 
         # Apply row-level filters

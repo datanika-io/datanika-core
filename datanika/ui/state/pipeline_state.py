@@ -1,6 +1,7 @@
 """Pipeline state for Reflex UI."""
 
 import json
+import re
 
 from pydantic import BaseModel
 
@@ -57,7 +58,7 @@ class PipelineState(BaseState):
     editing_pipeline_id: int = 0
 
     def set_form_name(self, value: str):
-        self.form_name = value
+        self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
 
     def set_form_description(self, value: str):
         self.form_description = value
@@ -208,6 +209,9 @@ class PipelineState(BaseState):
         self.error_message = ""
 
     async def save_pipeline(self):
+        if not self.form_name.strip():
+            self.error_message = "Pipeline name cannot be empty"
+            return
         org_id = await self._get_org_id()
         pipe_svc, _ = self._get_services()
         try:
@@ -365,7 +369,7 @@ class PipelineState(BaseState):
             self.source_conn_options = src_opts
             self.dest_conn_options = dst_opts
             self._populate_form_from_pipeline(pipeline, src_opts, dst_opts)
-        self.form_name = f"{self.form_name} (copy)"
+        self.form_name = f"{self.form_name} copy"
         self.editing_pipeline_id = 0
 
     def cancel_edit(self):

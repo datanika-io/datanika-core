@@ -41,7 +41,14 @@
       "Bash(find:*)",
       "Bash(gh repo rename:*)",
       "Bash(where:*)",
-      "Bash(git remote set-url:*)"
+      "Bash(git remote set-url:*)",
+      "Bash(git rm:*)",
+      "Bash(git commit:*)",
+      "Bash(docker compose:*)",
+      "Bash(GIT_SEQUENCE_EDITOR=\"sed -i ''s/^pick fb81724/reword fb81724/''\" git rebase -i origin/dev)",
+      "Bash(git stash:*)",
+      "Bash(git push:*)",
+      "Bash(docker-compose cp:*)"
     ]
   }
 }

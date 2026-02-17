@@ -105,7 +105,7 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Encryption** | Fernet (cryptography) |
 | **Package Manager** | uv |
 | **Linting** | Ruff |
-| **Testing** | pytest + pytest-asyncio (584 tests) |
+| **Testing** | pytest + pytest-asyncio (668 tests) |
 
 ## Quick Start
 
@@ -202,28 +202,30 @@ datanika/
 │   ├── run.py         #   Execution history
 │   ├── api_key.py     #   Service account keys
 │   └── audit_log.py   #   Audit trail
-├── services/          # Business logic (18 services)
+├── services/          # Business logic (17 services)
 │   ├── auth.py        #   JWT + bcrypt + RBAC
 │   ├── user_service.py    # Registration, org provisioning
 │   ├── connection_service.py  # Encrypted connection CRUD
 │   ├── pipeline_service.py    # Pipeline validation + CRUD
-│   ├── dlt_runner_service.py  # dlt pipeline/source/destination factory
+│   ├── dlt_runner.py      # dlt pipeline/source/destination factory
 │   ├── transformation_service.py  # dbt model CRUD
-│   ├── dbt_project_service.py    # Per-tenant dbt project management
+│   ├── dbt_project.py     # Per-tenant dbt project management
 │   ├── schedule_service.py    # Cron validation + CRUD
-│   ├── scheduler_integration_service.py  # APScheduler bridge
+│   ├── scheduler_integration.py  # APScheduler bridge
 │   ├── execution_service.py   # Run lifecycle management
 │   ├── dependency_service.py  # DAG validation
-│   ├── encryption_service.py  # Fernet encrypt/decrypt
+│   ├── encryption.py      # Fernet encrypt/decrypt
 │   ├── api_key_service.py     # API key management
 │   ├── audit_service.py       # Audit logging
-│   └── oauth_service.py       # Google + GitHub OAuth2
+│   ├── oauth_service.py       # Google + GitHub OAuth2
+│   ├── oauth_routes.py        # Starlette OAuth2 callback routes
+│   └── tenant.py              # Tenant provisioning
 ├── tasks/             # Celery async tasks
 │   ├── pipeline_tasks.py      # run_pipeline
 │   └── transformation_tasks.py    # run_transformation
 ├── ui/
-│   ├── state/         # Reflex state classes (11 files)
-│   ├── pages/         # Route handlers (12 pages)
+│   ├── state/         # Reflex state classes (10 files)
+│   ├── pages/         # Route handlers (11 pages)
 │   └── components/    # Reusable UI components
 ├── migrations/        # Alembic migrations
 └── dbt_projects/      # Generated per-tenant dbt projects

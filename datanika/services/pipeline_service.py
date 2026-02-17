@@ -1,7 +1,7 @@
 """Pipeline management service — CRUD with dlt_config validation."""
 
-import re
 from datetime import UTC, datetime
+from functools import partial
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from datanika.models.connection import ConnectionDirection
 from datanika.models.pipeline import Pipeline, PipelineStatus
 from datanika.services.connection_service import ConnectionService
+from datanika.services.naming import to_snake_case, validate_name
 
 VALID_WRITE_DISPOSITIONS = {"append", "replace", "merge"}
 VALID_MODES = {"single_table", "full_database"}
@@ -26,24 +27,8 @@ INTERNAL_CONFIG_KEYS = {
     "filters",
 }
 
-
-_PIPELINE_NAME_RE = re.compile(r"^[a-zA-Z0-9 ]+$")
-
-
-def validate_pipeline_name(name: str) -> None:
-    """Validate pipeline name: non-empty, alphanumeric + spaces only."""
-    stripped = name.strip()
-    if not stripped:
-        raise ValueError("Pipeline name cannot be empty")
-    if not _PIPELINE_NAME_RE.match(stripped):
-        raise ValueError(
-            "Pipeline name must contain only alphanumeric characters and spaces"
-        )
-
-
-def to_dataset_name(name: str) -> str:
-    """Convert pipeline name to a dataset name (snake_case)."""
-    return re.sub(r"\s+", "_", name.strip()).lower()
+validate_pipeline_name = partial(validate_name, entity_label="Pipeline")
+to_dataset_name = to_snake_case
 
 
 class PipelineConfigError(ValueError):

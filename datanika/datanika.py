@@ -5,6 +5,8 @@ from datanika.ui.pages.connections import connections_page
 from datanika.ui.pages.dag import dag_page
 from datanika.ui.pages.dashboard import dashboard_page
 from datanika.ui.pages.login import login_page
+from datanika.ui.pages.model_detail import model_detail_page
+from datanika.ui.pages.models import models_page
 from datanika.ui.pages.pipelines import pipelines_page
 from datanika.ui.pages.runs import runs_page
 from datanika.ui.pages.schedules import schedules_page
@@ -15,6 +17,8 @@ from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
+from datanika.ui.state.model_detail_state import ModelDetailState
+from datanika.ui.state.model_state import ModelState
 from datanika.ui.state.pipeline_state import PipelineState
 from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
@@ -85,6 +89,18 @@ app.add_page(
     route="/dag",
     title="Dependencies | Datanika",
     on_load=[AuthState.check_auth, DagState.load_dependencies],
+)
+app.add_page(
+    models_page,
+    route="/models",
+    title="Models | Datanika",
+    on_load=[AuthState.check_auth, ModelState.load_models],
+)
+app.add_page(
+    model_detail_page,
+    route="/models/[id]",
+    title="Model Detail | Datanika",
+    on_load=[AuthState.check_auth, ModelDetailState.load_model_detail],
 )
 app.add_page(
     settings_page,

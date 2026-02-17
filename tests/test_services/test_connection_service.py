@@ -491,3 +491,41 @@ class TestBuildSaUrl:
 
         with pytest.raises(ValueError, match="Unsupported"):
             _build_sa_url({"bucket": "x"}, ConnectionType.S3)
+
+
+class TestConnectionNameValidation:
+    def test_valid_name(self, svc, db_session, org):
+        conn = svc.create_connection(
+            db_session, org.id, "My DB 1",
+            ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+        )
+        assert conn.name == "My DB 1"
+
+    def test_empty_name_rejected(self, svc, db_session, org):
+        with pytest.raises(ValueError, match="Connection name cannot be empty"):
+            svc.create_connection(
+                db_session, org.id, "   ",
+                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+            )
+
+    def test_special_chars_rejected(self, svc, db_session, org):
+        with pytest.raises(ValueError, match="alphanumeric"):
+            svc.create_connection(
+                db_session, org.id, "My-DB!",
+                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+            )
+
+    def test_create_rejects_invalid(self, svc, db_session, org):
+        with pytest.raises(ValueError):
+            svc.create_connection(
+                db_session, org.id, "",
+                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+            )
+
+    def test_update_rejects_invalid_name(self, svc, db_session, org):
+        conn = svc.create_connection(
+            db_session, org.id, "Valid",
+            ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+        )
+        with pytest.raises(ValueError, match="alphanumeric"):
+            svc.update_connection(db_session, org.id, conn.id, name="bad@name")

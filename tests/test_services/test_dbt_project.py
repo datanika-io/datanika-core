@@ -816,3 +816,131 @@ class TestCheckFreshness:
     def test_project_not_found_raises(self, svc):
         with pytest.raises(DbtProjectError, match="project not found"):
             svc.check_freshness(999)
+
+
+# ---------------------------------------------------------------------------
+# write_source_yml_for_connection
+# ---------------------------------------------------------------------------
+class TestWriteSourceYmlForConnection:
+    def test_creates_yml_file(self, svc):
+        svc.ensure_project(1)
+        sources = [{
+            "name": "my_pipeline",
+            "schema": "my_pipeline",
+            "tables": [{"name": "users", "columns": [{"name": "id", "data_type": "INTEGER"}]}],
+        }]
+        path = svc.write_source_yml_for_connection(1, "my_conn", sources)
+        assert path.exists()
+        assert path.name == "my_conn_src.yml"
+
+    def test_yml_content_structure(self, svc):
+        svc.ensure_project(1)
+        sources = [{
+            "name": "ds1",
+            "description": "First dataset",
+            "schema": "ds1",
+            "tables": [
+                {"name": "t1", "columns": [{"name": "id", "data_type": "INT"}]},
+                {"name": "t2", "columns": [{"name": "name", "data_type": "TEXT"}]},
+            ],
+        }]
+        path = svc.write_source_yml_for_connection(1, "pg_conn", sources)
+        content = yaml.safe_load(path.read_text())
+        assert content["version"] == 2
+        assert len(content["sources"]) == 1
+        src = content["sources"][0]
+        assert src["name"] == "ds1"
+        assert src["description"] == "First dataset"
+        assert len(src["tables"]) == 2
+
+    def test_multiple_sources_from_multiple_pipelines(self, svc):
+        svc.ensure_project(1)
+        sources = [
+            {
+                "name": "pipeline_a",
+                "schema": "pipeline_a",
+                "tables": [{"name": "users", "columns": []}],
+            },
+            {
+                "name": "pipeline_b",
+                "schema": "pipeline_b",
+                "tables": [{"name": "orders", "columns": []}],
+            },
+        ]
+        path = svc.write_source_yml_for_connection(1, "shared_db", sources)
+        content = yaml.safe_load(path.read_text())
+        assert len(content["sources"]) == 2
+
+    def test_includes_freshness_when_provided(self, svc):
+        svc.ensure_project(1)
+        sources = [{
+            "name": "ds",
+            "schema": "ds",
+            "tables": [{"name": "t1", "columns": []}],
+            "freshness": {"warn_after": {"count": 12, "period": "hour"}},
+        }]
+        path = svc.write_source_yml_for_connection(1, "conn", sources)
+        content = yaml.safe_load(path.read_text())
+        assert "freshness" in content["sources"][0]
+
+    def test_overwrites_existing_file(self, svc):
+        svc.ensure_project(1)
+        sources_v1 = [{"name": "old", "schema": "old", "tables": []}]
+        svc.write_source_yml_for_connection(1, "conn", sources_v1)
+        sources_v2 = [{"name": "new", "schema": "new", "tables": []}]
+        path = svc.write_source_yml_for_connection(1, "conn", sources_v2)
+        content = yaml.safe_load(path.read_text())
+        assert content["sources"][0]["name"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# write_model_yml
+# ---------------------------------------------------------------------------
+class TestWriteModelYml:
+    def test_creates_yml_file(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_model_yml(
+            1, "stg_users", "staging",
+            columns=[{"name": "id", "data_type": "INT"}],
+        )
+        assert path.exists()
+        assert path.name == "stg_users.yml"
+        assert path.parent.name == "staging"
+
+    def test_yml_content_structure(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_model_yml(
+            1, "stg_users", "staging",
+            columns=[
+                {"name": "id", "data_type": "INT"},
+                {"name": "email", "data_type": "TEXT"},
+            ],
+            description="Staged users",
+            dbt_config={"materialized": "table"},
+        )
+        content = yaml.safe_load(path.read_text())
+        assert content["version"] == 2
+        model = content["models"][0]
+        assert model["name"] == "stg_users"
+        assert model["description"] == "Staged users"
+        assert model["config"] == {"materialized": "table"}
+        assert len(model["columns"]) == 2
+
+    def test_no_description_omitted(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_model_yml(1, "m", "s", columns=[])
+        content = yaml.safe_load(path.read_text())
+        assert "description" not in content["models"][0]
+
+    def test_no_config_omitted(self, svc):
+        svc.ensure_project(1)
+        path = svc.write_model_yml(1, "m", "s", columns=[])
+        content = yaml.safe_load(path.read_text())
+        assert "config" not in content["models"][0]
+
+    def test_overwrites_existing(self, svc):
+        svc.ensure_project(1)
+        svc.write_model_yml(1, "m", "s", columns=[], description="old")
+        path = svc.write_model_yml(1, "m", "s", columns=[], description="new")
+        content = yaml.safe_load(path.read_text())
+        assert content["models"][0]["description"] == "new"

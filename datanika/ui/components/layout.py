@@ -65,6 +65,7 @@ def sidebar() -> rx.Component:
                 sidebar_link("Schedules", "/schedules", "clock"),
                 sidebar_link("Runs", "/runs", "play"),
                 sidebar_link("Dependencies", "/dag", "network"),
+                sidebar_link("Models", "/models", "database"),
                 spacing="1",
                 width="100%",
                 padding="8px",

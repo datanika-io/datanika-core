@@ -19,6 +19,7 @@ PUBLIC_TABLES: set[str] = {
     "schedules",
     "api_keys",
     "audit_logs",
+    "catalog_entries",
 }
 
 # Tables managed by Alembic but not belonging to either category

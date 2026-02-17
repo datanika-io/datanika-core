@@ -9,6 +9,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
+from datanika.services.catalog_service import CatalogService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.transformation_service import TransformationService
@@ -132,3 +133,49 @@ class TestRunTransformationTask:
         from datanika.tasks.transformation_tasks import run_transformation_task
 
         assert run_transformation_task.name == "datanika.run_transformation"
+
+
+class TestCatalogSyncAfterTransformation:
+    def test_syncs_catalog_after_success(self, db_session, setup_transformation):
+        org, transformation, run = setup_transformation
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 10,
+                "logs": "ok",
+            }
+            run_transformation(run_id=run.id, org_id=org.id, session=db_session)
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        entries = CatalogService.list_entries(db_session, org.id)
+        assert len(entries) == 1
+        assert entries[0].table_name == "test_model"
+        assert entries[0].origin_type == NodeType.TRANSFORMATION
+
+    def test_writes_model_yml_after_success(self, db_session, setup_transformation):
+        org, transformation, run = setup_transformation
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 5,
+                "logs": "",
+            }
+            run_transformation(run_id=run.id, org_id=org.id, session=db_session)
+        instance.write_model_yml.assert_called_once()
+
+    def test_catalog_sync_failure_does_not_fail_run(self, db_session, setup_transformation):
+        org, transformation, run = setup_transformation
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 3,
+                "logs": "",
+            }
+            instance.write_model_yml.side_effect = RuntimeError("yml write failed")
+            run_transformation(run_id=run.id, org_id=org.id, session=db_session)
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        assert run.rows_loaded == 3

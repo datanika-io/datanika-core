@@ -1,17 +1,53 @@
 """Transformation execution Celery tasks."""
 
+import logging
 import traceback
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.models.catalog_entry import CatalogEntryType
+from datanika.models.dependency import NodeType
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
+from datanika.services.catalog_service import CatalogService
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.execution_service import ExecutionService
 from datanika.tasks.celery_app import celery_app
 
+logger = logging.getLogger(__name__)
 execution_service = ExecutionService()
+
+
+def _sync_catalog_after_transformation(
+    session: Session,
+    org_id: int,
+    transformation: Transformation,
+    dbt_svc: DbtProjectService,
+) -> None:
+    """Sync catalog entry and write model YML after a successful transformation run."""
+    catalog_svc = CatalogService()
+    catalog_svc.upsert_entry(
+        session,
+        org_id,
+        entry_type=CatalogEntryType.DBT_MODEL,
+        origin_type=NodeType.TRANSFORMATION,
+        origin_id=transformation.id,
+        table_name=transformation.name,
+        schema_name=transformation.schema_name,
+        dataset_name=transformation.schema_name,
+        columns=[],
+        description=transformation.description,
+        dbt_config={"materialized": transformation.materialization.value},
+    )
+    dbt_svc.write_model_yml(
+        org_id,
+        transformation.name,
+        transformation.schema_name,
+        columns=[],
+        description=transformation.description,
+        dbt_config={"materialized": transformation.materialization.value},
+    )
 
 
 def run_transformation(
@@ -69,6 +105,12 @@ def run_transformation(
         logs = result["logs"]
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
+
+        try:
+            _sync_catalog_after_transformation(session, org_id, transformation, dbt_svc)
+        except Exception:
+            logger.exception("Catalog sync failed (non-fatal)")
+
         if own_session:
             session.commit()
 

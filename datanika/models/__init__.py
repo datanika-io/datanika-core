@@ -1,6 +1,7 @@
 from datanika.models.api_key import ApiKey
 from datanika.models.audit_log import AuditAction, AuditLog
 from datanika.models.base import Base, TenantMixin, TimestampMixin
+from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.dependency import Dependency, NodeType
 from datanika.models.pipeline import Pipeline, PipelineStatus
@@ -32,4 +33,6 @@ __all__ = [
     "ApiKey",
     "AuditLog",
     "AuditAction",
+    "CatalogEntry",
+    "CatalogEntryType",
 ]

@@ -1,6 +1,7 @@
 """Connection state for Reflex UI."""
 
 import json
+import re
 
 from pydantic import BaseModel
 
@@ -150,7 +151,7 @@ class ConnectionState(BaseState):
     form_extra_headers: str = ""
 
     def set_form_name(self, value: str):
-        self.form_name = value
+        self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
 
     def set_form_type(self, value: str):
         self.form_type = value
@@ -500,7 +501,7 @@ class ConnectionState(BaseState):
             self.error_message = "Connection not found"
             return
         self._populate_form_from_config(
-            f"{conn.name} (copy)", conn.connection_type.value, config
+            f"{conn.name} copy", conn.connection_type.value, config
         )
         self.editing_conn_id = 0
 

@@ -420,6 +420,85 @@ class DbtProjectService:
             return True
         return False
 
+    def write_source_yml_for_connection(
+        self,
+        org_id: int,
+        conn_name_snake: str,
+        sources: list[dict],
+    ) -> Path:
+        """Write models/{conn_name_snake}_src.yml.
+
+        *sources* is a list of dbt source definitions::
+
+            [{
+                "name": dataset_name,
+                "description": "...",
+                "schema": dataset_name,
+                "tables": [{"name": "t1", "columns": [{"name": "c1", "data_type": "INT"}]}],
+                "freshness": {...} | None,
+            }]
+        """
+        project_path = self.get_project_path(org_id)
+        models_dir = project_path / "models"
+        models_dir.mkdir(parents=True, exist_ok=True)
+
+        # Build dbt-compatible source entries
+        dbt_sources = []
+        for src in sources:
+            source_def: dict = {
+                "name": src["name"],
+                "schema": src.get("schema", src["name"]),
+                "tables": [],
+            }
+            if src.get("description"):
+                source_def["description"] = src["description"]
+            if src.get("freshness"):
+                source_def["freshness"] = src["freshness"]
+            for tbl in src.get("tables", []):
+                tbl_def: dict = {"name": tbl["name"]}
+                if tbl.get("columns"):
+                    tbl_def["columns"] = [
+                        {"name": c["name"], "data_type": c.get("data_type", "")}
+                        for c in tbl["columns"]
+                    ]
+                source_def["tables"].append(tbl_def)
+            dbt_sources.append(source_def)
+
+        content = {"version": 2, "sources": dbt_sources}
+        yml_path = models_dir / f"{conn_name_snake}_src.yml"
+        yml_path.write_text(yaml.dump(content, default_flow_style=False))
+        return yml_path
+
+    def write_model_yml(
+        self,
+        org_id: int,
+        model_name: str,
+        schema_name: str,
+        columns: list[dict],
+        description: str | None = None,
+        dbt_config: dict | None = None,
+    ) -> Path:
+        """Write models/{schema_name}/{model_name}.yml."""
+        project_path = self.get_project_path(org_id)
+        schema_dir = project_path / "models" / schema_name
+        schema_dir.mkdir(parents=True, exist_ok=True)
+
+        model_entry: dict = {"name": model_name}
+        if description:
+            model_entry["description"] = description
+        if dbt_config:
+            model_entry["config"] = dbt_config
+        if columns:
+            model_entry["columns"] = [
+                {"name": c["name"], "data_type": c.get("data_type", "")}
+                for c in columns
+            ]
+
+        content = {"version": 2, "models": [model_entry]}
+        yml_path = schema_dir / f"{model_name}.yml"
+        yml_path.write_text(yaml.dump(content, default_flow_style=False))
+        return yml_path
+
     def write_sources_yml(
         self,
         org_id: int,

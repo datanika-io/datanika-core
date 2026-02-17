@@ -603,6 +603,74 @@ class TestRun:
 
 
 # ===========================================================================
+# CatalogEntry
+# ===========================================================================
+class TestCatalogEntry:
+    def test_table_exists(self):
+        assert "catalog_entries" in Base.metadata.tables
+
+    def test_columns(self):
+        cols = _columns("catalog_entries")
+        assert "id" in cols
+        assert "org_id" in cols
+        assert "entry_type" in cols
+        assert "origin_type" in cols
+        assert "origin_id" in cols
+        assert "table_name" in cols
+        assert "schema_name" in cols
+        assert "dataset_name" in cols
+        assert "connection_id" in cols
+        assert "description" in cols
+        assert "columns" in cols
+        assert "dbt_config" in cols
+        assert "created_at" in cols
+        assert "updated_at" in cols
+
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("catalog_entries")
+
+    def test_connection_id_fk(self):
+        assert _has_fk_to("catalog_entries", "connection_id", "connections")
+
+    def test_entry_type_enum(self):
+        from datanika.models.catalog_entry import CatalogEntryType
+
+        assert set(CatalogEntryType) == {
+            CatalogEntryType.SOURCE_TABLE,
+            CatalogEntryType.DBT_MODEL,
+        }
+
+    def test_create_catalog_entry(self, db_session):
+        from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
+        from datanika.models.dependency import NodeType
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-cat")
+        db_session.add(org)
+        db_session.flush()
+
+        entry = CatalogEntry(
+            org_id=org.id,
+            entry_type=CatalogEntryType.DBT_MODEL,
+            origin_type=NodeType.TRANSFORMATION,
+            origin_id=42,
+            table_name="stg_users",
+            schema_name="staging",
+            dataset_name="analytics",
+            description="Staged user table",
+            columns=[{"name": "id", "data_type": "INT"}, {"name": "email", "data_type": "TEXT"}],
+            dbt_config={"materialized": "view"},
+        )
+        db_session.add(entry)
+        db_session.flush()
+
+        assert isinstance(entry.id, int)
+        assert entry.entry_type == CatalogEntryType.DBT_MODEL
+        assert entry.origin_type == NodeType.TRANSFORMATION
+        assert len(entry.columns) == 2
+
+
+# ===========================================================================
 # Cross-model: relationships
 # ===========================================================================
 class TestRelationships:
@@ -636,6 +704,34 @@ class TestRelationships:
 
         db_session.refresh(org)
         assert len(org.memberships) == 1
+
+    def test_catalog_entry_creation(self, db_session):
+        from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
+        from datanika.models.dependency import NodeType
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-catalog")
+        db_session.add(org)
+        db_session.flush()
+
+        entry = CatalogEntry(
+            org_id=org.id,
+            entry_type=CatalogEntryType.SOURCE_TABLE,
+            origin_type=NodeType.PIPELINE,
+            origin_id=1,
+            table_name="users",
+            schema_name="public",
+            dataset_name="my_pipeline",
+            columns=[{"name": "id", "data_type": "INTEGER"}],
+            dbt_config={},
+        )
+        db_session.add(entry)
+        db_session.flush()
+
+        assert isinstance(entry.id, int)
+        assert entry.entry_type == CatalogEntryType.SOURCE_TABLE
+        assert entry.table_name == "users"
+        assert entry.columns == [{"name": "id", "data_type": "INTEGER"}]
 
     def test_pipeline_connection_relationships(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType

@@ -1,6 +1,7 @@
 """Connection management service — CRUD with encrypted credentials."""
 
 from datetime import UTC, datetime
+from functools import partial
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, select, text
@@ -8,6 +9,9 @@ from sqlalchemy.orm import Session
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.services.encryption import EncryptionService
+from datanika.services.naming import validate_name
+
+validate_connection_name = partial(validate_name, entity_label="Connection")
 
 # Connection types that don't support SELECT 1 testing
 _NON_DB_TYPES = {
@@ -91,6 +95,7 @@ class ConnectionService:
         direction: ConnectionDirection,
         config: dict,
     ) -> Connection:
+        validate_connection_name(name)
         conn = Connection(
             org_id=org_id,
             name=name,
@@ -132,6 +137,7 @@ class ConnectionService:
             return None
 
         if "name" in kwargs:
+            validate_connection_name(kwargs["name"])
             conn.name = kwargs["name"]
         if "direction" in kwargs:
             conn.direction = kwargs["direction"]

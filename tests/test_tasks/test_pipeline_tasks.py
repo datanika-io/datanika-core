@@ -1,6 +1,6 @@
 """TDD tests for pipeline Celery tasks (mocked dlt)."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
@@ -9,6 +9,7 @@ from datanika.models.connection import ConnectionDirection, ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.user import Organization
+from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
@@ -196,3 +197,77 @@ class TestRunPipelineTask:
             )
             call_kwargs = instance.execute.call_args[1]
             assert call_kwargs["dataset_name"] == "my_sales_pipeline"
+
+
+class TestCatalogSyncAfterPipeline:
+    def _run_with_catalog_mocks(self, db_session, setup_pipeline, introspect_result=None):
+        """Run pipeline with mocked DLT + mocked catalog introspection."""
+        org, pipeline, run, encryption = setup_pipeline
+        if introspect_result is None:
+            introspect_result = [
+                {"table_name": "users", "columns": [{"name": "id", "data_type": "INTEGER"}]},
+            ]
+
+        mock_dbt_instance = MagicMock()
+
+        with (
+            _mock_dlt_runner() as mock_runner_cls,
+            patch.object(
+                CatalogService, "introspect_tables",
+                return_value=introspect_result,
+            ) as mock_introspect,
+            patch(
+                "datanika.tasks.pipeline_tasks.DbtProjectService",
+                return_value=mock_dbt_instance,
+            ),
+        ):
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 10,
+                "load_info": "mock_load_info",
+            }
+            run_pipeline(
+                run_id=run.id, org_id=org.id,
+                session=db_session, encryption=encryption,
+            )
+        return org, pipeline, run, mock_introspect, mock_dbt_instance
+
+    def test_syncs_catalog_entries_after_success(self, db_session, setup_pipeline):
+        org, pipeline, run, mock_introspect, _ = self._run_with_catalog_mocks(
+            db_session, setup_pipeline,
+        )
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        mock_introspect.assert_called_once()
+        # Verify entries were persisted
+        entries = CatalogService.list_entries(db_session, org.id)
+        assert len(entries) == 1
+        assert entries[0].table_name == "users"
+
+    def test_source_yml_written_after_success(self, db_session, setup_pipeline):
+        _, _, _, _, mock_dbt_instance = self._run_with_catalog_mocks(
+            db_session, setup_pipeline,
+        )
+        mock_dbt_instance.write_source_yml_for_connection.assert_called_once()
+
+    def test_catalog_sync_failure_does_not_fail_run(self, db_session, setup_pipeline):
+        org, pipeline, run, encryption = setup_pipeline
+        with (
+            _mock_dlt_runner() as mock_runner_cls,
+            patch.object(
+                CatalogService, "introspect_tables",
+                side_effect=RuntimeError("introspect failed"),
+            ),
+        ):
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 5,
+                "load_info": "ok",
+            }
+            run_pipeline(
+                run_id=run.id, org_id=org.id,
+                session=db_session, encryption=encryption,
+            )
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        assert run.rows_loaded == 5

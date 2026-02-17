@@ -331,14 +331,27 @@ class DbtProjectService:
         compiled_sql = ""
         if result.success and result.result:
             for node_result in result.result:
+                # compiled_code may be on node_result directly or on node_result.node
                 code = getattr(node_result, "compiled_code", None)
+                if not code:
+                    node = getattr(node_result, "node", None)
+                    if node:
+                        code = getattr(node, "compiled_code", None)
                 if code:
                     compiled_sql = code
                     break
 
-        logs = str(result.result) if result.result else ""
-        if not logs and result.exception:
+        logs = ""
+        if result.exception:
             logs = str(result.exception)
+        elif not compiled_sql and result.result:
+            # Extract concise message from results instead of raw repr
+            messages = []
+            for nr in result.result:
+                msg = getattr(nr, "message", None)
+                if msg:
+                    messages.append(msg)
+            logs = "; ".join(messages) if messages else "Compilation produced no output"
         return {
             "success": result.success,
             "compiled_sql": compiled_sql,

@@ -31,6 +31,7 @@ class TransformationService:
         incremental_config: dict | None = None,
     ) -> Transformation:
         self.validate_model_name(name)
+        self.validate_unique_name(session, org_id, name)
         self.validate_sql_body(sql_body)
         self.validate_schema_name(schema_name)
         if tests_config is None:
@@ -83,6 +84,8 @@ class TransformationService:
             transformation.sql_body = kwargs["sql_body"]
         if "name" in kwargs:
             self.validate_model_name(kwargs["name"])
+            if kwargs["name"] != transformation.name:
+                self.validate_unique_name(session, org_id, kwargs["name"])
             transformation.name = kwargs["name"]
         if "description" in kwargs:
             transformation.description = kwargs["description"]
@@ -120,6 +123,18 @@ class TransformationService:
             raise TransformationConfigError(
                 "Model name must start with a letter or underscore and contain only "
                 "letters, digits, underscores, and hyphens"
+            )
+
+    @staticmethod
+    def validate_unique_name(session: Session, org_id: int, name: str) -> None:
+        stmt = select(Transformation.id).where(
+            Transformation.org_id == org_id,
+            Transformation.name == name,
+            Transformation.deleted_at.is_(None),
+        )
+        if session.execute(stmt).first() is not None:
+            raise TransformationConfigError(
+                f"A transformation named '{name}' already exists"
             )
 
     @staticmethod

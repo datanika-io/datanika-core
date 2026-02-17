@@ -13,6 +13,8 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import DESTINATION_TYPES
 
 _REF_PATTERN = re.compile(r"""\{\{\s*ref\(\s*['"]([^'"]*?)$""")
+_SOURCE_TABLE_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*?)$""")
+_SOURCE_SCHEMA_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]*?)$""")
 
 
 class TransformationItem(BaseModel):
@@ -40,8 +42,10 @@ class TransformationState(BaseState):
     # Schema combobox
     schema_options: list[str] = []
     adding_new_schema: bool = False
-    # Ref autocomplete
-    all_model_names: list[str] = []
+    # Ref/source autocomplete data
+    all_ref_names: list[str] = []
+    all_source_schemas: list[str] = []
+    source_tables_by_schema: dict[str, list[str]] = {}
     ref_suggestions: list[str] = []
     ref_suggestion_index: int = -1
     ref_selected_name: str = ""
@@ -165,17 +169,24 @@ class TransformationState(BaseState):
             schemas.add("staging")
             self.schema_options = sorted(schemas) + ["+ Add new..."]
 
-            # Catalog entries for ref autocomplete
+            # ref() autocomplete: transformation names only
+            self.all_ref_names = sorted({t.name for t in rows})
+
+            # source() autocomplete: source tables grouped by dataset
+            from datanika.models.catalog_entry import CatalogEntryType
             from datanika.services.catalog_service import CatalogService
 
             catalog_svc = CatalogService()
-            entries = catalog_svc.list_entries(session, org_id)
-            names = set()
-            for e in entries:
-                names.add(e.table_name)
-                if e.dbt_config and e.dbt_config.get("alias"):
-                    names.add(e.dbt_config["alias"])
-            self.all_model_names = sorted(names)
+            source_entries = catalog_svc.list_entries(
+                session, org_id, entry_type=CatalogEntryType.SOURCE_TABLE
+            )
+            schema_tables: dict[str, set[str]] = {}
+            for e in source_entries:
+                schema_tables.setdefault(e.dataset_name, set()).add(e.table_name)
+            self.all_source_schemas = sorted(schema_tables.keys())
+            self.source_tables_by_schema = {
+                k: sorted(v) for k, v in schema_tables.items()
+            }
 
         self.error_message = ""
 
@@ -353,6 +364,9 @@ class TransformationState(BaseState):
         from datanika.services.dbt_project import DbtProjectService
         from datanika.services.encryption import EncryptionService
 
+        self.preview_sql = "Preparing..."
+        yield
+
         org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:
@@ -409,30 +423,54 @@ class TransformationState(BaseState):
             except Exception as e:
                 self.preview_sql = f"Error compiling: {self._safe_error(e)}"
 
-    # -- Ref autocomplete --
+    # -- Ref/source autocomplete --
 
-    def _detect_ref(self, sql: str):
-        """Check if SQL text contains an unclosed ref('... pattern and show suggestions."""
+    def _detect_suggestions(self, sql: str):
+        """Detect ref/source patterns and populate suggestions accordingly."""
+        # Most specific first: source('schema', 'table...')
+        match = _SOURCE_TABLE_PATTERN.search(sql)
+        if match:
+            schema = match.group(1)
+            partial = match.group(2).lower()
+            tables = self.source_tables_by_schema.get(schema, [])
+            self._set_suggestions([t for t in tables if t.lower().startswith(partial)])
+            return
+
+        # source('schema...')
+        match = _SOURCE_SCHEMA_PATTERN.search(sql)
+        if match:
+            partial = match.group(1).lower()
+            self._set_suggestions(
+                [s for s in self.all_source_schemas if s.lower().startswith(partial)]
+            )
+            return
+
+        # ref('model...')
         match = _REF_PATTERN.search(sql)
         if match:
             partial = match.group(1).lower()
-            self.ref_suggestions = [
-                n for n in self.all_model_names if n.lower().startswith(partial)
-            ][:20]
-            self.ref_suggestion_index = 0 if self.ref_suggestions else -1
-            self.ref_selected_name = self.ref_suggestions[0] if self.ref_suggestions else ""
-            self.show_ref_popover = bool(self.ref_suggestions)
-        else:
-            self.show_ref_popover = False
-            self.ref_suggestions = []
-            self.ref_suggestion_index = -1
-            self.ref_selected_name = ""
+            self._set_suggestions(
+                [n for n in self.all_ref_names if n.lower().startswith(partial)]
+            )
+            return
+
+        # No match
+        self.show_ref_popover = False
+        self.ref_suggestions = []
+        self.ref_suggestion_index = -1
+        self.ref_selected_name = ""
+
+    def _set_suggestions(self, items: list[str]):
+        self.ref_suggestions = items[:20]
+        self.ref_suggestion_index = 0 if self.ref_suggestions else -1
+        self.ref_selected_name = self.ref_suggestions[0] if self.ref_suggestions else ""
+        self.show_ref_popover = bool(self.ref_suggestions)
 
     def detect_ref_suggestions(self):
-        """Called by JS after debounce delay. Detects ref pattern and shows popover."""
+        """Called by JS after debounce delay. Detects ref/source pattern and shows popover."""
         if self.ref_dismissed:
             return
-        self._detect_ref(self.form_sql_body)
+        self._detect_suggestions(self.form_sql_body)
 
     def ref_navigate_up(self):
         if not self.show_ref_popover or not self.ref_suggestions:
@@ -463,12 +501,34 @@ class TransformationState(BaseState):
         self._apply_ref_suggestion(name)
 
     def _apply_ref_suggestion(self, name: str):
-        """Replace the partial ref pattern with the complete ref call."""
-        match = _REF_PATTERN.search(self.form_sql_body)
+        """Replace the partial pattern with the completed text."""
+        sql = self.form_sql_body
+
+        # source('schema', 'table...) → complete table name
+        match = _SOURCE_TABLE_PATTERN.search(sql)
         if match:
-            # match.start(1) is where the partial name begins (after the opening quote)
-            # match.end() is end of the partial name
-            before = self.form_sql_body[:match.start(1)]
-            after = self.form_sql_body[match.end():]
+            before = sql[:match.start(2)]
+            after = sql[match.end():]
             self.form_sql_body = before + name + "') }}" + after
+            self.show_ref_popover = False
+            return
+
+        # source('schema...) → complete schema, keep open for table
+        match = _SOURCE_SCHEMA_PATTERN.search(sql)
+        if match:
+            before = sql[:match.start(1)]
+            after = sql[match.end():]
+            self.form_sql_body = before + name + "', '" + after
+            self.show_ref_popover = False
+            return
+
+        # ref('model...) → complete model name
+        match = _REF_PATTERN.search(sql)
+        if match:
+            before = sql[:match.start(1)]
+            after = sql[match.end():]
+            self.form_sql_body = before + name + "') }}" + after
+            self.show_ref_popover = False
+            return
+
         self.show_ref_popover = False

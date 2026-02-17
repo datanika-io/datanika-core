@@ -6,6 +6,8 @@ from datanika.ui.components.layout import page_layout
 from datanika.ui.state.model_detail_state import ColumnItem, ModelDetailState
 
 _CUSTOM_TEST_OPTIONS = [
+    "accepted_values",
+    "relationships",
     "expression_is_true",
     "not_constant",
     "not_null_proportion",
@@ -97,13 +99,44 @@ def _custom_test_form() -> rx.Component:
         ModelDetailState.adding_test_column != "",
         rx.card(
             rx.vstack(
-                rx.text("Add dbt_utils Test", size="2", weight="bold"),
+                rx.text("Add Test", size="2", weight="bold"),
                 rx.select(
                     _CUSTOM_TEST_OPTIONS,
                     placeholder="Select test type...",
                     value=ModelDetailState.custom_test_type,
                     on_change=ModelDetailState.set_custom_test_type,
                     width="100%",
+                ),
+                # accepted_values → CSV input
+                rx.cond(
+                    ModelDetailState.custom_test_type == "accepted_values",
+                    rx.input(
+                        placeholder="Comma-separated values (e.g. active, inactive)",
+                        value=ModelDetailState.custom_test_expression,
+                        on_change=ModelDetailState.set_custom_test_expression,
+                        width="100%",
+                    ),
+                    rx.fragment(),
+                ),
+                # relationships → to + field inputs
+                rx.cond(
+                    ModelDetailState.custom_test_type == "relationships",
+                    rx.hstack(
+                        rx.input(
+                            placeholder="to (e.g. ref('users'))",
+                            value=ModelDetailState.custom_test_min_value,
+                            on_change=ModelDetailState.set_custom_test_min_value,
+                            width="50%",
+                        ),
+                        rx.input(
+                            placeholder="field (e.g. id)",
+                            value=ModelDetailState.custom_test_max_value,
+                            on_change=ModelDetailState.set_custom_test_max_value,
+                            width="50%",
+                        ),
+                        width="100%",
+                    ),
+                    rx.fragment(),
                 ),
                 # expression_is_true → expression input
                 rx.cond(
@@ -218,56 +251,22 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                     ),
                     spacing="4",
                 ),
-                # Accepted Values
-                rx.text("Accepted Values", size="2", weight="bold"),
-                rx.input(
-                    placeholder="Comma-separated values (e.g. active, inactive)",
-                    value=col.accepted_values_csv,
-                    on_change=lambda v: ModelDetailState.set_column_accepted_values(col.name, v),
-                    width="100%",
-                ),
-                # Relationship
-                rx.text("Relationship", size="2", weight="bold"),
-                rx.hstack(
-                    rx.input(
-                        placeholder="to (e.g. ref('users'))",
-                        value=col.relationship_to,
-                        on_change=lambda v: ModelDetailState.set_column_relationship_to(
-                            col.name, v
-                        ),
-                        width="50%",
-                    ),
-                    rx.input(
-                        placeholder="field (e.g. id)",
-                        value=col.relationship_field,
-                        on_change=lambda v: ModelDetailState.set_column_relationship_field(
-                            col.name, v
-                        ),
-                        width="50%",
-                    ),
-                    width="100%",
-                ),
-                # Additional tests (non-standard)
-                rx.text("Additional Tests", size="2", weight="bold"),
+                # Additional tests
+                rx.text("Tests", size="2", weight="bold"),
                 rx.foreach(
-                    col.tests,
-                    lambda t: rx.cond(
-                        # Show removable badges for dict tests only
-                        t.to(str).contains("{"),
-                        rx.badge(
-                            t.to(str),
-                            rx.icon(
-                                "x",
-                                size=12,
-                                cursor="pointer",
-                                on_click=ModelDetailState.remove_column_test(
-                                    col.name, t.to(str),
-                                ),
+                    col.additional_tests,
+                    lambda t: rx.badge(
+                        t,
+                        rx.icon(
+                            "x",
+                            size=12,
+                            cursor="pointer",
+                            on_click=ModelDetailState.remove_column_test(
+                                col.name, t,
                             ),
-                            variant="outline",
-                            size="1",
                         ),
-                        rx.fragment(),
+                        variant="outline",
+                        size="1",
                     ),
                 ),
                 # Add custom test button

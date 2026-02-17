@@ -48,6 +48,7 @@ def _recompute_columns(columns: list["ColumnItem"]) -> list["ColumnItem"]:
         accepted_values_csv = ""
         relationship_to = ""
         relationship_field = ""
+        additional_tests: list[str] = []
 
         for t in col.tests:
             if t == "not_null":
@@ -55,12 +56,14 @@ def _recompute_columns(columns: list["ColumnItem"]) -> list["ColumnItem"]:
             elif t == "unique":
                 has_unique = True
             elif isinstance(t, dict):
-                if "accepted_values" in t:
+                key = next(iter(t), "")
+                if key == "accepted_values":
                     values = t["accepted_values"].get("values", [])
                     accepted_values_csv = ", ".join(str(v) for v in values)
-                elif "relationships" in t:
+                elif key == "relationships":
                     relationship_to = t["relationships"].get("to", "")
                     relationship_field = t["relationships"].get("field", "")
+                additional_tests.append(key)
 
         result.append(col.model_copy(update={
             "has_not_null": has_not_null,
@@ -68,6 +71,7 @@ def _recompute_columns(columns: list["ColumnItem"]) -> list["ColumnItem"]:
             "accepted_values_csv": accepted_values_csv,
             "relationship_to": relationship_to,
             "relationship_field": relationship_field,
+            "additional_tests": additional_tests,
         }))
     return result
 
@@ -83,6 +87,7 @@ class ColumnItem(BaseModel):
     accepted_values_csv: str = ""
     relationship_to: str = ""
     relationship_field: str = ""
+    additional_tests: list[str] = []  # display keys for non-standard dict tests
 
 
 class ModelDetailState(BaseState):
@@ -209,61 +214,6 @@ class ModelDetailState(BaseState):
             tests.append(test_name)
         return col.model_copy(update={"tests": tests})
 
-    # -- Accepted values --
-
-    def set_column_accepted_values(self, col_name: str, csv: str):
-        values = [v.strip() for v in csv.split(",") if v.strip()]
-        self.columns = _recompute_columns([
-            self._set_accepted_values(col, values)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
-
-    @staticmethod
-    def _set_accepted_values(col: ColumnItem, values: list[str]) -> ColumnItem:
-        tests = [t for t in col.tests
-                 if not (isinstance(t, dict) and "accepted_values" in t)]
-        if values:
-            tests.append({"accepted_values": {"values": values}})
-        return col.model_copy(update={"tests": tests})
-
-    # -- Relationships --
-
-    def set_column_relationship_to(self, col_name: str, value: str):
-        self.columns = _recompute_columns([
-            self._set_relationship_field_in(col, to=value)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
-
-    def set_column_relationship_field(self, col_name: str, value: str):
-        self.columns = _recompute_columns([
-            self._set_relationship_field_in(col, field=value)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
-
-    @staticmethod
-    def _set_relationship_field_in(
-        col: ColumnItem, to: str | None = None, field: str | None = None,
-    ) -> ColumnItem:
-        # Find existing relationship test
-        existing_rel = {}
-        other_tests = []
-        for t in col.tests:
-            if isinstance(t, dict) and "relationships" in t:
-                existing_rel = t["relationships"]
-            else:
-                other_tests.append(t)
-
-        new_to = to if to is not None else existing_rel.get("to", "")
-        new_field = field if field is not None else existing_rel.get("field", "")
-
-        tests = list(other_tests)
-        if new_to or new_field:
-            tests.append({"relationships": {"to": new_to, "field": new_field}})
-        return col.model_copy(update={"tests": tests})
-
     # -- Custom test form --
 
     def open_custom_test_form(self, col_name: str):
@@ -301,15 +251,42 @@ class ModelDetailState(BaseState):
         if test_entry is None:
             return
 
+        new_key = next(iter(test_entry), "")
         self.columns = _recompute_columns([
-            col.model_copy(update={"tests": list(col.tests) + [test_entry]})
+            self._replace_or_add_test(col, new_key, test_entry)
             if col.name == col_name else col
             for col in self.columns
         ])
         self.adding_test_column = ""
 
+    @staticmethod
+    def _replace_or_add_test(
+        col: "ColumnItem", new_key: str, test_entry: dict,
+    ) -> "ColumnItem":
+        """Remove any existing test with the same key, then append the new one."""
+        tests = [
+            t for t in col.tests
+            if not (isinstance(t, dict) and next(iter(t), "") == new_key)
+        ]
+        tests.append(test_entry)
+        return col.model_copy(update={"tests": tests})
+
     def _build_custom_test_entry(self) -> dict | None:
         test_type = self.custom_test_type
+        # Native dbt tests (no prefix)
+        if test_type == "accepted_values":
+            values = [v.strip() for v in self.custom_test_expression.split(",") if v.strip()]
+            if not values:
+                return None
+            return {"accepted_values": {"values": values}}
+        elif test_type == "relationships":
+            if not self.custom_test_min_value:
+                return None
+            return {"relationships": {
+                "to": self.custom_test_min_value,
+                "field": self.custom_test_max_value,
+            }}
+        # dbt_utils tests (prefixed)
         key = f"dbt_utils.{test_type}"
         if test_type == "expression_is_true":
             if not self.custom_test_expression:
@@ -338,7 +315,7 @@ class ModelDetailState(BaseState):
             return {key: config}
         elif test_type == "sequential_values":
             config = {}
-            if self.custom_test_min_value:  # reuse min_value field for interval
+            if self.custom_test_min_value:
                 try:
                     config["interval"] = int(self.custom_test_min_value)
                 except ValueError:

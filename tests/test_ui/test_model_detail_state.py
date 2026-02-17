@@ -91,6 +91,44 @@ class TestColumnRecompute:
         # dbt_utils tests don't affect simple booleans
         assert result[0].has_unique is False
 
+    def test_additional_tests_populated(self):
+        cols = [ColumnItem(
+            name="amount",
+            tests=[
+                "not_null",
+                {"dbt_utils.expression_is_true": {"expression": "amount > 0"}},
+                {"dbt_utils.accepted_range": {"min_value": 0, "max_value": 100}},
+            ],
+        )]
+        result = _recompute_columns(cols)
+        assert result[0].additional_tests == [
+            "dbt_utils.expression_is_true",
+            "dbt_utils.accepted_range",
+        ]
+
+    def test_additional_tests_includes_all_dict_tests(self):
+        """All dict tests (including accepted_values/relationships) appear in additional_tests."""
+        cols = [ColumnItem(
+            name="status",
+            tests=[
+                "not_null",
+                {"accepted_values": {"values": ["a", "b"]}},
+                {"relationships": {"to": "ref('users')", "field": "id"}},
+                {"dbt_utils.not_constant": {}},
+            ],
+        )]
+        result = _recompute_columns(cols)
+        assert result[0].additional_tests == [
+            "accepted_values",
+            "relationships",
+            "dbt_utils.not_constant",
+        ]
+
+    def test_additional_tests_empty_when_no_custom(self):
+        cols = [ColumnItem(name="id", tests=["not_null", "unique"])]
+        result = _recompute_columns(cols)
+        assert result[0].additional_tests == []
+
 
 # ---------------------------------------------------------------------------
 # Toggle tests — not_null on/off, unique on/off
@@ -203,12 +241,31 @@ class TestCustomTests:
             {"dbt_utils.expression_is_true": {"expression": "x > 0"}},
         ]
         col = ColumnItem(name="x", tests=tests)
-        # Remove the custom test
-        new_tests = [t for t in col.tests if isinstance(t, str) or
-                     "dbt_utils.expression_is_true" not in t]
-        updated = _recompute_columns([col.model_copy(update={"tests": new_tests})])
+        # Remove the custom test using the display key (same as UI passes)
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        updated = ModelDetailState._remove_test_by_display(
+            col, "dbt_utils.expression_is_true"
+        )
+        updated = _recompute_columns([updated])
         assert updated[0].has_not_null is True
         assert len(updated[0].tests) == 1
+        assert updated[0].additional_tests == []
+
+    def test_remove_preserves_other_custom_tests(self):
+        tests = [
+            "not_null",
+            {"dbt_utils.expression_is_true": {"expression": "x > 0"}},
+            {"dbt_utils.not_constant": {}},
+        ]
+        col = ColumnItem(name="x", tests=tests)
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        updated = ModelDetailState._remove_test_by_display(
+            col, "dbt_utils.expression_is_true"
+        )
+        updated = _recompute_columns([updated])
+        assert updated[0].has_not_null is True
+        assert len(updated[0].tests) == 2
+        assert updated[0].additional_tests == ["dbt_utils.not_constant"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +307,104 @@ class TestValidation:
 
     def test_empty_tests_valid(self):
         assert _validate_column_tests([]) is None
+
+
+# ---------------------------------------------------------------------------
+# Dedup — no more than 1 test of each type per column
+# ---------------------------------------------------------------------------
+class TestDedup:
+    def _add_test(self, col, test_entry):
+        # Simulate what add_custom_test does: dedup then append
+        key = next(iter(test_entry), "")
+        new_tests = [
+            t for t in col.tests
+            if not (isinstance(t, dict) and next(iter(t), "") == key)
+        ]
+        new_tests.append(test_entry)
+        return col.model_copy(update={"tests": new_tests})
+
+    def test_add_duplicate_replaces_existing(self):
+        col = ColumnItem(
+            name="status",
+            tests=[{"accepted_values": {"values": ["a", "b"]}}],
+        )
+        updated = self._add_test(col, {"accepted_values": {"values": ["x", "y", "z"]}})
+        result = _recompute_columns([updated])
+        # Only one accepted_values test, with the new values
+        av_tests = [t for t in result[0].tests if isinstance(t, dict) and "accepted_values" in t]
+        assert len(av_tests) == 1
+        assert av_tests[0]["accepted_values"]["values"] == ["x", "y", "z"]
+
+    def test_add_duplicate_dbt_utils_replaces(self):
+        col = ColumnItem(
+            name="x",
+            tests=[{"dbt_utils.expression_is_true": {"expression": "x > 0"}}],
+        )
+        updated = self._add_test(
+            col, {"dbt_utils.expression_is_true": {"expression": "x > 10"}}
+        )
+        result = _recompute_columns([updated])
+        expr_tests = [
+            t for t in result[0].tests
+            if isinstance(t, dict) and "dbt_utils.expression_is_true" in t
+        ]
+        assert len(expr_tests) == 1
+        assert expr_tests[0]["dbt_utils.expression_is_true"]["expression"] == "x > 10"
+
+    def test_different_types_coexist(self):
+        col = ColumnItem(
+            name="user_id",
+            tests=[
+                {"accepted_values": {"values": ["a"]}},
+                {"relationships": {"to": "ref('users')", "field": "id"}},
+            ],
+        )
+        result = _recompute_columns([col])
+        assert len(result[0].tests) == 2
+        assert "accepted_values" in result[0].additional_tests
+        assert "relationships" in result[0].additional_tests
+
+
+# ---------------------------------------------------------------------------
+# Form builder — accepted_values and relationships via form
+# ---------------------------------------------------------------------------
+class TestFormBuilder:
+    def test_build_accepted_values(self):
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        state = ModelDetailState()
+        state.custom_test_type = "accepted_values"
+        state.custom_test_expression = "active, inactive, pending"
+        entry = state._build_custom_test_entry()
+        assert entry == {"accepted_values": {"values": ["active", "inactive", "pending"]}}
+
+    def test_build_accepted_values_trims_whitespace(self):
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        state = ModelDetailState()
+        state.custom_test_type = "accepted_values"
+        state.custom_test_expression = "  a ,  b , c  "
+        entry = state._build_custom_test_entry()
+        assert entry == {"accepted_values": {"values": ["a", "b", "c"]}}
+
+    def test_build_accepted_values_empty_returns_none(self):
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        state = ModelDetailState()
+        state.custom_test_type = "accepted_values"
+        state.custom_test_expression = ""
+        assert state._build_custom_test_entry() is None
+
+    def test_build_relationships(self):
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        state = ModelDetailState()
+        state.custom_test_type = "relationships"
+        state.custom_test_min_value = "ref('users')"
+        state.custom_test_max_value = "id"
+        entry = state._build_custom_test_entry()
+        assert entry == {"relationships": {"to": "ref('users')", "field": "id"}}
+
+    def test_build_relationships_empty_to_returns_none(self):
+        from datanika.ui.state.model_detail_state import ModelDetailState
+        state = ModelDetailState()
+        state.custom_test_type = "relationships"
+        state.custom_test_min_value = ""
+        state.custom_test_max_value = "id"
+        assert state._build_custom_test_entry() is None

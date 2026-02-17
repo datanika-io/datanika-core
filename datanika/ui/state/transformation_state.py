@@ -380,6 +380,15 @@ class TransformationState(BaseState):
                             dbt_svc.generate_profiles_yml(
                                 org_id, conn.connection_type.value, decrypted
                             )
+                else:
+                    # Check if profiles.yml exists from a prior run
+                    project_path = dbt_svc.get_project_path(org_id)
+                    if not (project_path / "profiles.yml").exists():
+                        self.preview_sql = (
+                            "Cannot compile: no destination connection selected. "
+                            "Please set a destination connection first."
+                        )
+                        return
 
                 # Write the model .sql so dbt can find it
                 dbt_svc.write_model(

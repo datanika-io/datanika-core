@@ -1,10 +1,16 @@
 """DbtProjectService — manages per-tenant dbt project directories and executes dbt commands."""
 
+import json
 import re
 from pathlib import Path
 
 import yaml
 from dbt.cli.main import dbtRunner
+
+
+def _to_plain(obj):
+    """Convert nested data to plain Python types safe for yaml.safe_dump."""
+    return json.loads(json.dumps(obj))
 
 
 class DbtProjectError(ValueError):
@@ -58,7 +64,7 @@ class DbtProjectService:
                 "test-paths": ["tests"],
                 "snapshot-paths": ["snapshots"],
             }
-            yml_path.write_text(yaml.dump(content, default_flow_style=False))
+            yml_path.write_text(yaml.safe_dump(content, default_flow_style=False))
 
         return project_path
 
@@ -109,7 +115,7 @@ class DbtProjectService:
                 }
             )
 
-        schema_yml_path.write_text(yaml.dump(schema_config, default_flow_style=False))
+        schema_yml_path.write_text(yaml.safe_dump(schema_config, default_flow_style=False))
         return sql_path
 
     def generate_profiles_yml(
@@ -132,7 +138,7 @@ class DbtProjectService:
         }
 
         profiles_path = project_path / "profiles.yml"
-        profiles_path.write_text(yaml.dump(profile, default_flow_style=False))
+        profiles_path.write_text(yaml.safe_dump(profile, default_flow_style=False))
         return profiles_path
 
     @staticmethod
@@ -204,6 +210,8 @@ class DbtProjectService:
                     rows_affected += resp.rows_affected or 0
 
         logs = str(result.result) if result.result else ""
+        if not logs and result.exception:
+            logs = str(result.exception)
 
         return {
             "success": result.success,
@@ -263,7 +271,7 @@ class DbtProjectService:
         else:
             model_entry.pop("columns", None)
 
-        schema_yml_path.write_text(yaml.dump(schema_config, default_flow_style=False))
+        schema_yml_path.write_text(yaml.safe_dump(schema_config, default_flow_style=False))
         return schema_yml_path
 
     def run_test(self, org_id: int, model_name: str) -> dict:
@@ -290,6 +298,8 @@ class DbtProjectService:
         )
 
         logs = str(result.result) if result.result else ""
+        if not logs and result.exception:
+            logs = str(result.exception)
         return {
             "success": result.success,
             "logs": logs,
@@ -327,6 +337,8 @@ class DbtProjectService:
                     break
 
         logs = str(result.result) if result.result else ""
+        if not logs and result.exception:
+            logs = str(result.exception)
         return {
             "success": result.success,
             "compiled_sql": compiled_sql,
@@ -349,7 +361,7 @@ class DbtProjectService:
         project_path = self.get_project_path(org_id)
         packages_path = project_path / "packages.yml"
         content = {"packages": packages}
-        packages_path.write_text(yaml.dump(content, default_flow_style=False))
+        packages_path.write_text(yaml.safe_dump(content, default_flow_style=False))
         return packages_path
 
     def install_packages(self, org_id: int) -> dict:
@@ -506,7 +518,7 @@ class DbtProjectService:
                         if c.get("description"):
                             col_entry["description"] = c["description"]
                         if c.get("tests"):
-                            col_entry["tests"] = c["tests"]
+                            col_entry["tests"] = _to_plain(c["tests"])
                         col_list.append(col_entry)
                     tbl_def["columns"] = col_list
                 source_def["tables"].append(tbl_def)
@@ -515,7 +527,7 @@ class DbtProjectService:
         _validate_identifier(conn_name_snake, "Connection name")
         content = {"version": 2, "sources": dbt_sources}
         yml_path = models_dir / f"{conn_name_snake}_src.yml"
-        yml_path.write_text(yaml.dump(content, default_flow_style=False))
+        yml_path.write_text(yaml.safe_dump(content, default_flow_style=False))
         return yml_path
 
     def write_model_yml(
@@ -546,13 +558,13 @@ class DbtProjectService:
                 if c.get("description"):
                     col_entry["description"] = c["description"]
                 if c.get("tests"):
-                    col_entry["tests"] = c["tests"]
+                    col_entry["tests"] = _to_plain(c["tests"])
                 col_list.append(col_entry)
             model_entry["columns"] = col_list
 
         content = {"version": 2, "models": [model_entry]}
         yml_path = schema_dir / f"{model_name}.yml"
-        yml_path.write_text(yaml.dump(content, default_flow_style=False))
+        yml_path.write_text(yaml.safe_dump(content, default_flow_style=False))
         return yml_path
 
     def write_sources_yml(
@@ -578,7 +590,7 @@ class DbtProjectService:
 
         content = {"version": 2, "sources": [source_def]}
         sources_path = models_dir / "sources.yml"
-        sources_path.write_text(yaml.dump(content, default_flow_style=False))
+        sources_path.write_text(yaml.safe_dump(content, default_flow_style=False))
         return sources_path
 
     def check_freshness(self, org_id: int, source_name: str | None = None) -> dict:

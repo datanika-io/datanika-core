@@ -28,6 +28,7 @@ class TransformationService:
         tests_config: dict | None = None,
         destination_connection_id: int | None = None,
         tags: list[str] | None = None,
+        incremental_config: dict | None = None,
     ) -> Transformation:
         self.validate_model_name(name)
         self.validate_sql_body(sql_body)
@@ -46,6 +47,7 @@ class TransformationService:
             tests_config=tests_config,
             destination_connection_id=destination_connection_id,
             tags=tags or [],
+            incremental_config=incremental_config,
         )
         session.add(transformation)
         session.flush()
@@ -96,6 +98,8 @@ class TransformationService:
             transformation.destination_connection_id = kwargs["destination_connection_id"]
         if "tags" in kwargs:
             transformation.tags = kwargs["tags"]
+        if "incremental_config" in kwargs:
+            transformation.incremental_config = kwargs["incremental_config"]
 
         session.flush()
         return transformation

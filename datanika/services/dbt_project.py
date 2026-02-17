@@ -69,6 +69,7 @@ class DbtProjectService:
         sql_body: str,
         schema_name: str = "staging",
         materialization: str = "view",
+        incremental_config: dict | None = None,
     ) -> Path:
         """Write a .sql model file + schema.yml config. Returns path to the .sql file."""
         _validate_identifier(model_name, "Model name")
@@ -89,15 +90,22 @@ class DbtProjectService:
         if "models" not in schema_config:
             schema_config["models"] = []
 
+        # Build dbt config dict
+        model_cfg: dict = {"materialized": materialization}
+        if materialization == "incremental" and incremental_config:
+            for key in ("unique_key", "strategy", "updated_at", "on_schema_change"):
+                if incremental_config.get(key):
+                    model_cfg[key] = incremental_config[key]
+
         # Update or add model entry
         existing = [m for m in schema_config["models"] if m.get("name") == model_name]
         if existing:
-            existing[0]["config"] = {"materialized": materialization}
+            existing[0]["config"] = model_cfg
         else:
             schema_config["models"].append(
                 {
                     "name": model_name,
-                    "config": {"materialized": materialization},
+                    "config": model_cfg,
                 }
             )
 

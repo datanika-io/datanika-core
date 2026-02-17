@@ -1,6 +1,5 @@
 """Transformation state for Reflex UI."""
 
-import json
 import re
 
 from pydantic import BaseModel
@@ -33,8 +32,6 @@ class TransformationState(BaseState):
     form_materialization: str = "view"
     form_description: str = ""
     form_schema_name: str = "staging"
-    # Tests config (JSON string for column tests)
-    form_tests_config: str = "{}"
     # Connection
     dest_conn_options: list[str] = []
     form_connection_option: str = ""
@@ -54,6 +51,11 @@ class TransformationState(BaseState):
     test_result_message: str = ""
     # SQL preview
     preview_sql: str = ""
+    # Incremental materialization config
+    form_unique_key: str = ""
+    form_strategy: str = ""
+    form_updated_at: str = ""
+    form_on_schema_change: str = "ignore"
     # 0 = creating new, >0 = editing existing transformation
     editing_transformation_id: int = 0
 
@@ -89,14 +91,23 @@ class TransformationState(BaseState):
             self.schema_options = sorted(existing) + ["+ Add new..."]
         self.adding_new_schema = False
 
-    def set_form_tests_config(self, value: str):
-        self.form_tests_config = value
-
     def set_form_connection_option(self, value: str):
         self.form_connection_option = value
 
     def set_form_tags(self, value: str):
         self.form_tags = value
+
+    def set_form_unique_key(self, value: str):
+        self.form_unique_key = value
+
+    def set_form_strategy(self, value: str):
+        self.form_strategy = value
+
+    def set_form_updated_at(self, value: str):
+        self.form_updated_at = value
+
+    def set_form_on_schema_change(self, value: str):
+        self.form_on_schema_change = value
 
     def _reset_form(self):
         self.editing_transformation_id = 0
@@ -105,9 +116,12 @@ class TransformationState(BaseState):
         self.form_materialization = "view"
         self.form_description = ""
         self.form_schema_name = "staging"
-        self.form_tests_config = "{}"
         self.form_connection_option = ""
         self.form_tags = ""
+        self.form_unique_key = ""
+        self.form_strategy = ""
+        self.form_updated_at = ""
+        self.form_on_schema_change = "ignore"
         self.adding_new_schema = False
         self.show_ref_popover = False
         self.ref_selected_name = ""
@@ -176,16 +190,38 @@ class TransformationState(BaseState):
     def _parse_tags(self) -> list[str]:
         return [t.strip() for t in self.form_tags.split(",") if t.strip()]
 
+    def _build_incremental_config(self) -> dict | None:
+        if self.form_materialization != "incremental":
+            return None
+        cfg: dict = {}
+        if self.form_unique_key.strip():
+            cfg["unique_key"] = self.form_unique_key.strip()
+        if self.form_strategy.strip():
+            cfg["strategy"] = self.form_strategy.strip()
+        if self.form_updated_at.strip():
+            cfg["updated_at"] = self.form_updated_at.strip()
+        if self.form_on_schema_change and self.form_on_schema_change != "ignore":
+            cfg["on_schema_change"] = self.form_on_schema_change
+        return cfg or None
+
+    def _populate_incremental_form(self, incremental_config: dict | None):
+        if incremental_config:
+            self.form_unique_key = incremental_config.get("unique_key", "")
+            self.form_strategy = incremental_config.get("strategy", "")
+            self.form_updated_at = incremental_config.get("updated_at", "")
+            self.form_on_schema_change = incremental_config.get("on_schema_change", "ignore")
+        else:
+            self.form_unique_key = ""
+            self.form_strategy = ""
+            self.form_updated_at = ""
+            self.form_on_schema_change = "ignore"
+
     async def save_transformation(self):
         org_id = await self._get_org_id()
         svc = TransformationService()
-        try:
-            tests_config = json.loads(self.form_tests_config)
-        except json.JSONDecodeError:
-            self.error_message = "Invalid JSON in tests config"
-            return
         conn_id = self._parse_connection_id()
         tags = self._parse_tags()
+        inc_cfg = self._build_incremental_config()
         try:
             with get_sync_session() as session:
                 if self.editing_transformation_id:
@@ -198,9 +234,9 @@ class TransformationState(BaseState):
                         materialization=Materialization(self.form_materialization),
                         description=self.form_description or None,
                         schema_name=self.form_schema_name,
-                        tests_config=tests_config if tests_config else None,
                         destination_connection_id=conn_id,
                         tags=tags,
+                        incremental_config=inc_cfg,
                     )
                 else:
                     svc.create_transformation(
@@ -211,9 +247,9 @@ class TransformationState(BaseState):
                         Materialization(self.form_materialization),
                         description=self.form_description or None,
                         schema_name=self.form_schema_name,
-                        tests_config=tests_config if tests_config else None,
                         destination_connection_id=conn_id,
                         tags=tags,
+                        incremental_config=inc_cfg,
                     )
                 session.commit()
         except Exception as e:
@@ -242,9 +278,9 @@ class TransformationState(BaseState):
             self.form_materialization = t.materialization.value
             self.form_description = t.description or ""
             self.form_schema_name = t.schema_name
-            self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
             self.form_connection_option = self._find_conn_option(t.destination_connection_id)
             self.form_tags = ", ".join(t.tags) if t.tags else ""
+            self._populate_incremental_form(t.incremental_config)
         self.editing_transformation_id = transformation_id
         self.error_message = ""
 
@@ -262,9 +298,9 @@ class TransformationState(BaseState):
             self.form_materialization = t.materialization.value
             self.form_description = t.description or ""
             self.form_schema_name = t.schema_name
-            self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
             self.form_connection_option = self._find_conn_option(t.destination_connection_id)
             self.form_tags = ", ".join(t.tags) if t.tags else ""
+            self._populate_incremental_form(t.incremental_config)
         self.editing_transformation_id = 0
         self.error_message = ""
 
@@ -313,7 +349,9 @@ class TransformationState(BaseState):
     async def preview_compiled_sql(self, transformation_id: int):
         """Compile dbt model and show compiled SQL."""
         from datanika.config import settings
+        from datanika.services.connection_service import ConnectionService
         from datanika.services.dbt_project import DbtProjectService
+        from datanika.services.encryption import EncryptionService
 
         org_id = await self._get_org_id()
         svc = TransformationService()
@@ -322,17 +360,45 @@ class TransformationState(BaseState):
             if t is None:
                 self.preview_sql = "Transformation not found"
                 return
-            model_name = t.name
 
-        try:
-            dbt_svc = DbtProjectService(settings.dbt_projects_dir)
-            result = dbt_svc.compile_model(org_id, model_name)
-            if result["success"] and result["compiled_sql"]:
-                self.preview_sql = result["compiled_sql"]
-            else:
-                self.preview_sql = f"Compile failed: {result['logs']}"
-        except Exception as e:
-            self.preview_sql = f"Error compiling: {self._safe_error(e)}"
+            try:
+                dbt_svc = DbtProjectService(settings.dbt_projects_dir)
+                dbt_svc.ensure_project(org_id)
+
+                # Generate profiles.yml so dbt can resolve the target
+                if t.destination_connection_id:
+                    encryption = EncryptionService(settings.credential_encryption_key)
+                    conn_svc = ConnectionService(encryption)
+                    conn = conn_svc.get_connection(
+                        session, org_id, t.destination_connection_id
+                    )
+                    if conn:
+                        decrypted = conn_svc.get_connection_config(
+                            session, org_id, t.destination_connection_id
+                        )
+                        if decrypted:
+                            dbt_svc.generate_profiles_yml(
+                                org_id, conn.connection_type.value, decrypted
+                            )
+
+                # Write the model .sql so dbt can find it
+                dbt_svc.write_model(
+                    org_id,
+                    t.name,
+                    t.sql_body,
+                    schema_name=t.schema_name,
+                    materialization=t.materialization.value,
+                    incremental_config=t.incremental_config,
+                )
+
+                result = dbt_svc.compile_model(org_id, t.name)
+                if result["success"] and result["compiled_sql"]:
+                    self.preview_sql = result["compiled_sql"]
+                else:
+                    logs = result["logs"] or "No logs available"
+                    self.preview_sql = f"Compile failed: {logs}"
+            except Exception as e:
+                self.preview_sql = f"Error compiling: {self._safe_error(e)}"
 
     # -- Ref autocomplete --
 

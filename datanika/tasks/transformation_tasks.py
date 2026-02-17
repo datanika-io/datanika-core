@@ -121,6 +121,7 @@ def run_transformation(
             transformation.sql_body,
             schema_name=transformation.schema_name,
             materialization=transformation.materialization.value,
+            incremental_config=transformation.incremental_config,
         )
         result = dbt_svc.run_model(org_id, transformation.name)
         rows = result["rows_affected"]

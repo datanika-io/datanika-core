@@ -316,7 +316,10 @@ class TestTransformationStateSetters:
             "set_form_materialization",
             "set_form_description",
             "set_form_schema_name",
-            "set_form_tests_config",
+            "set_form_unique_key",
+            "set_form_strategy",
+            "set_form_updated_at",
+            "set_form_on_schema_change",
         ]
         for name in expected:
             method = getattr(TransformationState, name, None)

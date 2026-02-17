@@ -33,3 +33,4 @@ class Transformation(Base, TenantMixin, TimestampMixin):
         BigInteger, ForeignKey("connections.id"), nullable=True
     )
     tags: Mapped[list | None] = mapped_column(JSON, default=list)
+    incremental_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)

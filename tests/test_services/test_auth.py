@@ -100,6 +100,30 @@ class TestRefreshToken:
         assert auth.decode_token(token) is None
 
 
+class TestTokenTypeVerification:
+    def test_decode_access_with_correct_type(self, auth):
+        token = auth.create_access_token(user_id=1, org_id=1)
+        payload = auth.decode_token(token, expected_type="access")
+        assert payload is not None
+        assert payload["type"] == "access"
+
+    def test_decode_access_rejects_refresh_token(self, auth):
+        token = auth.create_refresh_token(user_id=1)
+        payload = auth.decode_token(token, expected_type="access")
+        assert payload is None
+
+    def test_decode_refresh_rejects_access_token(self, auth):
+        token = auth.create_access_token(user_id=1, org_id=1)
+        payload = auth.decode_token(token, expected_type="refresh")
+        assert payload is None
+
+    def test_decode_without_type_check_accepts_both(self, auth):
+        access = auth.create_access_token(user_id=1, org_id=1)
+        refresh = auth.create_refresh_token(user_id=1)
+        assert auth.decode_token(access) is not None
+        assert auth.decode_token(refresh) is not None
+
+
 class TestRolePermissions:
     def test_owner_has_all_permissions(self, auth):
         assert auth.has_permission("owner", "create") is True

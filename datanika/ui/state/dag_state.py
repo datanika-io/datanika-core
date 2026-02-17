@@ -114,7 +114,7 @@ class DagState(BaseState):
                 )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to add dependency")
             return
         self.form_upstream_id = ""
         self.form_downstream_id = ""

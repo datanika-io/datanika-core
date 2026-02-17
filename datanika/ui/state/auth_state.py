@@ -78,8 +78,8 @@ class AuthState(rx.State):
                         OrgInfo(id=o.id, name=o.name, slug=o.slug)
                         for o in svc.get_user_orgs(session, user.id)
                     ]
-        except Exception as e:
-            self.auth_error = f"Login failed: {e}"
+        except Exception:
+            self.auth_error = "Login failed. Please try again."
             return
 
         if result is None:
@@ -95,7 +95,10 @@ class AuthState(rx.State):
         self.user_orgs = orgs
 
         auth = AuthService(settings.secret_key)
-        payload = auth.decode_token(access_token)
+        payload = auth.decode_token(access_token, expected_type="access")
+        if payload is None:
+            self.auth_error = "Invalid access token"
+            return
         org_id = payload["org_id"]
         for o in self.user_orgs:
             if o.id == org_id:
@@ -134,8 +137,8 @@ class AuthState(rx.State):
                 )
                 self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
-        except Exception as e:
-            self.auth_error = str(e)
+        except Exception:
+            self.auth_error = "Signup failed. Please try again."
             return
         return rx.redirect("/")
 
@@ -150,11 +153,16 @@ class AuthState(rx.State):
 
     def switch_org(self, org_id: int):
         self.auth_error = ""
-        # Create tokens directly for the new org (password not available in state)
+        # Verify the user is a member of the target org
+        svc = self._get_user_service()
+        with get_sync_session() as session:
+            membership = svc.get_membership(session, org_id, self.current_user.id)
+            if membership is None:
+                self.auth_error = "You are not a member of that organization"
+                return
         auth = AuthService(settings.secret_key)
         self.access_token = auth.create_access_token(self.current_user.id, org_id)
         self.refresh_token = auth.create_refresh_token(self.current_user.id)
-        # Update current org
         for o in self.user_orgs:
             if o.id == org_id:
                 self.current_org = o
@@ -176,9 +184,8 @@ class AuthState(rx.State):
 
         # Decode token to get user_id and org_id
         auth = AuthService(settings.secret_key)
-        try:
-            payload = auth.decode_token(token)
-        except Exception:
+        payload = auth.decode_token(token, expected_type="access")
+        if payload is None:
             self.auth_error = "Invalid authentication token"
             return rx.redirect("/login")
 

@@ -1,3 +1,4 @@
+import re
 from logging.config import fileConfig
 
 from alembic import context
@@ -9,6 +10,8 @@ from datanika.migrations.helpers import (
     is_tenant_table,
 )
 from datanika.models.base import Base
+
+_TENANT_SCHEMA_RE = re.compile(r"^tenant_\d+$")
 
 config = context.config
 if config.config_file_name is not None:
@@ -69,6 +72,8 @@ def run_migrations_online() -> None:
         # Phase 2: each tenant schema
         tenant_schemas = get_tenant_schemas(connection)
         for schema in tenant_schemas:
+            if not _TENANT_SCHEMA_RE.match(schema):
+                continue
             connection.execute(text(f'SET search_path TO "{schema}", public'))
             context.configure(
                 connection=connection,

@@ -1,5 +1,6 @@
 """DbtProjectService — manages per-tenant dbt project directories and executes dbt commands."""
 
+import re
 from pathlib import Path
 
 import yaml
@@ -10,7 +11,19 @@ class DbtProjectError(ValueError):
     """Raised when dbt project operations fail."""
 
 
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
+
+
+def _validate_identifier(name: str, label: str = "Name") -> None:
+    """Validate that a name is a safe identifier (no path traversal, no special chars)."""
+    if not name:
+        raise DbtProjectError(f"{label} cannot be empty")
+    if not _IDENTIFIER_RE.match(name):
+        raise DbtProjectError(
+            f"{label} must start with a letter or underscore and contain only "
+            f"letters, digits, underscores, and hyphens. Got: {name!r}"
+        )
 
 
 class DbtProjectService:
@@ -58,6 +71,8 @@ class DbtProjectService:
         materialization: str = "view",
     ) -> Path:
         """Write a .sql model file + schema.yml config. Returns path to the .sql file."""
+        _validate_identifier(model_name, "Model name")
+        _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
         schema_dir = project_path / "models" / schema_name
         schema_dir.mkdir(parents=True, exist_ok=True)
@@ -155,6 +170,7 @@ class DbtProjectService:
 
         Returns {"success": bool, "rows_affected": int, "logs": str}.
         """
+        _validate_identifier(model_name, "Model name")
         project_path = self.get_project_path(org_id)
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
@@ -195,6 +211,8 @@ class DbtProjectService:
         schema_name: str = "staging",
     ) -> Path:
         """Write column tests into schema.yml for the given model. Returns schema.yml path."""
+        _validate_identifier(model_name, "Model name")
+        _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
         schema_dir = project_path / "models" / schema_name
         schema_yml_path = schema_dir / "schema.yml"
@@ -245,6 +263,7 @@ class DbtProjectService:
 
         Returns {"success": bool, "logs": str}.
         """
+        _validate_identifier(model_name, "Model name")
         project_path = self.get_project_path(org_id)
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
@@ -273,6 +292,7 @@ class DbtProjectService:
 
         Returns {"success": bool, "compiled_sql": str, "logs": str}.
         """
+        _validate_identifier(model_name, "Model name")
         project_path = self.get_project_path(org_id)
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
@@ -307,6 +327,8 @@ class DbtProjectService:
 
     def remove_model(self, org_id: int, model_name: str, schema_name: str = "staging") -> bool:
         """Delete a model .sql file. Returns True if file existed."""
+        _validate_identifier(model_name, "Model name")
+        _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
         sql_path = project_path / "models" / schema_name / f"{model_name}.sql"
         if sql_path.exists():
@@ -352,6 +374,17 @@ class DbtProjectService:
         target_schema: str = "snapshots",
     ) -> Path:
         """Write a dbt snapshot file. Returns path to the .sql file."""
+        _validate_identifier(snapshot_name, "Snapshot name")
+        _validate_identifier(target_schema, "Target schema")
+        _validate_identifier(unique_key, "Unique key")
+        if strategy not in ("timestamp", "check"):
+            raise DbtProjectError(f"Invalid snapshot strategy: {strategy!r}")
+        if updated_at:
+            _validate_identifier(updated_at, "Updated at column")
+        if check_cols:
+            for col in check_cols:
+                _validate_identifier(col, "Check column")
+
         project_path = self.get_project_path(org_id)
         snapshots_dir = project_path / "snapshots"
         snapshots_dir.mkdir(parents=True, exist_ok=True)
@@ -384,6 +417,7 @@ class DbtProjectService:
 
     def run_snapshot(self, org_id: int, snapshot_name: str) -> dict:
         """Execute `dbt snapshot --select snapshot_name`. Returns result dict."""
+        _validate_identifier(snapshot_name, "Snapshot name")
         project_path = self.get_project_path(org_id)
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
@@ -413,6 +447,7 @@ class DbtProjectService:
 
     def remove_snapshot(self, org_id: int, snapshot_name: str) -> bool:
         """Delete a snapshot .sql file. Returns True if file existed."""
+        _validate_identifier(snapshot_name, "Snapshot name")
         project_path = self.get_project_path(org_id)
         sql_path = project_path / "snapshots" / f"{snapshot_name}.sql"
         if sql_path.exists():
@@ -469,6 +504,7 @@ class DbtProjectService:
                 source_def["tables"].append(tbl_def)
             dbt_sources.append(source_def)
 
+        _validate_identifier(conn_name_snake, "Connection name")
         content = {"version": 2, "sources": dbt_sources}
         yml_path = models_dir / f"{conn_name_snake}_src.yml"
         yml_path.write_text(yaml.dump(content, default_flow_style=False))
@@ -484,6 +520,8 @@ class DbtProjectService:
         dbt_config: dict | None = None,
     ) -> Path:
         """Write models/{schema_name}/{model_name}.yml."""
+        _validate_identifier(model_name, "Model name")
+        _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
         schema_dir = project_path / "models" / schema_name
         schema_dir.mkdir(parents=True, exist_ok=True)
@@ -537,6 +575,8 @@ class DbtProjectService:
 
     def check_freshness(self, org_id: int, source_name: str | None = None) -> dict:
         """Run `dbt source freshness`. Returns {"success": bool, "logs": str}."""
+        if source_name:
+            _validate_identifier(source_name, "Source name")
         project_path = self.get_project_path(org_id)
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")

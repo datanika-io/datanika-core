@@ -1,4 +1,9 @@
+import logging
+import warnings
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_INSECURE_DEFAULT_KEY = "XEOMryjw0MylWx2uNX_4c7xvPzl9T5dBxxhCUmsQc8A"
 
 
 class Settings(BaseSettings):
@@ -12,12 +17,12 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Auth
-    secret_key: str = "XEOMryjw0MylWx2uNX_4c7xvPzl9T5dBxxhCUmsQc8A"
+    secret_key: str = _INSECURE_DEFAULT_KEY
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 7
 
     # Encryption
-    credential_encryption_key: str = "XEOMryjw0MylWx2uNX_4c7xvPzl9T5dBxxhCUmsQc8A"
+    credential_encryption_key: str = _INSECURE_DEFAULT_KEY
 
     # OAuth
     google_client_id: str = ""
@@ -32,7 +37,26 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "Datanika"
-    debug: bool = True
+    debug: bool = False
 
 
 settings = Settings()
+
+# Warn loudly when using default secret keys
+_log = logging.getLogger(__name__)
+if settings.secret_key == _INSECURE_DEFAULT_KEY:
+    msg = (
+        "SECRET_KEY is using the insecure default value. "
+        "Set SECRET_KEY in your .env file for production."
+    )
+    _log.warning(msg)
+    if not settings.debug:
+        warnings.warn(msg, stacklevel=1)
+if settings.credential_encryption_key == _INSECURE_DEFAULT_KEY:
+    msg = (
+        "CREDENTIAL_ENCRYPTION_KEY is using the insecure default value. "
+        "Set CREDENTIAL_ENCRYPTION_KEY in your .env file for production."
+    )
+    _log.warning(msg)
+    if not settings.debug:
+        warnings.warn(msg, stacklevel=1)

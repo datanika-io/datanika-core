@@ -49,11 +49,14 @@ class AuthService:
         }
         return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
-    def decode_token(self, token: str) -> dict | None:
+    def decode_token(self, token: str, expected_type: str | None = None) -> dict | None:
         try:
-            return jwt.decode(token, self._secret_key, algorithms=[ALGORITHM])
+            payload = jwt.decode(token, self._secret_key, algorithms=[ALGORITHM])
         except JWTError:
             return None
+        if expected_type and payload.get("type") != expected_type:
+            return None
+        return payload
 
     # -- Role permissions --
 

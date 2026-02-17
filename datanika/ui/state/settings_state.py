@@ -77,12 +77,13 @@ class SettingsState(BaseState):
                 svc.update_org(
                     session,
                     auth_state.current_org.id,
+                    user_id=auth_state.current_user.id,
                     name=self.edit_org_name,
                     slug=self.edit_org_slug,
                 )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to update organization")
             return
         self.org_name = self.edit_org_name
         self.org_slug = self.edit_org_slug
@@ -115,7 +116,7 @@ class SettingsState(BaseState):
                 )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to add member")
             return
         self.invite_email = ""
         self.error_message = ""
@@ -136,7 +137,7 @@ class SettingsState(BaseState):
                 )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to change role")
             return
         self.error_message = ""
         await self.load_settings()
@@ -149,7 +150,7 @@ class SettingsState(BaseState):
                 svc.remove_member(session, auth_state.current_org.id, membership_id)
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to remove member")
             return
         self.error_message = ""
         await self.load_settings()

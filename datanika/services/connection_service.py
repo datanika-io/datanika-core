@@ -184,7 +184,7 @@ class ConnectionService:
             return True, "Connected successfully"
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
-        except Exception as e:
-            return False, str(e)
+        except Exception:
+            return False, "Connection failed — check your credentials and network settings"
         finally:
             engine.dispose()

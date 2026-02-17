@@ -1,5 +1,7 @@
 """Base state with auth-based org_id and sync session helper."""
 
+import logging
+
 import reflex as rx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -7,6 +9,7 @@ from sqlalchemy.orm import Session
 from datanika.config import settings
 
 _engine = create_engine(settings.database_url_sync)
+_log = logging.getLogger(__name__)
 
 
 def get_sync_session() -> Session:
@@ -24,3 +27,11 @@ class BaseState(rx.State):
 
         auth = await self.get_state(AuthState)
         return auth.current_org.id if auth.current_org.id else 0
+
+    @staticmethod
+    def _safe_error(exc: Exception, fallback: str = "An error occurred") -> str:
+        """Return a user-safe error message. Logs the full exception."""
+        _log.exception("Caught exception in state handler")
+        if isinstance(exc, ValueError):
+            return str(exc)
+        return fallback

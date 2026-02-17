@@ -146,11 +146,21 @@ class UserService:
         )
         return list(session.execute(stmt).scalars().all())
 
-    def update_org(self, session: Session, org_id: int, **kwargs) -> Organization | None:
+    def update_org(
+        self, session: Session, org_id: int, user_id: int | None = None, **kwargs
+    ) -> Organization | None:
         stmt = select(Organization).where(Organization.id == org_id)
         org = session.execute(stmt).scalar_one_or_none()
         if org is None:
             return None
+
+        # If modifying fields, verify user has admin/owner role
+        if kwargs and user_id is not None:
+            membership = self.get_membership(session, org_id, user_id)
+            if membership is None or membership.role not in (
+                MemberRole.OWNER, MemberRole.ADMIN,
+            ):
+                raise UserServiceError("Only admins and owners can update the organization")
 
         if "name" in kwargs:
             org.name = kwargs["name"]

@@ -113,7 +113,7 @@ class TransformationState(BaseState):
                     )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to save transformation")
             return
         self._reset_form()
         await self.load_transformations()
@@ -194,7 +194,7 @@ class TransformationState(BaseState):
             else:
                 self.test_result_message = f"Tests failed for {model_name}: {result['logs']}"
         except Exception as e:
-            self.test_result_message = f"Error running tests: {e}"
+            self.test_result_message = f"Error running tests: {self._safe_error(e)}"
 
     async def preview_compiled_sql(self, transformation_id: int):
         """Compile dbt model and show compiled SQL."""
@@ -218,4 +218,4 @@ class TransformationState(BaseState):
             else:
                 self.preview_sql = f"Compile failed: {result['logs']}"
         except Exception as e:
-            self.preview_sql = f"Error compiling: {e}"
+            self.preview_sql = f"Error compiling: {self._safe_error(e)}"

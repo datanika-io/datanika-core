@@ -1,6 +1,10 @@
 import json
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
+
+
+class EncryptionError(ValueError):
+    """Raised when encryption or decryption fails."""
 
 
 class EncryptionService:
@@ -12,5 +16,10 @@ class EncryptionService:
         return self._fernet.encrypt(raw).decode("utf-8")
 
     def decrypt(self, encrypted: str) -> dict:
-        raw = self._fernet.decrypt(encrypted.encode("utf-8"))
+        try:
+            raw = self._fernet.decrypt(encrypted.encode("utf-8"))
+        except InvalidToken as exc:
+            raise EncryptionError(
+                "Failed to decrypt data — invalid key or corrupted data"
+            ) from exc
         return json.loads(raw)

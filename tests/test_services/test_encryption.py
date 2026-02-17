@@ -1,10 +1,9 @@
 """TDD tests for credential encryption service."""
 
-import cryptography.fernet
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.services.encryption import EncryptionService
+from datanika.services.encryption import EncryptionError, EncryptionService
 
 
 @pytest.fixture
@@ -33,7 +32,7 @@ class TestEncryptionService:
         encrypted = encryption.encrypt({"key": "value"})
         other_key = Fernet.generate_key().decode()
         other = EncryptionService(other_key)
-        with pytest.raises(cryptography.fernet.InvalidToken):
+        with pytest.raises(EncryptionError, match="Failed to decrypt"):
             other.decrypt(encrypted)
 
     def test_encrypt_empty_dict(self, encryption):

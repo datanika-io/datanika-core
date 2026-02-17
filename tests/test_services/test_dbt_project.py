@@ -5,7 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 
-from datanika.services.dbt_project import DbtProjectError, DbtProjectService
+from datanika.services.dbt_project import (
+    DbtProjectError,
+    DbtProjectService,
+    _validate_identifier,
+)
 
 
 @pytest.fixture
@@ -1035,3 +1039,65 @@ class TestSourceYmlColumnDescAndTests:
         col = content["sources"][0]["tables"][0]["columns"][0]
         assert "description" not in col
         assert "tests" not in col
+
+
+# ---------------------------------------------------------------------------
+# _validate_identifier — path traversal prevention
+# ---------------------------------------------------------------------------
+class TestValidateIdentifier:
+    def test_valid_simple_name(self):
+        _validate_identifier("my_model", "Name")
+
+    def test_valid_name_with_digits(self):
+        _validate_identifier("model_v2", "Name")
+
+    def test_valid_underscore_start(self):
+        _validate_identifier("_private", "Name")
+
+    def test_rejects_empty(self):
+        with pytest.raises(DbtProjectError, match="cannot be empty"):
+            _validate_identifier("", "Name")
+
+    def test_rejects_path_traversal_dots(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("../../etc/passwd", "Name")
+
+    def test_rejects_path_separator_slash(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("models/evil", "Name")
+
+    def test_rejects_path_separator_backslash(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("models\\evil", "Name")
+
+    def test_rejects_spaces(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("my model", "Name")
+
+    def test_rejects_leading_digit(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("2bad", "Name")
+
+    def test_rejects_special_chars(self):
+        with pytest.raises(DbtProjectError):
+            _validate_identifier("model;drop", "Name")
+
+    def test_allows_hyphen(self):
+        _validate_identifier("my-model", "Name")
+
+
+class TestWriteModelRejectsUnsafeName:
+    def test_write_model_rejects_traversal(self, svc):
+        svc.ensure_project(1)
+        with pytest.raises(DbtProjectError):
+            svc.write_model(1, "../evil", "SELECT 1")
+
+    def test_write_model_rejects_unsafe_schema(self, svc):
+        svc.ensure_project(1)
+        with pytest.raises(DbtProjectError):
+            svc.write_model(1, "ok_model", "SELECT 1", schema_name="../../etc")
+
+    def test_write_snapshot_rejects_traversal(self, svc):
+        svc.ensure_project(1)
+        with pytest.raises(DbtProjectError):
+            svc.write_snapshot(1, "../evil", "SELECT 1", unique_key="id")

@@ -1,5 +1,7 @@
 """OAuth routes — Starlette routes for social login (Google + GitHub)."""
 
+import hashlib
+import hmac
 import secrets
 from urllib.parse import urlencode
 
@@ -16,6 +18,8 @@ from datanika.services.oauth_service import (
     google_provider,
 )
 from datanika.services.user_service import UserService
+
+_OAUTH_STATE_COOKIE = "oauth_state"
 
 
 def _get_providers() -> dict[str, OAuthProvider]:
@@ -50,6 +54,19 @@ def _frontend(path: str) -> str:
     return f"{settings.frontend_url}{path}"
 
 
+def _sign_state(state: str) -> str:
+    """Create an HMAC signature for the OAuth state parameter."""
+    return hmac.new(
+        settings.secret_key.encode(), state.encode(), hashlib.sha256
+    ).hexdigest()
+
+
+def _verify_state(state: str, signature: str) -> bool:
+    """Verify an OAuth state parameter signature."""
+    expected = _sign_state(state)
+    return hmac.compare_digest(expected, signature)
+
+
 async def oauth_login(request: Request) -> RedirectResponse:
     provider = request.path_params["provider"]
     providers = _get_providers()
@@ -60,7 +77,13 @@ async def oauth_login(request: Request) -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/callback/{provider}"
     url = svc.get_authorize_url(providers[provider], redirect_uri, state)
-    return RedirectResponse(url=url, status_code=302)
+
+    response = RedirectResponse(url=url, status_code=302)
+    signed = f"{state}:{_sign_state(state)}"
+    response.set_cookie(
+        _OAUTH_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax",
+    )
+    return response
 
 
 async def oauth_callback(request: Request) -> RedirectResponse:
@@ -73,6 +96,23 @@ async def oauth_callback(request: Request) -> RedirectResponse:
     if not code:
         return RedirectResponse(
             url=_frontend("/login?error=Missing+authorization+code"), status_code=302
+        )
+
+    # Validate CSRF state
+    returned_state = request.query_params.get("state", "")
+    cookie_value = request.cookies.get(_OAUTH_STATE_COOKIE, "")
+    if ":" not in cookie_value:
+        return RedirectResponse(
+            url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302
+        )
+    stored_state, signature = cookie_value.rsplit(":", 1)
+    if (
+        not returned_state
+        or returned_state != stored_state
+        or not _verify_state(stored_state, signature)
+    ):
+        return RedirectResponse(
+            url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302
         )
 
     svc = _get_service()
@@ -94,7 +134,9 @@ async def oauth_callback(request: Request) -> RedirectResponse:
         "refresh": result["refresh_token"],
         "is_new": "1" if result["is_new"] else "0",
     })
-    return RedirectResponse(url=_frontend(f"/auth/complete?{params}"), status_code=302)
+    response = RedirectResponse(url=_frontend(f"/auth/complete?{params}"), status_code=302)
+    response.delete_cookie(_OAUTH_STATE_COOKIE)
+    return response
 
 
 oauth_routes = [

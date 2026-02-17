@@ -250,7 +250,7 @@ class PipelineState(BaseState):
                     )
                 session.commit()
         except Exception as e:
-            self.error_message = str(e)
+            self.error_message = self._safe_error(e, "Failed to save pipeline")
             return
         self._reset_form()
         await self.load_pipelines()

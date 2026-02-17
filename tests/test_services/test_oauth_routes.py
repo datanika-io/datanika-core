@@ -6,7 +6,7 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from datanika.services.oauth_routes import oauth_routes
+from datanika.services.oauth_routes import _sign_state, oauth_routes
 from datanika.services.oauth_service import github_provider, google_provider
 
 
@@ -14,6 +14,11 @@ from datanika.services.oauth_service import github_provider, google_provider
 def client():
     app = Starlette(routes=oauth_routes)
     return TestClient(app, follow_redirects=False)
+
+
+def _make_state_cookie(state: str) -> str:
+    """Build the signed cookie value for OAuth state validation."""
+    return f"{state}:{_sign_state(state)}"
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +75,9 @@ class TestOAuthCallback:
             sess_mock.return_value.__enter__ = MagicMock(return_value=mock_session)
             sess_mock.return_value.__exit__ = MagicMock(return_value=False)
 
-            resp = client.get("/api/auth/callback/google?code=authcode123&state=xyz")
+            state = "xyz"
+            client.cookies.set("oauth_state", _make_state_cookie(state))
+            resp = client.get(f"/api/auth/callback/google?code=authcode123&state={state}")
             assert resp.status_code == 302
             location = resp.headers["location"]
             assert "/auth/complete" in location
@@ -98,10 +105,27 @@ class TestOAuthCallback:
             sess_mock.return_value.__enter__ = MagicMock(return_value=mock_session)
             sess_mock.return_value.__exit__ = MagicMock(return_value=False)
 
-            resp = client.get("/api/auth/callback/google?code=newcode")
+            state = "abc123"
+            client.cookies.set("oauth_state", _make_state_cookie(state))
+            resp = client.get(f"/api/auth/callback/google?code=newcode&state={state}")
             assert resp.status_code == 302
             assert "/auth/complete" in resp.headers["location"]
             assert "is_new=1" in resp.headers["location"]
+
+    def test_invalid_state_redirects_to_login(self, client):
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
+            mock.return_value = {"google": google_provider("gid", "gsecret")}
+            client.cookies.set("oauth_state", _make_state_cookie("real_state"))
+            resp = client.get("/api/auth/callback/google?code=abc&state=forged_state")
+            assert resp.status_code == 302
+            assert "Invalid+OAuth+state" in resp.headers["location"]
+
+    def test_missing_state_cookie_redirects_to_login(self, client):
+        with patch("datanika.services.oauth_routes._get_providers") as mock:
+            mock.return_value = {"google": google_provider("gid", "gsecret")}
+            resp = client.get("/api/auth/callback/google?code=abc&state=xyz")
+            assert resp.status_code == 302
+            assert "Invalid+OAuth+state" in resp.headers["location"]
 
     def test_missing_code_redirects_to_login(self, client):
         with patch("datanika.services.oauth_routes._get_providers") as mock:
@@ -135,6 +159,8 @@ class TestOAuthCallback:
             sess_mock.return_value.__enter__ = MagicMock(return_value=mock_session)
             sess_mock.return_value.__exit__ = MagicMock(return_value=False)
 
-            resp = client.get("/api/auth/callback/google?code=badcode")
+            state = "test_state"
+            client.cookies.set("oauth_state", _make_state_cookie(state))
+            resp = client.get(f"/api/auth/callback/google?code=badcode&state={state}")
             assert resp.status_code == 302
             assert "/login" in resp.headers["location"]

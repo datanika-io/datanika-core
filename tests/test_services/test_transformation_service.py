@@ -173,6 +173,70 @@ class TestDeleteTransformation:
         assert result is False
 
 
+class TestModelNameValidation:
+    def test_valid_names(self):
+        for name in ("my_model", "model-v2", "_private", "A123", "stg_orders"):
+            TransformationService.validate_model_name(name)
+
+    def test_rejects_empty(self):
+        with pytest.raises(TransformationConfigError, match="empty"):
+            TransformationService.validate_model_name("")
+
+    def test_rejects_spaces(self):
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            TransformationService.validate_model_name("my model")
+
+    def test_rejects_dots(self):
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            TransformationService.validate_model_name("my.model")
+
+    def test_rejects_slashes(self):
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            TransformationService.validate_model_name("../evil")
+
+    def test_rejects_starts_with_digit(self):
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            TransformationService.validate_model_name("1model")
+
+    def test_create_rejects_invalid_name(self, svc, db_session, org):
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            svc.create_transformation(
+                db_session, org.id, "bad model!", "SELECT 1", Materialization.VIEW
+            )
+
+    def test_update_rejects_invalid_name(self, svc, db_session, org):
+        t = svc.create_transformation(
+            db_session, org.id, "valid_name", "SELECT 1", Materialization.VIEW
+        )
+        with pytest.raises(TransformationConfigError, match="Model name"):
+            svc.update_transformation(db_session, org.id, t.id, name="bad name!")
+
+
+class TestConnectionAndTags:
+    def test_create_with_connection_and_tags(self, svc, db_session, org):
+        t = svc.create_transformation(
+            db_session, org.id, "tagged_model", "SELECT 1", Materialization.VIEW,
+            tags=["finance", "daily"],
+        )
+        assert t.tags == ["finance", "daily"]
+        assert t.destination_connection_id is None
+
+    def test_update_tags(self, svc, db_session, org):
+        t = svc.create_transformation(
+            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+        )
+        updated = svc.update_transformation(
+            db_session, org.id, t.id, tags=["updated"]
+        )
+        assert updated.tags == ["updated"]
+
+    def test_default_tags_empty(self, svc, db_session, org):
+        t = svc.create_transformation(
+            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+        )
+        assert t.tags == []
+
+
 class TestValidation:
     def test_empty_schema_name_rejected(self):
         with pytest.raises(TransformationConfigError, match="schema_name"):

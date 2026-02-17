@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import Enum, String, Text
+from sqlalchemy import BigInteger, Enum, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import JSON
 
@@ -29,3 +29,7 @@ class Transformation(Base, TenantMixin, TimestampMixin):
     )
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False, default="staging")
     tests_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    destination_connection_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("connections.id"), nullable=True
+    )
+    tags: Mapped[list | None] = mapped_column(JSON, default=list)

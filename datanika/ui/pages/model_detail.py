@@ -54,6 +54,34 @@ def description_section() -> rx.Component:
     )
 
 
+def alias_section() -> rx.Component:
+    return rx.vstack(
+        rx.text("Alias", size="3", weight="bold"),
+        rx.input(
+            placeholder="dbt alias (optional)",
+            value=ModelDetailState.form_alias,
+            on_change=ModelDetailState.set_form_alias,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def tags_section() -> rx.Component:
+    return rx.vstack(
+        rx.text("Tags", size="3", weight="bold"),
+        rx.input(
+            placeholder="Comma-separated tags (e.g. finance, daily)",
+            value=ModelDetailState.form_tags,
+            on_change=ModelDetailState.set_form_tags,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def config_section() -> rx.Component:
     return rx.vstack(
         rx.text("dbt Config (JSON)", size="3", weight="bold"),
@@ -369,6 +397,8 @@ def model_detail_page() -> rx.Component:
             header_section(),
             rx.separator(),
             description_section(),
+            alias_section(),
+            tags_section(),
             config_section(),
             editable_columns_section(),
             rx.separator(),

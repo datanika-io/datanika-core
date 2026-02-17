@@ -27,6 +27,9 @@ def _sync_catalog_after_transformation(
 ) -> None:
     """Sync catalog entry and write model YML after a successful transformation run."""
     catalog_svc = CatalogService()
+    dbt_config = {"materialized": transformation.materialization.value}
+    if transformation.tags:
+        dbt_config["tags"] = transformation.tags
     catalog_svc.upsert_entry(
         session,
         org_id,
@@ -38,7 +41,7 @@ def _sync_catalog_after_transformation(
         dataset_name=transformation.schema_name,
         columns=[],
         description=transformation.description,
-        dbt_config={"materialized": transformation.materialization.value},
+        dbt_config=dbt_config,
     )
     dbt_svc.write_model_yml(
         org_id,
@@ -46,7 +49,7 @@ def _sync_catalog_after_transformation(
         transformation.schema_name,
         columns=[],
         description=transformation.description,
-        dbt_config={"materialized": transformation.materialization.value},
+        dbt_config=dbt_config,
     )
 
 
@@ -90,9 +93,28 @@ def run_transformation(
             )
 
         from datanika.config import settings
+        from datanika.services.connection_service import ConnectionService
+        from datanika.services.encryption import EncryptionService
 
         dbt_svc = DbtProjectService(settings.dbt_projects_dir)
         dbt_svc.ensure_project(org_id)
+
+        # Generate profiles.yml from the transformation's destination connection
+        if transformation.destination_connection_id:
+            encryption = EncryptionService(settings.credential_encryption_key)
+            conn_svc = ConnectionService(encryption)
+            conn = conn_svc.get_connection(
+                session, org_id, transformation.destination_connection_id
+            )
+            if conn:
+                decrypted = conn_svc.get_connection_config(
+                    session, org_id, transformation.destination_connection_id
+                )
+                if decrypted:
+                    dbt_svc.generate_profiles_yml(
+                        org_id, conn.connection_type.value, decrypted
+                    )
+
         dbt_svc.write_model(
             org_id,
             transformation.name,

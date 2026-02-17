@@ -101,6 +101,8 @@ class ModelDetailState(BaseState):
     columns: list[ColumnItem] = []
     form_description: str = ""
     form_dbt_config: str = "{}"
+    form_alias: str = ""
+    form_tags: str = ""
 
     # Column editing state
     expanded_column: str = ""
@@ -138,7 +140,11 @@ class ModelDetailState(BaseState):
             self.dataset_name = entry.dataset_name
             self.connection_id = entry.connection_id or 0
             self.form_description = entry.description or ""
-            self.form_dbt_config = json.dumps(entry.dbt_config or {}, indent=2)
+            dbt_cfg = entry.dbt_config or {}
+            self.form_alias = dbt_cfg.get("alias", "")
+            tags = dbt_cfg.get("tags", [])
+            self.form_tags = ", ".join(tags) if isinstance(tags, list) else ""
+            self.form_dbt_config = json.dumps(dbt_cfg, indent=2)
 
             # Resolve origin name
             if entry.origin_type == NodeType.PIPELINE:
@@ -170,6 +176,12 @@ class ModelDetailState(BaseState):
 
     def set_form_dbt_config(self, value: str):
         self.form_dbt_config = value
+
+    def set_form_alias(self, value: str):
+        self.form_alias = value
+
+    def set_form_tags(self, value: str):
+        self.form_tags = value
 
     def set_column_description(self, index: int, value: str):
         if 0 <= index < len(self.columns):
@@ -352,6 +364,17 @@ class ModelDetailState(BaseState):
         except json.JSONDecodeError as e:
             self.error_message = f"Invalid dbt config JSON: {e}"
             return
+
+        # Merge alias and tags into dbt_config
+        if self.form_alias.strip():
+            dbt_config["alias"] = self.form_alias.strip()
+        else:
+            dbt_config.pop("alias", None)
+        parsed_tags = [t.strip() for t in self.form_tags.split(",") if t.strip()]
+        if parsed_tags:
+            dbt_config["tags"] = parsed_tags
+        else:
+            dbt_config.pop("tags", None)
 
         # Validate column tests
         for col in self.columns:

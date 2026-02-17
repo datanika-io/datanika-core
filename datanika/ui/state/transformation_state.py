@@ -1,12 +1,19 @@
 """Transformation state for Reflex UI."""
 
 import json
+import re
 
 from pydantic import BaseModel
 
+from datanika.config import settings
 from datanika.models.transformation import Materialization
+from datanika.services.connection_service import ConnectionService
+from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.ui.state.base_state import BaseState, get_sync_session
+from datanika.ui.state.connection_state import DESTINATION_TYPES
+
+_REF_PATTERN = re.compile(r"""\{\{\s*ref\(\s*['"]([^'"]*?)$""")
 
 
 class TransformationItem(BaseModel):
@@ -15,6 +22,8 @@ class TransformationItem(BaseModel):
     description: str = ""
     materialization: str = ""
     schema_name: str = ""
+    tags: str = ""
+    connection_name: str = ""
 
 
 class TransformationState(BaseState):
@@ -26,6 +35,21 @@ class TransformationState(BaseState):
     form_schema_name: str = "staging"
     # Tests config (JSON string for column tests)
     form_tests_config: str = "{}"
+    # Connection
+    dest_conn_options: list[str] = []
+    form_connection_option: str = ""
+    # Tags
+    form_tags: str = ""
+    # Schema combobox
+    schema_options: list[str] = []
+    adding_new_schema: bool = False
+    # Ref autocomplete
+    all_model_names: list[str] = []
+    ref_suggestions: list[str] = []
+    ref_suggestion_index: int = -1
+    ref_selected_name: str = ""
+    show_ref_popover: bool = False
+    ref_dismissed: bool = False
     # Test results
     test_result_message: str = ""
     # SQL preview
@@ -38,6 +62,7 @@ class TransformationState(BaseState):
 
     def set_form_sql_body(self, value: str):
         self.form_sql_body = value
+        self.ref_dismissed = False
 
     def set_form_materialization(self, value: str):
         self.form_materialization = value
@@ -46,10 +71,32 @@ class TransformationState(BaseState):
         self.form_description = value
 
     def set_form_schema_name(self, value: str):
+        if value == "+ Add new...":
+            self.adding_new_schema = True
+            self.form_schema_name = ""
+        else:
+            self.adding_new_schema = False
+            self.form_schema_name = value
+
+    def set_new_schema_name(self, value: str):
         self.form_schema_name = value
+
+    def confirm_new_schema(self):
+        name = self.form_schema_name.strip()
+        if name:
+            existing = {o for o in self.schema_options if o != "+ Add new..."}
+            existing.add(name)
+            self.schema_options = sorted(existing) + ["+ Add new..."]
+        self.adding_new_schema = False
 
     def set_form_tests_config(self, value: str):
         self.form_tests_config = value
+
+    def set_form_connection_option(self, value: str):
+        self.form_connection_option = value
+
+    def set_form_tags(self, value: str):
+        self.form_tags = value
 
     def _reset_form(self):
         self.editing_transformation_id = 0
@@ -59,13 +106,24 @@ class TransformationState(BaseState):
         self.form_description = ""
         self.form_schema_name = "staging"
         self.form_tests_config = "{}"
+        self.form_connection_option = ""
+        self.form_tags = ""
+        self.adding_new_schema = False
+        self.show_ref_popover = False
+        self.ref_selected_name = ""
+        self.ref_dismissed = False
         self.error_message = ""
 
     async def load_transformations(self):
         org_id = await self._get_org_id()
         svc = TransformationService()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
         with get_sync_session() as session:
             rows = svc.list_transformations(session, org_id)
+            conns = conn_svc.list_connections(session, org_id)
+            conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in conns}
+
             self.transformations = [
                 TransformationItem(
                     id=t.id,
@@ -73,10 +131,50 @@ class TransformationState(BaseState):
                     description=t.description or "",
                     materialization=t.materialization.value,
                     schema_name=t.schema_name,
+                    tags=", ".join(t.tags) if t.tags else "",
+                    connection_name=conn_names.get(t.destination_connection_id, "")
+                    if t.destination_connection_id
+                    else "",
                 )
                 for t in rows
             ]
+
+            # Connection options (destinations only)
+            self.dest_conn_options = [
+                f"{c.id} — {c.name} ({c.connection_type.value})"
+                for c in conns
+                if c.connection_type.value in DESTINATION_TYPES
+            ]
+
+            # Schema options (unique existing + default + "Add new")
+            schemas = {t.schema_name for t in rows}
+            schemas.add("staging")
+            self.schema_options = sorted(schemas) + ["+ Add new..."]
+
+            # Catalog entries for ref autocomplete
+            from datanika.services.catalog_service import CatalogService
+
+            catalog_svc = CatalogService()
+            entries = catalog_svc.list_entries(session, org_id)
+            names = set()
+            for e in entries:
+                names.add(e.table_name)
+                if e.dbt_config and e.dbt_config.get("alias"):
+                    names.add(e.dbt_config["alias"])
+            self.all_model_names = sorted(names)
+
         self.error_message = ""
+
+    def _parse_connection_id(self) -> int | None:
+        if not self.form_connection_option:
+            return None
+        try:
+            return int(self.form_connection_option.split(" — ")[0])
+        except (ValueError, IndexError):
+            return None
+
+    def _parse_tags(self) -> list[str]:
+        return [t.strip() for t in self.form_tags.split(",") if t.strip()]
 
     async def save_transformation(self):
         org_id = await self._get_org_id()
@@ -86,6 +184,8 @@ class TransformationState(BaseState):
         except json.JSONDecodeError:
             self.error_message = "Invalid JSON in tests config"
             return
+        conn_id = self._parse_connection_id()
+        tags = self._parse_tags()
         try:
             with get_sync_session() as session:
                 if self.editing_transformation_id:
@@ -99,6 +199,8 @@ class TransformationState(BaseState):
                         description=self.form_description or None,
                         schema_name=self.form_schema_name,
                         tests_config=tests_config if tests_config else None,
+                        destination_connection_id=conn_id,
+                        tags=tags,
                     )
                 else:
                     svc.create_transformation(
@@ -110,6 +212,8 @@ class TransformationState(BaseState):
                         description=self.form_description or None,
                         schema_name=self.form_schema_name,
                         tests_config=tests_config if tests_config else None,
+                        destination_connection_id=conn_id,
+                        tags=tags,
                     )
                 session.commit()
         except Exception as e:
@@ -117,6 +221,12 @@ class TransformationState(BaseState):
             return
         self._reset_form()
         await self.load_transformations()
+
+    def _find_conn_option(self, connection_id: int | None) -> str:
+        if not connection_id:
+            return ""
+        prefix = f"{connection_id} — "
+        return next((o for o in self.dest_conn_options if o.startswith(prefix)), "")
 
     async def edit_transformation(self, transformation_id: int):
         """Load a transformation into the form for editing."""
@@ -133,6 +243,8 @@ class TransformationState(BaseState):
             self.form_description = t.description or ""
             self.form_schema_name = t.schema_name
             self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
+            self.form_connection_option = self._find_conn_option(t.destination_connection_id)
+            self.form_tags = ", ".join(t.tags) if t.tags else ""
         self.editing_transformation_id = transformation_id
         self.error_message = ""
 
@@ -145,12 +257,14 @@ class TransformationState(BaseState):
             if t is None:
                 self.error_message = "Transformation not found"
                 return
-            self.form_name = f"{t.name} (copy)"
+            self.form_name = f"{t.name}_copy"
             self.form_sql_body = t.sql_body
             self.form_materialization = t.materialization.value
             self.form_description = t.description or ""
             self.form_schema_name = t.schema_name
             self.form_tests_config = json.dumps(t.tests_config) if t.tests_config else "{}"
+            self.form_connection_option = self._find_conn_option(t.destination_connection_id)
+            self.form_tags = ", ".join(t.tags) if t.tags else ""
         self.editing_transformation_id = 0
         self.error_message = ""
 
@@ -219,3 +333,67 @@ class TransformationState(BaseState):
                 self.preview_sql = f"Compile failed: {result['logs']}"
         except Exception as e:
             self.preview_sql = f"Error compiling: {self._safe_error(e)}"
+
+    # -- Ref autocomplete --
+
+    def _detect_ref(self, sql: str):
+        """Check if SQL text contains an unclosed ref('... pattern and show suggestions."""
+        match = _REF_PATTERN.search(sql)
+        if match:
+            partial = match.group(1).lower()
+            self.ref_suggestions = [
+                n for n in self.all_model_names if n.lower().startswith(partial)
+            ][:20]
+            self.ref_suggestion_index = 0 if self.ref_suggestions else -1
+            self.ref_selected_name = self.ref_suggestions[0] if self.ref_suggestions else ""
+            self.show_ref_popover = bool(self.ref_suggestions)
+        else:
+            self.show_ref_popover = False
+            self.ref_suggestions = []
+            self.ref_suggestion_index = -1
+            self.ref_selected_name = ""
+
+    def detect_ref_suggestions(self):
+        """Called by JS after debounce delay. Detects ref pattern and shows popover."""
+        if self.ref_dismissed:
+            return
+        self._detect_ref(self.form_sql_body)
+
+    def ref_navigate_up(self):
+        if not self.show_ref_popover or not self.ref_suggestions:
+            return
+        self.ref_suggestion_index = max(self.ref_suggestion_index - 1, 0)
+        self.ref_selected_name = self.ref_suggestions[self.ref_suggestion_index]
+
+    def ref_navigate_down(self):
+        if not self.show_ref_popover or not self.ref_suggestions:
+            return
+        self.ref_suggestion_index = min(
+            self.ref_suggestion_index + 1, len(self.ref_suggestions) - 1
+        )
+        self.ref_selected_name = self.ref_suggestions[self.ref_suggestion_index]
+
+    def ref_select_current(self):
+        if not self.show_ref_popover:
+            return
+        if 0 <= self.ref_suggestion_index < len(self.ref_suggestions):
+            self._apply_ref_suggestion(self.ref_suggestions[self.ref_suggestion_index])
+
+    def ref_dismiss(self):
+        self.show_ref_popover = False
+        self.ref_dismissed = True
+
+    def select_ref_suggestion(self, name: str):
+        """Click handler for a popover suggestion item."""
+        self._apply_ref_suggestion(name)
+
+    def _apply_ref_suggestion(self, name: str):
+        """Replace the partial ref pattern with the complete ref call."""
+        match = _REF_PATTERN.search(self.form_sql_body)
+        if match:
+            # match.start(1) is where the partial name begins (after the opening quote)
+            # match.end() is end of the partial name
+            before = self.form_sql_body[:match.start(1)]
+            after = self.form_sql_body[match.end():]
+            self.form_sql_body = before + name + "') }}" + after
+        self.show_ref_popover = False

@@ -1,11 +1,14 @@
 """Transformation management service — CRUD with dbt config validation."""
 
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.transformation import Materialization, Transformation
+
+_MODEL_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
 
 class TransformationConfigError(ValueError):
@@ -23,7 +26,10 @@ class TransformationService:
         description: str | None = None,
         schema_name: str = "staging",
         tests_config: dict | None = None,
+        destination_connection_id: int | None = None,
+        tags: list[str] | None = None,
     ) -> Transformation:
+        self.validate_model_name(name)
         self.validate_sql_body(sql_body)
         self.validate_schema_name(schema_name)
         if tests_config is None:
@@ -38,6 +44,8 @@ class TransformationService:
             description=description,
             schema_name=schema_name,
             tests_config=tests_config,
+            destination_connection_id=destination_connection_id,
+            tags=tags or [],
         )
         session.add(transformation)
         session.flush()
@@ -72,6 +80,7 @@ class TransformationService:
             self.validate_sql_body(kwargs["sql_body"])
             transformation.sql_body = kwargs["sql_body"]
         if "name" in kwargs:
+            self.validate_model_name(kwargs["name"])
             transformation.name = kwargs["name"]
         if "description" in kwargs:
             transformation.description = kwargs["description"]
@@ -83,6 +92,10 @@ class TransformationService:
         if "tests_config" in kwargs:
             self.validate_tests_config(kwargs["tests_config"])
             transformation.tests_config = kwargs["tests_config"]
+        if "destination_connection_id" in kwargs:
+            transformation.destination_connection_id = kwargs["destination_connection_id"]
+        if "tags" in kwargs:
+            transformation.tags = kwargs["tags"]
 
         session.flush()
         return transformation
@@ -94,6 +107,16 @@ class TransformationService:
         transformation.deleted_at = datetime.now(UTC)
         session.flush()
         return True
+
+    @staticmethod
+    def validate_model_name(name: str) -> None:
+        if not name or not name.strip():
+            raise TransformationConfigError("Model name cannot be empty")
+        if not _MODEL_NAME_RE.match(name):
+            raise TransformationConfigError(
+                "Model name must start with a letter or underscore and contain only "
+                "letters, digits, underscores, and hyphens"
+            )
 
     @staticmethod
     def validate_sql_body(sql_body: str) -> None:

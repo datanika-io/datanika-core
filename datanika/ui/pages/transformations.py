@@ -271,11 +271,43 @@ def transformation_form() -> rx.Component:
 def transformations_table() -> rx.Component:
     return rx.vstack(
         rx.cond(
-            TransformationState.test_result_message,
+            TransformationState.preview_result_message,
             rx.callout(
-                TransformationState.test_result_message,
-                icon="flask-conical",
+                TransformationState.preview_result_message,
+                icon="info",
                 color_scheme="blue",
+            ),
+        ),
+        rx.cond(
+            TransformationState.preview_result_columns.length() > 0,
+            rx.card(
+                rx.vstack(
+                    rx.heading("Preview Result (LIMIT 5)", size="3"),
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.foreach(
+                                    TransformationState.preview_result_columns,
+                                    lambda col: rx.table.column_header_cell(col),
+                                ),
+                            ),
+                        ),
+                        rx.table.body(
+                            rx.foreach(
+                                TransformationState.preview_result_rows,
+                                lambda row: rx.table.row(
+                                    rx.foreach(
+                                        row,
+                                        lambda cell: rx.table.cell(cell),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        width="100%",
+                    ),
+                    spacing="2",
+                ),
+                width="100%",
             ),
         ),
         rx.cond(
@@ -336,10 +368,10 @@ def transformations_table() -> rx.Component:
                                     on_click=TransformationState.preview_compiled_sql(t.id),
                                 ),
                                 rx.button(
-                                    "Run Tests",
+                                    "Preview Result",
                                     size="1",
                                     variant="outline",
-                                    on_click=TransformationState.run_tests(t.id),
+                                    on_click=TransformationState.preview_result(t.id),
                                 ),
                                 rx.button(
                                     "Delete",

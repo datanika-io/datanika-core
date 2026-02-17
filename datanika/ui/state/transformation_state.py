@@ -51,8 +51,10 @@ class TransformationState(BaseState):
     ref_selected_name: str = ""
     show_ref_popover: bool = False
     ref_dismissed: bool = False
-    # Test results
-    test_result_message: str = ""
+    # Preview result
+    preview_result_message: str = ""
+    preview_result_columns: list[str] = []
+    preview_result_rows: list[list[str]] = []
     # SQL preview
     preview_sql: str = ""
     # Incremental materialization config
@@ -327,35 +329,78 @@ class TransformationState(BaseState):
             session.commit()
         await self.load_transformations()
 
-    async def run_tests(self, transformation_id: int):
-        """Run dbt tests for a transformation."""
+    async def preview_result(self, transformation_id: int):
+        """Compile SQL via dbt, add LIMIT 5, execute against destination, show results."""
+        import re as _re
+
         from datanika.config import settings
         from datanika.services.dbt_project import DbtProjectService
 
+        self.preview_result_message = "Preparing..."
+        self.preview_result_columns = []
+        self.preview_result_rows = []
+        yield
+
         org_id = await self._get_org_id()
         svc = TransformationService()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
+
         with get_sync_session() as session:
             t = svc.get_transformation(session, org_id, transformation_id)
             if t is None:
-                self.test_result_message = "Transformation not found"
+                self.preview_result_message = "Transformation not found"
                 return
-            model_name = t.name
-            tests_config = t.tests_config
+            if not t.destination_connection_id:
+                self.preview_result_message = "No destination connection set"
+                return
 
-        if not tests_config or not tests_config.get("columns"):
-            self.test_result_message = "No tests configured for this transformation"
-            return
+            conn = conn_svc.get_connection(session, org_id, t.destination_connection_id)
+            if conn is None:
+                self.preview_result_message = "Destination connection not found"
+                return
+            config = conn_svc.get_connection_config(
+                session, org_id, t.destination_connection_id
+            )
+            if not config:
+                self.preview_result_message = "Could not decrypt connection config"
+                return
 
-        try:
-            dbt_svc = DbtProjectService(settings.dbt_projects_dir)
-            dbt_svc.write_tests_config(org_id, model_name, tests_config)
-            result = dbt_svc.run_test(org_id, model_name)
-            if result["success"]:
-                self.test_result_message = f"Tests passed for {model_name}"
-            else:
-                self.test_result_message = f"Tests failed for {model_name}: {result['logs']}"
-        except Exception as e:
-            self.test_result_message = f"Error running tests: {self._safe_error(e)}"
+            try:
+                # Compile via dbt to resolve ref/source
+                dbt_svc = DbtProjectService(settings.dbt_projects_dir)
+                dbt_svc.ensure_project(org_id)
+                dbt_svc.generate_profiles_yml(
+                    org_id, conn.connection_type.value, config
+                )
+                dbt_svc.write_model(
+                    org_id, t.name, t.sql_body,
+                    schema_name=t.schema_name,
+                    materialization=t.materialization.value,
+                    incremental_config=t.incremental_config,
+                )
+                result = dbt_svc.compile_model(org_id, t.name)
+                if not result["success"] or not result["compiled_sql"]:
+                    logs = result["logs"] or "Compilation produced no output"
+                    self.preview_result_message = f"Compile failed: {logs}"
+                    return
+                query = result["compiled_sql"].strip().rstrip(";")
+
+                # Add LIMIT 5 if absent
+                if not _re.search(r"\bLIMIT\s+\d+", query, _re.IGNORECASE):
+                    query += "\nLIMIT 5"
+
+                columns, rows = ConnectionService.execute_query(
+                    config, conn.connection_type, query,
+                )
+                self.preview_result_columns = columns
+                self.preview_result_rows = [
+                    [str(v) if v is not None else "" for v in row]
+                    for row in rows
+                ]
+                self.preview_result_message = ""
+            except Exception as e:
+                self.preview_result_message = f"Error: {self._safe_error(e)}"
 
     async def preview_compiled_sql(self, transformation_id: int):
         """Compile dbt model and show compiled SQL."""

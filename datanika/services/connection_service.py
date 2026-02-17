@@ -158,6 +158,24 @@ class ConnectionService:
         return True
 
     @staticmethod
+    def execute_query(
+        config: dict, connection_type: ConnectionType, query: str,
+    ) -> tuple[list[str], list[list]]:
+        """Execute a read-only SQL query. Returns (column_names, rows)."""
+        if connection_type in _NON_DB_TYPES:
+            raise ValueError(f"Cannot execute SQL on {connection_type.value} connections")
+        url = _build_sa_url(config, connection_type)
+        engine = create_engine(url)
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(query))
+                columns = list(result.keys())
+                rows = [list(row) for row in result.fetchall()]
+                return columns, rows
+        finally:
+            engine.dispose()
+
+    @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
         """Test real database connectivity via SELECT 1. Returns (success, message)."""
         if not config:

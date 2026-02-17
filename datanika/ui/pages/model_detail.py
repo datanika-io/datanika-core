@@ -3,7 +3,15 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
-from datanika.ui.state.model_detail_state import ModelDetailState
+from datanika.ui.state.model_detail_state import ColumnItem, ModelDetailState
+
+_CUSTOM_TEST_OPTIONS = [
+    "expression_is_true",
+    "not_constant",
+    "not_null_proportion",
+    "accepted_range",
+    "sequential_values",
+]
 
 
 def _type_color(entry_type: rx.Var[str]) -> rx.Var[str]:
@@ -59,36 +67,273 @@ def config_section() -> rx.Component:
     )
 
 
-def columns_table() -> rx.Component:
-    return rx.vstack(
-        rx.text("Columns", size="3", weight="bold"),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Name"),
-                    rx.table.column_header_cell("Data Type"),
-                    rx.table.column_header_cell("Description"),
-                    rx.table.column_header_cell("Tests"),
+def _test_badges(col: rx.Var[ColumnItem]) -> rx.Component:
+    """Compact badge summary of tests on a column."""
+    return rx.hstack(
+        rx.cond(
+            col.has_not_null,
+            rx.badge("required", color_scheme="red", size="1"),
+            rx.fragment(),
+        ),
+        rx.cond(col.has_unique, rx.badge("unique", color_scheme="blue", size="1"), rx.fragment()),
+        rx.cond(
+            col.accepted_values_csv != "",
+            rx.badge("values", color_scheme="green", size="1"),
+            rx.fragment(),
+        ),
+        rx.cond(
+            col.relationship_to != "",
+            rx.badge("FK", color_scheme="orange", size="1"),
+            rx.fragment(),
+        ),
+        spacing="1",
+        wrap="wrap",
+    )
+
+
+def _custom_test_form() -> rx.Component:
+    """Form shown when adding a custom dbt_utils test to a column."""
+    return rx.cond(
+        ModelDetailState.adding_test_column != "",
+        rx.card(
+            rx.vstack(
+                rx.text("Add dbt_utils Test", size="2", weight="bold"),
+                rx.select(
+                    _CUSTOM_TEST_OPTIONS,
+                    placeholder="Select test type...",
+                    value=ModelDetailState.custom_test_type,
+                    on_change=ModelDetailState.set_custom_test_type,
+                    width="100%",
                 ),
-            ),
-            rx.table.body(
-                rx.foreach(
-                    ModelDetailState.columns,
-                    lambda col: rx.table.row(
-                        rx.table.cell(rx.code(col.name)),
-                        rx.table.cell(rx.badge(col.data_type, variant="outline")),
-                        rx.table.cell(rx.text(col.description)),
-                        rx.table.cell(
-                            rx.cond(
-                                col.tests.length() > 0,
-                                rx.text(col.tests.to_string()),
-                                rx.text("-", color="gray"),
-                            ),
-                        ),
+                # expression_is_true → expression input
+                rx.cond(
+                    ModelDetailState.custom_test_type == "expression_is_true",
+                    rx.input(
+                        placeholder="Expression (e.g. amount > 0)",
+                        value=ModelDetailState.custom_test_expression,
+                        on_change=ModelDetailState.set_custom_test_expression,
+                        width="100%",
                     ),
+                    rx.fragment(),
                 ),
+                # not_null_proportion → at_least input
+                rx.cond(
+                    ModelDetailState.custom_test_type == "not_null_proportion",
+                    rx.input(
+                        placeholder="at_least (0.0 - 1.0)",
+                        value=ModelDetailState.custom_test_proportion,
+                        on_change=ModelDetailState.set_custom_test_proportion,
+                        width="100%",
+                    ),
+                    rx.fragment(),
+                ),
+                # accepted_range → min/max inputs
+                rx.cond(
+                    ModelDetailState.custom_test_type == "accepted_range",
+                    rx.hstack(
+                        rx.input(
+                            placeholder="min_value",
+                            value=ModelDetailState.custom_test_min_value,
+                            on_change=ModelDetailState.set_custom_test_min_value,
+                            width="50%",
+                        ),
+                        rx.input(
+                            placeholder="max_value",
+                            value=ModelDetailState.custom_test_max_value,
+                            on_change=ModelDetailState.set_custom_test_max_value,
+                            width="50%",
+                        ),
+                        width="100%",
+                    ),
+                    rx.fragment(),
+                ),
+                # sequential_values → interval input (reuses min_value)
+                rx.cond(
+                    ModelDetailState.custom_test_type == "sequential_values",
+                    rx.input(
+                        placeholder="interval (optional, e.g. 1)",
+                        value=ModelDetailState.custom_test_min_value,
+                        on_change=ModelDetailState.set_custom_test_min_value,
+                        width="100%",
+                    ),
+                    rx.fragment(),
+                ),
+                rx.hstack(
+                    rx.button(
+                        "Add",
+                        on_click=ModelDetailState.add_custom_test,
+                        size="1",
+                        color_scheme="blue",
+                    ),
+                    rx.button(
+                        "Cancel",
+                        on_click=ModelDetailState.cancel_custom_test_form,
+                        size="1",
+                        variant="outline",
+                    ),
+                    spacing="2",
+                ),
+                spacing="2",
+                width="100%",
             ),
             width="100%",
+        ),
+        rx.fragment(),
+    )
+
+
+def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
+    """Expanded editing card for a single column."""
+    return rx.cond(
+        ModelDetailState.expanded_column == col.name,
+        rx.card(
+            rx.vstack(
+                # Description
+                rx.text("Description", size="2", weight="bold"),
+                rx.input(
+                    placeholder="Column description...",
+                    value=col.description,
+                    on_change=lambda v: ModelDetailState.set_column_description_by_name(
+                        col.name, v
+                    ),
+                    width="100%",
+                ),
+                rx.separator(),
+                # Tests section
+                rx.text("Tests", size="2", weight="bold"),
+                rx.hstack(
+                    rx.checkbox(
+                        "Required (not_null)",
+                        checked=col.has_not_null,
+                        on_change=lambda checked: ModelDetailState.toggle_column_not_null(
+                            col.name, checked
+                        ),
+                    ),
+                    rx.checkbox(
+                        "Unique",
+                        checked=col.has_unique,
+                        on_change=lambda checked: ModelDetailState.toggle_column_unique(
+                            col.name, checked
+                        ),
+                    ),
+                    spacing="4",
+                ),
+                # Accepted Values
+                rx.text("Accepted Values", size="2", weight="bold"),
+                rx.input(
+                    placeholder="Comma-separated values (e.g. active, inactive)",
+                    value=col.accepted_values_csv,
+                    on_change=lambda v: ModelDetailState.set_column_accepted_values(col.name, v),
+                    width="100%",
+                ),
+                # Relationship
+                rx.text("Relationship", size="2", weight="bold"),
+                rx.hstack(
+                    rx.input(
+                        placeholder="to (e.g. ref('users'))",
+                        value=col.relationship_to,
+                        on_change=lambda v: ModelDetailState.set_column_relationship_to(
+                            col.name, v
+                        ),
+                        width="50%",
+                    ),
+                    rx.input(
+                        placeholder="field (e.g. id)",
+                        value=col.relationship_field,
+                        on_change=lambda v: ModelDetailState.set_column_relationship_field(
+                            col.name, v
+                        ),
+                        width="50%",
+                    ),
+                    width="100%",
+                ),
+                # Additional tests (non-standard)
+                rx.text("Additional Tests", size="2", weight="bold"),
+                rx.foreach(
+                    col.tests,
+                    lambda t: rx.cond(
+                        # Show removable badges for dict tests only
+                        t.to(str).contains("{"),
+                        rx.badge(
+                            t.to(str),
+                            rx.icon(
+                                "x",
+                                size=12,
+                                cursor="pointer",
+                                on_click=ModelDetailState.remove_column_test(
+                                    col.name, t.to(str),
+                                ),
+                            ),
+                            variant="outline",
+                            size="1",
+                        ),
+                        rx.fragment(),
+                    ),
+                ),
+                # Add custom test button
+                rx.button(
+                    rx.icon("plus", size=14),
+                    " Add Test",
+                    on_click=ModelDetailState.open_custom_test_form(col.name),
+                    size="1",
+                    variant="outline",
+                ),
+                # Custom test form (when adding_test_column matches)
+                rx.cond(
+                    ModelDetailState.adding_test_column == col.name,
+                    _custom_test_form(),
+                    rx.fragment(),
+                ),
+                spacing="3",
+                width="100%",
+            ),
+            width="100%",
+        ),
+        rx.fragment(),
+    )
+
+
+def _column_row(col: rx.Var[ColumnItem]) -> rx.Component:
+    """A single column row with expand/collapse and inline test badges."""
+    return rx.vstack(
+        rx.hstack(
+            rx.code(col.name, size="2"),
+            rx.badge(col.data_type, variant="outline", size="1"),
+            _test_badges(col),
+            rx.spacer(),
+            rx.icon_button(
+                rx.icon(
+                    rx.cond(
+                        ModelDetailState.expanded_column == col.name,
+                        "chevron-up",
+                        "chevron-down",
+                    ),
+                    size=16,
+                ),
+                size="1",
+                variant="ghost",
+                on_click=ModelDetailState.toggle_column_expand(col.name),
+            ),
+            width="100%",
+            align="center",
+        ),
+        _expanded_column_card(col),
+        width="100%",
+        spacing="1",
+    )
+
+
+def editable_columns_section() -> rx.Component:
+    return rx.vstack(
+        rx.text("Columns", size="3", weight="bold"),
+        rx.cond(
+            ModelDetailState.columns.length() > 0,
+            rx.vstack(
+                rx.foreach(ModelDetailState.columns, _column_row),
+                spacing="2",
+                width="100%",
+            ),
+            rx.text("No columns", color="gray"),
         ),
         spacing="2",
         width="100%",
@@ -117,7 +362,7 @@ def model_detail_page() -> rx.Component:
                 ModelDetailState.error_message,
                 rx.callout(
                     ModelDetailState.error_message,
-                    icon="alert_triangle",
+                    icon="triangle_alert",
                     color_scheme="red",
                 ),
                 rx.fragment(),
@@ -126,7 +371,7 @@ def model_detail_page() -> rx.Component:
             rx.separator(),
             description_section(),
             config_section(),
-            columns_table(),
+            editable_columns_section(),
             rx.separator(),
             actions_section(),
             spacing="5",

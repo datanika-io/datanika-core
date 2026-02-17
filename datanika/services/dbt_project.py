@@ -457,10 +457,15 @@ class DbtProjectService:
             for tbl in src.get("tables", []):
                 tbl_def: dict = {"name": tbl["name"]}
                 if tbl.get("columns"):
-                    tbl_def["columns"] = [
-                        {"name": c["name"], "data_type": c.get("data_type", "")}
-                        for c in tbl["columns"]
-                    ]
+                    col_list = []
+                    for c in tbl["columns"]:
+                        col_entry = {"name": c["name"], "data_type": c.get("data_type", "")}
+                        if c.get("description"):
+                            col_entry["description"] = c["description"]
+                        if c.get("tests"):
+                            col_entry["tests"] = c["tests"]
+                        col_list.append(col_entry)
+                    tbl_def["columns"] = col_list
                 source_def["tables"].append(tbl_def)
             dbt_sources.append(source_def)
 
@@ -489,10 +494,15 @@ class DbtProjectService:
         if dbt_config:
             model_entry["config"] = dbt_config
         if columns:
-            model_entry["columns"] = [
-                {"name": c["name"], "data_type": c.get("data_type", "")}
-                for c in columns
-            ]
+            col_list = []
+            for c in columns:
+                col_entry = {"name": c["name"], "data_type": c.get("data_type", "")}
+                if c.get("description"):
+                    col_entry["description"] = c["description"]
+                if c.get("tests"):
+                    col_entry["tests"] = c["tests"]
+                col_list.append(col_entry)
+            model_entry["columns"] = col_list
 
         content = {"version": 2, "models": [model_entry]}
         yml_path = schema_dir / f"{model_name}.yml"

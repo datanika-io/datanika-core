@@ -944,3 +944,94 @@ class TestWriteModelYml:
         path = svc.write_model_yml(1, "m", "s", columns=[], description="new")
         content = yaml.safe_load(path.read_text())
         assert content["models"][0]["description"] == "new"
+
+    def test_columns_include_description(self, svc):
+        svc.ensure_project(1)
+        columns = [{"name": "status", "data_type": "VARCHAR", "description": "Account status"}]
+        path = svc.write_model_yml(1, "m", "s", columns=columns)
+        content = yaml.safe_load(path.read_text())
+        col = content["models"][0]["columns"][0]
+        assert col["description"] == "Account status"
+
+    def test_columns_include_tests(self, svc):
+        svc.ensure_project(1)
+        columns = [{"name": "id", "data_type": "INT", "tests": ["not_null", "unique"]}]
+        path = svc.write_model_yml(1, "m", "s", columns=columns)
+        content = yaml.safe_load(path.read_text())
+        col = content["models"][0]["columns"][0]
+        assert "not_null" in col["tests"]
+        assert "unique" in col["tests"]
+
+    def test_columns_include_dbt_utils_test(self, svc):
+        svc.ensure_project(1)
+        columns = [{
+            "name": "amount",
+            "data_type": "NUMERIC",
+            "tests": [{"dbt_utils.expression_is_true": {"expression": "amount > 0"}}],
+        }]
+        path = svc.write_model_yml(1, "m", "s", columns=columns)
+        content = yaml.safe_load(path.read_text())
+        col = content["models"][0]["columns"][0]
+        assert len(col["tests"]) == 1
+        assert "dbt_utils.expression_is_true" in col["tests"][0]
+
+    def test_columns_without_tests_omit_key(self, svc):
+        svc.ensure_project(1)
+        columns = [{"name": "id", "data_type": "INT"}]
+        path = svc.write_model_yml(1, "m", "s", columns=columns)
+        content = yaml.safe_load(path.read_text())
+        col = content["models"][0]["columns"][0]
+        assert "tests" not in col
+
+    def test_columns_without_description_omit_key(self, svc):
+        svc.ensure_project(1)
+        columns = [{"name": "id", "data_type": "INT"}]
+        path = svc.write_model_yml(1, "m", "s", columns=columns)
+        content = yaml.safe_load(path.read_text())
+        col = content["models"][0]["columns"][0]
+        assert "description" not in col
+
+
+# ---------------------------------------------------------------------------
+# write_source_yml_for_connection — column descriptions and tests
+# ---------------------------------------------------------------------------
+class TestSourceYmlColumnDescAndTests:
+    def test_source_columns_include_description_and_tests(self, svc):
+        svc.ensure_project(1)
+        sources = [{
+            "name": "ds1",
+            "schema": "ds1",
+            "tables": [{
+                "name": "users",
+                "columns": [
+                    {
+                        "name": "email",
+                        "data_type": "TEXT",
+                        "description": "User email",
+                        "tests": ["not_null", "unique"],
+                    },
+                ],
+            }],
+        }]
+        path = svc.write_source_yml_for_connection(1, "conn", sources)
+        content = yaml.safe_load(path.read_text())
+        col = content["sources"][0]["tables"][0]["columns"][0]
+        assert col["description"] == "User email"
+        assert "not_null" in col["tests"]
+        assert "unique" in col["tests"]
+
+    def test_source_columns_without_desc_tests_omit_keys(self, svc):
+        svc.ensure_project(1)
+        sources = [{
+            "name": "ds1",
+            "schema": "ds1",
+            "tables": [{
+                "name": "users",
+                "columns": [{"name": "id", "data_type": "INT"}],
+            }],
+        }]
+        path = svc.write_source_yml_for_connection(1, "conn", sources)
+        content = yaml.safe_load(path.read_text())
+        col = content["sources"][0]["tables"][0]["columns"][0]
+        assert "description" not in col
+        assert "tests" not in col

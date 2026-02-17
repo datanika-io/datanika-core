@@ -16,12 +16,73 @@ from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
+_VALID_STRING_TESTS = {"not_null", "unique"}
+_VALID_DICT_TESTS = {"accepted_values", "relationships"}
+_DBT_UTILS_PREFIX = "dbt_utils."
+
+
+def _validate_column_tests(tests: list) -> str | None:
+    """Validate that all tests are recognized dbt test formats.
+
+    Returns an error message string if invalid, or None if all valid.
+    """
+    for t in tests:
+        if isinstance(t, str):
+            if t not in _VALID_STRING_TESTS:
+                return f"Unknown test: {t}"
+        elif isinstance(t, dict):
+            key = next(iter(t), "")
+            if key not in _VALID_DICT_TESTS and not key.startswith(_DBT_UTILS_PREFIX):
+                return f"Unknown test: {key}"
+        else:
+            return f"Invalid test format: {t}"
+    return None
+
+
+def _recompute_columns(columns: list["ColumnItem"]) -> list["ColumnItem"]:
+    """Scan tests list on each column and populate computed display fields."""
+    result = []
+    for col in columns:
+        has_not_null = False
+        has_unique = False
+        accepted_values_csv = ""
+        relationship_to = ""
+        relationship_field = ""
+
+        for t in col.tests:
+            if t == "not_null":
+                has_not_null = True
+            elif t == "unique":
+                has_unique = True
+            elif isinstance(t, dict):
+                if "accepted_values" in t:
+                    values = t["accepted_values"].get("values", [])
+                    accepted_values_csv = ", ".join(str(v) for v in values)
+                elif "relationships" in t:
+                    relationship_to = t["relationships"].get("to", "")
+                    relationship_field = t["relationships"].get("field", "")
+
+        result.append(col.model_copy(update={
+            "has_not_null": has_not_null,
+            "has_unique": has_unique,
+            "accepted_values_csv": accepted_values_csv,
+            "relationship_to": relationship_to,
+            "relationship_field": relationship_field,
+        }))
+    return result
+
 
 class ColumnItem(BaseModel):
     name: str = ""
     data_type: str = ""
     description: str = ""
     tests: list = []
+    # Computed display fields (populated by _recompute_columns)
+    has_not_null: bool = False
+    has_unique: bool = False
+    accepted_values_csv: str = ""
+    relationship_to: str = ""
+    relationship_field: str = ""
 
 
 class ModelDetailState(BaseState):
@@ -35,6 +96,15 @@ class ModelDetailState(BaseState):
     columns: list[ColumnItem] = []
     form_description: str = ""
     form_dbt_config: str = "{}"
+
+    # Column editing state
+    expanded_column: str = ""
+    adding_test_column: str = ""
+    custom_test_type: str = ""
+    custom_test_expression: str = ""
+    custom_test_min_value: str = ""
+    custom_test_max_value: str = ""
+    custom_test_proportion: str = ""
 
     async def load_model_detail(self):
         raw_id = self.router.page.params.get("id", "0")
@@ -77,8 +147,8 @@ class ModelDetailState(BaseState):
                     entry.origin_id, f"Transformation #{entry.origin_id}"
                 )
 
-            # Populate columns
-            self.columns = [
+            # Populate columns with computed display fields
+            raw_cols = [
                 ColumnItem(
                     name=c.get("name", ""),
                     data_type=c.get("data_type", ""),
@@ -87,6 +157,7 @@ class ModelDetailState(BaseState):
                 )
                 for c in (entry.columns or [])
             ]
+            self.columns = _recompute_columns(raw_cols)
         self.error_message = ""
 
     def set_form_description(self, value: str):
@@ -100,6 +171,202 @@ class ModelDetailState(BaseState):
             updated = self.columns[index].model_copy(update={"description": value})
             self.columns[index] = updated
 
+    # -- Column expand/collapse --
+
+    def toggle_column_expand(self, col_name: str):
+        self.expanded_column = "" if self.expanded_column == col_name else col_name
+        self.adding_test_column = ""
+
+    # -- Column description by name --
+
+    def set_column_description_by_name(self, col_name: str, value: str):
+        self.columns = [
+            col.model_copy(update={"description": value})
+            if col.name == col_name else col
+            for col in self.columns
+        ]
+
+    # -- Toggle not_null / unique --
+
+    def toggle_column_not_null(self, col_name: str, checked: bool):
+        self.columns = _recompute_columns([
+            self._toggle_test(col, "not_null", checked)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    def toggle_column_unique(self, col_name: str, checked: bool):
+        self.columns = _recompute_columns([
+            self._toggle_test(col, "unique", checked)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    @staticmethod
+    def _toggle_test(col: ColumnItem, test_name: str, on: bool) -> ColumnItem:
+        tests = [t for t in col.tests if t != test_name]
+        if on:
+            tests.append(test_name)
+        return col.model_copy(update={"tests": tests})
+
+    # -- Accepted values --
+
+    def set_column_accepted_values(self, col_name: str, csv: str):
+        values = [v.strip() for v in csv.split(",") if v.strip()]
+        self.columns = _recompute_columns([
+            self._set_accepted_values(col, values)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    @staticmethod
+    def _set_accepted_values(col: ColumnItem, values: list[str]) -> ColumnItem:
+        tests = [t for t in col.tests
+                 if not (isinstance(t, dict) and "accepted_values" in t)]
+        if values:
+            tests.append({"accepted_values": {"values": values}})
+        return col.model_copy(update={"tests": tests})
+
+    # -- Relationships --
+
+    def set_column_relationship_to(self, col_name: str, value: str):
+        self.columns = _recompute_columns([
+            self._set_relationship_field_in(col, to=value)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    def set_column_relationship_field(self, col_name: str, value: str):
+        self.columns = _recompute_columns([
+            self._set_relationship_field_in(col, field=value)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    @staticmethod
+    def _set_relationship_field_in(
+        col: ColumnItem, to: str | None = None, field: str | None = None,
+    ) -> ColumnItem:
+        # Find existing relationship test
+        existing_rel = {}
+        other_tests = []
+        for t in col.tests:
+            if isinstance(t, dict) and "relationships" in t:
+                existing_rel = t["relationships"]
+            else:
+                other_tests.append(t)
+
+        new_to = to if to is not None else existing_rel.get("to", "")
+        new_field = field if field is not None else existing_rel.get("field", "")
+
+        tests = list(other_tests)
+        if new_to or new_field:
+            tests.append({"relationships": {"to": new_to, "field": new_field}})
+        return col.model_copy(update={"tests": tests})
+
+    # -- Custom test form --
+
+    def open_custom_test_form(self, col_name: str):
+        self.adding_test_column = col_name
+        self.custom_test_type = ""
+        self.custom_test_expression = ""
+        self.custom_test_min_value = ""
+        self.custom_test_max_value = ""
+        self.custom_test_proportion = ""
+
+    def cancel_custom_test_form(self):
+        self.adding_test_column = ""
+
+    def set_custom_test_type(self, value: str):
+        self.custom_test_type = value
+
+    def set_custom_test_expression(self, value: str):
+        self.custom_test_expression = value
+
+    def set_custom_test_min_value(self, value: str):
+        self.custom_test_min_value = value
+
+    def set_custom_test_max_value(self, value: str):
+        self.custom_test_max_value = value
+
+    def set_custom_test_proportion(self, value: str):
+        self.custom_test_proportion = value
+
+    def add_custom_test(self):
+        col_name = self.adding_test_column
+        if not col_name or not self.custom_test_type:
+            return
+
+        test_entry = self._build_custom_test_entry()
+        if test_entry is None:
+            return
+
+        self.columns = _recompute_columns([
+            col.model_copy(update={"tests": list(col.tests) + [test_entry]})
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+        self.adding_test_column = ""
+
+    def _build_custom_test_entry(self) -> dict | None:
+        test_type = self.custom_test_type
+        key = f"dbt_utils.{test_type}"
+        if test_type == "expression_is_true":
+            if not self.custom_test_expression:
+                return None
+            return {key: {"expression": self.custom_test_expression}}
+        elif test_type == "not_constant":
+            return {key: {}}
+        elif test_type == "not_null_proportion":
+            try:
+                at_least = float(self.custom_test_proportion)
+            except (ValueError, TypeError):
+                return None
+            return {key: {"at_least": at_least}}
+        elif test_type == "accepted_range":
+            config: dict = {}
+            if self.custom_test_min_value:
+                try:
+                    config["min_value"] = float(self.custom_test_min_value)
+                except ValueError:
+                    return None
+            if self.custom_test_max_value:
+                try:
+                    config["max_value"] = float(self.custom_test_max_value)
+                except ValueError:
+                    return None
+            return {key: config}
+        elif test_type == "sequential_values":
+            config = {}
+            if self.custom_test_min_value:  # reuse min_value field for interval
+                try:
+                    config["interval"] = int(self.custom_test_min_value)
+                except ValueError:
+                    return None
+            return {key: config}
+        return None
+
+    def remove_column_test(self, col_name: str, test_display: str):
+        """Remove a non-standard test identified by its display string."""
+        self.columns = _recompute_columns([
+            self._remove_test_by_display(col, test_display)
+            if col.name == col_name else col
+            for col in self.columns
+        ])
+
+    @staticmethod
+    def _remove_test_by_display(col: ColumnItem, test_display: str) -> ColumnItem:
+        new_tests = []
+        for t in col.tests:
+            if isinstance(t, dict):
+                key = next(iter(t), "")
+                if key == test_display:
+                    continue
+            new_tests.append(t)
+        return col.model_copy(update={"tests": new_tests})
+
+    # -- Save --
+
     async def save_model_detail(self):
         org_id = await self._get_org_id()
 
@@ -108,6 +375,13 @@ class ModelDetailState(BaseState):
         except json.JSONDecodeError as e:
             self.error_message = f"Invalid dbt config JSON: {e}"
             return
+
+        # Validate column tests
+        for col in self.columns:
+            err = _validate_column_tests(col.tests)
+            if err:
+                self.error_message = f"Column '{col.name}': {err}"
+                return
 
         columns_data = [
             {

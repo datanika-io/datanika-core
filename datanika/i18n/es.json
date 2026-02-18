@@ -38,8 +38,6 @@
   "common.name": "Nombre",
   "common.type": "Tipo",
   "common.status": "Estado",
-  "common.description": "Descripción",
-  "common.back": "Volver",
 
   "dashboard.welcome": "Bienvenido a Datanika",
   "dashboard.welcome_sub": "Gestiona tus pipelines de datos, transformaciones y programaciones.",

@@ -1,6 +1,8 @@
 """Tests for the i18n translation system."""
 
 import json
+import re
+from pathlib import Path
 
 from datanika.i18n import (
     DEFAULT_LOCALE,
@@ -89,3 +91,66 @@ class TestGetTranslations:
             assert differences > 10, (
                 f"{locale} has only {differences} different values from English"
             )
+
+
+# ---------------------------------------------------------------------------
+# Code ↔ JSON sync tests: every _t["key"] in UI code must exist in every
+# locale file, and every JSON key should be referenced in UI code.
+# ---------------------------------------------------------------------------
+
+_UI_ROOT = Path(__file__).resolve().parent.parent.parent / "datanika" / "ui"
+_KEY_RE = re.compile(r'_t\["([^"]+)"\]')
+
+
+def _collect_keys_from_code() -> set[str]:
+    """Scan all .py files under datanika/ui/ for _t["..."] references."""
+    keys: set[str] = set()
+    for py_file in _UI_ROOT.rglob("*.py"):
+        text = py_file.read_text(encoding="utf-8")
+        keys.update(_KEY_RE.findall(text))
+    return keys
+
+
+def _collect_keys_from_json() -> dict[str, set[str]]:
+    """Return {locale: set_of_keys} for every locale JSON file."""
+    result: dict[str, set[str]] = {}
+    for locale in SUPPORTED_LOCALES:
+        path = _dir / f"{locale}.json"
+        with open(path, encoding="utf-8") as f:
+            result[locale] = set(json.load(f).keys())
+    return result
+
+
+class TestCodeJsonSync:
+    """Ensure translation keys referenced in UI code match JSON files."""
+
+    def test_all_code_keys_exist_in_english(self):
+        """Every _t['key'] used in UI code must be defined in en.json."""
+        code_keys = _collect_keys_from_code()
+        en_keys = _collect_keys_from_json()["en"]
+        missing = code_keys - en_keys
+        assert not missing, f"Keys used in code but missing from en.json: {sorted(missing)}"
+
+    def test_all_code_keys_exist_in_every_locale(self):
+        """Every _t['key'] used in UI code must be present in all locale files."""
+        code_keys = _collect_keys_from_code()
+        locale_keys = _collect_keys_from_json()
+        for locale, keys in locale_keys.items():
+            missing = code_keys - keys
+            assert not missing, (
+                f"Keys used in code but missing from {locale}.json: {sorted(missing)}"
+            )
+
+    def test_no_orphan_keys_in_json(self):
+        """Every key in en.json should be referenced in at least one UI file."""
+        code_keys = _collect_keys_from_code()
+        en_keys = _collect_keys_from_json()["en"]
+        orphans = en_keys - code_keys
+        assert not orphans, f"Keys in en.json but never used in code: {sorted(orphans)}"
+
+    def test_code_references_at_least_one_key(self):
+        """Sanity: the regex scanner should find a reasonable number of keys."""
+        code_keys = _collect_keys_from_code()
+        assert len(code_keys) >= 50, (
+            f"Expected >=50 translation keys in UI code, found {len(code_keys)}"
+        )

@@ -38,8 +38,6 @@
   "common.name": "Name",
   "common.type": "Typ",
   "common.status": "Status",
-  "common.description": "Beschreibung",
-  "common.back": "Zurück",
 
   "dashboard.welcome": "Willkommen bei Datanika",
   "dashboard.welcome_sub": "Verwalten Sie Ihre Datenpipelines, Transformationen und Zeitpläne.",

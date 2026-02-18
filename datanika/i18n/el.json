@@ -38,8 +38,6 @@
   "common.name": "Όνομα",
   "common.type": "Τύπος",
   "common.status": "Κατάσταση",
-  "common.description": "Περιγραφή",
-  "common.back": "Πίσω",
 
   "dashboard.welcome": "Καλώς ήρθατε στο Datanika",
   "dashboard.welcome_sub": "Διαχειριστείτε αγωγούς δεδομένων, μετασχηματισμούς και χρονοδιαγράμματα.",

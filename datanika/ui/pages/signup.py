@@ -2,14 +2,18 @@
 
 import reflex as rx
 
+from datanika.ui.components.captcha import captcha_script
 from datanika.ui.state.auth_state import AuthState
+from datanika.ui.state.i18n_state import I18nState
+
+_t = I18nState.translations
 
 
 def signup_page() -> rx.Component:
     return rx.center(
         rx.vstack(
-            rx.heading("Datanika", size="7"),
-            rx.text("Create your account", size="3", color="gray"),
+            rx.heading(_t["app.name"], size="7"),
+            rx.text(_t["auth.create_account_heading"], size="3", color="gray"),
             rx.cond(
                 AuthState.auth_error != "",
                 rx.callout(
@@ -21,19 +25,19 @@ def signup_page() -> rx.Component:
             ),
             rx.form(
                 rx.vstack(
-                    rx.text("Full Name", size="2", weight="medium"),
+                    rx.text(_t["auth.full_name"], size="2", weight="medium"),
                     rx.input(
                         placeholder="Alice Smith",
                         name="full_name",
                         width="100%",
                     ),
-                    rx.text("Email", size="2", weight="medium"),
+                    rx.text(_t["auth.email"], size="2", weight="medium"),
                     rx.input(
                         placeholder="you@example.com",
                         name="email",
                         width="100%",
                     ),
-                    rx.text("Password", size="2", weight="medium"),
+                    rx.text(_t["auth.password"], size="2", weight="medium"),
                     rx.input(
                         placeholder="Password",
                         name="password",
@@ -41,20 +45,22 @@ def signup_page() -> rx.Component:
                         width="100%",
                     ),
                     rx.button(
-                        "Create Account",
+                        _t["auth.create_account"],
                         type="submit",
                         width="100%",
                         size="3",
                     ),
+                    captcha_script("signup"),
                     spacing="3",
                     width="100%",
                 ),
                 on_submit=AuthState.signup,
             ),
             rx.text(
-                "Already have an account? ",
+                _t["auth.have_account"],
+                " ",
                 rx.link(
-                    "Sign in",
+                    _t["auth.sign_in"],
                     href="/login",
                     on_click=AuthState.clear_auth_error,
                 ),

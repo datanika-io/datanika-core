@@ -2,10 +2,14 @@
 
 import reflex as rx
 
+from datanika.ui.components.language_switcher import language_switcher
 from datanika.ui.state.auth_state import AuthState
+from datanika.ui.state.i18n_state import I18nState
+
+_t = I18nState.translations
 
 
-def sidebar_link(text: str, href: str, icon: str) -> rx.Component:
+def sidebar_link(text: rx.Var[str], href: str, icon: str) -> rx.Component:
     return rx.link(
         rx.hstack(
             rx.icon(icon, size=18),
@@ -27,7 +31,8 @@ def sidebar_link(text: str, href: str, icon: str) -> rx.Component:
 def sidebar_user_section() -> rx.Component:
     return rx.vstack(
         rx.separator(),
-        sidebar_link("Settings", "/settings", "settings"),
+        language_switcher(),
+        sidebar_link(_t["nav.settings"], "/settings", "settings"),
         rx.hstack(
             rx.vstack(
                 rx.text(AuthState.current_user.full_name, size="2", weight="medium"),
@@ -55,17 +60,17 @@ def sidebar_user_section() -> rx.Component:
 def sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
-            rx.heading("Datanika", size="5", padding="16px"),
+            rx.heading(_t["app.name"], size="5", padding="16px"),
             rx.separator(),
             rx.vstack(
-                sidebar_link("Dashboard", "/", "layout-dashboard"),
-                sidebar_link("Connections", "/connections", "plug"),
-                sidebar_link("Pipelines", "/pipelines", "git-branch"),
-                sidebar_link("Transformations", "/transformations", "code"),
-                sidebar_link("Schedules", "/schedules", "clock"),
-                sidebar_link("Runs", "/runs", "play"),
-                sidebar_link("Dependencies", "/dag", "network"),
-                sidebar_link("Models", "/models", "database"),
+                sidebar_link(_t["nav.dashboard"], "/", "layout-dashboard"),
+                sidebar_link(_t["nav.connections"], "/connections", "plug"),
+                sidebar_link(_t["nav.pipelines"], "/pipelines", "git-branch"),
+                sidebar_link(_t["nav.transformations"], "/transformations", "code"),
+                sidebar_link(_t["nav.schedules"], "/schedules", "clock"),
+                sidebar_link(_t["nav.runs"], "/runs", "play"),
+                sidebar_link(_t["nav.dependencies"], "/dag", "network"),
+                sidebar_link(_t["nav.models"], "/models", "database"),
                 spacing="1",
                 width="100%",
                 padding="8px",
@@ -84,12 +89,12 @@ def sidebar() -> rx.Component:
     )
 
 
-def page_layout(*children, title: str = "") -> rx.Component:
+def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
     return rx.box(
         sidebar(),
         rx.box(
             rx.vstack(
-                rx.heading(title, size="6") if title else rx.fragment(),
+                rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
                 *children,
                 spacing="4",
                 width="100%",

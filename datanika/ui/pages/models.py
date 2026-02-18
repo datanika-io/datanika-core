@@ -3,7 +3,10 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.model_state import ModelState
+
+_t = I18nState.translations
 
 
 def _type_color(entry_type: rx.Var[str]) -> rx.Var[str]:
@@ -26,15 +29,15 @@ def models_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("Type"),
-                rx.table.column_header_cell("Origin"),
-                rx.table.column_header_cell("Table Name"),
-                rx.table.column_header_cell("Schema"),
-                rx.table.column_header_cell("Last Status"),
-                rx.table.column_header_cell("Last Run"),
-                rx.table.column_header_cell("Rows"),
-                rx.table.column_header_cell("Columns"),
-                rx.table.column_header_cell("Actions"),
+                rx.table.column_header_cell(_t["common.type"]),
+                rx.table.column_header_cell(_t["models.origin"]),
+                rx.table.column_header_cell(_t["models.table_name"]),
+                rx.table.column_header_cell(_t["models.schema"]),
+                rx.table.column_header_cell(_t["models.last_status"]),
+                rx.table.column_header_cell(_t["models.last_run"]),
+                rx.table.column_header_cell(_t["models.rows"]),
+                rx.table.column_header_cell(_t["models.columns"]),
+                rx.table.column_header_cell(_t["common.actions"]),
             ),
         ),
         rx.table.body(
@@ -87,7 +90,7 @@ def models_page() -> rx.Component:
             rx.cond(
                 ModelState.models.length() == 0,
                 rx.callout(
-                    "No models found. Run a pipeline or transformation to populate the catalog.",
+                    _t["models.no_models"],
                     icon="info",
                 ),
                 models_table(),
@@ -95,5 +98,5 @@ def models_page() -> rx.Component:
             spacing="6",
             width="100%",
         ),
-        title="Models",
+        title=_t["nav.models"],
     )

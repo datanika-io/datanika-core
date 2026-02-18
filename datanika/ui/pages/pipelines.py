@@ -3,7 +3,10 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
+
+_t = I18nState.translations
 
 
 def _mode_fields() -> rx.Component:
@@ -20,7 +23,7 @@ def _mode_fields() -> rx.Component:
                     width="100%",
                 ),
                 rx.checkbox(
-                    "Enable incremental loading",
+                    _t["pipelines.enable_incremental"],
                     checked=PipelineState.form_enable_incremental,
                     on_change=PipelineState.set_form_enable_incremental,
                 ),
@@ -71,8 +74,8 @@ def pipeline_form() -> rx.Component:
             rx.heading(
                 rx.cond(
                     PipelineState.editing_pipeline_id,
-                    "Edit Pipeline",
-                    "New Pipeline",
+                    _t["pipelines.edit"],
+                    _t["pipelines.new"],
                 ),
                 size="4",
             ),
@@ -143,11 +146,11 @@ def pipeline_form() -> rx.Component:
                 width="100%",
             ),
             # Schema contract
-            rx.text("Schema Contract (optional)", size="2", weight="bold"),
+            rx.text(_t["pipelines.schema_contract"], size="2", weight="bold"),
             rx.hstack(
-                rx.text("Tables", size="2", weight="bold", width="33%"),
-                rx.text("Columns", size="2", weight="bold", width="33%"),
-                rx.text("Data Type", size="2", weight="bold", width="33%"),
+                rx.text(_t["pipelines.tables"], size="2", weight="bold", width="33%"),
+                rx.text(_t["pipelines.columns"], size="2", weight="bold", width="33%"),
+                rx.text(_t["pipelines.data_type"], size="2", weight="bold", width="33%"),
                 spacing="2",
                 width="100%",
             ),
@@ -178,7 +181,7 @@ def pipeline_form() -> rx.Component:
             ),
             # Raw JSON toggle
             rx.checkbox(
-                "Use raw JSON config",
+                _t["pipelines.use_raw_json"],
                 checked=PipelineState.form_use_raw_json,
                 on_change=PipelineState.set_form_use_raw_json,
             ),
@@ -199,15 +202,15 @@ def pipeline_form() -> rx.Component:
                 rx.button(
                     rx.cond(
                         PipelineState.editing_pipeline_id,
-                        "Save Changes",
-                        "Create Pipeline",
+                        _t["common.save_changes"],
+                        _t["pipelines.create"],
                     ),
                     on_click=PipelineState.save_pipeline,
                 ),
                 rx.cond(
                     PipelineState.editing_pipeline_id,
                     rx.button(
-                        "Cancel",
+                        _t["common.cancel"],
                         variant="outline",
                         on_click=PipelineState.cancel_edit,
                     ),
@@ -225,12 +228,12 @@ def pipelines_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Name"),
-                rx.table.column_header_cell("Status"),
-                rx.table.column_header_cell("Source"),
-                rx.table.column_header_cell("Destination"),
-                rx.table.column_header_cell("Actions"),
+                rx.table.column_header_cell(_t["common.id"]),
+                rx.table.column_header_cell(_t["common.name"]),
+                rx.table.column_header_cell(_t["common.status"]),
+                rx.table.column_header_cell(_t["pipelines.source"]),
+                rx.table.column_header_cell(_t["pipelines.destination"]),
+                rx.table.column_header_cell(_t["common.actions"]),
             ),
         ),
         rx.table.body(
@@ -250,24 +253,24 @@ def pipelines_table() -> rx.Component:
                     rx.table.cell(
                         rx.hstack(
                             rx.button(
-                                "Edit",
+                                _t["common.edit"],
                                 size="1",
                                 variant="outline",
                                 on_click=PipelineState.edit_pipeline(pipe.id),
                             ),
                             rx.button(
-                                "Copy",
+                                _t["common.copy"],
                                 size="1",
                                 variant="outline",
                                 on_click=PipelineState.copy_pipeline(pipe.id),
                             ),
                             rx.button(
-                                "Run",
+                                _t["common.run"],
                                 size="1",
                                 on_click=PipelineState.run_pipeline(pipe.id),
                             ),
                             rx.button(
-                                "Delete",
+                                _t["common.delete"],
                                 color_scheme="red",
                                 size="1",
                                 on_click=PipelineState.delete_pipeline(pipe.id),
@@ -285,5 +288,5 @@ def pipelines_table() -> rx.Component:
 def pipelines_page() -> rx.Component:
     return page_layout(
         rx.vstack(pipeline_form(), pipelines_table(), spacing="6", width="100%"),
-        title="Pipelines",
+        title=_t["nav.pipelines"],
     )

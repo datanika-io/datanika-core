@@ -3,7 +3,10 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.schedule_state import ScheduleState
+
+_t = I18nState.translations
 
 
 def schedule_form() -> rx.Component:
@@ -12,8 +15,8 @@ def schedule_form() -> rx.Component:
             rx.heading(
                 rx.cond(
                     ScheduleState.editing_schedule_id,
-                    "Edit Schedule",
-                    "New Schedule",
+                    _t["schedules.edit"],
+                    _t["schedules.new"],
                 ),
                 size="4",
             ),
@@ -49,15 +52,15 @@ def schedule_form() -> rx.Component:
                 rx.button(
                     rx.cond(
                         ScheduleState.editing_schedule_id,
-                        "Save Changes",
-                        "Create Schedule",
+                        _t["common.save_changes"],
+                        _t["schedules.create"],
                     ),
                     on_click=ScheduleState.save_schedule,
                 ),
                 rx.cond(
                     ScheduleState.editing_schedule_id,
                     rx.button(
-                        "Cancel",
+                        _t["common.cancel"],
                         variant="outline",
                         on_click=ScheduleState.cancel_edit,
                     ),
@@ -75,12 +78,12 @@ def schedules_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Target"),
-                rx.table.column_header_cell("Cron"),
-                rx.table.column_header_cell("Timezone"),
-                rx.table.column_header_cell("Active"),
-                rx.table.column_header_cell("Actions"),
+                rx.table.column_header_cell(_t["common.id"]),
+                rx.table.column_header_cell(_t["dashboard.target"]),
+                rx.table.column_header_cell(_t["schedules.cron"]),
+                rx.table.column_header_cell(_t["schedules.timezone"]),
+                rx.table.column_header_cell(_t["schedules.active"]),
+                rx.table.column_header_cell(_t["common.actions"]),
             ),
         ),
         rx.table.body(
@@ -93,32 +96,36 @@ def schedules_table() -> rx.Component:
                     rx.table.cell(s.timezone),
                     rx.table.cell(
                         rx.badge(
-                            rx.cond(s.is_active, "Active", "Inactive"),
+                            rx.cond(
+                                s.is_active,
+                                _t["schedules.active"],
+                                _t["schedules.inactive"],
+                            ),
                             color_scheme=rx.cond(s.is_active, "green", "gray"),
                         ),
                     ),
                     rx.table.cell(
                         rx.hstack(
                             rx.button(
-                                "Edit",
+                                _t["common.edit"],
                                 size="1",
                                 variant="outline",
                                 on_click=ScheduleState.edit_schedule(s.id),
                             ),
                             rx.button(
-                                "Copy",
+                                _t["common.copy"],
                                 size="1",
                                 variant="outline",
                                 on_click=ScheduleState.copy_schedule(s.id),
                             ),
                             rx.button(
-                                rx.cond(s.is_active, "Pause", "Resume"),
+                                rx.cond(s.is_active, _t["schedules.pause"], _t["schedules.resume"]),
                                 size="1",
                                 variant="outline",
                                 on_click=ScheduleState.toggle_schedule(s.id),
                             ),
                             rx.button(
-                                "Delete",
+                                _t["common.delete"],
                                 color_scheme="red",
                                 size="1",
                                 on_click=ScheduleState.delete_schedule(s.id),
@@ -136,5 +143,5 @@ def schedules_table() -> rx.Component:
 def schedules_page() -> rx.Component:
     return page_layout(
         rx.vstack(schedule_form(), schedules_table(), spacing="6", width="100%"),
-        title="Schedules",
+        title=_t["nav.schedules"],
     )

@@ -3,12 +3,15 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.run_state import RunState
+
+_t = I18nState.translations
 
 
 def filters_bar() -> rx.Component:
     return rx.hstack(
-        rx.text("Status:", size="2"),
+        rx.text(_t["runs.status_filter"], size="2"),
         rx.select(
             ["pending", "running", "success", "failed", "cancelled"],
             value=RunState.filter_status,
@@ -16,7 +19,7 @@ def filters_bar() -> rx.Component:
             placeholder="All",
             width="100%",
         ),
-        rx.text("Target type:", size="2"),
+        rx.text(_t["runs.target_type_filter"], size="2"),
         rx.select(
             ["pipeline", "transformation"],
             value=RunState.filter_target_type,
@@ -45,14 +48,14 @@ def runs_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Target"),
-                rx.table.column_header_cell("Status"),
-                rx.table.column_header_cell("Started"),
-                rx.table.column_header_cell("Finished"),
-                rx.table.column_header_cell("Rows"),
-                rx.table.column_header_cell("Error"),
-                rx.table.column_header_cell("Logs"),
+                rx.table.column_header_cell(_t["common.id"]),
+                rx.table.column_header_cell(_t["runs.target"]),
+                rx.table.column_header_cell(_t["common.status"]),
+                rx.table.column_header_cell(_t["runs.started"]),
+                rx.table.column_header_cell(_t["runs.finished"]),
+                rx.table.column_header_cell(_t["runs.rows"]),
+                rx.table.column_header_cell(_t["runs.error"]),
+                rx.table.column_header_cell(_t["runs.logs"]),
             ),
         ),
         rx.table.body(
@@ -99,7 +102,8 @@ def logs_panel() -> rx.Component:
             rx.vstack(
                 rx.hstack(
                     rx.heading(
-                        f"Logs — Run #{RunState.selected_run_id}",
+                        _t["runs.logs_run"],
+                        RunState.selected_run_id,
                         size="4",
                     ),
                     rx.spacer(),
@@ -129,5 +133,5 @@ def logs_panel() -> rx.Component:
 def runs_page() -> rx.Component:
     return page_layout(
         rx.vstack(filters_bar(), runs_table(), logs_panel(), spacing="6", width="100%"),
-        title="Runs",
+        title=_t["nav.runs"],
     )

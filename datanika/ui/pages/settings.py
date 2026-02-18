@@ -3,27 +3,30 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.settings_state import MemberItem, SettingsState
+
+_t = I18nState.translations
 
 
 def org_profile_card() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("Organization Profile", size="4"),
+            rx.heading(_t["settings.org_profile"], size="4"),
             rx.vstack(
-                rx.text("Name", size="2", weight="medium"),
+                rx.text(_t["common.name"], size="2", weight="medium"),
                 rx.input(
                     value=SettingsState.edit_org_name,
                     on_change=SettingsState.set_edit_org_name,
                     width="100%",
                 ),
-                rx.text("Slug", size="2", weight="medium"),
+                rx.text(_t["settings.slug"], size="2", weight="medium"),
                 rx.input(
                     value=SettingsState.edit_org_slug,
                     on_change=SettingsState.set_edit_org_slug,
                     width="100%",
                 ),
-                rx.button("Save", on_click=SettingsState.update_org, size="2"),
+                rx.button(_t["common.save"], on_click=SettingsState.update_org, size="2"),
                 spacing="3",
                 width="100%",
             ),
@@ -49,7 +52,7 @@ def member_row(member: MemberItem) -> rx.Component:
         ),
         rx.table.cell(
             rx.button(
-                "Remove",
+                _t["settings.remove"],
                 on_click=SettingsState.remove_member(member.id),
                 size="1",
                 color_scheme="red",
@@ -62,14 +65,14 @@ def member_row(member: MemberItem) -> rx.Component:
 def members_card() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("Members", size="4"),
+            rx.heading(_t["settings.members"], size="4"),
             rx.table.root(
                 rx.table.header(
                     rx.table.row(
-                        rx.table.column_header_cell("Email"),
-                        rx.table.column_header_cell("Name"),
-                        rx.table.column_header_cell("Role"),
-                        rx.table.column_header_cell("Actions"),
+                        rx.table.column_header_cell(_t["settings.email"]),
+                        rx.table.column_header_cell(_t["common.name"]),
+                        rx.table.column_header_cell(_t["settings.role"]),
+                        rx.table.column_header_cell(_t["common.actions"]),
                     ),
                 ),
                 rx.table.body(
@@ -78,7 +81,7 @@ def members_card() -> rx.Component:
                 width="100%",
             ),
             rx.separator(),
-            rx.heading("Invite Member", size="3"),
+            rx.heading(_t["settings.invite_member"], size="3"),
             rx.hstack(
                 rx.input(
                     placeholder="Email address",
@@ -93,7 +96,7 @@ def members_card() -> rx.Component:
                     size="2",
                     width="100%",
                 ),
-                rx.button("Add", on_click=SettingsState.add_member_by_email, size="2"),
+                rx.button(_t["common.add"], on_click=SettingsState.add_member_by_email, size="2"),
                 spacing="2",
                 align="end",
             ),
@@ -121,5 +124,5 @@ def settings_page() -> rx.Component:
             spacing="6",
             width="100%",
         ),
-        title="Settings",
+        title=_t["nav.settings"],
     )

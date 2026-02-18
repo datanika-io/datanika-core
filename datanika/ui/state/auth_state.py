@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.services.auth import AuthService
+from datanika.services.captcha_service import CaptchaService
 from datanika.services.user_service import UserService
 from datanika.ui.state.base_state import get_sync_session
 
@@ -62,6 +63,11 @@ class AuthState(rx.State):
             self.auth_error = "Email and password are required"
             return
 
+        captcha_token = form_data.get("captcha_token", "")
+        if not CaptchaService().verify(captcha_token, "login"):
+            self.auth_error = "CAPTCHA verification failed. Please try again."
+            return
+
         # Authenticate against DB
         svc = self._get_user_service()
         try:
@@ -108,6 +114,12 @@ class AuthState(rx.State):
 
     def signup(self, form_data: dict):
         self.auth_error = ""
+
+        captcha_token = form_data.get("captcha_token", "")
+        if not CaptchaService().verify(captcha_token, "signup"):
+            self.auth_error = "CAPTCHA verification failed. Please try again."
+            return
+
         email = form_data.get("email", "")
         password = form_data.get("password", "")
         full_name = form_data.get("full_name", "")

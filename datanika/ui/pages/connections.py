@@ -5,6 +5,9 @@ import reflex as rx
 from datanika.ui.components.connection_config_fields import type_fields
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.connection_state import ConnectionState
+from datanika.ui.state.i18n_state import I18nState
+
+_t = I18nState.translations
 
 
 def connection_form() -> rx.Component:
@@ -13,12 +16,12 @@ def connection_form() -> rx.Component:
             rx.heading(
                 rx.cond(
                     ConnectionState.editing_conn_id > 0,
-                    "Edit Connection",
-                    "New Connection",
+                    _t["connections.edit"],
+                    _t["connections.new"],
                 ),
                 size="4",
             ),
-            rx.text("Connection Name *", size="2", weight="bold"),
+            rx.text(_t["connections.name"], size="2", weight="bold"),
             rx.input(
                 placeholder="Connection name",
                 value=ConnectionState.form_name,
@@ -54,7 +57,7 @@ def connection_form() -> rx.Component:
             ),
             # Raw JSON toggle
             rx.checkbox(
-                "Use raw JSON config",
+                _t["connections.use_raw_json"],
                 checked=ConnectionState.form_use_raw_json,
                 on_change=ConnectionState.set_form_use_raw_json,
             ),
@@ -85,20 +88,20 @@ def connection_form() -> rx.Component:
                 rx.button(
                     rx.cond(
                         ConnectionState.editing_conn_id > 0,
-                        "Save Changes",
-                        "Create Connection",
+                        _t["common.save_changes"],
+                        _t["connections.create"],
                     ),
                     on_click=ConnectionState.save_connection,
                 ),
                 rx.button(
-                    "Test Connection",
+                    _t["connections.test"],
                     variant="outline",
                     on_click=ConnectionState.test_connection_from_form,
                 ),
                 rx.cond(
                     ConnectionState.editing_conn_id > 0,
                     rx.button(
-                        "Cancel",
+                        _t["common.cancel"],
                         variant="soft",
                         color_scheme="gray",
                         on_click=ConnectionState.cancel_edit,
@@ -117,10 +120,10 @@ def connections_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Name"),
-                rx.table.column_header_cell("Type"),
-                rx.table.column_header_cell("Actions", padding_left="34px"),
+                rx.table.column_header_cell(_t["common.id"]),
+                rx.table.column_header_cell(_t["common.name"]),
+                rx.table.column_header_cell(_t["common.type"]),
+                rx.table.column_header_cell(_t["common.actions"], padding_left="34px"),
             ),
         ),
         rx.table.body(
@@ -151,7 +154,7 @@ def connections_table() -> rx.Component:
                                 ),
                             ),
                             rx.button(
-                                "Test",
+                                _t["common.test"],
                                 variant="outline",
                                 size="1",
                                 on_click=ConnectionState.test_saved_connection(
@@ -159,19 +162,19 @@ def connections_table() -> rx.Component:
                                 ),
                             ),
                             rx.button(
-                                "Edit",
+                                _t["common.edit"],
                                 variant="outline",
                                 size="1",
                                 on_click=ConnectionState.edit_connection(conn.id),
                             ),
                             rx.button(
-                                "Copy",
+                                _t["common.copy"],
                                 variant="outline",
                                 size="1",
                                 on_click=ConnectionState.copy_connection(conn.id),
                             ),
                             rx.button(
-                                "Delete",
+                                _t["common.delete"],
                                 color_scheme="red",
                                 size="1",
                                 on_click=ConnectionState.delete_connection(conn.id),
@@ -190,5 +193,5 @@ def connections_table() -> rx.Component:
 def connections_page() -> rx.Component:
     return page_layout(
         rx.vstack(connection_form(), connections_table(), spacing="6", width="100%"),
-        title="Connections",
+        title=_t["nav.connections"],
     )

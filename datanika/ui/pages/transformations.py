@@ -3,7 +3,10 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.transformation_state import TransformationState
+
+_t = I18nState.translations
 
 _REF_AUTOCOMPLETE_JS = """
 (function() {
@@ -120,7 +123,7 @@ def _schema_select() -> rx.Component:
                     width="100%",
                 ),
                 rx.button(
-                    "Add",
+                    _t["common.add"],
                     size="1",
                     on_click=TransformationState.confirm_new_schema,
                 ),
@@ -139,8 +142,8 @@ def transformation_form() -> rx.Component:
             rx.heading(
                 rx.cond(
                     TransformationState.editing_transformation_id,
-                    "Edit Transformation",
-                    "New Transformation",
+                    _t["transformations.edit"],
+                    _t["transformations.new"],
                 ),
                 size="4",
             ),
@@ -156,7 +159,7 @@ def transformation_form() -> rx.Component:
                 on_change=TransformationState.set_form_description,
                 width="100%",
             ),
-            rx.text("Destination Connection", size="2", weight="bold"),
+            rx.text(_t["transformations.dest_connection"], size="2", weight="bold"),
             rx.select(
                 TransformationState.dest_conn_options,
                 placeholder="Select connection...",
@@ -164,7 +167,7 @@ def transformation_form() -> rx.Component:
                 on_change=TransformationState.set_form_connection_option,
                 width="100%",
             ),
-            rx.text("SQL", size="2", weight="bold"),
+            rx.text(_t["transformations.sql"], size="2", weight="bold"),
             rx.box(
                 rx.text_area(
                     placeholder="SELECT * FROM {{ ref('model_name') }}",
@@ -180,7 +183,7 @@ def transformation_form() -> rx.Component:
             ),
             _ref_hidden_buttons(),
             rx.script(_REF_AUTOCOMPLETE_JS),
-            rx.text("Materialization", size="2", weight="bold"),
+            rx.text(_t["transformations.materialization"], size="2", weight="bold"),
             rx.select(
                 ["view", "table", "incremental", "ephemeral"],
                 value=TransformationState.form_materialization,
@@ -191,14 +194,14 @@ def transformation_form() -> rx.Component:
                 TransformationState.form_materialization == "incremental",
                 rx.card(
                     rx.vstack(
-                        rx.text("Incremental Config", size="2", weight="bold"),
+                        rx.text(_t["transformations.incremental_config"], size="2", weight="bold"),
                         rx.input(
                             placeholder="unique_key (e.g. id)",
                             value=TransformationState.form_unique_key,
                             on_change=TransformationState.set_form_unique_key,
                             width="100%",
                         ),
-                        rx.text("Strategy", size="2"),
+                        rx.text(_t["transformations.strategy"], size="2"),
                         rx.select(
                             ["append", "delete+insert", "merge"],
                             placeholder="Select strategy...",
@@ -212,7 +215,7 @@ def transformation_form() -> rx.Component:
                             on_change=TransformationState.set_form_updated_at,
                             width="100%",
                         ),
-                        rx.text("On Schema Change", size="2"),
+                        rx.text(_t["transformations.on_schema_change"], size="2"),
                         rx.select(
                             ["ignore", "fail", "append_new_columns", "sync_all_columns"],
                             value=TransformationState.form_on_schema_change,
@@ -225,9 +228,9 @@ def transformation_form() -> rx.Component:
                     width="100%",
                 ),
             ),
-            rx.text("Schema", size="2", weight="bold"),
+            rx.text(_t["transformations.schema"], size="2", weight="bold"),
             _schema_select(),
-            rx.text("Tags", size="2", weight="bold"),
+            rx.text(_t["transformations.tags"], size="2", weight="bold"),
             rx.input(
                 placeholder="Comma-separated tags (e.g. finance, daily)",
                 value=TransformationState.form_tags,
@@ -246,15 +249,15 @@ def transformation_form() -> rx.Component:
                 rx.button(
                     rx.cond(
                         TransformationState.editing_transformation_id,
-                        "Save Changes",
-                        "Create Transformation",
+                        _t["common.save_changes"],
+                        _t["transformations.create"],
                     ),
                     on_click=TransformationState.save_transformation,
                 ),
                 rx.cond(
                     TransformationState.editing_transformation_id,
                     rx.button(
-                        "Cancel",
+                        _t["common.cancel"],
                         variant="outline",
                         on_click=TransformationState.cancel_edit,
                     ),
@@ -282,7 +285,7 @@ def transformations_table() -> rx.Component:
             TransformationState.preview_result_columns.length() > 0,
             rx.card(
                 rx.vstack(
-                    rx.heading("Preview Result (LIMIT 5)", size="3"),
+                    rx.heading(_t["transformations.preview_result_heading"], size="3"),
                     rx.table.root(
                         rx.table.header(
                             rx.table.row(
@@ -314,7 +317,7 @@ def transformations_table() -> rx.Component:
             TransformationState.preview_sql,
             rx.card(
                 rx.vstack(
-                    rx.heading("Compiled SQL Preview", size="3"),
+                    rx.heading(_t["transformations.compiled_sql_preview"], size="3"),
                     rx.code_block(
                         TransformationState.preview_sql,
                         language="sql",
@@ -328,13 +331,13 @@ def transformations_table() -> rx.Component:
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("ID"),
-                    rx.table.column_header_cell("Name"),
-                    rx.table.column_header_cell("Connection"),
-                    rx.table.column_header_cell("Materialization"),
-                    rx.table.column_header_cell("Schema"),
-                    rx.table.column_header_cell("Tags"),
-                    rx.table.column_header_cell("Actions"),
+                    rx.table.column_header_cell(_t["common.id"]),
+                    rx.table.column_header_cell(_t["common.name"]),
+                    rx.table.column_header_cell(_t["transformations.connection"]),
+                    rx.table.column_header_cell(_t["transformations.materialization"]),
+                    rx.table.column_header_cell(_t["transformations.schema"]),
+                    rx.table.column_header_cell(_t["transformations.tags"]),
+                    rx.table.column_header_cell(_t["common.actions"]),
                 ),
             ),
             rx.table.body(
@@ -350,31 +353,31 @@ def transformations_table() -> rx.Component:
                         rx.table.cell(
                             rx.hstack(
                                 rx.button(
-                                    "Edit",
+                                    _t["common.edit"],
                                     size="1",
                                     variant="outline",
                                     on_click=TransformationState.edit_transformation(t.id),
                                 ),
                                 rx.button(
-                                    "Copy",
+                                    _t["common.copy"],
                                     size="1",
                                     variant="outline",
                                     on_click=TransformationState.copy_transformation(t.id),
                                 ),
                                 rx.button(
-                                    "Preview SQL",
+                                    _t["transformations.preview_sql"],
                                     size="1",
                                     variant="outline",
                                     on_click=TransformationState.preview_compiled_sql(t.id),
                                 ),
                                 rx.button(
-                                    "Preview Result",
+                                    _t["transformations.preview_result"],
                                     size="1",
                                     variant="outline",
                                     on_click=TransformationState.preview_result(t.id),
                                 ),
                                 rx.button(
-                                    "Delete",
+                                    _t["common.delete"],
                                     color_scheme="red",
                                     size="1",
                                     on_click=TransformationState.delete_transformation(t.id),
@@ -395,5 +398,5 @@ def transformations_table() -> rx.Component:
 def transformations_page() -> rx.Component:
     return page_layout(
         rx.vstack(transformation_form(), transformations_table(), spacing="6", width="100%"),
-        title="Transformations",
+        title=_t["nav.transformations"],
     )

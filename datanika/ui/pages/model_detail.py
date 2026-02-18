@@ -3,7 +3,10 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.model_detail_state import ColumnItem, ModelDetailState
+
+_t = I18nState.translations
 
 _CUSTOM_TEST_OPTIONS = [
     "accepted_values",
@@ -29,7 +32,13 @@ def header_section() -> rx.Component:
         ),
         rx.heading(ModelDetailState.table_name, size="5"),
         rx.text(
-            f"Schema: {ModelDetailState.schema_name} | Origin: {ModelDetailState.origin_name}",
+            _t["model_detail.schema_label"],
+            ": ",
+            ModelDetailState.schema_name,
+            " | ",
+            _t["model_detail.origin_label"],
+            ": ",
+            ModelDetailState.origin_name,
             color="gray",
             size="2",
         ),
@@ -41,7 +50,7 @@ def header_section() -> rx.Component:
 
 def description_section() -> rx.Component:
     return rx.vstack(
-        rx.text("Description", size="3", weight="bold"),
+        rx.text(_t["model_detail.description"], size="3", weight="bold"),
         rx.text_area(
             value=ModelDetailState.form_description,
             on_change=ModelDetailState.set_form_description,
@@ -56,7 +65,7 @@ def description_section() -> rx.Component:
 
 def alias_section() -> rx.Component:
     return rx.vstack(
-        rx.text("Alias", size="3", weight="bold"),
+        rx.text(_t["model_detail.alias"], size="3", weight="bold"),
         rx.input(
             placeholder="dbt alias (optional)",
             value=ModelDetailState.form_alias,
@@ -70,7 +79,7 @@ def alias_section() -> rx.Component:
 
 def tags_section() -> rx.Component:
     return rx.vstack(
-        rx.text("Tags", size="3", weight="bold"),
+        rx.text(_t["model_detail.tags"], size="3", weight="bold"),
         rx.input(
             placeholder="Comma-separated tags (e.g. finance, daily)",
             value=ModelDetailState.form_tags,
@@ -84,7 +93,7 @@ def tags_section() -> rx.Component:
 
 def config_section() -> rx.Component:
     return rx.vstack(
-        rx.text("dbt Config (JSON)", size="3", weight="bold"),
+        rx.text(_t["model_detail.dbt_config"], size="3", weight="bold"),
         rx.text_area(
             value=ModelDetailState.form_dbt_config,
             on_change=ModelDetailState.set_form_dbt_config,
@@ -127,7 +136,7 @@ def _custom_test_form() -> rx.Component:
         ModelDetailState.adding_test_column != "",
         rx.card(
             rx.vstack(
-                rx.text("Add Test", size="2", weight="bold"),
+                rx.text(_t["model_detail.add_test"], size="2", weight="bold"),
                 rx.select(
                     _CUSTOM_TEST_OPTIONS,
                     placeholder="Select test type...",
@@ -135,7 +144,7 @@ def _custom_test_form() -> rx.Component:
                     on_change=ModelDetailState.set_custom_test_type,
                     width="100%",
                 ),
-                # accepted_values → CSV input
+                # accepted_values -> CSV input
                 rx.cond(
                     ModelDetailState.custom_test_type == "accepted_values",
                     rx.input(
@@ -146,7 +155,7 @@ def _custom_test_form() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # relationships → to + field inputs
+                # relationships -> to + field inputs
                 rx.cond(
                     ModelDetailState.custom_test_type == "relationships",
                     rx.hstack(
@@ -166,7 +175,7 @@ def _custom_test_form() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # expression_is_true → expression input
+                # expression_is_true -> expression input
                 rx.cond(
                     ModelDetailState.custom_test_type == "expression_is_true",
                     rx.input(
@@ -177,7 +186,7 @@ def _custom_test_form() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # not_null_proportion → at_least input
+                # not_null_proportion -> at_least input
                 rx.cond(
                     ModelDetailState.custom_test_type == "not_null_proportion",
                     rx.input(
@@ -188,7 +197,7 @@ def _custom_test_form() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # accepted_range → min/max inputs
+                # accepted_range -> min/max inputs
                 rx.cond(
                     ModelDetailState.custom_test_type == "accepted_range",
                     rx.hstack(
@@ -208,7 +217,7 @@ def _custom_test_form() -> rx.Component:
                     ),
                     rx.fragment(),
                 ),
-                # sequential_values → interval input (reuses min_value)
+                # sequential_values -> interval input (reuses min_value)
                 rx.cond(
                     ModelDetailState.custom_test_type == "sequential_values",
                     rx.input(
@@ -221,13 +230,13 @@ def _custom_test_form() -> rx.Component:
                 ),
                 rx.hstack(
                     rx.button(
-                        "Add",
+                        _t["common.add"],
                         on_click=ModelDetailState.add_custom_test,
                         size="1",
                         color_scheme="blue",
                     ),
                     rx.button(
-                        "Cancel",
+                        _t["common.cancel"],
                         on_click=ModelDetailState.cancel_custom_test_form,
                         size="1",
                         variant="outline",
@@ -250,7 +259,7 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
         rx.card(
             rx.vstack(
                 # Description
-                rx.text("Description", size="2", weight="bold"),
+                rx.text(_t["model_detail.description"], size="2", weight="bold"),
                 rx.input(
                     placeholder="Column description...",
                     value=col.description,
@@ -261,17 +270,17 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                 ),
                 rx.separator(),
                 # Tests section
-                rx.text("Tests", size="2", weight="bold"),
+                rx.text(_t["model_detail.tests"], size="2", weight="bold"),
                 rx.hstack(
                     rx.checkbox(
-                        "Required (not_null)",
+                        _t["model_detail.required_not_null"],
                         checked=col.has_not_null,
                         on_change=lambda checked: ModelDetailState.toggle_column_not_null(
                             col.name, checked
                         ),
                     ),
                     rx.checkbox(
-                        "Unique",
+                        _t["model_detail.unique"],
                         checked=col.has_unique,
                         on_change=lambda checked: ModelDetailState.toggle_column_unique(
                             col.name, checked
@@ -280,7 +289,7 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                     spacing="4",
                 ),
                 # Additional tests
-                rx.text("Tests", size="2", weight="bold"),
+                rx.text(_t["model_detail.tests"], size="2", weight="bold"),
                 rx.foreach(
                     col.additional_tests,
                     lambda t: rx.badge(
@@ -300,7 +309,8 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                 # Add custom test button
                 rx.button(
                     rx.icon("plus", size=14),
-                    " Add Test",
+                    " ",
+                    _t["model_detail.add_test"],
                     on_click=ModelDetailState.open_custom_test_form(col.name),
                     size="1",
                     variant="outline",
@@ -352,7 +362,7 @@ def _column_row(col: rx.Var[ColumnItem]) -> rx.Component:
 
 def editable_columns_section() -> rx.Component:
     return rx.vstack(
-        rx.text("Columns", size="3", weight="bold"),
+        rx.text(_t["model_detail.columns"], size="3", weight="bold"),
         rx.cond(
             ModelDetailState.columns.length() > 0,
             rx.vstack(
@@ -360,7 +370,7 @@ def editable_columns_section() -> rx.Component:
                 spacing="2",
                 width="100%",
             ),
-            rx.text("No columns", color="gray"),
+            rx.text(_t["model_detail.no_columns"], color="gray"),
         ),
         spacing="2",
         width="100%",
@@ -370,12 +380,12 @@ def editable_columns_section() -> rx.Component:
 def actions_section() -> rx.Component:
     return rx.hstack(
         rx.button(
-            "Save",
+            _t["common.save"],
             on_click=ModelDetailState.save_model_detail,
             color_scheme="blue",
         ),
         rx.link(
-            rx.button("Back to Models", variant="outline"),
+            rx.button(_t["model_detail.back_to_models"], variant="outline"),
             href="/models",
         ),
         spacing="3",
@@ -406,5 +416,5 @@ def model_detail_page() -> rx.Component:
             spacing="5",
             width="100%",
         ),
-        title="Model Detail",
+        title=_t["model_detail.title"],
     )

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     oauth_redirect_base_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
 
+    # reCAPTCHA
+    recaptcha_site_key: str = ""
+    recaptcha_secret_key: str = ""
+
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 

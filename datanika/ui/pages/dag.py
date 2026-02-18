@@ -4,15 +4,18 @@ import reflex as rx
 
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.dag_state import DagState
+from datanika.ui.state.i18n_state import I18nState
+
+_t = I18nState.translations
 
 
 def add_dependency_form() -> rx.Component:
     return rx.card(
         rx.vstack(
-            rx.heading("Add Dependency", size="4"),
+            rx.heading(_t["dag.add_dependency"], size="4"),
             rx.hstack(
                 rx.vstack(
-                    rx.text("Upstream Type", size="2"),
+                    rx.text(_t["dag.upstream_type"], size="2"),
                     rx.select(
                         ["pipeline", "transformation"],
                         value=DagState.form_upstream_type,
@@ -22,7 +25,7 @@ def add_dependency_form() -> rx.Component:
                     spacing="1",
                 ),
                 rx.vstack(
-                    rx.text("Upstream ID", size="2"),
+                    rx.text(_t["dag.upstream_id"], size="2"),
                     rx.input(
                         value=DagState.form_upstream_id,
                         on_change=DagState.set_form_upstream_id,
@@ -33,7 +36,7 @@ def add_dependency_form() -> rx.Component:
                 ),
                 rx.icon("arrow-right", size=20),
                 rx.vstack(
-                    rx.text("Downstream Type", size="2"),
+                    rx.text(_t["dag.downstream_type"], size="2"),
                     rx.select(
                         ["pipeline", "transformation"],
                         value=DagState.form_downstream_type,
@@ -43,7 +46,7 @@ def add_dependency_form() -> rx.Component:
                     spacing="1",
                 ),
                 rx.vstack(
-                    rx.text("Downstream ID", size="2"),
+                    rx.text(_t["dag.downstream_id"], size="2"),
                     rx.input(
                         value=DagState.form_downstream_id,
                         on_change=DagState.set_form_downstream_id,
@@ -52,7 +55,7 @@ def add_dependency_form() -> rx.Component:
                     ),
                     spacing="1",
                 ),
-                rx.button("Add", on_click=DagState.add_dependency),
+                rx.button(_t["common.add"], on_click=DagState.add_dependency),
                 spacing="3",
                 align="end",
             ),
@@ -72,11 +75,11 @@ def dependency_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(
-                rx.table.column_header_cell("ID"),
-                rx.table.column_header_cell("Upstream"),
+                rx.table.column_header_cell(_t["common.id"]),
+                rx.table.column_header_cell(_t["dag.upstream"]),
                 rx.table.column_header_cell(""),
-                rx.table.column_header_cell("Downstream"),
-                rx.table.column_header_cell("Actions"),
+                rx.table.column_header_cell(_t["dag.downstream"]),
+                rx.table.column_header_cell(_t["common.actions"]),
             ),
         ),
         rx.table.body(
@@ -111,5 +114,5 @@ def dag_page() -> rx.Component:
             spacing="6",
             width="100%",
         ),
-        title="Dependencies",
+        title=_t["nav.dependencies"],
     )

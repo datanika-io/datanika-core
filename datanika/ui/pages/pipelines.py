@@ -1,4 +1,4 @@
-"""Pipelines page — list + create/edit form with structured mode fields + run button."""
+"""Pipelines page — list + create/edit form for dbt pipeline orchestration."""
 
 import reflex as rx
 
@@ -8,63 +8,71 @@ from datanika.ui.state.pipeline_state import PipelineState
 
 _t = I18nState.translations
 
+COMMAND_OPTIONS = ["build", "run", "test", "seed", "snapshot", "compile"]
 
-def _mode_fields() -> rx.Component:
-    """Conditional fields that depend on selected mode."""
-    return rx.fragment(
-        # single_table fields
-        rx.cond(
-            PipelineState.form_mode == "single_table",
-            rx.fragment(
-                rx.input(
-                    placeholder="Table name (e.g. customers)",
-                    value=PipelineState.form_table,
-                    on_change=PipelineState.set_form_table,
-                    width="100%",
+
+def _models_section() -> rx.Component:
+    """Models sub-table with add/remove and upstream/downstream toggles."""
+    return rx.vstack(
+        rx.text(_t["pipelines.models"], size="3", weight="bold"),
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    rx.table.column_header_cell(_t["pipelines.model_name"]),
+                    rx.table.column_header_cell(_t["pipelines.include_upstream"]),
+                    rx.table.column_header_cell(_t["pipelines.include_downstream"]),
+                    rx.table.column_header_cell(""),
                 ),
-                rx.checkbox(
-                    _t["pipelines.enable_incremental"],
-                    checked=PipelineState.form_enable_incremental,
-                    on_change=PipelineState.set_form_enable_incremental,
-                ),
-                rx.cond(
-                    PipelineState.form_enable_incremental,
-                    rx.vstack(
-                        rx.input(
-                            placeholder="Cursor path (e.g. updated_at)",
-                            value=PipelineState.form_cursor_path,
-                            on_change=PipelineState.set_form_cursor_path,
-                            width="100%",
+            ),
+            rx.table.body(
+                rx.foreach(
+                    PipelineState.form_models,
+                    lambda m, idx: rx.table.row(
+                        rx.table.cell(m.name),
+                        rx.table.cell(
+                            rx.checkbox(
+                                checked=m.upstream,
+                                on_change=lambda _v: PipelineState.toggle_model_upstream(idx),
+                            ),
                         ),
-                        rx.input(
-                            placeholder="Initial value (optional)",
-                            value=PipelineState.form_initial_value,
-                            on_change=PipelineState.set_form_initial_value,
-                            width="100%",
+                        rx.table.cell(
+                            rx.checkbox(
+                                checked=m.downstream,
+                                on_change=lambda _v: PipelineState.toggle_model_downstream(idx),
+                            ),
                         ),
-                        rx.select(
-                            ["asc", "desc"],
-                            value=PipelineState.form_row_order,
-                            on_change=PipelineState.set_form_row_order,
-                            placeholder="Row order (optional)",
-                            width="100%",
+                        rx.table.cell(
+                            rx.button(
+                                _t["pipelines.remove"],
+                                size="1",
+                                color_scheme="red",
+                                variant="outline",
+                                on_click=PipelineState.remove_model(idx),
+                            ),
                         ),
-                        spacing="2",
-                        width="100%",
                     ),
                 ),
             ),
+            width="100%",
         ),
-        # full_database fields
-        rx.cond(
-            PipelineState.form_mode == "full_database",
+        rx.hstack(
             rx.input(
-                placeholder="Table names (comma-separated, optional)",
-                value=PipelineState.form_table_names,
-                on_change=PipelineState.set_form_table_names,
+                placeholder="model_name",
+                value=PipelineState.form_new_model_name,
+                on_change=PipelineState.set_form_new_model_name,
                 width="100%",
             ),
+            rx.button(
+                _t["pipelines.add_model"],
+                on_click=PipelineState.add_model,
+                size="2",
+                variant="outline",
+            ),
+            spacing="2",
+            width="100%",
         ),
+        spacing="2",
+        width="100%",
     )
 
 
@@ -91,13 +99,8 @@ def pipeline_form() -> rx.Component:
                 on_change=PipelineState.set_form_description,
                 width="100%",
             ),
-            rx.select(
-                PipelineState.source_conn_options,
-                value=PipelineState.form_source_id,
-                on_change=PipelineState.set_form_source_id,
-                placeholder="Source connection",
-                width="100%",
-            ),
+            # Destination connection
+            rx.text(_t["pipelines.connection"], size="2", weight="bold"),
             rx.select(
                 PipelineState.dest_conn_options,
                 value=PipelineState.form_dest_id,
@@ -105,99 +108,38 @@ def pipeline_form() -> rx.Component:
                 placeholder="Destination connection",
                 width="100%",
             ),
-            # Mode selection
+            # dbt command
+            rx.text(_t["pipelines.command"], size="2", weight="bold"),
             rx.select(
-                ["full_database", "single_table"],
-                value=PipelineState.form_mode,
-                on_change=PipelineState.set_form_mode,
+                COMMAND_OPTIONS,
+                value=PipelineState.form_command,
+                on_change=PipelineState.set_form_command,
                 width="100%",
             ),
-            # Write disposition
-            rx.select(
-                ["append", "replace", "merge"],
-                value=PipelineState.form_write_disposition,
-                on_change=PipelineState.set_form_write_disposition,
-                width="100%",
-            ),
-            # Primary key (merge only)
-            rx.cond(
-                PipelineState.form_write_disposition == "merge",
-                rx.input(
-                    placeholder="Primary key (required for merge)",
-                    value=PipelineState.form_primary_key,
-                    on_change=PipelineState.set_form_primary_key,
-                    width="100%",
-                ),
-            ),
-            # Source schema
-            rx.input(
-                placeholder="Source schema (optional, e.g. public)",
-                value=PipelineState.form_source_schema,
-                on_change=PipelineState.set_form_source_schema,
-                width="100%",
-            ),
-            # Mode-specific fields
-            _mode_fields(),
-            # Batch size
-            rx.input(
-                placeholder="Batch size (optional, default 10000)",
-                value=PipelineState.form_batch_size,
-                on_change=PipelineState.set_form_batch_size,
-                width="100%",
-            ),
-            # Schema contract
-            rx.text(_t["pipelines.schema_contract"], size="2", weight="bold"),
-            rx.hstack(
-                rx.text(_t["pipelines.tables"], size="2", weight="bold", width="33%"),
-                rx.text(_t["pipelines.columns"], size="2", weight="bold", width="33%"),
-                rx.text(_t["pipelines.data_type"], size="2", weight="bold", width="33%"),
-                spacing="2",
-                width="100%",
-            ),
-            rx.hstack(
-                rx.select(
-                    ["evolve", "freeze", "discard_value", "discard_row"],
-                    value=PipelineState.form_sc_tables,
-                    on_change=PipelineState.set_form_sc_tables,
-                    placeholder="Tables",
-                    width="33%",
-                ),
-                rx.select(
-                    ["evolve", "freeze", "discard_value", "discard_row"],
-                    value=PipelineState.form_sc_columns,
-                    on_change=PipelineState.set_form_sc_columns,
-                    placeholder="Columns",
-                    width="33%",
-                ),
-                rx.select(
-                    ["evolve", "freeze", "discard_value", "discard_row"],
-                    value=PipelineState.form_sc_data_type,
-                    on_change=PipelineState.set_form_sc_data_type,
-                    placeholder="Data type",
-                    width="33%",
-                ),
-                spacing="2",
-                width="100%",
-            ),
-            # Raw JSON toggle
+            # Full refresh
             rx.checkbox(
-                _t["pipelines.use_raw_json"],
-                checked=PipelineState.form_use_raw_json,
-                on_change=PipelineState.set_form_use_raw_json,
+                _t["pipelines.full_refresh"],
+                checked=PipelineState.form_full_refresh,
+                on_change=PipelineState.set_form_full_refresh,
             ),
-            rx.cond(
-                PipelineState.form_use_raw_json,
-                rx.text_area(
-                    placeholder='{"write_disposition": "append"}',
-                    value=PipelineState.form_config,
-                    on_change=PipelineState.set_form_config,
-                    width="100%",
-                ),
+            # Models section
+            _models_section(),
+            # Custom selector
+            rx.text(_t["pipelines.custom_selector"], size="2", weight="bold"),
+            rx.input(
+                placeholder="tag:nightly or +model_a model_b+",
+                value=PipelineState.form_custom_selector,
+                on_change=PipelineState.set_form_custom_selector,
+                width="100%",
             ),
+            # Error
             rx.cond(
                 PipelineState.error_message,
-                rx.callout(PipelineState.error_message, icon="triangle_alert", color_scheme="red"),
+                rx.callout(
+                    PipelineState.error_message, icon="triangle_alert", color_scheme="red"
+                ),
             ),
+            # Buttons
             rx.hstack(
                 rx.button(
                     rx.cond(
@@ -230,50 +172,52 @@ def pipelines_table() -> rx.Component:
             rx.table.row(
                 rx.table.column_header_cell(_t["common.id"]),
                 rx.table.column_header_cell(_t["common.name"]),
+                rx.table.column_header_cell(_t["pipelines.command"]),
+                rx.table.column_header_cell(_t["pipelines.connection"]),
+                rx.table.column_header_cell(_t["pipelines.models"]),
                 rx.table.column_header_cell(_t["common.status"]),
-                rx.table.column_header_cell(_t["pipelines.source"]),
-                rx.table.column_header_cell(_t["pipelines.destination"]),
                 rx.table.column_header_cell(_t["common.actions"]),
             ),
         ),
         rx.table.body(
             rx.foreach(
                 PipelineState.pipelines,
-                lambda pipe: rx.table.row(
-                    rx.table.cell(pipe.id),
-                    rx.table.cell(pipe.name),
+                lambda p: rx.table.row(
+                    rx.table.cell(p.id),
+                    rx.table.cell(p.name),
+                    rx.table.cell(rx.badge(p.command)),
+                    rx.table.cell(p.connection_name),
+                    rx.table.cell(p.model_count),
                     rx.table.cell(
                         rx.badge(
-                            pipe.status,
-                            color_scheme=rx.cond(pipe.status == "active", "green", "gray"),
+                            p.status,
+                            color_scheme=rx.cond(p.status == "active", "green", "gray"),
                         ),
                     ),
-                    rx.table.cell(pipe.source_connection_name),
-                    rx.table.cell(pipe.destination_connection_name),
                     rx.table.cell(
                         rx.hstack(
                             rx.button(
                                 _t["common.edit"],
                                 size="1",
                                 variant="outline",
-                                on_click=PipelineState.edit_pipeline(pipe.id),
+                                on_click=PipelineState.edit_pipeline(p.id),
                             ),
                             rx.button(
                                 _t["common.copy"],
                                 size="1",
                                 variant="outline",
-                                on_click=PipelineState.copy_pipeline(pipe.id),
+                                on_click=PipelineState.copy_pipeline(p.id),
                             ),
                             rx.button(
                                 _t["common.run"],
                                 size="1",
-                                on_click=PipelineState.run_pipeline(pipe.id),
+                                on_click=PipelineState.run_pipeline(p.id),
                             ),
                             rx.button(
                                 _t["common.delete"],
                                 color_scheme="red",
                                 size="1",
-                                on_click=PipelineState.delete_pipeline(pipe.id),
+                                on_click=PipelineState.delete_pipeline(p.id),
                             ),
                             spacing="2",
                         ),

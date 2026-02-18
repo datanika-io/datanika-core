@@ -21,7 +21,7 @@ def filters_bar() -> rx.Component:
         ),
         rx.text(_t["runs.target_type_filter"], size="2"),
         rx.select(
-            ["pipeline", "transformation"],
+            ["upload", "transformation", "pipeline"],
             value=RunState.filter_target_type,
             on_change=RunState.set_target_type_filter,
             placeholder="All",

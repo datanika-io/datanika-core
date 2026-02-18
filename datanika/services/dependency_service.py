@@ -1,4 +1,4 @@
-"""Dependency management service — CRUD with validation for pipeline/transformation edges."""
+"""Dependency management service — CRUD with validation for upload/transformation edges."""
 
 from datetime import UTC, datetime
 
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from datanika.models.dependency import Dependency, NodeType
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 
 
 class DependencyConfigError(ValueError):
@@ -17,19 +18,23 @@ class DependencyConfigError(ValueError):
 class DependencyService:
     def __init__(
         self,
-        pipeline_service: PipelineService,
+        upload_service: UploadService,
         transformation_service: TransformationService,
+        pipeline_service: PipelineService | None = None,
     ):
-        self._pipe_svc = pipeline_service
+        self._upload_svc = upload_service
         self._transform_svc = transformation_service
+        self._pipeline_svc = pipeline_service or PipelineService()
 
     def _validate_node(
         self, session: Session, org_id: int, node_type: NodeType, node_id: int, label: str
     ) -> None:
-        if node_type == NodeType.PIPELINE:
-            target = self._pipe_svc.get_pipeline(session, org_id, node_id)
+        if node_type == NodeType.UPLOAD:
+            target = self._upload_svc.get_upload(session, org_id, node_id)
         elif node_type == NodeType.TRANSFORMATION:
             target = self._transform_svc.get_transformation(session, org_id, node_id)
+        elif node_type == NodeType.PIPELINE:
+            target = self._pipeline_svc.get_pipeline(session, org_id, node_id)
         else:
             target = None
 

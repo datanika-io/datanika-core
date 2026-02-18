@@ -9,6 +9,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
@@ -24,7 +25,7 @@ class ScheduleItem(BaseModel):
 
 class ScheduleState(BaseState):
     schedules: list[ScheduleItem] = []
-    form_target_type: str = "pipeline"
+    form_target_type: str = "upload"
     form_target_id: str = ""
     form_cron: str = ""
     form_timezone: str = "UTC"
@@ -46,22 +47,23 @@ class ScheduleState(BaseState):
     def _get_services(self):
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
-        return pipe_svc, transform_svc
+        pipeline_svc = PipelineService()
+        return upload_svc, transform_svc, pipeline_svc
 
     def _get_schedule_service(self) -> ScheduleService:
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
         from datanika.scheduler import scheduler_integration
 
-        return ScheduleService(pipe_svc, transform_svc, scheduler_integration)
+        return ScheduleService(upload_svc, transform_svc, scheduler_integration)
 
     def _reset_form(self):
         self.editing_schedule_id = 0
-        self.form_target_type = "pipeline"
+        self.form_target_type = "upload"
         self.form_target_id = ""
         self.form_cron = ""
         self.form_timezone = "UTC"
@@ -70,13 +72,15 @@ class ScheduleState(BaseState):
     async def load_schedules(self):
         org_id = await self._get_org_id()
         svc = self._get_schedule_service()
-        pipe_svc, transform_svc = self._get_services()
+        upload_svc, transform_svc, pipeline_svc = self._get_services()
         with get_sync_session() as session:
             # Build name lookups
-            pipelines = pipe_svc.list_pipelines(session, org_id)
-            pipe_names = {p.id: p.name for p in pipelines}
+            uploads = upload_svc.list_uploads(session, org_id)
+            upload_names = {u.id: u.name for u in uploads}
             transformations = transform_svc.list_transformations(session, org_id)
             trans_names = {t.id: t.name for t in transformations}
+            pipelines = pipeline_svc.list_pipelines(session, org_id)
+            pipeline_names = {p.id: p.name for p in pipelines}
 
             rows = svc.list_schedules(session, org_id)
             self.schedules = [
@@ -85,7 +89,8 @@ class ScheduleState(BaseState):
                     target_type=s.target_type.value,
                     target_id=s.target_id,
                     target_name=self._resolve_target_name(
-                        s.target_type.value, s.target_id, pipe_names, trans_names
+                        s.target_type.value, s.target_id,
+                        upload_names, trans_names, pipeline_names,
                     ),
                     cron_expression=s.cron_expression,
                     timezone=s.timezone,
@@ -97,10 +102,14 @@ class ScheduleState(BaseState):
 
     @staticmethod
     def _resolve_target_name(
-        target_type: str, target_id: int, pipe_names: dict, trans_names: dict
+        target_type: str, target_id: int,
+        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
     ) -> str:
+        if target_type == "upload":
+            name = upload_names.get(target_id, f"#{target_id}")
+            return f"upload: {name}"
         if target_type == "pipeline":
-            name = pipe_names.get(target_id, f"#{target_id}")
+            name = (pipeline_names or {}).get(target_id, f"#{target_id}")
             return f"pipeline: {name}"
         name = trans_names.get(target_id, f"#{target_id}")
         return f"transformation: {name}"

@@ -20,6 +20,7 @@ celery_app.conf.update(
 )
 
 celery_app.conf.include = [
-    "datanika.tasks.pipeline_tasks",
+    "datanika.tasks.upload_tasks",
     "datanika.tasks.transformation_tasks",
+    "datanika.tasks.pipeline_tasks",
 ]

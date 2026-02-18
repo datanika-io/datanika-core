@@ -17,7 +17,7 @@ def add_dependency_form() -> rx.Component:
                 rx.vstack(
                     rx.text(_t["dag.upstream_type"], size="2"),
                     rx.select(
-                        ["pipeline", "transformation"],
+                        ["upload", "transformation", "pipeline"],
                         value=DagState.form_upstream_type,
                         on_change=DagState.set_form_upstream_type,
                         width="100%",
@@ -38,7 +38,7 @@ def add_dependency_form() -> rx.Component:
                 rx.vstack(
                     rx.text(_t["dag.downstream_type"], size="2"),
                     rx.select(
-                        ["pipeline", "transformation"],
+                        ["upload", "transformation", "pipeline"],
                         value=DagState.form_downstream_type,
                         on_change=DagState.set_form_downstream_type,
                         width="100%",

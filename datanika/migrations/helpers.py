@@ -12,6 +12,7 @@ PUBLIC_TABLES: set[str] = {
     "users",
     "memberships",
     "connections",
+    "uploads",
     "pipelines",
     "transformations",
     "dependencies",

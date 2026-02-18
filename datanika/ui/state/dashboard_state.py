@@ -10,13 +10,15 @@ from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.run_state import RunItem
 
 
 class DashboardStats(BaseModel):
-    total_pipelines: int = 0
+    total_uploads: int = 0
     total_transformations: int = 0
+    total_pipelines: int = 0
     total_schedules: int = 0
     recent_runs_success: int = 0
     recent_runs_failed: int = 0
@@ -31,14 +33,16 @@ class DashboardState(BaseState):
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
-        schedule_svc = ScheduleService(pipe_svc, transform_svc)
+        pipeline_svc = PipelineService()
+        schedule_svc = ScheduleService(upload_svc, transform_svc)
         exec_svc = ExecutionService()
 
         with get_sync_session() as session:
-            pipelines = pipe_svc.list_pipelines(session, org_id)
+            uploads = upload_svc.list_uploads(session, org_id)
             transformations = transform_svc.list_transformations(session, org_id)
+            pipelines = pipeline_svc.list_pipelines(session, org_id)
             schedules = schedule_svc.list_schedules(session, org_id)
 
             recent = exec_svc.list_runs(session, org_id, limit=10)
@@ -46,8 +50,9 @@ class DashboardState(BaseState):
             failed_count = sum(1 for r in recent if r.status == RunStatus.FAILED)
 
             self.stats = DashboardStats(
-                total_pipelines=len(pipelines),
+                total_uploads=len(uploads),
                 total_transformations=len(transformations),
+                total_pipelines=len(pipelines),
                 total_schedules=len(schedules),
                 recent_runs_success=success_count,
                 recent_runs_failed=failed_count,

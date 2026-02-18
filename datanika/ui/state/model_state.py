@@ -10,6 +10,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
@@ -34,34 +35,39 @@ class ModelState(BaseState):
         exec_svc = ExecutionService()
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
+        pipeline_svc = PipelineService()
 
         with get_sync_session() as session:
             entries = catalog_svc.list_entries(session, org_id)
 
             # Build name maps
-            pipelines = pipe_svc.list_pipelines(session, org_id)
-            pipe_names = {p.id: p.name for p in pipelines}
+            uploads = upload_svc.list_uploads(session, org_id)
+            upload_names = {u.id: u.name for u in uploads}
             transformations = transform_svc.list_transformations(session, org_id)
             trans_names = {t.id: t.name for t in transformations}
+            pipelines = pipeline_svc.list_pipelines(session, org_id)
+            pipeline_names = {p.id: p.name for p in pipelines}
 
             items = []
             for entry in entries:
                 # Resolve origin name
-                if entry.origin_type == NodeType.PIPELINE:
-                    origin_name = pipe_names.get(entry.origin_id, f"Pipeline #{entry.origin_id}")
+                if entry.origin_type == NodeType.UPLOAD:
+                    origin_name = upload_names.get(
+                        entry.origin_id, f"Upload #{entry.origin_id}"
+                    )
+                elif entry.origin_type == NodeType.PIPELINE:
+                    origin_name = pipeline_names.get(
+                        entry.origin_id, f"Pipeline #{entry.origin_id}"
+                    )
                 else:
                     origin_name = trans_names.get(
                         entry.origin_id, f"Transformation #{entry.origin_id}"
                     )
 
                 # Get last run
-                target_type = (
-                    NodeType.PIPELINE
-                    if entry.origin_type == NodeType.PIPELINE
-                    else NodeType.TRANSFORMATION
-                )
+                target_type = entry.origin_type
                 runs = exec_svc.list_runs(
                     session, org_id,
                     target_type=target_type,

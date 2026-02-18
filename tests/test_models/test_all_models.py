@@ -208,14 +208,14 @@ class TestConnection:
 
 
 # ===========================================================================
-# Pipeline
+# Upload
 # ===========================================================================
-class TestPipeline:
+class TestUpload:
     def test_table_exists(self):
-        assert "pipelines" in Base.metadata.tables
+        assert "uploads" in Base.metadata.tables
 
     def test_columns(self):
-        cols = _columns("pipelines")
+        cols = _columns("uploads")
         assert "id" in cols
         assert "org_id" in cols
         assert "name" in cols
@@ -228,26 +228,26 @@ class TestPipeline:
         assert "updated_at" in cols
 
     def test_pk_is_integer_autoincrement(self):
-        assert _pk_is_autoincrement("pipelines")
+        assert _pk_is_autoincrement("uploads")
 
     def test_foreign_keys(self):
-        assert _has_fk_to("pipelines", "org_id", "organizations")
-        assert _has_fk_to("pipelines", "source_connection_id", "connections")
-        assert _has_fk_to("pipelines", "destination_connection_id", "connections")
+        assert _has_fk_to("uploads", "org_id", "organizations")
+        assert _has_fk_to("uploads", "source_connection_id", "connections")
+        assert _has_fk_to("uploads", "destination_connection_id", "connections")
 
     def test_status_enum(self):
-        from datanika.models.pipeline import PipelineStatus
+        from datanika.models.upload import UploadStatus
 
-        assert set(PipelineStatus) == {
-            PipelineStatus.DRAFT,
-            PipelineStatus.ACTIVE,
-            PipelineStatus.PAUSED,
-            PipelineStatus.ERROR,
+        assert set(UploadStatus) == {
+            UploadStatus.DRAFT,
+            UploadStatus.ACTIVE,
+            UploadStatus.PAUSED,
+            UploadStatus.ERROR,
         }
 
-    def test_create_pipeline(self, db_session):
+    def test_create_upload(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
-        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-pipe")
@@ -271,20 +271,20 @@ class TestPipeline:
         db_session.add_all([src, dst])
         db_session.flush()
 
-        pipeline = Pipeline(
+        upload = Upload(
             org_id=org.id,
             name="user_sync",
             description="Sync users",
             source_connection_id=src.id,
             destination_connection_id=dst.id,
             dlt_config={"write_disposition": "merge"},
-            status=PipelineStatus.DRAFT,
+            status=UploadStatus.DRAFT,
         )
-        db_session.add(pipeline)
+        db_session.add(upload)
         db_session.flush()
 
-        assert isinstance(pipeline.id, int)
-        assert pipeline.status == PipelineStatus.DRAFT
+        assert isinstance(upload.id, int)
+        assert upload.status == UploadStatus.DRAFT
 
 
 # ===========================================================================
@@ -370,12 +370,12 @@ class TestDependency:
     def test_node_type_enum(self):
         from datanika.models.dependency import NodeType
 
-        assert set(NodeType) == {NodeType.PIPELINE, NodeType.TRANSFORMATION}
+        assert set(NodeType) == {NodeType.UPLOAD, NodeType.TRANSFORMATION, NodeType.PIPELINE}
 
     def test_create_dependency(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import Dependency, NodeType
-        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.transformation import Materialization, Transformation
         from datanika.models.user import Organization
 
@@ -383,7 +383,7 @@ class TestDependency:
         db_session.add(org)
         db_session.flush()
 
-        # Create a real pipeline and transformation to reference
+        # Create a real upload and transformation to reference
         src = Connection(
             org_id=org.id,
             name="s",
@@ -401,13 +401,13 @@ class TestDependency:
         db_session.add_all([src, dst])
         db_session.flush()
 
-        pipe = Pipeline(
+        upload = Upload(
             org_id=org.id,
             name="p",
             source_connection_id=src.id,
             destination_connection_id=dst.id,
             dlt_config={},
-            status=PipelineStatus.DRAFT,
+            status=UploadStatus.DRAFT,
         )
         txf = Transformation(
             org_id=org.id,
@@ -416,13 +416,13 @@ class TestDependency:
             materialization=Materialization.VIEW,
             schema_name="staging",
         )
-        db_session.add_all([pipe, txf])
+        db_session.add_all([upload, txf])
         db_session.flush()
 
         dep = Dependency(
             org_id=org.id,
-            upstream_type=NodeType.PIPELINE,
-            upstream_id=pipe.id,
+            upstream_type=NodeType.UPLOAD,
+            upstream_id=upload.id,
             downstream_type=NodeType.TRANSFORMATION,
             downstream_id=txf.id,
         )
@@ -430,7 +430,7 @@ class TestDependency:
         db_session.flush()
 
         assert isinstance(dep.id, int)
-        assert dep.upstream_id == pipe.id
+        assert dep.upstream_id == upload.id
         assert dep.downstream_id == txf.id
 
 
@@ -459,7 +459,7 @@ class TestSchedule:
     def test_create_schedule(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import NodeType
-        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.schedule import Schedule
         from datanika.models.user import Organization
 
@@ -484,21 +484,21 @@ class TestSchedule:
         db_session.add_all([src, dst])
         db_session.flush()
 
-        pipe = Pipeline(
+        upload = Upload(
             org_id=org.id,
             name="p",
             source_connection_id=src.id,
             destination_connection_id=dst.id,
             dlt_config={},
-            status=PipelineStatus.DRAFT,
+            status=UploadStatus.DRAFT,
         )
-        db_session.add(pipe)
+        db_session.add(upload)
         db_session.flush()
 
         sched = Schedule(
             org_id=org.id,
-            target_type=NodeType.PIPELINE,
-            target_id=pipe.id,
+            target_type=NodeType.UPLOAD,
+            target_id=upload.id,
             cron_expression="0 3 * * *",
             timezone="UTC",
             is_active=True,
@@ -508,7 +508,7 @@ class TestSchedule:
 
         assert isinstance(sched.id, int)
         assert sched.is_active is True
-        assert sched.target_id == pipe.id
+        assert sched.target_id == upload.id
 
 
 # ===========================================================================
@@ -550,7 +550,7 @@ class TestRun:
     def test_create_run(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import NodeType
-        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.run import Run, RunStatus
         from datanika.models.user import Organization
 
@@ -575,21 +575,21 @@ class TestRun:
         db_session.add_all([src, dst])
         db_session.flush()
 
-        pipe = Pipeline(
+        upload = Upload(
             org_id=org.id,
             name="p",
             source_connection_id=src.id,
             destination_connection_id=dst.id,
             dlt_config={},
-            status=PipelineStatus.DRAFT,
+            status=UploadStatus.DRAFT,
         )
-        db_session.add(pipe)
+        db_session.add(upload)
         db_session.flush()
 
         run = Run(
             org_id=org.id,
-            target_type=NodeType.PIPELINE,
-            target_id=pipe.id,
+            target_type=NodeType.UPLOAD,
+            target_id=upload.id,
             status=RunStatus.PENDING,
         )
         db_session.add(run)
@@ -717,7 +717,7 @@ class TestRelationships:
         entry = CatalogEntry(
             org_id=org.id,
             entry_type=CatalogEntryType.SOURCE_TABLE,
-            origin_type=NodeType.PIPELINE,
+            origin_type=NodeType.UPLOAD,
             origin_id=1,
             table_name="users",
             schema_name="public",
@@ -733,9 +733,9 @@ class TestRelationships:
         assert entry.table_name == "users"
         assert entry.columns == [{"name": "id", "data_type": "INTEGER"}]
 
-    def test_pipeline_connection_relationships(self, db_session):
+    def test_upload_connection_relationships(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
-        from datanika.models.pipeline import Pipeline, PipelineStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-rel3")
@@ -759,17 +759,106 @@ class TestRelationships:
         db_session.add_all([src, dst])
         db_session.flush()
 
-        pipeline = Pipeline(
+        upload = Upload(
             org_id=org.id,
             name="test_pipe",
             source_connection_id=src.id,
             destination_connection_id=dst.id,
             dlt_config={},
+            status=UploadStatus.DRAFT,
+        )
+        db_session.add(upload)
+        db_session.flush()
+
+        db_session.refresh(upload)
+        assert upload.source_connection.name == "src"
+        assert upload.destination_connection.name == "dst"
+
+
+# ===========================================================================
+# Pipeline (dbt)
+# ===========================================================================
+class TestPipeline:
+    def test_table_exists(self):
+        assert "pipelines" in Base.metadata.tables
+
+    def test_columns(self):
+        cols = _columns("pipelines")
+        assert "id" in cols
+        assert "org_id" in cols
+        assert "name" in cols
+        assert "description" in cols
+        assert "destination_connection_id" in cols
+        assert "command" in cols
+        assert "full_refresh" in cols
+        assert "models" in cols
+        assert "custom_selector" in cols
+        assert "status" in cols
+        assert "created_at" in cols
+        assert "updated_at" in cols
+
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("pipelines")
+
+    def test_foreign_keys(self):
+        assert _has_fk_to("pipelines", "org_id", "organizations")
+        assert _has_fk_to("pipelines", "destination_connection_id", "connections")
+
+    def test_dbt_command_enum(self):
+        from datanika.models.pipeline import DbtCommand
+
+        assert set(DbtCommand) == {
+            DbtCommand.BUILD,
+            DbtCommand.RUN,
+            DbtCommand.TEST,
+            DbtCommand.SEED,
+            DbtCommand.SNAPSHOT,
+            DbtCommand.COMPILE,
+        }
+
+    def test_pipeline_status_enum(self):
+        from datanika.models.pipeline import PipelineStatus
+
+        assert set(PipelineStatus) == {
+            PipelineStatus.DRAFT,
+            PipelineStatus.ACTIVE,
+            PipelineStatus.PAUSED,
+            PipelineStatus.ERROR,
+        }
+
+    def test_create_pipeline(self, db_session):
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-dbt-pipe")
+        db_session.add(org)
+        db_session.flush()
+
+        dst = Connection(
+            org_id=org.id,
+            name="dst",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
+        )
+        db_session.add(dst)
+        db_session.flush()
+
+        pipeline = Pipeline(
+            org_id=org.id,
+            name="nightly_build",
+            description="Build all models",
+            destination_connection_id=dst.id,
+            command=DbtCommand.BUILD,
+            full_refresh=False,
+            models=[{"name": "orders", "upstream": True, "downstream": False}],
             status=PipelineStatus.DRAFT,
         )
         db_session.add(pipeline)
         db_session.flush()
 
-        db_session.refresh(pipeline)
-        assert pipeline.source_connection.name == "src"
-        assert pipeline.destination_connection.name == "dst"
+        assert isinstance(pipeline.id, int)
+        assert pipeline.command == DbtCommand.BUILD
+        assert pipeline.status == PipelineStatus.DRAFT
+        assert pipeline.models == [{"name": "orders", "upstream": True, "downstream": False}]

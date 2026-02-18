@@ -12,6 +12,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 
 if TYPE_CHECKING:
     from datanika.services.scheduler_integration import SchedulerIntegrationService
@@ -24,13 +25,15 @@ class ScheduleConfigError(ValueError):
 class ScheduleService:
     def __init__(
         self,
-        pipeline_service: PipelineService,
+        upload_service: UploadService,
         transformation_service: TransformationService,
         scheduler_integration: SchedulerIntegrationService | None = None,
+        pipeline_service: PipelineService | None = None,
     ):
-        self._pipe_svc = pipeline_service
+        self._upload_svc = upload_service
         self._transform_svc = transformation_service
         self._scheduler = scheduler_integration
+        self._pipeline_svc = pipeline_service or PipelineService()
 
     def create_schedule(
         self,
@@ -136,10 +139,12 @@ class ScheduleService:
     def validate_target(
         self, session: Session, org_id: int, target_type: NodeType, target_id: int
     ) -> None:
-        if target_type == NodeType.PIPELINE:
-            target = self._pipe_svc.get_pipeline(session, org_id, target_id)
+        if target_type == NodeType.UPLOAD:
+            target = self._upload_svc.get_upload(session, org_id, target_id)
         elif target_type == NodeType.TRANSFORMATION:
             target = self._transform_svc.get_transformation(session, org_id, target_id)
+        elif target_type == NodeType.PIPELINE:
+            target = self._pipeline_svc.get_pipeline(session, org_id, target_id)
         else:
             target = None
 

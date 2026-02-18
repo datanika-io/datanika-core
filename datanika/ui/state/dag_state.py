@@ -9,6 +9,7 @@ from datanika.services.dependency_service import DependencyService
 from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
@@ -24,7 +25,7 @@ class DependencyItem(BaseModel):
 
 class DagState(BaseState):
     dependencies: list[DependencyItem] = []
-    form_upstream_type: str = "pipeline"
+    form_upstream_type: str = "upload"
     form_upstream_id: str = ""
     form_downstream_type: str = "transformation"
     form_downstream_id: str = ""
@@ -44,16 +45,20 @@ class DagState(BaseState):
     def _get_service(self) -> DependencyService:
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
-        return DependencyService(pipe_svc, transform_svc)
+        return DependencyService(upload_svc, transform_svc)
 
     @staticmethod
     def _resolve_node_name(
-        node_type: str, node_id: int, pipe_names: dict, trans_names: dict
+        node_type: str, node_id: int,
+        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
     ) -> str:
+        if node_type == "upload":
+            name = upload_names.get(node_id, f"#{node_id}")
+            return f"upload: {name}"
         if node_type == "pipeline":
-            name = pipe_names.get(node_id, f"#{node_id}")
+            name = (pipeline_names or {}).get(node_id, f"#{node_id}")
             return f"pipeline: {name}"
         name = trans_names.get(node_id, f"#{node_id}")
         return f"transformation: {name}"
@@ -65,14 +70,17 @@ class DagState(BaseState):
         # Build name lookups
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
+        pipeline_svc = PipelineService()
 
         with get_sync_session() as session:
-            pipelines = pipe_svc.list_pipelines(session, org_id)
-            pipe_names = {p.id: p.name for p in pipelines}
+            uploads = upload_svc.list_uploads(session, org_id)
+            upload_names = {u.id: u.name for u in uploads}
             transformations = transform_svc.list_transformations(session, org_id)
             trans_names = {t.id: t.name for t in transformations}
+            pipelines = pipeline_svc.list_pipelines(session, org_id)
+            pipeline_names = {p.id: p.name for p in pipelines}
 
             rows = svc.list_dependencies(session, org_id)
             self.dependencies = [
@@ -81,12 +89,14 @@ class DagState(BaseState):
                     upstream_type=d.upstream_type.value,
                     upstream_id=d.upstream_id,
                     upstream_name=self._resolve_node_name(
-                        d.upstream_type.value, d.upstream_id, pipe_names, trans_names
+                        d.upstream_type.value, d.upstream_id,
+                        upload_names, trans_names, pipeline_names,
                     ),
                     downstream_type=d.downstream_type.value,
                     downstream_id=d.downstream_id,
                     downstream_name=self._resolve_node_name(
-                        d.downstream_type.value, d.downstream_id, pipe_names, trans_names
+                        d.downstream_type.value, d.downstream_id,
+                        upload_names, trans_names, pipeline_names,
                     ),
                 )
                 for d in rows

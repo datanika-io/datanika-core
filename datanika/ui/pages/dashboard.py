@@ -80,14 +80,19 @@ def dashboard_page() -> rx.Component:
             ),
             rx.hstack(
                 stat_card(
-                    _t["dashboard.pipelines"],
-                    DashboardState.stats.total_pipelines,
-                    "git-branch",
+                    _t["dashboard.uploads"],
+                    DashboardState.stats.total_uploads,
+                    "upload",
                 ),
                 stat_card(
                     _t["dashboard.transformations"],
                     DashboardState.stats.total_transformations,
                     "code",
+                ),
+                stat_card(
+                    _t["dashboard.pipelines"],
+                    DashboardState.stats.total_pipelines,
+                    "git-branch",
                 ),
                 stat_card(
                     _t["dashboard.schedules"],

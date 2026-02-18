@@ -263,9 +263,9 @@ class TestConnectionStateSetters:
         assert params["value"].annotation is bool
 
 
-class TestPipelineStateSetters:
+class TestUploadStateSetters:
     def test_all_setters_exist(self):
-        from datanika.ui.state.pipeline_state import PipelineState
+        from datanika.ui.state.upload_state import UploadState
 
         expected = [
             "set_form_name",
@@ -290,15 +290,15 @@ class TestPipelineStateSetters:
             "set_form_use_raw_json",
         ]
         for name in expected:
-            method = getattr(PipelineState, name, None)
-            assert method is not None, f"PipelineState missing {name}"
+            method = getattr(UploadState, name, None)
+            assert method is not None, f"UploadState missing {name}"
             assert callable(method)
 
     def test_bool_setter_signatures(self):
-        from datanika.ui.state.pipeline_state import PipelineState
+        from datanika.ui.state.upload_state import UploadState
 
         for name in ["set_form_enable_incremental", "set_form_use_raw_json"]:
-            handler = getattr(PipelineState, name)
+            handler = getattr(UploadState, name)
             fn = handler.fn if hasattr(handler, "fn") else handler
             sig = inspect.signature(fn)
             params = sig.parameters

@@ -65,8 +65,9 @@ def sidebar() -> rx.Component:
             rx.vstack(
                 sidebar_link(_t["nav.dashboard"], "/", "layout-dashboard"),
                 sidebar_link(_t["nav.connections"], "/connections", "plug"),
-                sidebar_link(_t["nav.pipelines"], "/pipelines", "git-branch"),
+                sidebar_link(_t["nav.uploads"], "/uploads", "upload"),
                 sidebar_link(_t["nav.transformations"], "/transformations", "code"),
+                sidebar_link(_t["nav.pipelines"], "/pipelines", "git-branch"),
                 sidebar_link(_t["nav.schedules"], "/schedules", "clock"),
                 sidebar_link(_t["nav.runs"], "/runs", "play"),
                 sidebar_link(_t["nav.dependencies"], "/dag", "network"),

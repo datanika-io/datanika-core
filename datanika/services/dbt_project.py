@@ -179,6 +179,61 @@ class DbtProjectService:
             "threads": 4,
         }
 
+    VALID_COMMANDS = {"build", "run", "test", "seed", "snapshot", "compile"}
+    FULL_REFRESH_COMMANDS = {"build", "run"}
+
+    def run_command(
+        self,
+        org_id: int,
+        command: str,
+        selector: str | None = None,
+        full_refresh: bool = False,
+    ) -> dict:
+        """Execute an arbitrary dbt command with optional selector and full-refresh.
+
+        Returns {"success": bool, "rows_affected": int, "logs": str}.
+        """
+        if command not in self.VALID_COMMANDS:
+            raise DbtProjectError(
+                f"Invalid dbt command: {command!r}. Must be one of {self.VALID_COMMANDS}"
+            )
+
+        project_path = self.get_project_path(org_id)
+        if not project_path.exists():
+            raise DbtProjectError(f"dbt project not found for org {org_id}")
+
+        args = [
+            command,
+            "--project-dir",
+            str(project_path),
+            "--profiles-dir",
+            str(project_path),
+        ]
+        if selector:
+            args.extend(["--select", selector])
+        if full_refresh and command in self.FULL_REFRESH_COMMANDS:
+            args.append("--full-refresh")
+
+        runner = dbtRunner()
+        result = runner.invoke(args)
+
+        rows_affected = 0
+        if result.result:
+            for node_result in result.result:
+                resp = getattr(node_result, "adapter_response", None)
+                if resp and hasattr(resp, "rows_affected"):
+                    rows_affected += resp.rows_affected or 0
+
+        logs = str(result.result) if result.result else ""
+        if not logs and result.exception:
+            logs = str(result.exception)
+
+        return {
+            "success": result.success,
+            "rows_affected": rows_affected,
+            "logs": logs,
+        }
+
     def run_model(self, org_id: int, model_name: str) -> dict:
         """Execute `dbt run --select model_name` for the tenant project.
 

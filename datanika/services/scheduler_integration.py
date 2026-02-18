@@ -12,6 +12,7 @@ from datanika.models.schedule import Schedule
 from datanika.services.execution_service import ExecutionService
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.tasks.transformation_tasks import run_transformation_task
+from datanika.tasks.upload_tasks import run_upload_task
 
 
 class SchedulerIntegrationService:
@@ -128,9 +129,11 @@ class SchedulerIntegrationService:
             run = exec_svc.create_run(session, org_id, node_type, target_id)
             session.commit()
 
-            if target_type == "pipeline":
-                run_pipeline_task.delay(run_id=run.id, org_id=org_id)
+            if target_type == "upload":
+                run_upload_task.delay(run_id=run.id, org_id=org_id)
             elif target_type == "transformation":
                 run_transformation_task.delay(run_id=run.id, org_id=org_id)
+            elif target_type == "pipeline":
+                run_pipeline_task.delay(run_id=run.id, org_id=org_id)
         finally:
             session.close()

@@ -13,6 +13,7 @@ from datanika.ui.pages.schedules import schedules_page
 from datanika.ui.pages.settings import settings_page
 from datanika.ui.pages.signup import signup_page
 from datanika.ui.pages.transformations import transformations_page
+from datanika.ui.pages.uploads import uploads_page
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
@@ -24,6 +25,7 @@ from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
 from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
+from datanika.ui.state.upload_state import UploadState
 
 app = rx.App()
 
@@ -61,16 +63,22 @@ app.add_page(
     on_load=[AuthState.check_auth, ConnectionState.load_connections],
 )
 app.add_page(
-    pipelines_page,
-    route="/pipelines",
-    title="Pipelines | Datanika",
-    on_load=[AuthState.check_auth, PipelineState.load_pipelines],
+    uploads_page,
+    route="/uploads",
+    title="Uploads | Datanika",
+    on_load=[AuthState.check_auth, UploadState.load_uploads],
 )
 app.add_page(
     transformations_page,
     route="/transformations",
     title="Transformations | Datanika",
     on_load=[AuthState.check_auth, TransformationState.load_transformations],
+)
+app.add_page(
+    pipelines_page,
+    route="/pipelines",
+    title="Pipelines | Datanika",
+    on_load=[AuthState.check_auth, PipelineState.load_pipelines],
 )
 app.add_page(
     schedules_page,

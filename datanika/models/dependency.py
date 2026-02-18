@@ -7,8 +7,9 @@ from datanika.models.base import Base, TenantMixin, TimestampMixin
 
 
 class NodeType(enum.StrEnum):
-    PIPELINE = "pipeline"
+    UPLOAD = "upload"
     TRANSFORMATION = "transformation"
+    PIPELINE = "pipeline"
 
 
 class Dependency(Base, TenantMixin, TimestampMixin):

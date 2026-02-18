@@ -14,6 +14,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.naming import to_snake_case
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 _VALID_STRING_TESTS = {"not_null", "unique"}
@@ -125,7 +126,7 @@ class ModelDetailState(BaseState):
         catalog_svc = CatalogService()
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
 
         with get_sync_session() as session:
@@ -147,8 +148,13 @@ class ModelDetailState(BaseState):
             self.form_dbt_config = json.dumps(dbt_cfg, indent=2)
 
             # Resolve origin name
-            if entry.origin_type == NodeType.PIPELINE:
-                pipelines = pipe_svc.list_pipelines(session, org_id)
+            if entry.origin_type == NodeType.UPLOAD:
+                uploads = upload_svc.list_uploads(session, org_id)
+                names = {u.id: u.name for u in uploads}
+                self.origin_name = names.get(entry.origin_id, f"Upload #{entry.origin_id}")
+            elif entry.origin_type == NodeType.PIPELINE:
+                pipeline_svc = PipelineService()
+                pipelines = pipeline_svc.list_pipelines(session, org_id)
                 names = {p.id: p.name for p in pipelines}
                 self.origin_name = names.get(entry.origin_id, f"Pipeline #{entry.origin_id}")
             else:

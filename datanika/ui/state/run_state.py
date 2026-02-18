@@ -10,6 +10,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 
@@ -37,19 +38,24 @@ class RunState(BaseState):
         org_id = await self._get_org_id()
         svc = ExecutionService()
         status_filter = RunStatus(self.filter_status) if self.filter_status else None
-        target_type_filter = NodeType(self.filter_target_type) if self.filter_target_type else None
+        target_type_filter = (
+            NodeType(self.filter_target_type) if self.filter_target_type else None
+        )
 
         # Build name lookups
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
-        pipe_svc = PipelineService(conn_svc)
+        upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
+        pipeline_svc = PipelineService()
 
         with get_sync_session() as session:
-            pipelines = pipe_svc.list_pipelines(session, org_id)
-            pipe_names = {p.id: p.name for p in pipelines}
+            uploads = upload_svc.list_uploads(session, org_id)
+            upload_names = {u.id: u.name for u in uploads}
             transformations = transform_svc.list_transformations(session, org_id)
             trans_names = {t.id: t.name for t in transformations}
+            pipelines = pipeline_svc.list_pipelines(session, org_id)
+            pipeline_names = {p.id: p.name for p in pipelines}
 
             rows = svc.list_runs(
                 session,
@@ -64,7 +70,8 @@ class RunState(BaseState):
                     target_type=r.target_type.value,
                     target_id=r.target_id,
                     target_name=self._resolve_target_name(
-                        r.target_type.value, r.target_id, pipe_names, trans_names
+                        r.target_type.value, r.target_id,
+                        upload_names, trans_names, pipeline_names,
                     ),
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
@@ -79,10 +86,14 @@ class RunState(BaseState):
 
     @staticmethod
     def _resolve_target_name(
-        target_type: str, target_id: int, pipe_names: dict, trans_names: dict
+        target_type: str, target_id: int,
+        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
     ) -> str:
+        if target_type == "upload":
+            name = upload_names.get(target_id, f"#{target_id}")
+            return f"upload: {name}"
         if target_type == "pipeline":
-            name = pipe_names.get(target_id, f"#{target_id}")
+            name = (pipeline_names or {}).get(target_id, f"#{target_id}")
             return f"pipeline: {name}"
         name = trans_names.get(target_id, f"#{target_id}")
         return f"transformation: {name}"

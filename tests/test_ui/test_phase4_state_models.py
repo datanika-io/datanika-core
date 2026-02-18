@@ -8,15 +8,17 @@ from datanika.ui.state.run_state import RunState
 class TestDashboardStats:
     def test_create_with_fields(self):
         stats = DashboardStats(
-            total_pipelines=5,
+            total_uploads=5,
             total_transformations=3,
+            total_pipelines=4,
             total_schedules=2,
             recent_runs_success=10,
             recent_runs_failed=1,
             recent_runs_total=11,
         )
-        assert stats.total_pipelines == 5
+        assert stats.total_uploads == 5
         assert stats.total_transformations == 3
+        assert stats.total_pipelines == 4
         assert stats.total_schedules == 2
         assert stats.recent_runs_success == 10
         assert stats.recent_runs_failed == 1
@@ -24,8 +26,9 @@ class TestDashboardStats:
 
     def test_defaults(self):
         stats = DashboardStats()
-        assert stats.total_pipelines == 0
+        assert stats.total_uploads == 0
         assert stats.total_transformations == 0
+        assert stats.total_pipelines == 0
         assert stats.total_schedules == 0
         assert stats.recent_runs_success == 0
         assert stats.recent_runs_failed == 0
@@ -36,13 +39,13 @@ class TestDependencyItem:
     def test_create_with_fields(self):
         item = DependencyItem(
             id=1,
-            upstream_type="pipeline",
+            upstream_type="upload",
             upstream_id=10,
             downstream_type="transformation",
             downstream_id=20,
         )
         assert item.id == 1
-        assert item.upstream_type == "pipeline"
+        assert item.upstream_type == "upload"
         assert item.upstream_id == 10
         assert item.downstream_type == "transformation"
         assert item.downstream_id == 20

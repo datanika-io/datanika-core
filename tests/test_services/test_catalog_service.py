@@ -103,7 +103,7 @@ class TestUpsertEntry:
     def test_creates_new_entry(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "users", "public", "my_pipeline",
             columns=[{"name": "id", "data_type": "INTEGER"}],
             connection_id=None,
@@ -115,13 +115,13 @@ class TestUpsertEntry:
     def test_updates_existing_entry(self, svc, db_session, org):
         entry1 = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "users", "public", "my_pipeline",
             columns=[{"name": "id", "data_type": "INTEGER"}],
         )
         entry2 = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "users", "public", "my_pipeline",
             columns=[
                 {"name": "id", "data_type": "INTEGER"},
@@ -134,12 +134,12 @@ class TestUpsertEntry:
     def test_different_dataset_creates_separate(self, svc, db_session, org):
         e1 = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "users", "public", "dataset_a",
         )
         e2 = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 2,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 2,
             "users", "public", "dataset_b",
         )
         assert e1.id != e2.id
@@ -149,7 +149,7 @@ class TestGetEntry:
     def test_existing(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "orders", "public", "ds",
         )
         found = svc.get_entry(db_session, org.id, entry.id)
@@ -162,7 +162,7 @@ class TestGetEntry:
     def test_wrong_org(self, svc, db_session, org, other_org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "orders", "public", "ds",
         )
         assert svc.get_entry(db_session, other_org.id, entry.id) is None
@@ -175,7 +175,7 @@ class TestListEntries:
     def test_returns_all_types(self, svc, db_session, org):
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         svc.upsert_entry(
@@ -188,7 +188,7 @@ class TestListEntries:
     def test_filter_by_type(self, svc, db_session, org):
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         svc.upsert_entry(
@@ -203,7 +203,7 @@ class TestListEntries:
     def test_excludes_deleted(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         svc.delete_entry(db_session, org.id, entry.id)
@@ -212,12 +212,12 @@ class TestListEntries:
     def test_filters_by_org(self, svc, db_session, org, other_org):
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         svc.upsert_entry(
             db_session, other_org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t2", "public", "ds",
         )
         result = svc.list_entries(db_session, org.id)
@@ -229,7 +229,7 @@ class TestUpdateEntry:
     def test_update_description(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         updated = svc.update_entry(db_session, org.id, entry.id, description="New desc")
@@ -238,7 +238,7 @@ class TestUpdateEntry:
     def test_update_columns(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
             columns=[{"name": "id", "data_type": "INT"}],
         )
@@ -265,7 +265,7 @@ class TestDeleteEntry:
     def test_soft_deletes(self, svc, db_session, org):
         entry = svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds",
         )
         assert svc.delete_entry(db_session, org.id, entry.id) is True
@@ -279,17 +279,17 @@ class TestGetEntriesByConnection:
     def test_returns_source_tables_for_connection(self, svc, db_session, org):
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds", connection_id=10,
         )
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t2", "public", "ds", connection_id=10,
         )
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 2,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 2,
             "t3", "public", "ds2", connection_id=20,
         )
         result = svc.get_entries_by_connection(db_session, org.id, 10)
@@ -299,7 +299,7 @@ class TestGetEntriesByConnection:
     def test_excludes_dbt_models(self, svc, db_session, org):
         svc.upsert_entry(
             db_session, org.id,
-            CatalogEntryType.SOURCE_TABLE, NodeType.PIPELINE, 1,
+            CatalogEntryType.SOURCE_TABLE, NodeType.UPLOAD, 1,
             "t1", "public", "ds", connection_id=10,
         )
         svc.upsert_entry(

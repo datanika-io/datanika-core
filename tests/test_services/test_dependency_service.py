@@ -10,7 +10,7 @@ from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.dependency_service import DependencyConfigError, DependencyService
 from datanika.services.encryption import EncryptionService
-from datanika.services.pipeline_service import PipelineService
+from datanika.services.upload_service import UploadService
 from datanika.services.transformation_service import TransformationService
 
 
@@ -26,8 +26,8 @@ def conn_svc(encryption):
 
 
 @pytest.fixture
-def pipe_svc(conn_svc):
-    return PipelineService(conn_svc)
+def upload_svc(conn_svc):
+    return UploadService(conn_svc)
 
 
 @pytest.fixture
@@ -36,8 +36,8 @@ def transform_svc():
 
 
 @pytest.fixture
-def svc(pipe_svc, transform_svc):
-    return DependencyService(pipe_svc, transform_svc)
+def svc(upload_svc, transform_svc):
+    return DependencyService(upload_svc, transform_svc)
 
 
 @pytest.fixture
@@ -57,7 +57,7 @@ def other_org(db_session):
 
 
 @pytest.fixture
-def pipeline(pipe_svc, conn_svc, db_session, org):
+def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
         db_session, org.id, "Src", ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {"h": "x"}
     )
@@ -69,11 +69,11 @@ def pipeline(pipe_svc, conn_svc, db_session, org):
         ConnectionDirection.DESTINATION,
         {"h": "y"},
     )
-    return pipe_svc.create_pipeline(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
 
 
 @pytest.fixture
-def pipeline2(pipe_svc, conn_svc, db_session, org):
+def upload2(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
         db_session,
         org.id,
@@ -90,7 +90,7 @@ def pipeline2(pipe_svc, conn_svc, db_session, org):
         ConnectionDirection.DESTINATION,
         {"h": "y"},
     )
-    return pipe_svc.create_pipeline(db_session, org.id, "pipe2", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(db_session, org.id, "pipe2", "desc", src.id, dst.id, {})
 
 
 @pytest.fixture
@@ -108,19 +108,19 @@ def transformation2(transform_svc, db_session, org):
 
 
 class TestAddDependency:
-    def test_pipeline_to_transformation(self, svc, db_session, org, pipeline, transformation):
+    def test_upload_to_transformation(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
         assert isinstance(dep, Dependency)
         assert isinstance(dep.id, int)
-        assert dep.upstream_type == NodeType.PIPELINE
-        assert dep.upstream_id == pipeline.id
+        assert dep.upstream_type == NodeType.UPLOAD
+        assert dep.upstream_id == upload.id
         assert dep.downstream_type == NodeType.TRANSFORMATION
         assert dep.downstream_id == transformation.id
         assert dep.org_id == org.id
@@ -139,35 +139,35 @@ class TestAddDependency:
         assert dep.upstream_type == NodeType.TRANSFORMATION
         assert dep.downstream_type == NodeType.TRANSFORMATION
 
-    def test_pipeline_to_pipeline(self, svc, db_session, org, pipeline, pipeline2):
+    def test_upload_to_upload(self, svc, db_session, org, upload, upload2):
         dep = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
-            NodeType.PIPELINE,
-            pipeline2.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.UPLOAD,
+            upload2.id,
         )
-        assert dep.upstream_type == NodeType.PIPELINE
-        assert dep.downstream_type == NodeType.PIPELINE
+        assert dep.upstream_type == NodeType.UPLOAD
+        assert dep.downstream_type == NodeType.UPLOAD
 
-    def test_self_reference_rejected(self, svc, db_session, org, pipeline):
+    def test_self_reference_rejected(self, svc, db_session, org, upload):
         with pytest.raises(DependencyConfigError, match="self-reference"):
             svc.add_dependency(
                 db_session,
                 org.id,
-                NodeType.PIPELINE,
-                pipeline.id,
-                NodeType.PIPELINE,
-                pipeline.id,
+                NodeType.UPLOAD,
+                upload.id,
+                NodeType.UPLOAD,
+                upload.id,
             )
 
-    def test_duplicate_rejected(self, svc, db_session, org, pipeline, transformation):
+    def test_duplicate_rejected(self, svc, db_session, org, upload, transformation):
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -175,8 +175,8 @@ class TestAddDependency:
             svc.add_dependency(
                 db_session,
                 org.id,
-                NodeType.PIPELINE,
-                pipeline.id,
+                NodeType.UPLOAD,
+                upload.id,
                 NodeType.TRANSFORMATION,
                 transformation.id,
             )
@@ -186,31 +186,31 @@ class TestAddDependency:
             svc.add_dependency(
                 db_session,
                 org.id,
-                NodeType.PIPELINE,
+                NodeType.UPLOAD,
                 99999,
                 NodeType.TRANSFORMATION,
                 transformation.id,
             )
 
-    def test_nonexistent_downstream_rejected(self, svc, db_session, org, pipeline):
+    def test_nonexistent_downstream_rejected(self, svc, db_session, org, upload):
         with pytest.raises(DependencyConfigError, match="downstream"):
             svc.add_dependency(
                 db_session,
                 org.id,
-                NodeType.PIPELINE,
-                pipeline.id,
+                NodeType.UPLOAD,
+                upload.id,
                 NodeType.TRANSFORMATION,
                 99999,
             )
 
 
 class TestRemoveDependency:
-    def test_sets_deleted_at(self, svc, db_session, org, pipeline, transformation):
+    def test_sets_deleted_at(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -225,12 +225,12 @@ class TestRemoveDependency:
 
 
 class TestGetDependency:
-    def test_existing(self, svc, db_session, org, pipeline, transformation):
+    def test_existing(self, svc, db_session, org, upload, transformation):
         created = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -241,23 +241,23 @@ class TestGetDependency:
     def test_nonexistent(self, svc, db_session, org):
         assert svc.get_dependency(db_session, org.id, 99999) is None
 
-    def test_wrong_org(self, svc, db_session, org, other_org, pipeline, transformation):
+    def test_wrong_org(self, svc, db_session, org, other_org, upload, transformation):
         created = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
         assert svc.get_dependency(db_session, other_org.id, created.id) is None
 
-    def test_soft_deleted_excluded(self, svc, db_session, org, pipeline, transformation):
+    def test_soft_deleted_excluded(self, svc, db_session, org, upload, transformation):
         created = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -270,20 +270,20 @@ class TestListDependencies:
         result = svc.list_dependencies(db_session, org.id)
         assert result == []
 
-    def test_multiple(self, svc, db_session, org, pipeline, transformation, transformation2):
+    def test_multiple(self, svc, db_session, org, upload, transformation, transformation2):
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation2.id,
         )
@@ -291,21 +291,21 @@ class TestListDependencies:
         assert len(result) == 2
 
     def test_excludes_deleted(
-        self, svc, db_session, org, pipeline, transformation, transformation2
+        self, svc, db_session, org, upload, transformation, transformation2
     ):
         dep1 = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation2.id,
         )
@@ -316,13 +316,13 @@ class TestListDependencies:
 
 class TestGetUpstream:
     def test_returns_correct_edges(
-        self, svc, db_session, org, pipeline, transformation, transformation2
+        self, svc, db_session, org, upload, transformation, transformation2
     ):
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -337,16 +337,16 @@ class TestGetUpstream:
         upstream = svc.get_upstream(db_session, org.id, NodeType.TRANSFORMATION, transformation.id)
         assert len(upstream) == 2
 
-    def test_empty_when_none(self, svc, db_session, org, pipeline):
-        upstream = svc.get_upstream(db_session, org.id, NodeType.PIPELINE, pipeline.id)
+    def test_empty_when_none(self, svc, db_session, org, upload):
+        upstream = svc.get_upstream(db_session, org.id, NodeType.UPLOAD, upload.id)
         assert upstream == []
 
-    def test_excludes_deleted(self, svc, db_session, org, pipeline, transformation):
+    def test_excludes_deleted(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
@@ -357,35 +357,35 @@ class TestGetUpstream:
 
 class TestGetDownstream:
     def test_returns_correct_edges(
-        self, svc, db_session, org, pipeline, transformation, transformation2
+        self, svc, db_session, org, upload, transformation, transformation2
     ):
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation2.id,
         )
-        downstream = svc.get_downstream(db_session, org.id, NodeType.PIPELINE, pipeline.id)
+        downstream = svc.get_downstream(db_session, org.id, NodeType.UPLOAD, upload.id)
         assert len(downstream) == 2
 
-    def test_org_scoped(self, svc, db_session, org, other_org, pipeline, transformation):
+    def test_org_scoped(self, svc, db_session, org, other_org, upload, transformation):
         svc.add_dependency(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             NodeType.TRANSFORMATION,
             transformation.id,
         )
-        downstream = svc.get_downstream(db_session, other_org.id, NodeType.PIPELINE, pipeline.id)
+        downstream = svc.get_downstream(db_session, other_org.id, NodeType.UPLOAD, upload.id)
         assert downstream == []

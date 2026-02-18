@@ -2,7 +2,7 @@
 
 from datanika.models.connection import ConnectionDirection
 from datanika.ui.state.connection_state import ConnectionItem, _infer_direction
-from datanika.ui.state.pipeline_state import PipelineItem
+from datanika.ui.state.upload_state import UploadItem
 from datanika.ui.state.run_state import RunItem
 from datanika.ui.state.schedule_state import ScheduleItem
 from datanika.ui.state.transformation_state import TransformationItem
@@ -36,9 +36,9 @@ class TestInferDirection:
             assert _infer_direction(t) == ConnectionDirection.DESTINATION
 
 
-class TestPipelineItem:
+class TestUploadItem:
     def test_create_with_fields(self):
-        item = PipelineItem(
+        item = UploadItem(
             id=5,
             name="ETL",
             description="desc",
@@ -53,7 +53,7 @@ class TestPipelineItem:
         assert item.destination_connection_id == 2
 
     def test_defaults(self):
-        item = PipelineItem()
+        item = UploadItem()
         assert item.id == 0
         assert item.description == ""
         assert item.status == ""
@@ -83,14 +83,14 @@ class TestScheduleItem:
     def test_create_with_fields(self):
         item = ScheduleItem(
             id=7,
-            target_type="pipeline",
+            target_type="upload",
             target_id=1,
             cron_expression="0 * * * *",
             timezone="UTC",
             is_active=True,
         )
         assert item.id == 7
-        assert item.target_type == "pipeline"
+        assert item.target_type == "upload"
         assert item.cron_expression == "0 * * * *"
         assert item.is_active is True
 
@@ -382,7 +382,7 @@ class TestRunItem:
     def test_create_with_fields(self):
         item = RunItem(
             id=10,
-            target_type="pipeline",
+            target_type="upload",
             target_id=2,
             status="success",
             started_at="2024-01-01",

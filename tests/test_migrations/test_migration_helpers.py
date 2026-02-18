@@ -40,6 +40,9 @@ class TestIsPublicTable:
     def test_connections_is_public(self):
         assert is_public_table("connections") is True
 
+    def test_uploads_is_public(self):
+        assert is_public_table("uploads") is True
+
     def test_pipelines_is_public(self):
         assert is_public_table("pipelines") is True
 

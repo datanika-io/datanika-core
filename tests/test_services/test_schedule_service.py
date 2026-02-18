@@ -10,7 +10,7 @@ from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
-from datanika.services.pipeline_service import PipelineService
+from datanika.services.upload_service import UploadService
 from datanika.services.schedule_service import ScheduleConfigError, ScheduleService
 from datanika.services.transformation_service import TransformationService
 
@@ -27,8 +27,8 @@ def conn_svc(encryption):
 
 
 @pytest.fixture
-def pipe_svc(conn_svc):
-    return PipelineService(conn_svc)
+def upload_svc(conn_svc):
+    return UploadService(conn_svc)
 
 
 @pytest.fixture
@@ -37,8 +37,8 @@ def transform_svc():
 
 
 @pytest.fixture
-def svc(pipe_svc, transform_svc):
-    return ScheduleService(pipe_svc, transform_svc)
+def svc(upload_svc, transform_svc):
+    return ScheduleService(upload_svc, transform_svc)
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ def other_org(db_session):
 
 
 @pytest.fixture
-def pipeline(pipe_svc, conn_svc, db_session, org):
+def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
         db_session, org.id, "Src", ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {"h": "x"}
     )
@@ -70,7 +70,7 @@ def pipeline(pipe_svc, conn_svc, db_session, org):
         ConnectionDirection.DESTINATION,
         {"h": "y"},
     )
-    return pipe_svc.create_pipeline(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
 
 
 @pytest.fixture
@@ -81,12 +81,12 @@ def transformation(transform_svc, db_session, org):
 
 
 class TestCreateSchedule:
-    def test_pipeline_schedule(self, svc, db_session, org, pipeline):
-        s = svc.create_schedule(db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *")
+    def test_upload_schedule(self, svc, db_session, org, upload):
+        s = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         assert isinstance(s, Schedule)
         assert isinstance(s.id, int)
-        assert s.target_type == NodeType.PIPELINE
-        assert s.target_id == pipeline.id
+        assert s.target_type == NodeType.UPLOAD
+        assert s.target_id == upload.id
         assert s.cron_expression == "0 * * * *"
         assert s.timezone == "UTC"
         assert s.is_active is True
@@ -98,13 +98,13 @@ class TestCreateSchedule:
         assert s.target_type == NodeType.TRANSFORMATION
         assert s.target_id == transformation.id
 
-    def test_invalid_cron(self, svc, db_session, org, pipeline):
+    def test_invalid_cron(self, svc, db_session, org, upload):
         with pytest.raises(ScheduleConfigError, match="cron"):
-            svc.create_schedule(db_session, org.id, NodeType.PIPELINE, pipeline.id, "bad")
+            svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "bad")
 
-    def test_nonexistent_pipeline(self, svc, db_session, org):
+    def test_nonexistent_upload(self, svc, db_session, org):
         with pytest.raises(ScheduleConfigError, match="target"):
-            svc.create_schedule(db_session, org.id, NodeType.PIPELINE, 99999, "0 * * * *")
+            svc.create_schedule(db_session, org.id, NodeType.UPLOAD, 99999, "0 * * * *")
 
     def test_nonexistent_transformation(self, svc, db_session, org):
         with pytest.raises(ScheduleConfigError, match="target"):
@@ -112,9 +112,9 @@ class TestCreateSchedule:
 
 
 class TestGetSchedule:
-    def test_existing(self, svc, db_session, org, pipeline):
+    def test_existing(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         fetched = svc.get_schedule(db_session, org.id, created.id)
         assert fetched is not None
@@ -123,15 +123,15 @@ class TestGetSchedule:
     def test_nonexistent(self, svc, db_session, org):
         assert svc.get_schedule(db_session, org.id, 99999) is None
 
-    def test_wrong_org(self, svc, db_session, org, other_org, pipeline):
+    def test_wrong_org(self, svc, db_session, org, other_org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         assert svc.get_schedule(db_session, other_org.id, created.id) is None
 
-    def test_soft_deleted(self, svc, db_session, org, pipeline):
+    def test_soft_deleted(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         svc.delete_schedule(db_session, org.id, created.id)
         assert svc.get_schedule(db_session, org.id, created.id) is None
@@ -142,17 +142,17 @@ class TestListSchedules:
         result = svc.list_schedules(db_session, org.id)
         assert result == []
 
-    def test_multiple(self, svc, db_session, org, pipeline, transformation):
-        svc.create_schedule(db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *")
+    def test_multiple(self, svc, db_session, org, upload, transformation):
+        svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         svc.create_schedule(
             db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
         )
         result = svc.list_schedules(db_session, org.id)
         assert len(result) == 2
 
-    def test_excludes_deleted(self, svc, db_session, org, pipeline, transformation):
+    def test_excludes_deleted(self, svc, db_session, org, upload, transformation):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         svc.create_schedule(
             db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
@@ -161,25 +161,25 @@ class TestListSchedules:
         result = svc.list_schedules(db_session, org.id)
         assert len(result) == 1
 
-    def test_filters_by_org(self, svc, db_session, org, other_org, pipeline):
-        svc.create_schedule(db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *")
-        # Create pipeline in other org for a schedule there
+    def test_filters_by_org(self, svc, db_session, org, other_org, upload):
+        svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        # Create upload in other org for a schedule there
         result = svc.list_schedules(db_session, other_org.id)
         assert result == []
 
 
 class TestUpdateSchedule:
-    def test_update_cron(self, svc, db_session, org, pipeline):
+    def test_update_cron(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         updated = svc.update_schedule(db_session, org.id, created.id, cron_expression="30 2 * * *")
         assert updated is not None
         assert updated.cron_expression == "30 2 * * *"
 
-    def test_update_timezone(self, svc, db_session, org, pipeline):
+    def test_update_timezone(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         updated = svc.update_schedule(db_session, org.id, created.id, timezone="US/Eastern")
         assert updated.timezone == "US/Eastern"
@@ -187,18 +187,18 @@ class TestUpdateSchedule:
     def test_nonexistent(self, svc, db_session, org):
         assert svc.update_schedule(db_session, org.id, 99999, timezone="UTC") is None
 
-    def test_invalid_cron_rejected(self, svc, db_session, org, pipeline):
+    def test_invalid_cron_rejected(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         with pytest.raises(ScheduleConfigError, match="cron"):
             svc.update_schedule(db_session, org.id, created.id, cron_expression="bad")
 
 
 class TestDeleteSchedule:
-    def test_sets_deleted_at(self, svc, db_session, org, pipeline):
+    def test_sets_deleted_at(self, svc, db_session, org, upload):
         created = svc.create_schedule(
-            db_session, org.id, NodeType.PIPELINE, pipeline.id, "0 * * * *"
+            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
         )
         result = svc.delete_schedule(db_session, org.id, created.id)
         assert result is True
@@ -211,12 +211,12 @@ class TestDeleteSchedule:
 
 
 class TestToggleActive:
-    def test_active_to_inactive(self, svc, db_session, org, pipeline):
+    def test_active_to_inactive(self, svc, db_session, org, upload):
         created = svc.create_schedule(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             "0 * * * *",
             is_active=True,
         )
@@ -224,12 +224,12 @@ class TestToggleActive:
         assert toggled is not None
         assert toggled.is_active is False
 
-    def test_inactive_to_active(self, svc, db_session, org, pipeline):
+    def test_inactive_to_active(self, svc, db_session, org, upload):
         created = svc.create_schedule(
             db_session,
             org.id,
-            NodeType.PIPELINE,
-            pipeline.id,
+            NodeType.UPLOAD,
+            upload.id,
             "0 * * * *",
             is_active=False,
         )

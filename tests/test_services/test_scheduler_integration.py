@@ -29,7 +29,7 @@ def svc(mock_scheduler):
 def _make_schedule(
     schedule_id=1,
     org_id=1,
-    target_type_value="pipeline",
+    target_type_value="upload",
     target_id=10,
     cron_expression="0 * * * *",
     timezone="UTC",
@@ -184,9 +184,9 @@ class TestGetJob:
 # _dispatch_target
 # ---------------------------------------------------------------------------
 class TestDispatchTarget:
-    @patch("datanika.services.scheduler_integration.run_pipeline_task")
+    @patch("datanika.services.scheduler_integration.run_upload_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
-    def test_creates_run_for_pipeline(self, mock_exec_cls, mock_pipeline_task):
+    def test_creates_run_for_upload(self, mock_exec_cls, mock_upload_task):
         mock_svc = mock_exec_cls.return_value
         mock_run = MagicMock()
         mock_run.id = 1
@@ -196,10 +196,10 @@ class TestDispatchTarget:
             patch("datanika.services.scheduler_integration.create_engine"),
             patch("datanika.services.scheduler_integration.SyncSession"),
         ):
-            SchedulerIntegrationService._dispatch_target(1, "pipeline", 10)
+            SchedulerIntegrationService._dispatch_target(1, "upload", 10)
 
         mock_svc.create_run.assert_called_once()
-        mock_pipeline_task.delay.assert_called_once()
+        mock_upload_task.delay.assert_called_once()
 
     @patch("datanika.services.scheduler_integration.run_transformation_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
@@ -218,9 +218,9 @@ class TestDispatchTarget:
         mock_svc.create_run.assert_called_once()
         mock_transform_task.delay.assert_called_once()
 
-    @patch("datanika.services.scheduler_integration.run_pipeline_task")
+    @patch("datanika.services.scheduler_integration.run_upload_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
-    def test_dispatches_correct_celery_task(self, mock_exec_cls, mock_pipeline_task):
+    def test_dispatches_correct_celery_task(self, mock_exec_cls, mock_upload_task):
         mock_svc = mock_exec_cls.return_value
         mock_run = MagicMock()
         mock_run.id = 5
@@ -230,6 +230,23 @@ class TestDispatchTarget:
             patch("datanika.services.scheduler_integration.create_engine"),
             patch("datanika.services.scheduler_integration.SyncSession"),
         ):
-            SchedulerIntegrationService._dispatch_target(3, "pipeline", 7)
+            SchedulerIntegrationService._dispatch_target(3, "upload", 7)
 
-        mock_pipeline_task.delay.assert_called_once_with(run_id=5, org_id=3)
+        mock_upload_task.delay.assert_called_once_with(run_id=5, org_id=3)
+
+    @patch("datanika.services.scheduler_integration.run_pipeline_task")
+    @patch("datanika.services.scheduler_integration.ExecutionService")
+    def test_creates_run_for_pipeline(self, mock_exec_cls, mock_pipeline_task):
+        mock_svc = mock_exec_cls.return_value
+        mock_run = MagicMock()
+        mock_run.id = 3
+        mock_svc.create_run.return_value = mock_run
+
+        with (
+            patch("datanika.services.scheduler_integration.create_engine"),
+            patch("datanika.services.scheduler_integration.SyncSession"),
+        ):
+            SchedulerIntegrationService._dispatch_target(1, "pipeline", 30)
+
+        mock_svc.create_run.assert_called_once()
+        mock_pipeline_task.delay.assert_called_once_with(run_id=3, org_id=1)

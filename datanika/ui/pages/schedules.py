@@ -21,7 +21,7 @@ def schedule_form() -> rx.Component:
                 size="4",
             ),
             rx.select(
-                ["pipeline", "transformation"],
+                ["upload", "transformation", "pipeline"],
                 value=ScheduleState.form_target_type,
                 on_change=ScheduleState.set_form_target_type,
                 width="100%",

@@ -167,9 +167,11 @@ class DbtProjectService:
                 "schema": config.get("schema", "PUBLIC"),
                 "threads": 4,
             }
-        # postgres, mysql, mssql, sqlite, redshift — same shape
+        # Map connection type to dbt adapter type
+        dbt_type = {"mssql": "sqlserver"}.get(connection_type, connection_type)
+        # postgres, mysql, sqlserver, sqlite, redshift — same shape
         return {
-            "type": connection_type,
+            "type": dbt_type,
             "host": config.get("host", ""),
             "port": config.get("port", 5432),
             "user": config.get("user", ""),

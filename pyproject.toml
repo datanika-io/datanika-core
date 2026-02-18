@@ -12,6 +12,9 @@ dependencies = [
     "dbt-snowflake>=1.9",
     "dbt-bigquery>=1.9",
     "dbt-redshift>=1.9",
+    "dbt-mysql>=1.0",
+    "dbt-sqlserver>=1.0",
+    "dbt-sqlite>=1.0",
 
     # SQL drivers
     "pymysql>=1.1",

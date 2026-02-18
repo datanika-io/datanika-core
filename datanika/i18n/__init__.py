@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-SUPPORTED_LOCALES = ["en", "ru", "el", "de", "fr", "es", "zh", "ar"]
+SUPPORTED_LOCALES = ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"]
 DEFAULT_LOCALE = "en"
 
 _cache: dict[str, dict[str, str]] = {}

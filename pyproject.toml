@@ -16,6 +16,10 @@ dependencies = [
     "dbt-sqlserver>=1.0",
     "dbt-sqlite>=1.0",
 
+    # Google Sheets
+    "gspread>=6.0",
+    "google-auth>=2.0",
+
     # SQL drivers
     "pymysql>=1.1",
     "pymssql>=2.2",

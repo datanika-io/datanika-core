@@ -130,6 +130,10 @@ class TestConnectionBuildConfig:
             "form_base_url": "",
             "form_api_key": "",
             "form_extra_headers": "",
+            "form_uploaded_file_id": 0,
+            "form_uploaded_file_name": "",
+            "form_spreadsheet_url": "",
+            "form_service_account_json": "",
             "form_use_raw_json": False,
             "form_config": "{}",
         }

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 
+    # File uploads
+    file_uploads_dir: str = "./uploaded_files"
+
     # App
     app_name: str = "Datanika"
     debug: bool = False

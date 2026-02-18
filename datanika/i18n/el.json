@@ -161,5 +161,13 @@
   "settings.email": "Email",
   "settings.role": "Ρόλος",
   "settings.slug": "Slug",
-  "settings.remove": "Αφαίρεση"
+  "settings.remove": "Αφαίρεση",
+
+  "connections.upload_file": "Μεταφόρτωση αρχείου",
+  "connections.or_enter_path": "Ή εισάγετε διαδρομή αρχείου",
+  "connections.max_file_size": "Μέγ. 20MB",
+  "connections.file_uploaded": "Το αρχείο μεταφορτώθηκε",
+  "connections.spreadsheet_url": "URL υπολογιστικού φύλλου",
+  "connections.service_account_json": "JSON λογαριασμού υπηρεσίας",
+  "connections.share_spreadsheet": "Μοιραστείτε το υπολογιστικό φύλλο με το email του λογαριασμού υπηρεσίας"
 }

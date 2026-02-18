@@ -20,6 +20,7 @@ _NON_DB_TYPES = {
     ConnectionType.JSON,
     ConnectionType.PARQUET,
     ConnectionType.REST_API,
+    ConnectionType.GOOGLE_SHEETS,
 }
 
 

@@ -161,5 +161,13 @@
   "settings.email": "E-Mail",
   "settings.role": "Rolle",
   "settings.slug": "Slug",
-  "settings.remove": "Entfernen"
+  "settings.remove": "Entfernen",
+
+  "connections.upload_file": "Datei hochladen",
+  "connections.or_enter_path": "Oder Dateipfad eingeben",
+  "connections.max_file_size": "Max. 20 MB",
+  "connections.file_uploaded": "Datei hochgeladen",
+  "connections.spreadsheet_url": "Tabellen-URL",
+  "connections.service_account_json": "Dienstkonto-JSON",
+  "connections.share_spreadsheet": "Teilen Sie die Tabelle mit der E-Mail des Dienstkontos"
 }

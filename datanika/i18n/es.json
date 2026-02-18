@@ -161,5 +161,13 @@
   "settings.email": "Correo electrónico",
   "settings.role": "Rol",
   "settings.slug": "Slug",
-  "settings.remove": "Eliminar"
+  "settings.remove": "Eliminar",
+
+  "connections.upload_file": "Subir archivo",
+  "connections.or_enter_path": "O introduzca la ruta del archivo",
+  "connections.max_file_size": "Máx. 20 MB",
+  "connections.file_uploaded": "Archivo subido",
+  "connections.spreadsheet_url": "URL de la hoja de cálculo",
+  "connections.service_account_json": "JSON de cuenta de servicio",
+  "connections.share_spreadsheet": "Comparta la hoja de cálculo con el correo de la cuenta de servicio"
 }

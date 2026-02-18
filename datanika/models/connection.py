@@ -20,6 +20,7 @@ class ConnectionType(enum.StrEnum):
     CSV = "csv"
     JSON = "json"
     PARQUET = "parquet"
+    GOOGLE_SHEETS = "google_sheets"
 
 
 class ConnectionDirection(enum.StrEnum):

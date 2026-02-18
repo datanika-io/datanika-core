@@ -44,6 +44,7 @@ def connection_form() -> rx.Component:
                     "csv",
                     "json",
                     "parquet",
+                    "google_sheets",
                 ],
                 value=ConnectionState.form_type,
                 on_change=ConnectionState.set_form_type,

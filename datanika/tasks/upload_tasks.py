@@ -125,19 +125,43 @@ def run_upload(
         src_config = encryption.decrypt(src_conn.config_encrypted)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
-        runner = DltRunnerService()
-        dataset_name = to_dataset_name(upload.name)
-        result = runner.execute(
-            pipeline_id=upload.id,
-            source_type=src_conn.connection_type.value,
-            source_config=src_config,
-            destination_type=dst_conn.connection_type.value,
-            destination_config=dst_config,
-            dlt_config=upload.dlt_config,
-            dataset_name=dataset_name,
+        # Extract uploaded file if present (for csv/json/parquet with file upload)
+        uploaded_file_id = (
+            src_config.get("uploaded_file_id")
+            or upload.dlt_config.get("uploaded_file_id")
         )
-        rows = result["rows_loaded"]
-        logs = str(result["load_info"])
+        extracted_dir = None
+        uploaded_file = None
+        dlt_config = dict(upload.dlt_config)
+
+        if uploaded_file_id:
+            from datanika.config import settings as app_settings
+            from datanika.models.uploaded_file import UploadedFile
+            from datanika.services.file_upload_service import FileUploadService
+
+            file_svc = FileUploadService(app_settings.file_uploads_dir)
+            uploaded_file = session.get(UploadedFile, uploaded_file_id)
+            if uploaded_file:
+                extracted_dir = file_svc.extract_for_dlt(uploaded_file)
+                dlt_config["bucket_url"] = extracted_dir
+
+        try:
+            runner = DltRunnerService()
+            dataset_name = to_dataset_name(upload.name)
+            result = runner.execute(
+                pipeline_id=upload.id,
+                source_type=src_conn.connection_type.value,
+                source_config=src_config,
+                destination_type=dst_conn.connection_type.value,
+                destination_config=dst_config,
+                dlt_config=dlt_config,
+                dataset_name=dataset_name,
+            )
+            rows = result["rows_loaded"]
+            logs = str(result["load_info"])
+        finally:
+            if extracted_dir and uploaded_file:
+                file_svc.cleanup_extracted(uploaded_file)
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 

@@ -9,6 +9,7 @@ from datanika.models.run import Run, RunStatus
 from datanika.models.schedule import Schedule
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
+from datanika.models.uploaded_file import UploadedFile
 from datanika.models.user import MemberRole, Membership, Organization, User
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "AuditAction",
     "CatalogEntry",
     "CatalogEntryType",
+    "UploadedFile",
 ]

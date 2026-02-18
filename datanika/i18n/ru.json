@@ -161,5 +161,13 @@
   "settings.email": "Эл. почта",
   "settings.role": "Роль",
   "settings.slug": "Слаг",
-  "settings.remove": "Удалить"
+  "settings.remove": "Удалить",
+
+  "connections.upload_file": "Загрузить файл",
+  "connections.or_enter_path": "Или укажите путь к файлу",
+  "connections.max_file_size": "Макс. 20 МБ",
+  "connections.file_uploaded": "Файл загружен",
+  "connections.spreadsheet_url": "URL таблицы",
+  "connections.service_account_json": "JSON сервисного аккаунта",
+  "connections.share_spreadsheet": "Предоставьте доступ к таблице сервисному аккаунту"
 }

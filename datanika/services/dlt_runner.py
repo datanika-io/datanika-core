@@ -15,6 +15,8 @@ AWS_CREDENTIAL_KEYS = {"aws_access_key_id", "aws_secret_access_key", "region_nam
 
 SUPPORTED_REST_TYPES = {"rest_api"}
 
+SUPPORTED_SHEETS_TYPES = {"google_sheets"}
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -31,6 +33,10 @@ INTERNAL_CONFIG_KEYS = {
     "resource_defaults",
     "base_url",
     "headers",
+    "uploaded_file_id",
+    "spreadsheet_url",
+    "service_account_json",
+    "sheet_names",
 }
 
 FILTER_OPS = {
@@ -128,6 +134,9 @@ class DltRunnerService:
         if connection_type in SUPPORTED_FILE_TYPES:
             return self._build_file_source(connection_type, config, dlt_config)
 
+        if connection_type in SUPPORTED_SHEETS_TYPES:
+            return self._build_google_sheets_source(config, dlt_config)
+
         if connection_type in SUPPORTED_REST_TYPES:
             return self._build_rest_api_source(config, dlt_config)
 
@@ -209,6 +218,28 @@ class DltRunnerService:
             rest_config["resource_defaults"] = resource_defaults
 
         return rest_api_source(rest_config)
+
+    def _build_google_sheets_source(self, config: dict, dlt_config: dict):
+        """Build a dlt source for Google Sheets using gspread."""
+        from datanika.services.google_sheets_source import google_sheets_source
+
+        spreadsheet_url = config.get("spreadsheet_url") or dlt_config.get("spreadsheet_url", "")
+        if not spreadsheet_url:
+            raise DltRunnerError("Google Sheets source requires 'spreadsheet_url'")
+
+        credentials_json = config.get("service_account_json") or dlt_config.get(
+            "service_account_json", ""
+        )
+        if not credentials_json:
+            raise DltRunnerError("Google Sheets source requires 'service_account_json'")
+
+        sheet_names = dlt_config.get("sheet_names")
+
+        return google_sheets_source(
+            spreadsheet_url=spreadsheet_url,
+            credentials_json=credentials_json,
+            sheet_names=sheet_names,
+        )
 
     def build_pipeline(
         self,

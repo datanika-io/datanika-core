@@ -161,5 +161,13 @@
   "settings.email": "E-mail",
   "settings.role": "Rôle",
   "settings.slug": "Slug",
-  "settings.remove": "Retirer"
+  "settings.remove": "Retirer",
+
+  "connections.upload_file": "Importer un fichier",
+  "connections.or_enter_path": "Ou saisir le chemin du fichier",
+  "connections.max_file_size": "Max 20 Mo",
+  "connections.file_uploaded": "Fichier importé",
+  "connections.spreadsheet_url": "URL de la feuille de calcul",
+  "connections.service_account_json": "JSON du compte de service",
+  "connections.share_spreadsheet": "Partagez la feuille de calcul avec l'adresse e-mail du compte de service"
 }

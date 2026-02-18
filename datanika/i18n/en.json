@@ -161,5 +161,13 @@
   "settings.email": "Email",
   "settings.role": "Role",
   "settings.slug": "Slug",
-  "settings.remove": "Remove"
+  "settings.remove": "Remove",
+
+  "connections.upload_file": "Upload File",
+  "connections.or_enter_path": "Or enter file path",
+  "connections.max_file_size": "Max 20MB",
+  "connections.file_uploaded": "File uploaded",
+  "connections.spreadsheet_url": "Spreadsheet URL",
+  "connections.service_account_json": "Service Account JSON",
+  "connections.share_spreadsheet": "Share the spreadsheet with the service account email"
 }

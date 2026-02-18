@@ -671,6 +671,58 @@ class TestCatalogEntry:
 
 
 # ===========================================================================
+# UploadedFile
+# ===========================================================================
+class TestUploadedFile:
+    def test_table_exists(self):
+        assert "uploaded_files" in Base.metadata.tables
+
+    def test_columns(self):
+        cols = _columns("uploaded_files")
+        assert "id" in cols
+        assert "org_id" in cols
+        assert "original_name" in cols
+        assert "content_type" in cols
+        assert "file_size" in cols
+        assert "file_hash" in cols
+        assert "archive_path" in cols
+        assert "created_at" in cols
+        assert "updated_at" in cols
+        assert "deleted_at" in cols
+
+    def test_pk_is_integer_autoincrement(self):
+        assert _pk_is_autoincrement("uploaded_files")
+
+    def test_org_id_fk(self):
+        assert _has_fk_to("uploaded_files", "org_id", "organizations")
+
+    def test_create_uploaded_file(self, db_session):
+        from datanika.models.uploaded_file import UploadedFile
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-upfile")
+        db_session.add(org)
+        db_session.flush()
+
+        uf = UploadedFile(
+            org_id=org.id,
+            original_name="data.csv",
+            content_type="csv",
+            file_size=1024,
+            file_hash="a" * 64,
+            archive_path="/tmp/a.tar.gz",
+        )
+        db_session.add(uf)
+        db_session.flush()
+
+        assert isinstance(uf.id, int)
+        assert uf.original_name == "data.csv"
+        assert uf.content_type == "csv"
+        assert uf.file_size == 1024
+        assert uf.deleted_at is None
+
+
+# ===========================================================================
 # Cross-model: relationships
 # ===========================================================================
 class TestRelationships:

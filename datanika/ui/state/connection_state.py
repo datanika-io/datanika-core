@@ -11,8 +11,11 @@ from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
-# Types that can serve as sources (databases + files + rest_api)
-SOURCE_TYPES = {"postgres", "mysql", "mssql", "sqlite", "rest_api", "s3", "csv", "json", "parquet"}
+# Types that can serve as sources (databases + files + rest_api + sheets)
+SOURCE_TYPES = {
+    "postgres", "mysql", "mssql", "sqlite", "rest_api",
+    "s3", "csv", "json", "parquet", "google_sheets",
+}
 # Types that can serve as destinations (databases + cloud warehouses)
 DESTINATION_TYPES = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
 
@@ -43,6 +46,9 @@ def _validate_connection_form(
     user: str = "",
     bucket_url: str = "",
     base_url: str = "",
+    uploaded_file_id: int = 0,
+    spreadsheet_url: str = "",
+    service_account_json: str = "",
 ) -> str:
     """Return an error message if required fields are missing, or '' if valid."""
     if not name.strip():
@@ -77,8 +83,13 @@ def _validate_connection_form(
         if not bucket_url.strip():
             return "Bucket URL is required"
     elif conn_type in ("csv", "json", "parquet"):
-        if not bucket_url.strip():
-            return "File path is required"
+        if not bucket_url.strip() and not uploaded_file_id:
+            return "File upload or file path is required"
+    elif conn_type == "google_sheets":
+        if not spreadsheet_url.strip():
+            return "Spreadsheet URL is required"
+        if not service_account_json.strip():
+            return "Service Account JSON is required"
     elif conn_type == "rest_api":
         if not base_url.strip():
             return "Base URL is required"
@@ -149,6 +160,14 @@ class ConnectionState(BaseState):
     form_base_url: str = ""
     form_api_key: str = ""
     form_extra_headers: str = ""
+
+    # File upload (csv/json/parquet)
+    form_uploaded_file_id: int = 0
+    form_uploaded_file_name: str = ""
+
+    # Google Sheets
+    form_spreadsheet_url: str = ""
+    form_service_account_json: str = ""
 
     def set_form_name(self, value: str):
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
@@ -226,6 +245,34 @@ class ConnectionState(BaseState):
     def set_form_extra_headers(self, value: str):
         self.form_extra_headers = value
 
+    def set_form_spreadsheet_url(self, value: str):
+        self.form_spreadsheet_url = value
+
+    def set_form_service_account_json(self, value: str):
+        self.form_service_account_json = value
+
+    async def handle_file_upload(self, files: list):
+        """Receive uploaded file, call FileUploadService.save_file, store ID."""
+        from datanika.services.file_upload_service import FileUploadService
+
+        if not files:
+            return
+        file = files[0]
+        upload_data = await file.read()
+        filename = file.filename
+
+        org_id = await self._get_org_id()
+        file_svc = FileUploadService(settings.file_uploads_dir)
+        try:
+            with get_sync_session() as session:
+                record = file_svc.save_file(session, org_id, filename, upload_data)
+                session.commit()
+                self.form_uploaded_file_id = record.id
+                self.form_uploaded_file_name = record.original_name
+                self.error_message = ""
+        except ValueError as e:
+            self.error_message = str(e)
+
     def _validate_form(self) -> str:
         """Return an error message if required fields are missing, or '' if valid."""
         return _validate_connection_form(
@@ -242,6 +289,9 @@ class ConnectionState(BaseState):
             user=self.form_user,
             bucket_url=self.form_bucket_url,
             base_url=self.form_base_url,
+            uploaded_file_id=self.form_uploaded_file_id,
+            spreadsheet_url=self.form_spreadsheet_url,
+            service_account_json=self.form_service_account_json,
         )
 
     def _build_config(self) -> dict:
@@ -307,8 +357,16 @@ class ConnectionState(BaseState):
                 config["endpoint_url"] = self.form_endpoint_url
 
         elif t in ("csv", "json", "parquet"):
+            if self.form_uploaded_file_id:
+                config["uploaded_file_id"] = self.form_uploaded_file_id
             if self.form_bucket_url:
                 config["bucket_url"] = self.form_bucket_url
+
+        elif t == "google_sheets":
+            if self.form_spreadsheet_url:
+                config["spreadsheet_url"] = self.form_spreadsheet_url
+            if self.form_service_account_json:
+                config["service_account_json"] = self.form_service_account_json
 
         elif t == "rest_api":
             if self.form_base_url:
@@ -348,6 +406,10 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_uploaded_file_id = 0
+        self.form_uploaded_file_name = ""
+        self.form_spreadsheet_url = ""
+        self.form_service_account_json = ""
         self.error_message = ""
         self.test_message = ""
         self.test_success = False
@@ -382,6 +444,10 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_uploaded_file_id = 0
+        self.form_uploaded_file_name = ""
+        self.form_spreadsheet_url = ""
+        self.form_service_account_json = ""
 
         if conn_type in _DB_TYPES:
             self.form_host = config.get("host", "")
@@ -412,6 +478,12 @@ class ConnectionState(BaseState):
             self.form_endpoint_url = config.get("endpoint_url", "")
         elif conn_type in ("csv", "json", "parquet"):
             self.form_bucket_url = config.get("bucket_url", "")
+            self.form_uploaded_file_id = config.get("uploaded_file_id", 0)
+            if self.form_uploaded_file_id:
+                self.form_uploaded_file_name = config.get("uploaded_file_name", "uploaded file")
+        elif conn_type == "google_sheets":
+            self.form_spreadsheet_url = config.get("spreadsheet_url", "")
+            self.form_service_account_json = config.get("service_account_json", "")
         elif conn_type == "rest_api":
             self.form_base_url = config.get("base_url", "")
             self.form_api_key = config.get("api_key", "")

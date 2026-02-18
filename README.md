@@ -23,7 +23,9 @@ Apply row-level data quality filters (8 operators), choose a write disposition (
 
 **Orchestrate** pipelines and transformations as a DAG — define upstream/downstream dependencies, validate for cycles, and schedule execution with 5-field cron expressions and timezone support.
 
-**Secure** with organization-based multi-tenancy, JWT authentication, role-based access (owner/admin/editor/viewer), Google and GitHub SSO, API keys for service accounts, Fernet-encrypted credentials, and a full audit log.
+**Secure** with organization-based multi-tenancy, JWT authentication, role-based access (owner/admin/editor/viewer), Google and GitHub SSO, reCAPTCHA v3 bot protection, API keys for service accounts, Fernet-encrypted credentials, and a full audit log.
+
+**Multilingual** — switch between English, Russian, Greek, German, French, and Spanish at any time from the sidebar.
 
 ## Architecture
 
@@ -105,7 +107,8 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Encryption** | Fernet (cryptography) |
 | **Package Manager** | uv |
 | **Linting** | Ruff |
-| **Testing** | pytest + pytest-asyncio (668 tests) |
+| **i18n** | 6 languages (en, ru, el, de, fr, es) with runtime switching |
+| **Testing** | pytest + pytest-asyncio (842 tests) |
 
 ## Quick Start
 
@@ -156,6 +159,7 @@ Key environment variables (see `.env.example` for the full list):
 | `DBT_PROJECTS_DIR` | Directory for generated per-tenant dbt projects |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth2 (optional) |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | GitHub OAuth2 (optional) |
+| `RECAPTCHA_SITE_KEY` / `RECAPTCHA_SECRET_KEY` | reCAPTCHA v3 (optional, disabled when empty) |
 
 ## Supported Sources and Destinations
 
@@ -208,6 +212,7 @@ datanika/
 │   ├── run.py         #   Execution history
 │   ├── api_key.py     #   Service account keys
 │   └── audit_log.py   #   Audit trail
+├── i18n/              # Translations (en, ru, el, de, fr, es)
 ├── services/          # Business logic (17 services)
 │   ├── auth.py        #   JWT + bcrypt + RBAC
 │   ├── user_service.py    # Registration, org provisioning
@@ -262,5 +267,6 @@ uv run alembic upgrade head
 - **Authorization**: 4-tier RBAC (owner > admin > editor > viewer)
 - **Credentials**: Fernet-encrypted at rest, decrypted only during pipeline execution
 - **API Keys**: `etf_`-prefixed tokens, SHA-256 hashed in DB, scoped with expiry
+- **CAPTCHA**: reCAPTCHA v3 on login/signup (optional — disabled when keys are empty)
 - **Audit Log**: Tracks create/update/delete/login/logout/run actions with old/new values
 - **Soft Delete**: All records are soft-deleted (preserved for audit), never hard-removed

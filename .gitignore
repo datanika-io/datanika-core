@@ -212,7 +212,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .claude
-CLAUDE.md
 PLAN.md
 reflex.db*
 .secrets

@@ -19,10 +19,10 @@ class TestI18nConfig:
         assert DEFAULT_LOCALE == "en"
 
     def test_supported_locales_count(self):
-        assert len(SUPPORTED_LOCALES) == 6
+        assert len(SUPPORTED_LOCALES) == 8
 
     def test_supported_locales_contains_expected(self):
-        for locale in ["en", "ru", "el", "de", "fr", "es"]:
+        for locale in ["en", "ru", "el", "de", "fr", "es", "zh", "ar"]:
             assert locale in SUPPORTED_LOCALES
 
 

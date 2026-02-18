@@ -8,7 +8,7 @@ Built with [dlt](https://dlthub.com/) for extraction and loading, [dbt-core](htt
 
 **Connect** to 12+ source and destination types — PostgreSQL, MySQL, SQL Server, SQLite, BigQuery, Snowflake, Redshift, REST APIs, S3, CSV, JSON, and Parquet files.
 
-**Extract & Load** with two pipeline modes:
+**Upload** data with two extraction modes:
 - *Single table* — pull one table with optional incremental loading
 - *Full database* — replicate an entire database or a filtered subset of tables
 
@@ -17,11 +17,17 @@ Apply row-level data quality filters (8 operators), choose a write disposition (
 **Transform** with dbt SQL models directly from the browser:
 - Write SQL, pick a materialization (view, table, incremental, ephemeral)
 - Configure column-level tests (not_null, unique, accepted_values, relationships)
-- Preview compiled SQL before running
+- Preview compiled SQL and execute with LIMIT 5 result preview
 - Create SCD Type 2 snapshots (timestamp or check strategy)
 - Manage dbt packages and check source freshness
 
-**Orchestrate** pipelines and transformations as a DAG — define upstream/downstream dependencies, validate for cycles, and schedule execution with 5-field cron expressions and timezone support.
+**Pipeline** dbt commands as reusable orchestration units:
+- Select a dbt command (build, run, test, seed, snapshot, compile)
+- Pick models with upstream (+model) and downstream (model+) inclusion
+- Use custom selectors (`tag:nightly`, `path:models/staging`)
+- Toggle full refresh per pipeline
+
+**Orchestrate** uploads, transformations, and pipelines as a DAG — define upstream/downstream dependencies, validate for cycles, and schedule execution with 5-field cron expressions and timezone support.
 
 **Secure** with organization-based multi-tenancy, JWT authentication, role-based access (owner/admin/editor/viewer), Google and GitHub SSO, reCAPTCHA v3 bot protection, API keys for service accounts, Fernet-encrypted credentials, and a full audit log.
 
@@ -40,14 +46,14 @@ Apply row-level data quality filters (8 operators), choose a write disposition (
               |                                 |
     +---------v---------+          +------------v-----------+
     |   State Classes   |          |   Starlette API        |
-    |  (auth, pipeline, |          |  (OAuth callbacks)     |
-    |   connections...) |          +-----------+------------+
+    |  (auth, upload,   |          |  (OAuth callbacks)     |
+    |   pipeline, ...)  |          +-----------+------------+
     +---------+---------+                      |
               |                                |
     +---------v-----------------------------------v---------+
     |                   Services Layer                      |
-    |  AuthService, PipelineService, DltRunnerService,      |
-    |  DbtProjectService, ScheduleService, AuditService...  |
+    |  AuthService, UploadService, PipelineService,          |
+    |  DltRunnerService, DbtProjectService, AuditService... |
     +-------+---------------------+---------------------+---+
             |                     |                     |
     +-------v-------+    +-------v-------+    +--------v-------+
@@ -108,7 +114,7 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Package Manager** | uv |
 | **Linting** | Ruff |
 | **i18n** | 6 languages (en, ru, el, de, fr, es) with runtime switching |
-| **Testing** | pytest + pytest-asyncio (842 tests) |
+| **Testing** | pytest + pytest-asyncio (891 tests) |
 
 ## Quick Start
 
@@ -193,6 +199,8 @@ Key environment variables (see `.env.example` for the full list):
 | **Models** | Write SQL, choose materialization (view/table/incremental/ephemeral) |
 | **Tests** | Column-level tests: not_null, unique, accepted_values, relationships |
 | **SQL Preview** | Compile models and inspect generated SQL before running |
+| **Result Preview** | Execute queries with LIMIT 5 to preview output |
+| **Pipelines** | Orchestrate dbt commands (build/run/test/seed/snapshot/compile) with model selectors |
 | **Snapshots** | SCD Type 2 with timestamp or check strategies |
 | **Source Freshness** | Define freshness thresholds and run `dbt source freshness` |
 | **Packages** | Manage packages.yml and install with `dbt deps` |
@@ -202,25 +210,27 @@ Key environment variables (see `.env.example` for the full list):
 
 ```
 datanika/
-├── models/            # SQLAlchemy ORM (11 tables)
+├── models/            # SQLAlchemy ORM (12 tables)
 │   ├── user.py        #   User, Organization, Membership
 │   ├── connection.py  #   Connection (encrypted credentials)
-│   ├── pipeline.py    #   Pipeline (dlt config)
+│   ├── upload.py      #   Upload (dlt extract+load config)
 │   ├── transformation.py  # Transformation (dbt SQL)
+│   ├── pipeline.py    #   Pipeline (dbt command orchestration)
 │   ├── dependency.py  #   DAG edges
 │   ├── schedule.py    #   Cron schedules
 │   ├── run.py         #   Execution history
 │   ├── api_key.py     #   Service account keys
 │   └── audit_log.py   #   Audit trail
 ├── i18n/              # Translations (en, ru, el, de, fr, es)
-├── services/          # Business logic (17 services)
+├── services/          # Business logic (18 services)
 │   ├── auth.py        #   JWT + bcrypt + RBAC
 │   ├── user_service.py    # Registration, org provisioning
 │   ├── connection_service.py  # Encrypted connection CRUD
-│   ├── pipeline_service.py    # Pipeline validation + CRUD
-│   ├── dlt_runner.py      # dlt pipeline/source/destination factory
+│   ├── upload_service.py      # Upload (dlt) validation + CRUD
+│   ├── pipeline_service.py    # Pipeline (dbt) validation + CRUD
+│   ├── dlt_runner.py      # dlt source/destination factory
 │   ├── transformation_service.py  # dbt model CRUD
-│   ├── dbt_project.py     # Per-tenant dbt project management
+│   ├── dbt_project.py     # Per-tenant dbt project + command execution
 │   ├── schedule_service.py    # Cron validation + CRUD
 │   ├── scheduler_integration.py  # APScheduler bridge
 │   ├── execution_service.py   # Run lifecycle management
@@ -232,11 +242,12 @@ datanika/
 │   ├── oauth_routes.py        # Starlette OAuth2 callback routes
 │   └── tenant.py              # Tenant provisioning
 ├── tasks/             # Celery async tasks
-│   ├── pipeline_tasks.py      # run_pipeline
+│   ├── upload_tasks.py        # run_upload (dlt extract+load)
+│   ├── pipeline_tasks.py      # run_pipeline (dbt commands)
 │   └── transformation_tasks.py    # run_transformation
 ├── ui/
-│   ├── state/         # Reflex state classes (10 files)
-│   ├── pages/         # Route handlers (11 pages)
+│   ├── state/         # Reflex state classes (11 files)
+│   ├── pages/         # Route handlers (12 pages)
 │   └── components/    # Reusable UI components
 ├── migrations/        # Alembic migrations
 └── dbt_projects/      # Generated per-tenant dbt projects

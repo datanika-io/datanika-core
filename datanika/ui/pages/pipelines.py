@@ -10,6 +10,39 @@ _t = I18nState.translations
 
 COMMAND_OPTIONS = ["build", "run", "test", "seed", "snapshot", "compile"]
 
+_MODEL_AUTOCOMPLETE_JS = """
+(function() {
+    if (window.__modelAutocompleteBound) return;
+    window.__modelAutocompleteBound = true;
+    document.addEventListener('keydown', function(e) {
+        var input = document.getElementById('model-name-input');
+        if (!input || document.activeElement !== input) return;
+        if (!document.getElementById('model-popover-box')) return;
+        var map = {
+            ArrowDown: 'model-nav-down', ArrowUp: 'model-nav-up',
+            Enter: 'model-select', Escape: 'model-dismiss'
+        };
+        var btn = map[e.key];
+        if (btn) {
+            e.preventDefault();
+            var el = document.getElementById(btn);
+            if (el) el.click();
+        }
+    }, true);
+})();
+"""
+
+
+def _model_hidden_buttons() -> rx.Component:
+    """Hidden buttons for keyboard navigation of model suggestions."""
+    return rx.box(
+        rx.el.button(id="model-nav-up", on_click=PipelineState.model_nav_up),
+        rx.el.button(id="model-nav-down", on_click=PipelineState.model_nav_down),
+        rx.el.button(id="model-select", on_click=PipelineState.model_select_current),
+        rx.el.button(id="model-dismiss", on_click=PipelineState.model_dismiss),
+        display="none",
+    )
+
 
 def _model_suggestions_popover() -> rx.Component:
     """Autocomplete popover for model names from transformations."""
@@ -18,14 +51,20 @@ def _model_suggestions_popover() -> rx.Component:
         rx.box(
             rx.foreach(
                 PipelineState.model_suggestions,
-                lambda name: rx.box(
+                lambda name, idx: rx.box(
                     rx.text(name, size="2"),
                     padding="4px 8px",
                     cursor="pointer",
+                    background=rx.cond(
+                        idx == PipelineState.model_suggestion_index,
+                        "var(--accent-3)",
+                        "transparent",
+                    ),
                     _hover={"background": "var(--accent-4)"},
                     on_click=PipelineState.select_model_suggestion(name),
                 ),
             ),
+            id="model-popover-box",
             position="absolute",
             top="100%",
             left="0",
@@ -89,6 +128,7 @@ def _models_section() -> rx.Component:
         rx.hstack(
             rx.box(
                 rx.input(
+                    id="model-name-input",
                     placeholder=_t["pipelines.ph_model_name"],
                     value=PipelineState.form_new_model_name,
                     on_change=PipelineState.set_form_new_model_name,
@@ -107,6 +147,20 @@ def _models_section() -> rx.Component:
             spacing="2",
             width="100%",
         ),
+        rx.cond(
+            PipelineState.model_warning,
+            rx.callout(
+                rx.text(
+                    _t["pipelines.model_not_found"],
+                    rx.text(PipelineState.model_warning, weight="bold", as_="span"),
+                ),
+                icon="triangle_alert",
+                color_scheme="orange",
+                size="1",
+            ),
+        ),
+        _model_hidden_buttons(),
+        rx.script(_MODEL_AUTOCOMPLETE_JS),
         spacing="2",
         width="100%",
     )

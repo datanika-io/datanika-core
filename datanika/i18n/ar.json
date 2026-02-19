@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "اتصال الوجهة",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "النموذج غير موجود في التحويلات: ",
   "pipelines.cmd_build_hint": "يُشغّل النموذج ويختبره",
   "pipelines.cmd_run_hint": "يُشغّل النموذج دون اختبار",
   "pipelines.cmd_test_hint": "يُشغّل الاختبارات فقط، دون بناء",

@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "Connexion de destination",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "Modèle introuvable dans les transformations : ",
   "pipelines.cmd_build_hint": "Exécute le modèle et le teste",
   "pipelines.cmd_run_hint": "Exécute le modèle sans tester",
   "pipelines.cmd_test_hint": "Exécute uniquement les tests, sans construction",

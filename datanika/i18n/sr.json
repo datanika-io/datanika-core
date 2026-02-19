@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "Одредишна конекција",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "Модел није пронађен у трансформацијама: ",
   "pipelines.cmd_build_hint": "Покреће модел и тестира га",
   "pipelines.cmd_run_hint": "Покреће модел без тестирања",
   "pipelines.cmd_test_hint": "Покреће само тестове, без градње",

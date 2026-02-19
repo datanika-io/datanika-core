@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "Σύνδεση προορισμού",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "Το μοντέλο δεν βρέθηκε στους μετασχηματισμούς: ",
   "pipelines.cmd_build_hint": "Εκτελεί το μοντέλο και το ελέγχει",
   "pipelines.cmd_run_hint": "Εκτελεί το μοντέλο χωρίς έλεγχο",
   "pipelines.cmd_test_hint": "Εκτελεί μόνο ελέγχους, χωρίς κατασκευή",

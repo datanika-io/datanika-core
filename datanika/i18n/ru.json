@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "Подключение-назначение",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "Модель не найдена в трансформациях: ",
   "pipelines.cmd_build_hint": "Запускает модель и тестирует её",
   "pipelines.cmd_run_hint": "Запускает модель без тестирования",
   "pipelines.cmd_test_hint": "Запускает только тесты, без сборки",

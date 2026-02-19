@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "Destination connection",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "Model not found in transformations: ",
   "pipelines.cmd_build_hint": "Runs the model and tests it",
   "pipelines.cmd_run_hint": "Runs the model without testing",
   "pipelines.cmd_test_hint": "Runs tests only, without building",

@@ -195,6 +195,7 @@
   "pipelines.ph_destination": "目标连接",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.model_not_found": "在转换中未找到模型：",
   "pipelines.cmd_build_hint": "运行模型并进行测试",
   "pipelines.cmd_run_hint": "运行模型但不测试",
   "pipelines.cmd_test_hint": "仅运行测试，不构建",

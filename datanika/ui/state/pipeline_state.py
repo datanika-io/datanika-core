@@ -49,6 +49,8 @@ class PipelineState(BaseState):
     all_model_names: list[str] = []
     model_suggestions: list[str] = []
     show_model_suggestions: bool = False
+    model_suggestion_index: int = -1
+    model_warning: str = ""
     # 0 = creating new, >0 = editing existing
     editing_pipeline_id: int = 0
 
@@ -73,28 +75,64 @@ class PipelineState(BaseState):
 
     def set_form_new_model_name(self, value: str):
         self.form_new_model_name = value
+        self.model_warning = ""
         if value.strip():
             query = value.strip().lower()
             self.model_suggestions = [
                 n for n in self.all_model_names if query in n.lower()
             ]
             self.show_model_suggestions = len(self.model_suggestions) > 0
+            self.model_suggestion_index = 0 if self.model_suggestions else -1
         else:
             self.model_suggestions = []
             self.show_model_suggestions = False
+            self.model_suggestion_index = -1
 
     def select_model_suggestion(self, name: str):
         self.form_new_model_name = name
         self.model_suggestions = []
         self.show_model_suggestions = False
+        self.model_suggestion_index = -1
+        self.model_warning = ""
+
+    def model_nav_up(self):
+        if not self.show_model_suggestions or not self.model_suggestions:
+            return
+        self.model_suggestion_index = max(self.model_suggestion_index - 1, 0)
+
+    def model_nav_down(self):
+        if not self.show_model_suggestions or not self.model_suggestions:
+            return
+        self.model_suggestion_index = min(
+            self.model_suggestion_index + 1, len(self.model_suggestions) - 1
+        )
+
+    def model_select_current(self):
+        if self.show_model_suggestions and 0 <= self.model_suggestion_index < len(
+            self.model_suggestions
+        ):
+            self.select_model_suggestion(self.model_suggestions[self.model_suggestion_index])
+        else:
+            self.add_model()
+
+    def model_dismiss(self):
+        self.show_model_suggestions = False
+        self.model_suggestions = []
+        self.model_suggestion_index = -1
 
     def add_model(self):
         if not self.form_new_model_name.strip():
             return
-        self.form_models.append(ModelEntry(name=self.form_new_model_name.strip()))
+        name = self.form_new_model_name.strip()
+        if self.all_model_names and name not in self.all_model_names:
+            self.model_warning = name
+        else:
+            self.model_warning = ""
+        self.form_models.append(ModelEntry(name=name))
         self.form_new_model_name = ""
         self.model_suggestions = []
         self.show_model_suggestions = False
+        self.model_suggestion_index = -1
 
     def remove_model(self, index: int):
         if 0 <= index < len(self.form_models):
@@ -242,6 +280,8 @@ class PipelineState(BaseState):
         self.all_model_names = []
         self.model_suggestions = []
         self.show_model_suggestions = False
+        self.model_suggestion_index = -1
+        self.model_warning = ""
         self.error_message = ""
 
     def _populate_form_from_pipeline(self, pipeline, conn_options_dst):

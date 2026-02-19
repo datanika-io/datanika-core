@@ -3,105 +3,15 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.sql_autocomplete import (
+    REF_AUTOCOMPLETE_JS,
+    ref_hidden_buttons,
+    ref_popover,
+)
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.transformation_state import TransformationState
 
 _t = I18nState.translations
-
-_REF_AUTOCOMPLETE_JS = """
-(function() {
-    if (window.__refAutocompleteBound) return;
-    window.__refAutocompleteBound = true;
-    var debounceTimer = null;
-    document.addEventListener('keydown', function(e) {
-        var ta = document.getElementById('sql-editor');
-        if (!ta || document.activeElement !== ta) return;
-        if (!document.getElementById('ref-popover-box')) return;
-        var map = {
-            ArrowDown: 'ref-nav-down', ArrowUp: 'ref-nav-up',
-            Enter: 'ref-select', Escape: 'ref-dismiss'
-        };
-        var btn = map[e.key];
-        if (btn) {
-            e.preventDefault();
-            var el = document.getElementById(btn);
-            if (el) el.click();
-        }
-    }, true);
-    document.addEventListener('input', function(e) {
-        if (e.target.id !== 'sql-editor') return;
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(function() {
-            var el = document.getElementById('ref-detect');
-            if (el) el.click();
-        }, 300);
-    });
-})();
-"""
-
-
-def _ref_hidden_buttons() -> rx.Component:
-    """Hidden buttons that JavaScript clicks programmatically to trigger state events."""
-    return rx.box(
-        rx.el.button(
-            id="ref-nav-up",
-            on_click=TransformationState.ref_navigate_up,
-        ),
-        rx.el.button(
-            id="ref-nav-down",
-            on_click=TransformationState.ref_navigate_down,
-        ),
-        rx.el.button(
-            id="ref-select",
-            on_click=TransformationState.ref_select_current,
-        ),
-        rx.el.button(
-            id="ref-dismiss",
-            on_click=TransformationState.ref_dismiss,
-        ),
-        rx.el.button(
-            id="ref-detect",
-            on_click=TransformationState.detect_ref_suggestions,
-        ),
-        display="none",
-    )
-
-
-def _ref_popover() -> rx.Component:
-    """Autocomplete popover that appears when typing {{ ref(' in the SQL editor."""
-    return rx.cond(
-        TransformationState.show_ref_popover,
-        rx.box(
-            rx.foreach(
-                TransformationState.ref_suggestions,
-                lambda name: rx.box(
-                    rx.text(name, size="2"),
-                    padding="4px 8px",
-                    cursor="pointer",
-                    background=rx.cond(
-                        name == TransformationState.ref_selected_name,
-                        "var(--accent-3)",
-                        "transparent",
-                    ),
-                    _hover={"background": "var(--accent-4)"},
-                    on_click=TransformationState.select_ref_suggestion(name),
-                ),
-            ),
-            id="ref-popover-box",
-            position="absolute",
-            bottom="0",
-            left="0",
-            width="100%",
-            max_height="160px",
-            overflow_y="auto",
-            background="var(--color-background)",
-            border="1px solid var(--gray-6)",
-            border_radius="6px",
-            box_shadow="0 4px 12px rgba(0,0,0,0.15)",
-            z_index="10",
-        ),
-        rx.fragment(),
-    )
 
 
 def _schema_select() -> rx.Component:
@@ -133,6 +43,115 @@ def _schema_select() -> rx.Component:
         ),
         spacing="2",
         width="100%",
+    )
+
+
+def preview_display() -> rx.Component:
+    """Preview sections for compiled SQL and query result, shared between pages."""
+    return rx.vstack(
+        rx.cond(
+            TransformationState.preview_result_message,
+            rx.callout(
+                TransformationState.preview_result_message,
+                icon="info",
+                color_scheme="blue",
+            ),
+        ),
+        rx.cond(
+            TransformationState.preview_result_columns.length() > 0,
+            rx.card(
+                rx.vstack(
+                    rx.heading(_t["transformations.preview_result_heading"], size="3"),
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.foreach(
+                                    TransformationState.preview_result_columns,
+                                    lambda col: rx.table.column_header_cell(col),
+                                ),
+                            ),
+                        ),
+                        rx.table.body(
+                            rx.foreach(
+                                TransformationState.preview_result_rows,
+                                lambda row: rx.table.row(
+                                    rx.foreach(
+                                        row,
+                                        lambda cell: rx.table.cell(cell),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        width="100%",
+                    ),
+                    spacing="2",
+                ),
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            TransformationState.preview_sql,
+            rx.card(
+                rx.vstack(
+                    rx.heading(_t["transformations.compiled_sql_preview"], size="3"),
+                    rx.code_block(
+                        TransformationState.preview_sql,
+                        language="sql",
+                        width="100%",
+                    ),
+                    spacing="2",
+                ),
+                width="100%",
+            ),
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
+def _sql_action_buttons() -> rx.Component:
+    """Upload SQL, SQL Editor, Preview SQL, Preview Result buttons below the textarea."""
+    return rx.hstack(
+        rx.upload(
+            rx.button(
+                _t["transformations.upload_sql"],
+                size="1",
+                variant="outline",
+                type="button",
+            ),
+            accept={".sql": ["text/plain", "application/sql"]},
+            max_files=1,
+            on_drop=TransformationState.handle_sql_file_upload(rx.upload_files()),  # type: ignore
+            no_click=False,
+            no_drag=True,
+            border="none",
+            padding="0",
+        ),
+        rx.link(
+            rx.button(
+                _t["transformations.sql_editor"],
+                size="1",
+                variant="outline",
+                type="button",
+            ),
+            href="/transformations/sql-editor",
+        ),
+        rx.button(
+            _t["transformations.preview_sql"],
+            size="1",
+            variant="outline",
+            on_click=TransformationState.preview_compiled_sql_from_form,
+            disabled=~TransformationState.can_preview,
+        ),
+        rx.button(
+            _t["transformations.preview_result"],
+            size="1",
+            variant="outline",
+            on_click=TransformationState.preview_result_from_form,
+            disabled=~TransformationState.can_preview,
+        ),
+        spacing="2",
+        wrap="wrap",
     )
 
 
@@ -177,12 +196,13 @@ def transformation_form() -> rx.Component:
                     min_height="120px",
                     width="100%",
                 ),
-                _ref_popover(),
+                ref_popover(),
                 position="relative",
                 width="100%",
             ),
-            _ref_hidden_buttons(),
-            rx.script(_REF_AUTOCOMPLETE_JS),
+            ref_hidden_buttons(),
+            rx.script(REF_AUTOCOMPLETE_JS),
+            _sql_action_buttons(),
             rx.text(_t["transformations.materialization"], size="2", weight="bold"),
             rx.select(
                 ["view", "table", "incremental", "ephemeral"],
@@ -273,61 +293,6 @@ def transformation_form() -> rx.Component:
 
 def transformations_table() -> rx.Component:
     return rx.vstack(
-        rx.cond(
-            TransformationState.preview_result_message,
-            rx.callout(
-                TransformationState.preview_result_message,
-                icon="info",
-                color_scheme="blue",
-            ),
-        ),
-        rx.cond(
-            TransformationState.preview_result_columns.length() > 0,
-            rx.card(
-                rx.vstack(
-                    rx.heading(_t["transformations.preview_result_heading"], size="3"),
-                    rx.table.root(
-                        rx.table.header(
-                            rx.table.row(
-                                rx.foreach(
-                                    TransformationState.preview_result_columns,
-                                    lambda col: rx.table.column_header_cell(col),
-                                ),
-                            ),
-                        ),
-                        rx.table.body(
-                            rx.foreach(
-                                TransformationState.preview_result_rows,
-                                lambda row: rx.table.row(
-                                    rx.foreach(
-                                        row,
-                                        lambda cell: rx.table.cell(cell),
-                                    ),
-                                ),
-                            ),
-                        ),
-                        width="100%",
-                    ),
-                    spacing="2",
-                ),
-                width="100%",
-            ),
-        ),
-        rx.cond(
-            TransformationState.preview_sql,
-            rx.card(
-                rx.vstack(
-                    rx.heading(_t["transformations.compiled_sql_preview"], size="3"),
-                    rx.code_block(
-                        TransformationState.preview_sql,
-                        language="sql",
-                        width="100%",
-                    ),
-                    spacing="2",
-                ),
-                width="100%",
-            ),
-        ),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
@@ -397,6 +362,12 @@ def transformations_table() -> rx.Component:
 
 def transformations_page() -> rx.Component:
     return page_layout(
-        rx.vstack(transformation_form(), transformations_table(), spacing="6", width="100%"),
+        rx.vstack(
+            transformation_form(),
+            preview_display(),
+            transformations_table(),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.transformations"],
     )

@@ -2,6 +2,7 @@
 
 import re
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
@@ -64,6 +65,18 @@ class TransformationState(BaseState):
     form_on_schema_change: str = "ignore"
     # 0 = creating new, >0 = editing existing transformation
     editing_transformation_id: int = 0
+    # Internal: org_id cached for form-based compile helpers
+    _form_org_id: int = 0
+
+    @rx.var
+    def can_preview(self) -> bool:
+        """True when required fields for preview are all non-empty."""
+        return bool(
+            self.form_name.strip()
+            and self.form_connection_option.strip()
+            and self.form_materialization.strip()
+            and self.form_schema_name.strip()
+        )
 
     def set_form_name(self, value: str):
         self.form_name = value
@@ -320,6 +333,117 @@ class TransformationState(BaseState):
     def cancel_edit(self):
         """Cancel editing and reset the form."""
         self._reset_form()
+
+    async def handle_sql_file_upload(self, files: list[rx.UploadFile]):
+        """Read the first uploaded .sql file and set form_sql_body."""
+        if not files:
+            return
+        upload_file = files[0]
+        content = await upload_file.read()
+        self.form_sql_body = content.decode("utf-8")
+
+    def _compile_from_form(self, session):
+        """Shared compile logic using form fields. Returns (dbt_svc, conn, config, result)."""
+        from datanika.services.dbt_project import DbtProjectService
+
+        conn_id = self._parse_connection_id()
+        if not conn_id:
+            return None, None, None, None
+
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
+        # org_id is set by caller on self before calling
+        conn = conn_svc.get_connection(session, self._form_org_id, conn_id)
+        if conn is None:
+            return None, None, None, None
+        config = conn_svc.get_connection_config(session, self._form_org_id, conn_id)
+        if not config:
+            return None, None, None, None
+
+        dbt_svc = DbtProjectService(settings.dbt_projects_dir)
+        dbt_svc.ensure_project(self._form_org_id)
+        dbt_svc.generate_profiles_yml(
+            self._form_org_id, conn.connection_type.value, config
+        )
+        dbt_svc.write_model(
+            self._form_org_id,
+            self.form_name,
+            self.form_sql_body,
+            schema_name=self.form_schema_name,
+            materialization=self.form_materialization,
+            incremental_config=self._build_incremental_config(),
+        )
+        result = dbt_svc.compile_model(self._form_org_id, self.form_name)
+        return dbt_svc, conn, config, result
+
+    async def preview_compiled_sql_from_form(self):
+        """Compile dbt model from form fields and show compiled SQL."""
+        self.preview_sql = "Preparing..."
+        yield
+
+        try:
+            self._form_org_id = await self._get_org_id()
+            with get_sync_session() as session:
+                _, _, _, result = self._compile_from_form(session)
+                if result is None:
+                    self.preview_sql = (
+                        "Cannot compile: no destination connection selected. "
+                        "Please set a destination connection first."
+                    )
+                    return
+                if result["success"] and result["compiled_sql"]:
+                    self.preview_sql = result["compiled_sql"]
+                else:
+                    logs = result["logs"] or "No logs available"
+                    self.preview_sql = f"Compile failed: {logs}"
+        except Exception as e:
+            self.preview_sql = f"Error compiling: {self._safe_error(e)}"
+
+    async def preview_result_from_form(self):
+        """Compile from form fields, add LIMIT 5, execute, show results + compiled SQL."""
+        import re as _re
+
+        self.preview_result_message = "Preparing..."
+        self.preview_result_columns = []
+        self.preview_result_rows = []
+        yield
+
+        try:
+            self._form_org_id = await self._get_org_id()
+            with get_sync_session() as session:
+                _, conn, config, result = self._compile_from_form(session)
+                if result is None:
+                    self.preview_result_message = (
+                        "Cannot preview: no destination connection selected."
+                    )
+                    return
+                if not result["success"] or not result["compiled_sql"]:
+                    logs = result["logs"] or "Compilation produced no output"
+                    self.preview_result_message = f"Compile failed: {logs}"
+                    return
+
+                compiled_sql = result["compiled_sql"]
+                self.preview_sql = compiled_sql
+
+                query = compiled_sql.strip().rstrip(";")
+                if not _re.search(r"\bLIMIT\s+\d+", query, _re.IGNORECASE):
+                    query += "\nLIMIT 5"
+
+                columns, rows = ConnectionService.execute_query(
+                    config, conn.connection_type, query,
+                )
+                self.preview_result_columns = columns
+                self.preview_result_rows = [
+                    [str(v) if v is not None else "" for v in row]
+                    for row in rows
+                ]
+                self.preview_result_message = ""
+        except Exception as e:
+            self.preview_result_message = f"Error: {self._safe_error(e)}"
+
+    def save_sql_and_return(self):
+        """Return to the transformations page. Form state persists in Reflex."""
+        return rx.redirect("/transformations")
 
     async def delete_transformation(self, transformation_id: int):
         org_id = await self._get_org_id()

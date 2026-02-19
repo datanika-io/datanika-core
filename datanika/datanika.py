@@ -12,6 +12,7 @@ from datanika.ui.pages.runs import runs_page
 from datanika.ui.pages.schedules import schedules_page
 from datanika.ui.pages.settings import settings_page
 from datanika.ui.pages.signup import signup_page
+from datanika.ui.pages.sql_editor import sql_editor_page
 from datanika.ui.pages.transformations import transformations_page
 from datanika.ui.pages.uploads import uploads_page
 from datanika.ui.state.auth_state import AuthState
@@ -76,6 +77,12 @@ app.add_page(
     transformations_page,
     route="/transformations",
     title="Transformations | Datanika",
+    on_load=[AuthState.check_auth, TransformationState.load_transformations],
+)
+app.add_page(
+    sql_editor_page,
+    route="/transformations/sql-editor",
+    title="SQL Editor | Datanika",
     on_load=[AuthState.check_auth, TransformationState.load_transformations],
 )
 app.add_page(

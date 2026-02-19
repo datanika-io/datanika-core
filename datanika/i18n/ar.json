@@ -212,7 +212,7 @@
   "schedules.inactive": "غير نشط",
   "schedules.pause": "إيقاف مؤقت",
   "schedules.resume": "استئناف",
-  "schedules.ph_target_id": "معرّف الهدف",
+  "schedules.ph_target_name": "اسم الهدف",
   "schedules.ph_cron": "تعبير Cron (مثال: 0 * * * *)",
   "schedules.ph_timezone": "المنطقة الزمنية (الافتراضي: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "إضافة تبعية",
   "dag.upstream_type": "نوع المنبع",
-  "dag.upstream_id": "معرّف المنبع",
+  "dag.upstream_name": "اسم المنبع",
   "dag.downstream_type": "نوع المصبّ",
-  "dag.downstream_id": "معرّف المصبّ",
+  "dag.downstream_name": "اسم المصبّ",
   "dag.upstream": "المنبع",
   "dag.downstream": "المصبّ",
-  "dag.ph_id": "المعرّف",
+  "dag.ph_name": "الاسم",
 
   "models.no_models": "لم يتم العثور على نماذج. قم بتشغيل تحميل أو تحويل لملء الكتالوج.",
   "models.origin": "المصدر",

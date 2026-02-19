@@ -212,7 +212,7 @@
   "schedules.inactive": "已停用",
   "schedules.pause": "暂停",
   "schedules.resume": "恢复",
-  "schedules.ph_target_id": "目标 ID",
+  "schedules.ph_target_name": "目标名称",
   "schedules.ph_cron": "Cron 表达式（如 0 * * * *）",
   "schedules.ph_timezone": "时区（默认：UTC）",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "添加依赖",
   "dag.upstream_type": "上游类型",
-  "dag.upstream_id": "上游 ID",
+  "dag.upstream_name": "上游名称",
   "dag.downstream_type": "下游类型",
-  "dag.downstream_id": "下游 ID",
+  "dag.downstream_name": "下游名称",
   "dag.upstream": "上游",
   "dag.downstream": "下游",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "名称",
 
   "models.no_models": "未找到模型。请先运行上传或转换以填充目录。",
   "models.origin": "来源",

@@ -212,7 +212,7 @@
   "schedules.inactive": "Неактиван",
   "schedules.pause": "Паузирај",
   "schedules.resume": "Настави",
-  "schedules.ph_target_id": "ИД циља",
+  "schedules.ph_target_name": "Име циља",
   "schedules.ph_cron": "Cron израз (нпр. 0 * * * *)",
   "schedules.ph_timezone": "Временска зона (подразумевано: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Додај зависност",
   "dag.upstream_type": "Тип узводног",
-  "dag.upstream_id": "ИД узводног",
+  "dag.upstream_name": "Име узводног",
   "dag.downstream_type": "Тип низводног",
-  "dag.downstream_id": "ИД низводног",
+  "dag.downstream_name": "Име низводног",
   "dag.upstream": "Узводни",
   "dag.downstream": "Низводни",
-  "dag.ph_id": "ИД",
+  "dag.ph_name": "Име",
 
   "models.no_models": "Нису пронађени модели. Покрените отпремање или трансформацију да бисте попунили каталог.",
   "models.origin": "Порекло",

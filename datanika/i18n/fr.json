@@ -212,7 +212,7 @@
   "schedules.inactive": "Inactif",
   "schedules.pause": "Pause",
   "schedules.resume": "Reprendre",
-  "schedules.ph_target_id": "ID de la cible",
+  "schedules.ph_target_name": "Nom de la cible",
   "schedules.ph_cron": "Expression cron (ex. 0 * * * *)",
   "schedules.ph_timezone": "Fuseau horaire (par défaut : UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Ajouter une dépendance",
   "dag.upstream_type": "Type amont",
-  "dag.upstream_id": "ID amont",
+  "dag.upstream_name": "Nom amont",
   "dag.downstream_type": "Type aval",
-  "dag.downstream_id": "ID aval",
+  "dag.downstream_name": "Nom aval",
   "dag.upstream": "Amont",
   "dag.downstream": "Aval",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "Nom",
 
   "models.no_models": "Aucun modèle trouvé. Exécutez un chargement ou une transformation pour remplir le catalogue.",
   "models.origin": "Origine",

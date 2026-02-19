@@ -212,7 +212,7 @@
   "schedules.inactive": "Неактивно",
   "schedules.pause": "Пауза",
   "schedules.resume": "Возобновить",
-  "schedules.ph_target_id": "ID цели",
+  "schedules.ph_target_name": "Имя цели",
   "schedules.ph_cron": "Cron-выражение (напр. 0 * * * *)",
   "schedules.ph_timezone": "Часовой пояс (по умолчанию: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Добавить зависимость",
   "dag.upstream_type": "Тип источника",
-  "dag.upstream_id": "ID источника",
+  "dag.upstream_name": "Имя источника",
   "dag.downstream_type": "Тип приёмника",
-  "dag.downstream_id": "ID приёмника",
+  "dag.downstream_name": "Имя приёмника",
   "dag.upstream": "Источник",
   "dag.downstream": "Приёмник",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "Имя",
 
   "models.no_models": "Модели не найдены. Запустите загрузку или трансформацию для заполнения каталога.",
   "models.origin": "Происхождение",

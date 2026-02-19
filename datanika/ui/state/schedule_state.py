@@ -26,17 +26,67 @@ class ScheduleItem(BaseModel):
 class ScheduleState(BaseState):
     schedules: list[ScheduleItem] = []
     form_target_type: str = "upload"
-    form_target_id: str = ""
+    form_target_name: str = ""
     form_cron: str = ""
     form_timezone: str = "UTC"
     # 0 = creating new, >0 = editing existing schedule
     editing_schedule_id: int = 0
+    # Target combobox
+    target_options: list[str] = []
+    target_suggestions: list[str] = []
+    show_target_suggestions: bool = False
+    target_suggestion_index: int = -1
+    _target_name_to_id: dict[str, int] = {}
 
-    def set_form_target_type(self, value: str):
+    async def set_form_target_type(self, value: str):
         self.form_target_type = value
+        self.form_target_name = ""
+        await self._load_target_options()
 
-    def set_form_target_id(self, value: str):
-        self.form_target_id = value
+    def set_form_target_name(self, value: str):
+        self.form_target_name = value
+        if value.strip():
+            query = value.strip().lower()
+            self.target_suggestions = [
+                n for n in self.target_options if query in n.lower()
+            ]
+            self.show_target_suggestions = len(self.target_suggestions) > 0
+            self.target_suggestion_index = 0 if self.target_suggestions else -1
+        else:
+            self.target_suggestions = []
+            self.show_target_suggestions = False
+            self.target_suggestion_index = -1
+
+    def select_target_suggestion(self, name: str):
+        self.form_target_name = name
+        self.target_suggestions = []
+        self.show_target_suggestions = False
+        self.target_suggestion_index = -1
+
+    def target_nav_up(self):
+        if not self.show_target_suggestions or not self.target_suggestions:
+            return
+        self.target_suggestion_index = max(self.target_suggestion_index - 1, 0)
+
+    def target_nav_down(self):
+        if not self.show_target_suggestions or not self.target_suggestions:
+            return
+        self.target_suggestion_index = min(
+            self.target_suggestion_index + 1, len(self.target_suggestions) - 1
+        )
+
+    def target_select_current(self):
+        if self.show_target_suggestions and 0 <= self.target_suggestion_index < len(
+            self.target_suggestions
+        ):
+            self.select_target_suggestion(
+                self.target_suggestions[self.target_suggestion_index]
+            )
+
+    def target_dismiss(self):
+        self.show_target_suggestions = False
+        self.target_suggestions = []
+        self.target_suggestion_index = -1
 
     def set_form_cron(self, value: str):
         self.form_cron = value
@@ -64,10 +114,32 @@ class ScheduleState(BaseState):
     def _reset_form(self):
         self.editing_schedule_id = 0
         self.form_target_type = "upload"
-        self.form_target_id = ""
+        self.form_target_name = ""
         self.form_cron = ""
         self.form_timezone = "UTC"
+        self.target_suggestions = []
+        self.show_target_suggestions = False
+        self.target_suggestion_index = -1
         self.error_message = ""
+
+    async def _load_target_options(self):
+        org_id = await self._get_org_id()
+        upload_svc, transform_svc, pipeline_svc = self._get_services()
+        name_to_id: dict[str, int] = {}
+        with get_sync_session() as session:
+            if self.form_target_type == "upload":
+                items = upload_svc.list_uploads(session, org_id)
+            elif self.form_target_type == "pipeline":
+                items = pipeline_svc.list_pipelines(session, org_id)
+            else:
+                items = transform_svc.list_transformations(session, org_id)
+            for item in items:
+                name_to_id[item.name] = item.id
+        self._target_name_to_id = name_to_id
+        self.target_options = sorted(name_to_id.keys())
+        self.target_suggestions = []
+        self.show_target_suggestions = False
+        self.target_suggestion_index = -1
 
     async def load_schedules(self):
         org_id = await self._get_org_id()
@@ -99,6 +171,7 @@ class ScheduleState(BaseState):
                 for s in rows
             ]
         self.error_message = ""
+        await self._load_target_options()
 
     @staticmethod
     def _resolve_target_name(
@@ -117,10 +190,9 @@ class ScheduleState(BaseState):
     async def save_schedule(self):
         org_id = await self._get_org_id()
         svc = self._get_schedule_service()
-        try:
-            target_id = int(self.form_target_id)
-        except ValueError:
-            self.error_message = "Target ID must be an integer"
+        target_id = self._target_name_to_id.get(self.form_target_name)
+        if target_id is None:
+            self.error_message = "Target not found — select a name from the list"
             return
         try:
             with get_sync_session() as session:
@@ -160,11 +232,14 @@ class ScheduleState(BaseState):
                 self.error_message = "Schedule not found"
                 return
             self.form_target_type = s.target_type.value
-            self.form_target_id = str(s.target_id)
             self.form_cron = s.cron_expression
             self.form_timezone = s.timezone
         self.editing_schedule_id = schedule_id
         self.error_message = ""
+        await self._load_target_options()
+        # Resolve target_id back to name
+        id_to_name = {v: k for k, v in self._target_name_to_id.items()}
+        self.form_target_name = id_to_name.get(s.target_id, "")
 
     async def copy_schedule(self, schedule_id: int):
         """Load a schedule into the form as a new copy."""
@@ -176,11 +251,14 @@ class ScheduleState(BaseState):
                 self.error_message = "Schedule not found"
                 return
             self.form_target_type = s.target_type.value
-            self.form_target_id = str(s.target_id)
             self.form_cron = s.cron_expression
             self.form_timezone = s.timezone
         self.editing_schedule_id = 0
         self.error_message = ""
+        await self._load_target_options()
+        # Resolve target_id back to name
+        id_to_name = {v: k for k, v in self._target_name_to_id.items()}
+        self.form_target_name = id_to_name.get(s.target_id, "")
 
     def cancel_edit(self):
         """Cancel editing and reset the form."""

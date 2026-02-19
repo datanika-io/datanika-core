@@ -333,7 +333,7 @@ class TestScheduleStateSetters:
 
         expected = [
             "set_form_target_type",
-            "set_form_target_id",
+            "set_form_target_name",
             "set_form_cron",
             "set_form_timezone",
         ]
@@ -349,9 +349,9 @@ class TestDagStateSetters:
 
         expected = [
             "set_form_upstream_type",
-            "set_form_upstream_id",
+            "set_form_upstream_name",
             "set_form_downstream_type",
-            "set_form_downstream_id",
+            "set_form_downstream_name",
         ]
         for name in expected:
             method = getattr(DagState, name, None)

@@ -8,6 +8,87 @@ from datanika.ui.state.schedule_state import ScheduleState
 
 _t = I18nState.translations
 
+_SCHEDULE_AUTOCOMPLETE_JS = """
+(function() {
+    if (window.__scheduleAutocompleteBound) return;
+    window.__scheduleAutocompleteBound = true;
+    document.addEventListener('keydown', function(e) {
+        var input = document.getElementById('schedule-target-input');
+        if (!input || document.activeElement !== input) return;
+        if (!document.getElementById('schedule-target-popover-box')) return;
+        var map = {
+            ArrowDown: 'schedule-target-nav-down',
+            ArrowUp: 'schedule-target-nav-up',
+            Enter: 'schedule-target-select',
+            Escape: 'schedule-target-dismiss'
+        };
+        var btn = map[e.key];
+        if (btn) {
+            e.preventDefault();
+            var el = document.getElementById(btn);
+            if (el) el.click();
+        }
+    }, true);
+})();
+"""
+
+
+def _schedule_hidden_buttons() -> rx.Component:
+    """Hidden buttons for keyboard navigation of target suggestions."""
+    return rx.box(
+        rx.el.button(
+            id="schedule-target-nav-up", on_click=ScheduleState.target_nav_up
+        ),
+        rx.el.button(
+            id="schedule-target-nav-down", on_click=ScheduleState.target_nav_down
+        ),
+        rx.el.button(
+            id="schedule-target-select",
+            on_click=ScheduleState.target_select_current,
+        ),
+        rx.el.button(
+            id="schedule-target-dismiss", on_click=ScheduleState.target_dismiss
+        ),
+        display="none",
+    )
+
+
+def _target_popover() -> rx.Component:
+    """Autocomplete popover for target names."""
+    return rx.cond(
+        ScheduleState.show_target_suggestions,
+        rx.box(
+            rx.foreach(
+                ScheduleState.target_suggestions,
+                lambda name, idx: rx.box(
+                    rx.text(name, size="2"),
+                    padding="4px 8px",
+                    cursor="pointer",
+                    background=rx.cond(
+                        idx == ScheduleState.target_suggestion_index,
+                        "var(--accent-3)",
+                        "transparent",
+                    ),
+                    _hover={"background": "var(--accent-4)"},
+                    on_click=ScheduleState.select_target_suggestion(name),
+                ),
+            ),
+            id="schedule-target-popover-box",
+            position="absolute",
+            top="100%",
+            left="0",
+            width="100%",
+            max_height="160px",
+            overflow_y="auto",
+            background="var(--color-background)",
+            border="1px solid var(--gray-6)",
+            border_radius="6px",
+            box_shadow="0 4px 12px rgba(0,0,0,0.15)",
+            z_index="10",
+        ),
+        rx.fragment(),
+    )
+
 
 def schedule_form() -> rx.Component:
     return rx.card(
@@ -26,10 +107,16 @@ def schedule_form() -> rx.Component:
                 on_change=ScheduleState.set_form_target_type,
                 width="100%",
             ),
-            rx.input(
-                placeholder=_t["schedules.ph_target_id"],
-                value=ScheduleState.form_target_id,
-                on_change=ScheduleState.set_form_target_id,
+            rx.box(
+                rx.input(
+                    id="schedule-target-input",
+                    placeholder=_t["schedules.ph_target_name"],
+                    value=ScheduleState.form_target_name,
+                    on_change=ScheduleState.set_form_target_name,
+                    width="100%",
+                ),
+                _target_popover(),
+                position="relative",
                 width="100%",
             ),
             rx.input(
@@ -46,7 +133,11 @@ def schedule_form() -> rx.Component:
             ),
             rx.cond(
                 ScheduleState.error_message,
-                rx.callout(ScheduleState.error_message, icon="triangle_alert", color_scheme="red"),
+                rx.callout(
+                    ScheduleState.error_message,
+                    icon="triangle_alert",
+                    color_scheme="red",
+                ),
             ),
             rx.hstack(
                 rx.button(
@@ -67,6 +158,8 @@ def schedule_form() -> rx.Component:
                 ),
                 spacing="2",
             ),
+            _schedule_hidden_buttons(),
+            rx.script(_SCHEDULE_AUTOCOMPLETE_JS),
             spacing="3",
             width="100%",
         ),
@@ -119,7 +212,11 @@ def schedules_table() -> rx.Component:
                                 on_click=ScheduleState.copy_schedule(s.id),
                             ),
                             rx.button(
-                                rx.cond(s.is_active, _t["schedules.pause"], _t["schedules.resume"]),
+                                rx.cond(
+                                    s.is_active,
+                                    _t["schedules.pause"],
+                                    _t["schedules.resume"],
+                                ),
                                 size="1",
                                 variant="outline",
                                 on_click=ScheduleState.toggle_schedule(s.id),

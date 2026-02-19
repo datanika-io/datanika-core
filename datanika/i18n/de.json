@@ -212,7 +212,7 @@
   "schedules.inactive": "Inaktiv",
   "schedules.pause": "Pausieren",
   "schedules.resume": "Fortsetzen",
-  "schedules.ph_target_id": "Ziel-ID",
+  "schedules.ph_target_name": "Zielname",
   "schedules.ph_cron": "Cron-Ausdruck (z.B. 0 * * * *)",
   "schedules.ph_timezone": "Zeitzone (Standard: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Abhängigkeit hinzufügen",
   "dag.upstream_type": "Upstream-Typ",
-  "dag.upstream_id": "Upstream-ID",
+  "dag.upstream_name": "Upstream-Name",
   "dag.downstream_type": "Downstream-Typ",
-  "dag.downstream_id": "Downstream-ID",
+  "dag.downstream_name": "Downstream-Name",
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "Name",
 
   "models.no_models": "Keine Modelle gefunden. Führen Sie einen Upload oder eine Transformation aus.",
   "models.origin": "Herkunft",

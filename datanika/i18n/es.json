@@ -212,7 +212,7 @@
   "schedules.inactive": "Inactivo",
   "schedules.pause": "Pausar",
   "schedules.resume": "Reanudar",
-  "schedules.ph_target_id": "ID del objetivo",
+  "schedules.ph_target_name": "Nombre del objetivo",
   "schedules.ph_cron": "Expresión cron (ej. 0 * * * *)",
   "schedules.ph_timezone": "Zona horaria (por defecto: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Añadir dependencia",
   "dag.upstream_type": "Tipo upstream",
-  "dag.upstream_id": "ID upstream",
+  "dag.upstream_name": "Nombre upstream",
   "dag.downstream_type": "Tipo downstream",
-  "dag.downstream_id": "ID downstream",
+  "dag.downstream_name": "Nombre downstream",
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "Nombre",
 
   "models.no_models": "No se encontraron modelos. Ejecute una carga o transformación para llenar el catálogo.",
   "models.origin": "Origen",

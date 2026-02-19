@@ -212,7 +212,7 @@
   "schedules.inactive": "Ανενεργό",
   "schedules.pause": "Παύση",
   "schedules.resume": "Συνέχιση",
-  "schedules.ph_target_id": "ID στόχου",
+  "schedules.ph_target_name": "Όνομα στόχου",
   "schedules.ph_cron": "Έκφραση cron (π.χ. 0 * * * *)",
   "schedules.ph_timezone": "Ζώνη ώρας (προεπιλογή: UTC)",
 
@@ -228,12 +228,12 @@
 
   "dag.add_dependency": "Προσθήκη εξάρτησης",
   "dag.upstream_type": "Τύπος ανάντη",
-  "dag.upstream_id": "ID ανάντη",
+  "dag.upstream_name": "Όνομα ανάντη",
   "dag.downstream_type": "Τύπος κατάντη",
-  "dag.downstream_id": "ID κατάντη",
+  "dag.downstream_name": "Όνομα κατάντη",
   "dag.upstream": "Ανάντη",
   "dag.downstream": "Κατάντη",
-  "dag.ph_id": "ID",
+  "dag.ph_name": "Όνομα",
 
   "models.no_models": "Δεν βρέθηκαν μοντέλα. Εκτελέστε μεταφόρτωση ή μετασχηματισμό για να γεμίσει ο κατάλογος.",
   "models.origin": "Προέλευση",

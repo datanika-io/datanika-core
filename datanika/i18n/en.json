@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Dashboard",
   "nav.connections": "Connections",
   "nav.uploads": "Uploads",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Dependencies",
   "nav.models": "Models",
   "nav.settings": "Settings",
-
   "auth.sign_in": "Sign In",
   "auth.sign_up": "Sign Up",
   "auth.sign_in_heading": "Sign in to your account",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Password",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Edit",
   "common.copy": "Copy",
   "common.delete": "Delete",
@@ -43,7 +40,6 @@
   "common.type": "Type",
   "common.status": "Status",
   "common.all": "All",
-
   "dashboard.welcome": "Welcome to Datanika",
   "dashboard.welcome_sub": "Manage your data uploads, transformations, and schedules.",
   "dashboard.uploads": "Uploads",
@@ -56,7 +52,6 @@
   "dashboard.target": "Target",
   "dashboard.started": "Started",
   "dashboard.rows": "Rows",
-
   "connections.new": "New Connection",
   "connections.edit": "Edit Connection",
   "connections.name": "Connection Name *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Use raw JSON config",
   "connections.upload_file": "Upload File",
   "connections.or_enter_path": "Or enter file path",
-  "connections.max_file_size": "Max 20MB",
   "connections.file_uploaded": "File uploaded",
   "connections.spreadsheet_url": "Spreadsheet URL",
   "connections.service_account_json": "Service Account JSON",
@@ -92,7 +86,6 @@
   "connections.base_url": "Base URL *",
   "connections.api_key": "API Key (optional)",
   "connections.extra_headers": "Extra Headers (optional, JSON)",
-  "connections.drag_drop": "Drag & drop or click to upload",
   "connections.ph_name": "Connection name",
   "connections.ph_type": "Connection type",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "API key for Authorization header",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "New Upload",
   "uploads.edit": "Edit Upload",
   "uploads.create": "Create Upload",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Columns",
   "uploads.ph_data_type": "Data type",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "New Transformation",
   "transformations.edit": "Edit Transformation",
   "transformations.create": "Create Transformation",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "updated_at column (optional, for merge)",
   "transformations.ph_schema": "New schema name",
   "transformations.ph_tags": "Comma-separated tags (e.g. finance, daily)",
-
   "pipelines.new": "New Pipeline",
   "pipelines.edit": "Edit Pipeline",
   "pipelines.create": "Create Pipeline",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Loads seed data from CSV files",
   "pipelines.cmd_snapshot_hint": "Captures point-in-time snapshots of source data",
   "pipelines.cmd_compile_hint": "Compiles SQL without executing against the database",
-
   "schedules.new": "New Schedule",
   "schedules.edit": "Edit Schedule",
   "schedules.create": "Create Schedule",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Target name",
   "schedules.ph_cron": "Cron expression (e.g. 0 * * * *)",
   "schedules.ph_timezone": "Timezone (default: UTC)",
-
   "runs.status_filter": "Status:",
   "runs.target_type_filter": "Target type:",
   "runs.target": "Target",
@@ -225,7 +213,6 @@
   "runs.error": "Error",
   "runs.logs": "Logs",
   "runs.logs_run": "Logs — Run #",
-
   "dag.add_dependency": "Add Dependency",
   "dag.upstream_type": "Upstream Type",
   "dag.upstream_name": "Upstream Name",
@@ -234,7 +221,6 @@
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
   "dag.ph_name": "Name",
-
   "models.no_models": "No models found. Run an upload or transformation to populate the catalog.",
   "models.origin": "Origin",
   "models.table_name": "Table Name",
@@ -243,7 +229,6 @@
   "models.last_run": "Last Run",
   "models.rows": "Rows",
   "models.columns": "Columns",
-
   "model_detail.title": "Model Detail",
   "model_detail.description": "Description",
   "model_detail.alias": "Alias",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (optional, e.g. 1)",
   "model_detail.ph_column_description": "Column description...",
-
   "settings.org_profile": "Organization Profile",
   "settings.members": "Members",
   "settings.invite_member": "Invite Member",

@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Панель",
   "nav.connections": "Подключения",
   "nav.uploads": "Загрузки",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Зависимости",
   "nav.models": "Модели",
   "nav.settings": "Настройки",
-
   "auth.sign_in": "Войти",
   "auth.sign_up": "Регистрация",
   "auth.sign_in_heading": "Войдите в свой аккаунт",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Пароль",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Изменить",
   "common.copy": "Копировать",
   "common.delete": "Удалить",
@@ -43,7 +40,6 @@
   "common.type": "Тип",
   "common.status": "Статус",
   "common.all": "Все",
-
   "dashboard.welcome": "Добро пожаловать в Datanika",
   "dashboard.welcome_sub": "Управляйте загрузками, трансформациями и расписаниями.",
   "dashboard.uploads": "Загрузки",
@@ -56,7 +52,6 @@
   "dashboard.target": "Цель",
   "dashboard.started": "Начат",
   "dashboard.rows": "Строки",
-
   "connections.new": "Новое подключение",
   "connections.edit": "Редактировать подключение",
   "connections.name": "Название подключения *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Использовать JSON",
   "connections.upload_file": "Загрузить файл",
   "connections.or_enter_path": "Или укажите путь к файлу",
-  "connections.max_file_size": "Макс. 20 МБ",
   "connections.file_uploaded": "Файл загружен",
   "connections.spreadsheet_url": "URL таблицы",
   "connections.service_account_json": "JSON сервисного аккаунта",
@@ -92,7 +86,6 @@
   "connections.base_url": "Базовый URL *",
   "connections.api_key": "API-ключ (необязательно)",
   "connections.extra_headers": "Доп. заголовки (необязательно, JSON)",
-  "connections.drag_drop": "Перетащите или нажмите для загрузки",
   "connections.ph_name": "Название подключения",
   "connections.ph_type": "Тип подключения",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "API-ключ для заголовка Authorization",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Новая загрузка",
   "uploads.edit": "Редактировать загрузку",
   "uploads.create": "Создать загрузку",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Столбцы",
   "uploads.ph_data_type": "Тип данных",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Новая трансформация",
   "transformations.edit": "Редактировать трансформацию",
   "transformations.create": "Создать трансформацию",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "Столбец updated_at (необязательно, для merge)",
   "transformations.ph_schema": "Имя новой схемы",
   "transformations.ph_tags": "Теги через запятую (напр. finance, daily)",
-
   "pipelines.new": "Новый пайплайн",
   "pipelines.edit": "Редактировать пайплайн",
   "pipelines.create": "Создать пайплайн",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Загружает начальные данные из CSV-файлов",
   "pipelines.cmd_snapshot_hint": "Создаёт снимки исходных данных на момент времени",
   "pipelines.cmd_compile_hint": "Компилирует SQL без выполнения в базе данных",
-
   "schedules.new": "Новое расписание",
   "schedules.edit": "Редактировать расписание",
   "schedules.create": "Создать расписание",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Имя цели",
   "schedules.ph_cron": "Cron-выражение (напр. 0 * * * *)",
   "schedules.ph_timezone": "Часовой пояс (по умолчанию: UTC)",
-
   "runs.status_filter": "Статус:",
   "runs.target_type_filter": "Тип цели:",
   "runs.target": "Цель",
@@ -225,7 +213,6 @@
   "runs.error": "Ошибка",
   "runs.logs": "Логи",
   "runs.logs_run": "Логи — Запуск #",
-
   "dag.add_dependency": "Добавить зависимость",
   "dag.upstream_type": "Тип источника",
   "dag.upstream_name": "Имя источника",
@@ -234,7 +221,6 @@
   "dag.upstream": "Источник",
   "dag.downstream": "Приёмник",
   "dag.ph_name": "Имя",
-
   "models.no_models": "Модели не найдены. Запустите загрузку или трансформацию для заполнения каталога.",
   "models.origin": "Происхождение",
   "models.table_name": "Имя таблицы",
@@ -243,7 +229,6 @@
   "models.last_run": "Посл. запуск",
   "models.rows": "Строки",
   "models.columns": "Столбцы",
-
   "model_detail.title": "Детали модели",
   "model_detail.description": "Описание",
   "model_detail.alias": "Псевдоним",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (необязательно, напр. 1)",
   "model_detail.ph_column_description": "Описание столбца...",
-
   "settings.org_profile": "Профиль организации",
   "settings.members": "Участники",
   "settings.invite_member": "Пригласить участника",

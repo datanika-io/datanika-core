@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "لوحة التحكم",
   "nav.connections": "الاتصالات",
   "nav.uploads": "التحميلات",
@@ -11,7 +10,6 @@
   "nav.dependencies": "التبعيات",
   "nav.models": "النماذج",
   "nav.settings": "الإعدادات",
-
   "auth.sign_in": "تسجيل الدخول",
   "auth.sign_up": "إنشاء حساب",
   "auth.sign_in_heading": "سجّل الدخول إلى حسابك",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "كلمة المرور",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "تعديل",
   "common.copy": "نسخ",
   "common.delete": "حذف",
@@ -43,7 +40,6 @@
   "common.type": "النوع",
   "common.status": "الحالة",
   "common.all": "الكل",
-
   "dashboard.welcome": "مرحباً بك في Datanika",
   "dashboard.welcome_sub": "إدارة تحميلات البيانات والتحويلات والجداول الزمنية.",
   "dashboard.uploads": "التحميلات",
@@ -56,7 +52,6 @@
   "dashboard.target": "الهدف",
   "dashboard.started": "وقت البدء",
   "dashboard.rows": "الصفوف",
-
   "connections.new": "اتصال جديد",
   "connections.edit": "تعديل الاتصال",
   "connections.name": "اسم الاتصال *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "استخدام تكوين JSON خام",
   "connections.upload_file": "رفع ملف",
   "connections.or_enter_path": "أو أدخل مسار الملف",
-  "connections.max_file_size": "الحد الأقصى 20 ميغابايت",
   "connections.file_uploaded": "تم رفع الملف",
   "connections.spreadsheet_url": "رابط جدول البيانات",
   "connections.service_account_json": "JSON حساب الخدمة",
@@ -92,7 +86,6 @@
   "connections.base_url": "الرابط الأساسي *",
   "connections.api_key": "مفتاح API (اختياري)",
   "connections.extra_headers": "ترويسات إضافية (اختياري، JSON)",
-  "connections.drag_drop": "اسحب وأفلت أو انقر للرفع",
   "connections.ph_name": "اسم الاتصال",
   "connections.ph_type": "نوع الاتصال",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "مفتاح API لترويسة التفويض",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "تحميل جديد",
   "uploads.edit": "تعديل التحميل",
   "uploads.create": "إنشاء تحميل",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "الأعمدة",
   "uploads.ph_data_type": "نوع البيانات",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "تحويل جديد",
   "transformations.edit": "تعديل التحويل",
   "transformations.create": "إنشاء تحويل",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "عمود updated_at (اختياري، للدمج)",
   "transformations.ph_schema": "اسم مخطط جديد",
   "transformations.ph_tags": "وسوم مفصولة بفواصل (مثال: finance, daily)",
-
   "pipelines.new": "خط أنابيب جديد",
   "pipelines.edit": "تعديل خط الأنابيب",
   "pipelines.create": "إنشاء خط أنابيب",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "يُحمّل البيانات الأولية من ملفات CSV",
   "pipelines.cmd_snapshot_hint": "يلتقط لقطات زمنية لبيانات المصدر",
   "pipelines.cmd_compile_hint": "يُجمّع SQL دون تنفيذه في قاعدة البيانات",
-
   "schedules.new": "جدول زمني جديد",
   "schedules.edit": "تعديل الجدول الزمني",
   "schedules.create": "إنشاء جدول زمني",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "اسم الهدف",
   "schedules.ph_cron": "تعبير Cron (مثال: 0 * * * *)",
   "schedules.ph_timezone": "المنطقة الزمنية (الافتراضي: UTC)",
-
   "runs.status_filter": "الحالة:",
   "runs.target_type_filter": "نوع الهدف:",
   "runs.target": "الهدف",
@@ -225,7 +213,6 @@
   "runs.error": "خطأ",
   "runs.logs": "السجلات",
   "runs.logs_run": "السجلات — التشغيل #",
-
   "dag.add_dependency": "إضافة تبعية",
   "dag.upstream_type": "نوع المنبع",
   "dag.upstream_name": "اسم المنبع",
@@ -234,7 +221,6 @@
   "dag.upstream": "المنبع",
   "dag.downstream": "المصبّ",
   "dag.ph_name": "الاسم",
-
   "models.no_models": "لم يتم العثور على نماذج. قم بتشغيل تحميل أو تحويل لملء الكتالوج.",
   "models.origin": "المصدر",
   "models.table_name": "اسم الجدول",
@@ -243,7 +229,6 @@
   "models.last_run": "آخر تشغيل",
   "models.rows": "الصفوف",
   "models.columns": "الأعمدة",
-
   "model_detail.title": "تفاصيل النموذج",
   "model_detail.description": "الوصف",
   "model_detail.alias": "الاسم المستعار",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "الفترة (اختياري، مثال: 1)",
   "model_detail.ph_column_description": "وصف العمود...",
-
   "settings.org_profile": "ملف المؤسسة",
   "settings.members": "الأعضاء",
   "settings.invite_member": "دعوة عضو",

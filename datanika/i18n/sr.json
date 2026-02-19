@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Контролна табла",
   "nav.connections": "Конекције",
   "nav.uploads": "Отпремања",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Зависности",
   "nav.models": "Модели",
   "nav.settings": "Подешавања",
-
   "auth.sign_in": "Пријава",
   "auth.sign_up": "Регистрација",
   "auth.sign_in_heading": "Пријавите се на свој налог",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Лозинка",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Измени",
   "common.copy": "Копирај",
   "common.delete": "Обриши",
@@ -43,7 +40,6 @@
   "common.type": "Тип",
   "common.status": "Статус",
   "common.all": "Све",
-
   "dashboard.welcome": "Добродошли у Datanika",
   "dashboard.welcome_sub": "Управљајте отпремањима података, трансформацијама и распоредима.",
   "dashboard.uploads": "Отпремања",
@@ -56,7 +52,6 @@
   "dashboard.target": "Циљ",
   "dashboard.started": "Почетак",
   "dashboard.rows": "Редови",
-
   "connections.new": "Нова конекција",
   "connections.edit": "Измени конекцију",
   "connections.name": "Назив конекције *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Користи сирови JSON",
   "connections.upload_file": "Отпреми фајл",
   "connections.or_enter_path": "Или унесите путању фајла",
-  "connections.max_file_size": "Макс. 20MB",
   "connections.file_uploaded": "Фајл отпремљен",
   "connections.spreadsheet_url": "URL табеле",
   "connections.service_account_json": "JSON сервисног налога",
@@ -92,7 +86,6 @@
   "connections.base_url": "Основни URL *",
   "connections.api_key": "API кључ (опционо)",
   "connections.extra_headers": "Додатна заглавља (опционо, JSON)",
-  "connections.drag_drop": "Превуците или кликните за отпремање",
   "connections.ph_name": "Назив конекције",
   "connections.ph_type": "Тип конекције",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "API кључ за заглавље ауторизације",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Ново отпремање",
   "uploads.edit": "Измени отпремање",
   "uploads.create": "Направи отпремање",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Колоне",
   "uploads.ph_data_type": "Тип података",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Нова трансформација",
   "transformations.edit": "Измени трансформацију",
   "transformations.create": "Направи трансформацију",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "updated_at колона (опционо, за спајање)",
   "transformations.ph_schema": "Нови назив шеме",
   "transformations.ph_tags": "Ознаке раздвојене зарезом (нпр. finance, daily)",
-
   "pipelines.new": "Нови цевовод",
   "pipelines.edit": "Измени цевовод",
   "pipelines.create": "Направи цевовод",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Учитава почетне податке из CSV фајлова",
   "pipelines.cmd_snapshot_hint": "Прави снимке изворних података у датом тренутку",
   "pipelines.cmd_compile_hint": "Компајлира SQL без извршавања у бази података",
-
   "schedules.new": "Нови распоред",
   "schedules.edit": "Измени распоред",
   "schedules.create": "Направи распоред",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Име циља",
   "schedules.ph_cron": "Cron израз (нпр. 0 * * * *)",
   "schedules.ph_timezone": "Временска зона (подразумевано: UTC)",
-
   "runs.status_filter": "Статус:",
   "runs.target_type_filter": "Тип циља:",
   "runs.target": "Циљ",
@@ -225,7 +213,6 @@
   "runs.error": "Грешка",
   "runs.logs": "Логови",
   "runs.logs_run": "Логови — Покретање #",
-
   "dag.add_dependency": "Додај зависност",
   "dag.upstream_type": "Тип узводног",
   "dag.upstream_name": "Име узводног",
@@ -234,7 +221,6 @@
   "dag.upstream": "Узводни",
   "dag.downstream": "Низводни",
   "dag.ph_name": "Име",
-
   "models.no_models": "Нису пронађени модели. Покрените отпремање или трансформацију да бисте попунили каталог.",
   "models.origin": "Порекло",
   "models.table_name": "Назив табеле",
@@ -243,7 +229,6 @@
   "models.last_run": "Последње покретање",
   "models.rows": "Редови",
   "models.columns": "Колоне",
-
   "model_detail.title": "Детаљи модела",
   "model_detail.description": "Опис",
   "model_detail.alias": "Алијас",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (опционо, нпр. 1)",
   "model_detail.ph_column_description": "Опис колоне...",
-
   "settings.org_profile": "Профил организације",
   "settings.members": "Чланови",
   "settings.invite_member": "Позови члана",

@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Tableau de bord",
   "nav.connections": "Connexions",
   "nav.uploads": "Chargements",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Dépendances",
   "nav.models": "Modèles",
   "nav.settings": "Paramètres",
-
   "auth.sign_in": "Connexion",
   "auth.sign_up": "Inscription",
   "auth.sign_in_heading": "Connectez-vous à votre compte",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Mot de passe",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Modifier",
   "common.copy": "Copier",
   "common.delete": "Supprimer",
@@ -43,7 +40,6 @@
   "common.type": "Type",
   "common.status": "Statut",
   "common.all": "Tous",
-
   "dashboard.welcome": "Bienvenue sur Datanika",
   "dashboard.welcome_sub": "Gérez vos chargements de données, transformations et planifications.",
   "dashboard.uploads": "Chargements",
@@ -56,7 +52,6 @@
   "dashboard.target": "Cible",
   "dashboard.started": "Démarré",
   "dashboard.rows": "Lignes",
-
   "connections.new": "Nouvelle connexion",
   "connections.edit": "Modifier la connexion",
   "connections.name": "Nom de connexion *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Utiliser JSON brut",
   "connections.upload_file": "Importer un fichier",
   "connections.or_enter_path": "Ou saisir le chemin du fichier",
-  "connections.max_file_size": "Max 20 Mo",
   "connections.file_uploaded": "Fichier importé",
   "connections.spreadsheet_url": "URL de la feuille de calcul",
   "connections.service_account_json": "JSON du compte de service",
@@ -92,7 +86,6 @@
   "connections.base_url": "URL de base *",
   "connections.api_key": "Clé API (optionnel)",
   "connections.extra_headers": "En-têtes supplémentaires (optionnel, JSON)",
-  "connections.drag_drop": "Glisser-déposer ou cliquer pour importer",
   "connections.ph_name": "Nom de connexion",
   "connections.ph_type": "Type de connexion",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "Clé API pour l'en-tête Authorization",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Nouveau chargement",
   "uploads.edit": "Modifier le chargement",
   "uploads.create": "Créer le chargement",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Colonnes",
   "uploads.ph_data_type": "Type de données",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Nouvelle transformation",
   "transformations.edit": "Modifier la transformation",
   "transformations.create": "Créer la transformation",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "Colonne updated_at (optionnel, pour merge)",
   "transformations.ph_schema": "Nouveau nom de schéma",
   "transformations.ph_tags": "Tags séparés par des virgules (ex. finance, daily)",
-
   "pipelines.new": "Nouveau pipeline",
   "pipelines.edit": "Modifier le pipeline",
   "pipelines.create": "Créer le pipeline",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Charge les données initiales depuis des fichiers CSV",
   "pipelines.cmd_snapshot_hint": "Capture des instantanés des données source à un instant donné",
   "pipelines.cmd_compile_hint": "Compile le SQL sans l'exécuter dans la base de données",
-
   "schedules.new": "Nouvelle planification",
   "schedules.edit": "Modifier la planification",
   "schedules.create": "Créer la planification",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Nom de la cible",
   "schedules.ph_cron": "Expression cron (ex. 0 * * * *)",
   "schedules.ph_timezone": "Fuseau horaire (par défaut : UTC)",
-
   "runs.status_filter": "Statut :",
   "runs.target_type_filter": "Type de cible :",
   "runs.target": "Cible",
@@ -225,7 +213,6 @@
   "runs.error": "Erreur",
   "runs.logs": "Journaux",
   "runs.logs_run": "Journaux — Exécution #",
-
   "dag.add_dependency": "Ajouter une dépendance",
   "dag.upstream_type": "Type amont",
   "dag.upstream_name": "Nom amont",
@@ -234,7 +221,6 @@
   "dag.upstream": "Amont",
   "dag.downstream": "Aval",
   "dag.ph_name": "Nom",
-
   "models.no_models": "Aucun modèle trouvé. Exécutez un chargement ou une transformation pour remplir le catalogue.",
   "models.origin": "Origine",
   "models.table_name": "Nom de table",
@@ -243,7 +229,6 @@
   "models.last_run": "Dernière exéc.",
   "models.rows": "Lignes",
   "models.columns": "Colonnes",
-
   "model_detail.title": "Détails du modèle",
   "model_detail.description": "Description",
   "model_detail.alias": "Alias",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (optionnel, ex. 1)",
   "model_detail.ph_column_description": "Description de la colonne...",
-
   "settings.org_profile": "Profil de l'organisation",
   "settings.members": "Membres",
   "settings.invite_member": "Inviter un membre",

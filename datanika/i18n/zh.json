@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "仪表板",
   "nav.connections": "连接",
   "nav.uploads": "上传",
@@ -11,7 +10,6 @@
   "nav.dependencies": "依赖关系",
   "nav.models": "模型",
   "nav.settings": "设置",
-
   "auth.sign_in": "登录",
   "auth.sign_up": "注册",
   "auth.sign_in_heading": "登录您的账户",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "密码",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "编辑",
   "common.copy": "复制",
   "common.delete": "删除",
@@ -43,7 +40,6 @@
   "common.type": "类型",
   "common.status": "状态",
   "common.all": "全部",
-
   "dashboard.welcome": "欢迎使用 Datanika",
   "dashboard.welcome_sub": "管理您的数据上传、转换和调度。",
   "dashboard.uploads": "上传",
@@ -56,7 +52,6 @@
   "dashboard.target": "目标",
   "dashboard.started": "开始时间",
   "dashboard.rows": "行数",
-
   "connections.new": "新建连接",
   "connections.edit": "编辑连接",
   "connections.name": "连接名称 *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "使用原始 JSON 配置",
   "connections.upload_file": "上传文件",
   "connections.or_enter_path": "或输入文件路径",
-  "connections.max_file_size": "最大 20MB",
   "connections.file_uploaded": "文件已上传",
   "connections.spreadsheet_url": "电子表格 URL",
   "connections.service_account_json": "服务账户 JSON",
@@ -92,7 +86,6 @@
   "connections.base_url": "基础 URL *",
   "connections.api_key": "API 密钥（可选）",
   "connections.extra_headers": "额外请求头（可选，JSON）",
-  "connections.drag_drop": "拖放或点击上传",
   "connections.ph_name": "连接名称",
   "connections.ph_type": "连接类型",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "用于 Authorization 请求头的 API 密钥",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "新建上传",
   "uploads.edit": "编辑上传",
   "uploads.create": "创建上传",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "列",
   "uploads.ph_data_type": "数据类型",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "新建转换",
   "transformations.edit": "编辑转换",
   "transformations.create": "创建转换",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "updated_at 列（可选，用于合并）",
   "transformations.ph_schema": "新模式名称",
   "transformations.ph_tags": "用逗号分隔的标签（如 finance, daily）",
-
   "pipelines.new": "新建管道",
   "pipelines.edit": "编辑管道",
   "pipelines.create": "创建管道",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "从 CSV 文件加载种子数据",
   "pipelines.cmd_snapshot_hint": "捕获源数据的时间点快照",
   "pipelines.cmd_compile_hint": "编译 SQL 但不在数据库中执行",
-
   "schedules.new": "新建调度",
   "schedules.edit": "编辑调度",
   "schedules.create": "创建调度",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "目标名称",
   "schedules.ph_cron": "Cron 表达式（如 0 * * * *）",
   "schedules.ph_timezone": "时区（默认：UTC）",
-
   "runs.status_filter": "状态：",
   "runs.target_type_filter": "目标类型：",
   "runs.target": "目标",
@@ -225,7 +213,6 @@
   "runs.error": "错误",
   "runs.logs": "日志",
   "runs.logs_run": "日志 — 运行 #",
-
   "dag.add_dependency": "添加依赖",
   "dag.upstream_type": "上游类型",
   "dag.upstream_name": "上游名称",
@@ -234,7 +221,6 @@
   "dag.upstream": "上游",
   "dag.downstream": "下游",
   "dag.ph_name": "名称",
-
   "models.no_models": "未找到模型。请先运行上传或转换以填充目录。",
   "models.origin": "来源",
   "models.table_name": "表名",
@@ -243,7 +229,6 @@
   "models.last_run": "最近运行",
   "models.rows": "行数",
   "models.columns": "列",
-
   "model_detail.title": "模型详情",
   "model_detail.description": "描述",
   "model_detail.alias": "别名",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval（可选，如 1）",
   "model_detail.ph_column_description": "列描述...",
-
   "settings.org_profile": "组织信息",
   "settings.members": "成员",
   "settings.invite_member": "邀请成员",

@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Panel",
   "nav.connections": "Conexiones",
   "nav.uploads": "Cargas",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Dependencias",
   "nav.models": "Modelos",
   "nav.settings": "Configuración",
-
   "auth.sign_in": "Iniciar sesión",
   "auth.sign_up": "Registrarse",
   "auth.sign_in_heading": "Inicia sesión en tu cuenta",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Contraseña",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Editar",
   "common.copy": "Copiar",
   "common.delete": "Eliminar",
@@ -43,7 +40,6 @@
   "common.type": "Tipo",
   "common.status": "Estado",
   "common.all": "Todos",
-
   "dashboard.welcome": "Bienvenido a Datanika",
   "dashboard.welcome_sub": "Gestiona tus cargas de datos, transformaciones y programaciones.",
   "dashboard.uploads": "Cargas",
@@ -56,7 +52,6 @@
   "dashboard.target": "Objetivo",
   "dashboard.started": "Iniciado",
   "dashboard.rows": "Filas",
-
   "connections.new": "Nueva conexión",
   "connections.edit": "Editar conexión",
   "connections.name": "Nombre de conexión *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Usar JSON sin formato",
   "connections.upload_file": "Subir archivo",
   "connections.or_enter_path": "O introduzca la ruta del archivo",
-  "connections.max_file_size": "Máx. 20 MB",
   "connections.file_uploaded": "Archivo subido",
   "connections.spreadsheet_url": "URL de la hoja de cálculo",
   "connections.service_account_json": "JSON de cuenta de servicio",
@@ -92,7 +86,6 @@
   "connections.base_url": "URL base *",
   "connections.api_key": "Clave API (opcional)",
   "connections.extra_headers": "Encabezados adicionales (opcional, JSON)",
-  "connections.drag_drop": "Arrastrar y soltar o hacer clic para subir",
   "connections.ph_name": "Nombre de conexión",
   "connections.ph_type": "Tipo de conexión",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "Clave API para encabezado Authorization",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Nueva carga",
   "uploads.edit": "Editar carga",
   "uploads.create": "Crear carga",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Columnas",
   "uploads.ph_data_type": "Tipo de dato",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Nueva transformación",
   "transformations.edit": "Editar transformación",
   "transformations.create": "Crear transformación",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "Columna updated_at (opcional, para merge)",
   "transformations.ph_schema": "Nuevo nombre de esquema",
   "transformations.ph_tags": "Etiquetas separadas por comas (ej. finance, daily)",
-
   "pipelines.new": "Nuevo pipeline",
   "pipelines.edit": "Editar pipeline",
   "pipelines.create": "Crear pipeline",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Carga datos iniciales desde archivos CSV",
   "pipelines.cmd_snapshot_hint": "Captura instantáneas de los datos de origen en un momento dado",
   "pipelines.cmd_compile_hint": "Compila SQL sin ejecutarlo en la base de datos",
-
   "schedules.new": "Nueva programación",
   "schedules.edit": "Editar programación",
   "schedules.create": "Crear programación",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Nombre del objetivo",
   "schedules.ph_cron": "Expresión cron (ej. 0 * * * *)",
   "schedules.ph_timezone": "Zona horaria (por defecto: UTC)",
-
   "runs.status_filter": "Estado:",
   "runs.target_type_filter": "Tipo de objetivo:",
   "runs.target": "Objetivo",
@@ -225,7 +213,6 @@
   "runs.error": "Error",
   "runs.logs": "Registros",
   "runs.logs_run": "Registros — Ejecución #",
-
   "dag.add_dependency": "Añadir dependencia",
   "dag.upstream_type": "Tipo upstream",
   "dag.upstream_name": "Nombre upstream",
@@ -234,7 +221,6 @@
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
   "dag.ph_name": "Nombre",
-
   "models.no_models": "No se encontraron modelos. Ejecute una carga o transformación para llenar el catálogo.",
   "models.origin": "Origen",
   "models.table_name": "Nombre de tabla",
@@ -243,7 +229,6 @@
   "models.last_run": "Última ejec.",
   "models.rows": "Filas",
   "models.columns": "Columnas",
-
   "model_detail.title": "Detalle del modelo",
   "model_detail.description": "Descripción",
   "model_detail.alias": "Alias",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (opcional, ej. 1)",
   "model_detail.ph_column_description": "Descripción de columna...",
-
   "settings.org_profile": "Perfil de organización",
   "settings.members": "Miembros",
   "settings.invite_member": "Invitar miembro",

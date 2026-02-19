@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Πίνακας",
   "nav.connections": "Συνδέσεις",
   "nav.uploads": "Μεταφορτώσεις",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Εξαρτήσεις",
   "nav.models": "Μοντέλα",
   "nav.settings": "Ρυθμίσεις",
-
   "auth.sign_in": "Σύνδεση",
   "auth.sign_up": "Εγγραφή",
   "auth.sign_in_heading": "Συνδεθείτε στον λογαριασμό σας",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Κωδικός",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Επεξεργασία",
   "common.copy": "Αντιγραφή",
   "common.delete": "Διαγραφή",
@@ -43,7 +40,6 @@
   "common.type": "Τύπος",
   "common.status": "Κατάσταση",
   "common.all": "Όλα",
-
   "dashboard.welcome": "Καλώς ήρθατε στο Datanika",
   "dashboard.welcome_sub": "Διαχειριστείτε μεταφορτώσεις δεδομένων, μετασχηματισμούς και χρονοδιαγράμματα.",
   "dashboard.uploads": "Μεταφορτώσεις",
@@ -56,7 +52,6 @@
   "dashboard.target": "Στόχος",
   "dashboard.started": "Έναρξη",
   "dashboard.rows": "Γραμμές",
-
   "connections.new": "Νέα σύνδεση",
   "connections.edit": "Επεξεργασία σύνδεσης",
   "connections.name": "Όνομα σύνδεσης *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Χρήση JSON",
   "connections.upload_file": "Μεταφόρτωση αρχείου",
   "connections.or_enter_path": "Ή εισάγετε διαδρομή αρχείου",
-  "connections.max_file_size": "Μέγ. 20MB",
   "connections.file_uploaded": "Το αρχείο μεταφορτώθηκε",
   "connections.spreadsheet_url": "URL υπολογιστικού φύλλου",
   "connections.service_account_json": "JSON λογαριασμού υπηρεσίας",
@@ -92,7 +86,6 @@
   "connections.base_url": "Βασικό URL *",
   "connections.api_key": "Κλειδί API (προαιρετικό)",
   "connections.extra_headers": "Επιπλέον κεφαλίδες (προαιρετικό, JSON)",
-  "connections.drag_drop": "Σύρετε ή κάντε κλικ για μεταφόρτωση",
   "connections.ph_name": "Όνομα σύνδεσης",
   "connections.ph_type": "Τύπος σύνδεσης",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "Κλειδί API για κεφαλίδα Authorization",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Νέα μεταφόρτωση",
   "uploads.edit": "Επεξεργασία μεταφόρτωσης",
   "uploads.create": "Δημιουργία μεταφόρτωσης",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Στήλες",
   "uploads.ph_data_type": "Τύπος δεδομένων",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Νέος μετασχηματισμός",
   "transformations.edit": "Επεξεργασία μετασχηματισμού",
   "transformations.create": "Δημιουργία μετασχηματισμού",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "Στήλη updated_at (προαιρετικό, για merge)",
   "transformations.ph_schema": "Νέο όνομα σχήματος",
   "transformations.ph_tags": "Ετικέτες χωρισμένες με κόμμα (π.χ. finance, daily)",
-
   "pipelines.new": "Νέος αγωγός",
   "pipelines.edit": "Επεξεργασία αγωγού",
   "pipelines.create": "Δημιουργία αγωγού",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Φορτώνει αρχικά δεδομένα από αρχεία CSV",
   "pipelines.cmd_snapshot_hint": "Καταγράφει στιγμιότυπα δεδομένων προέλευσης",
   "pipelines.cmd_compile_hint": "Μεταγλωττίζει SQL χωρίς εκτέλεση στη βάση δεδομένων",
-
   "schedules.new": "Νέο χρονοδιάγραμμα",
   "schedules.edit": "Επεξεργασία χρονοδιαγράμματος",
   "schedules.create": "Δημιουργία χρονοδιαγράμματος",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Όνομα στόχου",
   "schedules.ph_cron": "Έκφραση cron (π.χ. 0 * * * *)",
   "schedules.ph_timezone": "Ζώνη ώρας (προεπιλογή: UTC)",
-
   "runs.status_filter": "Κατάσταση:",
   "runs.target_type_filter": "Τύπος στόχου:",
   "runs.target": "Στόχος",
@@ -225,7 +213,6 @@
   "runs.error": "Σφάλμα",
   "runs.logs": "Αρχεία καταγραφής",
   "runs.logs_run": "Αρχεία — Εκτέλεση #",
-
   "dag.add_dependency": "Προσθήκη εξάρτησης",
   "dag.upstream_type": "Τύπος ανάντη",
   "dag.upstream_name": "Όνομα ανάντη",
@@ -234,7 +221,6 @@
   "dag.upstream": "Ανάντη",
   "dag.downstream": "Κατάντη",
   "dag.ph_name": "Όνομα",
-
   "models.no_models": "Δεν βρέθηκαν μοντέλα. Εκτελέστε μεταφόρτωση ή μετασχηματισμό για να γεμίσει ο κατάλογος.",
   "models.origin": "Προέλευση",
   "models.table_name": "Όνομα πίνακα",
@@ -243,7 +229,6 @@
   "models.last_run": "Τελ. εκτέλεση",
   "models.rows": "Γραμμές",
   "models.columns": "Στήλες",
-
   "model_detail.title": "Λεπτομέρειες μοντέλου",
   "model_detail.description": "Περιγραφή",
   "model_detail.alias": "Ψευδώνυμο",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (προαιρετικό, π.χ. 1)",
   "model_detail.ph_column_description": "Περιγραφή στήλης...",
-
   "settings.org_profile": "Προφίλ οργανισμού",
   "settings.members": "Μέλη",
   "settings.invite_member": "Πρόσκληση μέλους",

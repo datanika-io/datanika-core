@@ -1,6 +1,5 @@
 {
   "app.name": "Datanika",
-
   "nav.dashboard": "Dashboard",
   "nav.connections": "Verbindungen",
   "nav.uploads": "Uploads",
@@ -11,7 +10,6 @@
   "nav.dependencies": "Abhängigkeiten",
   "nav.models": "Modelle",
   "nav.settings": "Einstellungen",
-
   "auth.sign_in": "Anmelden",
   "auth.sign_up": "Registrieren",
   "auth.sign_in_heading": "Melden Sie sich an",
@@ -27,7 +25,6 @@
   "auth.ph_email": "you@example.com",
   "auth.ph_password": "Passwort",
   "auth.ph_full_name": "Alice Smith",
-
   "common.edit": "Bearbeiten",
   "common.copy": "Kopieren",
   "common.delete": "Löschen",
@@ -43,7 +40,6 @@
   "common.type": "Typ",
   "common.status": "Status",
   "common.all": "Alle",
-
   "dashboard.welcome": "Willkommen bei Datanika",
   "dashboard.welcome_sub": "Verwalten Sie Ihre Daten-Uploads, Transformationen und Zeitpläne.",
   "dashboard.uploads": "Uploads",
@@ -56,7 +52,6 @@
   "dashboard.target": "Ziel",
   "dashboard.started": "Gestartet",
   "dashboard.rows": "Zeilen",
-
   "connections.new": "Neue Verbindung",
   "connections.edit": "Verbindung bearbeiten",
   "connections.name": "Verbindungsname *",
@@ -65,7 +60,6 @@
   "connections.use_raw_json": "Raw JSON verwenden",
   "connections.upload_file": "Datei hochladen",
   "connections.or_enter_path": "Oder Dateipfad eingeben",
-  "connections.max_file_size": "Max. 20 MB",
   "connections.file_uploaded": "Datei hochgeladen",
   "connections.spreadsheet_url": "Tabellen-URL",
   "connections.service_account_json": "Dienstkonto-JSON",
@@ -92,7 +86,6 @@
   "connections.base_url": "Basis-URL *",
   "connections.api_key": "API-Schlüssel (optional)",
   "connections.extra_headers": "Zusätzliche Header (optional, JSON)",
-  "connections.drag_drop": "Ziehen und ablegen oder klicken zum Hochladen",
   "connections.ph_name": "Verbindungsname",
   "connections.ph_type": "Verbindungstyp",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
@@ -122,7 +115,6 @@
   "connections.ph_api_key": "API-Schlüssel für Authorization-Header",
   "connections.ph_extra_headers": "{\"X-Custom-Header\": \"value\"}",
   "connections.ph_spreadsheet_url": "https://docs.google.com/spreadsheets/d/...",
-
   "uploads.new": "Neuer Upload",
   "uploads.edit": "Upload bearbeiten",
   "uploads.create": "Upload erstellen",
@@ -150,7 +142,6 @@
   "uploads.ph_columns": "Spalten",
   "uploads.ph_data_type": "Datentyp",
   "uploads.ph_raw_json": "{\"write_disposition\": \"append\"}",
-
   "transformations.new": "Neue Transformation",
   "transformations.edit": "Transformation bearbeiten",
   "transformations.create": "Transformation erstellen",
@@ -176,7 +167,6 @@
   "transformations.ph_updated_at": "updated_at-Spalte (optional, für Merge)",
   "transformations.ph_schema": "Neuer Schemaname",
   "transformations.ph_tags": "Kommagetrennte Tags (z.B. finance, daily)",
-
   "pipelines.new": "Neue Pipeline",
   "pipelines.edit": "Pipeline bearbeiten",
   "pipelines.create": "Pipeline erstellen",
@@ -202,7 +192,6 @@
   "pipelines.cmd_seed_hint": "Lädt Startdaten aus CSV-Dateien",
   "pipelines.cmd_snapshot_hint": "Erstellt zeitpunktbezogene Snapshots der Quelldaten",
   "pipelines.cmd_compile_hint": "Kompiliert SQL ohne Ausführung in der Datenbank",
-
   "schedules.new": "Neuer Zeitplan",
   "schedules.edit": "Zeitplan bearbeiten",
   "schedules.create": "Zeitplan erstellen",
@@ -215,7 +204,6 @@
   "schedules.ph_target_name": "Zielname",
   "schedules.ph_cron": "Cron-Ausdruck (z.B. 0 * * * *)",
   "schedules.ph_timezone": "Zeitzone (Standard: UTC)",
-
   "runs.status_filter": "Status:",
   "runs.target_type_filter": "Zieltyp:",
   "runs.target": "Ziel",
@@ -225,7 +213,6 @@
   "runs.error": "Fehler",
   "runs.logs": "Protokolle",
   "runs.logs_run": "Protokolle — Ausführung #",
-
   "dag.add_dependency": "Abhängigkeit hinzufügen",
   "dag.upstream_type": "Upstream-Typ",
   "dag.upstream_name": "Upstream-Name",
@@ -234,7 +221,6 @@
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
   "dag.ph_name": "Name",
-
   "models.no_models": "Keine Modelle gefunden. Führen Sie einen Upload oder eine Transformation aus.",
   "models.origin": "Herkunft",
   "models.table_name": "Tabellenname",
@@ -243,7 +229,6 @@
   "models.last_run": "Letzte Ausf.",
   "models.rows": "Zeilen",
   "models.columns": "Spalten",
-
   "model_detail.title": "Modelldetails",
   "model_detail.description": "Beschreibung",
   "model_detail.alias": "Alias",
@@ -272,7 +257,6 @@
   "model_detail.ph_max_value": "max_value",
   "model_detail.ph_interval": "interval (optional, z.B. 1)",
   "model_detail.ph_column_description": "Spaltenbeschreibung...",
-
   "settings.org_profile": "Organisationsprofil",
   "settings.members": "Mitglieder",
   "settings.invite_member": "Mitglied einladen",

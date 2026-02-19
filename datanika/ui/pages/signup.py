@@ -12,7 +12,12 @@ _t = I18nState.translations
 def signup_page() -> rx.Component:
     return rx.center(
         rx.vstack(
-            rx.heading(_t["app.name"], size="7"),
+            rx.hstack(
+                rx.image(src="/logo.png", width="48px", height="48px"),
+                rx.heading(_t["app.name"], size="7"),
+                spacing="3",
+                align="center",
+            ),
             rx.text(_t["auth.create_account_heading"], size="3", color="gray"),
             rx.cond(
                 AuthState.auth_error != "",

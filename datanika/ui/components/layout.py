@@ -60,7 +60,13 @@ def sidebar_user_section() -> rx.Component:
 def sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
-            rx.heading(_t["app.name"], size="5", padding="16px"),
+            rx.hstack(
+                rx.image(src="/logo.png", width="32px", height="32px"),
+                rx.heading(_t["app.name"], size="5"),
+                spacing="2",
+                align="center",
+                padding="16px",
+            ),
             rx.separator(),
             rx.vstack(
                 sidebar_link(_t["nav.dashboard"], "/", "layout-dashboard"),

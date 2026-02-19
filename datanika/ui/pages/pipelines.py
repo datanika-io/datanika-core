@@ -11,6 +11,37 @@ _t = I18nState.translations
 COMMAND_OPTIONS = ["build", "run", "test", "seed", "snapshot", "compile"]
 
 
+def _model_suggestions_popover() -> rx.Component:
+    """Autocomplete popover for model names from transformations."""
+    return rx.cond(
+        PipelineState.show_model_suggestions,
+        rx.box(
+            rx.foreach(
+                PipelineState.model_suggestions,
+                lambda name: rx.box(
+                    rx.text(name, size="2"),
+                    padding="4px 8px",
+                    cursor="pointer",
+                    _hover={"background": "var(--accent-4)"},
+                    on_click=PipelineState.select_model_suggestion(name),
+                ),
+            ),
+            position="absolute",
+            top="100%",
+            left="0",
+            width="100%",
+            max_height="160px",
+            overflow_y="auto",
+            background="var(--color-background)",
+            border="1px solid var(--gray-6)",
+            border_radius="6px",
+            box_shadow="0 4px 12px rgba(0,0,0,0.15)",
+            z_index="10",
+        ),
+        rx.fragment(),
+    )
+
+
 def _models_section() -> rx.Component:
     """Models sub-table with add/remove and upstream/downstream toggles."""
     return rx.vstack(
@@ -56,10 +87,15 @@ def _models_section() -> rx.Component:
             width="100%",
         ),
         rx.hstack(
-            rx.input(
-                placeholder=_t["pipelines.ph_model_name"],
-                value=PipelineState.form_new_model_name,
-                on_change=PipelineState.set_form_new_model_name,
+            rx.box(
+                rx.input(
+                    placeholder=_t["pipelines.ph_model_name"],
+                    value=PipelineState.form_new_model_name,
+                    on_change=PipelineState.set_form_new_model_name,
+                    width="100%",
+                ),
+                _model_suggestions_popover(),
+                position="relative",
                 width="100%",
             ),
             rx.button(
@@ -115,6 +151,16 @@ def pipeline_form() -> rx.Component:
                 value=PipelineState.form_command,
                 on_change=PipelineState.set_form_command,
                 width="100%",
+            ),
+            rx.match(
+                PipelineState.form_command,
+                ("build", rx.text(_t["pipelines.cmd_build_hint"], size="1", color="gray")),
+                ("run", rx.text(_t["pipelines.cmd_run_hint"], size="1", color="gray")),
+                ("test", rx.text(_t["pipelines.cmd_test_hint"], size="1", color="gray")),
+                ("seed", rx.text(_t["pipelines.cmd_seed_hint"], size="1", color="gray")),
+                ("snapshot", rx.text(_t["pipelines.cmd_snapshot_hint"], size="1", color="gray")),
+                ("compile", rx.text(_t["pipelines.cmd_compile_hint"], size="1", color="gray")),
+                rx.fragment(),
             ),
             # Full refresh
             rx.checkbox(

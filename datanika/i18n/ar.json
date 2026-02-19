@@ -195,6 +195,12 @@
   "pipelines.ph_destination": "اتصال الوجهة",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.cmd_build_hint": "يُشغّل النموذج ويختبره",
+  "pipelines.cmd_run_hint": "يُشغّل النموذج دون اختبار",
+  "pipelines.cmd_test_hint": "يُشغّل الاختبارات فقط، دون بناء",
+  "pipelines.cmd_seed_hint": "يُحمّل البيانات الأولية من ملفات CSV",
+  "pipelines.cmd_snapshot_hint": "يلتقط لقطات زمنية لبيانات المصدر",
+  "pipelines.cmd_compile_hint": "يُجمّع SQL دون تنفيذه في قاعدة البيانات",
 
   "schedules.new": "جدول زمني جديد",
   "schedules.edit": "تعديل الجدول الزمني",

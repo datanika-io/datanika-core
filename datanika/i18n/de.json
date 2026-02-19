@@ -195,6 +195,12 @@
   "pipelines.ph_destination": "Zielverbindung",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.cmd_build_hint": "Führt das Modell aus und testet es",
+  "pipelines.cmd_run_hint": "Führt das Modell ohne Tests aus",
+  "pipelines.cmd_test_hint": "Führt nur Tests aus, ohne zu bauen",
+  "pipelines.cmd_seed_hint": "Lädt Startdaten aus CSV-Dateien",
+  "pipelines.cmd_snapshot_hint": "Erstellt zeitpunktbezogene Snapshots der Quelldaten",
+  "pipelines.cmd_compile_hint": "Kompiliert SQL ohne Ausführung in der Datenbank",
 
   "schedules.new": "Neuer Zeitplan",
   "schedules.edit": "Zeitplan bearbeiten",

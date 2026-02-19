@@ -9,6 +9,7 @@ from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
+from datanika.services.transformation_service import TransformationService
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import DESTINATION_TYPES
@@ -44,6 +45,10 @@ class PipelineState(BaseState):
     form_models: list[ModelEntry] = []
     # Model add field
     form_new_model_name: str = ""
+    # Model autocomplete
+    all_model_names: list[str] = []
+    model_suggestions: list[str] = []
+    show_model_suggestions: bool = False
     # 0 = creating new, >0 = editing existing
     editing_pipeline_id: int = 0
 
@@ -53,8 +58,9 @@ class PipelineState(BaseState):
     def set_form_description(self, value: str):
         self.form_description = value
 
-    def set_form_dest_id(self, value: str):
+    async def set_form_dest_id(self, value: str):
         self.form_dest_id = value
+        await self._load_model_names()
 
     def set_form_command(self, value: str):
         self.form_command = value
@@ -67,12 +73,28 @@ class PipelineState(BaseState):
 
     def set_form_new_model_name(self, value: str):
         self.form_new_model_name = value
+        if value.strip():
+            query = value.strip().lower()
+            self.model_suggestions = [
+                n for n in self.all_model_names if query in n.lower()
+            ]
+            self.show_model_suggestions = len(self.model_suggestions) > 0
+        else:
+            self.model_suggestions = []
+            self.show_model_suggestions = False
+
+    def select_model_suggestion(self, name: str):
+        self.form_new_model_name = name
+        self.model_suggestions = []
+        self.show_model_suggestions = False
 
     def add_model(self):
         if not self.form_new_model_name.strip():
             return
         self.form_models.append(ModelEntry(name=self.form_new_model_name.strip()))
         self.form_new_model_name = ""
+        self.model_suggestions = []
+        self.show_model_suggestions = False
 
     def remove_model(self, index: int):
         if 0 <= index < len(self.form_models):
@@ -97,6 +119,28 @@ class PipelineState(BaseState):
         conn_svc = ConnectionService(encryption)
         pipeline_svc = PipelineService()
         return pipeline_svc, conn_svc
+
+    async def _load_model_names(self):
+        try:
+            dst_id = int(self.form_dest_id.split(" — ")[0])
+        except (ValueError, IndexError, AttributeError):
+            self.all_model_names = []
+            self.model_suggestions = []
+            self.show_model_suggestions = False
+            return
+        org_id = await self._get_org_id()
+        if not org_id:
+            return
+        svc = TransformationService()
+        with get_sync_session() as session:
+            transformations = svc.list_transformations(session, org_id)
+        self.all_model_names = [
+            t.name
+            for t in transformations
+            if t.destination_connection_id == dst_id
+        ]
+        self.model_suggestions = []
+        self.show_model_suggestions = False
 
     async def load_pipelines(self):
         org_id = await self._get_org_id()
@@ -126,6 +170,7 @@ class PipelineState(BaseState):
                 if c.connection_type.value in DESTINATION_TYPES
             ]
         self.error_message = ""
+        await self._load_model_names()
 
     async def save_pipeline(self):
         if not self.form_name.strip():
@@ -194,6 +239,9 @@ class PipelineState(BaseState):
         self.form_custom_selector = ""
         self.form_models = []
         self.form_new_model_name = ""
+        self.all_model_names = []
+        self.model_suggestions = []
+        self.show_model_suggestions = False
         self.error_message = ""
 
     def _populate_form_from_pipeline(self, pipeline, conn_options_dst):
@@ -236,6 +284,7 @@ class PipelineState(BaseState):
             self.dest_conn_options = dst_opts
             self._populate_form_from_pipeline(pipeline, dst_opts)
         self.editing_pipeline_id = pipeline_id
+        await self._load_model_names()
 
     async def copy_pipeline(self, pipeline_id: int):
         org_id = await self._get_org_id()
@@ -255,6 +304,7 @@ class PipelineState(BaseState):
             self._populate_form_from_pipeline(pipeline, dst_opts)
         self.form_name = f"{self.form_name} copy"
         self.editing_pipeline_id = 0
+        await self._load_model_names()
 
     def cancel_edit(self):
         self._reset_form()

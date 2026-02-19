@@ -195,6 +195,12 @@
   "pipelines.ph_destination": "Подключение-назначение",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.cmd_build_hint": "Запускает модель и тестирует её",
+  "pipelines.cmd_run_hint": "Запускает модель без тестирования",
+  "pipelines.cmd_test_hint": "Запускает только тесты, без сборки",
+  "pipelines.cmd_seed_hint": "Загружает начальные данные из CSV-файлов",
+  "pipelines.cmd_snapshot_hint": "Создаёт снимки исходных данных на момент времени",
+  "pipelines.cmd_compile_hint": "Компилирует SQL без выполнения в базе данных",
 
   "schedules.new": "Новое расписание",
   "schedules.edit": "Редактировать расписание",

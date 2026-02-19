@@ -195,6 +195,12 @@
   "pipelines.ph_destination": "Σύνδεση προορισμού",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.cmd_build_hint": "Εκτελεί το μοντέλο και το ελέγχει",
+  "pipelines.cmd_run_hint": "Εκτελεί το μοντέλο χωρίς έλεγχο",
+  "pipelines.cmd_test_hint": "Εκτελεί μόνο ελέγχους, χωρίς κατασκευή",
+  "pipelines.cmd_seed_hint": "Φορτώνει αρχικά δεδομένα από αρχεία CSV",
+  "pipelines.cmd_snapshot_hint": "Καταγράφει στιγμιότυπα δεδομένων προέλευσης",
+  "pipelines.cmd_compile_hint": "Μεταγλωττίζει SQL χωρίς εκτέλεση στη βάση δεδομένων",
 
   "schedules.new": "Νέο χρονοδιάγραμμα",
   "schedules.edit": "Επεξεργασία χρονοδιαγράμματος",

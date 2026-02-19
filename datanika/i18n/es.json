@@ -195,6 +195,12 @@
   "pipelines.ph_destination": "Conexión de destino",
   "pipelines.ph_model_name": "model_name",
   "pipelines.ph_custom_selector": "tag:nightly or +model_a model_b+",
+  "pipelines.cmd_build_hint": "Ejecuta el modelo y lo prueba",
+  "pipelines.cmd_run_hint": "Ejecuta el modelo sin pruebas",
+  "pipelines.cmd_test_hint": "Ejecuta solo las pruebas, sin construir",
+  "pipelines.cmd_seed_hint": "Carga datos iniciales desde archivos CSV",
+  "pipelines.cmd_snapshot_hint": "Captura instantáneas de los datos de origen en un momento dado",
+  "pipelines.cmd_compile_hint": "Compila SQL sin ejecutarlo en la base de datos",
 
   "schedules.new": "Nueva programación",
   "schedules.edit": "Editar programación",

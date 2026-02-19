@@ -27,7 +27,11 @@ from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState
 
-app = rx.App()
+app = rx.App(
+    head_components=[
+        rx.el.link(rel="icon", href="/favicon.ico", type="image/x-icon"),
+    ],
+)
 
 # Start APScheduler and sync all active schedules from DB
 from datanika.scheduler import scheduler_integration

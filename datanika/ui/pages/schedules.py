@@ -27,19 +27,19 @@ def schedule_form() -> rx.Component:
                 width="100%",
             ),
             rx.input(
-                placeholder="Target ID",
+                placeholder=_t["schedules.ph_target_id"],
                 value=ScheduleState.form_target_id,
                 on_change=ScheduleState.set_form_target_id,
                 width="100%",
             ),
             rx.input(
-                placeholder="Cron expression (e.g. 0 * * * *)",
+                placeholder=_t["schedules.ph_cron"],
                 value=ScheduleState.form_cron,
                 on_change=ScheduleState.set_form_cron,
                 width="100%",
             ),
             rx.input(
-                placeholder="Timezone (default: UTC)",
+                placeholder=_t["schedules.ph_timezone"],
                 value=ScheduleState.form_timezone,
                 on_change=ScheduleState.set_form_timezone,
                 width="100%",

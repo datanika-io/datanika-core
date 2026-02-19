@@ -23,7 +23,7 @@ def connection_form() -> rx.Component:
             ),
             rx.text(_t["connections.name"], size="2", weight="bold"),
             rx.input(
-                placeholder="Connection name",
+                placeholder=_t["connections.ph_name"],
                 value=ConnectionState.form_name,
                 on_change=ConnectionState.set_form_name,
                 required=True,
@@ -48,7 +48,7 @@ def connection_form() -> rx.Component:
                 ],
                 value=ConnectionState.form_type,
                 on_change=ConnectionState.set_form_type,
-                placeholder="Connection type",
+                placeholder=_t["connections.ph_type"],
                 width="100%",
             ),
             # Dynamic config fields (hidden when raw JSON is active)
@@ -65,7 +65,7 @@ def connection_form() -> rx.Component:
             rx.cond(
                 ConnectionState.form_use_raw_json,
                 rx.text_area(
-                    placeholder='{"host": "localhost", "port": 5432}',
+                    placeholder=_t["connections.ph_raw_json"],
                     value=ConnectionState.form_config,
                     on_change=ConnectionState.set_form_config,
                     width="100%",

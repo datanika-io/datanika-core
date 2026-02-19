@@ -11,48 +11,48 @@ _t = I18nState.translations
 def db_fields() -> rx.Component:
     """Fields for postgres / mysql / mssql / redshift."""
     return rx.vstack(
-        rx.text("Host *", size="2", weight="bold"),
+        rx.text(_t["connections.host"], size="2", weight="bold"),
         rx.input(
-            placeholder="localhost",
+            placeholder=_t["connections.ph_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
             required=True,
             width="100%",
         ),
-        rx.text("Port *", size="2", weight="bold"),
+        rx.text(_t["connections.port"], size="2", weight="bold"),
         rx.input(
-            placeholder="5432",
+            placeholder=_t["connections.ph_port"],
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
             required=True,
             width="100%",
         ),
-        rx.text("User", size="2", weight="bold"),
+        rx.text(_t["connections.user"], size="2", weight="bold"),
         rx.input(
-            placeholder="postgres",
+            placeholder=_t["connections.ph_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
             width="100%",
         ),
-        rx.text("Password", size="2", weight="bold"),
+        rx.text(_t["connections.password"], size="2", weight="bold"),
         rx.input(
-            placeholder="Password",
+            placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
             type="password",
             width="100%",
         ),
-        rx.text("Database *", size="2", weight="bold"),
+        rx.text(_t["connections.database"], size="2", weight="bold"),
         rx.input(
-            placeholder="mydb",
+            placeholder=_t["connections.ph_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
             width="100%",
         ),
-        rx.text("Schema (optional)", size="2", weight="bold"),
+        rx.text(_t["connections.schema_optional"], size="2", weight="bold"),
         rx.input(
-            placeholder="public",
+            placeholder=_t["connections.ph_schema"],
             value=ConnectionState.form_schema,
             on_change=ConnectionState.set_form_schema,
             width="100%",
@@ -65,9 +65,9 @@ def db_fields() -> rx.Component:
 def sqlite_fields() -> rx.Component:
     """Fields for sqlite."""
     return rx.vstack(
-        rx.text("Database Path *", size="2", weight="bold"),
+        rx.text(_t["connections.db_path"], size="2", weight="bold"),
         rx.input(
-            placeholder="/data/my.db",
+            placeholder=_t["connections.ph_db_path"],
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
             required=True,
@@ -81,25 +81,25 @@ def sqlite_fields() -> rx.Component:
 def bigquery_fields() -> rx.Component:
     """Fields for bigquery."""
     return rx.vstack(
-        rx.text("GCP Project ID *", size="2", weight="bold"),
+        rx.text(_t["connections.gcp_project"], size="2", weight="bold"),
         rx.input(
-            placeholder="my-gcp-project",
+            placeholder=_t["connections.ph_gcp_project"],
             value=ConnectionState.form_project,
             on_change=ConnectionState.set_form_project,
             required=True,
             width="100%",
         ),
-        rx.text("Dataset *", size="2", weight="bold"),
+        rx.text(_t["connections.dataset"], size="2", weight="bold"),
         rx.input(
-            placeholder="raw_data",
+            placeholder=_t["connections.ph_dataset"],
             value=ConnectionState.form_dataset,
             on_change=ConnectionState.set_form_dataset,
             required=True,
             width="100%",
         ),
-        rx.text("Service Account JSON (optional)", size="2", weight="bold"),
+        rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
         rx.text_area(
-            placeholder='{"type": "service_account", ...}',
+            placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_keyfile_json,
             on_change=ConnectionState.set_form_keyfile_json,
             width="100%",
@@ -112,55 +112,55 @@ def bigquery_fields() -> rx.Component:
 def snowflake_fields() -> rx.Component:
     """Fields for snowflake."""
     return rx.vstack(
-        rx.text("Account *", size="2", weight="bold"),
+        rx.text(_t["connections.account"], size="2", weight="bold"),
         rx.input(
-            placeholder="abc123.us-east-1",
+            placeholder=_t["connections.ph_snowflake_account"],
             value=ConnectionState.form_account,
             on_change=ConnectionState.set_form_account,
             required=True,
             width="100%",
         ),
-        rx.text("User *", size="2", weight="bold"),
+        rx.text(_t["connections.user"], " *", size="2", weight="bold"),
         rx.input(
-            placeholder="SNOW_USER",
+            placeholder=_t["connections.ph_snowflake_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
             required=True,
             width="100%",
         ),
-        rx.text("Password", size="2", weight="bold"),
+        rx.text(_t["connections.password"], size="2", weight="bold"),
         rx.input(
-            placeholder="Password",
+            placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
             type="password",
             width="100%",
         ),
-        rx.text("Database *", size="2", weight="bold"),
+        rx.text(_t["connections.database"], size="2", weight="bold"),
         rx.input(
-            placeholder="ANALYTICS",
+            placeholder=_t["connections.ph_snowflake_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
             width="100%",
         ),
-        rx.text("Warehouse", size="2", weight="bold"),
+        rx.text(_t["connections.warehouse"], size="2", weight="bold"),
         rx.input(
-            placeholder="COMPUTE_WH",
+            placeholder=_t["connections.ph_snowflake_warehouse"],
             value=ConnectionState.form_warehouse,
             on_change=ConnectionState.set_form_warehouse,
             width="100%",
         ),
-        rx.text("Role", size="2", weight="bold"),
+        rx.text(_t["connections.role"], size="2", weight="bold"),
         rx.input(
-            placeholder="SYSADMIN",
+            placeholder=_t["connections.ph_snowflake_role"],
             value=ConnectionState.form_role,
             on_change=ConnectionState.set_form_role,
             width="100%",
         ),
-        rx.text("Schema", size="2", weight="bold"),
+        rx.text(_t["connections.schema"], size="2", weight="bold"),
         rx.input(
-            placeholder="PUBLIC",
+            placeholder=_t["connections.ph_snowflake_schema"],
             value=ConnectionState.form_schema,
             on_change=ConnectionState.set_form_schema,
             width="100%",
@@ -173,39 +173,39 @@ def snowflake_fields() -> rx.Component:
 def s3_fields() -> rx.Component:
     """Fields for s3."""
     return rx.vstack(
-        rx.text("Bucket URL *", size="2", weight="bold"),
+        rx.text(_t["connections.bucket_url"], size="2", weight="bold"),
         rx.input(
-            placeholder="s3://my-bucket/path",
+            placeholder=_t["connections.ph_bucket_url"],
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
             required=True,
             width="100%",
         ),
-        rx.text("AWS Access Key ID", size="2", weight="bold"),
+        rx.text(_t["connections.aws_access_key"], size="2", weight="bold"),
         rx.input(
-            placeholder="AKIAIOSFODNN7EXAMPLE",
+            placeholder=_t["connections.ph_aws_access_key"],
             value=ConnectionState.form_aws_access_key_id,
             on_change=ConnectionState.set_form_aws_access_key_id,
             width="100%",
         ),
-        rx.text("AWS Secret Access Key", size="2", weight="bold"),
+        rx.text(_t["connections.aws_secret_key"], size="2", weight="bold"),
         rx.input(
-            placeholder="Secret key",
+            placeholder=_t["connections.ph_secret_key"],
             value=ConnectionState.form_aws_secret_access_key,
             on_change=ConnectionState.set_form_aws_secret_access_key,
             type="password",
             width="100%",
         ),
-        rx.text("Region", size="2", weight="bold"),
+        rx.text(_t["connections.region"], size="2", weight="bold"),
         rx.input(
-            placeholder="us-east-1",
+            placeholder=_t["connections.ph_region"],
             value=ConnectionState.form_region_name,
             on_change=ConnectionState.set_form_region_name,
             width="100%",
         ),
-        rx.text("Endpoint URL (optional)", size="2", weight="bold"),
+        rx.text(_t["connections.endpoint_url"], size="2", weight="bold"),
         rx.input(
-            placeholder="https://minio.local:9000",
+            placeholder=_t["connections.ph_endpoint_url"],
             value=ConnectionState.form_endpoint_url,
             on_change=ConnectionState.set_form_endpoint_url,
             width="100%",
@@ -221,7 +221,7 @@ def file_upload_fields() -> rx.Component:
         rx.text(_t["connections.upload_file"], size="2", weight="bold"),
         rx.upload(
             rx.vstack(
-                rx.text("Drag & drop or click to upload"),
+                rx.text(_t["connections.drag_drop"]),
                 rx.text(
                     _t["connections.max_file_size"],
                     size="1",
@@ -258,7 +258,7 @@ def file_upload_fields() -> rx.Component:
         ),
         rx.text(_t["connections.or_enter_path"], size="1", color_scheme="gray"),
         rx.input(
-            placeholder="/data/files or s3://...",
+            placeholder=_t["connections.ph_file_path"],
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
             width="100%",
@@ -271,25 +271,25 @@ def file_upload_fields() -> rx.Component:
 def rest_api_fields() -> rx.Component:
     """Fields for rest_api."""
     return rx.vstack(
-        rx.text("Base URL *", size="2", weight="bold"),
+        rx.text(_t["connections.base_url"], size="2", weight="bold"),
         rx.input(
-            placeholder="https://api.example.com",
+            placeholder=_t["connections.ph_base_url"],
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
             required=True,
             width="100%",
         ),
-        rx.text("API Key (optional)", size="2", weight="bold"),
+        rx.text(_t["connections.api_key"], size="2", weight="bold"),
         rx.input(
-            placeholder="API key for Authorization header",
+            placeholder=_t["connections.ph_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
             type="password",
             width="100%",
         ),
-        rx.text("Extra Headers (optional, JSON)", size="2", weight="bold"),
+        rx.text(_t["connections.extra_headers"], size="2", weight="bold"),
         rx.text_area(
-            placeholder='{"X-Custom-Header": "value"}',
+            placeholder=_t["connections.ph_extra_headers"],
             value=ConnectionState.form_extra_headers,
             on_change=ConnectionState.set_form_extra_headers,
             width="100%",
@@ -304,7 +304,7 @@ def google_sheets_fields() -> rx.Component:
     return rx.vstack(
         rx.text(_t["connections.spreadsheet_url"], " *", size="2", weight="bold"),
         rx.input(
-            placeholder="https://docs.google.com/spreadsheets/d/...",
+            placeholder=_t["connections.ph_spreadsheet_url"],
             value=ConnectionState.form_spreadsheet_url,
             on_change=ConnectionState.set_form_spreadsheet_url,
             required=True,
@@ -312,7 +312,7 @@ def google_sheets_fields() -> rx.Component:
         ),
         rx.text(_t["connections.service_account_json"], " *", size="2", weight="bold"),
         rx.text_area(
-            placeholder='{"type": "service_account", ...}',
+            placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_service_account_json,
             on_change=ConnectionState.set_form_service_account_json,
             width="100%",

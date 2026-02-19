@@ -117,7 +117,7 @@ def _schema_select() -> rx.Component:
             TransformationState.adding_new_schema,
             rx.hstack(
                 rx.input(
-                    placeholder="New schema name",
+                    placeholder=_t["transformations.ph_schema"],
                     value=TransformationState.form_schema_name,
                     on_change=TransformationState.set_new_schema_name,
                     width="100%",
@@ -148,13 +148,13 @@ def transformation_form() -> rx.Component:
                 size="4",
             ),
             rx.input(
-                placeholder="Model name (letters, digits, underscores, hyphens)",
+                placeholder=_t["transformations.ph_name"],
                 value=TransformationState.form_name,
                 on_change=TransformationState.set_form_name,
                 width="100%",
             ),
             rx.input(
-                placeholder="Description",
+                placeholder=_t["transformations.ph_description"],
                 value=TransformationState.form_description,
                 on_change=TransformationState.set_form_description,
                 width="100%",
@@ -162,7 +162,7 @@ def transformation_form() -> rx.Component:
             rx.text(_t["transformations.dest_connection"], size="2", weight="bold"),
             rx.select(
                 TransformationState.dest_conn_options,
-                placeholder="Select connection...",
+                placeholder=_t["transformations.ph_connection"],
                 value=TransformationState.form_connection_option,
                 on_change=TransformationState.set_form_connection_option,
                 width="100%",
@@ -170,7 +170,7 @@ def transformation_form() -> rx.Component:
             rx.text(_t["transformations.sql"], size="2", weight="bold"),
             rx.box(
                 rx.text_area(
-                    placeholder="SELECT * FROM {{ ref('model_name') }}",
+                    placeholder=_t["transformations.ph_sql"],
                     value=TransformationState.form_sql_body,
                     on_change=TransformationState.set_form_sql_body,
                     id="sql-editor",
@@ -196,7 +196,7 @@ def transformation_form() -> rx.Component:
                     rx.vstack(
                         rx.text(_t["transformations.incremental_config"], size="2", weight="bold"),
                         rx.input(
-                            placeholder="unique_key (e.g. id)",
+                            placeholder=_t["transformations.ph_unique_key"],
                             value=TransformationState.form_unique_key,
                             on_change=TransformationState.set_form_unique_key,
                             width="100%",
@@ -204,13 +204,13 @@ def transformation_form() -> rx.Component:
                         rx.text(_t["transformations.strategy"], size="2"),
                         rx.select(
                             ["append", "delete+insert", "merge"],
-                            placeholder="Select strategy...",
+                            placeholder=_t["transformations.ph_strategy"],
                             value=TransformationState.form_strategy,
                             on_change=TransformationState.set_form_strategy,
                             width="100%",
                         ),
                         rx.input(
-                            placeholder="updated_at column (optional, for merge)",
+                            placeholder=_t["transformations.ph_updated_at"],
                             value=TransformationState.form_updated_at,
                             on_change=TransformationState.set_form_updated_at,
                             width="100%",
@@ -232,7 +232,7 @@ def transformation_form() -> rx.Component:
             _schema_select(),
             rx.text(_t["transformations.tags"], size="2", weight="bold"),
             rx.input(
-                placeholder="Comma-separated tags (e.g. finance, daily)",
+                placeholder=_t["transformations.ph_tags"],
                 value=TransformationState.form_tags,
                 on_change=TransformationState.set_form_tags,
                 width="100%",

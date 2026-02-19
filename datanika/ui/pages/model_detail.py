@@ -54,7 +54,7 @@ def description_section() -> rx.Component:
         rx.text_area(
             value=ModelDetailState.form_description,
             on_change=ModelDetailState.set_form_description,
-            placeholder="Add a description for this model...",
+            placeholder=_t["model_detail.ph_description"],
             width="100%",
             rows="3",
         ),
@@ -67,7 +67,7 @@ def alias_section() -> rx.Component:
     return rx.vstack(
         rx.text(_t["model_detail.alias"], size="3", weight="bold"),
         rx.input(
-            placeholder="dbt alias (optional)",
+            placeholder=_t["model_detail.ph_alias"],
             value=ModelDetailState.form_alias,
             on_change=ModelDetailState.set_form_alias,
             width="100%",
@@ -81,7 +81,7 @@ def tags_section() -> rx.Component:
     return rx.vstack(
         rx.text(_t["model_detail.tags"], size="3", weight="bold"),
         rx.input(
-            placeholder="Comma-separated tags (e.g. finance, daily)",
+            placeholder=_t["model_detail.ph_tags"],
             value=ModelDetailState.form_tags,
             on_change=ModelDetailState.set_form_tags,
             width="100%",
@@ -97,7 +97,7 @@ def config_section() -> rx.Component:
         rx.text_area(
             value=ModelDetailState.form_dbt_config,
             on_change=ModelDetailState.set_form_dbt_config,
-            placeholder='{"materialized": "view"}',
+            placeholder=_t["model_detail.ph_dbt_config"],
             width="100%",
             rows="4",
         ),
@@ -139,7 +139,7 @@ def _custom_test_form() -> rx.Component:
                 rx.text(_t["model_detail.add_test"], size="2", weight="bold"),
                 rx.select(
                     _CUSTOM_TEST_OPTIONS,
-                    placeholder="Select test type...",
+                    placeholder=_t["model_detail.ph_test_type"],
                     value=ModelDetailState.custom_test_type,
                     on_change=ModelDetailState.set_custom_test_type,
                     width="100%",
@@ -148,7 +148,7 @@ def _custom_test_form() -> rx.Component:
                 rx.cond(
                     ModelDetailState.custom_test_type == "accepted_values",
                     rx.input(
-                        placeholder="Comma-separated values (e.g. active, inactive)",
+                        placeholder=_t["model_detail.ph_accepted_values"],
                         value=ModelDetailState.custom_test_expression,
                         on_change=ModelDetailState.set_custom_test_expression,
                         width="100%",
@@ -160,13 +160,13 @@ def _custom_test_form() -> rx.Component:
                     ModelDetailState.custom_test_type == "relationships",
                     rx.hstack(
                         rx.input(
-                            placeholder="to (e.g. ref('users'))",
+                            placeholder=_t["model_detail.ph_relationship_to"],
                             value=ModelDetailState.custom_test_min_value,
                             on_change=ModelDetailState.set_custom_test_min_value,
                             width="50%",
                         ),
                         rx.input(
-                            placeholder="field (e.g. id)",
+                            placeholder=_t["model_detail.ph_relationship_field"],
                             value=ModelDetailState.custom_test_max_value,
                             on_change=ModelDetailState.set_custom_test_max_value,
                             width="50%",
@@ -179,7 +179,7 @@ def _custom_test_form() -> rx.Component:
                 rx.cond(
                     ModelDetailState.custom_test_type == "expression_is_true",
                     rx.input(
-                        placeholder="Expression (e.g. amount > 0)",
+                        placeholder=_t["model_detail.ph_expression"],
                         value=ModelDetailState.custom_test_expression,
                         on_change=ModelDetailState.set_custom_test_expression,
                         width="100%",
@@ -190,7 +190,7 @@ def _custom_test_form() -> rx.Component:
                 rx.cond(
                     ModelDetailState.custom_test_type == "not_null_proportion",
                     rx.input(
-                        placeholder="at_least (0.0 - 1.0)",
+                        placeholder=_t["model_detail.ph_proportion"],
                         value=ModelDetailState.custom_test_proportion,
                         on_change=ModelDetailState.set_custom_test_proportion,
                         width="100%",
@@ -202,13 +202,13 @@ def _custom_test_form() -> rx.Component:
                     ModelDetailState.custom_test_type == "accepted_range",
                     rx.hstack(
                         rx.input(
-                            placeholder="min_value",
+                            placeholder=_t["model_detail.ph_min_value"],
                             value=ModelDetailState.custom_test_min_value,
                             on_change=ModelDetailState.set_custom_test_min_value,
                             width="50%",
                         ),
                         rx.input(
-                            placeholder="max_value",
+                            placeholder=_t["model_detail.ph_max_value"],
                             value=ModelDetailState.custom_test_max_value,
                             on_change=ModelDetailState.set_custom_test_max_value,
                             width="50%",
@@ -221,7 +221,7 @@ def _custom_test_form() -> rx.Component:
                 rx.cond(
                     ModelDetailState.custom_test_type == "sequential_values",
                     rx.input(
-                        placeholder="interval (optional, e.g. 1)",
+                        placeholder=_t["model_detail.ph_interval"],
                         value=ModelDetailState.custom_test_min_value,
                         on_change=ModelDetailState.set_custom_test_min_value,
                         width="100%",
@@ -261,7 +261,7 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                 # Description
                 rx.text(_t["model_detail.description"], size="2", weight="bold"),
                 rx.input(
-                    placeholder="Column description...",
+                    placeholder=_t["model_detail.ph_column_description"],
                     value=col.description,
                     on_change=lambda v: ModelDetailState.set_column_description_by_name(
                         col.name, v

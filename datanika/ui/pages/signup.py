@@ -32,19 +32,19 @@ def signup_page() -> rx.Component:
                 rx.vstack(
                     rx.text(_t["auth.full_name"], size="2", weight="medium"),
                     rx.input(
-                        placeholder="Alice Smith",
+                        placeholder=_t["auth.ph_full_name"],
                         name="full_name",
                         width="100%",
                     ),
                     rx.text(_t["auth.email"], size="2", weight="medium"),
                     rx.input(
-                        placeholder="you@example.com",
+                        placeholder=_t["auth.ph_email"],
                         name="email",
                         width="100%",
                     ),
                     rx.text(_t["auth.password"], size="2", weight="medium"),
                     rx.input(
-                        placeholder="Password",
+                        placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",
                         width="100%",

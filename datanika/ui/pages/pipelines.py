@@ -57,7 +57,7 @@ def _models_section() -> rx.Component:
         ),
         rx.hstack(
             rx.input(
-                placeholder="model_name",
+                placeholder=_t["pipelines.ph_model_name"],
                 value=PipelineState.form_new_model_name,
                 on_change=PipelineState.set_form_new_model_name,
                 width="100%",
@@ -88,13 +88,13 @@ def pipeline_form() -> rx.Component:
                 size="4",
             ),
             rx.input(
-                placeholder="Pipeline name",
+                placeholder=_t["pipelines.ph_name"],
                 value=PipelineState.form_name,
                 on_change=PipelineState.set_form_name,
                 width="100%",
             ),
             rx.input(
-                placeholder="Description",
+                placeholder=_t["pipelines.ph_description"],
                 value=PipelineState.form_description,
                 on_change=PipelineState.set_form_description,
                 width="100%",
@@ -105,7 +105,7 @@ def pipeline_form() -> rx.Component:
                 PipelineState.dest_conn_options,
                 value=PipelineState.form_dest_id,
                 on_change=PipelineState.set_form_dest_id,
-                placeholder="Destination connection",
+                placeholder=_t["pipelines.ph_destination"],
                 width="100%",
             ),
             # dbt command
@@ -127,7 +127,7 @@ def pipeline_form() -> rx.Component:
             # Custom selector
             rx.text(_t["pipelines.custom_selector"], size="2", weight="bold"),
             rx.input(
-                placeholder="tag:nightly or +model_a model_b+",
+                placeholder=_t["pipelines.ph_custom_selector"],
                 value=PipelineState.form_custom_selector,
                 on_change=PipelineState.set_form_custom_selector,
                 width="100%",

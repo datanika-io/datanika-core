@@ -84,7 +84,7 @@ def members_card() -> rx.Component:
             rx.heading(_t["settings.invite_member"], size="3"),
             rx.hstack(
                 rx.input(
-                    placeholder="Email address",
+                    placeholder=_t["settings.ph_email"],
                     value=SettingsState.invite_email,
                     on_change=SettingsState.set_invite_email,
                     width="100%",

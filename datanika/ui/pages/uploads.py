@@ -17,7 +17,7 @@ def _mode_fields() -> rx.Component:
             UploadState.form_mode == "single_table",
             rx.fragment(
                 rx.input(
-                    placeholder="Table name (e.g. customers)",
+                    placeholder=_t["uploads.ph_table_name"],
                     value=UploadState.form_table,
                     on_change=UploadState.set_form_table,
                     width="100%",
@@ -31,13 +31,13 @@ def _mode_fields() -> rx.Component:
                     UploadState.form_enable_incremental,
                     rx.vstack(
                         rx.input(
-                            placeholder="Cursor path (e.g. updated_at)",
+                            placeholder=_t["uploads.ph_cursor_path"],
                             value=UploadState.form_cursor_path,
                             on_change=UploadState.set_form_cursor_path,
                             width="100%",
                         ),
                         rx.input(
-                            placeholder="Initial value (optional)",
+                            placeholder=_t["uploads.ph_initial_value"],
                             value=UploadState.form_initial_value,
                             on_change=UploadState.set_form_initial_value,
                             width="100%",
@@ -46,7 +46,7 @@ def _mode_fields() -> rx.Component:
                             ["asc", "desc"],
                             value=UploadState.form_row_order,
                             on_change=UploadState.set_form_row_order,
-                            placeholder="Row order (optional)",
+                            placeholder=_t["uploads.ph_row_order"],
                             width="100%",
                         ),
                         spacing="2",
@@ -59,7 +59,7 @@ def _mode_fields() -> rx.Component:
         rx.cond(
             UploadState.form_mode == "full_database",
             rx.input(
-                placeholder="Table names (comma-separated, optional)",
+                placeholder=_t["uploads.ph_table_names"],
                 value=UploadState.form_table_names,
                 on_change=UploadState.set_form_table_names,
                 width="100%",
@@ -80,13 +80,13 @@ def upload_form() -> rx.Component:
                 size="4",
             ),
             rx.input(
-                placeholder="Upload name",
+                placeholder=_t["uploads.ph_name"],
                 value=UploadState.form_name,
                 on_change=UploadState.set_form_name,
                 width="100%",
             ),
             rx.input(
-                placeholder="Description",
+                placeholder=_t["uploads.ph_description"],
                 value=UploadState.form_description,
                 on_change=UploadState.set_form_description,
                 width="100%",
@@ -95,14 +95,14 @@ def upload_form() -> rx.Component:
                 UploadState.source_conn_options,
                 value=UploadState.form_source_id,
                 on_change=UploadState.set_form_source_id,
-                placeholder="Source connection",
+                placeholder=_t["uploads.ph_source"],
                 width="100%",
             ),
             rx.select(
                 UploadState.dest_conn_options,
                 value=UploadState.form_dest_id,
                 on_change=UploadState.set_form_dest_id,
-                placeholder="Destination connection",
+                placeholder=_t["uploads.ph_destination"],
                 width="100%",
             ),
             # Mode selection
@@ -123,7 +123,7 @@ def upload_form() -> rx.Component:
             rx.cond(
                 UploadState.form_write_disposition == "merge",
                 rx.input(
-                    placeholder="Primary key (required for merge)",
+                    placeholder=_t["uploads.ph_primary_key"],
                     value=UploadState.form_primary_key,
                     on_change=UploadState.set_form_primary_key,
                     width="100%",
@@ -131,7 +131,7 @@ def upload_form() -> rx.Component:
             ),
             # Source schema
             rx.input(
-                placeholder="Source schema (optional, e.g. public)",
+                placeholder=_t["uploads.ph_source_schema"],
                 value=UploadState.form_source_schema,
                 on_change=UploadState.set_form_source_schema,
                 width="100%",
@@ -140,7 +140,7 @@ def upload_form() -> rx.Component:
             _mode_fields(),
             # Batch size
             rx.input(
-                placeholder="Batch size (optional, default 10000)",
+                placeholder=_t["uploads.ph_batch_size"],
                 value=UploadState.form_batch_size,
                 on_change=UploadState.set_form_batch_size,
                 width="100%",
@@ -159,21 +159,21 @@ def upload_form() -> rx.Component:
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=UploadState.form_sc_tables,
                     on_change=UploadState.set_form_sc_tables,
-                    placeholder="Tables",
+                    placeholder=_t["uploads.ph_tables"],
                     width="33%",
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=UploadState.form_sc_columns,
                     on_change=UploadState.set_form_sc_columns,
-                    placeholder="Columns",
+                    placeholder=_t["uploads.ph_columns"],
                     width="33%",
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
                     value=UploadState.form_sc_data_type,
                     on_change=UploadState.set_form_sc_data_type,
-                    placeholder="Data type",
+                    placeholder=_t["uploads.ph_data_type"],
                     width="33%",
                 ),
                 spacing="2",
@@ -188,7 +188,7 @@ def upload_form() -> rx.Component:
             rx.cond(
                 UploadState.form_use_raw_json,
                 rx.text_area(
-                    placeholder='{"write_disposition": "append"}',
+                    placeholder=_t["uploads.ph_raw_json"],
                     value=UploadState.form_config,
                     on_change=UploadState.set_form_config,
                     width="100%",

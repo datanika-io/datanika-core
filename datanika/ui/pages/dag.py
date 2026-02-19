@@ -29,7 +29,7 @@ def add_dependency_form() -> rx.Component:
                     rx.input(
                         value=DagState.form_upstream_id,
                         on_change=DagState.set_form_upstream_id,
-                        placeholder="ID",
+                        placeholder=_t["dag.ph_id"],
                         width="100px",
                     ),
                     spacing="1",
@@ -50,7 +50,7 @@ def add_dependency_form() -> rx.Component:
                     rx.input(
                         value=DagState.form_downstream_id,
                         on_change=DagState.set_form_downstream_id,
-                        placeholder="ID",
+                        placeholder=_t["dag.ph_id"],
                         width="100px",
                     ),
                     spacing="1",

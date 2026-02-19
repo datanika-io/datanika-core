@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     # Data pipeline
-    "dlt[postgres,snowflake,bigquery,mssql]>=1.5",
+    "dlt[postgres,snowflake,bigquery,mssql,clickhouse]>=1.5",
     "dbt-core>=1.7,<1.8",
     "dbt-postgres>=1.7,<1.8",
     "dbt-snowflake>=1.7,<1.8",
@@ -14,6 +14,7 @@ dependencies = [
     "dbt-redshift>=1.7,<1.8",
     "dbt-mysql>=1.7,<1.8",
     "dbt-sqlserver>=1.7,<1.8",
+    "dbt-clickhouse>=1.7,<1.8",
 
     # Google Sheets
     "gspread>=6.0",
@@ -22,6 +23,8 @@ dependencies = [
     # SQL drivers
     "pymysql>=1.1",
     "pymssql>=2.2",
+    "pymongo>=4.0",
+    "clickhouse-connect>=0.7",
     "snowflake-sqlalchemy>=1.7",
     "sqlalchemy-bigquery>=1.11",
 

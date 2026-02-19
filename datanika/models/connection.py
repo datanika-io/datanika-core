@@ -21,6 +21,8 @@ class ConnectionType(enum.StrEnum):
     JSON = "json"
     PARQUET = "parquet"
     GOOGLE_SHEETS = "google_sheets"
+    MONGODB = "mongodb"
+    CLICKHOUSE = "clickhouse"
 
 
 class ConnectionDirection(enum.StrEnum):

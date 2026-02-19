@@ -40,6 +40,8 @@ def connection_form() -> rx.Component:
                     "bigquery",
                     "snowflake",
                     "redshift",
+                    "clickhouse",
+                    "mongodb",
                     "s3",
                     "csv",
                     "json",

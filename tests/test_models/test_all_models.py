@@ -180,6 +180,8 @@ class TestConnection:
         assert ConnectionType.SNOWFLAKE in ConnectionType
         assert ConnectionType.S3 in ConnectionType
         assert ConnectionType.CSV in ConnectionType
+        assert ConnectionType.MONGODB in ConnectionType
+        assert ConnectionType.CLICKHOUSE in ConnectionType
 
         assert ConnectionDirection.SOURCE in ConnectionDirection
         assert ConnectionDirection.DESTINATION in ConnectionDirection

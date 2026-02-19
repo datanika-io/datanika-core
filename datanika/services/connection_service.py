@@ -13,7 +13,7 @@ from datanika.services.naming import validate_name
 
 validate_connection_name = partial(validate_name, entity_label="Connection")
 
-# Connection types that don't support SELECT 1 testing
+# Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
 _NON_DB_TYPES = {
     ConnectionType.S3,
     ConnectionType.CSV,
@@ -21,6 +21,7 @@ _NON_DB_TYPES = {
     ConnectionType.PARQUET,
     ConnectionType.REST_API,
     ConnectionType.GOOGLE_SHEETS,
+    ConnectionType.MONGODB,
 }
 
 
@@ -79,6 +80,15 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
         project = config.get("project", "")
         dataset = config.get("dataset", "")
         return f"bigquery://{project}/{dataset}"
+
+    if connection_type == ConnectionType.CLICKHOUSE:
+        port = config.get("port", 8123)
+        return (
+            f"clickhousedb+connect://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
+        )
 
     raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
 
@@ -177,10 +187,43 @@ class ConnectionService:
             engine.dispose()
 
     @staticmethod
+    def _test_mongodb(config: dict) -> tuple[bool, str]:
+        """Test MongoDB connectivity via server_info(). Returns (success, message)."""
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            return False, "Driver not installed for mongodb"
+
+        host = config.get("host", "localhost")
+        port = config.get("port", 27017)
+        user = config.get("user", "")
+        password = config.get("password", "")
+        database = config.get("database", "")
+
+        if user:
+            uri = (
+                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
+                f"@{host}:{port}/{database}"
+            )
+        else:
+            uri = f"mongodb://{host}:{port}/{database}"
+
+        try:
+            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            client.server_info()
+            client.close()
+            return True, "Connected successfully"
+        except Exception:
+            return False, "Connection failed — check your credentials and network settings"
+
+    @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
         """Test real database connectivity via SELECT 1. Returns (success, message)."""
         if not config:
             return False, "Configuration is empty"
+
+        if connection_type == ConnectionType.MONGODB:
+            return ConnectionService._test_mongodb(config)
 
         if connection_type in _NON_DB_TYPES:
             return True, "Test not applicable for this type"

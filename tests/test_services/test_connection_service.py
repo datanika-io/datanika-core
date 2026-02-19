@@ -387,6 +387,61 @@ class TestTestConnection:
         assert ok is True
         assert "not applicable" in msg.lower()
 
+    def test_mongodb_connection_mocked(self, svc):
+        """Mock pymongo.MongoClient to verify server_info() is called."""
+        from unittest.mock import MagicMock, patch
+
+        mock_client_cls = MagicMock()
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        with patch.dict("sys.modules", {"pymongo": MagicMock(MongoClient=mock_client_cls)}):
+            ok, msg = svc.test_connection(
+                {"host": "localhost", "port": 27017, "database": "testdb"},
+                ConnectionType.MONGODB,
+            )
+        assert ok is True
+        assert msg == "Connected successfully"
+        mock_client.server_info.assert_called_once()
+        mock_client.close.assert_called_once()
+
+    def test_mongodb_connection_failure(self, svc):
+        """Mock pymongo.MongoClient raising an exception."""
+        from unittest.mock import MagicMock, patch
+
+        mock_client_cls = MagicMock()
+        mock_client_cls.return_value.server_info.side_effect = Exception("refused")
+
+        with patch.dict("sys.modules", {"pymongo": MagicMock(MongoClient=mock_client_cls)}):
+            ok, msg = svc.test_connection(
+                {"host": "badhost", "database": "testdb"},
+                ConnectionType.MONGODB,
+            )
+        assert ok is False
+        assert len(msg) > 0
+
+    def test_clickhouse_connection_mocked(self, svc):
+        """Mock create_engine to verify SELECT 1 is executed for ClickHouse."""
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "datanika.services.connection_service.create_engine", return_value=mock_engine
+        ):
+            ok, msg = svc.test_connection(
+                {
+                    "host": "localhost", "port": 8123,
+                    "user": "default", "password": "", "database": "default",
+                },
+                ConnectionType.CLICKHOUSE,
+            )
+        assert ok is True
+        assert msg == "Connected successfully"
+
 
 class TestBuildSaUrl:
     def test_postgres_url(self):
@@ -475,6 +530,19 @@ class TestBuildSaUrl:
         )
         assert url == "bigquery://my-project/raw_data"
 
+    def test_clickhouse_url(self):
+        from datanika.services.connection_service import _build_sa_url
+
+        config = {
+            "host": "ch.example.com", "port": 8123,
+            "user": "default", "password": "secret", "database": "analytics",
+        }
+        url = _build_sa_url(config, ConnectionType.CLICKHOUSE)
+        assert url.startswith("clickhousedb+connect://")
+        assert "ch.example.com" in url
+        assert "8123" in url
+        assert "analytics" in url
+
     def test_special_chars_encoded(self):
         from datanika.services.connection_service import _build_sa_url
 
@@ -491,6 +559,12 @@ class TestBuildSaUrl:
 
         with pytest.raises(ValueError, match="Unsupported"):
             _build_sa_url({"bucket": "x"}, ConnectionType.S3)
+
+    def test_mongodb_url_raises(self):
+        from datanika.services.connection_service import _build_sa_url
+
+        with pytest.raises(ValueError, match="Unsupported"):
+            _build_sa_url({"host": "localhost"}, ConnectionType.MONGODB)
 
 
 class TestConnectionNameValidation:
@@ -529,3 +603,11 @@ class TestConnectionNameValidation:
         )
         with pytest.raises(ValueError, match="alphanumeric"):
             svc.update_connection(db_session, org.id, conn.id, name="bad@name")
+
+
+class TestExecuteQueryRejection:
+    def test_mongodb_rejected(self):
+        with pytest.raises(ValueError, match="Cannot execute SQL"):
+            ConnectionService.execute_query(
+                {"host": "localhost"}, ConnectionType.MONGODB, "SELECT 1"
+            )

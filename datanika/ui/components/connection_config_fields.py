@@ -220,15 +220,11 @@ def file_upload_fields() -> rx.Component:
     return rx.vstack(
         rx.text(_t["connections.upload_file"], size="2", weight="bold"),
         rx.upload(
-            rx.vstack(
-                rx.text(_t["connections.drag_drop"]),
-                rx.text(
-                    _t["connections.max_file_size"],
-                    size="1",
-                    color_scheme="gray",
-                ),
-                align="center",
-                spacing="1",
+            rx.button(
+                rx.icon("upload", size=16),
+                _t["connections.upload_file"],
+                variant="outline",
+                cursor="pointer",
             ),
             id="file_upload",
             max_size=20 * 1024 * 1024,
@@ -240,8 +236,7 @@ def file_upload_fields() -> rx.Component:
             on_drop=ConnectionState.handle_file_upload(
                 rx.upload_files(upload_id="file_upload")
             ),
-            border="1px dashed var(--gray-7)",
-            padding="4",
+            no_drag=True,
             width="100%",
         ),
         rx.cond(
@@ -327,6 +322,52 @@ def google_sheets_fields() -> rx.Component:
     )
 
 
+def mongodb_fields() -> rx.Component:
+    """Fields for mongodb (host/port/user/pass/database — no schema)."""
+    return rx.vstack(
+        rx.text(_t["connections.host"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_host"],
+            value=ConnectionState.form_host,
+            on_change=ConnectionState.set_form_host,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.port"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_port"],
+            value=ConnectionState.form_port,
+            on_change=ConnectionState.set_form_port,
+            width="100%",
+        ),
+        rx.text(_t["connections.user"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_user"],
+            value=ConnectionState.form_user,
+            on_change=ConnectionState.set_form_user,
+            width="100%",
+        ),
+        rx.text(_t["connections.password"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_password"],
+            value=ConnectionState.form_password,
+            on_change=ConnectionState.set_form_password,
+            type="password",
+            width="100%",
+        ),
+        rx.text(_t["connections.database"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_database"],
+            value=ConnectionState.form_database,
+            on_change=ConnectionState.set_form_database,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def type_fields() -> rx.Component:
     """Render the appropriate config fields based on selected connection type."""
     return rx.fragment(
@@ -334,7 +375,8 @@ def type_fields() -> rx.Component:
             (ConnectionState.form_type == "postgres")
             | (ConnectionState.form_type == "mysql")
             | (ConnectionState.form_type == "mssql")
-            | (ConnectionState.form_type == "redshift"),
+            | (ConnectionState.form_type == "redshift")
+            | (ConnectionState.form_type == "clickhouse"),
             db_fields(),
         ),
         rx.cond(ConnectionState.form_type == "sqlite", sqlite_fields()),
@@ -349,4 +391,5 @@ def type_fields() -> rx.Component:
         ),
         rx.cond(ConnectionState.form_type == "rest_api", rest_api_fields()),
         rx.cond(ConnectionState.form_type == "google_sheets", google_sheets_fields()),
+        rx.cond(ConnectionState.form_type == "mongodb", mongodb_fields()),
     )

@@ -15,9 +15,12 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 SOURCE_TYPES = {
     "postgres", "mysql", "mssql", "sqlite", "rest_api",
     "s3", "csv", "json", "parquet", "google_sheets",
+    "mongodb", "clickhouse",
 }
 # Types that can serve as destinations (databases + cloud warehouses)
-DESTINATION_TYPES = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
+DESTINATION_TYPES = {
+    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift", "clickhouse",
+}
 
 # Default ports for database connection types
 _DEFAULT_PORTS: dict[str, str] = {
@@ -25,10 +28,12 @@ _DEFAULT_PORTS: dict[str, str] = {
     "mysql": "3306",
     "mssql": "1433",
     "redshift": "5439",
+    "mongodb": "27017",
+    "clickhouse": "8123",
 }
 
-# Connection types that use the SQL database form group
-_DB_TYPES = {"postgres", "mysql", "mssql", "redshift"}
+# Connection types that use the SQL database form group (host/port/user/pass/db/schema)
+_DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse"}
 
 
 def _validate_connection_form(
@@ -85,6 +90,11 @@ def _validate_connection_form(
     elif conn_type in ("csv", "json", "parquet"):
         if not bucket_url.strip() and not uploaded_file_id:
             return "File upload or file path is required"
+    elif conn_type == "mongodb":
+        if not host.strip():
+            return "Host is required"
+        if not database.strip():
+            return "Database is required"
     elif conn_type == "google_sheets":
         if not spreadsheet_url.strip():
             return "Spreadsheet URL is required"
@@ -376,6 +386,18 @@ class ConnectionState(BaseState):
             if self.form_extra_headers:
                 config["extra_headers"] = self.form_extra_headers
 
+        elif t == "mongodb":
+            if self.form_host:
+                config["host"] = self.form_host
+            if self.form_port:
+                config["port"] = int(self.form_port)
+            if self.form_user:
+                config["user"] = self.form_user
+            if self.form_password:
+                config["password"] = self.form_password
+            if self.form_database:
+                config["database"] = self.form_database
+
         return config
 
     def _reset_form_fields(self):
@@ -488,6 +510,12 @@ class ConnectionState(BaseState):
             self.form_base_url = config.get("base_url", "")
             self.form_api_key = config.get("api_key", "")
             self.form_extra_headers = config.get("extra_headers", "")
+        elif conn_type == "mongodb":
+            self.form_host = config.get("host", "")
+            self.form_port = str(config.get("port", _DEFAULT_PORTS.get("mongodb", "")))
+            self.form_user = config.get("user", "")
+            self.form_password = config.get("password", "")
+            self.form_database = config.get("database", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()

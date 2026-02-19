@@ -31,6 +31,7 @@ services:
 
   app:
     build: .
+    image: datanika-io/app:latest
     container_name: datanika-app
     ports:
       - "3000:3000"
@@ -50,6 +51,7 @@ services:
 
   celery:
     build: .
+    image: datanika-io/celery:latest
     container_name: datanika-celery
     env_file:
       - .env.docker

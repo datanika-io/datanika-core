@@ -7,14 +7,13 @@ requires-python = ">=3.12"
 dependencies = [
     # Data pipeline
     "dlt[postgres,snowflake,bigquery,mssql]>=1.5",
-    "dbt-core>=1.9",
-    "dbt-postgres>=1.9",
-    "dbt-snowflake>=1.9",
-    "dbt-bigquery>=1.9",
-    "dbt-redshift>=1.9",
-    "dbt-mysql>=1.0",
-    "dbt-sqlserver>=1.0",
-    "dbt-sqlite>=1.0",
+    "dbt-core>=1.7,<1.8",
+    "dbt-postgres>=1.7,<1.8",
+    "dbt-snowflake>=1.7,<1.8",
+    "dbt-bigquery>=1.7,<1.8",
+    "dbt-redshift>=1.7,<1.8",
+    "dbt-mysql>=1.7,<1.8",
+    "dbt-sqlserver>=1.7,<1.8",
 
     # Google Sheets
     "gspread>=6.0",

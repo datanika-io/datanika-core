@@ -48,7 +48,28 @@
       "Bash(GIT_SEQUENCE_EDITOR=\"sed -i ''s/^pick fb81724/reword fb81724/''\" git rebase -i origin/dev)",
       "Bash(git stash:*)",
       "Bash(git push:*)",
-      "Bash(docker-compose cp:*)"
+      "Bash(docker-compose cp:*)",
+      "WebFetch(domain:support.google.com)",
+      "WebFetch(domain:docs.github.com)",
+      "Bash(docker images:*)",
+      "Bash(sort:*)",
+      "Bash(docker system:*)",
+      "Bash(docker rmi:*)",
+      "Bash(docker container prune:*)",
+      "Bash(docker builder:*)",
+      "Bash(docker history:*)",
+      "Bash(MSYS_NO_PATHCONV=1 docker run:*)",
+      "Bash(docker-compose build:*)",
+      "Bash(npm create:*)",
+      "Bash(cmd //c \"node --version\")",
+      "Bash(cmd //c \"npm --version\")",
+      "Bash(cmd //c \"echo %PATH%\")",
+      "Bash(tr:*)",
+      "Bash(powershell.exe -Command \"Invoke-WebRequest -Uri ''https://github.com/cli/cli/releases/download/v2.67.0/gh_2.67.0_windows_amd64.zip'' -OutFile ''D:/Temp/gh.zip''; Expand-Archive -Path ''D:/Temp/gh.zip'' -DestinationPath ''D:/Tools/gh'' -Force; Write-Output ''Done''\")",
+      "Bash(cmd //c start http://localhost:4322)",
+      "Bash(uv pip index versions:*)",
+      "WebFetch(domain:pypi.org)",
+      "Bash(uv lock:*)"
     ]
   }
 }

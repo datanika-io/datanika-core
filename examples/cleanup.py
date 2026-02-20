@@ -164,11 +164,19 @@ def cleanup_pg(conn):
     cur = conn.cursor()
     # Bypass FK checks for the session
     cur.execute("SET session_replication_role = 'replica'")
+    truncated = 0
     for table in PG_TABLES:
-        cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
+        cur.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = %s)",
+            (table,),
+        )
+        if cur.fetchone()[0]:
+            cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
+            truncated += 1
     cur.execute("SET session_replication_role = 'origin'")
     cur.close()
-    print(f"  PostgreSQL: truncated {len(PG_TABLES)} tables")
+    print(f"  PostgreSQL: truncated {truncated}/{len(PG_TABLES)} tables")
 
 
 # MySQL (example) — reverse FK order, but FK checks disabled anyway

@@ -117,6 +117,29 @@ This:
 
 Accepts `--pg-*`, `--mysql-*`, `--mssql-*`, and `--mongo-*` connection args (defaults match `docker-compose.yml`).
 
+## Cython-Optimized Generators (Optional)
+
+The seed script's data generation loops can be compiled to C with Cython for faster execution at high `--multiplier` values. This is entirely optional — the script falls back to pure Python automatically.
+
+```bash
+# Install build dependencies (inside the venv)
+uv pip install cython setuptools
+
+# Compile (produces _seed_generators.cp312-win_amd64.pyd on Windows, .so on Linux/macOS)
+cd datanika/examples
+python build_cython.py build_ext --inplace
+```
+
+On Windows, Microsoft C++ Build Tools must be installed (`cl.exe`). On Linux/macOS, `gcc` is typically available by default.
+
+Once compiled, `seed_data.py` picks up the Cython module automatically — visible in verbose mode:
+
+```bash
+python seed_data.py -v   # log shows "Using Cython-optimized generators"
+```
+
+Without the compiled module, the same command runs using pure Python (log shows "Cython generators not available, using pure Python"). Both paths produce identical output for the same `--seed`.
+
 ## Cleanup (destroy containers)
 
 ```bash

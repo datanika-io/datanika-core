@@ -24,6 +24,7 @@ class PipelineItem(BaseModel):
     model_count: int = 0
     status: str = ""
     full_refresh: bool = False
+    last_run_status: str = ""
 
 
 class ModelEntry(BaseModel):
@@ -183,25 +184,33 @@ class PipelineState(BaseState):
     async def load_pipelines(self):
         org_id = await self._get_org_id()
         pipeline_svc, conn_svc = self._get_services()
+        exec_svc = ExecutionService()
         with get_sync_session() as session:
             conns = conn_svc.list_connections(session, org_id)
             conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in conns}
             rows = pipeline_svc.list_pipelines(session, org_id)
-            self.pipelines = [
-                PipelineItem(
-                    id=p.id,
-                    name=p.name,
-                    description=p.description or "",
-                    command=p.command.value,
-                    connection_name=conn_names.get(
-                        p.destination_connection_id, f"#{p.destination_connection_id}"
-                    ),
-                    model_count=len(p.models) if p.models else 0,
-                    status=p.status.value,
-                    full_refresh=p.full_refresh,
+            items = []
+            for p in rows:
+                runs = exec_svc.list_runs(
+                    session, org_id, target_type=NodeType.PIPELINE, target_id=p.id, limit=1
                 )
-                for p in rows
-            ]
+                last_status = runs[0].status.value if runs else ""
+                items.append(
+                    PipelineItem(
+                        id=p.id,
+                        name=p.name,
+                        description=p.description or "",
+                        command=p.command.value,
+                        connection_name=conn_names.get(
+                            p.destination_connection_id, f"#{p.destination_connection_id}"
+                        ),
+                        model_count=len(p.models) if p.models else 0,
+                        status=p.status.value,
+                        full_refresh=p.full_refresh,
+                        last_run_status=last_status,
+                    )
+                )
+            self.pipelines = items
             self.dest_conn_options = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns

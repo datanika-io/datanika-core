@@ -25,6 +25,7 @@ class UploadItem(BaseModel):
     destination_connection_id: int = 0
     source_connection_name: str = ""
     destination_connection_name: str = ""
+    last_run_status: str = ""
 
 
 class UploadState(BaseState):
@@ -174,27 +175,35 @@ class UploadState(BaseState):
     async def load_uploads(self):
         org_id = await self._get_org_id()
         upload_svc, conn_svc = self._get_services()
+        exec_svc = ExecutionService()
         with get_sync_session() as session:
             conns = conn_svc.list_connections(session, org_id)
             conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in conns}
             rows = upload_svc.list_uploads(session, org_id)
-            self.uploads = [
-                UploadItem(
-                    id=p.id,
-                    name=p.name,
-                    description=p.description or "",
-                    status=p.status.value,
-                    source_connection_id=p.source_connection_id,
-                    destination_connection_id=p.destination_connection_id,
-                    source_connection_name=conn_names.get(
-                        p.source_connection_id, f"#{p.source_connection_id}"
-                    ),
-                    destination_connection_name=conn_names.get(
-                        p.destination_connection_id, f"#{p.destination_connection_id}"
-                    ),
+            items = []
+            for p in rows:
+                runs = exec_svc.list_runs(
+                    session, org_id, target_type=NodeType.UPLOAD, target_id=p.id, limit=1
                 )
-                for p in rows
-            ]
+                last_status = runs[0].status.value if runs else ""
+                items.append(
+                    UploadItem(
+                        id=p.id,
+                        name=p.name,
+                        description=p.description or "",
+                        status=p.status.value,
+                        source_connection_id=p.source_connection_id,
+                        destination_connection_id=p.destination_connection_id,
+                        source_connection_name=conn_names.get(
+                            p.source_connection_id, f"#{p.source_connection_id}"
+                        ),
+                        destination_connection_name=conn_names.get(
+                            p.destination_connection_id, f"#{p.destination_connection_id}"
+                        ),
+                        last_run_status=last_status,
+                    )
+                )
+            self.uploads = items
             # Load connections filtered by capability
             self.source_conn_options = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"

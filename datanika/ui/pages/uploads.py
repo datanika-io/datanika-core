@@ -9,6 +9,22 @@ from datanika.ui.state.upload_state import UploadState
 _t = I18nState.translations
 
 
+def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
+    return rx.cond(
+        status == "success",
+        "green",
+        rx.cond(
+            status == "failed",
+            "red",
+            rx.cond(
+                (status == "running") | (status == "pending"),
+                "yellow",
+                "gray",
+            ),
+        ),
+    )
+
+
 def _mode_fields() -> rx.Component:
     """Conditional fields that depend on selected mode."""
     return rx.fragment(
@@ -267,6 +283,7 @@ def uploads_table() -> rx.Component:
                             rx.button(
                                 _t["common.run"],
                                 size="1",
+                                color_scheme=_run_button_color(u.last_run_status),
                                 on_click=UploadState.run_upload(u.id),
                             ),
                             rx.button(

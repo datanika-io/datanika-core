@@ -8,6 +8,23 @@ from datanika.ui.state.pipeline_state import PipelineState
 
 _t = I18nState.translations
 
+
+def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
+    return rx.cond(
+        status == "success",
+        "green",
+        rx.cond(
+            status == "failed",
+            "red",
+            rx.cond(
+                (status == "running") | (status == "pending"),
+                "yellow",
+                "gray",
+            ),
+        ),
+    )
+
+
 COMMAND_OPTIONS = ["build", "run", "test", "seed", "snapshot", "compile"]
 
 _MODEL_AUTOCOMPLETE_JS = """
@@ -311,6 +328,7 @@ def pipelines_table() -> rx.Component:
                             rx.button(
                                 _t["common.run"],
                                 size="1",
+                                color_scheme=_run_button_color(p.last_run_status),
                                 on_click=PipelineState.run_pipeline(p.id),
                             ),
                             rx.button(

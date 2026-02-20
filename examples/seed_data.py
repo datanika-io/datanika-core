@@ -48,16 +48,27 @@ def parse_args():
     p.add_argument("--mongo-host", default=os.getenv("MONGO_HOST", conf.get("mongodb", "host", fallback="localhost")))
     p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", conf.get("mongodb", "port", fallback="27017"))))
     p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", conf.get("mongodb", "database", fallback="online_store")))
+    p.add_argument("--multiplier", type=float, default=float(conf.get("seed", "multiplier", fallback="1")), help="Scale all record counts by this factor")
     p.add_argument("--seed", type=int, default=int(conf.get("seed", "seed", fallback="42")), help="Random seed for reproducibility")
     p.add_argument("--users", type=int, default=int(conf.get("seed", "users", fallback="500")), help="Number of users (MongoDB)")
-    p.add_argument("--sellers", type=int, default=int(conf.get("seed", "sellers", fallback="50")), help="Number of sellers (max 50)")
+    p.add_argument("--sellers", type=int, default=int(conf.get("seed", "sellers", fallback="50")), help="Number of sellers")
     p.add_argument("--goods", type=int, default=int(conf.get("seed", "goods", fallback="500")), help="Number of goods")
     p.add_argument("--orders", type=int, default=int(conf.get("seed", "orders", fallback="2000")), help="Number of orders")
     p.add_argument("--order-items", type=int, default=int(conf.get("seed", "order_items", fallback="5000")), help="Target number of order items")
     p.add_argument("--ratings", type=int, default=int(conf.get("seed", "ratings", fallback="3000")), help="Number of ratings (MSSQL)")
     p.add_argument("--reviews", type=int, default=int(conf.get("seed", "reviews", fallback="1000")), help="Number of reviews (MSSQL)")
     args = p.parse_args()
-    args.sellers = min(args.sellers, len(SELLER_NAMES))
+
+    # Apply multiplier to all record counts
+    if args.multiplier != 1:
+        args.users = max(1, int(args.users * args.multiplier))
+        args.sellers = max(1, int(args.sellers * args.multiplier))
+        args.goods = max(1, int(args.goods * args.multiplier))
+        args.orders = max(1, int(args.orders * args.multiplier))
+        args.order_items = max(1, int(args.order_items * args.multiplier))
+        args.ratings = max(1, int(args.ratings * args.multiplier))
+        args.reviews = max(1, int(args.reviews * args.multiplier))
+
     return args
 
 
@@ -226,15 +237,33 @@ def generate_users(n=500):
     return users
 
 
+def _random_suffix():
+    """Generate 1–3 random uppercase letters, e.g. 'GRD', 'DF', 'A'."""
+    return "".join(random.choices(string.ascii_uppercase, k=random.randint(1, 3)))
+
+
 def generate_sellers(n=50):
     sellers = []
-    names = SELLER_NAMES[:n]
+    used_names = set()
+    countries = list(set(COUNTRIES))  # deduplicate weighted list
     for sid in range(1, n + 1):
+        base = random.choice(SELLER_NAMES)
+        country = random.choice(countries)
+        # First occurrence of a base name keeps it bare
+        if base not in used_names:
+            name = base
+        else:
+            # Append random letter suffix + country until unique
+            for _ in range(1000):
+                name = f"{base} {_random_suffix()} {country}"
+                if name not in used_names:
+                    break
+        used_names.add(name)
         sellers.append({
             "id": sid,
-            "name": names[sid - 1],
+            "name": name,
             "registered_at": random_datetime_between(START, NOW - timedelta(days=60)),
-            "country": random.choice(COUNTRIES),
+            "country": country,
         })
     return sellers
 

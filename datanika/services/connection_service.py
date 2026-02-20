@@ -233,10 +233,14 @@ class ConnectionService:
         except ValueError as e:
             return False, str(e)
 
+        connect_args: dict = {}
+        if connection_type == ConnectionType.MSSQL:
+            connect_args = {"login_timeout": 5}
+        elif connection_type != ConnectionType.SQLITE:
+            connect_args = {"connect_timeout": 5}
+
         try:
-            engine = create_engine(url, connect_args={"connect_timeout": 5}
-                                   if connection_type not in (ConnectionType.SQLITE,)
-                                   else {})
+            engine = create_engine(url, connect_args=connect_args)
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
 

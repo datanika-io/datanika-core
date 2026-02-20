@@ -443,6 +443,59 @@ class TestTestConnection:
         assert msg == "Connected successfully"
 
 
+class TestTestConnectionConnectArgs:
+    """Verify each connection type passes the correct timeout kwarg to create_engine."""
+
+    _DB_CONFIG = {"host": "h", "port": 1234, "user": "u", "password": "p", "database": "d"}
+
+    def _run(self, svc, connection_type, config=None):
+        from unittest.mock import MagicMock, patch
+
+        mock_engine = MagicMock()
+        mock_conn = MagicMock()
+        mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch(
+            "datanika.services.connection_service.create_engine", return_value=mock_engine
+        ) as mock_create:
+            svc.test_connection(config or self._DB_CONFIG, connection_type)
+
+        return mock_create.call_args
+
+    def test_mssql_uses_login_timeout(self, svc):
+        call = self._run(svc, ConnectionType.MSSQL)
+        assert call.kwargs["connect_args"] == {"login_timeout": 5}
+
+    def test_postgres_uses_connect_timeout(self, svc):
+        call = self._run(svc, ConnectionType.POSTGRES)
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+
+    def test_mysql_uses_connect_timeout(self, svc):
+        call = self._run(svc, ConnectionType.MYSQL)
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+
+    def test_redshift_uses_connect_timeout(self, svc):
+        call = self._run(svc, ConnectionType.REDSHIFT)
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+
+    def test_clickhouse_uses_connect_timeout(self, svc):
+        call = self._run(svc, ConnectionType.CLICKHOUSE)
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+
+    def test_snowflake_uses_connect_timeout(self, svc):
+        config = {
+            "account": "acct", "user": "u", "password": "p",
+            "database": "d", "schema": "s",
+        }
+        call = self._run(svc, ConnectionType.SNOWFLAKE, config)
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+
+    def test_sqlite_uses_no_connect_args(self, svc):
+        call = self._run(svc, ConnectionType.SQLITE, {"path": ":memory:"})
+        assert call.kwargs["connect_args"] == {}
+
+
 class TestBuildSaUrl:
     def test_postgres_url(self):
         from datanika.services.connection_service import _build_sa_url

@@ -34,7 +34,16 @@ def parse_args():
     p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", "27017")))
     p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", "online_store"))
     p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    return p.parse_args()
+    p.add_argument("--users", type=int, default=500, help="Number of users (MongoDB)")
+    p.add_argument("--sellers", type=int, default=50, help="Number of sellers (max 50)")
+    p.add_argument("--goods", type=int, default=500, help="Number of goods")
+    p.add_argument("--orders", type=int, default=2000, help="Number of orders")
+    p.add_argument("--order-items", type=int, default=5000, help="Target number of order items")
+    p.add_argument("--ratings", type=int, default=3000, help="Number of ratings (MSSQL)")
+    p.add_argument("--reviews", type=int, default=1000, help="Number of reviews (MSSQL)")
+    args = p.parse_args()
+    args.sellers = min(args.sellers, len(SELLER_NAMES))
+    return args
 
 
 # ---------------------------------------------------------------------------
@@ -307,9 +316,10 @@ def generate_sellers(n=50):
 
 
 def generate_goods(sellers, n=500):
-    # Pareto-like: 20% of sellers (top 10) get ~60% of goods
-    top_seller_ids = [s["id"] for s in sellers[:10]]
-    other_seller_ids = [s["id"] for s in sellers[10:]]
+    # Pareto-like: top 20% of sellers get ~60% of goods
+    top_count = max(1, len(sellers) // 5)
+    top_seller_ids = [s["id"] for s in sellers[:top_count]]
+    other_seller_ids = [s["id"] for s in sellers[top_count:]]
 
     goods = []
     for gid in range(1, n + 1):
@@ -528,14 +538,14 @@ def main():
     setup_mssql_schema(mssql_conn, args.mssql_db, mssql_schema)
 
     print("\nGenerating data...")
-    users = generate_users(500)
+    users = generate_users(args.users)
     user_ids = [u["user_id"] for u in users]
-    sellers = generate_sellers(50)
-    goods = generate_goods(sellers, 500)
+    sellers = generate_sellers(args.sellers)
+    goods = generate_goods(sellers, args.goods)
     good_ids = [g["id"] for g in goods]
-    orders, order_items = generate_orders_and_items(user_ids, goods, 2000, 5000)
-    ratings = generate_ratings(user_ids, good_ids, 3000)
-    reviews = generate_reviews(ratings, 1000)
+    orders, order_items = generate_orders_and_items(user_ids, goods, args.orders, args.order_items)
+    ratings = generate_ratings(user_ids, good_ids, args.ratings)
+    reviews = generate_reviews(ratings, args.reviews)
 
     print("\nInserting data...")
 

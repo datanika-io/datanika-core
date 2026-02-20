@@ -66,7 +66,41 @@ The example containers join the `datanika_default` network, so the main app and 
 | MSSQL | localhost | 1433 | sa | SA_Password1! | online_store |
 | MongoDB | localhost | 27017 | — | — | online_store |
 
-## Cleanup
+## Custom Data Volumes
+
+The seed script accepts CLI args to control how many records are generated (defaults match the table above):
+
+```bash
+python examples/seed_data.py --users 100 --sellers 10 --goods 50 --orders 200 --order-items 500 --ratings 300 --reviews 100
+```
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--users` | 500 | MongoDB users |
+| `--sellers` | 50 | Capped at 50 (fixed name list) |
+| `--goods` | 500 | |
+| `--orders` | 2000 | |
+| `--order-items` | 5000 | Target, not exact |
+| `--ratings` | 3000 | |
+| `--reviews` | 1000 | Subset of ratings |
+
+## Cleanup (reset data)
+
+Wipe all data from **every** database — Datanika (PostgreSQL) and the three example databases — without recreating containers:
+
+```bash
+python examples/cleanup.py
+```
+
+This:
+- **PostgreSQL**: truncates all 14 Datanika tables (organizations, users, connections, pipelines, etc.) with `RESTART IDENTITY`
+- **MySQL**: truncates sellers, goods, orders, order_items
+- **MSSQL**: truncates goods_ratings, reviews
+- **MongoDB**: drops the users collection
+
+Accepts `--pg-*`, `--mysql-*`, `--mssql-*`, and `--mongo-*` connection args (defaults match `docker-compose.yml`).
+
+## Cleanup (destroy containers)
 
 ```bash
 cd datanika/examples

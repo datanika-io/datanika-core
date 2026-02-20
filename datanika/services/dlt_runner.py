@@ -54,14 +54,25 @@ FILTER_OPS = {
 }
 
 
-def _extract_rows_loaded(load_info) -> int:
-    """Sum items_count across all job metrics in a dlt LoadInfo."""
-    total = 0
-    for metrics_list in load_info.metrics.values():
-        for metrics in metrics_list:
-            for jm in metrics.get("job_metrics", {}).values():
-                total += getattr(jm, "items_count", 0)
-    return total
+def _extract_rows_loaded(pipeline) -> int:
+    """Extract total rows loaded from dlt pipeline's normalize step.
+
+    dlt 1.21+ stores items_count in NormalizeInfo.row_counts (from the
+    normalize step), not in LoadJobMetrics. We read it from the pipeline's
+    last_trace after run() completes.
+    """
+    try:
+        trace = pipeline.last_trace
+        if trace is None:
+            return 0
+        normalize_info = trace.last_normalize_info
+        if normalize_info is None:
+            return 0
+        row_counts = normalize_info.row_counts
+        # row_counts is {table_name: count} — exclude dlt internal tables
+        return sum(v for k, v in row_counts.items() if not k.startswith("_dlt_"))
+    except Exception:
+        return 0
 
 
 class DltRunnerError(ValueError):
@@ -331,7 +342,7 @@ class DltRunnerService:
 
         run_kwargs = {k: v for k, v in dlt_config.items() if k not in INTERNAL_CONFIG_KEYS}
         load_info = pipeline.run(source, **run_kwargs)
-        rows_loaded = _extract_rows_loaded(load_info)
+        rows_loaded = _extract_rows_loaded(pipeline)
 
         return {
             "rows_loaded": rows_loaded,

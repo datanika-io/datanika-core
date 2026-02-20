@@ -8,6 +8,7 @@ import yaml
 from datanika.services.dbt_project import (
     DbtProjectError,
     DbtProjectService,
+    _sum_rows_affected,
     _validate_identifier,
 )
 
@@ -321,6 +322,73 @@ class TestRunModel:
     def test_project_not_found_raises(self, svc):
         with pytest.raises(DbtProjectError, match="project not found"):
             svc.run_model(999, "nonexistent")
+
+    @patch("datanika.services.dbt_project.dbtRunner")
+    def test_dict_adapter_response_extracts_rows(self, mock_runner_cls, svc):
+        """Regression: dbt 1.7 returns adapter_response as dict, not object."""
+        svc.ensure_project(1)
+        svc.write_model(1, "test_model", "SELECT 1")
+        svc.generate_profiles_yml(
+            1, "postgres",
+            {"host": "h", "port": 5432, "user": "u", "password": "p",
+             "database": "d", "schema": "s"},
+        )
+
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [
+            MagicMock(adapter_response={"rows_affected": 150, "code": "INSERT 0 150"})
+        ]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        result = svc.run_model(1, "test_model")
+        assert result["rows_affected"] == 150
+
+
+# ---------------------------------------------------------------------------
+# _sum_rows_affected
+# ---------------------------------------------------------------------------
+class TestSumRowsAffected:
+    def test_dict_adapter_response(self):
+        """dbt 1.7: adapter_response is a dict."""
+        mock_result = MagicMock()
+        mock_result.result = [
+            MagicMock(adapter_response={"rows_affected": 100, "code": "INSERT 0 100"}),
+            MagicMock(adapter_response={"rows_affected": 50}),
+        ]
+        assert _sum_rows_affected(mock_result) == 150
+
+    def test_object_adapter_response(self):
+        """Older dbt or future: adapter_response as object with attribute."""
+        resp = MagicMock()
+        resp.rows_affected = 42
+        mock_result = MagicMock()
+        mock_result.result = [MagicMock(adapter_response=resp)]
+        assert _sum_rows_affected(mock_result) == 42
+
+    def test_empty_result(self):
+        mock_result = MagicMock()
+        mock_result.result = []
+        assert _sum_rows_affected(mock_result) == 0
+
+    def test_none_result(self):
+        mock_result = MagicMock()
+        mock_result.result = None
+        assert _sum_rows_affected(mock_result) == 0
+
+    def test_none_rows_affected_in_dict(self):
+        mock_result = MagicMock()
+        mock_result.result = [
+            MagicMock(adapter_response={"rows_affected": None})
+        ]
+        assert _sum_rows_affected(mock_result) == 0
+
+    def test_missing_rows_affected_key(self):
+        mock_result = MagicMock()
+        mock_result.result = [
+            MagicMock(adapter_response={"code": "CREATE VIEW"})
+        ]
+        assert _sum_rows_affected(mock_result) == 0
 
 
 # ---------------------------------------------------------------------------

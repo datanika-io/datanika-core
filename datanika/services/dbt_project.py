@@ -21,6 +21,23 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
 
 
+def _sum_rows_affected(result) -> int:
+    """Extract total rows_affected from a dbt invocation result.
+
+    dbt 1.7 stores adapter_response as a plain dict, so we use .get()
+    instead of attribute access.
+    """
+    total = 0
+    if result.result:
+        for node_result in result.result:
+            resp = getattr(node_result, "adapter_response", None)
+            if isinstance(resp, dict):
+                total += resp.get("rows_affected") or 0
+            elif resp and hasattr(resp, "rows_affected"):
+                total += resp.rows_affected or 0
+    return total
+
+
 def _validate_identifier(name: str, label: str = "Name") -> None:
     """Validate that a name is a safe identifier (no path traversal, no special chars)."""
     if not name:
@@ -219,12 +236,7 @@ class DbtProjectService:
         runner = dbtRunner()
         result = runner.invoke(args)
 
-        rows_affected = 0
-        if result.result:
-            for node_result in result.result:
-                resp = getattr(node_result, "adapter_response", None)
-                if resp and hasattr(resp, "rows_affected"):
-                    rows_affected += resp.rows_affected or 0
+        rows_affected = _sum_rows_affected(result)
 
         logs = str(result.result) if result.result else ""
         if not logs and result.exception:
@@ -259,12 +271,7 @@ class DbtProjectService:
             ]
         )
 
-        rows_affected = 0
-        if result.result:
-            for node_result in result.result:
-                resp = getattr(node_result, "adapter_response", None)
-                if resp and hasattr(resp, "rows_affected"):
-                    rows_affected += resp.rows_affected or 0
+        rows_affected = _sum_rows_affected(result)
 
         logs = str(result.result) if result.result else ""
         if not logs and result.exception:

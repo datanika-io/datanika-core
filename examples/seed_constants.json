@@ -1,0 +1,115 @@
+{
+  "first_names": [
+    "Emma", "Liam", "Olivia", "Noah", "Ava", "Ethan", "Sophia", "Mason",
+    "Isabella", "William", "Mia", "James", "Charlotte", "Benjamin", "Amelia",
+    "Lucas", "Harper", "Henry", "Evelyn", "Alexander", "Abigail", "Daniel",
+    "Emily", "Michael", "Elizabeth", "Sebastian", "Sofia", "Jack", "Avery",
+    "Owen", "Ella", "Aiden", "Scarlett", "Samuel", "Grace", "Ryan", "Chloe",
+    "Nathan", "Victoria", "Leo", "Riley", "Aria", "Elijah", "Lily", "Caleb",
+    "Aurora", "Isaac", "Zoey", "Luke", "Penelope"
+  ],
+  "last_names": [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
+    "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
+    "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark",
+    "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King",
+    "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores", "Green",
+    "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
+    "Carter", "Roberts"
+  ],
+  "cities": [
+    "New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia",
+    "San Antonio", "San Diego", "Dallas", "San Jose", "Austin", "Jacksonville",
+    "Fort Worth", "Columbus", "Charlotte", "Indianapolis", "San Francisco",
+    "Seattle", "Denver", "Washington", "Nashville", "Oklahoma City", "El Paso",
+    "Boston", "Portland", "Las Vegas", "Memphis", "Louisville", "Baltimore",
+    "Milwaukee"
+  ],
+  "streets": [
+    "Main St", "Oak Ave", "Maple Dr", "Cedar Ln", "Pine Rd", "Elm St",
+    "Washington Blvd", "Park Ave", "Lake Dr", "Hill Rd", "River Rd",
+    "Sunset Blvd", "Broadway", "Church St", "Forest Ave", "Spring St",
+    "Meadow Ln", "Valley Rd", "Highland Ave", "Union St"
+  ],
+  "seller_names": [
+    "TechWorld", "GadgetHub", "HomeEssentials", "StyleCraft", "FitGear",
+    "BookNest", "GreenLeaf", "UrbanTrend", "PetPalace", "KitchenPro",
+    "SoundWave", "LightHouse", "GameVault", "SportZone", "BeautyBox",
+    "ToolMaster", "FoodFresh", "BabyBliss", "ArtCorner", "TravelMate",
+    "SmartLiving", "PowerUp", "CozyHome", "FashionForward", "WellnessHub",
+    "OutdoorEdge", "DigitalDen", "EcoShop", "LuxeLife", "CraftWorld",
+    "MegaStore", "ValueMart", "PrimePicks", "EliteGoods", "BrightStar",
+    "SwiftShip", "QualityFirst", "DailyDeals", "TopChoice", "BestBuy Plus",
+    "NexGen", "CoreSupply", "AlphaMarket", "ZenStore", "VividGoods",
+    "PeakDirect", "NovaShop", "TrueValue", "ClearPath", "OneStop"
+  ],
+  "countries": [
+    "US", "US", "US", "US", "US",
+    "UK", "UK", "Germany", "Germany", "France",
+    "Canada", "Australia", "Japan", "China", "India",
+    "Brazil", "Mexico", "South Korea", "Italy", "Spain"
+  ],
+  "categories": [
+    "Electronics", "Clothing", "Home & Kitchen", "Books", "Sports",
+    "Toys", "Beauty", "Automotive", "Garden", "Health"
+  ],
+  "product_adjectives": [
+    "Premium", "Classic", "Ultra", "Pro", "Essential", "Deluxe", "Advanced",
+    "Smart", "Compact", "Eco", "Vintage", "Modern", "Elite", "Basic", "Lite"
+  ],
+  "product_nouns": {
+    "Electronics": ["Headphones", "Charger", "Cable", "Speaker", "Webcam", "Mouse", "Keyboard", "Monitor Stand", "USB Hub", "Power Bank"],
+    "Clothing": ["T-Shirt", "Hoodie", "Jacket", "Jeans", "Sneakers", "Cap", "Scarf", "Gloves", "Belt", "Socks"],
+    "Home & Kitchen": ["Mug", "Cutting Board", "Blender", "Towel Set", "Candle", "Lamp", "Pillow", "Coaster Set", "Vase", "Clock"],
+    "Books": ["Notebook", "Journal", "Planner", "Sketchbook", "Cookbook", "Guide", "Manual", "Workbook", "Almanac", "Atlas"],
+    "Sports": ["Water Bottle", "Yoga Mat", "Resistance Band", "Jump Rope", "Dumbbell", "Gym Bag", "Wristband", "Knee Pad", "Grip Tape", "Towel"],
+    "Toys": ["Puzzle", "Building Set", "Action Figure", "Board Game", "Card Game", "Stuffed Animal", "Drone", "RC Car", "Slime Kit", "Craft Set"],
+    "Beauty": ["Face Cream", "Lip Balm", "Shampoo", "Conditioner", "Serum", "Mask", "Brush Set", "Nail Kit", "Perfume", "Lotion"],
+    "Automotive": ["Phone Mount", "Seat Cover", "Floor Mat", "Air Freshener", "Dash Cam", "Tire Gauge", "Jump Starter", "Sunshade", "Organizer", "Charger"],
+    "Garden": ["Plant Pot", "Garden Gloves", "Pruner", "Seed Set", "Hose Nozzle", "Bird Feeder", "Solar Light", "Trowel", "Watering Can", "Planter"],
+    "Health": ["Vitamins", "Thermometer", "First Aid Kit", "Bandage Pack", "Hand Sanitizer", "Face Mask", "Heating Pad", "Ice Pack", "Pill Box", "Scale"]
+  },
+  "order_statuses": {
+    "delivered": 70,
+    "shipped": 15,
+    "processing": 10,
+    "cancelled": 5
+  },
+  "rating_distribution": {
+    "1": 5,
+    "2": 5,
+    "3": 15,
+    "4": 35,
+    "5": 40
+  },
+  "email_domains": [
+    "gmail.com", "yahoo.com", "outlook.com", "mail.com", "proton.me"
+  ],
+  "review_titles_good": [
+    "Great product!", "Highly recommend", "Excellent quality", "Love it!",
+    "Best purchase ever", "Perfect", "Amazing value", "Very satisfied",
+    "Exceeded expectations", "Would buy again"
+  ],
+  "review_titles_bad": [
+    "Disappointed", "Not as described", "Poor quality", "Would not recommend",
+    "Waste of money", "Broke after a week", "Terrible", "Not worth it"
+  ],
+  "review_bodies_good": [
+    "Works exactly as described. Very happy with this purchase.",
+    "The quality is outstanding for the price. Shipping was fast too.",
+    "I've been using this for a few weeks now and it's been excellent.",
+    "Bought this as a gift and they loved it. Would definitely recommend.",
+    "Solid build quality and great design. Five stars all the way.",
+    "This is my second one \u2014 first one lasted years. Very reliable.",
+    "Arrived quickly and well-packaged. No complaints at all.",
+    "Compared several options and this was clearly the best choice."
+  ],
+  "review_bodies_bad": [
+    "The product arrived damaged and customer service was unhelpful.",
+    "Looks nothing like the pictures. Very misleading listing.",
+    "Stopped working after just two weeks of normal use.",
+    "Material feels very cheap. Not worth the price at all.",
+    "Took forever to arrive and was not what I expected."
+  ]
+}

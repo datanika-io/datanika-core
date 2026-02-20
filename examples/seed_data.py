@@ -8,6 +8,8 @@ Populates MySQL, MSSQL, and MongoDB with a coherent dataset:
 """
 
 import argparse
+import configparser
+import json
 import os
 import random
 import string
@@ -15,32 +17,45 @@ import time
 from datetime import datetime, timedelta
 
 # ---------------------------------------------------------------------------
+# Config file loading
+# ---------------------------------------------------------------------------
+
+def load_conf():
+    """Load databases.conf from the same directory as this script."""
+    conf = configparser.ConfigParser()
+    conf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "databases.conf")
+    conf.read(conf_path)
+    return conf
+
+
+# ---------------------------------------------------------------------------
 # CLI arguments
 # ---------------------------------------------------------------------------
 
 def parse_args():
+    conf = load_conf()
     p = argparse.ArgumentParser(description="Seed the online store example databases")
-    p.add_argument("--mysql-host", default=os.getenv("MYSQL_HOST", "localhost"))
-    p.add_argument("--mysql-port", type=int, default=int(os.getenv("MYSQL_PORT", "3306")))
-    p.add_argument("--mysql-user", default=os.getenv("MYSQL_USER", "root"))
-    p.add_argument("--mysql-password", default=os.getenv("MYSQL_PASSWORD", "root"))
-    p.add_argument("--mysql-db", default=os.getenv("MYSQL_DB", "online_store"))
-    p.add_argument("--mssql-host", default=os.getenv("MSSQL_HOST", "localhost"))
-    p.add_argument("--mssql-port", type=int, default=int(os.getenv("MSSQL_PORT", "1433")))
-    p.add_argument("--mssql-user", default=os.getenv("MSSQL_USER", "sa"))
-    p.add_argument("--mssql-password", default=os.getenv("MSSQL_PASSWORD", "SA_Password1!"))
-    p.add_argument("--mssql-db", default=os.getenv("MSSQL_DB", "online_store"))
-    p.add_argument("--mongo-host", default=os.getenv("MONGO_HOST", "localhost"))
-    p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", "27017")))
-    p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", "online_store"))
-    p.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    p.add_argument("--users", type=int, default=500, help="Number of users (MongoDB)")
-    p.add_argument("--sellers", type=int, default=50, help="Number of sellers (max 50)")
-    p.add_argument("--goods", type=int, default=500, help="Number of goods")
-    p.add_argument("--orders", type=int, default=2000, help="Number of orders")
-    p.add_argument("--order-items", type=int, default=5000, help="Target number of order items")
-    p.add_argument("--ratings", type=int, default=3000, help="Number of ratings (MSSQL)")
-    p.add_argument("--reviews", type=int, default=1000, help="Number of reviews (MSSQL)")
+    p.add_argument("--mysql-host", default=os.getenv("MYSQL_HOST", conf.get("mysql", "host", fallback="localhost")))
+    p.add_argument("--mysql-port", type=int, default=int(os.getenv("MYSQL_PORT", conf.get("mysql", "port", fallback="3306"))))
+    p.add_argument("--mysql-user", default=os.getenv("MYSQL_USER", conf.get("mysql", "user", fallback="root")))
+    p.add_argument("--mysql-password", default=os.getenv("MYSQL_PASSWORD", conf.get("mysql", "password", fallback="root")))
+    p.add_argument("--mysql-db", default=os.getenv("MYSQL_DB", conf.get("mysql", "database", fallback="online_store")))
+    p.add_argument("--mssql-host", default=os.getenv("MSSQL_HOST", conf.get("mssql", "host", fallback="localhost")))
+    p.add_argument("--mssql-port", type=int, default=int(os.getenv("MSSQL_PORT", conf.get("mssql", "port", fallback="1433"))))
+    p.add_argument("--mssql-user", default=os.getenv("MSSQL_USER", conf.get("mssql", "user", fallback="sa")))
+    p.add_argument("--mssql-password", default=os.getenv("MSSQL_PASSWORD", conf.get("mssql", "password", fallback="SA_Password1!")))
+    p.add_argument("--mssql-db", default=os.getenv("MSSQL_DB", conf.get("mssql", "database", fallback="online_store")))
+    p.add_argument("--mongo-host", default=os.getenv("MONGO_HOST", conf.get("mongodb", "host", fallback="localhost")))
+    p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", conf.get("mongodb", "port", fallback="27017"))))
+    p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", conf.get("mongodb", "database", fallback="online_store")))
+    p.add_argument("--seed", type=int, default=int(conf.get("seed", "seed", fallback="42")), help="Random seed for reproducibility")
+    p.add_argument("--users", type=int, default=int(conf.get("seed", "users", fallback="500")), help="Number of users (MongoDB)")
+    p.add_argument("--sellers", type=int, default=int(conf.get("seed", "sellers", fallback="50")), help="Number of sellers (max 50)")
+    p.add_argument("--goods", type=int, default=int(conf.get("seed", "goods", fallback="500")), help="Number of goods")
+    p.add_argument("--orders", type=int, default=int(conf.get("seed", "orders", fallback="2000")), help="Number of orders")
+    p.add_argument("--order-items", type=int, default=int(conf.get("seed", "order_items", fallback="5000")), help="Target number of order items")
+    p.add_argument("--ratings", type=int, default=int(conf.get("seed", "ratings", fallback="3000")), help="Number of ratings (MSSQL)")
+    p.add_argument("--reviews", type=int, default=int(conf.get("seed", "reviews", fallback="1000")), help="Number of reviews (MSSQL)")
     args = p.parse_args()
     args.sellers = min(args.sellers, len(SELLER_NAMES))
     return args
@@ -129,122 +144,32 @@ def setup_mssql_schema(conn, db_name, schema_file):
 
 
 # ---------------------------------------------------------------------------
-# Data generation helpers
+# Load constants from seed_constants.json
 # ---------------------------------------------------------------------------
 
-FIRST_NAMES = [
-    "Emma", "Liam", "Olivia", "Noah", "Ava", "Ethan", "Sophia", "Mason",
-    "Isabella", "William", "Mia", "James", "Charlotte", "Benjamin", "Amelia",
-    "Lucas", "Harper", "Henry", "Evelyn", "Alexander", "Abigail", "Daniel",
-    "Emily", "Michael", "Elizabeth", "Sebastian", "Sofia", "Jack", "Avery",
-    "Owen", "Ella", "Aiden", "Scarlett", "Samuel", "Grace", "Ryan", "Chloe",
-    "Nathan", "Victoria", "Leo", "Riley", "Aria", "Elijah", "Lily", "Caleb",
-    "Aurora", "Isaac", "Zoey", "Luke", "Penelope",
-]
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-LAST_NAMES = [
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
-    "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez",
-    "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
-    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark",
-    "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King",
-    "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores", "Green",
-    "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
-    "Carter", "Roberts",
-]
+with open(os.path.join(_SCRIPT_DIR, "seed_constants.json")) as _f:
+    _C = json.load(_f)
 
-CITIES = [
-    "New York", "Los Angeles", "Chicago", "Houston", "Phoenix", "Philadelphia",
-    "San Antonio", "San Diego", "Dallas", "San Jose", "Austin", "Jacksonville",
-    "Fort Worth", "Columbus", "Charlotte", "Indianapolis", "San Francisco",
-    "Seattle", "Denver", "Washington", "Nashville", "Oklahoma City", "El Paso",
-    "Boston", "Portland", "Las Vegas", "Memphis", "Louisville", "Baltimore",
-    "Milwaukee",
-]
+FIRST_NAMES = _C["first_names"]
+LAST_NAMES = _C["last_names"]
+CITIES = _C["cities"]
+STREETS = _C["streets"]
+SELLER_NAMES = _C["seller_names"]
+COUNTRIES = _C["countries"]
+CATEGORIES = _C["categories"]
+PRODUCT_ADJECTIVES = _C["product_adjectives"]
+PRODUCT_NOUNS = _C["product_nouns"]
+EMAIL_DOMAINS = _C["email_domains"]
+REVIEW_TITLES_GOOD = _C["review_titles_good"]
+REVIEW_TITLES_BAD = _C["review_titles_bad"]
+REVIEW_BODIES_GOOD = _C["review_bodies_good"]
+REVIEW_BODIES_BAD = _C["review_bodies_bad"]
 
-STREETS = [
-    "Main St", "Oak Ave", "Maple Dr", "Cedar Ln", "Pine Rd", "Elm St",
-    "Washington Blvd", "Park Ave", "Lake Dr", "Hill Rd", "River Rd",
-    "Sunset Blvd", "Broadway", "Church St", "Forest Ave", "Spring St",
-    "Meadow Ln", "Valley Rd", "Highland Ave", "Union St",
-]
-
-SELLER_NAMES = [
-    "TechWorld", "GadgetHub", "HomeEssentials", "StyleCraft", "FitGear",
-    "BookNest", "GreenLeaf", "UrbanTrend", "PetPalace", "KitchenPro",
-    "SoundWave", "LightHouse", "GameVault", "SportZone", "BeautyBox",
-    "ToolMaster", "FoodFresh", "BabyBliss", "ArtCorner", "TravelMate",
-    "SmartLiving", "PowerUp", "CozyHome", "FashionForward", "WellnessHub",
-    "OutdoorEdge", "DigitalDen", "EcoShop", "LuxeLife", "CraftWorld",
-    "MegaStore", "ValueMart", "PrimePicks", "EliteGoods", "BrightStar",
-    "SwiftShip", "QualityFirst", "DailyDeals", "TopChoice", "BestBuy Plus",
-    "NexGen", "CoreSupply", "AlphaMarket", "ZenStore", "VividGoods",
-    "PeakDirect", "NovaShop", "TrueValue", "ClearPath", "OneStop",
-]
-
-COUNTRIES = [
-    "US", "US", "US", "US", "US",  # weighted toward US
-    "UK", "UK", "Germany", "Germany", "France",
-    "Canada", "Australia", "Japan", "China", "India",
-    "Brazil", "Mexico", "South Korea", "Italy", "Spain",
-]
-
-CATEGORIES = [
-    "Electronics", "Clothing", "Home & Kitchen", "Books", "Sports",
-    "Toys", "Beauty", "Automotive", "Garden", "Health",
-]
-
-PRODUCT_ADJECTIVES = [
-    "Premium", "Classic", "Ultra", "Pro", "Essential", "Deluxe", "Advanced",
-    "Smart", "Compact", "Eco", "Vintage", "Modern", "Elite", "Basic", "Lite",
-]
-
-PRODUCT_NOUNS = {
-    "Electronics": ["Headphones", "Charger", "Cable", "Speaker", "Webcam", "Mouse", "Keyboard", "Monitor Stand", "USB Hub", "Power Bank"],
-    "Clothing": ["T-Shirt", "Hoodie", "Jacket", "Jeans", "Sneakers", "Cap", "Scarf", "Gloves", "Belt", "Socks"],
-    "Home & Kitchen": ["Mug", "Cutting Board", "Blender", "Towel Set", "Candle", "Lamp", "Pillow", "Coaster Set", "Vase", "Clock"],
-    "Books": ["Notebook", "Journal", "Planner", "Sketchbook", "Cookbook", "Guide", "Manual", "Workbook", "Almanac", "Atlas"],
-    "Sports": ["Water Bottle", "Yoga Mat", "Resistance Band", "Jump Rope", "Dumbbell", "Gym Bag", "Wristband", "Knee Pad", "Grip Tape", "Towel"],
-    "Toys": ["Puzzle", "Building Set", "Action Figure", "Board Game", "Card Game", "Stuffed Animal", "Drone", "RC Car", "Slime Kit", "Craft Set"],
-    "Beauty": ["Face Cream", "Lip Balm", "Shampoo", "Conditioner", "Serum", "Mask", "Brush Set", "Nail Kit", "Perfume", "Lotion"],
-    "Automotive": ["Phone Mount", "Seat Cover", "Floor Mat", "Air Freshener", "Dash Cam", "Tire Gauge", "Jump Starter", "Sunshade", "Organizer", "Charger"],
-    "Garden": ["Plant Pot", "Garden Gloves", "Pruner", "Seed Set", "Hose Nozzle", "Bird Feeder", "Solar Light", "Trowel", "Watering Can", "Planter"],
-    "Health": ["Vitamins", "Thermometer", "First Aid Kit", "Bandage Pack", "Hand Sanitizer", "Face Mask", "Heating Pad", "Ice Pack", "Pill Box", "Scale"],
-}
-
-ORDER_STATUSES = ["delivered"] * 70 + ["shipped"] * 15 + ["processing"] * 10 + ["cancelled"] * 5
-
-RATING_DISTRIBUTION = [1] * 5 + [2] * 5 + [3] * 15 + [4] * 35 + [5] * 40
-
-REVIEW_TITLES_GOOD = [
-    "Great product!", "Highly recommend", "Excellent quality", "Love it!",
-    "Best purchase ever", "Perfect", "Amazing value", "Very satisfied",
-    "Exceeded expectations", "Would buy again",
-]
-
-REVIEW_TITLES_BAD = [
-    "Disappointed", "Not as described", "Poor quality", "Would not recommend",
-    "Waste of money", "Broke after a week", "Terrible", "Not worth it",
-]
-
-REVIEW_BODIES_GOOD = [
-    "Works exactly as described. Very happy with this purchase.",
-    "The quality is outstanding for the price. Shipping was fast too.",
-    "I've been using this for a few weeks now and it's been excellent.",
-    "Bought this as a gift and they loved it. Would definitely recommend.",
-    "Solid build quality and great design. Five stars all the way.",
-    "This is my second one — first one lasted years. Very reliable.",
-    "Arrived quickly and well-packaged. No complaints at all.",
-    "Compared several options and this was clearly the best choice.",
-]
-
-REVIEW_BODIES_BAD = [
-    "The product arrived damaged and customer service was unhelpful.",
-    "Looks nothing like the pictures. Very misleading listing.",
-    "Stopped working after just two weeks of normal use.",
-    "Material feels very cheap. Not worth the price at all.",
-    "Took forever to arrive and was not what I expected.",
-]
+# Expand weighted maps into flat lists for random.choice()
+ORDER_STATUSES = [s for s, w in _C["order_statuses"].items() for _ in range(w)]
+RATING_DISTRIBUTION = [int(r) for r, w in _C["rating_distribution"].items() for _ in range(w)]
 
 
 def random_phone():
@@ -252,10 +177,9 @@ def random_phone():
 
 
 def random_email(first, last):
-    domains = ["gmail.com", "yahoo.com", "outlook.com", "mail.com", "proton.me"]
     sep = random.choice([".", "_", ""])
     suffix = random.randint(1, 999) if random.random() < 0.4 else ""
-    return f"{first.lower()}{sep}{last.lower()}{suffix}@{random.choice(domains)}"
+    return f"{first.lower()}{sep}{last.lower()}{suffix}@{random.choice(EMAIL_DOMAINS)}"
 
 
 def random_datetime_between(start: datetime, end: datetime) -> datetime:
@@ -522,8 +446,7 @@ def main():
     args = parse_args()
     random.seed(args.seed)
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    mssql_schema = os.path.join(script_dir, "init", "mssql", "01_schema.sql")
+    mssql_schema = os.path.join(_SCRIPT_DIR, "init", "mssql", "01_schema.sql")
 
     print("Connecting to databases...")
     mongo_db = connect_mongo(args.mongo_host, args.mongo_port, args.mongo_db)

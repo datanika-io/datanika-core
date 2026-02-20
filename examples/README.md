@@ -46,6 +46,23 @@ python -c "import pymssql; c=pymssql.connect('localhost',1433,'sa','SA_Password1
 docker exec examples-mongodb-1 mongosh online_store --eval "db.users.countDocuments()"
 ```
 
+## Configuration
+
+Connection defaults for all databases live in `databases.conf` (INI format). Both `seed_data.py` and `cleanup.py` read from this file automatically.
+
+```ini
+[mysql]
+host = localhost
+port = 3306
+user = root
+password = root
+database = online_store
+```
+
+Edit the file to match your environment — no need to pass `--mysql-host`, `--pg-port`, etc. every time.
+
+**Override priority** (highest wins): CLI args > environment variables > `databases.conf` > hardcoded fallbacks.
+
 ## Connection Details
 
 The example containers join the `datanika_default` network, so the main app and Celery containers can reach them by service name.

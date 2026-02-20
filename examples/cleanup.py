@@ -7,41 +7,55 @@ is removed.
 """
 
 import argparse
+import configparser
 import os
 import time
+
+# ---------------------------------------------------------------------------
+# Config file loading
+# ---------------------------------------------------------------------------
+
+def load_conf():
+    """Load databases.conf from the same directory as this script."""
+    conf = configparser.ConfigParser()
+    conf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "databases.conf")
+    conf.read(conf_path)
+    return conf
+
 
 # ---------------------------------------------------------------------------
 # CLI arguments
 # ---------------------------------------------------------------------------
 
 def parse_args():
+    conf = load_conf()
     p = argparse.ArgumentParser(description="Wipe all data from Datanika and example databases")
 
     # PostgreSQL (Datanika)
-    p.add_argument("--pg-host", default=os.getenv("PG_HOST", "localhost"))
-    p.add_argument("--pg-port", type=int, default=int(os.getenv("PG_PORT", "5432")))
-    p.add_argument("--pg-user", default=os.getenv("PG_USER", "datanika"))
-    p.add_argument("--pg-password", default=os.getenv("PG_PASSWORD", "datanika"))
-    p.add_argument("--pg-db", default=os.getenv("PG_DB", "datanika"))
+    p.add_argument("--pg-host", default=os.getenv("PG_HOST", conf.get("postgresql", "host", fallback="localhost")))
+    p.add_argument("--pg-port", type=int, default=int(os.getenv("PG_PORT", conf.get("postgresql", "port", fallback="5432"))))
+    p.add_argument("--pg-user", default=os.getenv("PG_USER", conf.get("postgresql", "user", fallback="datanika")))
+    p.add_argument("--pg-password", default=os.getenv("PG_PASSWORD", conf.get("postgresql", "password", fallback="datanika")))
+    p.add_argument("--pg-db", default=os.getenv("PG_DB", conf.get("postgresql", "database", fallback="datanika")))
 
     # MySQL (example)
-    p.add_argument("--mysql-host", default=os.getenv("MYSQL_HOST", "localhost"))
-    p.add_argument("--mysql-port", type=int, default=int(os.getenv("MYSQL_PORT", "3306")))
-    p.add_argument("--mysql-user", default=os.getenv("MYSQL_USER", "root"))
-    p.add_argument("--mysql-password", default=os.getenv("MYSQL_PASSWORD", "root"))
-    p.add_argument("--mysql-db", default=os.getenv("MYSQL_DB", "online_store"))
+    p.add_argument("--mysql-host", default=os.getenv("MYSQL_HOST", conf.get("mysql", "host", fallback="localhost")))
+    p.add_argument("--mysql-port", type=int, default=int(os.getenv("MYSQL_PORT", conf.get("mysql", "port", fallback="3306"))))
+    p.add_argument("--mysql-user", default=os.getenv("MYSQL_USER", conf.get("mysql", "user", fallback="root")))
+    p.add_argument("--mysql-password", default=os.getenv("MYSQL_PASSWORD", conf.get("mysql", "password", fallback="root")))
+    p.add_argument("--mysql-db", default=os.getenv("MYSQL_DB", conf.get("mysql", "database", fallback="online_store")))
 
     # MSSQL (example)
-    p.add_argument("--mssql-host", default=os.getenv("MSSQL_HOST", "localhost"))
-    p.add_argument("--mssql-port", type=int, default=int(os.getenv("MSSQL_PORT", "1433")))
-    p.add_argument("--mssql-user", default=os.getenv("MSSQL_USER", "sa"))
-    p.add_argument("--mssql-password", default=os.getenv("MSSQL_PASSWORD", "SA_Password1!"))
-    p.add_argument("--mssql-db", default=os.getenv("MSSQL_DB", "online_store"))
+    p.add_argument("--mssql-host", default=os.getenv("MSSQL_HOST", conf.get("mssql", "host", fallback="localhost")))
+    p.add_argument("--mssql-port", type=int, default=int(os.getenv("MSSQL_PORT", conf.get("mssql", "port", fallback="1433"))))
+    p.add_argument("--mssql-user", default=os.getenv("MSSQL_USER", conf.get("mssql", "user", fallback="sa")))
+    p.add_argument("--mssql-password", default=os.getenv("MSSQL_PASSWORD", conf.get("mssql", "password", fallback="SA_Password1!")))
+    p.add_argument("--mssql-db", default=os.getenv("MSSQL_DB", conf.get("mssql", "database", fallback="online_store")))
 
     # MongoDB (example)
-    p.add_argument("--mongo-host", default=os.getenv("MONGO_HOST", "localhost"))
-    p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", "27017")))
-    p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", "online_store"))
+    p.add_argument("--mongo-host", default=os.getenv("MONGO_HOST", conf.get("mongodb", "host", fallback="localhost")))
+    p.add_argument("--mongo-port", type=int, default=int(os.getenv("MONGO_PORT", conf.get("mongodb", "port", fallback="27017"))))
+    p.add_argument("--mongo-db", default=os.getenv("MONGO_DB", conf.get("mongodb", "database", fallback="online_store")))
 
     return p.parse_args()
 

@@ -931,3 +931,118 @@ class TestExecuteDatasetName:
         )
         pipeline_kwargs = mock_dlt.pipeline.call_args[1]
         assert "dataset_name" not in pipeline_kwargs
+
+
+# ---------------------------------------------------------------------------
+# build_source — MongoDB
+# ---------------------------------------------------------------------------
+class TestBuildMongodbSource:
+    @patch("datanika.services.dlt_runner.DltRunnerService._build_mongodb_source")
+    def test_mongodb_routes_to_build_mongodb_source(self, mock_build, svc):
+        mock_build.return_value = "mongo_src"
+        result = svc.build_source(
+            "mongodb",
+            {"host": "localhost", "port": 27017, "database": "testdb"},
+            {},
+        )
+        mock_build.assert_called_once()
+        assert result == "mongo_src"
+
+    def test_requires_database_in_config(self, svc):
+        with pytest.raises(DltRunnerError, match="database"):
+            svc.build_source("mongodb", {"host": "localhost", "port": 27017}, {})
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_passes_collection_names_from_dlt_config(self, mock_source, svc):
+        mock_source.return_value = "mongo_src"
+        svc.build_source(
+            "mongodb",
+            {"host": "localhost", "port": 27017, "database": "testdb"},
+            {"collection_names": ["users", "orders"]},
+        )
+        call_kwargs = mock_source.call_args[1]
+        assert call_kwargs["collection_names"] == ["users", "orders"]
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_builds_uri_with_auth(self, mock_source, svc):
+        mock_source.return_value = "mongo_src"
+        svc.build_source(
+            "mongodb",
+            {
+                "host": "db.example.com", "port": 27017,
+                "user": "admin", "password": "s3cret", "database": "mydb",
+            },
+            {},
+        )
+        call_kwargs = mock_source.call_args[1]
+        assert "admin" in call_kwargs["connection_uri"]
+        assert "s3cret" in call_kwargs["connection_uri"]
+        assert "db.example.com" in call_kwargs["connection_uri"]
+        assert call_kwargs["database"] == "mydb"
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_builds_uri_without_auth(self, mock_source, svc):
+        mock_source.return_value = "mongo_src"
+        svc.build_source(
+            "mongodb",
+            {"host": "localhost", "port": 27017, "database": "testdb"},
+            {},
+        )
+        call_kwargs = mock_source.call_args[1]
+        assert call_kwargs["connection_uri"] == "mongodb://localhost:27017/testdb"
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_collection_names_filtered_from_run_kwargs(self, mock_source, svc):
+        """collection_names is an internal key — must not pass to pipeline.run()."""
+        assert "collection_names" in INTERNAL_CONFIG_KEYS
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_execute_with_mongodb_source(self, mock_dlt, mock_source, svc):
+        mock_pipeline = MagicMock()
+        load_info = _make_load_info([[30]])
+        mock_pipeline.run.return_value = load_info
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+        mock_source.return_value = MagicMock()
+
+        result = svc.execute(
+            pipeline_id=1,
+            source_type="mongodb",
+            source_config={"host": "localhost", "port": 27017, "database": "testdb"},
+            destination_type="postgres",
+            destination_config={"host": "h"},
+            dlt_config={
+                "collection_names": ["users"],
+                "write_disposition": "replace",
+            },
+        )
+        assert result["rows_loaded"] == 30
+        mock_source.assert_called_once()
+        run_kwargs = mock_pipeline.run.call_args[1]
+        assert "collection_names" not in run_kwargs
+        assert run_kwargs["write_disposition"] == "replace"
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_passes_batch_size(self, mock_source, svc):
+        mock_source.return_value = "mongo_src"
+        svc.build_source(
+            "mongodb",
+            {"host": "localhost", "port": 27017, "database": "testdb"},
+            {},
+            batch_size=5000,
+        )
+        call_kwargs = mock_source.call_args[1]
+        assert call_kwargs["batch_size"] == 5000
+
+    @patch("datanika.services.mongodb_source.mongodb_source")
+    def test_database_from_dlt_config(self, mock_source, svc):
+        """database can come from dlt_config if not in connection config."""
+        mock_source.return_value = "mongo_src"
+        svc.build_source(
+            "mongodb",
+            {"host": "localhost", "port": 27017},
+            {"database": "from_dlt_config"},
+        )
+        call_kwargs = mock_source.call_args[1]
+        assert call_kwargs["database"] == "from_dlt_config"

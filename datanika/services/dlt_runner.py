@@ -17,6 +17,8 @@ SUPPORTED_REST_TYPES = {"rest_api"}
 
 SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 
+SUPPORTED_MONGODB_TYPES = {"mongodb"}
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -37,6 +39,7 @@ INTERNAL_CONFIG_KEYS = {
     "spreadsheet_url",
     "service_account_json",
     "sheet_names",
+    "collection_names",
 }
 
 FILTER_OPS = {
@@ -140,6 +143,9 @@ class DltRunnerService:
         if connection_type in SUPPORTED_REST_TYPES:
             return self._build_rest_api_source(config, dlt_config)
 
+        if connection_type in SUPPORTED_MONGODB_TYPES:
+            return self._build_mongodb_source(config, dlt_config, batch_size)
+
         if connection_type not in self.SUPPORTED_SOURCE_TYPES:
             raise DltRunnerError(f"Unsupported source type: {connection_type}")
 
@@ -239,6 +245,38 @@ class DltRunnerService:
             spreadsheet_url=spreadsheet_url,
             credentials_json=credentials_json,
             sheet_names=sheet_names,
+        )
+
+    def _build_mongodb_source(self, config: dict, dlt_config: dict, batch_size: int):
+        """Build a dlt source for MongoDB using pymongo."""
+        from urllib.parse import quote_plus
+
+        from datanika.services.mongodb_source import mongodb_source
+
+        database = config.get("database") or dlt_config.get("database", "")
+        if not database:
+            raise DltRunnerError("MongoDB source requires 'database' in config")
+
+        host = config.get("host", "localhost")
+        port = config.get("port", 27017)
+        user = config.get("user", "")
+        password = config.get("password", "")
+
+        if user:
+            uri = (
+                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
+                f"@{host}:{port}/{database}"
+            )
+        else:
+            uri = f"mongodb://{host}:{port}/{database}"
+
+        collection_names = dlt_config.get("collection_names")
+
+        return mongodb_source(
+            connection_uri=uri,
+            database=database,
+            collection_names=collection_names,
+            batch_size=batch_size,
         )
 
     def build_pipeline(

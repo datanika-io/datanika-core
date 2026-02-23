@@ -11,17 +11,9 @@ _t = I18nState.translations
 
 def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
     return rx.cond(
-        status == "success",
-        "green",
-        rx.cond(
-            status == "failed",
-            "red",
-            rx.cond(
-                (status == "running") | (status == "pending"),
-                "yellow",
-                "gray",
-            ),
-        ),
+        (status == "running") | (status == "pending"),
+        "yellow",
+        "gray",
     )
 
 

@@ -122,7 +122,11 @@ def upload_form() -> rx.Component:
             ),
             # Write disposition
             rx.select(
-                ["append", "replace", "merge"],
+                rx.cond(
+                    UploadState.form_mode == "single_table",
+                    ["append", "replace", "merge"],
+                    ["append", "replace"],
+                ),
                 value=UploadState.form_write_disposition,
                 on_change=UploadState.set_form_write_disposition,
                 width="100%",

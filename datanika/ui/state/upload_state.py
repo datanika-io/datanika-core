@@ -72,6 +72,8 @@ class UploadState(BaseState):
 
     def set_form_mode(self, value: str):
         self.form_mode = value
+        if value == "full_database" and self.form_write_disposition == "merge":
+            self.form_write_disposition = "append"
 
     def set_form_write_disposition(self, value: str):
         self.form_write_disposition = value

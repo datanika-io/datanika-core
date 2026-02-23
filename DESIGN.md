@@ -80,6 +80,7 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Linting** | Ruff |
 | **i18n** | 6 languages (en, ru, el, de, fr, es) with runtime switching |
 | **Testing** | pytest + pytest-asyncio, SQLite in-memory for model tests |
+| **Monitoring** | Prometheus (metrics collection), Grafana (dashboards), Node Exporter (host metrics), cAdvisor (container metrics) |
 
 ## Database Design
 
@@ -234,6 +235,25 @@ State classes in `ui/state/` bridge UI and services. Common patterns:
 | **Audit trail** | Tracks create/update/delete/login/logout/run with old/new values |
 | **Soft delete** | Records preserved for audit, never hard-removed |
 | **Input validation** | Identifier regex, path traversal prevention in dbt file writes |
+
+## Monitoring
+
+The platform includes a full observability stack deployed via docker-compose.
+
+### Components
+
+| Service | Image | Port | Role |
+|---------|-------|------|------|
+| **Prometheus** | `prom/prometheus` | 9090 | Metrics collection and storage (30-day retention) |
+| **Grafana** | `grafana/grafana` | 3001 | Dashboards and alerting, auto-provisioned with Prometheus datasource |
+| **Node Exporter** | `prom/node-exporter` | 9100 | Host-level metrics (CPU, memory, disk, network) |
+| **cAdvisor** | `gcr.io/cadvisor/cadvisor` | 8080 | Container-level metrics (per-container CPU, memory, I/O) |
+
+### Configuration
+
+- **Prometheus config**: `monitoring/prometheus.yml` — 15-second scrape interval, scrapes itself, Node Exporter, and cAdvisor
+- **Grafana datasource**: `monitoring/grafana/provisioning/datasources/datasource.yml` — auto-provisions Prometheus as the default datasource
+- **Grafana credentials**: `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` in `.env.docker`
 
 ## Testing Strategy
 

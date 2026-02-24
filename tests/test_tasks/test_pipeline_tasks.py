@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.dependency import NodeType
-from datanika.models.pipeline import DbtCommand, Pipeline
+from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.user import Organization
@@ -107,6 +107,67 @@ class TestRunPipelineTask:
             )
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
+
+    def test_pipeline_status_active_on_success(self, db_session, encryption, setup_pipeline):
+        org, conn, pipeline, transformations, run = setup_pipeline
+        assert pipeline.status == PipelineStatus.DRAFT
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(pipeline)
+        assert pipeline.status == PipelineStatus.ACTIVE
+
+    def test_pipeline_status_error_on_dbt_failure(self, db_session, encryption, setup_pipeline):
+        org, conn, pipeline, transformations, run = setup_pipeline
+        assert pipeline.status == PipelineStatus.DRAFT
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": False,
+                "rows_affected": 0,
+                "logs": "dbt error",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(pipeline)
+        assert pipeline.status == PipelineStatus.ERROR
+
+    def test_pipeline_status_error_on_exception(self, db_session, encryption, setup_pipeline):
+        org, conn, pipeline, transformations, run = setup_pipeline
+        assert pipeline.status == PipelineStatus.DRAFT
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.side_effect = RuntimeError("boom")
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(pipeline)
+        assert pipeline.status == PipelineStatus.ERROR
 
     def test_fails_on_dbt_error(self, db_session, encryption, setup_pipeline):
         org, conn, pipeline, transformations, run = setup_pipeline

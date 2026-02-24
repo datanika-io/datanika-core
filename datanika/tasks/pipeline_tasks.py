@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
-from datanika.models.pipeline import Pipeline
+from datanika.models.pipeline import Pipeline, PipelineStatus
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
@@ -223,6 +223,9 @@ def run_pipeline(
                 )
             except Exception:
                 logger.exception("Pipeline catalog sync failed (non-fatal)")
+
+            pipeline.status = PipelineStatus.ACTIVE
+            session.flush()
         else:
             execution_service.fail_run(
                 session,
@@ -230,6 +233,8 @@ def run_pipeline(
                 error_message="dbt command failed",
                 logs=result["logs"],
             )
+            pipeline.status = PipelineStatus.ERROR
+            session.flush()
 
         if own_session:
             session.commit()
@@ -243,6 +248,16 @@ def run_pipeline(
             error_message=str(exc),
             logs=traceback.format_exc(),
         )
+        run_obj = session.get(Run, run_id)
+        if run_obj:
+            pipe = session.execute(
+                select(Pipeline).where(
+                    Pipeline.id == run_obj.target_id, Pipeline.org_id == org_id
+                )
+            ).scalar_one_or_none()
+            if pipe:
+                pipe.status = PipelineStatus.ERROR
+                session.flush()
         if own_session:
             session.commit()
 

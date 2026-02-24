@@ -11,7 +11,7 @@ from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run
-from datanika.models.upload import Upload
+from datanika.models.upload import Upload, UploadStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
@@ -178,6 +178,8 @@ def run_upload(
         except Exception:
             logger.exception("Catalog sync failed (non-fatal)")
 
+        upload.status = UploadStatus.ACTIVE
+        session.flush()
         if own_session:
             session.commit()
 
@@ -190,6 +192,14 @@ def run_upload(
             error_message=str(exc),
             logs=traceback.format_exc(),
         )
+        run_obj = session.get(Run, run_id)
+        if run_obj:
+            upload = session.execute(
+                select(Upload).where(Upload.id == run_obj.target_id, Upload.org_id == org_id)
+            ).scalar_one_or_none()
+            if upload:
+                upload.status = UploadStatus.ERROR
+                session.flush()
         if own_session:
             session.commit()
 

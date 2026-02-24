@@ -8,6 +8,7 @@ from cryptography.fernet import Fernet
 from datanika.models.connection import ConnectionDirection, ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
+from datanika.models.upload import UploadStatus
 from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
@@ -142,6 +143,43 @@ class TestRunUploadTask:
         assert run.status == RunStatus.FAILED
         assert run.finished_at is not None
         assert "dlt exploded" in run.error_message
+
+    def test_upload_status_active_on_success(self, db_session, setup_upload):
+        org, upload, run, encryption = setup_upload
+        assert upload.status == UploadStatus.DRAFT
+
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 42,
+                "load_info": "mock_load_info",
+            }
+            run_upload(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(upload)
+        assert upload.status == UploadStatus.ACTIVE
+
+    def test_upload_status_error_on_failure(self, db_session, setup_upload):
+        org, upload, run, encryption = setup_upload
+        assert upload.status == UploadStatus.DRAFT
+
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.side_effect = RuntimeError("dlt exploded")
+            run_upload(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(upload)
+        assert upload.status == UploadStatus.ERROR
 
     def test_passes_dataset_name_derived_from_upload_name(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload

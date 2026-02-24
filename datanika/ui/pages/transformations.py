@@ -364,8 +364,8 @@ def transformations_page() -> rx.Component:
     return page_layout(
         rx.vstack(
             transformation_form(),
-            preview_display(),
             transformations_table(),
+            preview_display(),
             spacing="6",
             width="100%",
         ),

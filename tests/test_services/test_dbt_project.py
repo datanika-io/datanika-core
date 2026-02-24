@@ -8,6 +8,7 @@ import yaml
 from datanika.services.dbt_project import (
     DbtProjectError,
     DbtProjectService,
+    _format_dbt_logs,
     _sum_rows_affected,
     _validate_identifier,
 )
@@ -1190,3 +1191,95 @@ class TestWriteModelRejectsUnsafeName:
         svc.ensure_project(1)
         with pytest.raises(DbtProjectError):
             svc.write_snapshot(1, "../evil", "SELECT 1", unique_key="id")
+
+
+# ---------------------------------------------------------------------------
+# _format_dbt_logs
+# ---------------------------------------------------------------------------
+class TestFormatDbtLogs:
+    def test_format_dbt_logs_success(self):
+        """Multiple successful results produce clean summary lines."""
+        node1 = MagicMock()
+        node1.node.name = "src_order_items"
+        node1.status.value = "success"
+        node1.message = "CREATE VIEW"
+        node1.execution_time = 0.13
+        node1.failures = None
+
+        node2 = MagicMock()
+        node2.node.name = "src_users"
+        node2.status.value = "success"
+        node2.message = "CREATE VIEW"
+        node2.execution_time = 0.12
+        node2.failures = None
+
+        mock_result = MagicMock()
+        mock_result.result = [node1, node2]
+
+        logs = _format_dbt_logs(mock_result)
+        assert "src_order_items" in logs
+        assert "src_users" in logs
+        assert "success" in logs
+        assert "CREATE VIEW" in logs
+        assert "0.13s" in logs
+        assert "2 models" in logs
+        assert "2 succeeded" in logs
+        assert "0 failed" in logs
+
+    def test_format_dbt_logs_failure(self):
+        """Failed result includes error info."""
+        node = MagicMock()
+        node.node.name = "bad_model"
+        node.status.value = "error"
+        node.message = "relation does not exist"
+        node.execution_time = 0.05
+        node.failures = 1
+
+        mock_result = MagicMock()
+        mock_result.result = [node]
+
+        logs = _format_dbt_logs(mock_result)
+        assert "bad_model" in logs
+        assert "error" in logs
+        assert "relation does not exist" in logs
+        assert "1 failed" in logs
+
+    def test_format_dbt_logs_empty(self):
+        """None/empty result returns empty string."""
+        mock_result = MagicMock()
+        mock_result.result = None
+        assert _format_dbt_logs(mock_result) == ""
+
+        mock_result.result = []
+        assert _format_dbt_logs(mock_result) == ""
+
+    def test_format_dbt_logs_mixed(self):
+        """Mix of success and failure produces correct totals."""
+        ok = MagicMock()
+        ok.node.name = "model_a"
+        ok.status.value = "success"
+        ok.message = "INSERT 0 100"
+        ok.execution_time = 1.5
+        ok.failures = None
+
+        fail = MagicMock()
+        fail.node.name = "model_b"
+        fail.status.value = "error"
+        fail.message = "compilation error"
+        fail.execution_time = 0.02
+        fail.failures = 1
+
+        skip = MagicMock()
+        skip.node.name = "model_c"
+        skip.status.value = "skipped"
+        skip.message = "SKIP"
+        skip.execution_time = 0.0
+        skip.failures = None
+
+        mock_result = MagicMock()
+        mock_result.result = [ok, fail, skip]
+
+        logs = _format_dbt_logs(mock_result)
+        assert "3 models" in logs
+        assert "1 succeeded" in logs
+        assert "1 failed" in logs

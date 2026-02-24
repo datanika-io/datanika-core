@@ -1,0 +1,208 @@
+"""TDD tests for pipeline Celery tasks."""
+
+import uuid
+from unittest.mock import MagicMock, patch
+
+import pytest
+from cryptography.fernet import Fernet
+
+from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.models.dependency import NodeType
+from datanika.models.pipeline import DbtCommand, Pipeline
+from datanika.models.run import RunStatus
+from datanika.models.transformation import Materialization, Transformation
+from datanika.models.user import Organization
+from datanika.services.catalog_service import CatalogService
+from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
+from datanika.tasks.pipeline_tasks import run_pipeline
+
+
+@pytest.fixture
+def encryption():
+    key = Fernet.generate_key().decode()
+    return EncryptionService(key)
+
+
+@pytest.fixture
+def exec_svc():
+    return ExecutionService()
+
+
+@pytest.fixture
+def setup_pipeline(db_session, encryption, exec_svc):
+    """Create org, connection, transformations, pipeline, and pending run."""
+    slug = f"acme-pipe-{uuid.uuid4().hex[:8]}"
+    org = Organization(name="Acme", slug=slug)
+    db_session.add(org)
+    db_session.flush()
+
+    conn = Connection(
+        org_id=org.id,
+        name="pg_dest",
+        connection_type=ConnectionType.POSTGRES,
+        direction=ConnectionDirection.DESTINATION,
+        config_encrypted=encryption.encrypt(
+            {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"}
+        ),
+    )
+    db_session.add(conn)
+    db_session.flush()
+
+    # Create transformations that the pipeline selects
+    t1 = Transformation(
+        org_id=org.id,
+        name="src_order_items",
+        description="Order items staging",
+        sql_body="SELECT 1",
+        materialization=Materialization.VIEW,
+        schema_name="staging",
+    )
+    t2 = Transformation(
+        org_id=org.id,
+        name="src_users",
+        description="Users staging",
+        sql_body="SELECT 1",
+        materialization=Materialization.TABLE,
+        schema_name="staging",
+    )
+    db_session.add_all([t1, t2])
+    db_session.flush()
+
+    pipeline = Pipeline(
+        org_id=org.id,
+        name="my_pipeline",
+        destination_connection_id=conn.id,
+        command=DbtCommand.RUN,
+        models=[{"name": "src_order_items"}, {"name": "src_users"}],
+    )
+    db_session.add(pipeline)
+    db_session.flush()
+
+    run = exec_svc.create_run(db_session, org.id, NodeType.PIPELINE, pipeline.id)
+    return org, conn, pipeline, [t1, t2], run
+
+
+def _mock_dbt_project():
+    """Return a patch context that mocks DbtProjectService for pipeline task tests."""
+    return patch("datanika.tasks.pipeline_tasks.DbtProjectService")
+
+
+class TestRunPipelineTask:
+    def test_transitions_to_success(self, db_session, encryption, setup_pipeline):
+        org, conn, pipeline, transformations, run = setup_pipeline
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+
+    def test_fails_on_dbt_error(self, db_session, encryption, setup_pipeline):
+        org, conn, pipeline, transformations, run = setup_pipeline
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": False,
+                "rows_affected": 0,
+                "logs": "dbt error",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+        db_session.refresh(run)
+        assert run.status == RunStatus.FAILED
+
+
+class TestPipelineCatalogSync:
+    def test_pipeline_run_syncs_catalog(self, db_session, encryption, setup_pipeline):
+        """After successful pipeline run, catalog entries exist for each model."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+
+        # Build mock dbt RunResult nodes
+        node1 = MagicMock()
+        node1.node.name = "src_order_items"
+        node1.node.schema = "staging"
+        node1.node.resource_type.value = "model"
+        node1.node.config.materialized = "view"
+        node1.status.value = "success"
+
+        node2 = MagicMock()
+        node2.node.name = "src_users"
+        node2.node.schema = "staging"
+        node2.node.resource_type.value = "model"
+        node2.node.config.materialized = "table"
+        node2.status.value = "success"
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [node1, node2],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+
+        entries = CatalogService.list_entries(db_session, org.id)
+        entry_names = {e.table_name for e in entries}
+        assert "src_order_items" in entry_names
+        assert "src_users" in entry_names
+        assert len(entries) == 2
+
+        for entry in entries:
+            assert entry.origin_type == NodeType.TRANSFORMATION
+
+    def test_catalog_sync_failure_does_not_fail_run(self, db_session, encryption, setup_pipeline):
+        """Catalog sync is non-fatal — run still succeeds if sync raises."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+
+        node = MagicMock()
+        node.node.name = "src_order_items"
+        node.node.schema = "staging"
+        node.node.resource_type.value = "model"
+        node.node.config.materialized = "view"
+        node.status.value = "success"
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 5,
+                "logs": "",
+                "raw_result": [node],
+            }
+            # write_model_yml will fail — catalog sync should be non-fatal
+            instance.write_model_yml.side_effect = RuntimeError("yml write failed")
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        assert run.rows_loaded == 5

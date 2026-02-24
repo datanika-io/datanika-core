@@ -21,6 +21,45 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
 
 
+def _format_dbt_logs(result) -> str:
+    """Format dbt invocation result into human-readable log lines.
+
+    Produces per-model summary lines + a totals line, e.g.::
+
+        Model: src_users | Status: success | CREATE VIEW | Time: 0.12s
+        2 models, 2 succeeded, 0 failed | Total: 0.25s
+    """
+    if not result.result:
+        return ""
+
+    lines = []
+    total_time = 0.0
+    succeeded = 0
+    failed = 0
+
+    for node_result in result.result:
+        name = getattr(getattr(node_result, "node", None), "name", "unknown")
+        status = getattr(getattr(node_result, "status", None), "value", "unknown")
+        message = getattr(node_result, "message", "") or ""
+        try:
+            exec_time = float(getattr(node_result, "execution_time", 0) or 0)
+        except (TypeError, ValueError):
+            exec_time = 0.0
+        total_time += exec_time
+
+        if status == "success":
+            succeeded += 1
+        elif status == "error":
+            failed += 1
+
+        lines.append(f"Model: {name} | Status: {status} | {message} | Time: {exec_time:.2f}s")
+
+    total = len(result.result)
+    summary = f"{total} models, {succeeded} succeeded, {failed} failed | Total: {total_time:.2f}s"
+    lines.append(f"\n{summary}")
+    return "\n".join(lines)
+
+
 def _sum_rows_affected(result) -> int:
     """Extract total rows_affected from a dbt invocation result.
 
@@ -238,7 +277,7 @@ class DbtProjectService:
 
         rows_affected = _sum_rows_affected(result)
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
         if not logs and result.exception:
             logs = str(result.exception)
 
@@ -246,6 +285,7 @@ class DbtProjectService:
             "success": result.success,
             "rows_affected": rows_affected,
             "logs": logs,
+            "raw_result": result.result,
         }
 
     def run_model(self, org_id: int, model_name: str) -> dict:
@@ -273,7 +313,7 @@ class DbtProjectService:
 
         rows_affected = _sum_rows_affected(result)
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
         if not logs and result.exception:
             logs = str(result.exception)
 
@@ -281,6 +321,7 @@ class DbtProjectService:
             "success": result.success,
             "rows_affected": rows_affected,
             "logs": logs,
+            "raw_result": result.result,
         }
 
     def write_tests_config(
@@ -361,7 +402,7 @@ class DbtProjectService:
             ]
         )
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
         if not logs and result.exception:
             logs = str(result.exception)
         return {
@@ -456,7 +497,9 @@ class DbtProjectService:
             ["deps", "--project-dir", str(project_path), "--profiles-dir", str(project_path)]
         )
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
+        if not logs:
+            logs = str(result.result) if result.result else ""
         return {"success": result.success, "logs": logs}
 
     def write_snapshot(
@@ -539,7 +582,7 @@ class DbtProjectService:
                 if resp and hasattr(resp, "rows_affected"):
                     rows_affected += resp.rows_affected or 0
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
         return {"success": result.success, "rows_affected": rows_affected, "logs": logs}
 
     def remove_snapshot(self, org_id: int, snapshot_name: str) -> bool:
@@ -692,5 +735,5 @@ class DbtProjectService:
         runner = dbtRunner()
         result = runner.invoke(cmd)
 
-        logs = str(result.result) if result.result else ""
+        logs = _format_dbt_logs(result)
         return {"success": result.success, "logs": logs}

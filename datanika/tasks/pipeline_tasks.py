@@ -6,9 +6,13 @@ import traceback
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
+from datanika.models.dependency import NodeType
 from datanika.models.pipeline import Pipeline
 from datanika.models.run import Run
+from datanika.models.transformation import Transformation
+from datanika.services.catalog_service import CatalogService
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
@@ -17,6 +21,73 @@ from datanika.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 execution_service = ExecutionService()
+
+
+def _sync_catalog_after_pipeline(
+    session: Session,
+    org_id: int,
+    raw_result: list,
+    dbt_svc: DbtProjectService,
+) -> None:
+    """Create/update catalog entries for each successful model in the dbt result."""
+    catalog_svc = CatalogService()
+
+    for node_result in raw_result:
+        status = getattr(getattr(node_result, "status", None), "value", None)
+        if status != "success":
+            continue
+
+        node = getattr(node_result, "node", None)
+        if node is None:
+            continue
+
+        resource_type = getattr(getattr(node, "resource_type", None), "value", None)
+        if resource_type != "model":
+            continue
+
+        name = getattr(node, "name", None)
+        schema = getattr(node, "schema", "staging")
+        materialized = getattr(getattr(node, "config", None), "materialized", "view")
+
+        if not name:
+            continue
+
+        # Look up the matching Transformation to get origin_id and description
+        transformation = session.execute(
+            select(Transformation).where(
+                Transformation.name == name,
+                Transformation.org_id == org_id,
+                Transformation.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+
+        origin_id = transformation.id if transformation else 0
+        description = transformation.description if transformation else None
+
+        dbt_config = {"materialized": materialized}
+
+        catalog_svc.upsert_entry(
+            session,
+            org_id,
+            entry_type=CatalogEntryType.DBT_MODEL,
+            origin_type=NodeType.TRANSFORMATION,
+            origin_id=origin_id,
+            table_name=name,
+            schema_name=schema,
+            dataset_name=schema,
+            columns=[],
+            description=description,
+            dbt_config=dbt_config,
+        )
+
+        dbt_svc.write_model_yml(
+            org_id,
+            name,
+            schema,
+            columns=[],
+            description=description,
+            dbt_config=dbt_config,
+        )
 
 
 def run_pipeline(
@@ -88,6 +159,12 @@ def run_pipeline(
                 rows_loaded=result["rows_affected"],
                 logs=result["logs"],
             )
+
+            try:
+                raw_result = result.get("raw_result") or []
+                _sync_catalog_after_pipeline(session, org_id, raw_result, dbt_svc)
+            except Exception:
+                logger.exception("Pipeline catalog sync failed (non-fatal)")
         else:
             execution_service.fail_run(
                 session,

@@ -133,7 +133,7 @@ class DbtProjectService:
         materialization: str = "view",
         incremental_config: dict | None = None,
     ) -> Path:
-        """Write a .sql model file + schema.yml config. Returns path to the .sql file."""
+        """Write a .sql model file + per-model .yml config. Returns path to the .sql file."""
         _validate_identifier(model_name, "Model name")
         _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
@@ -143,15 +143,6 @@ class DbtProjectService:
         sql_path = schema_dir / f"{model_name}.sql"
         sql_path.write_text(sql_body)
 
-        schema_yml_path = schema_dir / "schema.yml"
-        if schema_yml_path.exists():
-            schema_config = yaml.safe_load(schema_yml_path.read_text()) or {}
-        else:
-            schema_config = {"version": 2, "models": []}
-
-        if "models" not in schema_config:
-            schema_config["models"] = []
-
         # Build dbt config dict
         model_cfg: dict = {"materialized": materialization}
         if materialization == "incremental" and incremental_config:
@@ -159,19 +150,20 @@ class DbtProjectService:
                 if incremental_config.get(key):
                     model_cfg[key] = incremental_config[key]
 
-        # Update or add model entry
-        existing = [m for m in schema_config["models"] if m.get("name") == model_name]
-        if existing:
-            existing[0]["config"] = model_cfg
-        else:
-            schema_config["models"].append(
-                {
-                    "name": model_name,
-                    "config": model_cfg,
-                }
-            )
+        # Write per-model yml (replaces shared schema.yml to avoid duplicate entries)
+        model_entry: dict = {"name": model_name, "config": model_cfg}
+        yml_path = schema_dir / f"{model_name}.yml"
 
-        schema_yml_path.write_text(yaml.safe_dump(schema_config, default_flow_style=False))
+        # Preserve existing columns/tests if the yml already exists
+        if yml_path.exists():
+            existing = yaml.safe_load(yml_path.read_text()) or {}
+            for m in existing.get("models", []):
+                if m.get("name") == model_name and "columns" in m:
+                    model_entry["columns"] = m["columns"]
+                    break
+
+        content = {"version": 2, "models": [model_entry]}
+        yml_path.write_text(yaml.safe_dump(content, default_flow_style=False))
         return sql_path
 
     def generate_profiles_yml(
@@ -331,28 +323,30 @@ class DbtProjectService:
         tests_config: dict,
         schema_name: str = "staging",
     ) -> Path:
-        """Write column tests into schema.yml for the given model. Returns schema.yml path."""
+        """Write column tests into per-model .yml. Returns yml path."""
         _validate_identifier(model_name, "Model name")
         _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
         schema_dir = project_path / "models" / schema_name
-        schema_yml_path = schema_dir / "schema.yml"
+        schema_dir.mkdir(parents=True, exist_ok=True)
+        yml_path = schema_dir / f"{model_name}.yml"
 
-        if schema_yml_path.exists():
-            schema_config = yaml.safe_load(schema_yml_path.read_text()) or {}
+        # Load existing per-model yml to preserve config
+        if yml_path.exists():
+            existing_content = yaml.safe_load(yml_path.read_text()) or {}
         else:
-            schema_config = {"version": 2, "models": []}
+            existing_content = {"version": 2, "models": []}
 
-        if "models" not in schema_config:
-            schema_config["models"] = []
+        if "models" not in existing_content:
+            existing_content["models"] = []
 
         # Find or create model entry
-        existing = [m for m in schema_config["models"] if m.get("name") == model_name]
+        existing = [m for m in existing_content["models"] if m.get("name") == model_name]
         if existing:
             model_entry = existing[0]
         else:
             model_entry = {"name": model_name}
-            schema_config["models"].append(model_entry)
+            existing_content["models"].append(model_entry)
 
         # Build column entries from tests_config
         columns_cfg = tests_config.get("columns", {})
@@ -376,8 +370,8 @@ class DbtProjectService:
         else:
             model_entry.pop("columns", None)
 
-        schema_yml_path.write_text(yaml.safe_dump(schema_config, default_flow_style=False))
-        return schema_yml_path
+        yml_path.write_text(yaml.safe_dump(existing_content, default_flow_style=False))
+        return yml_path
 
     def run_test(self, org_id: int, model_name: str) -> dict:
         """Execute `dbt test --select model_name` for the tenant project.

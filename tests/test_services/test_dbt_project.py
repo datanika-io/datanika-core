@@ -89,12 +89,12 @@ class TestWriteModel:
         assert "raw" in str(path)
         assert path.parent.name == "raw"
 
-    def test_creates_schema_yml_with_materialization(self, svc):
+    def test_creates_per_model_yml_with_materialization(self, svc):
         svc.ensure_project(1)
         svc.write_model(1, "my_model", "SELECT 1", materialization="table")
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        assert schema_path.exists()
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        assert yml_path.exists()
+        content = yaml.safe_load(yml_path.read_text())
         assert content["models"][0]["name"] == "my_model"
         assert content["models"][0]["config"]["materialized"] == "table"
 
@@ -422,14 +422,14 @@ class TestRemoveModel:
 # write_tests_config (Step 21)
 # ---------------------------------------------------------------------------
 class TestWriteTestsConfig:
-    def test_writes_simple_tests_to_schema_yml(self, svc):
+    def test_writes_simple_tests_to_model_yml(self, svc):
         svc.ensure_project(1)
         svc.write_model(1, "my_model", "SELECT 1 AS id")
         svc.write_tests_config(
             1, "my_model", {"columns": {"id": ["not_null", "unique"]}}, schema_name="staging"
         )
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
         model = [m for m in content["models"] if m["name"] == "my_model"][0]
         col = [c for c in model["columns"] if c["name"] == "id"][0]
         test_names = [t if isinstance(t, str) else list(t.keys())[0] for t in col["tests"]]
@@ -444,8 +444,8 @@ class TestWriteTestsConfig:
             "my_model",
             {"columns": {"status": {"accepted_values": ["active", "inactive"]}}},
         )
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
         model = [m for m in content["models"] if m["name"] == "my_model"][0]
         col = [c for c in model["columns"] if c["name"] == "status"][0]
         av_test = [t for t in col["tests"] if isinstance(t, dict) and "accepted_values" in t][0]
@@ -459,8 +459,8 @@ class TestWriteTestsConfig:
             "my_model",
             {"columns": {"user_id": {"relationships": {"to": "ref('users')", "field": "id"}}}},
         )
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
         model = [m for m in content["models"] if m["name"] == "my_model"][0]
         col = [c for c in model["columns"] if c["name"] == "user_id"][0]
         rel_test = [t for t in col["tests"] if isinstance(t, dict) and "relationships" in t][0]
@@ -471,8 +471,8 @@ class TestWriteTestsConfig:
         svc.ensure_project(1)
         svc.write_model(1, "my_model", "SELECT 1 AS id")
         svc.write_tests_config(1, "my_model", {"columns": {}})
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
         model = [m for m in content["models"] if m["name"] == "my_model"][0]
         assert "columns" not in model or model.get("columns") == []
 
@@ -481,8 +481,8 @@ class TestWriteTestsConfig:
         svc.write_model(1, "my_model", "SELECT 1 AS id")
         svc.write_tests_config(1, "my_model", {"columns": {"id": ["not_null"]}})
         svc.write_tests_config(1, "my_model", {"columns": {"id": ["unique"]}})
-        schema_path = svc.get_project_path(1) / "models" / "staging" / "schema.yml"
-        content = yaml.safe_load(schema_path.read_text())
+        yml_path = svc.get_project_path(1) / "models" / "staging" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
         model = [m for m in content["models"] if m["name"] == "my_model"][0]
         col = [c for c in model["columns"] if c["name"] == "id"][0]
         test_names = [t if isinstance(t, str) else list(t.keys())[0] for t in col["tests"]]

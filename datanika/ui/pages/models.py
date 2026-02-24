@@ -35,7 +35,6 @@ def models_table() -> rx.Component:
                 rx.table.column_header_cell(_t["models.schema"]),
                 rx.table.column_header_cell(_t["models.last_status"]),
                 rx.table.column_header_cell(_t["models.last_run"]),
-                rx.table.column_header_cell(_t["models.rows"]),
                 rx.table.column_header_cell(_t["models.columns"]),
                 rx.table.column_header_cell(_t["common.actions"]),
             ),
@@ -61,7 +60,6 @@ def models_table() -> rx.Component:
                         ),
                     ),
                     rx.table.cell(rx.text(m.last_run_datetime)),
-                    rx.table.cell(rx.text(m.last_run_rows)),
                     rx.table.cell(rx.text(m.column_count)),
                     rx.table.cell(
                         rx.link(

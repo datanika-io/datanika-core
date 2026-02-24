@@ -3,7 +3,7 @@
 import logging
 import traceback
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from datanika.models.catalog_entry import CatalogEntryType
@@ -90,6 +90,39 @@ def _sync_catalog_after_pipeline(
         )
 
 
+def _write_transformation_models(
+    session: Session,
+    org_id: int,
+    destination_connection_id: int,
+    dbt_svc: DbtProjectService,
+) -> None:
+    """Write .sql model files for all active transformations targeting this destination.
+
+    Includes transformations with ``destination_connection_id`` matching the
+    pipeline's destination **or** NULL (inherits the pipeline destination).
+    """
+    transformations = session.execute(
+        select(Transformation).where(
+            Transformation.org_id == org_id,
+            Transformation.deleted_at.is_(None),
+            or_(
+                Transformation.destination_connection_id == destination_connection_id,
+                Transformation.destination_connection_id.is_(None),
+            ),
+        )
+    ).scalars().all()
+
+    for t in transformations:
+        dbt_svc.write_model(
+            org_id,
+            t.name,
+            t.sql_body,
+            schema_name=t.schema_name,
+            materialization=t.materialization.value,
+            incremental_config=t.incremental_config,
+        )
+
+
 def run_pipeline(
     run_id: int,
     org_id: int,
@@ -140,6 +173,9 @@ def run_pipeline(
             dst_conn.connection_type.value,
             dst_config,
         )
+
+        # Write .sql model files for all relevant transformations
+        _write_transformation_models(session, org_id, pipeline.destination_connection_id, dbt_svc)
 
         # Build selector
         selector = PipelineService.build_selector(pipeline.models, pipeline.custom_selector)

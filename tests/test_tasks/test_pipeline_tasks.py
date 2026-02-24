@@ -128,6 +128,161 @@ class TestRunPipelineTask:
         assert run.status == RunStatus.FAILED
 
 
+class TestPipelineWritesModels:
+    def test_pipeline_writes_all_transformation_models(
+        self, db_session, encryption, setup_pipeline
+    ):
+        """A full pipeline run writes .sql model files for all active transformations
+        that target the same destination connection (or have no explicit destination)."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+
+        # Add 3 more transformations — these have never been run individually,
+        # so their .sql files don't exist on disk yet.
+        extra = []
+        for i, name in enumerate(["dim_customers", "fct_orders", "int_payments"]):
+            t = Transformation(
+                org_id=org.id,
+                name=name,
+                description=f"Extra model {i}",
+                sql_body=f"SELECT {i}",
+                materialization=Materialization.VIEW,
+                schema_name="staging",
+                # destination_connection_id=None means "inherits pipeline destination"
+            )
+            extra.append(t)
+        db_session.add_all(extra)
+
+        # Add a transformation that targets a DIFFERENT destination — should NOT be written
+        other_conn = Connection(
+            org_id=org.id,
+            name="other_dest",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted=encryption.encrypt(
+                {"host": "h2", "port": 5432, "user": "u2", "password": "p2", "database": "d2"}
+            ),
+        )
+        db_session.add(other_conn)
+        db_session.flush()
+
+        other_t = Transformation(
+            org_id=org.id,
+            name="other_model",
+            sql_body="SELECT 999",
+            materialization=Materialization.TABLE,
+            schema_name="staging",
+            destination_connection_id=other_conn.id,
+        )
+        db_session.add(other_t)
+
+        # Add a soft-deleted transformation — should NOT be written
+        import datetime
+
+        deleted_t = Transformation(
+            org_id=org.id,
+            name="deleted_model",
+            sql_body="SELECT -1",
+            materialization=Materialization.VIEW,
+            schema_name="staging",
+        )
+        db_session.add(deleted_t)
+        db_session.flush()
+        deleted_t.deleted_at = datetime.datetime.now(datetime.UTC)
+
+        db_session.flush()
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        # write_model should have been called for each of the 5 matching transformations
+        # (2 from setup_pipeline + 3 extra with NULL destination_connection_id)
+        # but NOT for other_model (different dest) or deleted_model (soft-deleted)
+        write_calls = instance.write_model.call_args_list
+        written_names = {call.args[1] for call in write_calls}
+        assert written_names == {
+            "src_order_items",
+            "src_users",
+            "dim_customers",
+            "fct_orders",
+            "int_payments",
+        }
+        assert len(write_calls) == 5
+
+    def test_pipeline_writes_models_matching_destination(self, db_session, encryption):
+        """Transformations explicitly targeting the pipeline's destination are also written."""
+        slug = f"acme-dst-{uuid.uuid4().hex[:8]}"
+        org = Organization(name="Acme", slug=slug)
+        db_session.add(org)
+        db_session.flush()
+
+        conn = Connection(
+            org_id=org.id,
+            name="pg_dest",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted=encryption.encrypt(
+                {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"}
+            ),
+        )
+        db_session.add(conn)
+        db_session.flush()
+
+        # Transformation that explicitly targets this destination
+        t = Transformation(
+            org_id=org.id,
+            name="explicit_dest_model",
+            sql_body="SELECT 1",
+            materialization=Materialization.TABLE,
+            schema_name="analytics",
+            destination_connection_id=conn.id,
+        )
+        db_session.add(t)
+        db_session.flush()
+
+        pipeline = Pipeline(
+            org_id=org.id,
+            name="dst_pipeline",
+            destination_connection_id=conn.id,
+            command=DbtCommand.RUN,
+        )
+        db_session.add(pipeline)
+        db_session.flush()
+
+        exec_svc = ExecutionService()
+        run = exec_svc.create_run(db_session, org.id, NodeType.PIPELINE, pipeline.id)
+
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        write_calls = instance.write_model.call_args_list
+        written_names = {call.args[1] for call in write_calls}
+        assert "explicit_dest_model" in written_names
+
+
 class TestPipelineCatalogSync:
     def test_pipeline_run_syncs_catalog(self, db_session, encryption, setup_pipeline):
         """After successful pipeline run, catalog entries exist for each model."""

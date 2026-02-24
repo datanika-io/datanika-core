@@ -45,6 +45,10 @@ class DashboardState(BaseState):
             pipelines = pipeline_svc.list_pipelines(session, org_id)
             schedules = schedule_svc.list_schedules(session, org_id)
 
+            upload_names = {u.id: u.name for u in uploads}
+            trans_names = {t.id: t.name for t in transformations}
+            pipeline_names = {p.id: p.name for p in pipelines}
+
             recent = exec_svc.list_runs(session, org_id, limit=10)
             success_count = sum(1 for r in recent if r.status == RunStatus.SUCCESS)
             failed_count = sum(1 for r in recent if r.status == RunStatus.FAILED)
@@ -63,6 +67,13 @@ class DashboardState(BaseState):
                     id=r.id,
                     target_type=r.target_type.value,
                     target_id=r.target_id,
+                    target_name=self._resolve_target_name(
+                        r.target_type.value,
+                        r.target_id,
+                        upload_names,
+                        trans_names,
+                        pipeline_names,
+                    ),
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
                     finished_at=str(r.finished_at) if r.finished_at else "",
@@ -72,3 +83,20 @@ class DashboardState(BaseState):
                 for r in recent
             ]
         self.error_message = ""
+
+    @staticmethod
+    def _resolve_target_name(
+        target_type: str,
+        target_id: int,
+        upload_names: dict,
+        trans_names: dict,
+        pipeline_names: dict | None = None,
+    ) -> str:
+        if target_type == "upload":
+            name = upload_names.get(target_id, f"#{target_id}")
+            return f"upload: {name}"
+        if target_type == "pipeline":
+            name = (pipeline_names or {}).get(target_id, f"#{target_id}")
+            return f"pipeline: {name}"
+        name = trans_names.get(target_id, f"#{target_id}")
+        return f"transformation: {name}"

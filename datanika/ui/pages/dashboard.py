@@ -52,7 +52,7 @@ def recent_runs_table() -> rx.Component:
                     DashboardState.recent_runs,
                     lambda r: rx.table.row(
                         rx.table.cell(r.id),
-                        rx.table.cell(rx.text(f"{r.target_type} #{r.target_id}")),
+                        rx.table.cell(rx.text(r.target_name)),
                         rx.table.cell(
                             rx.badge(r.status, color_scheme=_status_color(r.status)),
                         ),

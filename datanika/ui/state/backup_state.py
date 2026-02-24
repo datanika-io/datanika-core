@@ -14,16 +14,17 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 
 class BackupState(BaseState):
     restore_conflicts: list[dict] = []
-    restore_resolutions: dict[str, str] = {}
     restore_data: dict = {}
     restore_result: str = ""
 
     def set_conflict_resolution(self, key: str, value: str):
-        self.restore_resolutions[key] = value
+        self.restore_conflicts = [
+            {**c, "resolution": value} if c.get("key") == key else c
+            for c in self.restore_conflicts
+        ]
 
     def cancel_restore(self):
         self.restore_conflicts = []
-        self.restore_resolutions = {}
         self.restore_data = {}
         self.restore_result = ""
 
@@ -69,8 +70,10 @@ class BackupState(BaseState):
 
         if conflicts:
             self.restore_data = data
-            self.restore_conflicts = conflicts
-            self.restore_resolutions = {f"{c['type']}:{c['name']}": "skip" for c in conflicts}
+            self.restore_conflicts = [
+                {**c, "key": f"{c['type']}:{c['name']}", "resolution": "skip"}
+                for c in conflicts
+            ]
         else:
             await self._do_import(org_id, data, {})
 
@@ -79,12 +82,11 @@ class BackupState(BaseState):
         if not org_id or not self.restore_data:
             return
         resolutions: dict[tuple[str, str], str] = {}
-        for key, value in self.restore_resolutions.items():
-            typ, name = key.split(":", 1)
-            resolutions[(typ, name)] = value
+        for c in self.restore_conflicts:
+            typ, name = c["key"].split(":", 1)
+            resolutions[(typ, name)] = c.get("resolution", "skip")
         await self._do_import(org_id, self.restore_data, resolutions)
         self.restore_conflicts = []
-        self.restore_resolutions = {}
         self.restore_data = {}
 
     async def _do_import(self, org_id: int, data: dict, resolutions: dict[tuple[str, str], str]):

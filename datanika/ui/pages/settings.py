@@ -109,7 +109,6 @@ def members_card() -> rx.Component:
 
 
 def _conflict_row(conflict: dict) -> rx.Component:
-    key = conflict["type"] + ":" + conflict["name"]
     return rx.hstack(
         rx.badge(conflict["type"], variant="outline"),
         rx.text(conflict["name"], weight="medium"),
@@ -119,8 +118,8 @@ def _conflict_row(conflict: dict) -> rx.Component:
                 _t["settings.conflict_overwrite"],
                 _t["settings.conflict_rename"],
             ],
-            value=BackupState.restore_resolutions[key],
-            on_change=lambda val: BackupState.set_conflict_resolution(key, val),
+            value=conflict["resolution"],
+            on_change=lambda val: BackupState.set_conflict_resolution(conflict["key"], val),
             size="1",
         ),
         spacing="3",

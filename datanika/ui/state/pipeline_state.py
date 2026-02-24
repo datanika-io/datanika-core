@@ -1,5 +1,6 @@
 """Pipeline state for Reflex UI — dbt pipeline orchestration."""
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
@@ -369,3 +370,4 @@ class PipelineState(BaseState):
             run_id = run.id
         run_pipeline_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
+        yield rx.toast("Run triggered", position="top-right")

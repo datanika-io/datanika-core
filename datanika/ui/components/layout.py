@@ -110,4 +110,5 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             padding="24px",
             width="calc(100% - 240px)",
         ),
+        rx.toast.provider(duration=3000),
     )

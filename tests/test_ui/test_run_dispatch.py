@@ -48,7 +48,8 @@ class TestUploadRunDispatchesCeleryTask:
             mock_get_session.return_value.__enter__ = MagicMock(return_value=mock_session)
             mock_get_session.return_value.__exit__ = MagicMock(return_value=False)
 
-            await fn(state, upload_id=5)
+            async for _ in fn(state, upload_id=5):
+                pass
 
         # Verify run was created
         mock_exec_svc.create_run.assert_called_once_with(mock_session, 1, NodeType.UPLOAD, 5)

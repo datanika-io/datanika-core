@@ -3,6 +3,7 @@
 import json
 import re
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
@@ -412,3 +413,4 @@ class UploadState(BaseState):
             run_id = run.id
         run_upload_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
+        yield rx.toast("Run triggered", position="top-right")

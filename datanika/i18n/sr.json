@@ -232,7 +232,6 @@
   "models.schema": "Шема",
   "models.last_status": "Последњи статус",
   "models.last_run": "Последње покретање",
-  "models.rows": "Редови",
   "models.columns": "Колоне",
   "model_detail.title": "Детаљи модела",
   "model_detail.description": "Опис",

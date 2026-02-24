@@ -232,7 +232,6 @@
   "models.schema": "Σχήμα",
   "models.last_status": "Τελ. κατάσταση",
   "models.last_run": "Τελ. εκτέλεση",
-  "models.rows": "Γραμμές",
   "models.columns": "Στήλες",
   "model_detail.title": "Λεπτομέρειες μοντέλου",
   "model_detail.description": "Περιγραφή",

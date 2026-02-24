@@ -232,7 +232,6 @@
   "models.schema": "المخطط",
   "models.last_status": "آخر حالة",
   "models.last_run": "آخر تشغيل",
-  "models.rows": "الصفوف",
   "models.columns": "الأعمدة",
   "model_detail.title": "تفاصيل النموذج",
   "model_detail.description": "الوصف",

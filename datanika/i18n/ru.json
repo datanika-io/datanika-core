@@ -232,7 +232,6 @@
   "models.schema": "Схема",
   "models.last_status": "Посл. статус",
   "models.last_run": "Посл. запуск",
-  "models.rows": "Строки",
   "models.columns": "Столбцы",
   "model_detail.title": "Детали модели",
   "model_detail.description": "Описание",

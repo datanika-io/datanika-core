@@ -232,7 +232,6 @@
   "models.schema": "模式",
   "models.last_status": "最近状态",
   "models.last_run": "最近运行",
-  "models.rows": "行数",
   "models.columns": "列",
   "model_detail.title": "模型详情",
   "model_detail.description": "描述",

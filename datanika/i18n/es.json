@@ -232,7 +232,6 @@
   "models.schema": "Esquema",
   "models.last_status": "Último estado",
   "models.last_run": "Última ejec.",
-  "models.rows": "Filas",
   "models.columns": "Columnas",
   "model_detail.title": "Detalle del modelo",
   "model_detail.description": "Descripción",

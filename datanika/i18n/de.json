@@ -232,7 +232,6 @@
   "models.schema": "Schema",
   "models.last_status": "Letzter Status",
   "models.last_run": "Letzte Ausf.",
-  "models.rows": "Zeilen",
   "models.columns": "Spalten",
   "model_detail.title": "Modelldetails",
   "model_detail.description": "Beschreibung",

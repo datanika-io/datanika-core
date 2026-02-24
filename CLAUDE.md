@@ -21,7 +21,8 @@ uv add <package>           # core dependency
 uv add --dev <package>     # dev dependency
 
 # Infrastructure (PostgreSQL 16 + Redis 7)
-docker-compose up -d
+# Must source .env.docker first — docker-compose.yml interpolates variables from it
+set -a && source .env.docker && set +a && docker-compose up -d
 
 # Run app (starts frontend on :3000, backend on :8000)
 uv run reflex run

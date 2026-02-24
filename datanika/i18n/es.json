@@ -225,6 +225,7 @@
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
   "dag.ph_name": "Nombre",
+  "dag.check_timeframe": "Plazo de verificación",
   "models.no_models": "No se encontraron modelos. Ejecute una carga o transformación para llenar el catálogo.",
   "models.origin": "Origen",
   "models.table_name": "Nombre de tabla",

@@ -225,6 +225,7 @@
   "dag.upstream": "Источник",
   "dag.downstream": "Приёмник",
   "dag.ph_name": "Имя",
+  "dag.check_timeframe": "Интервал проверки",
   "models.no_models": "Модели не найдены. Запустите загрузку или трансформацию для заполнения каталога.",
   "models.origin": "Происхождение",
   "models.table_name": "Имя таблицы",

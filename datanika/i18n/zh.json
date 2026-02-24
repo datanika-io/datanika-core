@@ -225,6 +225,7 @@
   "dag.upstream": "上游",
   "dag.downstream": "下游",
   "dag.ph_name": "名称",
+  "dag.check_timeframe": "检查时间范围",
   "models.no_models": "未找到模型。请先运行上传或转换以填充目录。",
   "models.origin": "来源",
   "models.table_name": "表名",

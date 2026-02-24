@@ -225,6 +225,7 @@
   "dag.upstream": "المنبع",
   "dag.downstream": "المصبّ",
   "dag.ph_name": "الاسم",
+  "dag.check_timeframe": "فترة التحقق",
   "models.no_models": "لم يتم العثور على نماذج. قم بتشغيل تحميل أو تحويل لملء الكتالوج.",
   "models.origin": "المصدر",
   "models.table_name": "اسم الجدول",

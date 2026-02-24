@@ -209,6 +209,10 @@ def run_upload(
 
 
 @celery_app.task(bind=True, name="datanika.run_upload")
-def run_upload_task(self, run_id: int, org_id: int):
+def run_upload_task(self, run_id: int, org_id: int, scheduled: bool = False):
     """Celery entry point for upload execution."""
+    if scheduled:
+        from datanika.tasks.dependency_helpers import check_deps_or_retry
+
+        check_deps_or_retry(self, run_id, org_id, NodeType.UPLOAD)
     run_upload(run_id=run_id, org_id=org_id)

@@ -204,6 +204,78 @@ class TestAddDependency:
             )
 
 
+class TestAddDependencyTimeframe:
+    def test_with_valid_timeframe(self, svc, db_session, org, upload, transformation):
+        dep = svc.add_dependency(
+            db_session, org.id,
+            NodeType.UPLOAD, upload.id,
+            NodeType.TRANSFORMATION, transformation.id,
+            check_timeframe_value=30,
+            check_timeframe_unit="minutes",
+        )
+        assert dep.check_timeframe_value == 30
+        assert dep.check_timeframe_unit == "minutes"
+
+    def test_with_hours_unit(self, svc, db_session, org, upload, transformation):
+        dep = svc.add_dependency(
+            db_session, org.id,
+            NodeType.UPLOAD, upload.id,
+            NodeType.TRANSFORMATION, transformation.id,
+            check_timeframe_value=2,
+            check_timeframe_unit="hours",
+        )
+        assert dep.check_timeframe_value == 2
+        assert dep.check_timeframe_unit == "hours"
+
+    def test_none_timeframe_is_metadata_only(self, svc, db_session, org, upload, transformation):
+        dep = svc.add_dependency(
+            db_session, org.id,
+            NodeType.UPLOAD, upload.id,
+            NodeType.TRANSFORMATION, transformation.id,
+        )
+        assert dep.check_timeframe_value is None
+        assert dep.check_timeframe_unit is None
+
+    def test_negative_value_rejected(self, svc, db_session, org, upload, transformation):
+        with pytest.raises(DependencyConfigError, match="positive"):
+            svc.add_dependency(
+                db_session, org.id,
+                NodeType.UPLOAD, upload.id,
+                NodeType.TRANSFORMATION, transformation.id,
+                check_timeframe_value=-5,
+                check_timeframe_unit="minutes",
+            )
+
+    def test_zero_value_rejected(self, svc, db_session, org, upload, transformation):
+        with pytest.raises(DependencyConfigError, match="positive"):
+            svc.add_dependency(
+                db_session, org.id,
+                NodeType.UPLOAD, upload.id,
+                NodeType.TRANSFORMATION, transformation.id,
+                check_timeframe_value=0,
+                check_timeframe_unit="minutes",
+            )
+
+    def test_invalid_unit_rejected(self, svc, db_session, org, upload, transformation):
+        with pytest.raises(DependencyConfigError, match="check_timeframe_unit"):
+            svc.add_dependency(
+                db_session, org.id,
+                NodeType.UPLOAD, upload.id,
+                NodeType.TRANSFORMATION, transformation.id,
+                check_timeframe_value=30,
+                check_timeframe_unit="days",
+            )
+
+    def test_unit_without_value_rejected(self, svc, db_session, org, upload, transformation):
+        with pytest.raises(DependencyConfigError, match="requires check_timeframe_value"):
+            svc.add_dependency(
+                db_session, org.id,
+                NodeType.UPLOAD, upload.id,
+                NodeType.TRANSFORMATION, transformation.id,
+                check_timeframe_unit="minutes",
+            )
+
+
 class TestRemoveDependency:
     def test_sets_deleted_at(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(

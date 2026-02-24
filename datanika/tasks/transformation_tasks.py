@@ -190,6 +190,11 @@ def run_transformation(
 
 
 @celery_app.task(bind=True, name="datanika.run_transformation")
-def run_transformation_task(self, run_id: int, org_id: int):
+def run_transformation_task(self, run_id: int, org_id: int, scheduled: bool = False):
     """Celery entry point for transformation execution."""
+    if scheduled:
+        from datanika.models.dependency import NodeType
+        from datanika.tasks.dependency_helpers import check_deps_or_retry
+
+        check_deps_or_retry(self, run_id, org_id, NodeType.TRANSFORMATION)
     run_transformation(run_id=run_id, org_id=org_id)

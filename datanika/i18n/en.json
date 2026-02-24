@@ -225,6 +225,7 @@
   "dag.upstream": "Upstream",
   "dag.downstream": "Downstream",
   "dag.ph_name": "Name",
+  "dag.check_timeframe": "Check Timeframe",
   "models.no_models": "No models found. Run an upload or transformation to populate the catalog.",
   "models.origin": "Origin",
   "models.table_name": "Table Name",

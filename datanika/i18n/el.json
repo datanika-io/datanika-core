@@ -225,6 +225,7 @@
   "dag.upstream": "Ανάντη",
   "dag.downstream": "Κατάντη",
   "dag.ph_name": "Όνομα",
+  "dag.check_timeframe": "Χρονικό πλαίσιο ελέγχου",
   "models.no_models": "Δεν βρέθηκαν μοντέλα. Εκτελέστε μεταφόρτωση ή μετασχηματισμό για να γεμίσει ο κατάλογος.",
   "models.origin": "Προέλευση",
   "models.table_name": "Όνομα πίνακα",

@@ -21,6 +21,9 @@ class DependencyItem(BaseModel):
     downstream_type: str = ""
     downstream_id: int = 0
     downstream_name: str = ""
+    check_timeframe_value: str = ""
+    check_timeframe_unit: str = ""
+    check_timeframe_display: str = ""
 
 
 class DagState(BaseState):
@@ -39,6 +42,9 @@ class DagState(BaseState):
     downstream_suggestions: list[str] = []
     show_downstream_suggestions: bool = False
     downstream_suggestion_index: int = -1
+    # Timeframe form fields
+    form_check_timeframe_value: str = ""
+    form_check_timeframe_unit: str = "minutes"
     # Internal name→ID lookup: {"upload": {"name": id}, ...}
     _name_to_id: dict[str, dict[str, int]] = {}
 
@@ -58,9 +64,14 @@ class DagState(BaseState):
             self.show_upstream_suggestions = len(self.upstream_suggestions) > 0
             self.upstream_suggestion_index = 0 if self.upstream_suggestions else -1
         else:
-            self.upstream_suggestions = []
-            self.show_upstream_suggestions = False
-            self.upstream_suggestion_index = -1
+            self.upstream_suggestions = list(self.upstream_options)
+            self.show_upstream_suggestions = len(self.upstream_suggestions) > 0
+            self.upstream_suggestion_index = 0 if self.upstream_suggestions else -1
+
+    def show_upstream_all(self):
+        self.upstream_suggestions = list(self.upstream_options)
+        self.show_upstream_suggestions = len(self.upstream_suggestions) > 0
+        self.upstream_suggestion_index = 0 if self.upstream_suggestions else -1
 
     def select_upstream_suggestion(self, name: str):
         self.form_upstream_name = name
@@ -109,9 +120,14 @@ class DagState(BaseState):
             self.show_downstream_suggestions = len(self.downstream_suggestions) > 0
             self.downstream_suggestion_index = 0 if self.downstream_suggestions else -1
         else:
-            self.downstream_suggestions = []
-            self.show_downstream_suggestions = False
-            self.downstream_suggestion_index = -1
+            self.downstream_suggestions = list(self.downstream_options)
+            self.show_downstream_suggestions = len(self.downstream_suggestions) > 0
+            self.downstream_suggestion_index = 0 if self.downstream_suggestions else -1
+
+    def show_downstream_all(self):
+        self.downstream_suggestions = list(self.downstream_options)
+        self.show_downstream_suggestions = len(self.downstream_suggestions) > 0
+        self.downstream_suggestion_index = 0 if self.downstream_suggestions else -1
 
     def select_downstream_suggestion(self, name: str):
         self.form_downstream_name = name
@@ -239,6 +255,13 @@ class DagState(BaseState):
                         trans_names,
                         pipeline_names,
                     ),
+                    check_timeframe_value=str(d.check_timeframe_value or ""),
+                    check_timeframe_unit=d.check_timeframe_unit or "",
+                    check_timeframe_display=(
+                        f"{d.check_timeframe_value} {d.check_timeframe_unit}"
+                        if d.check_timeframe_value
+                        else ""
+                    ),
                 )
                 for d in rows
             ]
@@ -255,6 +278,17 @@ class DagState(BaseState):
         if upstream_id is None or downstream_id is None:
             self.error_message = "Node not found — select a name from the list"
             return
+        # Parse optional timeframe
+        tf_value = None
+        tf_unit = None
+        if self.form_check_timeframe_value.strip():
+            try:
+                tf_value = int(self.form_check_timeframe_value.strip())
+            except ValueError:
+                self.error_message = "Timeframe value must be a number"
+                return
+            tf_unit = self.form_check_timeframe_unit or "minutes"
+
         try:
             with get_sync_session() as session:
                 svc.add_dependency(
@@ -264,6 +298,8 @@ class DagState(BaseState):
                     upstream_id,
                     NodeType(self.form_downstream_type),
                     downstream_id,
+                    check_timeframe_value=tf_value,
+                    check_timeframe_unit=tf_unit,
                 )
                 session.commit()
         except Exception as e:
@@ -271,6 +307,8 @@ class DagState(BaseState):
             return
         self.form_upstream_name = ""
         self.form_downstream_name = ""
+        self.form_check_timeframe_value = ""
+        self.form_check_timeframe_unit = "minutes"
         self.error_message = ""
         await self.load_dependencies()
 

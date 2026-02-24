@@ -43,6 +43,8 @@ class DependencyService:
                 f"{label} {node_type.value} with id {node_id} not found in org {org_id}"
             )
 
+    _VALID_TIMEFRAME_UNITS = ("minutes", "hours")
+
     def add_dependency(
         self,
         session: Session,
@@ -51,7 +53,22 @@ class DependencyService:
         upstream_id: int,
         downstream_type: NodeType,
         downstream_id: int,
+        check_timeframe_value: int | None = None,
+        check_timeframe_unit: str | None = None,
     ) -> Dependency:
+        # Validate timeframe params
+        if check_timeframe_unit is not None and check_timeframe_value is None:
+            raise DependencyConfigError("check_timeframe_unit requires check_timeframe_value")
+        if check_timeframe_value is not None and check_timeframe_value <= 0:
+            raise DependencyConfigError("check_timeframe_value must be positive")
+        if (
+            check_timeframe_unit is not None
+            and check_timeframe_unit not in self._VALID_TIMEFRAME_UNITS
+        ):
+            raise DependencyConfigError(
+                f"check_timeframe_unit must be one of {self._VALID_TIMEFRAME_UNITS}"
+            )
+
         # Reject self-references
         if upstream_type == downstream_type and upstream_id == downstream_id:
             raise DependencyConfigError("self-reference: upstream and downstream are the same node")
@@ -81,6 +98,8 @@ class DependencyService:
             upstream_id=upstream_id,
             downstream_type=downstream_type,
             downstream_id=downstream_id,
+            check_timeframe_value=check_timeframe_value,
+            check_timeframe_unit=check_timeframe_unit,
         )
         session.add(dep)
         session.flush()

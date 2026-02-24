@@ -225,6 +225,7 @@
   "dag.upstream": "Amont",
   "dag.downstream": "Aval",
   "dag.ph_name": "Nom",
+  "dag.check_timeframe": "Délai de vérification",
   "models.no_models": "Aucun modèle trouvé. Exécutez un chargement ou une transformation pour remplir le catalogue.",
   "models.origin": "Origine",
   "models.table_name": "Nom de table",

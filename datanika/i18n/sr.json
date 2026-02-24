@@ -225,6 +225,7 @@
   "dag.upstream": "Узводни",
   "dag.downstream": "Низводни",
   "dag.ph_name": "Име",
+  "dag.check_timeframe": "Временски оквир провере",
   "models.no_models": "Нису пронађени модели. Покрените отпремање или трансформацију да бисте попунили каталог.",
   "models.origin": "Порекло",
   "models.table_name": "Назив табеле",

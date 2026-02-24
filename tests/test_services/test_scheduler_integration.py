@@ -200,6 +200,8 @@ class TestDispatchTarget:
 
         mock_svc.create_run.assert_called_once()
         mock_upload_task.delay.assert_called_once()
+        call_kwargs = mock_upload_task.delay.call_args[1]
+        assert call_kwargs["scheduled"] is True
 
     @patch("datanika.services.scheduler_integration.run_transformation_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
@@ -217,6 +219,8 @@ class TestDispatchTarget:
 
         mock_svc.create_run.assert_called_once()
         mock_transform_task.delay.assert_called_once()
+        call_kwargs = mock_transform_task.delay.call_args[1]
+        assert call_kwargs["scheduled"] is True
 
     @patch("datanika.services.scheduler_integration.run_upload_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
@@ -232,7 +236,7 @@ class TestDispatchTarget:
         ):
             SchedulerIntegrationService._dispatch_target(3, "upload", 7)
 
-        mock_upload_task.delay.assert_called_once_with(run_id=5, org_id=3)
+        mock_upload_task.delay.assert_called_once_with(run_id=5, org_id=3, scheduled=True)
 
     @patch("datanika.services.scheduler_integration.run_pipeline_task")
     @patch("datanika.services.scheduler_integration.ExecutionService")
@@ -249,4 +253,4 @@ class TestDispatchTarget:
             SchedulerIntegrationService._dispatch_target(1, "pipeline", 30)
 
         mock_svc.create_run.assert_called_once()
-        mock_pipeline_task.delay.assert_called_once_with(run_id=3, org_id=1)
+        mock_pipeline_task.delay.assert_called_once_with(run_id=3, org_id=1, scheduled=True)

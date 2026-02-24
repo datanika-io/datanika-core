@@ -1,6 +1,6 @@
 import enum
 
-from sqlalchemy import BigInteger, Enum
+from sqlalchemy import BigInteger, Enum, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from datanika.models.base import Base, TenantMixin, TimestampMixin
@@ -24,3 +24,5 @@ class Dependency(Base, TenantMixin, TimestampMixin):
         Enum(NodeType, native_enum=False, length=20), nullable=False
     )
     downstream_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    check_timeframe_value: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    check_timeframe_unit: Mapped[str | None] = mapped_column(String(10), nullable=True)

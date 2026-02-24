@@ -104,6 +104,25 @@ class TestWriteModel:
         path = svc.write_model(1, "my_model", "SELECT 2 AS updated")
         assert path.read_text() == "SELECT 2 AS updated"
 
+    def test_removes_stale_files_on_schema_change(self, svc):
+        """When schema_name changes, old .sql and .yml in the previous dir are removed."""
+        svc.ensure_project(1)
+        svc.write_model(1, "src_users", "SELECT 1", schema_name="raw")
+        old_sql = svc.get_project_path(1) / "models" / "raw" / "src_users.sql"
+        old_yml = svc.get_project_path(1) / "models" / "raw" / "src_users.yml"
+        assert old_sql.exists()
+        assert old_yml.exists()
+
+        # Change schema from raw → public
+        svc.write_model(1, "src_users", "SELECT 2", schema_name="public")
+        new_sql = svc.get_project_path(1) / "models" / "public" / "src_users.sql"
+        new_yml = svc.get_project_path(1) / "models" / "public" / "src_users.yml"
+        assert new_sql.exists()
+        assert new_yml.exists()
+        # Old files must be gone
+        assert not old_sql.exists()
+        assert not old_yml.exists()
+
     def test_handles_special_characters_in_name(self, svc):
         svc.ensure_project(1)
         path = svc.write_model(1, "my-model_v2", "SELECT 1")

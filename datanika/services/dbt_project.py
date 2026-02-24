@@ -137,8 +137,18 @@ class DbtProjectService:
         _validate_identifier(model_name, "Model name")
         _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
-        schema_dir = project_path / "models" / schema_name
+        models_dir = project_path / "models"
+        schema_dir = models_dir / schema_name
         schema_dir.mkdir(parents=True, exist_ok=True)
+
+        # Remove stale .sql/.yml from other schema dirs to prevent duplicate entries
+        if models_dir.exists():
+            for sibling in models_dir.iterdir():
+                if sibling.is_dir() and sibling.name != schema_name:
+                    for ext in (".sql", ".yml"):
+                        stale = sibling / f"{model_name}{ext}"
+                        if stale.exists():
+                            stale.unlink()
 
         sql_path = schema_dir / f"{model_name}.sql"
         sql_path.write_text(sql_body)
@@ -657,8 +667,17 @@ class DbtProjectService:
         _validate_identifier(model_name, "Model name")
         _validate_identifier(schema_name, "Schema name")
         project_path = self.get_project_path(org_id)
-        schema_dir = project_path / "models" / schema_name
+        models_dir = project_path / "models"
+        schema_dir = models_dir / schema_name
         schema_dir.mkdir(parents=True, exist_ok=True)
+
+        # Remove stale .yml from other schema dirs to prevent duplicate entries
+        if models_dir.exists():
+            for sibling in models_dir.iterdir():
+                if sibling.is_dir() and sibling.name != schema_name:
+                    stale = sibling / f"{model_name}.yml"
+                    if stale.exists():
+                        stale.unlink()
 
         model_entry: dict = {"name": model_name}
         if description:

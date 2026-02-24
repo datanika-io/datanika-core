@@ -66,14 +66,18 @@ def _recompute_columns(columns: list["ColumnItem"]) -> list["ColumnItem"]:
                     relationship_field = t["relationships"].get("field", "")
                 additional_tests.append(key)
 
-        result.append(col.model_copy(update={
-            "has_not_null": has_not_null,
-            "has_unique": has_unique,
-            "accepted_values_csv": accepted_values_csv,
-            "relationship_to": relationship_to,
-            "relationship_field": relationship_field,
-            "additional_tests": additional_tests,
-        }))
+        result.append(
+            col.model_copy(
+                update={
+                    "has_not_null": has_not_null,
+                    "has_unique": has_unique,
+                    "accepted_values_csv": accepted_values_csv,
+                    "relationship_to": relationship_to,
+                    "relationship_field": relationship_field,
+                    "additional_tests": additional_tests,
+                }
+            )
+        )
     return result
 
 
@@ -160,9 +164,7 @@ class ModelDetailState(BaseState):
             else:
                 transformations = transform_svc.list_transformations(session, org_id)
                 names = {t.id: t.name for t in transformations}
-                self.origin_name = names.get(
-                    entry.origin_id, f"Transformation #{entry.origin_id}"
-                )
+                self.origin_name = names.get(entry.origin_id, f"Transformation #{entry.origin_id}")
 
             # Populate columns with computed display fields
             raw_cols = [
@@ -204,26 +206,27 @@ class ModelDetailState(BaseState):
 
     def set_column_description_by_name(self, col_name: str, value: str):
         self.columns = [
-            col.model_copy(update={"description": value})
-            if col.name == col_name else col
+            col.model_copy(update={"description": value}) if col.name == col_name else col
             for col in self.columns
         ]
 
     # -- Toggle not_null / unique --
 
     def toggle_column_not_null(self, col_name: str, checked: bool):
-        self.columns = _recompute_columns([
-            self._toggle_test(col, "not_null", checked)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
+        self.columns = _recompute_columns(
+            [
+                self._toggle_test(col, "not_null", checked) if col.name == col_name else col
+                for col in self.columns
+            ]
+        )
 
     def toggle_column_unique(self, col_name: str, checked: bool):
-        self.columns = _recompute_columns([
-            self._toggle_test(col, "unique", checked)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
+        self.columns = _recompute_columns(
+            [
+                self._toggle_test(col, "unique", checked) if col.name == col_name else col
+                for col in self.columns
+            ]
+        )
 
     @staticmethod
     def _toggle_test(col: ColumnItem, test_name: str, on: bool) -> ColumnItem:
@@ -270,22 +273,22 @@ class ModelDetailState(BaseState):
             return
 
         new_key = next(iter(test_entry), "")
-        self.columns = _recompute_columns([
-            self._replace_or_add_test(col, new_key, test_entry)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
+        self.columns = _recompute_columns(
+            [
+                self._replace_or_add_test(col, new_key, test_entry) if col.name == col_name else col
+                for col in self.columns
+            ]
+        )
         self.adding_test_column = ""
 
     @staticmethod
     def _replace_or_add_test(
-        col: "ColumnItem", new_key: str, test_entry: dict,
+        col: "ColumnItem",
+        new_key: str,
+        test_entry: dict,
     ) -> "ColumnItem":
         """Remove any existing test with the same key, then append the new one."""
-        tests = [
-            t for t in col.tests
-            if not (isinstance(t, dict) and next(iter(t), "") == new_key)
-        ]
+        tests = [t for t in col.tests if not (isinstance(t, dict) and next(iter(t), "") == new_key)]
         tests.append(test_entry)
         return col.model_copy(update={"tests": tests})
 
@@ -300,10 +303,12 @@ class ModelDetailState(BaseState):
         elif test_type == "relationships":
             if not self.custom_test_min_value:
                 return None
-            return {"relationships": {
-                "to": self.custom_test_min_value,
-                "field": self.custom_test_max_value,
-            }}
+            return {
+                "relationships": {
+                    "to": self.custom_test_min_value,
+                    "field": self.custom_test_max_value,
+                }
+            }
         # dbt_utils tests (prefixed)
         key = f"dbt_utils.{test_type}"
         if test_type == "expression_is_true":
@@ -343,11 +348,12 @@ class ModelDetailState(BaseState):
 
     def remove_column_test(self, col_name: str, test_display: str):
         """Remove a non-standard test identified by its display string."""
-        self.columns = _recompute_columns([
-            self._remove_test_by_display(col, test_display)
-            if col.name == col_name else col
-            for col in self.columns
-        ])
+        self.columns = _recompute_columns(
+            [
+                self._remove_test_by_display(col, test_display) if col.name == col_name else col
+                for col in self.columns
+            ]
+        )
 
     @staticmethod
     def _remove_test_by_display(col: ColumnItem, test_display: str) -> ColumnItem:
@@ -403,7 +409,9 @@ class ModelDetailState(BaseState):
 
         with get_sync_session() as session:
             entry = catalog_svc.update_entry(
-                session, org_id, self.entry_id,
+                session,
+                org_id,
+                self.entry_id,
                 description=self.form_description or None,
                 columns=columns_data,
                 dbt_config=dbt_config,
@@ -421,14 +429,18 @@ class ModelDetailState(BaseState):
                     from collections import defaultdict
 
                     all_entries = catalog_svc.get_entries_by_connection(
-                        session, org_id, entry.connection_id,
+                        session,
+                        org_id,
+                        entry.connection_id,
                     )
                     by_dataset: dict[str, list] = defaultdict(list)
                     for e in all_entries:
-                        by_dataset[e.dataset_name].append({
-                            "name": e.table_name,
-                            "columns": e.columns or [],
-                        })
+                        by_dataset[e.dataset_name].append(
+                            {
+                                "name": e.table_name,
+                                "columns": e.columns or [],
+                            }
+                        )
                     sources = [
                         {
                             "name": ds,

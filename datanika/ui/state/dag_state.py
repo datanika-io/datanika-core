@@ -54,9 +54,7 @@ class DagState(BaseState):
         self.form_upstream_name = value
         if value.strip():
             query = value.strip().lower()
-            self.upstream_suggestions = [
-                n for n in self.upstream_options if query in n.lower()
-            ]
+            self.upstream_suggestions = [n for n in self.upstream_options if query in n.lower()]
             self.show_upstream_suggestions = len(self.upstream_suggestions) > 0
             self.upstream_suggestion_index = 0 if self.upstream_suggestions else -1
         else:
@@ -107,13 +105,9 @@ class DagState(BaseState):
         self.form_downstream_name = value
         if value.strip():
             query = value.strip().lower()
-            self.downstream_suggestions = [
-                n for n in self.downstream_options if query in n.lower()
-            ]
+            self.downstream_suggestions = [n for n in self.downstream_options if query in n.lower()]
             self.show_downstream_suggestions = len(self.downstream_suggestions) > 0
-            self.downstream_suggestion_index = (
-                0 if self.downstream_suggestions else -1
-            )
+            self.downstream_suggestion_index = 0 if self.downstream_suggestions else -1
         else:
             self.downstream_suggestions = []
             self.show_downstream_suggestions = False
@@ -160,8 +154,11 @@ class DagState(BaseState):
 
     @staticmethod
     def _resolve_node_name(
-        node_type: str, node_id: int,
-        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
+        node_type: str,
+        node_id: int,
+        upload_names: dict,
+        trans_names: dict,
+        pipeline_names: dict | None = None,
     ) -> str:
         if node_type == "upload":
             name = upload_names.get(node_id, f"#{node_id}")
@@ -193,9 +190,7 @@ class DagState(BaseState):
                 lookup["pipeline"][p.name] = p.id
         self._name_to_id = lookup
         self.upstream_options = sorted(lookup.get(self.form_upstream_type, {}).keys())
-        self.downstream_options = sorted(
-            lookup.get(self.form_downstream_type, {}).keys()
-        )
+        self.downstream_options = sorted(lookup.get(self.form_downstream_type, {}).keys())
         self.upstream_suggestions = []
         self.show_upstream_suggestions = False
         self.upstream_suggestion_index = -1
@@ -229,14 +224,20 @@ class DagState(BaseState):
                     upstream_type=d.upstream_type.value,
                     upstream_id=d.upstream_id,
                     upstream_name=self._resolve_node_name(
-                        d.upstream_type.value, d.upstream_id,
-                        upload_names, trans_names, pipeline_names,
+                        d.upstream_type.value,
+                        d.upstream_id,
+                        upload_names,
+                        trans_names,
+                        pipeline_names,
                     ),
                     downstream_type=d.downstream_type.value,
                     downstream_id=d.downstream_id,
                     downstream_name=self._resolve_node_name(
-                        d.downstream_type.value, d.downstream_id,
-                        upload_names, trans_names, pipeline_names,
+                        d.downstream_type.value,
+                        d.downstream_id,
+                        upload_names,
+                        trans_names,
+                        pipeline_names,
                     ),
                 )
                 for d in rows

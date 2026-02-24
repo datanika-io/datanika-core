@@ -68,9 +68,7 @@ class TestMongodbSource:
         mock_client.__getitem__ = MagicMock(return_value=mock_db)
         mock_client_cls.return_value = mock_client
 
-        source = mongodb_source(
-            "mongodb://localhost:27017/testdb", "testdb", batch_size=2
-        )
+        source = mongodb_source("mongodb://localhost:27017/testdb", "testdb", batch_size=2)
         resource = source.resources["items"]
         # dlt flattens batches — all 5 docs arrive as individual items
         items = list(resource)

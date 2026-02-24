@@ -117,9 +117,7 @@ class OAuthService:
             "is_new": is_new,
         }
 
-    async def _exchange_code(
-        self, provider: OAuthProvider, code: str, redirect_uri: str
-    ) -> dict:
+    async def _exchange_code(self, provider: OAuthProvider, code: str, redirect_uri: str) -> dict:
         """Exchange authorization code for tokens."""
         async with httpx.AsyncClient() as client:
             resp = await client.post(

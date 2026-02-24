@@ -170,7 +170,9 @@ class ConnectionService:
 
     @staticmethod
     def execute_query(
-        config: dict, connection_type: ConnectionType, query: str,
+        config: dict,
+        connection_type: ConnectionType,
+        query: str,
     ) -> tuple[list[str], list[list]]:
         """Execute a read-only SQL query. Returns (column_names, rows)."""
         if connection_type in _NON_DB_TYPES:
@@ -201,10 +203,7 @@ class ConnectionService:
         database = config.get("database", "")
 
         if user:
-            uri = (
-                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
-                f"@{host}:{port}/{database}"
-            )
+            uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
         else:
             uri = f"mongodb://{host}:{port}/{database}"
 

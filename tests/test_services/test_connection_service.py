@@ -324,9 +324,7 @@ class TestTestConnection:
         mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "datanika.services.connection_service.create_engine", return_value=mock_engine
-        ):
+        with patch("datanika.services.connection_service.create_engine", return_value=mock_engine):
             ok, msg = svc.test_connection(
                 {"host": "localhost", "port": 5432, "user": "u", "password": "p", "database": "d"},
                 ConnectionType.POSTGRES,
@@ -346,9 +344,7 @@ class TestTestConnection:
         mock_engine = MagicMock()
         mock_engine.connect.side_effect = OperationalError("stmt", {}, Exception("refused"))
 
-        with patch(
-            "datanika.services.connection_service.create_engine", return_value=mock_engine
-        ):
+        with patch("datanika.services.connection_service.create_engine", return_value=mock_engine):
             ok, msg = svc.test_connection(
                 {"host": "badhost", "user": "u", "password": "p", "database": "d"},
                 ConnectionType.POSTGRES,
@@ -429,13 +425,14 @@ class TestTestConnection:
         mock_engine.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
         mock_engine.connect.return_value.__exit__ = MagicMock(return_value=False)
 
-        with patch(
-            "datanika.services.connection_service.create_engine", return_value=mock_engine
-        ):
+        with patch("datanika.services.connection_service.create_engine", return_value=mock_engine):
             ok, msg = svc.test_connection(
                 {
-                    "host": "localhost", "port": 8123,
-                    "user": "default", "password": "", "database": "default",
+                    "host": "localhost",
+                    "port": 8123,
+                    "user": "default",
+                    "password": "",
+                    "database": "default",
                 },
                 ConnectionType.CLICKHOUSE,
             )
@@ -485,8 +482,11 @@ class TestTestConnectionConnectArgs:
 
     def test_snowflake_uses_connect_timeout(self, svc):
         config = {
-            "account": "acct", "user": "u", "password": "p",
-            "database": "d", "schema": "s",
+            "account": "acct",
+            "user": "u",
+            "password": "p",
+            "database": "d",
+            "schema": "s",
         }
         call = self._run(svc, ConnectionType.SNOWFLAKE, config)
         assert call.kwargs["connect_args"] == {"connect_timeout": 5}
@@ -501,8 +501,11 @@ class TestBuildSaUrl:
         from datanika.services.connection_service import _build_sa_url
 
         config = {
-            "host": "db.example.com", "port": 5432,
-            "user": "admin", "password": "s3c", "database": "mydb",
+            "host": "db.example.com",
+            "port": 5432,
+            "user": "admin",
+            "password": "s3c",
+            "database": "mydb",
         }
         url = _build_sa_url(config, ConnectionType.POSTGRES)
         assert url.startswith("postgresql+psycopg2://")
@@ -516,7 +519,9 @@ class TestBuildSaUrl:
 
         config = {
             "host": "cluster.redshift.amazonaws.com",
-            "user": "u", "password": "p", "database": "dw",
+            "user": "u",
+            "password": "p",
+            "database": "dw",
         }
         url = _build_sa_url(config, ConnectionType.REDSHIFT)
         assert url.startswith("postgresql+psycopg2://")
@@ -587,8 +592,11 @@ class TestBuildSaUrl:
         from datanika.services.connection_service import _build_sa_url
 
         config = {
-            "host": "ch.example.com", "port": 8123,
-            "user": "default", "password": "secret", "database": "analytics",
+            "host": "ch.example.com",
+            "port": 8123,
+            "user": "default",
+            "password": "secret",
+            "database": "analytics",
         }
         url = _build_sa_url(config, ConnectionType.CLICKHOUSE)
         assert url.startswith("clickhousedb+connect://")
@@ -600,8 +608,10 @@ class TestBuildSaUrl:
         from datanika.services.connection_service import _build_sa_url
 
         config = {
-            "host": "db.example.com", "user": "admin@corp",
-            "password": "p@ss/word!", "database": "db",
+            "host": "db.example.com",
+            "user": "admin@corp",
+            "password": "p@ss/word!",
+            "database": "db",
         }
         url = _build_sa_url(config, ConnectionType.POSTGRES)
         assert "admin%40corp" in url
@@ -623,36 +633,56 @@ class TestBuildSaUrl:
 class TestConnectionNameValidation:
     def test_valid_name(self, svc, db_session, org):
         conn = svc.create_connection(
-            db_session, org.id, "My DB 1",
-            ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+            db_session,
+            org.id,
+            "My DB 1",
+            ConnectionType.POSTGRES,
+            ConnectionDirection.SOURCE,
+            {},
         )
         assert conn.name == "My DB 1"
 
     def test_empty_name_rejected(self, svc, db_session, org):
         with pytest.raises(ValueError, match="Connection name cannot be empty"):
             svc.create_connection(
-                db_session, org.id, "   ",
-                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+                db_session,
+                org.id,
+                "   ",
+                ConnectionType.POSTGRES,
+                ConnectionDirection.SOURCE,
+                {},
             )
 
     def test_special_chars_rejected(self, svc, db_session, org):
         with pytest.raises(ValueError, match="alphanumeric"):
             svc.create_connection(
-                db_session, org.id, "My-DB!",
-                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+                db_session,
+                org.id,
+                "My-DB!",
+                ConnectionType.POSTGRES,
+                ConnectionDirection.SOURCE,
+                {},
             )
 
     def test_create_rejects_invalid(self, svc, db_session, org):
         with pytest.raises(ValueError):
             svc.create_connection(
-                db_session, org.id, "",
-                ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+                db_session,
+                org.id,
+                "",
+                ConnectionType.POSTGRES,
+                ConnectionDirection.SOURCE,
+                {},
             )
 
     def test_update_rejects_invalid_name(self, svc, db_session, org):
         conn = svc.create_connection(
-            db_session, org.id, "Valid",
-            ConnectionType.POSTGRES, ConnectionDirection.SOURCE, {},
+            db_session,
+            org.id,
+            "Valid",
+            ConnectionType.POSTGRES,
+            ConnectionDirection.SOURCE,
+            {},
         )
         with pytest.raises(ValueError, match="alphanumeric"):
             svc.update_connection(db_session, org.id, conn.id, name="bad@name")

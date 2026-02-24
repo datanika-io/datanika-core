@@ -233,9 +233,7 @@ def file_upload_fields() -> rx.Component:
                 "application/json": [".json"],
                 "application/octet-stream": [".parquet"],
             },
-            on_drop=ConnectionState.handle_file_upload(
-                rx.upload_files(upload_id="file_upload")
-            ),
+            on_drop=ConnectionState.handle_file_upload(rx.upload_files(upload_id="file_upload")),
             no_drag=True,
             width="100%",
         ),

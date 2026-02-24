@@ -65,7 +65,9 @@ def run_pipeline(
 
         # Generate profiles.yml from destination connection
         dbt_svc.generate_profiles_yml(
-            org_id, dst_conn.connection_type.value, dst_config,
+            org_id,
+            dst_conn.connection_type.value,
+            dst_config,
         )
 
         # Build selector
@@ -81,13 +83,15 @@ def run_pipeline(
 
         if result["success"]:
             execution_service.complete_run(
-                session, run_id,
+                session,
+                run_id,
                 rows_loaded=result["rows_affected"],
                 logs=result["logs"],
             )
         else:
             execution_service.fail_run(
-                session, run_id,
+                session,
+                run_id,
                 error_message="dbt command failed",
                 logs=result["logs"],
             )
@@ -99,7 +103,8 @@ def run_pipeline(
         if own_session:
             session.rollback()
         execution_service.fail_run(
-            session, run_id,
+            session,
+            run_id,
             error_message=str(exc),
             logs=traceback.format_exc(),
         )

@@ -4,6 +4,7 @@ Revision ID: b7e2f1a3c4d6
 Revises: d5d30abce35c
 Create Date: 2026-02-18 12:00:00.000000
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -36,7 +37,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("transformations", "tags")
-    op.drop_constraint(
-        "fk_transformations_connection", "transformations", type_="foreignkey"
-    )
+    op.drop_constraint("fk_transformations_connection", "transformations", type_="foreignkey")
     op.drop_column("transformations", "destination_connection_id")

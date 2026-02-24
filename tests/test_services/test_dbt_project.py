@@ -329,9 +329,16 @@ class TestRunModel:
         svc.ensure_project(1)
         svc.write_model(1, "test_model", "SELECT 1")
         svc.generate_profiles_yml(
-            1, "postgres",
-            {"host": "h", "port": 5432, "user": "u", "password": "p",
-             "database": "d", "schema": "s"},
+            1,
+            "postgres",
+            {
+                "host": "h",
+                "port": 5432,
+                "user": "u",
+                "password": "p",
+                "database": "d",
+                "schema": "s",
+            },
         )
 
         mock_result = MagicMock()
@@ -378,16 +385,12 @@ class TestSumRowsAffected:
 
     def test_none_rows_affected_in_dict(self):
         mock_result = MagicMock()
-        mock_result.result = [
-            MagicMock(adapter_response={"rows_affected": None})
-        ]
+        mock_result.result = [MagicMock(adapter_response={"rows_affected": None})]
         assert _sum_rows_affected(mock_result) == 0
 
     def test_missing_rows_affected_key(self):
         mock_result = MagicMock()
-        mock_result.result = [
-            MagicMock(adapter_response={"code": "CREATE VIEW"})
-        ]
+        mock_result.result = [MagicMock(adapter_response={"code": "CREATE VIEW"})]
         assert _sum_rows_affected(mock_result) == 0
 
 
@@ -717,9 +720,7 @@ class TestWriteSnapshot:
 
     def test_target_schema_in_config(self, svc):
         svc.ensure_project(1)
-        path = svc.write_snapshot(
-            1, "snap", "SELECT 1", unique_key="id", target_schema="history"
-        )
+        path = svc.write_snapshot(1, "snap", "SELECT 1", unique_key="id", target_schema="history")
         content = path.read_text()
         assert "target_schema='history'" in content
 
@@ -896,26 +897,30 @@ class TestCheckFreshness:
 class TestWriteSourceYmlForConnection:
     def test_creates_yml_file(self, svc):
         svc.ensure_project(1)
-        sources = [{
-            "name": "my_pipeline",
-            "schema": "my_pipeline",
-            "tables": [{"name": "users", "columns": [{"name": "id", "data_type": "INTEGER"}]}],
-        }]
+        sources = [
+            {
+                "name": "my_pipeline",
+                "schema": "my_pipeline",
+                "tables": [{"name": "users", "columns": [{"name": "id", "data_type": "INTEGER"}]}],
+            }
+        ]
         path = svc.write_source_yml_for_connection(1, "my_conn", sources)
         assert path.exists()
         assert path.name == "my_conn_src.yml"
 
     def test_yml_content_structure(self, svc):
         svc.ensure_project(1)
-        sources = [{
-            "name": "ds1",
-            "description": "First dataset",
-            "schema": "ds1",
-            "tables": [
-                {"name": "t1", "columns": [{"name": "id", "data_type": "INT"}]},
-                {"name": "t2", "columns": [{"name": "name", "data_type": "TEXT"}]},
-            ],
-        }]
+        sources = [
+            {
+                "name": "ds1",
+                "description": "First dataset",
+                "schema": "ds1",
+                "tables": [
+                    {"name": "t1", "columns": [{"name": "id", "data_type": "INT"}]},
+                    {"name": "t2", "columns": [{"name": "name", "data_type": "TEXT"}]},
+                ],
+            }
+        ]
         path = svc.write_source_yml_for_connection(1, "pg_conn", sources)
         content = yaml.safe_load(path.read_text())
         assert content["version"] == 2
@@ -945,12 +950,14 @@ class TestWriteSourceYmlForConnection:
 
     def test_includes_freshness_when_provided(self, svc):
         svc.ensure_project(1)
-        sources = [{
-            "name": "ds",
-            "schema": "ds",
-            "tables": [{"name": "t1", "columns": []}],
-            "freshness": {"warn_after": {"count": 12, "period": "hour"}},
-        }]
+        sources = [
+            {
+                "name": "ds",
+                "schema": "ds",
+                "tables": [{"name": "t1", "columns": []}],
+                "freshness": {"warn_after": {"count": 12, "period": "hour"}},
+            }
+        ]
         path = svc.write_source_yml_for_connection(1, "conn", sources)
         content = yaml.safe_load(path.read_text())
         assert "freshness" in content["sources"][0]
@@ -972,7 +979,9 @@ class TestWriteModelYml:
     def test_creates_yml_file(self, svc):
         svc.ensure_project(1)
         path = svc.write_model_yml(
-            1, "stg_users", "staging",
+            1,
+            "stg_users",
+            "staging",
             columns=[{"name": "id", "data_type": "INT"}],
         )
         assert path.exists()
@@ -982,7 +991,9 @@ class TestWriteModelYml:
     def test_yml_content_structure(self, svc):
         svc.ensure_project(1)
         path = svc.write_model_yml(
-            1, "stg_users", "staging",
+            1,
+            "stg_users",
+            "staging",
             columns=[
                 {"name": "id", "data_type": "INT"},
                 {"name": "email", "data_type": "TEXT"},
@@ -1036,11 +1047,13 @@ class TestWriteModelYml:
 
     def test_columns_include_dbt_utils_test(self, svc):
         svc.ensure_project(1)
-        columns = [{
-            "name": "amount",
-            "data_type": "NUMERIC",
-            "tests": [{"dbt_utils.expression_is_true": {"expression": "amount > 0"}}],
-        }]
+        columns = [
+            {
+                "name": "amount",
+                "data_type": "NUMERIC",
+                "tests": [{"dbt_utils.expression_is_true": {"expression": "amount > 0"}}],
+            }
+        ]
         path = svc.write_model_yml(1, "m", "s", columns=columns)
         content = yaml.safe_load(path.read_text())
         col = content["models"][0]["columns"][0]
@@ -1070,21 +1083,25 @@ class TestWriteModelYml:
 class TestSourceYmlColumnDescAndTests:
     def test_source_columns_include_description_and_tests(self, svc):
         svc.ensure_project(1)
-        sources = [{
-            "name": "ds1",
-            "schema": "ds1",
-            "tables": [{
-                "name": "users",
-                "columns": [
+        sources = [
+            {
+                "name": "ds1",
+                "schema": "ds1",
+                "tables": [
                     {
-                        "name": "email",
-                        "data_type": "TEXT",
-                        "description": "User email",
-                        "tests": ["not_null", "unique"],
-                    },
+                        "name": "users",
+                        "columns": [
+                            {
+                                "name": "email",
+                                "data_type": "TEXT",
+                                "description": "User email",
+                                "tests": ["not_null", "unique"],
+                            },
+                        ],
+                    }
                 ],
-            }],
-        }]
+            }
+        ]
         path = svc.write_source_yml_for_connection(1, "conn", sources)
         content = yaml.safe_load(path.read_text())
         col = content["sources"][0]["tables"][0]["columns"][0]
@@ -1094,14 +1111,18 @@ class TestSourceYmlColumnDescAndTests:
 
     def test_source_columns_without_desc_tests_omit_keys(self, svc):
         svc.ensure_project(1)
-        sources = [{
-            "name": "ds1",
-            "schema": "ds1",
-            "tables": [{
-                "name": "users",
-                "columns": [{"name": "id", "data_type": "INT"}],
-            }],
-        }]
+        sources = [
+            {
+                "name": "ds1",
+                "schema": "ds1",
+                "tables": [
+                    {
+                        "name": "users",
+                        "columns": [{"name": "id", "data_type": "INT"}],
+                    }
+                ],
+            }
+        ]
         path = svc.write_source_yml_for_connection(1, "conn", sources)
         content = yaml.safe_load(path.read_text())
         col = content["sources"][0]["tables"][0]["columns"][0]

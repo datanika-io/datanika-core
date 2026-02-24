@@ -160,9 +160,7 @@ def connections_table() -> rx.Component:
                                 _t["common.test"],
                                 variant="outline",
                                 size="1",
-                                on_click=ConnectionState.test_saved_connection(
-                                    conn.id
-                                ),
+                                on_click=ConnectionState.test_saved_connection(conn.id),
                             ),
                             rx.button(
                                 _t["common.edit"],

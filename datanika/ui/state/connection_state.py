@@ -13,13 +13,29 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
-    "postgres", "mysql", "mssql", "sqlite", "rest_api",
-    "s3", "csv", "json", "parquet", "google_sheets",
-    "mongodb", "clickhouse",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "rest_api",
+    "s3",
+    "csv",
+    "json",
+    "parquet",
+    "google_sheets",
+    "mongodb",
+    "clickhouse",
 }
 # Types that can serve as destinations (databases + cloud warehouses)
 DESTINATION_TYPES = {
-    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift", "clickhouse",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "bigquery",
+    "snowflake",
+    "redshift",
+    "clickhouse",
 }
 
 # Default ports for database connection types
@@ -600,9 +616,7 @@ class ConnectionState(BaseState):
         if conn is None or config is None:
             self.error_message = "Connection not found"
             return
-        self._populate_form_from_config(
-            f"{conn.name} copy", conn.connection_type.value, config
-        )
+        self._populate_form_from_config(f"{conn.name} copy", conn.connection_type.value, config)
         self.editing_conn_id = 0
 
     def cancel_edit(self):
@@ -652,8 +666,6 @@ class ConnectionState(BaseState):
     def _set_row_test_status(self, conn_id: int, status: str):
         """Update test_status for a specific connection row."""
         self.connections = [
-            item.model_copy(update={"test_status": status})
-            if item.id == conn_id
-            else item
+            item.model_copy(update={"test_status": status}) if item.id == conn_id else item
             for item in self.connections
         ]

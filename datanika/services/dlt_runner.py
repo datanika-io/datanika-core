@@ -275,10 +275,7 @@ class DltRunnerService:
         password = config.get("password", "")
 
         if user:
-            uri = (
-                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
-                f"@{host}:{port}/{database}"
-            )
+            uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
         else:
             uri = f"mongodb://{host}:{port}/{database}"
 

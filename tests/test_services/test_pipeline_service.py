@@ -58,7 +58,12 @@ def dest_conn(conn_svc, db_session, org):
 class TestCreatePipeline:
     def test_creates_draft_pipeline(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "My Pipeline", "desc", dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "My Pipeline",
+            "desc",
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         assert isinstance(pipe, Pipeline)
         assert isinstance(pipe.id, int)
@@ -78,7 +83,12 @@ class TestCreatePipeline:
             {"name": "customers", "upstream": False, "downstream": True},
         ]
         pipe = svc.create_pipeline(
-            db_session, org.id, "Pipe", None, dest_conn.id, DbtCommand.BUILD,
+            db_session,
+            org.id,
+            "Pipe",
+            None,
+            dest_conn.id,
+            DbtCommand.BUILD,
             models=models,
         )
         assert pipe.models == models
@@ -86,14 +96,24 @@ class TestCreatePipeline:
 
     def test_creates_with_full_refresh(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "FR", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "FR",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
             full_refresh=True,
         )
         assert pipe.full_refresh is True
 
     def test_creates_with_custom_selector(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "CS", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "CS",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
             custom_selector="tag:nightly",
         )
         assert pipe.custom_selector == "tag:nightly"
@@ -101,19 +121,34 @@ class TestCreatePipeline:
     def test_empty_name_rejected(self, svc, db_session, org, dest_conn):
         with pytest.raises(PipelineConfigError, match="name"):
             svc.create_pipeline(
-                db_session, org.id, "", None, dest_conn.id, DbtCommand.RUN,
+                db_session,
+                org.id,
+                "",
+                None,
+                dest_conn.id,
+                DbtCommand.RUN,
             )
 
     def test_whitespace_name_rejected(self, svc, db_session, org, dest_conn):
         with pytest.raises(PipelineConfigError, match="name"):
             svc.create_pipeline(
-                db_session, org.id, "   ", None, dest_conn.id, DbtCommand.RUN,
+                db_session,
+                org.id,
+                "   ",
+                None,
+                dest_conn.id,
+                DbtCommand.RUN,
             )
 
     def test_invalid_models_rejected(self, svc, db_session, org, dest_conn):
         with pytest.raises(PipelineConfigError, match="name"):
             svc.create_pipeline(
-                db_session, org.id, "Bad", None, dest_conn.id, DbtCommand.RUN,
+                db_session,
+                org.id,
+                "Bad",
+                None,
+                dest_conn.id,
+                DbtCommand.RUN,
                 models=[{"bad": "format"}],
             )
 
@@ -121,7 +156,12 @@ class TestCreatePipeline:
 class TestGetPipeline:
     def test_existing(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         found = svc.get_pipeline(db_session, org.id, pipe.id)
         assert found is not None
@@ -132,13 +172,23 @@ class TestGetPipeline:
 
     def test_wrong_org(self, svc, db_session, org, other_org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         assert svc.get_pipeline(db_session, other_org.id, pipe.id) is None
 
     def test_soft_deleted_excluded(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         svc.delete_pipeline(db_session, org.id, pipe.id)
         assert svc.get_pipeline(db_session, org.id, pipe.id) is None
@@ -169,7 +219,12 @@ class TestListPipelines:
 class TestUpdatePipeline:
     def test_updates_name(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "Old", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "Old",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         updated = svc.update_pipeline(db_session, org.id, pipe.id, name="New")
         assert updated is not None
@@ -177,14 +232,24 @@ class TestUpdatePipeline:
 
     def test_updates_command(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         updated = svc.update_pipeline(db_session, org.id, pipe.id, command=DbtCommand.BUILD)
         assert updated.command == DbtCommand.BUILD
 
     def test_updates_models(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         models = [{"name": "orders", "upstream": False, "downstream": False}]
         updated = svc.update_pipeline(db_session, org.id, pipe.id, models=models)
@@ -192,17 +257,30 @@ class TestUpdatePipeline:
 
     def test_updates_full_refresh(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         updated = svc.update_pipeline(db_session, org.id, pipe.id, full_refresh=True)
         assert updated.full_refresh is True
 
     def test_updates_status(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         updated = svc.update_pipeline(
-            db_session, org.id, pipe.id, status=PipelineStatus.ACTIVE,
+            db_session,
+            org.id,
+            pipe.id,
+            status=PipelineStatus.ACTIVE,
         )
         assert updated.status == PipelineStatus.ACTIVE
 
@@ -211,7 +289,12 @@ class TestUpdatePipeline:
 
     def test_invalid_models_rejected(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         with pytest.raises(PipelineConfigError, match="models"):
             svc.update_pipeline(db_session, org.id, pipe.id, models="not a list")
@@ -220,7 +303,12 @@ class TestUpdatePipeline:
 class TestDeletePipeline:
     def test_soft_deletes(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
-            db_session, org.id, "P", None, dest_conn.id, DbtCommand.RUN,
+            db_session,
+            org.id,
+            "P",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
         )
         assert svc.delete_pipeline(db_session, org.id, pipe.id) is True
         db_session.refresh(pipe)
@@ -287,9 +375,11 @@ class TestBuildSelector:
 
 class TestValidateModels:
     def test_valid_models(self):
-        PipelineService.validate_models([
-            {"name": "orders", "upstream": True, "downstream": False},
-        ])
+        PipelineService.validate_models(
+            [
+                {"name": "orders", "upstream": True, "downstream": False},
+            ]
+        )
 
     def test_not_a_list_rejected(self):
         with pytest.raises(PipelineConfigError, match="models must be a list"):
@@ -301,6 +391,8 @@ class TestValidateModels:
 
     def test_empty_name_rejected(self):
         with pytest.raises(PipelineConfigError, match="name"):
-            PipelineService.validate_models([
-                {"name": "", "upstream": True, "downstream": False},
-            ])
+            PipelineService.validate_models(
+                [
+                    {"name": "", "upstream": True, "downstream": False},
+                ]
+            )

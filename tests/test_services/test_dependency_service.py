@@ -290,9 +290,7 @@ class TestListDependencies:
         result = svc.list_dependencies(db_session, org.id)
         assert len(result) == 2
 
-    def test_excludes_deleted(
-        self, svc, db_session, org, upload, transformation, transformation2
-    ):
+    def test_excludes_deleted(self, svc, db_session, org, upload, transformation, transformation2):
         dep1 = svc.add_dependency(
             db_session,
             org.id,

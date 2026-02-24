@@ -181,17 +181,13 @@ class UploadService:
                 raise UploadConfigError("table_names must be a list")
             if disposition == "merge":
                 if "merge_config" not in dlt_config:
-                    raise UploadConfigError(
-                        "full_database merge requires 'merge_config'"
-                    )
+                    raise UploadConfigError("full_database merge requires 'merge_config'")
                 merge_config = dlt_config["merge_config"]
                 if not isinstance(merge_config, dict):
                     raise UploadConfigError("merge_config must be a dict")
                 for table_name, table_cfg in merge_config.items():
                     if not isinstance(table_cfg, dict):
-                        raise UploadConfigError(
-                            f"merge_config entry '{table_name}' must be a dict"
-                        )
+                        raise UploadConfigError(f"merge_config entry '{table_name}' must be a dict")
                     if "primary_key" not in table_cfg:
                         raise UploadConfigError(
                             f"merge_config entry '{table_name}' requires 'primary_key'"

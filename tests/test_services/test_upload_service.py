@@ -465,9 +465,7 @@ class TestValidateUploadConfigModes:
             )
 
     def test_full_database_accepts_table_names(self):
-        UploadService.validate_upload_config(
-            {"mode": "full_database", "table_names": ["a", "b"]}
-        )
+        UploadService.validate_upload_config({"mode": "full_database", "table_names": ["a", "b"]})
 
     def test_full_database_table_names_must_be_list(self):
         with pytest.raises(UploadConfigError, match="table_names"):
@@ -526,9 +524,7 @@ class TestValidateUploadConfigModes:
     # -- source_schema --
 
     def test_source_schema_string(self):
-        UploadService.validate_upload_config(
-            {"mode": "full_database", "source_schema": "public"}
-        )
+        UploadService.validate_upload_config({"mode": "full_database", "source_schema": "public"})
 
     def test_source_schema_non_string_raises(self):
         with pytest.raises(UploadConfigError, match="source_schema"):
@@ -563,9 +559,7 @@ class TestValidateSchemaContract:
 
     def test_schema_contract_invalid_value(self):
         with pytest.raises(UploadConfigError, match="schema_contract"):
-            UploadService.validate_upload_config(
-                {"schema_contract": {"tables": "invalid_value"}}
-            )
+            UploadService.validate_upload_config({"schema_contract": {"tables": "invalid_value"}})
 
     def test_schema_contract_empty_dict_valid(self):
         UploadService.validate_upload_config({"schema_contract": {}})
@@ -784,15 +778,11 @@ class TestToDatasetName:
 class TestCreateUploadNameValidation:
     def test_rejects_special_chars(self, svc, db_session, org, source_conn, dest_conn):
         with pytest.raises(ValueError, match="alphanumeric"):
-            svc.create_upload(
-                db_session, org.id, "my-pipe!", "d", source_conn.id, dest_conn.id, {}
-            )
+            svc.create_upload(db_session, org.id, "my-pipe!", "d", source_conn.id, dest_conn.id, {})
 
     def test_rejects_empty_name(self, svc, db_session, org, source_conn, dest_conn):
         with pytest.raises(ValueError, match="cannot be empty"):
-            svc.create_upload(
-                db_session, org.id, "", "d", source_conn.id, dest_conn.id, {}
-            )
+            svc.create_upload(db_session, org.id, "", "d", source_conn.id, dest_conn.id, {})
 
 
 class TestUpdateUploadNameValidation:

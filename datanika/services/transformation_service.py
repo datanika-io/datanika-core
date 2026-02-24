@@ -133,9 +133,7 @@ class TransformationService:
             Transformation.deleted_at.is_(None),
         )
         if session.execute(stmt).first() is not None:
-            raise TransformationConfigError(
-                f"A transformation named '{name}' already exists"
-            )
+            raise TransformationConfigError(f"A transformation named '{name}' already exists")
 
     @staticmethod
     def validate_sql_body(sql_body: str) -> None:

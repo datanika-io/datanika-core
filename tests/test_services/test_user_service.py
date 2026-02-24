@@ -447,8 +447,6 @@ class TestFindOrCreateOAuthUser:
     def test_oauth_fields_set_on_existing_user(self, svc, db_session, user):
         """If existing user has no oauth_provider, it gets updated."""
         assert user.oauth_provider is None
-        svc.find_or_create_oauth_user(
-            db_session, user.email, "Existing", "google", "g789"
-        )
+        svc.find_or_create_oauth_user(db_session, user.email, "Existing", "google", "g789")
         assert user.oauth_provider == "google"
         assert user.oauth_provider_id == "g789"

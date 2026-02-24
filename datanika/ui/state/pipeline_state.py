@@ -79,9 +79,7 @@ class PipelineState(BaseState):
         self.model_warning = ""
         if value.strip():
             query = value.strip().lower()
-            self.model_suggestions = [
-                n for n in self.all_model_names if query in n.lower()
-            ]
+            self.model_suggestions = [n for n in self.all_model_names if query in n.lower()]
             self.show_model_suggestions = len(self.model_suggestions) > 0
             self.model_suggestion_index = 0 if self.model_suggestions else -1
         else:
@@ -174,9 +172,7 @@ class PipelineState(BaseState):
         with get_sync_session() as session:
             transformations = svc.list_transformations(session, org_id)
         self.all_model_names = [
-            t.name
-            for t in transformations
-            if t.destination_connection_id == dst_id
+            t.name for t in transformations if t.destination_connection_id == dst_id
         ]
         self.model_suggestions = []
         self.show_model_suggestions = False
@@ -302,9 +298,7 @@ class PipelineState(BaseState):
         self.error_message = ""
 
         dst_prefix = f"{pipeline.destination_connection_id} — "
-        self.form_dest_id = next(
-            (o for o in conn_options_dst if o.startswith(dst_prefix)), ""
-        )
+        self.form_dest_id = next((o for o in conn_options_dst if o.startswith(dst_prefix)), "")
 
         models = pipeline.models or []
         self.form_models = [

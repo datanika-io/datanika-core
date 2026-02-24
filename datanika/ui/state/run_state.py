@@ -38,9 +38,7 @@ class RunState(BaseState):
         org_id = await self._get_org_id()
         svc = ExecutionService()
         status_filter = RunStatus(self.filter_status) if self.filter_status else None
-        target_type_filter = (
-            NodeType(self.filter_target_type) if self.filter_target_type else None
-        )
+        target_type_filter = NodeType(self.filter_target_type) if self.filter_target_type else None
 
         # Build name lookups
         encryption = EncryptionService(settings.credential_encryption_key)
@@ -70,8 +68,11 @@ class RunState(BaseState):
                     target_type=r.target_type.value,
                     target_id=r.target_id,
                     target_name=self._resolve_target_name(
-                        r.target_type.value, r.target_id,
-                        upload_names, trans_names, pipeline_names,
+                        r.target_type.value,
+                        r.target_id,
+                        upload_names,
+                        trans_names,
+                        pipeline_names,
                     ),
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
@@ -86,8 +87,11 @@ class RunState(BaseState):
 
     @staticmethod
     def _resolve_target_name(
-        target_type: str, target_id: int,
-        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
+        target_type: str,
+        target_id: int,
+        upload_names: dict,
+        trans_names: dict,
+        pipeline_names: dict | None = None,
     ) -> str:
         if target_type == "upload":
             name = upload_names.get(target_id, f"#{target_id}")

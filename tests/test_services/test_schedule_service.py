@@ -113,9 +113,7 @@ class TestCreateSchedule:
 
 class TestGetSchedule:
     def test_existing(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         fetched = svc.get_schedule(db_session, org.id, created.id)
         assert fetched is not None
         assert fetched.id == created.id
@@ -124,15 +122,11 @@ class TestGetSchedule:
         assert svc.get_schedule(db_session, org.id, 99999) is None
 
     def test_wrong_org(self, svc, db_session, org, other_org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         assert svc.get_schedule(db_session, other_org.id, created.id) is None
 
     def test_soft_deleted(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         svc.delete_schedule(db_session, org.id, created.id)
         assert svc.get_schedule(db_session, org.id, created.id) is None
 
@@ -151,9 +145,7 @@ class TestListSchedules:
         assert len(result) == 2
 
     def test_excludes_deleted(self, svc, db_session, org, upload, transformation):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         svc.create_schedule(
             db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
         )
@@ -170,17 +162,13 @@ class TestListSchedules:
 
 class TestUpdateSchedule:
     def test_update_cron(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         updated = svc.update_schedule(db_session, org.id, created.id, cron_expression="30 2 * * *")
         assert updated is not None
         assert updated.cron_expression == "30 2 * * *"
 
     def test_update_timezone(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         updated = svc.update_schedule(db_session, org.id, created.id, timezone="US/Eastern")
         assert updated.timezone == "US/Eastern"
 
@@ -188,18 +176,14 @@ class TestUpdateSchedule:
         assert svc.update_schedule(db_session, org.id, 99999, timezone="UTC") is None
 
     def test_invalid_cron_rejected(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         with pytest.raises(ScheduleConfigError, match="cron"):
             svc.update_schedule(db_session, org.id, created.id, cron_expression="bad")
 
 
 class TestDeleteSchedule:
     def test_sets_deleted_at(self, svc, db_session, org, upload):
-        created = svc.create_schedule(
-            db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *"
-        )
+        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         result = svc.delete_schedule(db_session, org.id, created.id)
         assert result is True
         db_session.refresh(created)

@@ -199,9 +199,7 @@ class TransformationState(BaseState):
             for e in source_entries:
                 schema_tables.setdefault(e.dataset_name, set()).add(e.table_name)
             self.all_source_schemas = sorted(schema_tables.keys())
-            self.source_tables_by_schema = {
-                k: sorted(v) for k, v in schema_tables.items()
-            }
+            self.source_tables_by_schema = {k: sorted(v) for k, v in schema_tables.items()}
 
         self.error_message = ""
 
@@ -362,9 +360,7 @@ class TransformationState(BaseState):
 
         dbt_svc = DbtProjectService(settings.dbt_projects_dir)
         dbt_svc.ensure_project(self._form_org_id)
-        dbt_svc.generate_profiles_yml(
-            self._form_org_id, conn.connection_type.value, config
-        )
+        dbt_svc.generate_profiles_yml(self._form_org_id, conn.connection_type.value, config)
         dbt_svc.write_model(
             self._form_org_id,
             self.form_name,
@@ -430,12 +426,13 @@ class TransformationState(BaseState):
                     query += "\nLIMIT 5"
 
                 columns, rows = ConnectionService.execute_query(
-                    config, conn.connection_type, query,
+                    config,
+                    conn.connection_type,
+                    query,
                 )
                 self.preview_result_columns = columns
                 self.preview_result_rows = [
-                    [str(v) if v is not None else "" for v in row]
-                    for row in rows
+                    [str(v) if v is not None else "" for v in row] for row in rows
                 ]
                 self.preview_result_message = ""
         except Exception as e:
@@ -483,9 +480,7 @@ class TransformationState(BaseState):
             if conn is None:
                 self.preview_result_message = "Destination connection not found"
                 return
-            config = conn_svc.get_connection_config(
-                session, org_id, t.destination_connection_id
-            )
+            config = conn_svc.get_connection_config(session, org_id, t.destination_connection_id)
             if not config:
                 self.preview_result_message = "Could not decrypt connection config"
                 return
@@ -494,11 +489,11 @@ class TransformationState(BaseState):
                 # Compile via dbt to resolve ref/source
                 dbt_svc = DbtProjectService(settings.dbt_projects_dir)
                 dbt_svc.ensure_project(org_id)
-                dbt_svc.generate_profiles_yml(
-                    org_id, conn.connection_type.value, config
-                )
+                dbt_svc.generate_profiles_yml(org_id, conn.connection_type.value, config)
                 dbt_svc.write_model(
-                    org_id, t.name, t.sql_body,
+                    org_id,
+                    t.name,
+                    t.sql_body,
                     schema_name=t.schema_name,
                     materialization=t.materialization.value,
                     incremental_config=t.incremental_config,
@@ -515,12 +510,13 @@ class TransformationState(BaseState):
                     query += "\nLIMIT 5"
 
                 columns, rows = ConnectionService.execute_query(
-                    config, conn.connection_type, query,
+                    config,
+                    conn.connection_type,
+                    query,
                 )
                 self.preview_result_columns = columns
                 self.preview_result_rows = [
-                    [str(v) if v is not None else "" for v in row]
-                    for row in rows
+                    [str(v) if v is not None else "" for v in row] for row in rows
                 ]
                 self.preview_result_message = ""
             except Exception as e:
@@ -552,9 +548,7 @@ class TransformationState(BaseState):
                 if t.destination_connection_id:
                     encryption = EncryptionService(settings.credential_encryption_key)
                     conn_svc = ConnectionService(encryption)
-                    conn = conn_svc.get_connection(
-                        session, org_id, t.destination_connection_id
-                    )
+                    conn = conn_svc.get_connection(session, org_id, t.destination_connection_id)
                     if conn:
                         decrypted = conn_svc.get_connection_config(
                             session, org_id, t.destination_connection_id
@@ -618,9 +612,7 @@ class TransformationState(BaseState):
         match = _REF_PATTERN.search(sql)
         if match:
             partial = match.group(1).lower()
-            self._set_suggestions(
-                [n for n in self.all_ref_names if n.lower().startswith(partial)]
-            )
+            self._set_suggestions([n for n in self.all_ref_names if n.lower().startswith(partial)])
             return
 
         # No match
@@ -676,8 +668,8 @@ class TransformationState(BaseState):
         # source('schema', 'table...) → complete table name
         match = _SOURCE_TABLE_PATTERN.search(sql)
         if match:
-            before = sql[:match.start(2)]
-            after = sql[match.end():]
+            before = sql[: match.start(2)]
+            after = sql[match.end() :]
             self.form_sql_body = before + name + "') }}" + after
             self.show_ref_popover = False
             return
@@ -685,8 +677,8 @@ class TransformationState(BaseState):
         # source('schema...) → complete schema, keep open for table
         match = _SOURCE_SCHEMA_PATTERN.search(sql)
         if match:
-            before = sql[:match.start(1)]
-            after = sql[match.end():]
+            before = sql[: match.start(1)]
+            after = sql[match.end() :]
             self.form_sql_body = before + name + "', '" + after
             self.show_ref_popover = False
             return
@@ -694,8 +686,8 @@ class TransformationState(BaseState):
         # ref('model...) → complete model name
         match = _REF_PATTERN.search(sql)
         if match:
-            before = sql[:match.start(1)]
-            after = sql[match.end():]
+            before = sql[: match.start(1)]
+            after = sql[match.end() :]
             self.form_sql_body = before + name + "') }}" + after
             self.show_ref_popover = False
             return

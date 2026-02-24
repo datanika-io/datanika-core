@@ -44,29 +44,17 @@ def _dag_hidden_buttons() -> rx.Component:
     return rx.box(
         # Upstream
         rx.el.button(id="dag-upstream-nav-up", on_click=DagState.upstream_nav_up),
-        rx.el.button(
-            id="dag-upstream-nav-down", on_click=DagState.upstream_nav_down
-        ),
-        rx.el.button(
-            id="dag-upstream-select", on_click=DagState.upstream_select_current
-        ),
-        rx.el.button(
-            id="dag-upstream-dismiss", on_click=DagState.upstream_dismiss
-        ),
+        rx.el.button(id="dag-upstream-nav-down", on_click=DagState.upstream_nav_down),
+        rx.el.button(id="dag-upstream-select", on_click=DagState.upstream_select_current),
+        rx.el.button(id="dag-upstream-dismiss", on_click=DagState.upstream_dismiss),
         # Downstream
-        rx.el.button(
-            id="dag-downstream-nav-up", on_click=DagState.downstream_nav_up
-        ),
-        rx.el.button(
-            id="dag-downstream-nav-down", on_click=DagState.downstream_nav_down
-        ),
+        rx.el.button(id="dag-downstream-nav-up", on_click=DagState.downstream_nav_up),
+        rx.el.button(id="dag-downstream-nav-down", on_click=DagState.downstream_nav_down),
         rx.el.button(
             id="dag-downstream-select",
             on_click=DagState.downstream_select_current,
         ),
-        rx.el.button(
-            id="dag-downstream-dismiss", on_click=DagState.downstream_dismiss
-        ),
+        rx.el.button(id="dag-downstream-dismiss", on_click=DagState.downstream_dismiss),
         display="none",
     )
 

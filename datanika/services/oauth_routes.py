@@ -56,9 +56,7 @@ def _frontend(path: str) -> str:
 
 def _sign_state(state: str) -> str:
     """Create an HMAC signature for the OAuth state parameter."""
-    return hmac.new(
-        settings.secret_key.encode(), state.encode(), hashlib.sha256
-    ).hexdigest()
+    return hmac.new(settings.secret_key.encode(), state.encode(), hashlib.sha256).hexdigest()
 
 
 def _verify_state(state: str, signature: str) -> bool:
@@ -81,7 +79,11 @@ async def oauth_login(request: Request) -> RedirectResponse:
     response = RedirectResponse(url=url, status_code=302)
     signed = f"{state}:{_sign_state(state)}"
     response.set_cookie(
-        _OAUTH_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax",
+        _OAUTH_STATE_COOKIE,
+        signed,
+        max_age=600,
+        httponly=True,
+        samesite="lax",
     )
     return response
 
@@ -102,38 +104,34 @@ async def oauth_callback(request: Request) -> RedirectResponse:
     returned_state = request.query_params.get("state", "")
     cookie_value = request.cookies.get(_OAUTH_STATE_COOKIE, "")
     if ":" not in cookie_value:
-        return RedirectResponse(
-            url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302
-        )
+        return RedirectResponse(url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302)
     stored_state, signature = cookie_value.rsplit(":", 1)
     if (
         not returned_state
         or returned_state != stored_state
         or not _verify_state(stored_state, signature)
     ):
-        return RedirectResponse(
-            url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302
-        )
+        return RedirectResponse(url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302)
 
     svc = _get_service()
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/callback/{provider}"
 
     with _get_session() as session:
         try:
-            result = await svc.handle_callback(
-                providers[provider], code, redirect_uri, session
-            )
+            result = await svc.handle_callback(providers[provider], code, redirect_uri, session)
             session.commit()
         except Exception:
             return RedirectResponse(
                 url=_frontend("/login?error=OAuth+authentication+failed"), status_code=302
             )
 
-    params = urlencode({
-        "token": result["access_token"],
-        "refresh": result["refresh_token"],
-        "is_new": "1" if result["is_new"] else "0",
-    })
+    params = urlencode(
+        {
+            "token": result["access_token"],
+            "refresh": result["refresh_token"],
+            "is_new": "1" if result["is_new"] else "0",
+        }
+    )
     response = RedirectResponse(url=_frontend(f"/auth/complete?{params}"), status_code=302)
     response.delete_cookie(_OAUTH_STATE_COOKIE)
     return response

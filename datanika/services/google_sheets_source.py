@@ -30,9 +30,7 @@ def google_sheets_source(spreadsheet_url, credentials_json, sheet_names=None):
         credentials_json: JSON string of service account credentials.
         sheet_names: Optional list of sheet names to extract. If None, all sheets.
     """
-    creds = Credentials.from_service_account_info(
-        json.loads(credentials_json), scopes=SCOPES
-    )
+    creds = Credentials.from_service_account_info(json.loads(credentials_json), scopes=SCOPES)
     gc = gspread.authorize(creds)
     spreadsheet = gc.open_by_url(spreadsheet_url)
     sheets = sheet_names or [ws.title for ws in spreadsheet.worksheets()]

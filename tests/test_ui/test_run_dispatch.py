@@ -37,29 +37,21 @@ class TestUploadRunDispatchesCeleryTask:
         mock_exec_svc.create_run.return_value = mock_run
 
         with (
-            patch(
-                "datanika.ui.state.upload_state.get_sync_session"
-            ) as mock_get_session,
+            patch("datanika.ui.state.upload_state.get_sync_session") as mock_get_session,
             patch(
                 "datanika.ui.state.upload_state.ExecutionService",
                 return_value=mock_exec_svc,
             ),
-            patch(
-                "datanika.ui.state.upload_state.run_upload_task"
-            ) as mock_task,
+            patch("datanika.ui.state.upload_state.run_upload_task") as mock_task,
         ):
             mock_session = MagicMock()
-            mock_get_session.return_value.__enter__ = MagicMock(
-                return_value=mock_session
-            )
+            mock_get_session.return_value.__enter__ = MagicMock(return_value=mock_session)
             mock_get_session.return_value.__exit__ = MagicMock(return_value=False)
 
             await fn(state, upload_id=5)
 
         # Verify run was created
-        mock_exec_svc.create_run.assert_called_once_with(
-            mock_session, 1, NodeType.UPLOAD, 5
-        )
+        mock_exec_svc.create_run.assert_called_once_with(mock_session, 1, NodeType.UPLOAD, 5)
         # THE KEY ASSERTION: Celery task must be dispatched
         mock_task.delay.assert_called_once_with(run_id=42, org_id=1)
 

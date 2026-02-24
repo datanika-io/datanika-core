@@ -12,7 +12,9 @@ from datanika.models.dependency import NodeType
 class CatalogService:
     @staticmethod
     def introspect_tables(
-        sa_url: str, schema_name: str, table_names: list[str] | None = None,
+        sa_url: str,
+        schema_name: str,
+        table_names: list[str] | None = None,
     ) -> list[dict]:
         """Query destination DB for table metadata.
 
@@ -33,13 +35,12 @@ class CatalogService:
                     cols = insp.get_columns(tbl, schema=schema_name)
                 except Exception:
                     continue
-                results.append({
-                    "table_name": tbl,
-                    "columns": [
-                        {"name": c["name"], "data_type": str(c["type"])}
-                        for c in cols
-                    ],
-                })
+                results.append(
+                    {
+                        "table_name": tbl,
+                        "columns": [{"name": c["name"], "data_type": str(c["type"])} for c in cols],
+                    }
+                )
             return results
         finally:
             engine.dispose()
@@ -128,7 +129,10 @@ class CatalogService:
 
     @staticmethod
     def update_entry(
-        session: Session, org_id: int, entry_id: int, **kwargs,
+        session: Session,
+        org_id: int,
+        entry_id: int,
+        **kwargs,
     ) -> CatalogEntry | None:
         entry = CatalogService.get_entry(session, org_id, entry_id)
         if entry is None:
@@ -155,7 +159,9 @@ class CatalogService:
 
     @staticmethod
     def get_entries_by_connection(
-        session: Session, org_id: int, connection_id: int,
+        session: Session,
+        org_id: int,
+        connection_id: int,
     ) -> list[CatalogEntry]:
         """Return SOURCE_TABLE entries for a given connection."""
         stmt = (

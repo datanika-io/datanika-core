@@ -59,10 +59,12 @@ def _sync_catalog_after_upload(
     all_entries = catalog_svc.get_entries_by_connection(session, org_id, dst_conn.id)
     by_dataset: dict[str, list] = defaultdict(list)
     for entry in all_entries:
-        by_dataset[entry.dataset_name].append({
-            "name": entry.table_name,
-            "columns": entry.columns or [],
-        })
+        by_dataset[entry.dataset_name].append(
+            {
+                "name": entry.table_name,
+                "columns": entry.columns or [],
+            }
+        )
 
     sources = [
         {
@@ -126,9 +128,8 @@ def run_upload(
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
         # Extract uploaded file if present (for csv/json/parquet with file upload)
-        uploaded_file_id = (
-            src_config.get("uploaded_file_id")
-            or upload.dlt_config.get("uploaded_file_id")
+        uploaded_file_id = src_config.get("uploaded_file_id") or upload.dlt_config.get(
+            "uploaded_file_id"
         )
         extracted_dir = None
         uploaded_file = None
@@ -167,7 +168,12 @@ def run_upload(
 
         try:
             _sync_catalog_after_upload(
-                session, org_id, upload, dst_conn, dst_config, dataset_name,
+                session,
+                org_id,
+                upload,
+                dst_conn,
+                dst_config,
+                dataset_name,
             )
         except Exception:
             logger.exception("Catalog sync failed (non-fatal)")

@@ -215,25 +215,23 @@ class TestModelNameValidation:
 class TestConnectionAndTags:
     def test_create_with_connection_and_tags(self, svc, db_session, org):
         t = svc.create_transformation(
-            db_session, org.id, "tagged_model", "SELECT 1", Materialization.VIEW,
+            db_session,
+            org.id,
+            "tagged_model",
+            "SELECT 1",
+            Materialization.VIEW,
             tags=["finance", "daily"],
         )
         assert t.tags == ["finance", "daily"]
         assert t.destination_connection_id is None
 
     def test_update_tags(self, svc, db_session, org):
-        t = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
-        )
-        updated = svc.update_transformation(
-            db_session, org.id, t.id, tags=["updated"]
-        )
+        t = svc.create_transformation(db_session, org.id, "m", "SELECT 1", Materialization.VIEW)
+        updated = svc.update_transformation(db_session, org.id, t.id, tags=["updated"])
         assert updated.tags == ["updated"]
 
     def test_default_tags_empty(self, svc, db_session, org):
-        t = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
-        )
+        t = svc.create_transformation(db_session, org.id, "m", "SELECT 1", Materialization.VIEW)
         assert t.tags == []
 
 

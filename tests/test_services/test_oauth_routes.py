@@ -63,12 +63,14 @@ class TestOAuthCallback:
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
             mock_svc = MagicMock()
-            mock_svc.handle_callback = AsyncMock(return_value={
-                "access_token": "jwt_tok",
-                "refresh_token": "jwt_ref",
-                "user": MagicMock(id=1),
-                "is_new": False,
-            })
+            mock_svc.handle_callback = AsyncMock(
+                return_value={
+                    "access_token": "jwt_tok",
+                    "refresh_token": "jwt_ref",
+                    "user": MagicMock(id=1),
+                    "is_new": False,
+                }
+            )
             svc_mock.return_value = mock_svc
 
             mock_session = MagicMock()
@@ -93,12 +95,14 @@ class TestOAuthCallback:
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
             mock_svc = MagicMock()
-            mock_svc.handle_callback = AsyncMock(return_value={
-                "access_token": "jwt_tok",
-                "refresh_token": "jwt_ref",
-                "user": MagicMock(id=2),
-                "is_new": True,
-            })
+            mock_svc.handle_callback = AsyncMock(
+                return_value={
+                    "access_token": "jwt_tok",
+                    "refresh_token": "jwt_ref",
+                    "user": MagicMock(id=2),
+                    "is_new": True,
+                }
+            )
             svc_mock.return_value = mock_svc
 
             mock_session = MagicMock()
@@ -150,9 +154,7 @@ class TestOAuthCallback:
             prov_mock.return_value = {"google": google_provider("gid", "gsecret")}
 
             mock_svc = MagicMock()
-            mock_svc.handle_callback = AsyncMock(
-                side_effect=Exception("Provider error")
-            )
+            mock_svc.handle_callback = AsyncMock(side_effect=Exception("Provider error"))
             svc_mock.return_value = mock_svc
 
             mock_session = MagicMock()

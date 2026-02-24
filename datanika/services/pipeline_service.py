@@ -112,9 +112,7 @@ class PipelineService:
                 raise PipelineConfigError("Each model entry must have a non-empty 'name'")
 
     @staticmethod
-    def build_selector(
-        models: list[dict], custom_selector: str | None
-    ) -> str | None:
+    def build_selector(models: list[dict], custom_selector: str | None) -> str | None:
         """Build dbt --select string from models list or custom selector."""
         if custom_selector and custom_selector.strip():
             return custom_selector.strip()

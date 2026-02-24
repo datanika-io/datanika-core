@@ -308,13 +308,9 @@ class UploadState(BaseState):
 
         # Find matching connection option strings
         src_prefix = f"{upload.source_connection_id} — "
-        self.form_source_id = next(
-            (o for o in conn_options_src if o.startswith(src_prefix)), ""
-        )
+        self.form_source_id = next((o for o in conn_options_src if o.startswith(src_prefix)), "")
         dst_prefix = f"{upload.destination_connection_id} — "
-        self.form_dest_id = next(
-            (o for o in conn_options_dst if o.startswith(dst_prefix)), ""
-        )
+        self.form_dest_id = next((o for o in conn_options_dst if o.startswith(dst_prefix)), "")
 
         # Populate from dlt_config
         config = upload.dlt_config or {}
@@ -322,9 +318,7 @@ class UploadState(BaseState):
         self.form_write_disposition = config.get("write_disposition", "append")
         self.form_primary_key = config.get("primary_key", "")
         merge_config = config.get("merge_config")
-        self.form_merge_config = (
-            json.dumps(merge_config, indent=2) if merge_config else ""
-        )
+        self.form_merge_config = json.dumps(merge_config, indent=2) if merge_config else ""
         self.form_source_schema = config.get("source_schema", "")
         self.form_batch_size = str(config["batch_size"]) if "batch_size" in config else ""
         self.form_table = config.get("table", "")

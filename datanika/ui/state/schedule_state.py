@@ -47,9 +47,7 @@ class ScheduleState(BaseState):
         self.form_target_name = value
         if value.strip():
             query = value.strip().lower()
-            self.target_suggestions = [
-                n for n in self.target_options if query in n.lower()
-            ]
+            self.target_suggestions = [n for n in self.target_options if query in n.lower()]
             self.show_target_suggestions = len(self.target_suggestions) > 0
             self.target_suggestion_index = 0 if self.target_suggestions else -1
         else:
@@ -79,9 +77,7 @@ class ScheduleState(BaseState):
         if self.show_target_suggestions and 0 <= self.target_suggestion_index < len(
             self.target_suggestions
         ):
-            self.select_target_suggestion(
-                self.target_suggestions[self.target_suggestion_index]
-            )
+            self.select_target_suggestion(self.target_suggestions[self.target_suggestion_index])
 
     def target_dismiss(self):
         self.show_target_suggestions = False
@@ -161,8 +157,11 @@ class ScheduleState(BaseState):
                     target_type=s.target_type.value,
                     target_id=s.target_id,
                     target_name=self._resolve_target_name(
-                        s.target_type.value, s.target_id,
-                        upload_names, trans_names, pipeline_names,
+                        s.target_type.value,
+                        s.target_id,
+                        upload_names,
+                        trans_names,
+                        pipeline_names,
                     ),
                     cron_expression=s.cron_expression,
                     timezone=s.timezone,
@@ -175,8 +174,11 @@ class ScheduleState(BaseState):
 
     @staticmethod
     def _resolve_target_name(
-        target_type: str, target_id: int,
-        upload_names: dict, trans_names: dict, pipeline_names: dict | None = None,
+        target_type: str,
+        target_id: int,
+        upload_names: dict,
+        trans_names: dict,
+        pipeline_names: dict | None = None,
     ) -> str:
         if target_type == "upload":
             name = upload_names.get(target_id, f"#{target_id}")

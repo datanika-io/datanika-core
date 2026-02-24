@@ -51,29 +51,45 @@ class TestConnectionFormValidation:
     def test_db_missing_host(self):
         for t in ("postgres", "mysql", "mssql", "redshift"):
             err = self._validate(
-                name="X", conn_type=t, use_raw_json=False,
-                host="", port="5432", database="db",
+                name="X",
+                conn_type=t,
+                use_raw_json=False,
+                host="",
+                port="5432",
+                database="db",
             )
             assert "Host is required" in err, f"Failed for {t}"
 
     def test_db_missing_port(self):
         err = self._validate(
-            name="X", conn_type="postgres", use_raw_json=False,
-            host="localhost", port="", database="db",
+            name="X",
+            conn_type="postgres",
+            use_raw_json=False,
+            host="localhost",
+            port="",
+            database="db",
         )
         assert "Port is required" in err
 
     def test_db_missing_database(self):
         err = self._validate(
-            name="X", conn_type="mysql", use_raw_json=False,
-            host="localhost", port="3306", database="",
+            name="X",
+            conn_type="mysql",
+            use_raw_json=False,
+            host="localhost",
+            port="3306",
+            database="",
         )
         assert "Database is required" in err
 
     def test_db_valid(self):
         err = self._validate(
-            name="X", conn_type="postgres", use_raw_json=False,
-            host="localhost", port="5432", database="mydb",
+            name="X",
+            conn_type="postgres",
+            use_raw_json=False,
+            host="localhost",
+            port="5432",
+            database="mydb",
         )
         assert err == ""
 
@@ -81,13 +97,19 @@ class TestConnectionFormValidation:
 
     def test_sqlite_missing_path(self):
         err = self._validate(
-            name="X", conn_type="sqlite", use_raw_json=False, path="",
+            name="X",
+            conn_type="sqlite",
+            use_raw_json=False,
+            path="",
         )
         assert "path is required" in err.lower()
 
     def test_sqlite_valid(self):
         err = self._validate(
-            name="X", conn_type="sqlite", use_raw_json=False, path="/data/my.db",
+            name="X",
+            conn_type="sqlite",
+            use_raw_json=False,
+            path="/data/my.db",
         )
         assert err == ""
 
@@ -95,22 +117,31 @@ class TestConnectionFormValidation:
 
     def test_bigquery_missing_project(self):
         err = self._validate(
-            name="X", conn_type="bigquery", use_raw_json=False,
-            project="", dataset="raw",
+            name="X",
+            conn_type="bigquery",
+            use_raw_json=False,
+            project="",
+            dataset="raw",
         )
         assert "Project ID is required" in err
 
     def test_bigquery_missing_dataset(self):
         err = self._validate(
-            name="X", conn_type="bigquery", use_raw_json=False,
-            project="proj", dataset="",
+            name="X",
+            conn_type="bigquery",
+            use_raw_json=False,
+            project="proj",
+            dataset="",
         )
         assert "Dataset is required" in err
 
     def test_bigquery_valid(self):
         err = self._validate(
-            name="X", conn_type="bigquery", use_raw_json=False,
-            project="proj", dataset="raw",
+            name="X",
+            conn_type="bigquery",
+            use_raw_json=False,
+            project="proj",
+            dataset="raw",
         )
         assert err == ""
 
@@ -118,29 +149,45 @@ class TestConnectionFormValidation:
 
     def test_snowflake_missing_account(self):
         err = self._validate(
-            name="X", conn_type="snowflake", use_raw_json=False,
-            account="", user="u", database="db",
+            name="X",
+            conn_type="snowflake",
+            use_raw_json=False,
+            account="",
+            user="u",
+            database="db",
         )
         assert "Account is required" in err
 
     def test_snowflake_missing_user(self):
         err = self._validate(
-            name="X", conn_type="snowflake", use_raw_json=False,
-            account="acct", user="", database="db",
+            name="X",
+            conn_type="snowflake",
+            use_raw_json=False,
+            account="acct",
+            user="",
+            database="db",
         )
         assert "User is required" in err
 
     def test_snowflake_missing_database(self):
         err = self._validate(
-            name="X", conn_type="snowflake", use_raw_json=False,
-            account="acct", user="u", database="",
+            name="X",
+            conn_type="snowflake",
+            use_raw_json=False,
+            account="acct",
+            user="u",
+            database="",
         )
         assert "Database is required" in err
 
     def test_snowflake_valid(self):
         err = self._validate(
-            name="X", conn_type="snowflake", use_raw_json=False,
-            account="acct", user="u", database="db",
+            name="X",
+            conn_type="snowflake",
+            use_raw_json=False,
+            account="acct",
+            user="u",
+            database="db",
         )
         assert err == ""
 
@@ -148,13 +195,18 @@ class TestConnectionFormValidation:
 
     def test_s3_missing_bucket_url(self):
         err = self._validate(
-            name="X", conn_type="s3", use_raw_json=False, bucket_url="",
+            name="X",
+            conn_type="s3",
+            use_raw_json=False,
+            bucket_url="",
         )
         assert "Bucket URL is required" in err
 
     def test_s3_valid(self):
         err = self._validate(
-            name="X", conn_type="s3", use_raw_json=False,
+            name="X",
+            conn_type="s3",
+            use_raw_json=False,
             bucket_url="s3://my-bucket",
         )
         assert err == ""
@@ -164,13 +216,18 @@ class TestConnectionFormValidation:
     def test_file_type_missing_path(self):
         for t in ("csv", "json", "parquet"):
             err = self._validate(
-                name="X", conn_type=t, use_raw_json=False, bucket_url="",
+                name="X",
+                conn_type=t,
+                use_raw_json=False,
+                bucket_url="",
             )
             assert "path is required" in err.lower(), f"Failed for {t}"
 
     def test_file_type_valid(self):
         err = self._validate(
-            name="X", conn_type="csv", use_raw_json=False,
+            name="X",
+            conn_type="csv",
+            use_raw_json=False,
             bucket_url="/data/files",
         )
         assert err == ""
@@ -179,13 +236,18 @@ class TestConnectionFormValidation:
 
     def test_rest_api_missing_base_url(self):
         err = self._validate(
-            name="X", conn_type="rest_api", use_raw_json=False, base_url="",
+            name="X",
+            conn_type="rest_api",
+            use_raw_json=False,
+            base_url="",
         )
         assert "Base URL is required" in err
 
     def test_rest_api_valid(self):
         err = self._validate(
-            name="X", conn_type="rest_api", use_raw_json=False,
+            name="X",
+            conn_type="rest_api",
+            use_raw_json=False,
             base_url="https://api.example.com",
         )
         assert err == ""

@@ -19,8 +19,7 @@ class BackupState(BaseState):
 
     def set_conflict_resolution(self, key: str, value: str):
         self.restore_conflicts = [
-            {**c, "resolution": value} if c.get("key") == key else c
-            for c in self.restore_conflicts
+            {**c, "resolution": value} if c.get("key") == key else c for c in self.restore_conflicts
         ]
 
     def cancel_restore(self):
@@ -71,8 +70,7 @@ class BackupState(BaseState):
         if conflicts:
             self.restore_data = data
             self.restore_conflicts = [
-                {**c, "key": f"{c['type']}:{c['name']}", "resolution": "skip"}
-                for c in conflicts
+                {**c, "key": f"{c['type']}:{c['name']}", "resolution": "skip"} for c in conflicts
             ]
         else:
             await self._do_import(org_id, data, {})

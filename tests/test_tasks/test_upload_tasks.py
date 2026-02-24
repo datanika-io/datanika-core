@@ -172,16 +172,29 @@ class TestRunUploadTask:
         db_session.add(org)
         db_session.flush()
         src = conn_svc.create_connection(
-            db_session, org.id, "S", ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE, {"host": "src", "port": 5432},
+            db_session,
+            org.id,
+            "S",
+            ConnectionType.POSTGRES,
+            ConnectionDirection.SOURCE,
+            {"host": "src", "port": 5432},
         )
         dst = conn_svc.create_connection(
-            db_session, org.id, "D", ConnectionType.POSTGRES,
-            ConnectionDirection.DESTINATION, {"host": "dst", "port": 5432},
+            db_session,
+            org.id,
+            "D",
+            ConnectionType.POSTGRES,
+            ConnectionDirection.DESTINATION,
+            {"host": "dst", "port": 5432},
         )
         upload = upload_svc.create_upload(
-            db_session, org.id, "My Sales Pipeline", "desc",
-            src.id, dst.id, {"write_disposition": "append"},
+            db_session,
+            org.id,
+            "My Sales Pipeline",
+            "desc",
+            src.id,
+            dst.id,
+            {"write_disposition": "append"},
         )
         run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
 
@@ -192,8 +205,10 @@ class TestRunUploadTask:
                 "load_info": "mock_load_info",
             }
             run_upload(
-                run_id=run.id, org_id=org.id,
-                session=db_session, encryption=encryption,
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
             )
             call_kwargs = instance.execute.call_args[1]
             assert call_kwargs["dataset_name"] == "my_sales_pipeline"
@@ -213,7 +228,8 @@ class TestCatalogSyncAfterUpload:
         with (
             _mock_dlt_runner() as mock_runner_cls,
             patch.object(
-                CatalogService, "introspect_tables",
+                CatalogService,
+                "introspect_tables",
                 return_value=introspect_result,
             ) as mock_introspect,
             patch(
@@ -227,14 +243,17 @@ class TestCatalogSyncAfterUpload:
                 "load_info": "mock_load_info",
             }
             run_upload(
-                run_id=run.id, org_id=org.id,
-                session=db_session, encryption=encryption,
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
             )
         return org, upload, run, mock_introspect, mock_dbt_instance
 
     def test_syncs_catalog_entries_after_success(self, db_session, setup_upload):
         org, upload, run, mock_introspect, _ = self._run_with_catalog_mocks(
-            db_session, setup_upload,
+            db_session,
+            setup_upload,
         )
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
@@ -246,7 +265,8 @@ class TestCatalogSyncAfterUpload:
 
     def test_source_yml_written_after_success(self, db_session, setup_upload):
         _, _, _, _, mock_dbt_instance = self._run_with_catalog_mocks(
-            db_session, setup_upload,
+            db_session,
+            setup_upload,
         )
         mock_dbt_instance.write_source_yml_for_connection.assert_called_once()
 
@@ -255,7 +275,8 @@ class TestCatalogSyncAfterUpload:
         with (
             _mock_dlt_runner() as mock_runner_cls,
             patch.object(
-                CatalogService, "introspect_tables",
+                CatalogService,
+                "introspect_tables",
                 side_effect=RuntimeError("introspect failed"),
             ),
         ):
@@ -265,8 +286,10 @@ class TestCatalogSyncAfterUpload:
                 "load_info": "ok",
             }
             run_upload(
-                run_id=run.id, org_id=org.id,
-                session=db_session, encryption=encryption,
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
             )
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS

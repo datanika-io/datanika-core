@@ -150,9 +150,7 @@ class TestHandleCallback:
         mock_user_svc.get_user_orgs.return_value = [org]
 
         svc._exchange_code = AsyncMock(return_value={"access_token": "tok"})
-        svc._fetch_userinfo = AsyncMock(
-            return_value={"login": "ghuser", "id": 789}
-        )
+        svc._fetch_userinfo = AsyncMock(return_value={"login": "ghuser", "id": 789})
         svc._fetch_github_email = AsyncMock(return_value="ghuser@github.com")
 
         session = MagicMock()

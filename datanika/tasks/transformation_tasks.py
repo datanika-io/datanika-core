@@ -111,9 +111,7 @@ def run_transformation(
                     session, org_id, transformation.destination_connection_id
                 )
                 if decrypted:
-                    dbt_svc.generate_profiles_yml(
-                        org_id, conn.connection_type.value, decrypted
-                    )
+                    dbt_svc.generate_profiles_yml(org_id, conn.connection_type.value, decrypted)
 
         dbt_svc.write_model(
             org_id,

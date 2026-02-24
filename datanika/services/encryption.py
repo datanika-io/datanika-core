@@ -19,7 +19,5 @@ class EncryptionService:
         try:
             raw = self._fernet.decrypt(encrypted.encode("utf-8"))
         except InvalidToken as exc:
-            raise EncryptionError(
-                "Failed to decrypt data — invalid key or corrupted data"
-            ) from exc
+            raise EncryptionError("Failed to decrypt data — invalid key or corrupted data") from exc
         return json.loads(raw)

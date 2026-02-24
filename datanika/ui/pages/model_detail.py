@@ -299,7 +299,8 @@ def _expanded_column_card(col: rx.Var[ColumnItem]) -> rx.Component:
                             size=12,
                             cursor="pointer",
                             on_click=ModelDetailState.remove_column_test(
-                                col.name, t,
+                                col.name,
+                                t,
                             ),
                         ),
                         variant="outline",

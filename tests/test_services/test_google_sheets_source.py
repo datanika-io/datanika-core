@@ -24,7 +24,8 @@ class TestGoogleSheetsSource:
         mock_spreadsheet = MagicMock()
         mock_spreadsheet.worksheets.return_value = [mock_ws1, mock_ws2]
         mock_spreadsheet.worksheet.side_effect = lambda name: {
-            "Sheet1": mock_ws1, "Sheet2": mock_ws2
+            "Sheet1": mock_ws1,
+            "Sheet2": mock_ws2,
         }[name]
 
         mock_gc = MagicMock()

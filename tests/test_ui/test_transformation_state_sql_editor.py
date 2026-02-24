@@ -25,46 +25,29 @@ class TestCanPreviewComputedVar:
 
     def test_can_preview_logic_missing_name(self):
         result = bool(
-            "".strip()
-            and "1 — PG (postgres)".strip()
-            and "view".strip()
-            and "staging".strip()
+            "".strip() and "1 — PG (postgres)".strip() and "view".strip() and "staging".strip()
         )
         assert result is False
 
     def test_can_preview_logic_missing_connection(self):
-        result = bool(
-            "my_model".strip()
-            and "".strip()
-            and "view".strip()
-            and "staging".strip()
-        )
+        result = bool("my_model".strip() and "".strip() and "view".strip() and "staging".strip())
         assert result is False
 
     def test_can_preview_logic_missing_materialization(self):
         result = bool(
-            "my_model".strip()
-            and "1 — PG (postgres)".strip()
-            and "".strip()
-            and "staging".strip()
+            "my_model".strip() and "1 — PG (postgres)".strip() and "".strip() and "staging".strip()
         )
         assert result is False
 
     def test_can_preview_logic_missing_schema(self):
         result = bool(
-            "my_model".strip()
-            and "1 — PG (postgres)".strip()
-            and "view".strip()
-            and "".strip()
+            "my_model".strip() and "1 — PG (postgres)".strip() and "view".strip() and "".strip()
         )
         assert result is False
 
     def test_can_preview_logic_whitespace_only(self):
         result = bool(
-            "  ".strip()
-            and "1 — PG (postgres)".strip()
-            and "view".strip()
-            and "staging".strip()
+            "  ".strip() and "1 — PG (postgres)".strip() and "view".strip() and "staging".strip()
         )
         assert result is False
 

@@ -158,7 +158,8 @@ class UserService:
         if kwargs and user_id is not None:
             membership = self.get_membership(session, org_id, user_id)
             if membership is None or membership.role not in (
-                MemberRole.OWNER, MemberRole.ADMIN,
+                MemberRole.OWNER,
+                MemberRole.ADMIN,
             ):
                 raise UserServiceError("Only admins and owners can update the organization")
 

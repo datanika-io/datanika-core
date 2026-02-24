@@ -54,9 +54,7 @@ class ModelState(BaseState):
             for entry in entries:
                 # Resolve origin name
                 if entry.origin_type == NodeType.UPLOAD:
-                    origin_name = upload_names.get(
-                        entry.origin_id, f"Upload #{entry.origin_id}"
-                    )
+                    origin_name = upload_names.get(entry.origin_id, f"Upload #{entry.origin_id}")
                 elif entry.origin_type == NodeType.PIPELINE:
                     origin_name = pipeline_names.get(
                         entry.origin_id, f"Pipeline #{entry.origin_id}"
@@ -69,7 +67,8 @@ class ModelState(BaseState):
                 # Get last run
                 target_type = entry.origin_type
                 runs = exec_svc.list_runs(
-                    session, org_id,
+                    session,
+                    org_id,
                     target_type=target_type,
                     target_id=entry.origin_id,
                     limit=1,
@@ -85,9 +84,7 @@ class ModelState(BaseState):
                         schema_name=entry.schema_name,
                         last_run_status=last_run.status.value if last_run else "",
                         last_run_datetime=(
-                            str(last_run.finished_at)
-                            if last_run and last_run.finished_at
-                            else ""
+                            str(last_run.finished_at) if last_run and last_run.finished_at else ""
                         ),
                         last_run_rows=last_run.rows_loaded or 0 if last_run else 0,
                         column_count=len(entry.columns) if entry.columns else 0,

@@ -31,7 +31,6 @@ def _slugify(text: str) -> str:
 
 
 class AuthState(rx.State):
-
     access_token: str = ""
     refresh_token: str = ""
     current_user: UserInfo = UserInfo()
@@ -95,9 +94,7 @@ class AuthState(rx.State):
         # Apply auth state
         self.access_token = access_token
         self.refresh_token = refresh_token
-        self.current_user = UserInfo(
-            id=user_id, email=user_email, full_name=user_name
-        )
+        self.current_user = UserInfo(id=user_id, email=user_email, full_name=user_name)
         self.user_orgs = orgs
 
         auth = AuthService(settings.secret_key)
@@ -211,9 +208,7 @@ class AuthState(rx.State):
                 self.auth_error = "User not found"
                 return rx.redirect("/login")
 
-            self.current_user = UserInfo(
-                id=user.id, email=user.email, full_name=user.full_name
-            )
+            self.current_user = UserInfo(id=user.id, email=user.email, full_name=user.full_name)
             orgs = svc.get_user_orgs(session, user_id)
             self.user_orgs = [OrgInfo(id=o.id, name=o.name, slug=o.slug) for o in orgs]
             for o in self.user_orgs:

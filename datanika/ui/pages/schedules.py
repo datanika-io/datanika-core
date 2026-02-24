@@ -36,19 +36,13 @@ _SCHEDULE_AUTOCOMPLETE_JS = """
 def _schedule_hidden_buttons() -> rx.Component:
     """Hidden buttons for keyboard navigation of target suggestions."""
     return rx.box(
-        rx.el.button(
-            id="schedule-target-nav-up", on_click=ScheduleState.target_nav_up
-        ),
-        rx.el.button(
-            id="schedule-target-nav-down", on_click=ScheduleState.target_nav_down
-        ),
+        rx.el.button(id="schedule-target-nav-up", on_click=ScheduleState.target_nav_up),
+        rx.el.button(id="schedule-target-nav-down", on_click=ScheduleState.target_nav_down),
         rx.el.button(
             id="schedule-target-select",
             on_click=ScheduleState.target_select_current,
         ),
-        rx.el.button(
-            id="schedule-target-dismiss", on_click=ScheduleState.target_dismiss
-        ),
+        rx.el.button(id="schedule-target-dismiss", on_click=ScheduleState.target_dismiss),
         display="none",
     )
 

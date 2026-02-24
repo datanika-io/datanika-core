@@ -244,9 +244,7 @@ def pipeline_form() -> rx.Component:
             # Error
             rx.cond(
                 PipelineState.error_message,
-                rx.callout(
-                    PipelineState.error_message, icon="triangle_alert", color_scheme="red"
-                ),
+                rx.callout(PipelineState.error_message, icon="triangle_alert", color_scheme="red"),
             ),
             # Buttons
             rx.hstack(

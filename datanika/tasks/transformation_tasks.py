@@ -7,10 +7,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.catalog_entry import CatalogEntryType
+from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.services.catalog_service import CatalogService
+from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.execution_service import ExecutionService
 from datanika.tasks.celery_app import celery_app
@@ -24,12 +26,34 @@ def _sync_catalog_after_transformation(
     org_id: int,
     transformation: Transformation,
     dbt_svc: DbtProjectService,
+    dst_conn: Connection | None = None,
+    dst_config: dict | None = None,
 ) -> None:
     """Sync catalog entry and write model YML after a successful transformation run."""
     catalog_svc = CatalogService()
     dbt_config = {"materialized": transformation.materialization.value}
     if transformation.tags:
         dbt_config["tags"] = transformation.tags
+
+    # Introspect columns from destination DB
+    columns = []
+    if dst_conn is not None and dst_config is not None:
+        try:
+            sa_url = _build_sa_url(dst_config, dst_conn.connection_type)
+            introspected = catalog_svc.introspect_tables(
+                sa_url,
+                schema_name=transformation.schema_name,
+                table_names=[transformation.name],
+            )
+            if introspected:
+                columns = introspected[0].get("columns", [])
+        except Exception:
+            logger.exception(
+                "Column introspection failed for %s.%s (non-fatal)",
+                transformation.schema_name,
+                transformation.name,
+            )
+
     catalog_svc.upsert_entry(
         session,
         org_id,
@@ -39,7 +63,7 @@ def _sync_catalog_after_transformation(
         table_name=transformation.name,
         schema_name=transformation.schema_name,
         dataset_name=transformation.schema_name,
-        columns=[],
+        columns=columns,
         description=transformation.description,
         dbt_config=dbt_config,
     )
@@ -47,7 +71,7 @@ def _sync_catalog_after_transformation(
         org_id,
         transformation.name,
         transformation.schema_name,
-        columns=[],
+        columns=columns,
         description=transformation.description,
         dbt_config=dbt_config,
     )
@@ -100,18 +124,22 @@ def run_transformation(
         dbt_svc.ensure_project(org_id)
 
         # Generate profiles.yml from the transformation's destination connection
+        dst_conn = None
+        dst_config = None
         if transformation.destination_connection_id:
             encryption = EncryptionService(settings.credential_encryption_key)
             conn_svc = ConnectionService(encryption)
-            conn = conn_svc.get_connection(
+            dst_conn = conn_svc.get_connection(
                 session, org_id, transformation.destination_connection_id
             )
-            if conn:
-                decrypted = conn_svc.get_connection_config(
+            if dst_conn:
+                dst_config = conn_svc.get_connection_config(
                     session, org_id, transformation.destination_connection_id
                 )
-                if decrypted:
-                    dbt_svc.generate_profiles_yml(org_id, conn.connection_type.value, decrypted)
+                if dst_config:
+                    dbt_svc.generate_profiles_yml(
+                        org_id, dst_conn.connection_type.value, dst_config
+                    )
 
         dbt_svc.write_model(
             org_id,
@@ -128,7 +156,9 @@ def run_transformation(
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
         try:
-            _sync_catalog_after_transformation(session, org_id, transformation, dbt_svc)
+            _sync_catalog_after_transformation(
+                session, org_id, transformation, dbt_svc, dst_conn, dst_config
+            )
         except Exception:
             logger.exception("Catalog sync failed (non-fatal)")
 

@@ -13,6 +13,7 @@ from datanika.models.pipeline import Pipeline
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.services.catalog_service import CatalogService
+from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
@@ -28,9 +29,12 @@ def _sync_catalog_after_pipeline(
     org_id: int,
     raw_result: list,
     dbt_svc: DbtProjectService,
+    dst_conn: Connection,
+    dst_config: dict,
 ) -> None:
     """Create/update catalog entries for each successful model in the dbt result."""
     catalog_svc = CatalogService()
+    sa_url = _build_sa_url(dst_config, dst_conn.connection_type)
 
     for node_result in raw_result:
         status = getattr(getattr(node_result, "status", None), "value", None)
@@ -66,6 +70,17 @@ def _sync_catalog_after_pipeline(
 
         dbt_config = {"materialized": materialized}
 
+        # Introspect columns from destination DB
+        columns = []
+        try:
+            introspected = catalog_svc.introspect_tables(
+                sa_url, schema_name=schema, table_names=[name]
+            )
+            if introspected:
+                columns = introspected[0].get("columns", [])
+        except Exception:
+            logger.exception("Column introspection failed for %s.%s (non-fatal)", schema, name)
+
         catalog_svc.upsert_entry(
             session,
             org_id,
@@ -75,7 +90,7 @@ def _sync_catalog_after_pipeline(
             table_name=name,
             schema_name=schema,
             dataset_name=schema,
-            columns=[],
+            columns=columns,
             description=description,
             dbt_config=dbt_config,
         )
@@ -84,7 +99,7 @@ def _sync_catalog_after_pipeline(
             org_id,
             name,
             schema,
-            columns=[],
+            columns=columns,
             description=description,
             dbt_config=dbt_config,
         )
@@ -198,7 +213,9 @@ def run_pipeline(
 
             try:
                 raw_result = result.get("raw_result") or []
-                _sync_catalog_after_pipeline(session, org_id, raw_result, dbt_svc)
+                _sync_catalog_after_pipeline(
+                    session, org_id, raw_result, dbt_svc, dst_conn, dst_config
+                )
             except Exception:
                 logger.exception("Pipeline catalog sync failed (non-fatal)")
         else:

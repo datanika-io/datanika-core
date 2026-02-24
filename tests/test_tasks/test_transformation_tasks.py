@@ -1,10 +1,11 @@
 """TDD tests for transformation Celery tasks."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography.fernet import Fernet
 
+from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization
@@ -13,7 +14,10 @@ from datanika.services.catalog_service import CatalogService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.transformation_service import TransformationService
-from datanika.tasks.transformation_tasks import run_transformation
+from datanika.tasks.transformation_tasks import (
+    _sync_catalog_after_transformation,
+    run_transformation,
+)
 
 
 @pytest.fixture
@@ -179,3 +183,64 @@ class TestCatalogSyncAfterTransformation:
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
         assert run.rows_loaded == 3
+
+    def test_transformation_catalog_sync_introspects_columns(
+        self, db_session, encryption
+    ):
+        """_sync_catalog_after_transformation introspects columns from the DB
+        when dst_conn and dst_config are provided."""
+        import uuid
+
+        slug = f"acme-intro-{uuid.uuid4().hex[:8]}"
+        org = Organization(name="Acme", slug=slug)
+        db_session.add(org)
+        db_session.flush()
+
+        dst_config = {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"}
+        conn = Connection(
+            org_id=org.id,
+            name="pg_dest",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted=encryption.encrypt(dst_config),
+        )
+        db_session.add(conn)
+        db_session.flush()
+
+        transform_svc = TransformationService()
+        transformation = transform_svc.create_transformation(
+            db_session,
+            org.id,
+            "test_introspect",
+            "SELECT 1 AS id",
+            Materialization.TABLE,
+            schema_name="staging",
+            destination_connection_id=conn.id,
+        )
+
+        introspected_columns = [
+            {"name": "id", "data_type": "INTEGER"},
+            {"name": "name", "data_type": "VARCHAR"},
+        ]
+
+        mock_dbt_svc = MagicMock()
+
+        with (
+            patch(
+                "datanika.tasks.transformation_tasks.CatalogService.introspect_tables"
+            ) as mock_introspect,
+            patch(
+                "datanika.tasks.transformation_tasks._build_sa_url",
+                return_value="postgresql+psycopg2://u:p@h:5432/d",
+            ),
+        ):
+            mock_introspect.return_value = [
+                {"table_name": "test_introspect", "columns": introspected_columns}
+            ]
+            _sync_catalog_after_transformation(
+                db_session, org.id, transformation, mock_dbt_svc, conn, dst_config
+            )
+
+        entries = CatalogService.list_entries(db_session, org.id)
+        assert len(entries) == 1
+        assert entries[0].columns == introspected_columns

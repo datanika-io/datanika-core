@@ -361,3 +361,95 @@ class TestPipelineCatalogSync:
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
         assert run.rows_loaded == 5
+
+    def test_pipeline_catalog_sync_introspects_columns(
+        self, db_session, encryption, setup_pipeline
+    ):
+        """After a successful pipeline run, catalog entries should contain columns
+        introspected from the destination database."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+
+        node = MagicMock()
+        node.node.name = "src_order_items"
+        node.node.schema = "staging"
+        node.node.resource_type.value = "model"
+        node.node.config.materialized = "view"
+        node.status.value = "success"
+
+        introspected_columns = [
+            {"name": "id", "data_type": "INTEGER"},
+            {"name": "qty", "data_type": "BIGINT"},
+        ]
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch(
+                "datanika.tasks.pipeline_tasks.CatalogService.introspect_tables"
+            ) as mock_introspect,
+            patch(
+                "datanika.tasks.pipeline_tasks._build_sa_url",
+                return_value="postgresql+psycopg2://u:p@h:5432/d",
+            ),
+        ):
+            mock_introspect.return_value = [
+                {"table_name": "src_order_items", "columns": introspected_columns}
+            ]
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [node],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        entries = CatalogService.list_entries(db_session, org.id)
+        assert len(entries) == 1
+        assert entries[0].columns == introspected_columns
+
+    def test_pipeline_catalog_sync_falls_back_on_introspect_failure(
+        self, db_session, encryption, setup_pipeline
+    ):
+        """If introspection fails, the run still succeeds and columns are not wiped."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+
+        node = MagicMock()
+        node.node.name = "src_order_items"
+        node.node.schema = "staging"
+        node.node.resource_type.value = "model"
+        node.node.config.materialized = "view"
+        node.status.value = "success"
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch(
+                "datanika.tasks.pipeline_tasks.CatalogService.introspect_tables",
+                side_effect=Exception("connection refused"),
+            ),
+            patch(
+                "datanika.tasks.pipeline_tasks._build_sa_url",
+                return_value="postgresql+psycopg2://u:p@h:5432/d",
+            ),
+        ):
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 10,
+                "logs": "",
+                "raw_result": [node],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        db_session.refresh(run)
+        assert run.status == RunStatus.SUCCESS
+        assert run.rows_loaded == 10

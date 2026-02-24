@@ -90,7 +90,7 @@ def _upstream_popover() -> rx.Component:
             border="1px solid var(--gray-6)",
             border_radius="6px",
             box_shadow="0 4px 12px rgba(0,0,0,0.15)",
-            z_index="10",
+            z_index="50",
         ),
         rx.fragment(),
     )
@@ -127,14 +127,14 @@ def _downstream_popover() -> rx.Component:
             border="1px solid var(--gray-6)",
             border_radius="6px",
             box_shadow="0 4px 12px rgba(0,0,0,0.15)",
-            z_index="10",
+            z_index="50",
         ),
         rx.fragment(),
     )
 
 
 def add_dependency_form() -> rx.Component:
-    return rx.card(
+    return rx.box(
         rx.vstack(
             rx.heading(_t["dag.add_dependency"], size="4"),
             rx.hstack(
@@ -230,6 +230,10 @@ def add_dependency_form() -> rx.Component:
             width="100%",
         ),
         width="100%",
+        padding="16px",
+        border="1px solid var(--gray-6)",
+        border_radius="var(--radius-3)",
+        background="var(--color-panel-solid)",
     )
 
 

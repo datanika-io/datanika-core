@@ -51,9 +51,14 @@ class ScheduleState(BaseState):
             self.show_target_suggestions = len(self.target_suggestions) > 0
             self.target_suggestion_index = 0 if self.target_suggestions else -1
         else:
-            self.target_suggestions = []
-            self.show_target_suggestions = False
-            self.target_suggestion_index = -1
+            self.target_suggestions = list(self.target_options)
+            self.show_target_suggestions = len(self.target_suggestions) > 0
+            self.target_suggestion_index = 0 if self.target_suggestions else -1
+
+    def show_target_all(self):
+        self.target_suggestions = list(self.target_options)
+        self.show_target_suggestions = len(self.target_suggestions) > 0
+        self.target_suggestion_index = 0 if self.target_suggestions else -1
 
     def select_target_suggestion(self, name: str):
         self.form_target_name = name

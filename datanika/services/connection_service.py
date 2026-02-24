@@ -106,6 +106,9 @@ class ConnectionService:
         direction: ConnectionDirection,
         config: dict,
     ) -> Connection:
+        from datanika.hooks import emit
+
+        emit("connection.before_create", session=session, org_id=org_id)
         validate_connection_name(name)
         conn = Connection(
             org_id=org_id,

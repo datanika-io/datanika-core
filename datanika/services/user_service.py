@@ -178,6 +178,9 @@ class UserService:
     def add_member(
         self, session: Session, org_id: int, user_id: int, role: MemberRole
     ) -> Membership:
+        from datanika.hooks import emit
+
+        emit("membership.before_create", session=session, org_id=org_id)
         # Verify org exists
         org = session.execute(
             select(Organization).where(Organization.id == org_id)

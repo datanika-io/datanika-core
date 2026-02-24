@@ -45,6 +45,9 @@ class ScheduleService:
         timezone: str = "UTC",
         is_active: bool = True,
     ) -> Schedule:
+        from datanika.hooks import emit
+
+        emit("schedule.before_create", session=session, org_id=org_id)
         self.validate_cron_expression(cron_expression)
         self.validate_target(session, org_id, target_type, target_id)
 

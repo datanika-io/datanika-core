@@ -33,7 +33,7 @@ def _sync_catalog_after_upload(
     dst_conn: Connection,
     dst_config: dict,
     dataset_name: str,
-) -> None:
+) -> int:
     """Sync catalog entries and write source YML after a successful upload run."""
     catalog_svc = CatalogService()
     sa_url = _build_sa_url(dst_config, dst_conn.connection_type)
@@ -82,6 +82,7 @@ def _sync_catalog_after_upload(
     dbt_svc.ensure_project(org_id)
     conn_name_snake = to_snake_case(dst_conn.name)
     dbt_svc.write_source_yml_for_connection(org_id, conn_name_snake, sources)
+    return len(tables)
 
 
 def run_upload(
@@ -166,8 +167,9 @@ def run_upload(
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
+        table_count = 1  # fallback
         try:
-            _sync_catalog_after_upload(
+            table_count = _sync_catalog_after_upload(
                 session,
                 org_id,
                 upload,
@@ -177,6 +179,10 @@ def run_upload(
             )
         except Exception:
             logger.exception("Catalog sync failed (non-fatal)")
+
+        from datanika.hooks import emit
+
+        emit("run.upload_completed", org_id=org_id, table_count=table_count)
 
         upload.status = UploadStatus.ACTIVE
         session.flush()

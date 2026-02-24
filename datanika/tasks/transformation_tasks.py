@@ -162,6 +162,10 @@ def run_transformation(
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
+        from datanika.hooks import emit
+
+        emit("run.transformation_completed", org_id=org_id)
+
         try:
             _sync_catalog_after_transformation(
                 session, org_id, transformation, dbt_svc, dst_conn, dst_config

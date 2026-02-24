@@ -216,13 +216,27 @@ def run_pipeline(
                 logs=result["logs"],
             )
 
+            raw_result = result.get("raw_result") or []
+
             try:
-                raw_result = result.get("raw_result") or []
                 _sync_catalog_after_pipeline(
                     session, org_id, raw_result, dbt_svc, dst_conn, dst_config
                 )
             except Exception:
                 logger.exception("Pipeline catalog sync failed (non-fatal)")
+
+            # Count successful model + test nodes for usage metering
+            billable_nodes = sum(
+                1
+                for r in raw_result
+                if getattr(getattr(r, "status", None), "value", None) == "success"
+                and getattr(getattr(r, "node", None), "resource_type", None) is not None
+                and getattr(r.node.resource_type, "value", None) in ("model", "test")
+            )
+            if billable_nodes > 0:
+                from datanika.hooks import emit
+
+                emit("run.models_completed", org_id=org_id, count=billable_nodes)
 
             pipeline.status = PipelineStatus.ACTIVE
             session.flush()

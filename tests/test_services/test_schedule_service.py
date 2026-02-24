@@ -10,9 +10,9 @@ from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
-from datanika.services.upload_service import UploadService
 from datanika.services.schedule_service import ScheduleConfigError, ScheduleService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 
 
 @pytest.fixture

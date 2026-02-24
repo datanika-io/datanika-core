@@ -268,5 +268,14 @@
   "settings.role": "Роль",
   "settings.slug": "Слаг",
   "settings.remove": "Удалить",
-  "settings.ph_email": "Адрес эл. почты"
+  "settings.ph_email": "Адрес эл. почты",
+  "settings.backup_restore": "Резервное копирование",
+  "settings.export_backup": "Экспорт резервной копии",
+  "settings.restore_backup": "Восстановить из копии",
+  "settings.confirm_restore": "Подтвердить восстановление",
+  "settings.restore_conflicts": "Обнаружены конфликты имён",
+  "settings.restore_success": "Восстановление завершено",
+  "settings.conflict_skip": "Пропустить",
+  "settings.conflict_overwrite": "Перезаписать",
+  "settings.conflict_rename": "Переименовать"
 }

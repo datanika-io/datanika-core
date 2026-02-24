@@ -10,8 +10,8 @@ from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.dependency_service import DependencyConfigError, DependencyService
 from datanika.services.encryption import EncryptionService
-from datanika.services.upload_service import UploadService
 from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 
 
 @pytest.fixture

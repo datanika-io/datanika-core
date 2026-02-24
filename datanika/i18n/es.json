@@ -268,5 +268,14 @@
   "settings.role": "Rol",
   "settings.slug": "Slug",
   "settings.remove": "Eliminar",
-  "settings.ph_email": "Dirección de correo electrónico"
+  "settings.ph_email": "Dirección de correo electrónico",
+  "settings.backup_restore": "Copia de seguridad y restauración",
+  "settings.export_backup": "Exportar copia de seguridad",
+  "settings.restore_backup": "Restaurar desde copia",
+  "settings.confirm_restore": "Confirmar restauración",
+  "settings.restore_conflicts": "Conflictos de nombres detectados",
+  "settings.restore_success": "Restauración completada",
+  "settings.conflict_skip": "Omitir",
+  "settings.conflict_overwrite": "Sobrescribir",
+  "settings.conflict_rename": "Renombrar"
 }

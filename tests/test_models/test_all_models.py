@@ -377,8 +377,8 @@ class TestDependency:
     def test_create_dependency(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import Dependency, NodeType
-        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.transformation import Materialization, Transformation
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-dep")
@@ -461,8 +461,8 @@ class TestSchedule:
     def test_create_schedule(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import NodeType
-        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.schedule import Schedule
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-sched")
@@ -552,8 +552,8 @@ class TestRun:
     def test_create_run(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
         from datanika.models.dependency import NodeType
-        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.run import Run, RunStatus
+        from datanika.models.upload import Upload, UploadStatus
         from datanika.models.user import Organization
 
         org = Organization(name="Acme", slug="acme-run")

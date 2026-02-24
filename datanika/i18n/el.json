@@ -268,5 +268,14 @@
   "settings.role": "Ρόλος",
   "settings.slug": "Slug",
   "settings.remove": "Αφαίρεση",
-  "settings.ph_email": "Διεύθυνση email"
+  "settings.ph_email": "Διεύθυνση email",
+  "settings.backup_restore": "Αντίγραφο & Επαναφορά",
+  "settings.export_backup": "Εξαγωγή αντιγράφου",
+  "settings.restore_backup": "Επαναφορά από αντίγραφο",
+  "settings.confirm_restore": "Επιβεβαίωση επαναφοράς",
+  "settings.restore_conflicts": "Εντοπίστηκαν συγκρούσεις ονομάτων",
+  "settings.restore_success": "Η επαναφορά ολοκληρώθηκε",
+  "settings.conflict_skip": "Παράλειψη",
+  "settings.conflict_overwrite": "Αντικατάσταση",
+  "settings.conflict_rename": "Μετονομασία"
 }

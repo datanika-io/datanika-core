@@ -1,6 +1,5 @@
 """Regression tests: run_upload must dispatch Celery task, not just create a Run."""
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest

@@ -2,10 +2,10 @@
 
 from datanika.models.connection import ConnectionDirection
 from datanika.ui.state.connection_state import ConnectionItem, _infer_direction
-from datanika.ui.state.upload_state import UploadItem
 from datanika.ui.state.run_state import RunItem
 from datanika.ui.state.schedule_state import ScheduleItem
 from datanika.ui.state.transformation_state import TransformationItem
+from datanika.ui.state.upload_state import UploadItem
 
 
 class TestConnectionItem:

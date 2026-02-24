@@ -268,5 +268,14 @@
   "settings.role": "Улога",
   "settings.slug": "Идентификатор",
   "settings.remove": "Уклони",
-  "settings.ph_email": "Адреса е-поште"
+  "settings.ph_email": "Адреса е-поште",
+  "settings.backup_restore": "Резервна копија и враћање",
+  "settings.export_backup": "Извези резервну копију",
+  "settings.restore_backup": "Врати из резервне копије",
+  "settings.confirm_restore": "Потврди враћање",
+  "settings.restore_conflicts": "Откривени конфликти имена",
+  "settings.restore_success": "Враћање завршено",
+  "settings.conflict_skip": "Прескочи",
+  "settings.conflict_overwrite": "Препиши",
+  "settings.conflict_rename": "Преименуј"
 }

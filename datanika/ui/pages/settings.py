@@ -1,8 +1,9 @@
-"""Settings page — org profile and member management."""
+"""Settings page — org profile, member management, and backup/restore."""
 
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.settings_state import MemberItem, SettingsState
 
@@ -107,6 +108,96 @@ def members_card() -> rx.Component:
     )
 
 
+def _conflict_row(conflict: dict) -> rx.Component:
+    key = conflict["type"] + ":" + conflict["name"]
+    return rx.hstack(
+        rx.badge(conflict["type"], variant="outline"),
+        rx.text(conflict["name"], weight="medium"),
+        rx.select(
+            [
+                _t["settings.conflict_skip"],
+                _t["settings.conflict_overwrite"],
+                _t["settings.conflict_rename"],
+            ],
+            value=BackupState.restore_resolutions[key],
+            on_change=lambda val: BackupState.set_conflict_resolution(key, val),
+            size="1",
+        ),
+        spacing="3",
+        align="center",
+        width="100%",
+    )
+
+
+def backup_restore_card() -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.heading(_t["settings.backup_restore"], size="4"),
+            rx.hstack(
+                rx.button(
+                    _t["settings.export_backup"],
+                    on_click=BackupState.export_backup,
+                    size="2",
+                ),
+                spacing="3",
+            ),
+            rx.separator(),
+            rx.text(_t["settings.restore_backup"], size="2", weight="medium"),
+            rx.upload(
+                rx.button(_t["settings.restore_backup"], size="2", variant="outline"),
+                accept={".json": ["application/json"]},
+                max_files=1,
+                on_drop=BackupState.handle_restore_upload(rx.upload_files()),  # type: ignore
+                id="backup_upload",
+            ),
+            rx.cond(
+                BackupState.restore_conflicts.length() > 0,
+                rx.vstack(
+                    rx.callout(
+                        _t["settings.restore_conflicts"],
+                        icon="triangle_alert",
+                        color_scheme="orange",
+                        width="100%",
+                    ),
+                    rx.foreach(BackupState.restore_conflicts, _conflict_row),
+                    rx.hstack(
+                        rx.button(
+                            _t["settings.confirm_restore"],
+                            on_click=BackupState.confirm_restore,
+                            size="2",
+                        ),
+                        rx.button(
+                            _t["common.cancel"],
+                            on_click=BackupState.cancel_restore,
+                            size="2",
+                            variant="outline",
+                        ),
+                        spacing="2",
+                    ),
+                    spacing="3",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                BackupState.restore_result != "",
+                rx.callout(
+                    rx.vstack(
+                        rx.text(_t["settings.restore_success"], weight="bold"),
+                        rx.text(BackupState.restore_result),
+                        spacing="1",
+                    ),
+                    icon="check",
+                    color_scheme="green",
+                    width="100%",
+                ),
+            ),
+            spacing="4",
+            width="100%",
+        ),
+        width="100%",
+    )
+
+
 def settings_page() -> rx.Component:
     return page_layout(
         rx.vstack(
@@ -121,6 +212,7 @@ def settings_page() -> rx.Component:
             ),
             org_profile_card(),
             members_card(),
+            backup_restore_card(),
             spacing="6",
             width="100%",
         ),

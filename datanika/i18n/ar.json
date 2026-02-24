@@ -268,5 +268,14 @@
   "settings.role": "الدور",
   "settings.slug": "المعرّف",
   "settings.remove": "إزالة",
-  "settings.ph_email": "عنوان البريد الإلكتروني"
+  "settings.ph_email": "عنوان البريد الإلكتروني",
+  "settings.backup_restore": "النسخ الاحتياطي والاستعادة",
+  "settings.export_backup": "تصدير النسخة الاحتياطية",
+  "settings.restore_backup": "الاستعادة من نسخة احتياطية",
+  "settings.confirm_restore": "تأكيد الاستعادة",
+  "settings.restore_conflicts": "تم اكتشاف تعارضات في الأسماء",
+  "settings.restore_success": "اكتملت الاستعادة",
+  "settings.conflict_skip": "تخطي",
+  "settings.conflict_overwrite": "استبدال",
+  "settings.conflict_rename": "إعادة تسمية"
 }

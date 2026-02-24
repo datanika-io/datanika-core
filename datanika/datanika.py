@@ -1,5 +1,6 @@
 import reflex as rx
 
+from datanika.scheduler import scheduler_integration
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
 from datanika.ui.pages.dag import dag_page
@@ -16,6 +17,7 @@ from datanika.ui.pages.sql_editor import sql_editor_page
 from datanika.ui.pages.transformations import transformations_page
 from datanika.ui.pages.uploads import uploads_page
 from datanika.ui.state.auth_state import AuthState
+from datanika.ui.state.base_state import get_sync_session
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
@@ -35,9 +37,6 @@ app = rx.App(
 )
 
 # Start APScheduler and sync all active schedules from DB
-from datanika.scheduler import scheduler_integration
-from datanika.ui.state.base_state import get_sync_session
-
 scheduler_integration.start()
 with get_sync_session() as _session:
     scheduler_integration.sync_all(_session)

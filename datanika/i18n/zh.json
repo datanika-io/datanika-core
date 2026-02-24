@@ -268,5 +268,14 @@
   "settings.role": "角色",
   "settings.slug": "标识符",
   "settings.remove": "移除",
-  "settings.ph_email": "电子邮件地址"
+  "settings.ph_email": "电子邮件地址",
+  "settings.backup_restore": "备份与恢复",
+  "settings.export_backup": "导出备份",
+  "settings.restore_backup": "从备份恢复",
+  "settings.confirm_restore": "确认恢复",
+  "settings.restore_conflicts": "检测到名称冲突",
+  "settings.restore_success": "恢复完成",
+  "settings.conflict_skip": "跳过",
+  "settings.conflict_overwrite": "覆盖",
+  "settings.conflict_rename": "重命名"
 }

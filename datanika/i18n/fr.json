@@ -268,5 +268,14 @@
   "settings.role": "Rôle",
   "settings.slug": "Slug",
   "settings.remove": "Retirer",
-  "settings.ph_email": "Adresse e-mail"
+  "settings.ph_email": "Adresse e-mail",
+  "settings.backup_restore": "Sauvegarde & Restauration",
+  "settings.export_backup": "Exporter la sauvegarde",
+  "settings.restore_backup": "Restaurer depuis la sauvegarde",
+  "settings.confirm_restore": "Confirmer la restauration",
+  "settings.restore_conflicts": "Conflits de noms détectés",
+  "settings.restore_success": "Restauration terminée",
+  "settings.conflict_skip": "Ignorer",
+  "settings.conflict_overwrite": "Écraser",
+  "settings.conflict_rename": "Renommer"
 }

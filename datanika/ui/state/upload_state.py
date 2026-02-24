@@ -48,6 +48,7 @@ class UploadState(BaseState):
     form_cursor_path: str = ""
     form_initial_value: str = ""
     form_row_order: str = ""
+    form_merge_config: str = ""
     # Schema contract
     form_sc_tables: str = ""
     form_sc_columns: str = ""
@@ -72,14 +73,19 @@ class UploadState(BaseState):
 
     def set_form_mode(self, value: str):
         self.form_mode = value
-        if value == "full_database" and self.form_write_disposition == "merge":
-            self.form_write_disposition = "append"
+        if value == "full_database":
+            self.form_primary_key = ""
+        elif value == "single_table":
+            self.form_merge_config = ""
 
     def set_form_write_disposition(self, value: str):
         self.form_write_disposition = value
 
     def set_form_primary_key(self, value: str):
         self.form_primary_key = value
+
+    def set_form_merge_config(self, value: str):
+        self.form_merge_config = value
 
     def set_form_table(self, value: str):
         self.form_table = value
@@ -136,8 +142,11 @@ class UploadState(BaseState):
 
         if self.form_write_disposition:
             config["write_disposition"] = self.form_write_disposition
-        if self.form_write_disposition == "merge" and self.form_primary_key:
-            config["primary_key"] = self.form_primary_key
+        if self.form_write_disposition == "merge":
+            if self.form_mode == "single_table" and self.form_primary_key:
+                config["primary_key"] = self.form_primary_key
+            elif self.form_mode == "full_database" and self.form_merge_config:
+                config["merge_config"] = json.loads(self.form_merge_config)
 
         if self.form_source_schema:
             config["source_schema"] = self.form_source_schema
@@ -275,6 +284,7 @@ class UploadState(BaseState):
         self.form_mode = "full_database"
         self.form_write_disposition = "append"
         self.form_primary_key = ""
+        self.form_merge_config = ""
         self.form_table = ""
         self.form_source_schema = ""
         self.form_table_names = ""
@@ -311,6 +321,10 @@ class UploadState(BaseState):
         self.form_mode = config.get("mode", "full_database")
         self.form_write_disposition = config.get("write_disposition", "append")
         self.form_primary_key = config.get("primary_key", "")
+        merge_config = config.get("merge_config")
+        self.form_merge_config = (
+            json.dumps(merge_config, indent=2) if merge_config else ""
+        )
         self.form_source_schema = config.get("source_schema", "")
         self.form_batch_size = str(config["batch_size"]) if "batch_size" in config else ""
         self.form_table = config.get("table", "")

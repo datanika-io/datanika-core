@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Порядок строк (необязательно)",
   "uploads.ph_table_names": "Имена таблиц (через запятую, необязательно)",
   "uploads.ph_primary_key": "Первичный ключ (обязателен для merge)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Схема источника (необязательно, напр. public)",
   "uploads.ph_batch_size": "Размер пакета (необязательно, по умолчанию 10000)",
   "uploads.ph_tables": "Таблицы",

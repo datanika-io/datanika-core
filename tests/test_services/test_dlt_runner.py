@@ -897,6 +897,122 @@ class TestExecuteModes:
         mock_source.add_filter.assert_called_once()
 
 
+class TestExecuteMergeConfig:
+    """execute() with merge_config for full_database per-table merge hints."""
+
+    @patch("datanika.services.dlt_runner.sql_database")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_merge_config_applies_hints_per_resource(self, mock_dlt, mock_sql_db, svc):
+        """Listed tables get merge+primary_key hints, unlisted get append."""
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.return_value = MagicMock()
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+
+        # Create a mock source with named resources
+        mock_source = MagicMock()
+        customers_resource = MagicMock()
+        orders_resource = MagicMock()
+        logs_resource = MagicMock()
+        mock_source.resources = {
+            "customers": customers_resource,
+            "orders": orders_resource,
+            "logs": logs_resource,
+        }
+        mock_sql_db.return_value = mock_source
+
+        svc.execute(
+            pipeline_id=1,
+            source_type="postgres",
+            source_config={"host": "h"},
+            destination_type="postgres",
+            destination_config={"host": "d"},
+            dlt_config={
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {
+                    "customers": {"primary_key": "id"},
+                    "orders": {"primary_key": "order_id"},
+                },
+            },
+        )
+
+        customers_resource.apply_hints.assert_called_once_with(
+            write_disposition="merge", primary_key="id"
+        )
+        orders_resource.apply_hints.assert_called_once_with(
+            write_disposition="merge", primary_key="order_id"
+        )
+        logs_resource.apply_hints.assert_called_once_with(write_disposition="append")
+
+    @patch("datanika.services.dlt_runner.sql_database")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_merge_config_composite_key(self, mock_dlt, mock_sql_db, svc):
+        """Composite primary keys are passed through as lists."""
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.return_value = MagicMock()
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+
+        mock_source = MagicMock()
+        items_resource = MagicMock()
+        mock_source.resources = {"order_items": items_resource}
+        mock_sql_db.return_value = mock_source
+
+        svc.execute(
+            pipeline_id=1,
+            source_type="postgres",
+            source_config={"host": "h"},
+            destination_type="postgres",
+            destination_config={"host": "d"},
+            dlt_config={
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {
+                    "order_items": {"primary_key": ["order_id", "item_id"]},
+                },
+            },
+        )
+
+        items_resource.apply_hints.assert_called_once_with(
+            write_disposition="merge", primary_key=["order_id", "item_id"]
+        )
+
+    @patch("datanika.services.dlt_runner.sql_database")
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_merge_config_excludes_merge_keys_from_run(self, mock_dlt, mock_sql_db, svc):
+        """write_disposition, primary_key, merge_config must not pass to pipeline.run()."""
+        mock_pipeline = MagicMock()
+        mock_pipeline.run.return_value = MagicMock()
+        mock_dlt.pipeline.return_value = mock_pipeline
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
+
+        mock_source = MagicMock()
+        mock_source.resources = {"t": MagicMock()}
+        mock_sql_db.return_value = mock_source
+
+        svc.execute(
+            pipeline_id=1,
+            source_type="postgres",
+            source_config={"host": "h"},
+            destination_type="postgres",
+            destination_config={"host": "d"},
+            dlt_config={
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {"t": {"primary_key": "id"}},
+            },
+        )
+
+        run_kwargs = mock_pipeline.run.call_args[1]
+        assert "write_disposition" not in run_kwargs
+        assert "primary_key" not in run_kwargs
+        assert "merge_config" not in run_kwargs
+
+    def test_merge_config_in_internal_config_keys(self):
+        assert "merge_config" in INTERNAL_CONFIG_KEYS
+
+
 class TestExecuteDatasetName:
     @patch("datanika.services.dlt_runner.sql_database")
     @patch("datanika.services.dlt_runner.dlt")

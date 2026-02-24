@@ -40,6 +40,7 @@ INTERNAL_CONFIG_KEYS = {
     "service_account_json",
     "sheet_names",
     "collection_names",
+    "merge_config",
 }
 
 FILTER_OPS = {
@@ -340,7 +341,21 @@ class DltRunnerService:
                 filter_fn = FILTER_OPS[f["op"]](f["column"], f["value"])
                 source.add_filter(filter_fn)
 
+        # Apply per-table merge hints for full_database mode
+        merge_config = dlt_config.get("merge_config")
+        if merge_config and dlt_config.get("mode", "full_database") == "full_database":
+            for resource_name, resource in source.resources.items():
+                if resource_name in merge_config:
+                    pk = merge_config[resource_name]["primary_key"]
+                    resource.apply_hints(write_disposition="merge", primary_key=pk)
+                else:
+                    resource.apply_hints(write_disposition="append")
+
         run_kwargs = {k: v for k, v in dlt_config.items() if k not in INTERNAL_CONFIG_KEYS}
+        # When merge_config is used, write_disposition/primary_key are applied per-resource
+        if merge_config:
+            run_kwargs.pop("write_disposition", None)
+            run_kwargs.pop("primary_key", None)
         load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = _extract_rows_loaded(pipeline)
 

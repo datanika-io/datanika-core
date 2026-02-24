@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Row order (optional)",
   "uploads.ph_table_names": "Table names (comma-separated, optional)",
   "uploads.ph_primary_key": "Primary key (required for merge)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Source schema (optional, e.g. public)",
   "uploads.ph_batch_size": "Batch size (optional, default 10000)",
   "uploads.ph_tables": "Tables",

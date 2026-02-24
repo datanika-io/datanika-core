@@ -393,18 +393,25 @@ class TestValidateUploadConfig:
     def test_replace_valid(self):
         UploadService.validate_upload_config({"write_disposition": "replace"})
 
-    def test_merge_with_pk_valid(self):
+    def test_merge_with_pk_valid_single_table(self):
         UploadService.validate_upload_config(
-            {"write_disposition": "merge", "primary_key": "id"}
+            {
+                "mode": "single_table",
+                "table": "t",
+                "write_disposition": "merge",
+                "primary_key": "id",
+            }
         )
 
     def test_invalid_disposition(self):
         with pytest.raises(UploadConfigError, match="write_disposition"):
             UploadService.validate_upload_config({"write_disposition": "invalid"})
 
-    def test_merge_without_pk(self):
+    def test_merge_without_pk_single_table(self):
         with pytest.raises(UploadConfigError, match="primary_key"):
-            UploadService.validate_upload_config({"write_disposition": "merge"})
+            UploadService.validate_upload_config(
+                {"mode": "single_table", "table": "t", "write_disposition": "merge"}
+            )
 
     def test_empty_config_valid(self):
         UploadService.validate_upload_config({})
@@ -619,6 +626,101 @@ class TestValidateFilters:
 
     def test_empty_filters_list_valid(self):
         UploadService.validate_upload_config({"filters": []})
+
+
+class TestValidateMergeConfig:
+    """Per-table merge_config validation for full_database mode."""
+
+    def test_full_database_merge_with_merge_config_valid(self):
+        UploadService.validate_upload_config(
+            {
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {
+                    "customers": {"primary_key": "id"},
+                    "orders": {"primary_key": "order_id"},
+                },
+            }
+        )
+
+    def test_full_database_merge_composite_keys(self):
+        UploadService.validate_upload_config(
+            {
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {
+                    "order_items": {"primary_key": ["order_id", "item_id"]},
+                },
+            }
+        )
+
+    def test_full_database_merge_requires_merge_config(self):
+        with pytest.raises(UploadConfigError, match="merge_config"):
+            UploadService.validate_upload_config(
+                {"mode": "full_database", "write_disposition": "merge"}
+            )
+
+    def test_merge_config_must_be_dict(self):
+        with pytest.raises(UploadConfigError, match="merge_config.*dict"):
+            UploadService.validate_upload_config(
+                {
+                    "mode": "full_database",
+                    "write_disposition": "merge",
+                    "merge_config": "not a dict",
+                }
+            )
+
+    def test_merge_config_values_must_have_primary_key(self):
+        with pytest.raises(UploadConfigError, match="primary_key"):
+            UploadService.validate_upload_config(
+                {
+                    "mode": "full_database",
+                    "write_disposition": "merge",
+                    "merge_config": {"customers": {}},
+                }
+            )
+
+    def test_merge_config_primary_key_must_be_str_or_list(self):
+        with pytest.raises(UploadConfigError, match="primary_key"):
+            UploadService.validate_upload_config(
+                {
+                    "mode": "full_database",
+                    "write_disposition": "merge",
+                    "merge_config": {"customers": {"primary_key": 123}},
+                }
+            )
+
+    def test_merge_config_values_must_be_dicts(self):
+        with pytest.raises(UploadConfigError, match="merge_config"):
+            UploadService.validate_upload_config(
+                {
+                    "mode": "full_database",
+                    "write_disposition": "merge",
+                    "merge_config": {"customers": "id"},
+                }
+            )
+
+    def test_single_table_merge_rejects_merge_config(self):
+        with pytest.raises(UploadConfigError, match="merge_config"):
+            UploadService.validate_upload_config(
+                {
+                    "mode": "single_table",
+                    "table": "t",
+                    "write_disposition": "merge",
+                    "primary_key": "id",
+                    "merge_config": {"t": {"primary_key": "id"}},
+                }
+            )
+
+    def test_full_database_merge_does_not_require_primary_key(self):
+        """full_database merge needs merge_config, not primary_key."""
+        UploadService.validate_upload_config(
+            {
+                "mode": "full_database",
+                "write_disposition": "merge",
+                "merge_config": {"customers": {"primary_key": "id"}},
+            }
+        )
 
 
 class TestValidateUploadName:

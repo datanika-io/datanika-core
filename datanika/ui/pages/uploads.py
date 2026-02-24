@@ -122,22 +122,30 @@ def upload_form() -> rx.Component:
             ),
             # Write disposition
             rx.select(
-                rx.cond(
-                    UploadState.form_mode == "single_table",
-                    ["append", "replace", "merge"],
-                    ["append", "replace"],
-                ),
+                ["append", "replace", "merge"],
                 value=UploadState.form_write_disposition,
                 on_change=UploadState.set_form_write_disposition,
                 width="100%",
             ),
-            # Primary key (merge only)
+            # Primary key (merge + single_table only)
             rx.cond(
-                UploadState.form_write_disposition == "merge",
+                (UploadState.form_write_disposition == "merge")
+                & (UploadState.form_mode == "single_table"),
                 rx.input(
                     placeholder=_t["uploads.ph_primary_key"],
                     value=UploadState.form_primary_key,
                     on_change=UploadState.set_form_primary_key,
+                    width="100%",
+                ),
+            ),
+            # Merge config (merge + full_database only)
+            rx.cond(
+                (UploadState.form_write_disposition == "merge")
+                & (UploadState.form_mode == "full_database"),
+                rx.text_area(
+                    placeholder=_t["uploads.ph_merge_config"],
+                    value=UploadState.form_merge_config,
+                    on_change=UploadState.set_form_merge_config,
                     width="100%",
                 ),
             ),

@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Σειρά γραμμών (προαιρετικό)",
   "uploads.ph_table_names": "Ονόματα πινάκων (χωρισμένα με κόμμα, προαιρετικό)",
   "uploads.ph_primary_key": "Πρωτεύον κλειδί (απαιτείται για merge)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Σχήμα πηγής (προαιρετικό, π.χ. public)",
   "uploads.ph_batch_size": "Μέγεθος παρτίδας (προαιρετικό, προεπιλογή 10000)",
   "uploads.ph_tables": "Πίνακες",

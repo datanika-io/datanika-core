@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Редослед редова (опционо)",
   "uploads.ph_table_names": "Називи табела (раздвојени зарезом, опционо)",
   "uploads.ph_primary_key": "Примарни кључ (обавезан за спајање)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Изворна шема (опционо, нпр. public)",
   "uploads.ph_batch_size": "Величина серије (опционо, подразумевано 10000)",
   "uploads.ph_tables": "Табеле",

@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Zeilenreihenfolge (optional)",
   "uploads.ph_table_names": "Tabellennamen (kommagetrennt, optional)",
   "uploads.ph_primary_key": "Primärschlüssel (erforderlich für Merge)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Quellschema (optional, z.B. public)",
   "uploads.ph_batch_size": "Stapelgröße (optional, Standard 10000)",
   "uploads.ph_tables": "Tabellen",

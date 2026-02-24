@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "Orden de filas (opcional)",
   "uploads.ph_table_names": "Nombres de tablas (separados por comas, opcional)",
   "uploads.ph_primary_key": "Clave primaria (requerida para merge)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "Esquema de origen (opcional, ej. public)",
   "uploads.ph_batch_size": "Tamaño de lote (opcional, por defecto 10000)",
   "uploads.ph_tables": "Tablas",

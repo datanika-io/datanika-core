@@ -25,6 +25,7 @@ INTERNAL_CONFIG_KEYS = {
     "incremental",
     "batch_size",
     "filters",
+    "merge_config",
 }
 
 validate_upload_name = partial(validate_name, entity_label="Upload")
@@ -146,8 +147,6 @@ class UploadService:
             raise UploadConfigError(
                 f"write_disposition must be one of {VALID_WRITE_DISPOSITIONS}, got '{disposition}'"
             )
-        if disposition == "merge" and "primary_key" not in dlt_config:
-            raise UploadConfigError("write_disposition 'merge' requires a 'primary_key' field")
 
         # -- mode validation --
         mode = dlt_config.get("mode", "full_database")
@@ -159,6 +158,10 @@ class UploadService:
                 raise UploadConfigError("single_table mode requires a 'table' field")
             if "table_names" in dlt_config:
                 raise UploadConfigError("single_table mode does not accept 'table_names'")
+            if "merge_config" in dlt_config:
+                raise UploadConfigError("single_table mode does not accept 'merge_config'")
+            if disposition == "merge" and "primary_key" not in dlt_config:
+                raise UploadConfigError("write_disposition 'merge' requires a 'primary_key' field")
             incremental = dlt_config.get("incremental")
             if incremental is not None:
                 if not isinstance(incremental, dict) or "cursor_path" not in incremental:
@@ -176,6 +179,29 @@ class UploadService:
             table_names = dlt_config.get("table_names")
             if table_names is not None and not isinstance(table_names, list):
                 raise UploadConfigError("table_names must be a list")
+            if disposition == "merge":
+                if "merge_config" not in dlt_config:
+                    raise UploadConfigError(
+                        "full_database merge requires 'merge_config'"
+                    )
+                merge_config = dlt_config["merge_config"]
+                if not isinstance(merge_config, dict):
+                    raise UploadConfigError("merge_config must be a dict")
+                for table_name, table_cfg in merge_config.items():
+                    if not isinstance(table_cfg, dict):
+                        raise UploadConfigError(
+                            f"merge_config entry '{table_name}' must be a dict"
+                        )
+                    if "primary_key" not in table_cfg:
+                        raise UploadConfigError(
+                            f"merge_config entry '{table_name}' requires 'primary_key'"
+                        )
+                    pk = table_cfg["primary_key"]
+                    if not isinstance(pk, (str, list)):
+                        raise UploadConfigError(
+                            f"merge_config entry '{table_name}': "
+                            "primary_key must be a string or list"
+                        )
 
         # -- batch_size --
         batch_size = dlt_config.get("batch_size")

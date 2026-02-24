@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "ترتيب الصفوف (اختياري)",
   "uploads.ph_table_names": "أسماء الجداول (مفصولة بفواصل، اختياري)",
   "uploads.ph_primary_key": "المفتاح الأساسي (مطلوب للدمج)",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "مخطط المصدر (اختياري، مثال: public)",
   "uploads.ph_batch_size": "حجم الدفعة (اختياري، الافتراضي 10000)",
   "uploads.ph_tables": "الجداول",

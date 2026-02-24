@@ -136,6 +136,7 @@
   "uploads.ph_row_order": "行排序（可选）",
   "uploads.ph_table_names": "表名（用逗号分隔，可选）",
   "uploads.ph_primary_key": "主键（合并模式必填）",
+  "uploads.ph_merge_config": "{\"customers\": {\"primary_key\": \"id\"}, \"orders\": {\"primary_key\": \"order_id\"}}",
   "uploads.ph_source_schema": "源模式（可选，如 public）",
   "uploads.ph_batch_size": "批量大小（可选，默认 10000）",
   "uploads.ph_tables": "表",

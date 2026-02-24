@@ -277,5 +277,6 @@
   "settings.restore_success": "Η επαναφορά ολοκληρώθηκε",
   "settings.conflict_skip": "Παράλειψη",
   "settings.conflict_overwrite": "Αντικατάσταση",
-  "settings.conflict_rename": "Μετονομασία"
+  "settings.conflict_rename": "Μετονομασία",
+  "settings.default_dbt_schema": "Προεπιλεγμένο σχήμα dbt"
 }

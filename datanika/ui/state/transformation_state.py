@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.transformation import Materialization
+from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
@@ -358,9 +359,14 @@ class TransformationState(BaseState):
         if not config:
             return None, None, None, None
 
+        org = session.get(Organization, self._form_org_id)
+        default_schema = org.default_dbt_schema if org else "datanika"
+
         dbt_svc = DbtProjectService(settings.dbt_projects_dir)
         dbt_svc.ensure_project(self._form_org_id)
-        dbt_svc.generate_profiles_yml(self._form_org_id, conn.connection_type.value, config)
+        dbt_svc.generate_profiles_yml(
+            self._form_org_id, conn.connection_type.value, config, default_schema=default_schema
+        )
         dbt_svc.write_model(
             self._form_org_id,
             self.form_name,
@@ -487,9 +493,14 @@ class TransformationState(BaseState):
 
             try:
                 # Compile via dbt to resolve ref/source
+                org = session.get(Organization, org_id)
+                default_schema = org.default_dbt_schema if org else "datanika"
+
                 dbt_svc = DbtProjectService(settings.dbt_projects_dir)
                 dbt_svc.ensure_project(org_id)
-                dbt_svc.generate_profiles_yml(org_id, conn.connection_type.value, config)
+                dbt_svc.generate_profiles_yml(
+                    org_id, conn.connection_type.value, config, default_schema=default_schema
+                )
                 dbt_svc.write_model(
                     org_id,
                     t.name,
@@ -541,6 +552,9 @@ class TransformationState(BaseState):
                 return
 
             try:
+                org = session.get(Organization, org_id)
+                default_schema = org.default_dbt_schema if org else "datanika"
+
                 dbt_svc = DbtProjectService(settings.dbt_projects_dir)
                 dbt_svc.ensure_project(org_id)
 
@@ -555,7 +569,10 @@ class TransformationState(BaseState):
                         )
                         if decrypted:
                             dbt_svc.generate_profiles_yml(
-                                org_id, conn.connection_type.value, decrypted
+                                org_id,
+                                conn.connection_type.value,
+                                decrypted,
+                                default_schema=default_schema,
                             )
                 else:
                     # Check if profiles.yml exists from a prior run

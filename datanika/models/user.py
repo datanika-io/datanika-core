@@ -19,6 +19,9 @@ class Organization(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    default_dbt_schema: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="datanika"
+    )
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="organization")
 

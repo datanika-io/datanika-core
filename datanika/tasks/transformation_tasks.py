@@ -11,6 +11,7 @@ from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
+from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
@@ -120,6 +121,9 @@ def run_transformation(
         from datanika.services.connection_service import ConnectionService
         from datanika.services.encryption import EncryptionService
 
+        org = session.get(Organization, org_id)
+        default_schema = org.default_dbt_schema if org else "datanika"
+
         dbt_svc = DbtProjectService(settings.dbt_projects_dir)
         dbt_svc.ensure_project(org_id)
 
@@ -138,7 +142,10 @@ def run_transformation(
                 )
                 if dst_config:
                     dbt_svc.generate_profiles_yml(
-                        org_id, dst_conn.connection_type.value, dst_config
+                        org_id,
+                        dst_conn.connection_type.value,
+                        dst_config,
+                        default_schema=default_schema,
                     )
 
         dbt_svc.write_model(

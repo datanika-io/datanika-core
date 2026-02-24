@@ -272,6 +272,84 @@ class TestGenerateProfilesYml:
         assert path.name == "profiles.yml"
         assert path.parent == svc.get_project_path(1)
 
+    def test_postgres_default_schema_fallback(self, svc):
+        """When config has no schema key, use the default_schema parameter."""
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "postgres",
+            {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"},
+            default_schema="my_org_schema",
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["schema"] == "my_org_schema"
+
+    def test_postgres_default_schema_not_overridden_by_config(self, svc):
+        """When config provides an explicit schema, default_schema is ignored."""
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "postgres",
+            {
+                "host": "h",
+                "port": 5432,
+                "user": "u",
+                "password": "p",
+                "database": "d",
+                "schema": "explicit",
+            },
+            default_schema="my_org_schema",
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["schema"] == "explicit"
+
+    def test_snowflake_default_schema_uppercased(self, svc):
+        """For Snowflake, default_schema should be upper-cased."""
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "snowflake",
+            {
+                "account": "a",
+                "user": "u",
+                "password": "p",
+                "database": "DB",
+                "warehouse": "WH",
+                "role": "R",
+            },
+            default_schema="datanika",
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["schema"] == "DATANIKA"
+
+    def test_bigquery_default_schema_used_as_dataset(self, svc):
+        """For BigQuery, default_schema should be used as the dataset fallback."""
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "bigquery",
+            {"project": "proj", "keyfile_json": {"type": "service_account"}},
+            default_schema="my_dataset",
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["dataset"] == "my_dataset"
+
+    def test_default_schema_defaults_to_datanika(self, svc):
+        """When no default_schema is passed, it defaults to 'datanika'."""
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "postgres",
+            {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"},
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["schema"] == "datanika"
+
 
 # ---------------------------------------------------------------------------
 # run_model

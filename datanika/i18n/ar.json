@@ -277,5 +277,6 @@
   "settings.restore_success": "اكتملت الاستعادة",
   "settings.conflict_skip": "تخطي",
   "settings.conflict_overwrite": "استبدال",
-  "settings.conflict_rename": "إعادة تسمية"
+  "settings.conflict_rename": "إعادة تسمية",
+  "settings.default_dbt_schema": "مخطط dbt الافتراضي"
 }

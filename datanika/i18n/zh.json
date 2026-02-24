@@ -277,5 +277,6 @@
   "settings.restore_success": "恢复完成",
   "settings.conflict_skip": "跳过",
   "settings.conflict_overwrite": "覆盖",
-  "settings.conflict_rename": "重命名"
+  "settings.conflict_rename": "重命名",
+  "settings.default_dbt_schema": "默认 dbt 模式"
 }

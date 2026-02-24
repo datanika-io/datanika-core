@@ -277,5 +277,6 @@
   "settings.restore_success": "Restauration terminée",
   "settings.conflict_skip": "Ignorer",
   "settings.conflict_overwrite": "Écraser",
-  "settings.conflict_rename": "Renommer"
+  "settings.conflict_rename": "Renommer",
+  "settings.default_dbt_schema": "Schéma dbt par défaut"
 }

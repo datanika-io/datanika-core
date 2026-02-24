@@ -191,7 +191,11 @@ class DbtProjectService:
         return sql_path
 
     def generate_profiles_yml(
-        self, org_id: int, connection_type: str, connection_config: dict
+        self,
+        org_id: int,
+        connection_type: str,
+        connection_config: dict,
+        default_schema: str = "datanika",
     ) -> Path:
         """Generate profiles.yml from a destination connection config. Returns path."""
         if connection_type not in SUPPORTED_ADAPTERS:
@@ -200,7 +204,7 @@ class DbtProjectService:
         project_path = self.get_project_path(org_id)
         profile_name = f"tenant_{org_id}"
 
-        output = self._build_profile_output(connection_type, connection_config)
+        output = self._build_profile_output(connection_type, connection_config, default_schema)
 
         profile = {
             profile_name: {
@@ -214,14 +218,16 @@ class DbtProjectService:
         return profiles_path
 
     @staticmethod
-    def _build_profile_output(connection_type: str, config: dict) -> dict:
+    def _build_profile_output(
+        connection_type: str, config: dict, default_schema: str = "datanika"
+    ) -> dict:
         """Build adapter-specific dbt profile output dict."""
         if connection_type == "bigquery":
             output = {
                 "type": "bigquery",
                 "method": "service-account-json",
                 "project": config.get("project", ""),
-                "dataset": config.get("dataset", ""),
+                "dataset": config.get("dataset", default_schema),
                 "threads": 4,
             }
             if "keyfile_json" in config:
@@ -236,7 +242,7 @@ class DbtProjectService:
                 "database": config.get("database", ""),
                 "warehouse": config.get("warehouse", ""),
                 "role": config.get("role", ""),
-                "schema": config.get("schema", "PUBLIC"),
+                "schema": config.get("schema", default_schema.upper()),
                 "threads": 4,
             }
         # Map connection type to dbt adapter type
@@ -249,7 +255,7 @@ class DbtProjectService:
             "user": config.get("user", ""),
             "password": config.get("password", ""),
             "dbname": config.get("database", ""),
-            "schema": config.get("schema", "public"),
+            "schema": config.get("schema", default_schema),
             "threads": 4,
         }
 

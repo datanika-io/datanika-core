@@ -277,5 +277,6 @@
   "settings.restore_success": "Восстановление завершено",
   "settings.conflict_skip": "Пропустить",
   "settings.conflict_overwrite": "Перезаписать",
-  "settings.conflict_rename": "Переименовать"
+  "settings.conflict_rename": "Переименовать",
+  "settings.default_dbt_schema": "Схема dbt по умолчанию"
 }

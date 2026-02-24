@@ -277,5 +277,6 @@
   "settings.restore_success": "Wiederherstellung abgeschlossen",
   "settings.conflict_skip": "Überspringen",
   "settings.conflict_overwrite": "Überschreiben",
-  "settings.conflict_rename": "Umbenennen"
+  "settings.conflict_rename": "Umbenennen",
+  "settings.default_dbt_schema": "Standard-dbt-Schema"
 }

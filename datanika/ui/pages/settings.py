@@ -27,6 +27,12 @@ def org_profile_card() -> rx.Component:
                     on_change=SettingsState.set_edit_org_slug,
                     width="100%",
                 ),
+                rx.text(_t["settings.default_dbt_schema"], size="2", weight="medium"),
+                rx.input(
+                    value=SettingsState.edit_default_dbt_schema,
+                    on_change=SettingsState.set_edit_default_dbt_schema,
+                    width="100%",
+                ),
                 rx.button(_t["common.save"], on_click=SettingsState.update_org, size="2"),
                 spacing="3",
                 width="100%",

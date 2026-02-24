@@ -277,5 +277,6 @@
   "settings.restore_success": "Враћање завршено",
   "settings.conflict_skip": "Прескочи",
   "settings.conflict_overwrite": "Препиши",
-  "settings.conflict_rename": "Преименуј"
+  "settings.conflict_rename": "Преименуј",
+  "settings.default_dbt_schema": "Подразумевана dbt шема"
 }

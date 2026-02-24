@@ -167,6 +167,8 @@ class UserService:
             org.name = kwargs["name"]
         if "slug" in kwargs:
             org.slug = kwargs["slug"]
+        if "default_dbt_schema" in kwargs:
+            org.default_dbt_schema = kwargs["default_dbt_schema"]
 
         session.flush()
         return org

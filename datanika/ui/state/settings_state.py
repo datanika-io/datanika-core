@@ -25,12 +25,16 @@ class SettingsState(BaseState):
     invite_role: str = "viewer"
     edit_org_name: str = ""
     edit_org_slug: str = ""
+    edit_default_dbt_schema: str = ""
 
     def set_edit_org_name(self, value: str):
         self.edit_org_name = value
 
     def set_edit_org_slug(self, value: str):
         self.edit_org_slug = value
+
+    def set_edit_default_dbt_schema(self, value: str):
+        self.edit_default_dbt_schema = value
 
     def set_invite_email(self, value: str):
         self.invite_email = value
@@ -54,6 +58,7 @@ class SettingsState(BaseState):
                 self.org_slug = org.slug
                 self.edit_org_name = org.name
                 self.edit_org_slug = org.slug
+                self.edit_default_dbt_schema = org.default_dbt_schema
             members = svc.list_members(session, auth_state.current_org.id)
             self.members = []
             for m in members:
@@ -80,6 +85,7 @@ class SettingsState(BaseState):
                     user_id=auth_state.current_user.id,
                     name=self.edit_org_name,
                     slug=self.edit_org_slug,
+                    default_dbt_schema=self.edit_default_dbt_schema,
                 )
                 session.commit()
         except Exception as e:

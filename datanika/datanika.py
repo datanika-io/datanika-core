@@ -36,6 +36,14 @@ app = rx.App(
     ],
 )
 
+# Load cloud plugin if running in cloud edition
+from datanika.config import settings as _settings  # noqa: E402
+
+if _settings.datanika_edition == "cloud":
+    from datanika_cloud.plugin import init_cloud  # noqa: E402
+
+    init_cloud(app)
+
 # Start APScheduler and sync all active schedules from DB
 scheduler_integration.start()
 with get_sync_session() as _session:

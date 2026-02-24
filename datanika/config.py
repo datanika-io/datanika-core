@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     app_name: str = "Datanika"
     debug: bool = False
 
+    # Edition: "core" (open-source) or "cloud" (SaaS with billing)
+    datanika_edition: str = "core"
+
 
 settings = Settings()
 

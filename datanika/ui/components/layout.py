@@ -8,6 +8,9 @@ from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
 
+# Plugin extension point — plugins append (text_key, href, icon) tuples here.
+extra_sidebar_links: list[tuple[str, str, str]] = []
+
 
 def sidebar_link(text: rx.Var[str], href: str, icon: str) -> rx.Component:
     return rx.link(
@@ -33,6 +36,7 @@ def sidebar_user_section() -> rx.Component:
         rx.separator(),
         language_switcher(),
         sidebar_link(_t["nav.settings"], "/settings", "settings"),
+        *[sidebar_link(_t[key], href, icon) for key, href, icon in extra_sidebar_links],
         rx.hstack(
             rx.vstack(
                 rx.text(AuthState.current_user.full_name, size="2", weight="medium"),

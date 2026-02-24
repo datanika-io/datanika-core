@@ -18,6 +18,19 @@ def load_all() -> None:
             _cache[locale] = json.load(f)
 
 
+def register_translations(translations: dict[str, dict[str, str]]) -> None:
+    """Merge extra translations from a plugin into the cache.
+
+    ``translations`` maps locale codes to key→value dicts.  Only locales
+    already present in the cache are updated.
+    """
+    if not _cache:
+        load_all()
+    for locale, keys in translations.items():
+        if locale in _cache:
+            _cache[locale].update(keys)
+
+
 def get_translations(locale: str) -> dict[str, str]:
     """Return merged translations: English base + target locale overrides.
 

@@ -72,6 +72,16 @@ class TestEnsureProject:
         assert content["config-version"] == 2
         assert "models" in content["model-paths"]
 
+    def test_creates_generate_schema_name_macro(self, svc):
+        """ensure_project writes a custom generate_schema_name macro so that
+        model-level ``schema`` config is used directly, not concatenated."""
+        path = svc.ensure_project(1)
+        macro_path = path / "macros" / "generate_schema_name.sql"
+        assert macro_path.exists()
+        text = macro_path.read_text()
+        assert "generate_schema_name" in text
+        assert "custom_schema_name" in text
+
 
 # ---------------------------------------------------------------------------
 # write_model
@@ -97,6 +107,14 @@ class TestWriteModel:
         content = yaml.safe_load(yml_path.read_text())
         assert content["models"][0]["name"] == "my_model"
         assert content["models"][0]["config"]["materialized"] == "table"
+
+    def test_model_yml_includes_schema(self, svc):
+        """Model config must include +schema so dbt creates the table in the right schema."""
+        svc.ensure_project(1)
+        svc.write_model(1, "my_model", "SELECT 1", schema_name="raw")
+        yml_path = svc.get_project_path(1) / "models" / "raw" / "my_model.yml"
+        content = yaml.safe_load(yml_path.read_text())
+        assert content["models"][0]["config"]["schema"] == "raw"
 
     def test_overwrites_existing_model(self, svc):
         svc.ensure_project(1)

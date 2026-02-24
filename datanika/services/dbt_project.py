@@ -122,6 +122,20 @@ class DbtProjectService:
             }
             yml_path.write_text(yaml.safe_dump(content, default_flow_style=False))
 
+        # Custom schema macro — use the model's schema config directly
+        macro_path = project_path / "macros" / "generate_schema_name.sql"
+        if not macro_path.exists():
+            macro_path.write_text(
+                "{% macro generate_schema_name(custom_schema_name, node) -%}\n"
+                "    {%- set default_schema = target.schema -%}\n"
+                "    {%- if custom_schema_name is none -%}\n"
+                "        {{ default_schema }}\n"
+                "    {%- else -%}\n"
+                "        {{ custom_schema_name | trim }}\n"
+                "    {%- endif -%}\n"
+                "{%- endmacro %}\n"
+            )
+
         return project_path
 
     def write_model(
@@ -154,7 +168,7 @@ class DbtProjectService:
         sql_path.write_text(sql_body)
 
         # Build dbt config dict
-        model_cfg: dict = {"materialized": materialization}
+        model_cfg: dict = {"materialized": materialization, "schema": schema_name}
         if materialization == "incremental" and incremental_config:
             for key in ("unique_key", "strategy", "updated_at", "on_schema_change"):
                 if incremental_config.get(key):

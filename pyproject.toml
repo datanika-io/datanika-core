@@ -3,6 +3,7 @@ name = "datanika"
 version = "0.1.0"
 description = "Multi-tenant data pipeline management platform with dlt + dbt"
 readme = "README.md"
+license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     # Data pipeline

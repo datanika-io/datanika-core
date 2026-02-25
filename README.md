@@ -162,4 +162,4 @@ Open an issue or contact founders@datanika.io
 
 ## License
 
-TBD
+[AGPL-3.0](LICENSE)

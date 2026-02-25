@@ -81,14 +81,14 @@ Sources → **dlt** (extract+load into user-chosen schema) → **dbt** (transfor
 Every user-visible string in the UI **must** have a translation key. When adding or changing text that users see (headings, button labels, form labels, table headers, badge text, callout messages, navigation links):
 
 1. Add the key to `datanika/i18n/en.json` first
-2. Add the same key with a translated value to all other locale files: `ru.json`, `el.json`, `de.json`, `fr.json`, `es.json`
+2. Add the same key with a translated value to all other locale files: `ru.json`, `el.json`, `de.json`, `fr.json`, `es.json`, `zh.json`, `ar.json`, `sr.json`
 3. Reference it in the page/component via `_t = I18nState.translations` then `_t["your.key"]`
 
 **What to translate:** headings, button labels, form field labels, table column headers, navigation text, badge labels, callout/info text, checkbox labels.
 
 **What to skip:** input placeholders, dynamic error messages from services, status enum values (success/failed/running), technical identifiers, OAuth provider names (Google/GitHub).
 
-Locale files live in `datanika/i18n/`. The test `tests/test_i18n/test_i18n.py::test_all_locales_have_same_keys` will fail if any locale is missing a key present in `en.json`.
+There are **9 locale files** in `datanika/i18n/` (en, ru, el, de, fr, es, zh, ar, sr). The test `tests/test_i18n/test_i18n.py::test_all_locales_have_same_keys` will fail if any locale is missing a key present in `en.json`.
 
 ## Development Approach — TDD
 

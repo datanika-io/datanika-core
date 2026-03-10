@@ -293,5 +293,6 @@
   "guide.step6_title": "6. 设置定时调度",
   "guide.step6_desc": "前往调度，使用 cron 表达式自动化上传、转换或管道。在 DAG 中设置依赖关系以控制执行顺序。",
   "guide.step7_title": "7. 监控运行",
-  "guide.step7_desc": "前往运行记录查看执行历史、状态、行数和日志。按状态或目标类型筛选。"
+  "guide.step7_desc": "前往运行记录查看执行历史、状态、行数和日志。按状态或目标类型筛选。",
+  "guide.docs_link": "阅读完整文档"
 }

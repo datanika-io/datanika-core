@@ -293,5 +293,6 @@
   "guide.step6_title": "6. Planifiez l'automatisation",
   "guide.step6_desc": "Allez dans Planifications pour automatiser chargements, transformations ou pipelines avec des expressions cron. Définissez les dépendances dans le DAG.",
   "guide.step7_title": "7. Surveillez les exécutions",
-  "guide.step7_desc": "Allez dans Exécutions pour l'historique, le statut, le nombre de lignes et les journaux. Filtrez par statut ou type de cible."
+  "guide.step7_desc": "Allez dans Exécutions pour l'historique, le statut, le nombre de lignes et les journaux. Filtrez par statut ou type de cible.",
+  "guide.docs_link": "Lire la documentation complète"
 }

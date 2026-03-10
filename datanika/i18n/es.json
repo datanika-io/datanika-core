@@ -293,5 +293,6 @@
   "guide.step6_title": "6. Programa la automatización",
   "guide.step6_desc": "Ve a Programaciones para automatizar cargas, transformaciones o pipelines con expresiones cron. Define dependencias en el DAG para el orden de ejecución.",
   "guide.step7_title": "7. Monitorea las ejecuciones",
-  "guide.step7_desc": "Ve a Ejecuciones para ver historial, estado, filas y registros. Filtra por estado o tipo de objetivo."
+  "guide.step7_desc": "Ve a Ejecuciones para ver historial, estado, filas y registros. Filtra por estado o tipo de objetivo.",
+  "guide.docs_link": "Leer documentación completa"
 }

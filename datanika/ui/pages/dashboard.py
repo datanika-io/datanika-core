@@ -92,6 +92,18 @@ def getting_started_card() -> rx.Component:
                 _guide_step(_t["guide.step5_title"], _t["guide.step5_desc"]),
                 _guide_step(_t["guide.step6_title"], _t["guide.step6_desc"]),
                 _guide_step(_t["guide.step7_title"], _t["guide.step7_desc"]),
+                rx.link(
+                    rx.hstack(
+                        rx.icon("external-link", size=14),
+                        rx.text(_t["guide.docs_link"], size="2"),
+                        align="center",
+                        spacing="1",
+                    ),
+                    href="https://datanika.io/docs",
+                    is_external=True,
+                    color_scheme="violet",
+                    padding_top="2",
+                ),
                 spacing="1",
                 width="100%",
             ),

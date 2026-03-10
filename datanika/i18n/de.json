@@ -293,5 +293,6 @@
   "guide.step6_title": "6. Automatisierung planen",
   "guide.step6_desc": "Gehen Sie zu Zeitpläne, um Uploads, Transformationen oder Pipelines mit Cron-Ausdrücken zu automatisieren. Definieren Sie Abhängigkeiten im DAG.",
   "guide.step7_title": "7. Ausführungen überwachen",
-  "guide.step7_desc": "Gehen Sie zu Ausführungen für Verlauf, Status, Zeilenzahlen und Protokolle. Filtern Sie nach Status oder Zieltyp."
+  "guide.step7_desc": "Gehen Sie zu Ausführungen für Verlauf, Status, Zeilenzahlen und Protokolle. Filtern Sie nach Status oder Zieltyp.",
+  "guide.docs_link": "Vollständige Dokumentation lesen"
 }

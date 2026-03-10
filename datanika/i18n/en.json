@@ -293,5 +293,6 @@
   "guide.step6_title": "6. Schedule automation",
   "guide.step6_desc": "Go to Schedules to automate any upload, transformation, or pipeline with a cron expression. Set dependencies in the DAG to control execution order.",
   "guide.step7_title": "7. Monitor runs",
-  "guide.step7_desc": "Go to Runs to view execution history, status, row counts, and logs. Filter by status or target type."
+  "guide.step7_desc": "Go to Runs to view execution history, status, row counts, and logs. Filter by status or target type.",
+  "guide.docs_link": "Read full documentation"
 }

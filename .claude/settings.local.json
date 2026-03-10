@@ -69,7 +69,12 @@
       "Bash(cmd //c start http://localhost:4322)",
       "Bash(uv pip index versions:*)",
       "WebFetch(domain:pypi.org)",
-      "Bash(uv lock:*)"
+      "Bash(uv lock:*)",
+      "Bash(cd /d/Projects/ET/datanika && set -a && source .env.docker && set +a && docker-compose ps --format \"table {{.Name}}\\\\t{{.Status}}\" 2>&1)",
+      "Bash(cd /d/Projects/ET/datanika && set -a && source .env.docker && set +a && docker-compose exec postgres psql -U datanika -d datanika -c \"SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename IN \\('runs', 'dbt_models', 'transformations'\\);\" 2>&1)",
+      "Bash(cd /d/Projects/ET/datanika && set -a && source .env.docker && set +a && docker-compose exec postgres psql -U datanika -d datanika -c \"SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;\" 2>&1)",
+      "Bash(cd /d/Projects/ET/datanika && set -a && source .env.docker && set +a && docker-compose exec postgres psql -U datanika -d datanika -c \"SELECT COUNT\\(*\\) AS runs FROM runs; SELECT COUNT\\(*\\) AS transformations FROM transformations; SELECT COUNT\\(*\\) AS pipelines FROM pipelines; SELECT COUNT\\(*\\) AS uploads FROM uploads;\" 2>&1)",
+      "Bash(cd /d/Projects/ET/datanika && set -a && source .env.docker && set +a && docker-compose exec postgres psql -U datanika -d datanika -c \"DELETE FROM runs;\" 2>&1)"
     ]
   }
 }

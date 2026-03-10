@@ -278,5 +278,20 @@
   "settings.conflict_skip": "Omitir",
   "settings.conflict_overwrite": "Sobrescribir",
   "settings.conflict_rename": "Renombrar",
-  "settings.default_dbt_schema": "Esquema dbt predeterminado"
+  "settings.default_dbt_schema": "Esquema dbt predeterminado",
+  "guide.title": "Primeros pasos",
+  "guide.step1_title": "1. Invita a tu equipo",
+  "guide.step1_desc": "Ve a Configuración y añade miembros por correo electrónico. Asigna roles: Propietario, Admin, Editor o Lector.",
+  "guide.step2_title": "2. Añade conexiones",
+  "guide.step2_desc": "Ve a Conexiones y crea un origen (de dónde vienen los datos) y un destino (a dónde van). Soportados: PostgreSQL, MySQL, BigQuery, Snowflake, S3, REST API y más.",
+  "guide.step3_title": "3. Crea una carga",
+  "guide.step3_desc": "Ve a Cargas y crea un trabajo de extracción+carga. Elige conexiones, tablas y modo de escritura (añadir, reemplazar o fusionar).",
+  "guide.step4_title": "4. Transforma tus datos",
+  "guide.step4_desc": "Ve a Transformaciones y escribe modelos SQL con dbt. Elige materialización (vista, tabla, incremental) y previsualiza.",
+  "guide.step5_title": "5. Crea un pipeline",
+  "guide.step5_desc": "Ve a Pipelines para agrupar varias transformaciones en una ejecución dbt. Selecciona modelos y comando (build, run, test).",
+  "guide.step6_title": "6. Programa la automatización",
+  "guide.step6_desc": "Ve a Programaciones para automatizar cargas, transformaciones o pipelines con expresiones cron. Define dependencias en el DAG para el orden de ejecución.",
+  "guide.step7_title": "7. Monitorea las ejecuciones",
+  "guide.step7_desc": "Ve a Ejecuciones para ver historial, estado, filas y registros. Filtra por estado o tipo de objetivo."
 }

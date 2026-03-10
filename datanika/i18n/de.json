@@ -278,5 +278,20 @@
   "settings.conflict_skip": "Überspringen",
   "settings.conflict_overwrite": "Überschreiben",
   "settings.conflict_rename": "Umbenennen",
-  "settings.default_dbt_schema": "Standard-dbt-Schema"
+  "settings.default_dbt_schema": "Standard-dbt-Schema",
+  "guide.title": "Erste Schritte",
+  "guide.step1_title": "1. Team einladen",
+  "guide.step1_desc": "Gehen Sie zu Einstellungen und fügen Sie Mitglieder per E-Mail hinzu. Weisen Sie Rollen zu: Eigentümer, Admin, Editor oder Betrachter.",
+  "guide.step2_title": "2. Verbindungen hinzufügen",
+  "guide.step2_desc": "Gehen Sie zu Verbindungen und erstellen Sie eine Quelle (woher die Daten kommen) und ein Ziel (wohin sie gehen). Unterstützt: PostgreSQL, MySQL, BigQuery, Snowflake, S3, REST API u.a.",
+  "guide.step3_title": "3. Upload erstellen",
+  "guide.step3_desc": "Gehen Sie zu Uploads und erstellen Sie einen Extrahieren+Laden-Job. Wählen Sie Verbindungen, Tabellen und Schreibmodus (Anhängen, Ersetzen oder Zusammenführen).",
+  "guide.step4_title": "4. Daten transformieren",
+  "guide.step4_desc": "Gehen Sie zu Transformationen und schreiben Sie SQL-Modelle mit dbt. Wählen Sie Materialisierung (View, Table, Incremental) und Vorschau.",
+  "guide.step5_title": "5. Pipeline erstellen",
+  "guide.step5_desc": "Gehen Sie zu Pipelines, um mehrere Transformationen in einem dbt-Lauf zusammenzufassen. Wählen Sie Modelle und Befehl (build, run, test).",
+  "guide.step6_title": "6. Automatisierung planen",
+  "guide.step6_desc": "Gehen Sie zu Zeitpläne, um Uploads, Transformationen oder Pipelines mit Cron-Ausdrücken zu automatisieren. Definieren Sie Abhängigkeiten im DAG.",
+  "guide.step7_title": "7. Ausführungen überwachen",
+  "guide.step7_desc": "Gehen Sie zu Ausführungen für Verlauf, Status, Zeilenzahlen und Protokolle. Filtern Sie nach Status oder Zieltyp."
 }

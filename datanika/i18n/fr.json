@@ -278,5 +278,20 @@
   "settings.conflict_skip": "Ignorer",
   "settings.conflict_overwrite": "Écraser",
   "settings.conflict_rename": "Renommer",
-  "settings.default_dbt_schema": "Schéma dbt par défaut"
+  "settings.default_dbt_schema": "Schéma dbt par défaut",
+  "guide.title": "Premiers pas",
+  "guide.step1_title": "1. Invitez votre équipe",
+  "guide.step1_desc": "Allez dans Paramètres et ajoutez des membres par e-mail. Attribuez des rôles : Propriétaire, Admin, Éditeur ou Lecteur.",
+  "guide.step2_title": "2. Ajoutez des connexions",
+  "guide.step2_desc": "Allez dans Connexions et créez une source (d'où viennent les données) et une destination (où elles vont). Supportés : PostgreSQL, MySQL, BigQuery, Snowflake, S3, REST API, etc.",
+  "guide.step3_title": "3. Créez un chargement",
+  "guide.step3_desc": "Allez dans Chargements et créez un job d'extraction+chargement. Choisissez les connexions, tables et mode d'écriture (ajout, remplacement ou fusion).",
+  "guide.step4_title": "4. Transformez vos données",
+  "guide.step4_desc": "Allez dans Transformations et écrivez des modèles SQL avec dbt. Choisissez la matérialisation (vue, table, incrémentale) et prévisualisez.",
+  "guide.step5_title": "5. Créez un pipeline",
+  "guide.step5_desc": "Allez dans Pipelines pour regrouper plusieurs transformations en une seule exécution dbt. Sélectionnez les modèles et la commande (build, run, test).",
+  "guide.step6_title": "6. Planifiez l'automatisation",
+  "guide.step6_desc": "Allez dans Planifications pour automatiser chargements, transformations ou pipelines avec des expressions cron. Définissez les dépendances dans le DAG.",
+  "guide.step7_title": "7. Surveillez les exécutions",
+  "guide.step7_desc": "Allez dans Exécutions pour l'historique, le statut, le nombre de lignes et les journaux. Filtrez par statut ou type de cible."
 }

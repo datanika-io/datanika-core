@@ -278,5 +278,20 @@
   "settings.conflict_skip": "Skip",
   "settings.conflict_overwrite": "Overwrite",
   "settings.conflict_rename": "Rename",
-  "settings.default_dbt_schema": "Default dbt Schema"
+  "settings.default_dbt_schema": "Default dbt Schema",
+  "guide.title": "Getting Started",
+  "guide.step1_title": "1. Invite your team",
+  "guide.step1_desc": "Go to Settings and add members to your organization by email. Assign roles: Owner, Admin, Editor, or Viewer.",
+  "guide.step2_title": "2. Add connections",
+  "guide.step2_desc": "Go to Connections and create a source (where data comes from) and a destination (where data goes). Supported: PostgreSQL, MySQL, BigQuery, Snowflake, S3, REST API, and more.",
+  "guide.step3_title": "3. Create an upload",
+  "guide.step3_desc": "Go to Uploads and create an Extract+Load job. Pick a source and destination connection, choose tables, and configure write mode (append, replace, or merge).",
+  "guide.step4_title": "4. Transform your data",
+  "guide.step4_desc": "Go to Transformations and write SQL models powered by dbt. Choose materialization (view, table, incremental) and preview results.",
+  "guide.step5_title": "5. Build a pipeline",
+  "guide.step5_desc": "Go to Pipelines to group multiple transformations into a single dbt run. Select models and choose a command (build, run, test).",
+  "guide.step6_title": "6. Schedule automation",
+  "guide.step6_desc": "Go to Schedules to automate any upload, transformation, or pipeline with a cron expression. Set dependencies in the DAG to control execution order.",
+  "guide.step7_title": "7. Monitor runs",
+  "guide.step7_desc": "Go to Runs to view execution history, status, row counts, and logs. Filter by status or target type."
 }

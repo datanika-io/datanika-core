@@ -67,6 +67,37 @@ def recent_runs_table() -> rx.Component:
     )
 
 
+def _guide_step(title: rx.Var[str], desc: rx.Var[str]) -> rx.Component:
+    return rx.box(
+        rx.text(title, size="2", weight="bold"),
+        rx.text(desc, size="2", color="gray"),
+        padding_y="2",
+    )
+
+
+def getting_started_card() -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.hstack(
+                rx.icon("book-open", size=18),
+                rx.heading(_t["guide.title"], size="3"),
+                align="center",
+                spacing="2",
+            ),
+            _guide_step(_t["guide.step1_title"], _t["guide.step1_desc"]),
+            _guide_step(_t["guide.step2_title"], _t["guide.step2_desc"]),
+            _guide_step(_t["guide.step3_title"], _t["guide.step3_desc"]),
+            _guide_step(_t["guide.step4_title"], _t["guide.step4_desc"]),
+            _guide_step(_t["guide.step5_title"], _t["guide.step5_desc"]),
+            _guide_step(_t["guide.step6_title"], _t["guide.step6_desc"]),
+            _guide_step(_t["guide.step7_title"], _t["guide.step7_desc"]),
+            spacing="1",
+            width="100%",
+        ),
+        width="100%",
+    )
+
+
 def dashboard_page() -> rx.Component:
     return page_layout(
         rx.vstack(
@@ -78,6 +109,7 @@ def dashboard_page() -> rx.Component:
                 ),
                 width="100%",
             ),
+            getting_started_card(),
             rx.hstack(
                 stat_card(
                     _t["dashboard.uploads"],

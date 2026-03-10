@@ -278,5 +278,20 @@
   "settings.conflict_skip": "跳过",
   "settings.conflict_overwrite": "覆盖",
   "settings.conflict_rename": "重命名",
-  "settings.default_dbt_schema": "默认 dbt 模式"
+  "settings.default_dbt_schema": "默认 dbt 模式",
+  "guide.title": "快速入门",
+  "guide.step1_title": "1. 邀请团队成员",
+  "guide.step1_desc": "前往设置，通过电子邮件添加组织成员。分配角色：所有者、管理员、编辑者或查看者。",
+  "guide.step2_title": "2. 添加连接",
+  "guide.step2_desc": "前往连接，创建数据源（数据来源）和目标（数据去向）。支持：PostgreSQL、MySQL、BigQuery、Snowflake、S3、REST API 等。",
+  "guide.step3_title": "3. 创建上传任务",
+  "guide.step3_desc": "前往上传，创建提取+加载任务。选择源和目标连接、表，以及写入模式（追加、替换或合并）。",
+  "guide.step4_title": "4. 转换数据",
+  "guide.step4_desc": "前往转换，使用 dbt 编写 SQL 模型。选择物化方式（视图、表、增量）并预览结果。",
+  "guide.step5_title": "5. 创建管道",
+  "guide.step5_desc": "前往管道，将多个转换组合为一次 dbt 运行。选择模型和命令（build、run、test）。",
+  "guide.step6_title": "6. 设置定时调度",
+  "guide.step6_desc": "前往调度，使用 cron 表达式自动化上传、转换或管道。在 DAG 中设置依赖关系以控制执行顺序。",
+  "guide.step7_title": "7. 监控运行",
+  "guide.step7_desc": "前往运行记录查看执行历史、状态、行数和日志。按状态或目标类型筛选。"
 }

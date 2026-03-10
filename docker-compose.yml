@@ -32,7 +32,9 @@ services:
       retries: 5
 
   app:
-    build: .
+    build:
+      context: ..
+      dockerfile: datanika/Dockerfile
     image: datanika-io/app:latest
     container_name: datanika-app
     ports:
@@ -52,7 +54,9 @@ services:
              uv run reflex run --env prod --backend-host 0.0.0.0"
 
   celery:
-    build: .
+    build:
+      context: ..
+      dockerfile: datanika/Dockerfile
     image: datanika-io/celery:latest
     container_name: datanika-celery
     env_file:

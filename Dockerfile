@@ -11,7 +11,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Copy dependency files + README (hatchling needs it) for layer caching
-COPY pyproject.toml uv.lock README.md ./
+COPY datanika/pyproject.toml datanika/uv.lock datanika/README.md ./
 
 # Stub the package so uv sync can resolve it without full source
 RUN mkdir -p datanika && touch datanika/__init__.py
@@ -20,7 +20,11 @@ RUN mkdir -p datanika && touch datanika/__init__.py
 RUN uv sync --frozen --no-dev
 
 # Copy full application code
-COPY . .
+COPY datanika/ .
+
+# Install cloud edition plugin
+COPY datanika-cloud/ /cloud/
+RUN uv pip install /cloud
 
 # Reflex needs to initialize on first run
 RUN uv run reflex init

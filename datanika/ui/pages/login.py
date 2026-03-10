@@ -68,6 +68,7 @@ def login_page() -> rx.Component:
                         width="100%",
                     ),
                     href=f"{_backend}/api/auth/login/google",
+                    is_external=True,
                     width="100%",
                 ),
                 rx.link(
@@ -78,6 +79,7 @@ def login_page() -> rx.Component:
                         width="100%",
                     ),
                     href=f"{_backend}/api/auth/login/github",
+                    is_external=True,
                     width="100%",
                 ),
                 width="100%",

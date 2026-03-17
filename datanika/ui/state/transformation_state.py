@@ -17,6 +17,7 @@ from datanika.ui.state.connection_state import DESTINATION_TYPES
 _REF_PATTERN = re.compile(r"""\{\{\s*ref\(\s*['"]([^'"]*?)$""")
 _SOURCE_TABLE_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*?)$""")
 _SOURCE_SCHEMA_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]*?)$""")
+_BARE_JINJA_PATTERN = re.compile(r"""\{\{\s*$""")
 
 
 class TransformationItem(BaseModel):
@@ -632,6 +633,12 @@ class TransformationState(BaseState):
             self._set_suggestions([n for n in self.all_ref_names if n.lower().startswith(partial)])
             return
 
+        # Bare {{ — suggest ref( and source(
+        match = _BARE_JINJA_PATTERN.search(sql)
+        if match:
+            self._set_suggestions(["ref('", "source('"])
+            return
+
         # No match
         self.show_ref_popover = False
         self.ref_suggestions = []
@@ -707,6 +714,16 @@ class TransformationState(BaseState):
             after = sql[match.end() :]
             self.form_sql_body = before + name + "') }}" + after
             self.show_ref_popover = False
+            return
+
+        # Bare {{ → insert the selected function stub (ref(' or source(')
+        match = _BARE_JINJA_PATTERN.search(sql)
+        if match:
+            before = sql[: match.end()]
+            after = sql[match.end() :]
+            self.form_sql_body = before + " " + name + after
+            self.show_ref_popover = False
+            self.ref_dismissed = False
             return
 
         self.show_ref_popover = False

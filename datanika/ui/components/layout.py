@@ -82,6 +82,8 @@ def sidebar() -> rx.Component:
                 sidebar_link(_t["nav.dependencies"], "/dag", "network"),
                 sidebar_link(_t["nav.schedules"], "/schedules", "clock"),
                 sidebar_link(_t["nav.runs"], "/runs", "play"),
+                sidebar_link(_t["nav.api_keys"], "/api-keys", "key"),
+                sidebar_link(_t["nav.audit_log"], "/audit-log", "scroll-text"),
                 spacing="1",
                 width="100%",
                 padding="8px",
@@ -101,18 +103,25 @@ def sidebar() -> rx.Component:
 
 
 def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
-    return rx.box(
-        sidebar(),
+    return rx.cond(
+        AuthState.is_authenticated,
         rx.box(
-            rx.vstack(
-                rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
-                *children,
-                spacing="4",
-                width="100%",
+            sidebar(),
+            rx.box(
+                rx.vstack(
+                    rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
+                    *children,
+                    spacing="4",
+                    width="100%",
+                ),
+                margin_left="240px",
+                padding="24px",
+                width="calc(100% - 240px)",
             ),
-            margin_left="240px",
-            padding="24px",
-            width="calc(100% - 240px)",
+            rx.toast.provider(duration=3000),
         ),
-        rx.toast.provider(duration=3000),
+        rx.center(
+            rx.spinner(size="3"),
+            height="100vh",
+        ),
     )

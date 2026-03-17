@@ -22,6 +22,9 @@ PUBLIC_TABLES: set[str] = {
     "audit_logs",
     "catalog_entries",
     "uploaded_files",
+    "plans",
+    "subscriptions",
+    "usage_ledger",
 }
 
 # Tables managed by Alembic but not belonging to either category

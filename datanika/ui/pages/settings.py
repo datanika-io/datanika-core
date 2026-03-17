@@ -89,23 +89,27 @@ def members_card() -> rx.Component:
             ),
             rx.separator(),
             rx.heading(_t["settings.invite_member"], size="3"),
-            rx.hstack(
+            rx.vstack(
+                rx.text(_t["settings.email"], size="2", weight="medium"),
                 rx.input(
-                    placeholder=_t["settings.ph_email"],
+                    placeholder="user@example.com",
                     value=SettingsState.invite_email,
                     on_change=SettingsState.set_invite_email,
                     width="100%",
                 ),
-                rx.select(
-                    ["owner", "admin", "editor", "viewer"],
-                    value=SettingsState.invite_role,
-                    on_change=SettingsState.set_invite_role,
-                    size="2",
-                    width="100%",
+                rx.text(_t["settings.role"], size="2", weight="medium"),
+                rx.hstack(
+                    rx.select(
+                        ["owner", "admin", "editor", "viewer"],
+                        value=SettingsState.invite_role,
+                        on_change=SettingsState.set_invite_role,
+                        size="2",
+                    ),
+                    rx.button(_t["common.add"], on_click=SettingsState.add_member_by_email, size="2"),
+                    spacing="2",
                 ),
-                rx.button(_t["common.add"], on_click=SettingsState.add_member_by_email, size="2"),
-                spacing="2",
-                align="end",
+                spacing="3",
+                width="100%",
             ),
             spacing="4",
             width="100%",

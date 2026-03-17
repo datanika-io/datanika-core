@@ -1,6 +1,8 @@
 import reflex as rx
 
 from datanika.scheduler import scheduler_integration
+from datanika.ui.pages.api_keys import api_keys_page
+from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
 from datanika.ui.pages.dag import dag_page
@@ -16,6 +18,8 @@ from datanika.ui.pages.signup import signup_page
 from datanika.ui.pages.sql_editor import sql_editor_page
 from datanika.ui.pages.transformations import transformations_page
 from datanika.ui.pages.uploads import uploads_page
+from datanika.ui.state.api_key_state import ApiKeyState
+from datanika.ui.state.audit_state import AuditState
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.base_state import get_sync_session
 from datanika.ui.state.connection_state import ConnectionState
@@ -133,6 +137,18 @@ app.add_page(
     route="/settings",
     title="Settings | Datanika",
     on_load=[AuthState.check_auth, SettingsState.load_settings],
+)
+app.add_page(
+    api_keys_page,
+    route="/api-keys",
+    title="API Keys | Datanika",
+    on_load=[AuthState.check_auth, ApiKeyState.load_api_keys],
+)
+app.add_page(
+    audit_logs_page,
+    route="/audit-log",
+    title="Audit Log | Datanika",
+    on_load=[AuthState.check_auth, AuditState.load_audit_logs],
 )
 
 # OAuth completion page (public — picks up tokens from URL after OAuth callback)

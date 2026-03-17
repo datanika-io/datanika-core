@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.sql_autocomplete import (
     REF_AUTOCOMPLETE_JS,
     ref_hidden_buttons,
@@ -17,7 +18,7 @@ _t = I18nState.translations
 def _schema_select() -> rx.Component:
     """Schema combobox with 'Add new...' option."""
     return rx.vstack(
-        rx.select(
+        searchable_select(
             TransformationState.schema_options,
             value=TransformationState.form_schema_name,
             on_change=TransformationState.set_form_schema_name,
@@ -179,11 +180,11 @@ def transformation_form() -> rx.Component:
                 width="100%",
             ),
             rx.text(_t["transformations.dest_connection"], size="2", weight="bold"),
-            rx.select(
+            searchable_select(
                 TransformationState.dest_conn_options,
-                placeholder=_t["transformations.ph_connection"],
                 value=TransformationState.form_connection_option,
                 on_change=TransformationState.set_form_connection_option,
+                placeholder=_t["transformations.ph_connection"],
                 width="100%",
             ),
             rx.text(_t["transformations.sql"], size="2", weight="bold"),

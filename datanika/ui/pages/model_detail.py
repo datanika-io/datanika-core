@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.model_detail_state import ColumnItem, ModelDetailState
 
@@ -137,11 +138,11 @@ def _custom_test_form() -> rx.Component:
         rx.card(
             rx.vstack(
                 rx.text(_t["model_detail.add_test"], size="2", weight="bold"),
-                rx.select(
+                searchable_select(
                     _CUSTOM_TEST_OPTIONS,
-                    placeholder=_t["model_detail.ph_test_type"],
                     value=ModelDetailState.custom_test_type,
                     on_change=ModelDetailState.set_custom_test_type,
+                    placeholder=_t["model_detail.ph_test_type"],
                     width="100%",
                 ),
                 # accepted_values -> CSV input

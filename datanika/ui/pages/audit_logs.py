@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.audit_state import AuditLogItem, AuditState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -26,7 +27,7 @@ def audit_logs_page() -> rx.Component:
             rx.hstack(
                 rx.vstack(
                     rx.text(_t["audit.filter_action"], size="2", weight="medium"),
-                    rx.select(
+                    searchable_select(
                         ["all", "create", "update", "delete", "login", "logout", "run"],
                         value=AuditState.filter_action,
                         on_change=AuditState.set_filter_action,
@@ -36,7 +37,7 @@ def audit_logs_page() -> rx.Component:
                 ),
                 rx.vstack(
                     rx.text(_t["audit.filter_resource"], size="2", weight="medium"),
-                    rx.select(
+                    searchable_select(
                         [
                             "all",
                             "connection",

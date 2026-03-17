@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.upload_state import UploadState
 
@@ -99,14 +100,14 @@ def upload_form() -> rx.Component:
                 on_change=UploadState.set_form_description,
                 width="100%",
             ),
-            rx.select(
+            searchable_select(
                 UploadState.source_conn_options,
                 value=UploadState.form_source_id,
                 on_change=UploadState.set_form_source_id,
                 placeholder=_t["uploads.ph_source"],
                 width="100%",
             ),
-            rx.select(
+            searchable_select(
                 UploadState.dest_conn_options,
                 value=UploadState.form_dest_id,
                 on_change=UploadState.set_form_dest_id,

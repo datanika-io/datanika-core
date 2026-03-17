@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
 
@@ -200,7 +201,7 @@ def pipeline_form() -> rx.Component:
             ),
             # Destination connection
             rx.text(_t["pipelines.connection"], size="2", weight="bold"),
-            rx.select(
+            searchable_select(
                 PipelineState.dest_conn_options,
                 value=PipelineState.form_dest_id,
                 on_change=PipelineState.set_form_dest_id,
@@ -209,7 +210,7 @@ def pipeline_form() -> rx.Component:
             ),
             # dbt command
             rx.text(_t["pipelines.command"], size="2", weight="bold"),
-            rx.select(
+            searchable_select(
                 COMMAND_OPTIONS,
                 value=PipelineState.form_command,
                 on_change=PipelineState.set_form_command,

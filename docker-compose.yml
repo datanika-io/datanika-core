@@ -17,6 +17,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -30,6 +31,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   app:
     build:
@@ -52,6 +54,7 @@ services:
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
+    restart: unless-stopped
 
   celery:
     build:
@@ -69,6 +72,7 @@ services:
     volumes:
       - dbt_projects:/app/dbt_projects
     command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
+    restart: unless-stopped
 
   # --- Monitoring ---
 

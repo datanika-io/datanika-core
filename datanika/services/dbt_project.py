@@ -20,7 +20,7 @@ class DbtProjectError(ValueError):
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {
     "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift",
-    "clickhouse", "duckdb",
+    "clickhouse", "duckdb", "databricks", "synapse",
 }
 
 
@@ -263,6 +263,27 @@ class DbtProjectService:
             return {
                 "type": "duckdb",
                 "path": config.get("path", config.get("database", ":memory:")),
+                "schema": config.get("schema", default_schema),
+                "threads": 4,
+            }
+        if connection_type == "databricks":
+            return {
+                "type": "databricks",
+                "host": config.get("host", ""),
+                "http_path": config.get("http_path", ""),
+                "token": config.get("token", config.get("password", "")),
+                "catalog": config.get("catalog", config.get("database", "")),
+                "schema": config.get("schema", default_schema),
+                "threads": 4,
+            }
+        if connection_type == "synapse":
+            return {
+                "type": "synapse",
+                "host": config.get("host", ""),
+                "port": config.get("port", 1433),
+                "user": config.get("user", ""),
+                "password": config.get("password", ""),
+                "database": config.get("database", ""),
                 "schema": config.get("schema", default_schema),
                 "threads": 4,
             }

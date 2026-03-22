@@ -24,8 +24,15 @@ class ConnectionType(enum.StrEnum):
     MONGODB = "mongodb"
     CLICKHOUSE = "clickhouse"
     DUCKDB = "duckdb"
+    DATABRICKS = "databricks"
+    SYNAPSE = "synapse"
     STRIPE = "stripe"
     GITHUB = "github"
+    HUBSPOT = "hubspot"
+    SALESFORCE = "salesforce"
+    SHOPIFY = "shopify"
+    JIRA = "jira"
+    SLACK = "slack"
 
 
 class ConnectionDirection(enum.StrEnum):

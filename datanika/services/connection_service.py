@@ -24,6 +24,11 @@ _NON_DB_TYPES = {
     ConnectionType.MONGODB,
     ConnectionType.STRIPE,
     ConnectionType.GITHUB,
+    ConnectionType.HUBSPOT,
+    ConnectionType.SALESFORCE,
+    ConnectionType.SHOPIFY,
+    ConnectionType.JIRA,
+    ConnectionType.SLACK,
 }
 
 
@@ -82,6 +87,25 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
         project = config.get("project", "")
         dataset = config.get("dataset", "")
         return f"bigquery://{project}/{dataset}"
+
+    if connection_type == ConnectionType.DATABRICKS:
+        host = config.get("host", "")
+        http_path = config.get("http_path", "")
+        token = config.get("token", config.get("password", ""))
+        catalog = config.get("catalog", config.get("database", ""))
+        return (
+            f"databricks://token:{quote_plus(token)}@{host}"
+            f"?http_path={quote_plus(http_path)}&catalog={quote_plus(catalog)}"
+        )
+
+    if connection_type == ConnectionType.SYNAPSE:
+        port = config.get("port", 1433)
+        return (
+            f"mssql+pymssql://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
+        )
 
     if connection_type == ConnectionType.DUCKDB:
         path = config.get("path", config.get("database", ":memory:"))

@@ -410,6 +410,152 @@ def github_fields() -> rx.Component:
     )
 
 
+def databricks_fields() -> rx.Component:
+    """Fields for databricks."""
+    return rx.vstack(
+        rx.text(_t["connections.host"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_databricks_host"],
+            value=ConnectionState.form_host,
+            on_change=ConnectionState.set_form_host,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.http_path"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_http_path"],
+            value=ConnectionState.form_http_path,
+            on_change=ConnectionState.set_form_http_path,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.token"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_token"],
+            value=ConnectionState.form_token,
+            on_change=ConnectionState.set_form_token,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.catalog"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_catalog"],
+            value=ConnectionState.form_catalog,
+            on_change=ConnectionState.set_form_catalog,
+            width="100%",
+        ),
+        rx.text(_t["connections.schema"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_schema"],
+            value=ConnectionState.form_schema,
+            on_change=ConnectionState.set_form_schema,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def saas_api_key_fields() -> rx.Component:
+    """Shared fields for SaaS sources that only need an API key (HubSpot, Slack)."""
+    return rx.vstack(
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_api_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def salesforce_fields() -> rx.Component:
+    """Fields for salesforce source."""
+    return rx.vstack(
+        rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_salesforce_token"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.instance_url"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_instance_url"],
+            value=ConnectionState.form_instance_url,
+            on_change=ConnectionState.set_form_instance_url,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def shopify_fields() -> rx.Component:
+    """Fields for shopify source."""
+    return rx.vstack(
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_shopify_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.store_name"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_store_name"],
+            value=ConnectionState.form_store,
+            on_change=ConnectionState.set_form_store,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def jira_fields() -> rx.Component:
+    """Fields for jira source."""
+    return rx.vstack(
+        rx.text(_t["connections.jira_domain"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_jira_domain"],
+            value=ConnectionState.form_domain,
+            on_change=ConnectionState.set_form_domain,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.jira_email"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_jira_email"],
+            value=ConnectionState.form_email,
+            on_change=ConnectionState.set_form_email,
+            width="100%",
+        ),
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_jira_token"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def mongodb_fields() -> rx.Component:
     """Fields for mongodb (host/port/user/pass/database — no schema)."""
     return rx.vstack(
@@ -463,11 +609,13 @@ def type_fields() -> rx.Component:
             (ConnectionState.form_type == "postgres")
             | (ConnectionState.form_type == "mysql")
             | (ConnectionState.form_type == "mssql")
-            | (ConnectionState.form_type == "redshift"),
+            | (ConnectionState.form_type == "redshift")
+            | (ConnectionState.form_type == "synapse"),
             db_fields(),
         ),
         rx.cond(ConnectionState.form_type == "clickhouse", clickhouse_fields()),
         rx.cond(ConnectionState.form_type == "duckdb", duckdb_fields()),
+        rx.cond(ConnectionState.form_type == "databricks", databricks_fields()),
         rx.cond(ConnectionState.form_type == "sqlite", sqlite_fields()),
         rx.cond(ConnectionState.form_type == "bigquery", bigquery_fields()),
         rx.cond(ConnectionState.form_type == "snowflake", snowflake_fields()),
@@ -483,4 +631,12 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "mongodb", mongodb_fields()),
         rx.cond(ConnectionState.form_type == "stripe", stripe_fields()),
         rx.cond(ConnectionState.form_type == "github", github_fields()),
+        rx.cond(
+            (ConnectionState.form_type == "hubspot")
+            | (ConnectionState.form_type == "slack"),
+            saas_api_key_fields(),
+        ),
+        rx.cond(ConnectionState.form_type == "salesforce", salesforce_fields()),
+        rx.cond(ConnectionState.form_type == "shopify", shopify_fields()),
+        rx.cond(ConnectionState.form_type == "jira", jira_fields()),
     )

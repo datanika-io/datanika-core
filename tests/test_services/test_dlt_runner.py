@@ -1296,3 +1296,114 @@ class TestGitHubSaasSource:
     def test_github_requires_owner_and_repo(self, svc):
         with pytest.raises(DltRunnerError, match="owner"):
             svc._build_saas_source("github", {"access_token": "ghp_xxx"}, {})
+
+
+# ---------------------------------------------------------------------------
+# Phase B: Databricks, Synapse destinations + SaaS sources
+# ---------------------------------------------------------------------------
+class TestDatabricksDestination:
+    def test_databricks_in_supported_destinations(self, svc):
+        assert "databricks" in svc.SUPPORTED_DESTINATION_TYPES
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_databricks_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.databricks.return_value = "db_dest"
+        result = svc.build_destination(
+            "databricks", {"host": "adb.net", "http_path": "/sql/1", "token": "dapi123"}
+        )
+        assert result == "db_dest"
+        mock_dlt.destinations.databricks.assert_called_once()
+
+
+class TestSynapseDestination:
+    def test_synapse_in_supported_destinations(self, svc):
+        assert "synapse" in svc.SUPPORTED_DESTINATION_TYPES
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_synapse_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.synapse.return_value = "syn_dest"
+        result = svc.build_destination(
+            "synapse", {"host": "syn.sql.net", "user": "sa", "password": "p", "database": "dw"}
+        )
+        assert result == "syn_dest"
+        mock_dlt.destinations.synapse.assert_called_once()
+
+
+class TestHubSpotSaasSource:
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_hubspot_builds_rest_api(self, mock_rest, svc):
+        mock_rest.return_value = "hs_src"
+        result = svc._build_saas_source("hubspot", {"api_key": "pat-123"}, {})
+        assert result == "hs_src"
+        call_config = mock_rest.call_args[0][0]
+        assert "hubapi.com" in call_config["client"]["base_url"]
+        assert len(call_config["resources"]) == 3
+
+    def test_hubspot_requires_api_key(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key"):
+            svc._build_saas_source("hubspot", {}, {})
+
+
+class TestSalesforceSaasSource:
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_salesforce_builds_rest_api(self, mock_rest, svc):
+        mock_rest.return_value = "sf_src"
+        result = svc._build_saas_source(
+            "salesforce",
+            {"access_token": "tok", "instance_url": "https://org.my.salesforce.com"},
+            {},
+        )
+        assert result == "sf_src"
+        call_config = mock_rest.call_args[0][0]
+        assert "salesforce.com" in call_config["client"]["base_url"]
+
+    def test_salesforce_requires_token_and_url(self, svc):
+        with pytest.raises(DltRunnerError, match="access_token"):
+            svc._build_saas_source("salesforce", {}, {})
+
+
+class TestShopifySaasSource:
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_shopify_builds_rest_api(self, mock_rest, svc):
+        mock_rest.return_value = "sh_src"
+        result = svc._build_saas_source(
+            "shopify", {"api_key": "shpat_123", "store": "mystore"}, {}
+        )
+        assert result == "sh_src"
+        call_config = mock_rest.call_args[0][0]
+        assert "mystore.myshopify.com" in call_config["client"]["base_url"]
+
+    def test_shopify_requires_key_and_store(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key.*store"):
+            svc._build_saas_source("shopify", {}, {})
+
+
+class TestJiraSaasSource:
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_jira_builds_rest_api(self, mock_rest, svc):
+        mock_rest.return_value = "jira_src"
+        result = svc._build_saas_source(
+            "jira", {"api_key": "tok", "domain": "myco", "email": "a@b.com"}, {}
+        )
+        assert result == "jira_src"
+        call_config = mock_rest.call_args[0][0]
+        assert "myco.atlassian.net" in call_config["client"]["base_url"]
+
+    def test_jira_requires_key_and_domain(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key.*domain"):
+            svc._build_saas_source("jira", {}, {})
+
+
+class TestSlackSaasSource:
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_slack_builds_rest_api(self, mock_rest, svc):
+        mock_rest.return_value = "slack_src"
+        result = svc._build_saas_source("slack", {"api_key": "xoxb-123"}, {})
+        assert result == "slack_src"
+        call_config = mock_rest.call_args[0][0]
+        assert "slack.com" in call_config["client"]["base_url"]
+        assert len(call_config["resources"]) == 2
+
+    def test_slack_requires_bot_token(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key"):
+            svc._build_saas_source("slack", {}, {})

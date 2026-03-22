@@ -19,7 +19,7 @@ SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 
 SUPPORTED_MONGODB_TYPES = {"mongodb"}
 
-SUPPORTED_SAAS_TYPES = {"stripe", "github"}
+SUPPORTED_SAAS_TYPES = {"stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack"}
 
 INTERNAL_CONFIG_KEYS = {
     "mode",
@@ -109,7 +109,8 @@ class DltRunnerService:
         "postgres", "mysql", "mssql", "sqlite", "clickhouse", "duckdb",
     }
     SUPPORTED_DESTINATION_TYPES = (
-        SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift"}
+        SUPPORTED_SOURCE_TYPES
+        | {"bigquery", "snowflake", "redshift", "databricks", "synapse"}
     )
 
     @staticmethod
@@ -378,6 +379,100 @@ class DltRunnerService:
                         "Accept": "application/vnd.github+json",
                     },
                     "paginator": "header_link",
+                },
+                "resources": resources,
+            })
+
+        if connection_type == "hubspot":
+            api_key = config.get("api_key") or config.get("access_token", "")
+            if not api_key:
+                raise DltRunnerError("HubSpot source requires 'api_key'")
+            resources = dlt_config.get("resources") or [
+                {"name": "contacts", "endpoint": {"path": "crm/v3/objects/contacts"}},
+                {"name": "companies", "endpoint": {"path": "crm/v3/objects/companies"}},
+                {"name": "deals", "endpoint": {"path": "crm/v3/objects/deals"}},
+            ]
+            return rest_api_source({
+                "client": {
+                    "base_url": "https://api.hubapi.com/",
+                    "auth": {"type": "bearer", "token": api_key},
+                },
+                "resources": resources,
+            })
+
+        if connection_type == "salesforce":
+            access_token = config.get("access_token") or config.get("api_key", "")
+            instance_url = config.get("instance_url", "")
+            if not access_token or not instance_url:
+                raise DltRunnerError(
+                    "Salesforce source requires 'access_token' and 'instance_url'"
+                )
+            resources = dlt_config.get("resources") or [
+                {"name": "accounts", "endpoint": {"path": "services/data/v59.0/sobjects/Account"}},
+                {"name": "contacts", "endpoint": {"path": "services/data/v59.0/sobjects/Contact"}},
+                {"name": "opportunities", "endpoint": {
+                    "path": "services/data/v59.0/sobjects/Opportunity",
+                }},
+            ]
+            return rest_api_source({
+                "client": {
+                    "base_url": instance_url.rstrip("/") + "/",
+                    "auth": {"type": "bearer", "token": access_token},
+                },
+                "resources": resources,
+            })
+
+        if connection_type == "shopify":
+            api_key = config.get("api_key") or config.get("access_token", "")
+            store = config.get("store", "")
+            if not api_key or not store:
+                raise DltRunnerError("Shopify source requires 'api_key' and 'store'")
+            resources = dlt_config.get("resources") or [
+                {"name": "orders", "endpoint": {"path": "admin/api/2024-01/orders.json"}},
+                {"name": "products", "endpoint": {"path": "admin/api/2024-01/products.json"}},
+                {"name": "customers", "endpoint": {"path": "admin/api/2024-01/customers.json"}},
+            ]
+            return rest_api_source({
+                "client": {
+                    "base_url": f"https://{store}.myshopify.com/",
+                    "headers": {"X-Shopify-Access-Token": api_key},
+                },
+                "resources": resources,
+            })
+
+        if connection_type == "jira":
+            email = config.get("email", "")
+            api_token = config.get("api_key") or config.get("api_token", "")
+            domain = config.get("domain", "")
+            if not api_token or not domain:
+                raise DltRunnerError("Jira source requires 'api_key' and 'domain'")
+            import base64
+
+            auth_str = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+            resources = dlt_config.get("resources") or [
+                {"name": "issues", "endpoint": {"path": "rest/api/3/search"}},
+                {"name": "projects", "endpoint": {"path": "rest/api/3/project"}},
+            ]
+            return rest_api_source({
+                "client": {
+                    "base_url": f"https://{domain}.atlassian.net/",
+                    "headers": {"Authorization": f"Basic {auth_str}"},
+                },
+                "resources": resources,
+            })
+
+        if connection_type == "slack":
+            bot_token = config.get("api_key") or config.get("bot_token", "")
+            if not bot_token:
+                raise DltRunnerError("Slack source requires 'api_key' (bot token)")
+            resources = dlt_config.get("resources") or [
+                {"name": "channels", "endpoint": {"path": "api/conversations.list"}},
+                {"name": "users", "endpoint": {"path": "api/users.list"}},
+            ]
+            return rest_api_source({
+                "client": {
+                    "base_url": "https://slack.com/",
+                    "auth": {"type": "bearer", "token": bot_token},
                 },
                 "resources": resources,
             })

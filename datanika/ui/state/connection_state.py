@@ -46,10 +46,11 @@ _DEFAULT_PORTS: dict[str, str] = {
     "redshift": "5439",
     "mongodb": "27017",
     "clickhouse": "8123",
+    "synapse": "1433",
 }
 
 # Connection types that use the SQL database form group (host/port/user/pass/db/schema)
-_DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse"}
+_DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse", "synapse"}
 
 
 def _validate_connection_form(
@@ -198,9 +199,18 @@ class ConnectionState(BaseState):
     # ClickHouse cluster (empty = single-node merge_tree, non-empty = replicated_merge_tree)
     form_cluster: str = ""
 
-    # Stripe / GitHub (SaaS sources using REST API under the hood)
+    # Databricks
+    form_http_path: str = ""
+    form_token: str = ""
+    form_catalog: str = ""
+
+    # SaaS sources
     form_owner: str = ""
     form_repo: str = ""
+    form_instance_url: str = ""  # Salesforce
+    form_store: str = ""  # Shopify
+    form_domain: str = ""  # Jira
+    form_email: str = ""  # Jira
 
     def set_form_name(self, value: str):
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
@@ -425,6 +435,18 @@ class ConnectionState(BaseState):
             if self.form_database:
                 config["database"] = self.form_database
 
+        elif t == "databricks":
+            if self.form_host:
+                config["host"] = self.form_host
+            if self.form_http_path:
+                config["http_path"] = self.form_http_path
+            if self.form_token:
+                config["token"] = self.form_token
+            if self.form_catalog:
+                config["catalog"] = self.form_catalog
+            if self.form_schema:
+                config["schema"] = self.form_schema
+
         elif t == "stripe":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
@@ -436,6 +458,34 @@ class ConnectionState(BaseState):
                 config["owner"] = self.form_owner
             if self.form_repo:
                 config["repo"] = self.form_repo
+
+        elif t == "hubspot":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+
+        elif t == "salesforce":
+            if self.form_api_key:
+                config["access_token"] = self.form_api_key
+            if self.form_instance_url:
+                config["instance_url"] = self.form_instance_url
+
+        elif t == "shopify":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_store:
+                config["store"] = self.form_store
+
+        elif t == "jira":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_email:
+                config["email"] = self.form_email
+            if self.form_domain:
+                config["domain"] = self.form_domain
+
+        elif t == "slack":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
 
         return config
 
@@ -472,8 +522,15 @@ class ConnectionState(BaseState):
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
         self.form_cluster = ""
+        self.form_http_path = ""
+        self.form_token = ""
+        self.form_catalog = ""
         self.form_owner = ""
         self.form_repo = ""
+        self.form_instance_url = ""
+        self.form_store = ""
+        self.form_domain = ""
+        self.form_email = ""
         self.error_message = ""
         self.test_message = ""
         self.test_success = False
@@ -513,8 +570,15 @@ class ConnectionState(BaseState):
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
         self.form_cluster = ""
+        self.form_http_path = ""
+        self.form_token = ""
+        self.form_catalog = ""
         self.form_owner = ""
         self.form_repo = ""
+        self.form_instance_url = ""
+        self.form_store = ""
+        self.form_domain = ""
+        self.form_email = ""
 
         if conn_type in _DB_TYPES:
             self.form_host = config.get("host", "")
@@ -563,12 +627,32 @@ class ConnectionState(BaseState):
             self.form_user = config.get("user", "")
             self.form_password = config.get("password", "")
             self.form_database = config.get("database", "")
+        elif conn_type == "databricks":
+            self.form_host = config.get("host", "")
+            self.form_http_path = config.get("http_path", "")
+            self.form_token = config.get("token", "")
+            self.form_catalog = config.get("catalog", "")
+            self.form_schema = config.get("schema", "")
         elif conn_type == "stripe":
             self.form_api_key = config.get("api_key", "")
         elif conn_type == "github":
             self.form_api_key = config.get("access_token", "")
             self.form_owner = config.get("owner", "")
             self.form_repo = config.get("repo", "")
+        elif conn_type == "hubspot":
+            self.form_api_key = config.get("api_key", "")
+        elif conn_type == "salesforce":
+            self.form_api_key = config.get("access_token", "")
+            self.form_instance_url = config.get("instance_url", "")
+        elif conn_type == "shopify":
+            self.form_api_key = config.get("api_key", "")
+            self.form_store = config.get("store", "")
+        elif conn_type == "jira":
+            self.form_api_key = config.get("api_key", "")
+            self.form_email = config.get("email", "")
+            self.form_domain = config.get("domain", "")
+        elif conn_type == "slack":
+            self.form_api_key = config.get("api_key", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()

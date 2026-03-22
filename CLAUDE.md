@@ -94,7 +94,16 @@ Every user-visible string in the UI **must** have a translation key. When adding
 
 There are **9 locale files** in `datanika/i18n/` (en, ru, el, de, fr, es, zh, ar, sr). The test `tests/test_i18n/test_i18n.py::test_all_locales_have_same_keys` will fail if any locale is missing a key present in `en.json`.
 
-## Development Approach — TDD
+## Development Approach — TDD + Phased Planning
+
+### Feature/Improvement Workflow
+
+1. **Plan** — design the feature in phases, save plan to `PLAN.md`
+2. **Implement** — TDD per phase: failing test → implementation → green
+3. **Commit** — after each phase is finished, commit with descriptive message
+4. **Update plan** — mark completed phases as DONE in `PLAN.md`
+
+### TDD Process
 
 Follow test-driven development for all new code:
 

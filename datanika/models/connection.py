@@ -23,6 +23,9 @@ class ConnectionType(enum.StrEnum):
     GOOGLE_SHEETS = "google_sheets"
     MONGODB = "mongodb"
     CLICKHOUSE = "clickhouse"
+    DUCKDB = "duckdb"
+    STRIPE = "stripe"
+    GITHUB = "github"
 
 
 class ConnectionDirection(enum.StrEnum):

@@ -1173,3 +1173,73 @@ class TestBuildMongodbSource:
         )
         call_kwargs = mock_source.call_args[1]
         assert call_kwargs["database"] == "from_dlt_config"
+
+
+# ---------------------------------------------------------------------------
+# Phase A connectors: ClickHouse, DuckDB, Stripe, GitHub
+# ---------------------------------------------------------------------------
+class TestClickHouseDestination:
+    def test_clickhouse_in_supported_destinations(self, svc):
+        assert "clickhouse" in svc.SUPPORTED_DESTINATION_TYPES
+
+    def test_clickhouse_drivername(self, svc):
+        creds = svc._to_dlt_credentials(
+            "clickhouse", {"host": "ch", "port": 8123, "user": "default", "database": "db"}
+        )
+        assert creds["drivername"] == "clickhouse"
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_clickhouse_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.clickhouse.return_value = "ch_dest"
+        result = svc.build_destination(
+            "clickhouse", {"host": "ch", "port": 8123, "user": "default", "database": "db"}
+        )
+        assert result == "ch_dest"
+        mock_dlt.destinations.clickhouse.assert_called_once()
+
+
+class TestDuckDBDestination:
+    def test_duckdb_in_supported_destinations(self, svc):
+        assert "duckdb" in svc.SUPPORTED_DESTINATION_TYPES
+
+    def test_duckdb_drivername(self, svc):
+        creds = svc._to_dlt_credentials("duckdb", {"path": "/data/my.duckdb"})
+        assert creds["drivername"] == "duckdb"
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_duckdb_destination(self, mock_dlt, svc):
+        mock_dlt.destinations.duckdb.return_value = "duckdb_dest"
+        result = svc.build_destination("duckdb", {"path": "/data/my.duckdb"})
+        assert result == "duckdb_dest"
+        mock_dlt.destinations.duckdb.assert_called_once()
+
+
+class TestStripeSaasSource:
+    @patch("datanika.services.dlt_runner.DltRunnerService._build_saas_source")
+    def test_stripe_routes_to_saas_builder(self, mock_saas, svc):
+        mock_saas.return_value = "stripe_src"
+        result = svc.build_source("stripe", {"api_key": "sk_test_123"}, {})
+        assert result == "stripe_src"
+        mock_saas.assert_called_once_with("stripe", {"api_key": "sk_test_123"}, {})
+
+    def test_stripe_requires_api_key(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key"):
+            svc._build_saas_source("stripe", {}, {})
+
+
+class TestGitHubSaasSource:
+    @patch("datanika.services.dlt_runner.DltRunnerService._build_saas_source")
+    def test_github_routes_to_saas_builder(self, mock_saas, svc):
+        mock_saas.return_value = "github_src"
+        result = svc.build_source(
+            "github", {"access_token": "ghp_xxx"}, {"owner": "org", "repo": "repo"}
+        )
+        assert result == "github_src"
+
+    def test_github_requires_access_token(self, svc):
+        with pytest.raises(DltRunnerError, match="access_token"):
+            svc._build_saas_source("github", {}, {"owner": "o", "repo": "r"})
+
+    def test_github_requires_owner_and_repo(self, svc):
+        with pytest.raises(DltRunnerError, match="owner"):
+            svc._build_saas_source("github", {"access_token": "ghp_xxx"}, {})

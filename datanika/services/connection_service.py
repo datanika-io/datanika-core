@@ -22,6 +22,8 @@ _NON_DB_TYPES = {
     ConnectionType.REST_API,
     ConnectionType.GOOGLE_SHEETS,
     ConnectionType.MONGODB,
+    ConnectionType.STRIPE,
+    ConnectionType.GITHUB,
 }
 
 
@@ -80,6 +82,10 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
         project = config.get("project", "")
         dataset = config.get("dataset", "")
         return f"bigquery://{project}/{dataset}"
+
+    if connection_type == ConnectionType.DUCKDB:
+        path = config.get("path", config.get("database", ":memory:"))
+        return f"duckdb:///{path}"
 
     if connection_type == ConnectionType.CLICKHOUSE:
         port = config.get("port", 8123)

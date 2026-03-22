@@ -250,6 +250,32 @@ class TestGenerateProfilesYml:
         assert profile["host"] == "cluster.redshift.amazonaws.com"
         assert profile["port"] == 5439
 
+    def test_clickhouse_profile(self, svc):
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1,
+            "clickhouse",
+            {"host": "ch.example.com", "port": 8123, "user": "default", "password": "secret",
+             "database": "analytics"},
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["type"] == "clickhouse"
+        assert profile["host"] == "ch.example.com"
+        assert profile["port"] == 8123
+        assert profile["user"] == "default"
+        assert profile["schema"] == "analytics"
+
+    def test_duckdb_profile(self, svc):
+        svc.ensure_project(1)
+        path = svc.generate_profiles_yml(
+            1, "duckdb", {"path": "/data/warehouse.duckdb"}
+        )
+        content = yaml.safe_load(path.read_text())
+        profile = content["tenant_1"]["outputs"]["default"]
+        assert profile["type"] == "duckdb"
+        assert profile["path"] == "/data/warehouse.duckdb"
+
     def test_unsupported_type_raises(self, svc):
         svc.ensure_project(1)
         with pytest.raises(DbtProjectError, match="Unsupported dbt adapter"):

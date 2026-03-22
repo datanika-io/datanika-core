@@ -19,6 +19,8 @@ SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 
 SUPPORTED_MONGODB_TYPES = {"mongodb"}
 
+SUPPORTED_SAAS_TYPES = {"stripe", "github"}
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -86,6 +88,8 @@ DRIVERNAME_MAP = {
     "mssql": "mssql+pymssql",
     "sqlite": "sqlite",
     "redshift": "redshift+redshift_connector",
+    "clickhouse": "clickhouse",
+    "duckdb": "duckdb",
 }
 
 # Types where user→username renaming is needed
@@ -96,7 +100,9 @@ class DltRunnerService:
     """Builds dlt pipeline objects from connection configs and pipeline settings."""
 
     SUPPORTED_SOURCE_TYPES = {"postgres", "mysql", "mssql", "sqlite"}
-    SUPPORTED_DESTINATION_TYPES = SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift"}
+    SUPPORTED_DESTINATION_TYPES = (
+        SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift", "clickhouse", "duckdb"}
+    )
 
     @staticmethod
     def _to_dlt_credentials(connection_type: str, config: dict) -> dict:
@@ -157,6 +163,9 @@ class DltRunnerService:
 
         if connection_type in SUPPORTED_MONGODB_TYPES:
             return self._build_mongodb_source(config, dlt_config, batch_size)
+
+        if connection_type in SUPPORTED_SAAS_TYPES:
+            return self._build_saas_source(connection_type, config, dlt_config)
 
         if connection_type not in self.SUPPORTED_SOURCE_TYPES:
             raise DltRunnerError(f"Unsupported source type: {connection_type}")
@@ -287,6 +296,60 @@ class DltRunnerService:
             collection_names=collection_names,
             batch_size=batch_size,
         )
+
+    def _build_saas_source(self, connection_type: str, config: dict, dlt_config: dict):
+        """Build a dlt verified source for SaaS connectors (Stripe, GitHub).
+
+        dlt verified sources are separate packages — import errors are caught
+        and re-raised as DltRunnerError with an install hint.
+        """
+        if connection_type == "stripe":
+            api_key = config.get("api_key") or config.get("stripe_secret_key", "")
+            if not api_key:
+                raise DltRunnerError("Stripe source requires 'api_key'")
+
+            try:
+                from dlt.sources.stripe_analytics import stripe_source
+            except ImportError:
+                raise DltRunnerError(
+                    "Stripe source not installed. Run: dlt init stripe_analytics <destination>"
+                )
+
+            endpoints = dlt_config.get("endpoints")
+            start_date = dlt_config.get("start_date")
+
+            kwargs: dict = {"stripe_secret_key": api_key}
+            if endpoints:
+                kwargs["endpoints"] = tuple(endpoints)
+            if start_date:
+                kwargs["start_date"] = start_date
+            return stripe_source(**kwargs)
+
+        if connection_type == "github":
+            access_token = config.get("access_token") or config.get("api_key", "")
+            if not access_token:
+                raise DltRunnerError("GitHub source requires 'access_token'")
+
+            owner = dlt_config.get("owner") or config.get("owner", "")
+            repo = dlt_config.get("repo") or config.get("repo", "")
+            if not owner or not repo:
+                raise DltRunnerError("GitHub source requires 'owner' and 'repo'")
+
+            try:
+                from dlt.sources.github import github_reactions, github_repo_events
+            except ImportError:
+                raise DltRunnerError(
+                    "GitHub source not installed. Run: dlt init github <destination>"
+                )
+
+            source_type = dlt_config.get("github_source_type", "reactions")
+            if source_type == "events":
+                return github_repo_events(owner, repo, access_token=access_token)
+            return github_reactions(
+                owner, repo, access_token=access_token, items_per_page=100
+            )
+
+        raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
 
     def build_pipeline(
         self,

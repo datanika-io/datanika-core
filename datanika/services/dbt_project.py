@@ -18,7 +18,10 @@ class DbtProjectError(ValueError):
 
 
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
-SUPPORTED_ADAPTERS = {"postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift"}
+SUPPORTED_ADAPTERS = {
+    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift",
+    "clickhouse", "duckdb",
+}
 
 
 def _format_dbt_logs(result) -> str:
@@ -243,6 +246,24 @@ class DbtProjectService:
                 "warehouse": config.get("warehouse", ""),
                 "role": config.get("role", ""),
                 "schema": config.get("schema", default_schema.upper()),
+                "threads": 4,
+            }
+        if connection_type == "clickhouse":
+            return {
+                "type": "clickhouse",
+                "host": config.get("host", "localhost"),
+                "port": config.get("port", 8123),
+                "user": config.get("user", "default"),
+                "password": config.get("password", ""),
+                "schema": config.get("database", default_schema),
+                "secure": config.get("secure", False),
+                "threads": 4,
+            }
+        if connection_type == "duckdb":
+            return {
+                "type": "duckdb",
+                "path": config.get("path", config.get("database", ":memory:")),
+                "schema": config.get("schema", default_schema),
                 "threads": 4,
             }
         # Map connection type to dbt adapter type

@@ -39,6 +39,19 @@ class AuthService:
         }
         return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
+    def create_email_verification_token(
+        self, user_id: int, email: str, expires_hours: int = 24
+    ) -> str:
+        now = datetime.now(UTC)
+        payload = {
+            "user_id": user_id,
+            "email": email,
+            "type": "email_verify",
+            "exp": now + timedelta(hours=expires_hours),
+            "iat": now,
+        }
+        return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
+
     def create_refresh_token(self, user_id: int, expires_days: int = 7) -> str:
         now = datetime.now(UTC)
         payload = {

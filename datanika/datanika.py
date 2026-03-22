@@ -164,3 +164,9 @@ from datanika.services.oauth_routes import oauth_routes  # noqa: E402
 
 for _route in oauth_routes:
     app._api.routes.append(_route)
+
+# Mount email verification routes
+from datanika.services.email_routes import email_routes  # noqa: E402
+
+for _route in email_routes:
+    app._api.routes.append(_route)

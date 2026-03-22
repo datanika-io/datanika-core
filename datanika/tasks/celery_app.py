@@ -23,4 +23,5 @@ celery_app.conf.include = [
     "datanika.tasks.upload_tasks",
     "datanika.tasks.transformation_tasks",
     "datanika.tasks.pipeline_tasks",
+    "datanika.tasks.email_tasks",
 ]

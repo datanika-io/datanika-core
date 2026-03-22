@@ -42,9 +42,17 @@ class UserService:
         session.flush()
         return user
 
-    def authenticate(self, session: Session, email: str, password: str) -> dict | None:
+    def authenticate(
+        self,
+        session: Session,
+        email: str,
+        password: str,
+        require_email_verified: bool = False,
+    ) -> dict | None:
         user = self.get_user_by_email(session, email)
         if user is None or not user.is_active:
+            return None
+        if require_email_verified and not user.email_verified:
             return None
         if not self._auth.verify_password(password, user.password_hash):
             return None
@@ -287,6 +295,7 @@ class UserService:
             email=email,
             password_hash=random_hash,
             full_name=full_name or email.split("@")[0],
+            email_verified=True,  # OAuth provider already verified the email
             oauth_provider=oauth_provider,
             oauth_provider_id=oauth_provider_id,
         )

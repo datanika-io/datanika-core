@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     # File uploads
     file_uploads_dir: str = "./uploaded_files"
 
+    # Email / SMTP (disabled when smtp_host is empty)
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = "noreply@datanika.io"
+    smtp_from_name: str = "Datanika"
+    smtp_use_tls: bool = True
+    email_verification_required: bool = False
+
     # App
     app_name: str = "Datanika"
     debug: bool = False

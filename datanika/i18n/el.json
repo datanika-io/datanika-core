@@ -344,5 +344,11 @@
   "connections.jira_email": "Email",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "Κλειδί API Jira",
-  "uploads.select_endpoints": "Επιλέξτε endpoints για φόρτωση"
+  "uploads.select_endpoints": "Επιλέξτε endpoints για φόρτωση",
+  "uploads.sheet_names": "Ονόματα φύλλων (προαιρετικά, χωρισμένα με κόμμα)",
+  "uploads.ph_sheet_names": "Sheet1, Sheet2 (leave empty for all sheets)",
+  "uploads.collection_names": "Ονόματα συλλογών (προαιρετικά, χωρισμένα με κόμμα)",
+  "uploads.ph_collection_names": "users, orders (leave empty for all collections)",
+  "uploads.file_glob": "Πρότυπο αρχείου",
+  "uploads.ph_file_glob": "*.csv, *.json, or custom pattern"
 }

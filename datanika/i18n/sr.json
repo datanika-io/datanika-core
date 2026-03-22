@@ -344,5 +344,11 @@
   "connections.jira_email": "Имејл",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "Jira API токен",
-  "uploads.select_endpoints": "Изаберите крајње тачке за учитавање"
+  "uploads.select_endpoints": "Изаберите крајње тачке за учитавање",
+  "uploads.sheet_names": "Имена листова (необавезно, раздвојена зарезом)",
+  "uploads.ph_sheet_names": "Sheet1, Sheet2 (leave empty for all sheets)",
+  "uploads.collection_names": "Имена колекција (необавезно, раздвојена зарезом)",
+  "uploads.ph_collection_names": "users, orders (leave empty for all collections)",
+  "uploads.file_glob": "Образац датотеке",
+  "uploads.ph_file_glob": "*.csv, *.json, or custom pattern"
 }

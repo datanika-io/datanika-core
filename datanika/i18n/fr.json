@@ -344,5 +344,11 @@
   "connections.jira_email": "E-mail",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "Jeton API Jira",
-  "uploads.select_endpoints": "Sélectionnez les endpoints à charger"
+  "uploads.select_endpoints": "Sélectionnez les endpoints à charger",
+  "uploads.sheet_names": "Noms des feuilles (optionnel, séparés par des virgules)",
+  "uploads.ph_sheet_names": "Sheet1, Sheet2 (leave empty for all sheets)",
+  "uploads.collection_names": "Noms des collections (optionnel, séparés par des virgules)",
+  "uploads.ph_collection_names": "users, orders (leave empty for all collections)",
+  "uploads.file_glob": "Modèle de fichier",
+  "uploads.ph_file_glob": "*.csv, *.json, or custom pattern"
 }

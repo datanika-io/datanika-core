@@ -344,5 +344,11 @@
   "connections.jira_email": "البريد الإلكتروني",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "رمز Jira API",
-  "uploads.select_endpoints": "حدد نقاط النهاية للتحميل"
+  "uploads.select_endpoints": "حدد نقاط النهاية للتحميل",
+  "uploads.sheet_names": "أسماء الأوراق (اختياري، مفصولة بفواصل)",
+  "uploads.ph_sheet_names": "Sheet1, Sheet2 (leave empty for all sheets)",
+  "uploads.collection_names": "أسماء المجموعات (اختياري، مفصولة بفواصل)",
+  "uploads.ph_collection_names": "users, orders (leave empty for all collections)",
+  "uploads.file_glob": "نمط الملف",
+  "uploads.ph_file_glob": "*.csv, *.json, or custom pattern"
 }

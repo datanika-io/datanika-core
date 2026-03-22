@@ -54,6 +54,14 @@ SAAS_SOURCE_TYPES = {
     "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
 }
 
+# File-based source types
+FILE_SOURCE_TYPES = {"s3", "csv", "json", "parquet"}
+
+# Source types that need their own config instead of SQL mode
+NON_SQL_SOURCE_TYPES = SAAS_SOURCE_TYPES | FILE_SOURCE_TYPES | {
+    "google_sheets", "mongodb", "rest_api",
+}
+
 # Default available endpoints per SaaS connector
 SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
     "stripe": ["Subscription", "Account", "Coupon", "Customer", "Invoice", "Product", "Price"],

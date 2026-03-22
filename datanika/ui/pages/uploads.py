@@ -134,9 +134,57 @@ def upload_form() -> rx.Component:
                     width="100%",
                 ),
             ),
-            # SQL-specific fields (hidden for SaaS sources)
+            # Google Sheets: sheet names
             rx.cond(
-                ~UploadState.form_is_saas_source,
+                UploadState.form_source_id.contains("google_sheets"),
+                rx.vstack(
+                    rx.text(_t["uploads.sheet_names"], size="2", weight="bold"),
+                    rx.input(
+                        placeholder=_t["uploads.ph_sheet_names"],
+                        value=UploadState.form_sheet_names,
+                        on_change=UploadState.set_form_sheet_names,
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
+            # MongoDB: collection names
+            rx.cond(
+                UploadState.form_source_id.contains("mongodb"),
+                rx.vstack(
+                    rx.text(_t["uploads.collection_names"], size="2", weight="bold"),
+                    rx.input(
+                        placeholder=_t["uploads.ph_collection_names"],
+                        value=UploadState.form_collection_names,
+                        on_change=UploadState.set_form_collection_names,
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
+            # File sources: glob pattern
+            rx.cond(
+                UploadState.form_source_id.contains("csv")
+                | UploadState.form_source_id.contains("json")
+                | UploadState.form_source_id.contains("parquet")
+                | UploadState.form_source_id.contains("(s3)"),
+                rx.vstack(
+                    rx.text(_t["uploads.file_glob"], size="2", weight="bold"),
+                    rx.input(
+                        placeholder=_t["uploads.ph_file_glob"],
+                        value=UploadState.form_file_glob,
+                        on_change=UploadState.set_form_file_glob,
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
+            # SQL-specific fields (hidden for non-SQL sources)
+            rx.cond(
+                ~UploadState.form_is_non_sql_source,
                 rx.vstack(
                     # Mode selection
                     rx.select(

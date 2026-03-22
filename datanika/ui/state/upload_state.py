@@ -16,6 +16,7 @@ from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import (
     DESTINATION_TYPES,
+    NON_SQL_SOURCE_TYPES,
     SAAS_DEFAULT_ENDPOINTS,
     SAAS_SOURCE_TYPES,
     SOURCE_TYPES,
@@ -63,6 +64,16 @@ class UploadState(BaseState):
     form_available_endpoints: list[str] = []
     form_selected_endpoints: list[str] = []
     form_is_saas_source: bool = False
+    form_is_non_sql_source: bool = False
+
+    # Google Sheets specific
+    form_sheet_names: str = ""
+
+    # MongoDB specific
+    form_collection_names: str = ""
+
+    # File source specific (csv/json/parquet/s3)
+    form_file_glob: str = ""
 
     # Raw JSON fallback
     form_config: str = "{}"
@@ -78,8 +89,8 @@ class UploadState(BaseState):
 
     def set_form_source_id(self, value: str):
         self.form_source_id = value
-        # Detect SaaS source type and populate available endpoints
         conn_type = self._extract_conn_type(value)
+        self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
@@ -222,6 +233,22 @@ class UploadState(BaseState):
         if self.form_is_saas_source and self.form_selected_endpoints:
             config["endpoints"] = self.form_selected_endpoints
 
+        # Google Sheets: sheet names
+        if self.form_sheet_names:
+            names = [s.strip() for s in self.form_sheet_names.split(",") if s.strip()]
+            if names:
+                config["sheet_names"] = names
+
+        # MongoDB: collection names
+        if self.form_collection_names:
+            names = [c.strip() for c in self.form_collection_names.split(",") if c.strip()]
+            if names:
+                config["collection_names"] = names
+
+        # File sources: glob pattern
+        if self.form_file_glob:
+            config["file_glob"] = self.form_file_glob
+
         return config
 
     async def load_uploads(self):
@@ -340,8 +367,12 @@ class UploadState(BaseState):
         self.form_config = "{}"
         self.form_use_raw_json = False
         self.form_is_saas_source = False
+        self.form_is_non_sql_source = False
         self.form_available_endpoints = []
         self.form_selected_endpoints = []
+        self.form_sheet_names = ""
+        self.form_collection_names = ""
+        self.form_file_glob = ""
         self.error_message = ""
 
     def _populate_form_from_upload(self, upload, conn_options_src, conn_options_dst):
@@ -383,8 +414,9 @@ class UploadState(BaseState):
         self.form_use_raw_json = False
         self.form_config = "{}"
 
-        # Restore SaaS endpoint selection
+        # Restore source-type-specific fields
         conn_type = self._extract_conn_type(self.form_source_id)
+        self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
@@ -396,6 +428,17 @@ class UploadState(BaseState):
             self.form_is_saas_source = False
             self.form_available_endpoints = []
             self.form_selected_endpoints = []
+
+        # Google Sheets
+        sheet_names = config.get("sheet_names", [])
+        self.form_sheet_names = ", ".join(sheet_names) if sheet_names else ""
+
+        # MongoDB
+        collection_names = config.get("collection_names", [])
+        self.form_collection_names = ", ".join(collection_names) if collection_names else ""
+
+        # File sources
+        self.form_file_glob = config.get("file_glob", "")
 
     async def edit_upload(self, upload_id: int):
         """Load an upload into the form for editing."""

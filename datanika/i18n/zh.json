@@ -344,5 +344,11 @@
   "connections.jira_email": "邮箱",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "Jira API 令牌",
-  "uploads.select_endpoints": "选择要加载的端点"
+  "uploads.select_endpoints": "选择要加载的端点",
+  "uploads.sheet_names": "工作表名称（可选，逗号分隔）",
+  "uploads.ph_sheet_names": "Sheet1, Sheet2 (leave empty for all sheets)",
+  "uploads.collection_names": "集合名称（可选，逗号分隔）",
+  "uploads.ph_collection_names": "users, orders (leave empty for all collections)",
+  "uploads.file_glob": "文件模式",
+  "uploads.ph_file_glob": "*.csv, *.json, or custom pattern"
 }

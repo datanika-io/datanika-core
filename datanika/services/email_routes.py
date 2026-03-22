@@ -2,6 +2,7 @@
 
 import logging
 
+from sqlalchemy import select as sa_select
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 from starlette.routing import Route
@@ -50,6 +51,61 @@ async def verify_email(request: Request) -> RedirectResponse:
     )
 
 
+async def accept_invite(request: Request) -> RedirectResponse:
+    """GET /api/accept-invite?token=... — accept an org invitation."""
+    token = request.query_params.get("token", "")
+
+    if not token:
+        return RedirectResponse(
+            url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
+        )
+
+    try:
+        from datanika.models.user import User
+        from datanika.services.invitation_service import InvitationService
+        from datanika.ui.state.base_state import get_sync_session
+
+        inv_svc = InvitationService(_auth)
+
+        with get_sync_session() as session:
+            invitation = inv_svc.get_invitation_by_token(session, token)
+            if invitation is None:
+                return RedirectResponse(
+                    url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
+                )
+
+            # Check if user exists
+            user = session.execute(
+                sa_select(User).where(User.email == invitation.email)
+            ).scalar_one_or_none()
+
+            if user is None:
+                # User needs to register first — redirect to signup with token
+                return RedirectResponse(
+                    url=f"{settings.frontend_url}/signup?invite_token={token}",
+                    status_code=302,
+                )
+
+            # User exists — accept the invitation
+            membership = inv_svc.accept_invitation(session, token)
+            if membership is None:
+                return RedirectResponse(
+                    url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
+                )
+            session.commit()
+
+    except Exception:
+        logger.exception("Failed to process invitation")
+        return RedirectResponse(
+            url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
+        )
+
+    return RedirectResponse(
+        url=f"{settings.frontend_url}/login?invite_accepted=1", status_code=302
+    )
+
+
 email_routes = [
     Route("/api/verify-email", endpoint=verify_email, methods=["GET"]),
+    Route("/api/accept-invite", endpoint=accept_invite, methods=["GET"]),
 ]

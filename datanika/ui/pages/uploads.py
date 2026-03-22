@@ -164,12 +164,9 @@ def upload_form() -> rx.Component:
                     width="100%",
                 ),
             ),
-            # File sources: glob pattern
+            # S3 source: file glob pattern (CSV/JSON/Parquet use uploaded files, no glob needed)
             rx.cond(
-                UploadState.form_source_id.contains("csv")
-                | UploadState.form_source_id.contains("json")
-                | UploadState.form_source_id.contains("parquet")
-                | UploadState.form_source_id.contains("(s3)"),
+                UploadState.form_source_id.contains("(s3)"),
                 rx.vstack(
                     rx.text(_t["uploads.file_glob"], size="2", weight="bold"),
                     rx.input(

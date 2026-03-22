@@ -314,5 +314,16 @@
   "audit.resource_type": "Тип ресурса",
   "audit.resource_id": "ID ресурса",
   "audit.ip_address": "IP адреса",
-  "audit.no_logs": "Нису пронађени записи у ревизорском дневнику."
+  "audit.no_logs": "Нису пронађени записи у ревизорском дневнику.",
+  "connections.cluster": "Име кластера (необавезно)",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "Када је име кластера постављено, табеле користе ReplicatedMergeTree.",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... или sk_test_...",
+  "connections.access_token": "Токен приступа",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "Власник / Организација",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "Репозиторијум",
+  "connections.ph_github_repo": "hello-world"
 }

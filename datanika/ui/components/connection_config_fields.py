@@ -320,6 +320,96 @@ def google_sheets_fields() -> rx.Component:
     )
 
 
+def clickhouse_fields() -> rx.Component:
+    """Fields for clickhouse — extends db_fields with cluster name."""
+    return rx.vstack(
+        db_fields(),
+        rx.text(_t["connections.cluster"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_cluster"],
+            value=ConnectionState.form_cluster,
+            on_change=ConnectionState.set_form_cluster,
+            width="100%",
+        ),
+        rx.cond(
+            ConnectionState.form_cluster != "",
+            rx.callout(
+                _t["connections.cluster_hint"],
+                icon="info",
+                size="1",
+            ),
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def duckdb_fields() -> rx.Component:
+    """Fields for duckdb — path to database file."""
+    return rx.vstack(
+        rx.text(_t["connections.db_path"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_duckdb_path"],
+            value=ConnectionState.form_path,
+            on_change=ConnectionState.set_form_path,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def stripe_fields() -> rx.Component:
+    """Fields for stripe source."""
+    return rx.vstack(
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_stripe_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def github_fields() -> rx.Component:
+    """Fields for github source."""
+    return rx.vstack(
+        rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_github_token"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.owner"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_github_owner"],
+            value=ConnectionState.form_owner,
+            on_change=ConnectionState.set_form_owner,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.repo"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_github_repo"],
+            value=ConnectionState.form_repo,
+            on_change=ConnectionState.set_form_repo,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def mongodb_fields() -> rx.Component:
     """Fields for mongodb (host/port/user/pass/database — no schema)."""
     return rx.vstack(
@@ -373,10 +463,11 @@ def type_fields() -> rx.Component:
             (ConnectionState.form_type == "postgres")
             | (ConnectionState.form_type == "mysql")
             | (ConnectionState.form_type == "mssql")
-            | (ConnectionState.form_type == "redshift")
-            | (ConnectionState.form_type == "clickhouse"),
+            | (ConnectionState.form_type == "redshift"),
             db_fields(),
         ),
+        rx.cond(ConnectionState.form_type == "clickhouse", clickhouse_fields()),
+        rx.cond(ConnectionState.form_type == "duckdb", duckdb_fields()),
         rx.cond(ConnectionState.form_type == "sqlite", sqlite_fields()),
         rx.cond(ConnectionState.form_type == "bigquery", bigquery_fields()),
         rx.cond(ConnectionState.form_type == "snowflake", snowflake_fields()),
@@ -390,4 +481,6 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "rest_api", rest_api_fields()),
         rx.cond(ConnectionState.form_type == "google_sheets", google_sheets_fields()),
         rx.cond(ConnectionState.form_type == "mongodb", mongodb_fields()),
+        rx.cond(ConnectionState.form_type == "stripe", stripe_fields()),
+        rx.cond(ConnectionState.form_type == "github", github_fields()),
     )

@@ -195,6 +195,13 @@ class ConnectionState(BaseState):
     form_spreadsheet_url: str = ""
     form_service_account_json: str = ""
 
+    # ClickHouse cluster (empty = single-node merge_tree, non-empty = replicated_merge_tree)
+    form_cluster: str = ""
+
+    # Stripe / GitHub (SaaS sources using REST API under the hood)
+    form_owner: str = ""
+    form_repo: str = ""
+
     def set_form_name(self, value: str):
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
 
@@ -341,8 +348,12 @@ class ConnectionState(BaseState):
                 config["database"] = self.form_database
             if self.form_schema:
                 config["schema"] = self.form_schema
+            # ClickHouse cluster → auto-set replicated_merge_tree
+            if t == "clickhouse" and self.form_cluster:
+                config["cluster"] = self.form_cluster
+                config["table_engine_type"] = "replicated_merge_tree"
 
-        elif t == "sqlite":
+        elif t in ("duckdb", "sqlite"):
             if self.form_path:
                 config["path"] = self.form_path
 
@@ -414,6 +425,18 @@ class ConnectionState(BaseState):
             if self.form_database:
                 config["database"] = self.form_database
 
+        elif t == "stripe":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+
+        elif t == "github":
+            if self.form_api_key:
+                config["access_token"] = self.form_api_key
+            if self.form_owner:
+                config["owner"] = self.form_owner
+            if self.form_repo:
+                config["repo"] = self.form_repo
+
         return config
 
     def _reset_form_fields(self):
@@ -448,6 +471,9 @@ class ConnectionState(BaseState):
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
+        self.form_cluster = ""
+        self.form_owner = ""
+        self.form_repo = ""
         self.error_message = ""
         self.test_message = ""
         self.test_success = False
@@ -486,6 +512,9 @@ class ConnectionState(BaseState):
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
+        self.form_cluster = ""
+        self.form_owner = ""
+        self.form_repo = ""
 
         if conn_type in _DB_TYPES:
             self.form_host = config.get("host", "")
@@ -494,7 +523,9 @@ class ConnectionState(BaseState):
             self.form_password = config.get("password", "")
             self.form_database = config.get("database", "")
             self.form_schema = config.get("schema", "")
-        elif conn_type == "sqlite":
+            if conn_type == "clickhouse":
+                self.form_cluster = config.get("cluster", "")
+        elif conn_type in ("duckdb", "sqlite"):
             self.form_path = config.get("path", "")
         elif conn_type == "bigquery":
             self.form_project = config.get("project", "")
@@ -532,6 +563,12 @@ class ConnectionState(BaseState):
             self.form_user = config.get("user", "")
             self.form_password = config.get("password", "")
             self.form_database = config.get("database", "")
+        elif conn_type == "stripe":
+            self.form_api_key = config.get("api_key", "")
+        elif conn_type == "github":
+            self.form_api_key = config.get("access_token", "")
+            self.form_owner = config.get("owner", "")
+            self.form_repo = config.get("repo", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()

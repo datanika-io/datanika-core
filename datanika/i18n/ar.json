@@ -314,5 +314,16 @@
   "audit.resource_type": "نوع المورد",
   "audit.resource_id": "معرف المورد",
   "audit.ip_address": "عنوان IP",
-  "audit.no_logs": "لم يتم العثور على إدخالات في سجل التدقيق."
+  "audit.no_logs": "لم يتم العثور على إدخالات في سجل التدقيق.",
+  "connections.cluster": "اسم المجموعة (اختياري)",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "عند تعيين اسم المجموعة، تستخدم الجداول محرك ReplicatedMergeTree.",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... أو sk_test_...",
+  "connections.access_token": "رمز الوصول",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "المالك / المنظمة",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "المستودع",
+  "connections.ph_github_repo": "hello-world"
 }

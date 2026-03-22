@@ -314,5 +314,16 @@
   "audit.resource_type": "Type de ressource",
   "audit.resource_id": "ID de ressource",
   "audit.ip_address": "Adresse IP",
-  "audit.no_logs": "Aucune entrée dans le journal d'audit."
+  "audit.no_logs": "Aucune entrée dans le journal d'audit.",
+  "connections.cluster": "Nom du cluster (optionnel)",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "Lorsqu'un nom de cluster est défini, les tables utilisent le moteur ReplicatedMergeTree.",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... ou sk_test_...",
+  "connections.access_token": "Jeton d'accès",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "Propriétaire / Organisation",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "Dépôt",
+  "connections.ph_github_repo": "hello-world"
 }

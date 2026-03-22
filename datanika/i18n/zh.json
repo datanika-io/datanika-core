@@ -314,5 +314,16 @@
   "audit.resource_type": "资源类型",
   "audit.resource_id": "资源 ID",
   "audit.ip_address": "IP 地址",
-  "audit.no_logs": "未找到审计日志条目。"
+  "audit.no_logs": "未找到审计日志条目。",
+  "connections.cluster": "集群名称（可选）",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "设置集群名称后，表将使用 ReplicatedMergeTree 引擎进行集群复制。",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... 或 sk_test_...",
+  "connections.access_token": "访问令牌",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "所有者 / 组织",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "仓库",
+  "connections.ph_github_repo": "hello-world"
 }

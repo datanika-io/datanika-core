@@ -314,5 +314,16 @@
   "audit.resource_type": "Тип ресурса",
   "audit.resource_id": "ID ресурса",
   "audit.ip_address": "IP-адрес",
-  "audit.no_logs": "Записи журнала аудита не найдены."
+  "audit.no_logs": "Записи журнала аудита не найдены.",
+  "connections.cluster": "Имя кластера (необязательно)",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "При указании имени кластера таблицы используют движок ReplicatedMergeTree для репликации.",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... или sk_test_...",
+  "connections.access_token": "Токен доступа",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "Владелец / Организация",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "Репозиторий",
+  "connections.ph_github_repo": "hello-world"
 }

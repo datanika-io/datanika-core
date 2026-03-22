@@ -314,5 +314,16 @@
   "audit.resource_type": "Tipo de recurso",
   "audit.resource_id": "ID de recurso",
   "audit.ip_address": "Dirección IP",
-  "audit.no_logs": "No se encontraron entradas en el registro de auditoría."
+  "audit.no_logs": "No se encontraron entradas en el registro de auditoría.",
+  "connections.cluster": "Nombre del clúster (opcional)",
+  "connections.ph_cluster": "my_cluster",
+  "connections.cluster_hint": "Cuando se establece un nombre de clúster, las tablas usan el motor ReplicatedMergeTree.",
+  "connections.ph_duckdb_path": "/data/warehouse.duckdb",
+  "connections.ph_stripe_key": "sk_live_... o sk_test_...",
+  "connections.access_token": "Token de acceso",
+  "connections.ph_github_token": "ghp_...",
+  "connections.owner": "Propietario / Organización",
+  "connections.ph_github_owner": "octocat",
+  "connections.repo": "Repositorio",
+  "connections.ph_github_repo": "hello-world"
 }

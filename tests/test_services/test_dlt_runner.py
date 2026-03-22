@@ -1215,26 +1215,38 @@ class TestDuckDBDestination:
 
 
 class TestStripeSaasSource:
-    @patch("datanika.services.dlt_runner.DltRunnerService._build_saas_source")
-    def test_stripe_routes_to_saas_builder(self, mock_saas, svc):
-        mock_saas.return_value = "stripe_src"
-        result = svc.build_source("stripe", {"api_key": "sk_test_123"}, {})
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_stripe_builds_rest_api_source(self, mock_rest, svc):
+        mock_rest.return_value = "stripe_src"
+        result = svc._build_saas_source("stripe", {"api_key": "sk_test_123"}, {})
         assert result == "stripe_src"
-        mock_saas.assert_called_once_with("stripe", {"api_key": "sk_test_123"}, {})
+        call_config = mock_rest.call_args[0][0]
+        assert call_config["client"]["base_url"] == "https://api.stripe.com/v1/"
+        assert len(call_config["resources"]) == 6  # default endpoints
 
     def test_stripe_requires_api_key(self, svc):
         with pytest.raises(DltRunnerError, match="api_key"):
             svc._build_saas_source("stripe", {}, {})
 
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_stripe_custom_resources(self, mock_rest, svc):
+        custom = [{"name": "charges", "endpoint": {"path": "charges"}}]
+        svc._build_saas_source("stripe", {"api_key": "sk_test"}, {"resources": custom})
+        call_config = mock_rest.call_args[0][0]
+        assert len(call_config["resources"]) == 1
+
 
 class TestGitHubSaasSource:
-    @patch("datanika.services.dlt_runner.DltRunnerService._build_saas_source")
-    def test_github_routes_to_saas_builder(self, mock_saas, svc):
-        mock_saas.return_value = "github_src"
-        result = svc.build_source(
+    @patch("datanika.services.dlt_runner.rest_api_source")
+    def test_github_builds_rest_api_source(self, mock_rest, svc):
+        mock_rest.return_value = "github_src"
+        result = svc._build_saas_source(
             "github", {"access_token": "ghp_xxx"}, {"owner": "org", "repo": "repo"}
         )
         assert result == "github_src"
+        call_config = mock_rest.call_args[0][0]
+        assert call_config["client"]["base_url"] == "https://api.github.com/"
+        assert len(call_config["resources"]) == 4  # default endpoints
 
     def test_github_requires_access_token(self, svc):
         with pytest.raises(DltRunnerError, match="access_token"):

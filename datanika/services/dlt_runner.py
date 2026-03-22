@@ -298,32 +298,39 @@ class DltRunnerService:
         )
 
     def _build_saas_source(self, connection_type: str, config: dict, dlt_config: dict):
-        """Build a dlt verified source for SaaS connectors (Stripe, GitHub).
+        """Build a dlt REST API source pre-configured for SaaS connectors.
 
-        dlt verified sources are separate packages — import errors are caught
-        and re-raised as DltRunnerError with an install hint.
+        Stripe and GitHub use the generic rest_api_source with provider-specific
+        defaults (base URL, auth headers, common endpoints).  Users can override
+        via dlt_config.
         """
         if connection_type == "stripe":
             api_key = config.get("api_key") or config.get("stripe_secret_key", "")
             if not api_key:
                 raise DltRunnerError("Stripe source requires 'api_key'")
 
-            try:
-                from dlt.sources.stripe_analytics import stripe_source
-            except ImportError:
-                raise DltRunnerError(
-                    "Stripe source not installed. Run: dlt init stripe_analytics <destination>"
-                )
+            resources = dlt_config.get("resources") or [
+                {"name": "customers", "endpoint": {"path": "customers"}},
+                {"name": "charges", "endpoint": {"path": "charges"}},
+                {"name": "invoices", "endpoint": {"path": "invoices"}},
+                {"name": "subscriptions", "endpoint": {"path": "subscriptions"}},
+                {"name": "products", "endpoint": {"path": "products"}},
+                {"name": "prices", "endpoint": {"path": "prices"}},
+            ]
 
-            endpoints = dlt_config.get("endpoints")
-            start_date = dlt_config.get("start_date")
-
-            kwargs: dict = {"stripe_secret_key": api_key}
-            if endpoints:
-                kwargs["endpoints"] = tuple(endpoints)
-            if start_date:
-                kwargs["start_date"] = start_date
-            return stripe_source(**kwargs)
+            return rest_api_source({
+                "client": {
+                    "base_url": "https://api.stripe.com/v1/",
+                    "auth": {"type": "bearer", "token": api_key},
+                    "paginator": {
+                        "type": "cursor",
+                        "cursor_path": "data[-1].id",
+                        "cursor_param": "starting_after",
+                        "next_page_filter": "response.json().get('has_more', False)",
+                    },
+                },
+                "resources": resources,
+            })
 
         if connection_type == "github":
             access_token = config.get("access_token") or config.get("api_key", "")
@@ -335,19 +342,24 @@ class DltRunnerService:
             if not owner or not repo:
                 raise DltRunnerError("GitHub source requires 'owner' and 'repo'")
 
-            try:
-                from dlt.sources.github import github_reactions, github_repo_events
-            except ImportError:
-                raise DltRunnerError(
-                    "GitHub source not installed. Run: dlt init github <destination>"
-                )
+            resources = dlt_config.get("resources") or [
+                {"name": "issues", "endpoint": {"path": f"repos/{owner}/{repo}/issues"}},
+                {"name": "pulls", "endpoint": {"path": f"repos/{owner}/{repo}/pulls"}},
+                {"name": "commits", "endpoint": {"path": f"repos/{owner}/{repo}/commits"}},
+                {"name": "stargazers", "endpoint": {"path": f"repos/{owner}/{repo}/stargazers"}},
+            ]
 
-            source_type = dlt_config.get("github_source_type", "reactions")
-            if source_type == "events":
-                return github_repo_events(owner, repo, access_token=access_token)
-            return github_reactions(
-                owner, repo, access_token=access_token, items_per_page=100
-            )
+            return rest_api_source({
+                "client": {
+                    "base_url": "https://api.github.com/",
+                    "headers": {
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                    "paginator": "header_link",
+                },
+                "resources": resources,
+            })
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
 

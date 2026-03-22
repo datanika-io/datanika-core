@@ -20,6 +20,10 @@ dependencies = [
     "dbt-databricks>=1.7,<1.8",
     "dbt-synapse>=1.7,<1.8",
 
+    # SaaS source dependencies (used by dlt verified sources)
+    "stripe>=5.0",
+    "simple-salesforce>=1.12",
+
     # Google Sheets
     "gspread>=6.0",
     "google-auth>=2.0",

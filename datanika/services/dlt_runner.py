@@ -320,85 +320,106 @@ class DltRunnerService:
         )
 
     def _build_saas_source(self, connection_type: str, config: dict, dlt_config: dict):
-        """Build a dlt REST API source pre-configured for SaaS connectors.
+        """Build a dlt verified source for SaaS connectors.
 
-        Stripe and GitHub use the generic rest_api_source with provider-specific
-        defaults (base URL, auth headers, common endpoints).  Users can override
-        via dlt_config.
+        Uses official dlt verified sources (bundled via ``dlt init`` at Docker
+        build time).  Falls back to a generic REST API source when the verified
+        source module is not installed.
         """
         if connection_type == "stripe":
             api_key = config.get("api_key") or config.get("stripe_secret_key", "")
             if not api_key:
                 raise DltRunnerError("Stripe source requires 'api_key'")
+            try:
+                from stripe_analytics import stripe_source
 
-            resources = dlt_config.get("resources") or [
-                {"name": "customers", "endpoint": {"path": "customers"}},
-                {"name": "charges", "endpoint": {"path": "charges"}},
-                {"name": "invoices", "endpoint": {"path": "invoices"}},
-                {"name": "subscriptions", "endpoint": {"path": "subscriptions"}},
-                {"name": "products", "endpoint": {"path": "products"}},
-                {"name": "prices", "endpoint": {"path": "prices"}},
-            ]
-
-            return rest_api_source({
-                "client": {
-                    "base_url": "https://api.stripe.com/v1/",
-                    "auth": {"type": "bearer", "token": api_key},
-                    "paginator": {
-                        "type": "cursor",
-                        "cursor_path": "data[-1].id",
-                        "cursor_param": "starting_after",
-                        "next_page_filter": "response.json().get('has_more', False)",
-                    },
-                },
-                "resources": resources,
-            })
+                endpoints = dlt_config.get("endpoints")
+                kwargs: dict = {"stripe_secret_key": api_key}
+                if endpoints:
+                    kwargs["endpoints"] = tuple(endpoints)
+                start_date = dlt_config.get("start_date")
+                if start_date:
+                    kwargs["start_date"] = start_date
+                return stripe_source(**kwargs)
+            except ImportError:
+                return self._rest_api_fallback(
+                    "https://api.stripe.com/v1/",
+                    {"type": "bearer", "token": api_key},
+                    dlt_config.get("resources") or [
+                        {"name": "customers", "endpoint": {"path": "customers"}},
+                        {"name": "invoices", "endpoint": {"path": "invoices"}},
+                        {"name": "subscriptions", "endpoint": {"path": "subscriptions"}},
+                        {"name": "products", "endpoint": {"path": "products"}},
+                        {"name": "prices", "endpoint": {"path": "prices"}},
+                        {"name": "charges", "endpoint": {"path": "charges"}},
+                    ],
+                )
 
         if connection_type == "github":
             access_token = config.get("access_token") or config.get("api_key", "")
             if not access_token:
                 raise DltRunnerError("GitHub source requires 'access_token'")
-
             owner = dlt_config.get("owner") or config.get("owner", "")
             repo = dlt_config.get("repo") or config.get("repo", "")
             if not owner or not repo:
                 raise DltRunnerError("GitHub source requires 'owner' and 'repo'")
+            try:
+                from github import github_reactions, github_repo_events
 
-            resources = dlt_config.get("resources") or [
-                {"name": "issues", "endpoint": {"path": f"repos/{owner}/{repo}/issues"}},
-                {"name": "pulls", "endpoint": {"path": f"repos/{owner}/{repo}/pulls"}},
-                {"name": "commits", "endpoint": {"path": f"repos/{owner}/{repo}/commits"}},
-                {"name": "stargazers", "endpoint": {"path": f"repos/{owner}/{repo}/stargazers"}},
-            ]
-
-            return rest_api_source({
-                "client": {
-                    "base_url": "https://api.github.com/",
-                    "headers": {
+                source_type = dlt_config.get("github_source_type", "reactions")
+                if source_type == "events":
+                    return github_repo_events(owner, repo, access_token=access_token)
+                return github_reactions(
+                    owner, repo, access_token=access_token, items_per_page=100
+                )
+            except ImportError:
+                return self._rest_api_fallback(
+                    "https://api.github.com/",
+                    None,
+                    dlt_config.get("resources") or [
+                        {"name": "issues", "endpoint": {
+                            "path": f"repos/{owner}/{repo}/issues",
+                        }},
+                        {"name": "pulls", "endpoint": {
+                            "path": f"repos/{owner}/{repo}/pulls",
+                        }},
+                        {"name": "commits", "endpoint": {
+                            "path": f"repos/{owner}/{repo}/commits",
+                        }},
+                        {"name": "stargazers", "endpoint": {
+                            "path": f"repos/{owner}/{repo}/stargazers",
+                        }},
+                    ],
+                    headers={
                         "Authorization": f"Bearer {access_token}",
                         "Accept": "application/vnd.github+json",
                     },
-                    "paginator": "header_link",
-                },
-                "resources": resources,
-            })
+                )
 
         if connection_type == "hubspot":
             api_key = config.get("api_key") or config.get("access_token", "")
             if not api_key:
                 raise DltRunnerError("HubSpot source requires 'api_key'")
-            resources = dlt_config.get("resources") or [
-                {"name": "contacts", "endpoint": {"path": "crm/v3/objects/contacts"}},
-                {"name": "companies", "endpoint": {"path": "crm/v3/objects/companies"}},
-                {"name": "deals", "endpoint": {"path": "crm/v3/objects/deals"}},
-            ]
-            return rest_api_source({
-                "client": {
-                    "base_url": "https://api.hubapi.com/",
-                    "auth": {"type": "bearer", "token": api_key},
-                },
-                "resources": resources,
-            })
+            try:
+                from hubspot import hubspot
+
+                return hubspot(api_key=api_key)
+            except ImportError:
+                return self._rest_api_fallback(
+                    "https://api.hubapi.com/",
+                    {"type": "bearer", "token": api_key},
+                    dlt_config.get("resources") or [
+                        {"name": "contacts", "endpoint": {
+                            "path": "crm/v3/objects/contacts",
+                        }},
+                        {"name": "companies", "endpoint": {
+                            "path": "crm/v3/objects/companies",
+                        }},
+                        {"name": "deals", "endpoint": {
+                            "path": "crm/v3/objects/deals",
+                        }},
+                    ],
+                )
 
         if connection_type == "salesforce":
             access_token = config.get("access_token") or config.get("api_key", "")
@@ -407,38 +428,56 @@ class DltRunnerService:
                 raise DltRunnerError(
                     "Salesforce source requires 'access_token' and 'instance_url'"
                 )
-            resources = dlt_config.get("resources") or [
-                {"name": "accounts", "endpoint": {"path": "services/data/v59.0/sobjects/Account"}},
-                {"name": "contacts", "endpoint": {"path": "services/data/v59.0/sobjects/Contact"}},
-                {"name": "opportunities", "endpoint": {
-                    "path": "services/data/v59.0/sobjects/Opportunity",
-                }},
-            ]
-            return rest_api_source({
-                "client": {
-                    "base_url": instance_url.rstrip("/") + "/",
-                    "auth": {"type": "bearer", "token": access_token},
-                },
-                "resources": resources,
-            })
+            try:
+                from salesforce import salesforce_source
+
+                return salesforce_source()
+            except ImportError:
+                return self._rest_api_fallback(
+                    instance_url.rstrip("/") + "/",
+                    {"type": "bearer", "token": access_token},
+                    dlt_config.get("resources") or [
+                        {"name": "accounts", "endpoint": {
+                            "path": "services/data/v59.0/sobjects/Account",
+                        }},
+                        {"name": "contacts", "endpoint": {
+                            "path": "services/data/v59.0/sobjects/Contact",
+                        }},
+                        {"name": "opportunities", "endpoint": {
+                            "path": "services/data/v59.0/sobjects/Opportunity",
+                        }},
+                    ],
+                )
 
         if connection_type == "shopify":
             api_key = config.get("api_key") or config.get("access_token", "")
             store = config.get("store", "")
             if not api_key or not store:
                 raise DltRunnerError("Shopify source requires 'api_key' and 'store'")
-            resources = dlt_config.get("resources") or [
-                {"name": "orders", "endpoint": {"path": "admin/api/2024-01/orders.json"}},
-                {"name": "products", "endpoint": {"path": "admin/api/2024-01/products.json"}},
-                {"name": "customers", "endpoint": {"path": "admin/api/2024-01/customers.json"}},
-            ]
-            return rest_api_source({
-                "client": {
-                    "base_url": f"https://{store}.myshopify.com/",
-                    "headers": {"X-Shopify-Access-Token": api_key},
-                },
-                "resources": resources,
-            })
+            try:
+                from shopify_dlt import shopify_source
+
+                return shopify_source(
+                    private_app_password=api_key,
+                    shop_url=f"{store}.myshopify.com",
+                )
+            except ImportError:
+                return self._rest_api_fallback(
+                    f"https://{store}.myshopify.com/",
+                    None,
+                    dlt_config.get("resources") or [
+                        {"name": "orders", "endpoint": {
+                            "path": "admin/api/2024-01/orders.json",
+                        }},
+                        {"name": "products", "endpoint": {
+                            "path": "admin/api/2024-01/products.json",
+                        }},
+                        {"name": "customers", "endpoint": {
+                            "path": "admin/api/2024-01/customers.json",
+                        }},
+                    ],
+                    headers={"X-Shopify-Access-Token": api_key},
+                )
 
         if connection_type == "jira":
             email = config.get("email", "")
@@ -446,38 +485,64 @@ class DltRunnerService:
             domain = config.get("domain", "")
             if not api_token or not domain:
                 raise DltRunnerError("Jira source requires 'api_key' and 'domain'")
-            import base64
+            try:
+                from jira import jira
 
-            auth_str = base64.b64encode(f"{email}:{api_token}".encode()).decode()
-            resources = dlt_config.get("resources") or [
-                {"name": "issues", "endpoint": {"path": "rest/api/3/search"}},
-                {"name": "projects", "endpoint": {"path": "rest/api/3/project"}},
-            ]
-            return rest_api_source({
-                "client": {
-                    "base_url": f"https://{domain}.atlassian.net/",
-                    "headers": {"Authorization": f"Basic {auth_str}"},
-                },
-                "resources": resources,
-            })
+                return jira(
+                    subdomain=domain,
+                    email=email,
+                    api_token=api_token,
+                )
+            except ImportError:
+                import base64
+
+                auth_str = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+                return self._rest_api_fallback(
+                    f"https://{domain}.atlassian.net/",
+                    None,
+                    dlt_config.get("resources") or [
+                        {"name": "issues", "endpoint": {"path": "rest/api/3/search"}},
+                        {"name": "projects", "endpoint": {"path": "rest/api/3/project"}},
+                    ],
+                    headers={"Authorization": f"Basic {auth_str}"},
+                )
 
         if connection_type == "slack":
             bot_token = config.get("api_key") or config.get("bot_token", "")
             if not bot_token:
                 raise DltRunnerError("Slack source requires 'api_key' (bot token)")
-            resources = dlt_config.get("resources") or [
-                {"name": "channels", "endpoint": {"path": "api/conversations.list"}},
-                {"name": "users", "endpoint": {"path": "api/users.list"}},
-            ]
-            return rest_api_source({
-                "client": {
-                    "base_url": "https://slack.com/",
-                    "auth": {"type": "bearer", "token": bot_token},
-                },
-                "resources": resources,
-            })
+            try:
+                from slack import slack_source
+
+                return slack_source(access_token=bot_token)
+            except ImportError:
+                return self._rest_api_fallback(
+                    "https://slack.com/",
+                    {"type": "bearer", "token": bot_token},
+                    dlt_config.get("resources") or [
+                        {"name": "channels", "endpoint": {
+                            "path": "api/conversations.list",
+                        }},
+                        {"name": "users", "endpoint": {"path": "api/users.list"}},
+                    ],
+                )
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
+
+    @staticmethod
+    def _rest_api_fallback(
+        base_url: str,
+        auth: dict | None,
+        resources: list,
+        headers: dict | None = None,
+    ):
+        """Generic REST API source used when a verified source module is not installed."""
+        client: dict = {"base_url": base_url}
+        if auth:
+            client["auth"] = auth
+        if headers:
+            client["headers"] = headers
+        return rest_api_source({"client": client, "resources": resources})
 
     def build_pipeline(
         self,

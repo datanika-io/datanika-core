@@ -22,6 +22,15 @@ RUN uv sync --frozen --no-dev
 # Copy full application code
 COPY datanika/ .
 
+# Initialize dlt verified sources (SaaS connectors)
+RUN echo "Y" | uv run dlt init stripe_analytics duckdb && \
+    echo "Y" | uv run dlt init github duckdb && \
+    echo "Y" | uv run dlt init hubspot duckdb && \
+    echo "Y" | uv run dlt init shopify_dlt duckdb && \
+    echo "Y" | uv run dlt init jira duckdb && \
+    echo "Y" | uv run dlt init slack duckdb && \
+    echo "Y" | uv run dlt init salesforce duckdb
+
 # Copy cloud edition plugin source
 COPY datanika-cloud/ /cloud/
 

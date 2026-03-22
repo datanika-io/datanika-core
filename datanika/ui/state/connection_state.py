@@ -33,6 +33,13 @@ SOURCE_TYPES = {
     "shopify",
     "jira",
     "slack",
+    "google_analytics",
+    "google_ads",
+    "facebook_ads",
+    "zendesk",
+    "airtable",
+    "notion",
+    "kafka",
 }
 # Types that can serve as destinations (databases + cloud warehouses)
 DESTINATION_TYPES = {
@@ -52,6 +59,7 @@ DESTINATION_TYPES = {
 # SaaS source types that use endpoint/resource selection (not SQL mode)
 SAAS_SOURCE_TYPES = {
     "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
+    "google_analytics", "google_ads", "facebook_ads", "zendesk", "airtable", "notion",
 }
 
 # File-based source types
@@ -59,7 +67,7 @@ FILE_SOURCE_TYPES = {"s3", "csv", "json", "parquet"}
 
 # Source types that need their own config instead of SQL mode
 NON_SQL_SOURCE_TYPES = SAAS_SOURCE_TYPES | FILE_SOURCE_TYPES | {
-    "google_sheets", "mongodb", "rest_api",
+    "google_sheets", "mongodb", "rest_api", "kafka",
 }
 
 # Default available endpoints per SaaS connector
@@ -71,6 +79,12 @@ SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
     "shopify": ["orders", "products", "customers"],
     "jira": ["issues", "users", "workflows", "projects"],
     "slack": ["channels", "messages", "users", "threads"],
+    "google_analytics": ["report"],
+    "google_ads": ["customers", "campaigns", "ad_groups", "ads"],
+    "facebook_ads": ["campaigns", "ad_sets", "ads", "leads", "creatives"],
+    "zendesk": ["tickets", "users", "organizations", "groups", "brands"],
+    "airtable": ["tables"],
+    "notion": ["databases", "pages"],
 }
 
 # Default ports for database connection types
@@ -244,8 +258,15 @@ class ConnectionState(BaseState):
     form_repo: str = ""
     form_instance_url: str = ""  # Salesforce
     form_store: str = ""  # Shopify
-    form_domain: str = ""  # Jira
-    form_email: str = ""  # Jira
+    form_domain: str = ""  # Jira, Zendesk
+    form_email: str = ""  # Jira, Zendesk
+    form_property_id: str = ""  # Google Analytics
+    form_customer_id: str = ""  # Google Ads
+    form_account_id: str = ""  # Facebook Ads
+    form_base_id: str = ""  # Airtable
+    form_bootstrap_servers: str = ""  # Kafka
+    form_topics: str = ""  # Kafka
+    form_group_id: str = ""  # Kafka
 
     def set_form_name(self, value: str):
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
@@ -522,6 +543,50 @@ class ConnectionState(BaseState):
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
 
+        elif t == "google_analytics":
+            if self.form_api_key:
+                config["service_account_json"] = self.form_api_key
+            if self.form_property_id:
+                config["property_id"] = self.form_property_id
+
+        elif t == "google_ads":
+            if self.form_api_key:
+                config["service_account_json"] = self.form_api_key
+            if self.form_customer_id:
+                config["customer_id"] = self.form_customer_id
+
+        elif t == "facebook_ads":
+            if self.form_api_key:
+                config["access_token"] = self.form_api_key
+            if self.form_account_id:
+                config["account_id"] = self.form_account_id
+
+        elif t == "zendesk":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_domain:
+                config["subdomain"] = self.form_domain
+            if self.form_email:
+                config["email"] = self.form_email
+
+        elif t == "airtable":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_base_id:
+                config["base_id"] = self.form_base_id
+
+        elif t == "notion":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+
+        elif t == "kafka":
+            if self.form_bootstrap_servers:
+                config["bootstrap_servers"] = self.form_bootstrap_servers
+            if self.form_topics:
+                config["topics"] = [t.strip() for t in self.form_topics.split(",") if t.strip()]
+            if self.form_group_id:
+                config["group_id"] = self.form_group_id
+
         return config
 
     def _reset_form_fields(self):
@@ -566,6 +631,13 @@ class ConnectionState(BaseState):
         self.form_store = ""
         self.form_domain = ""
         self.form_email = ""
+        self.form_property_id = ""
+        self.form_customer_id = ""
+        self.form_account_id = ""
+        self.form_base_id = ""
+        self.form_bootstrap_servers = ""
+        self.form_topics = ""
+        self.form_group_id = ""
         self.error_message = ""
         self.test_message = ""
         self.test_success = False
@@ -614,6 +686,13 @@ class ConnectionState(BaseState):
         self.form_store = ""
         self.form_domain = ""
         self.form_email = ""
+        self.form_property_id = ""
+        self.form_customer_id = ""
+        self.form_account_id = ""
+        self.form_base_id = ""
+        self.form_bootstrap_servers = ""
+        self.form_topics = ""
+        self.form_group_id = ""
 
         if conn_type in _DB_TYPES:
             self.form_host = config.get("host", "")
@@ -688,6 +767,29 @@ class ConnectionState(BaseState):
             self.form_domain = config.get("domain", "")
         elif conn_type == "slack":
             self.form_api_key = config.get("api_key", "")
+        elif conn_type == "google_analytics":
+            self.form_api_key = config.get("service_account_json", "")
+            self.form_property_id = config.get("property_id", "")
+        elif conn_type == "google_ads":
+            self.form_api_key = config.get("service_account_json", "")
+            self.form_customer_id = config.get("customer_id", "")
+        elif conn_type == "facebook_ads":
+            self.form_api_key = config.get("access_token", "")
+            self.form_account_id = config.get("account_id", "")
+        elif conn_type == "zendesk":
+            self.form_api_key = config.get("api_key", "")
+            self.form_domain = config.get("subdomain", "")
+            self.form_email = config.get("email", "")
+        elif conn_type == "airtable":
+            self.form_api_key = config.get("api_key", "")
+            self.form_base_id = config.get("base_id", "")
+        elif conn_type == "notion":
+            self.form_api_key = config.get("api_key", "")
+        elif conn_type == "kafka":
+            self.form_bootstrap_servers = config.get("bootstrap_servers", "")
+            topics = config.get("topics", [])
+            self.form_topics = ", ".join(topics) if isinstance(topics, list) else topics
+            self.form_group_id = config.get("group_id", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()

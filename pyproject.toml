@@ -23,6 +23,11 @@ dependencies = [
     # SaaS source dependencies (used by dlt verified sources)
     "stripe>=5.0",
     "simple-salesforce>=1.12",
+    "pyairtable>=2.0",
+    "facebook-business>=19.0",
+    "google-analytics-data>=0.18",
+    "google-ads>=24.0",
+    "confluent-kafka>=2.3",
 
     # Google Sheets
     "gspread>=6.0",

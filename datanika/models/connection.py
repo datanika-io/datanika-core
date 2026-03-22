@@ -33,6 +33,13 @@ class ConnectionType(enum.StrEnum):
     SHOPIFY = "shopify"
     JIRA = "jira"
     SLACK = "slack"
+    GOOGLE_ANALYTICS = "google_analytics"
+    GOOGLE_ADS = "google_ads"
+    FACEBOOK_ADS = "facebook_ads"
+    ZENDESK = "zendesk"
+    AIRTABLE = "airtable"
+    NOTION = "notion"
+    KAFKA = "kafka"
 
 
 class ConnectionDirection(enum.StrEnum):

@@ -29,6 +29,13 @@ _NON_DB_TYPES = {
     ConnectionType.SHOPIFY,
     ConnectionType.JIRA,
     ConnectionType.SLACK,
+    ConnectionType.GOOGLE_ANALYTICS,
+    ConnectionType.GOOGLE_ADS,
+    ConnectionType.FACEBOOK_ADS,
+    ConnectionType.ZENDESK,
+    ConnectionType.AIRTABLE,
+    ConnectionType.NOTION,
+    ConnectionType.KAFKA,
 }
 
 

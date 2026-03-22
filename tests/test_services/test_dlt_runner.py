@@ -1407,3 +1407,80 @@ class TestSlackSaasSource:
     def test_slack_requires_bot_token(self, svc):
         with pytest.raises(DltRunnerError, match="api_key"):
             svc._build_saas_source("slack", {}, {})
+
+
+# ---------------------------------------------------------------------------
+# Phase C: Google Analytics, Google Ads, Facebook Ads, Zendesk, Airtable, Notion, Kafka
+# ---------------------------------------------------------------------------
+class TestGoogleAnalyticsSource:
+    def test_requires_property_id(self, svc):
+        with pytest.raises(DltRunnerError, match="property_id"):
+            svc._build_saas_source("google_analytics", {}, {})
+
+
+class TestGoogleAdsSource:
+    def test_requires_customer_id(self, svc):
+        with pytest.raises(DltRunnerError, match="customer_id"):
+            svc._build_saas_source("google_ads", {}, {})
+
+
+class TestFacebookAdsSource:
+    def test_requires_token_and_account(self, svc):
+        with pytest.raises(DltRunnerError, match="access_token"):
+            svc._build_saas_source("facebook_ads", {}, {})
+
+
+class TestZendeskSource:
+    def test_requires_subdomain_and_token(self, svc):
+        with pytest.raises(DltRunnerError, match="subdomain"):
+            svc._build_saas_source("zendesk", {}, {})
+
+    @patch("datanika.services.dlt_runner.DltRunnerService._rest_api_fallback")
+    def test_zendesk_fallback_to_rest(self, mock_fallback, svc):
+        mock_fallback.return_value = "zd_src"
+        result = svc._build_saas_source(
+            "zendesk", {"subdomain": "test", "api_key": "tok"}, {}
+        )
+        assert result == "zd_src"
+        call_args = mock_fallback.call_args
+        assert "test.zendesk.com" in call_args[0][0]
+
+
+class TestAirtableSource:
+    def test_requires_key_and_base_id(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key"):
+            svc._build_saas_source("airtable", {}, {})
+
+    @patch("datanika.services.dlt_runner.DltRunnerService._rest_api_fallback")
+    def test_airtable_fallback_to_rest(self, mock_fallback, svc):
+        mock_fallback.return_value = "at_src"
+        result = svc._build_saas_source(
+            "airtable", {"api_key": "pat123", "base_id": "appXXX"}, {}
+        )
+        assert result == "at_src"
+        call_args = mock_fallback.call_args
+        assert "airtable.com" in call_args[0][0]
+
+
+class TestNotionSource:
+    def test_requires_api_key(self, svc):
+        with pytest.raises(DltRunnerError, match="api_key"):
+            svc._build_saas_source("notion", {}, {})
+
+    @patch("datanika.services.dlt_runner.DltRunnerService._rest_api_fallback")
+    def test_notion_fallback_to_rest(self, mock_fallback, svc):
+        mock_fallback.return_value = "notion_src"
+        result = svc._build_saas_source("notion", {"api_key": "secret_xxx"}, {})
+        assert result == "notion_src"
+        call_args = mock_fallback.call_args
+        assert "notion.com" in call_args[0][0]
+
+
+class TestKafkaSource:
+    def test_requires_bootstrap_servers(self, svc):
+        with pytest.raises(DltRunnerError, match="bootstrap_servers"):
+            svc._build_kafka_source({}, {})
+
+    def test_requires_topics(self, svc):
+        with pytest.raises(DltRunnerError, match="topics"):
+            svc._build_kafka_source({"bootstrap_servers": "localhost:9092"}, {})

@@ -19,7 +19,13 @@ SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 
 SUPPORTED_MONGODB_TYPES = {"mongodb"}
 
-SUPPORTED_SAAS_TYPES = {"stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack"}
+SUPPORTED_SAAS_TYPES = {
+    "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
+    "google_analytics", "google_ads", "facebook_ads", "zendesk", "airtable", "notion",
+}
+
+# Kafka is a streaming source with its own builder
+SUPPORTED_KAFKA_TYPES = {"kafka"}
 
 INTERNAL_CONFIG_KEYS = {
     "mode",
@@ -188,6 +194,9 @@ class DltRunnerService:
 
         if connection_type in SUPPORTED_SAAS_TYPES:
             return self._build_saas_source(connection_type, config, dlt_config)
+
+        if connection_type in SUPPORTED_KAFKA_TYPES:
+            return self._build_kafka_source(config, dlt_config)
 
         if connection_type not in self.SUPPORTED_SOURCE_TYPES:
             raise DltRunnerError(f"Unsupported source type: {connection_type}")
@@ -527,7 +536,140 @@ class DltRunnerService:
                     ],
                 )
 
+        if connection_type == "google_analytics":
+            credentials_json = config.get("service_account_json", "")
+            property_id = config.get("property_id", "") or dlt_config.get("property_id", "")
+            if not property_id:
+                raise DltRunnerError("Google Analytics source requires 'property_id'")
+            try:
+                from google_analytics import google_analytics
+
+                kwargs_ga: dict = {"property_id": int(property_id)}
+                if credentials_json:
+                    kwargs_ga["credentials"] = credentials_json
+                return google_analytics(**kwargs_ga)
+            except ImportError:
+                raise DltRunnerError(
+                    "Google Analytics verified source not installed (run dlt init google_analytics)"
+                ) from None
+
+        if connection_type == "google_ads":
+            credentials_json = config.get("service_account_json", "")
+            customer_id = config.get("customer_id", "") or dlt_config.get("customer_id", "")
+            if not customer_id:
+                raise DltRunnerError("Google Ads source requires 'customer_id'")
+            try:
+                from google_ads import google_ads
+
+                return google_ads(customer_id=customer_id)
+            except ImportError:
+                raise DltRunnerError(
+                    "Google Ads verified source not installed (run dlt init google_ads)"
+                ) from None
+
+        if connection_type == "facebook_ads":
+            access_token = config.get("access_token") or config.get("api_key", "")
+            account_id = config.get("account_id", "") or dlt_config.get("account_id", "")
+            if not access_token or not account_id:
+                raise DltRunnerError(
+                    "Facebook Ads source requires 'access_token' and 'account_id'"
+                )
+            try:
+                from facebook_ads import facebook_ads_source
+
+                return facebook_ads_source(
+                    account_id=account_id, access_token=access_token
+                )
+            except ImportError:
+                raise DltRunnerError(
+                    "Facebook Ads verified source not installed (run dlt init facebook_ads)"
+                ) from None
+
+        if connection_type == "zendesk":
+            subdomain = config.get("subdomain", "") or config.get("domain", "")
+            email = config.get("email", "")
+            api_token = config.get("api_key") or config.get("api_token", "")
+            if not subdomain or not api_token:
+                raise DltRunnerError("Zendesk source requires 'subdomain' and 'api_key'")
+            try:
+                from zendesk import zendesk_support
+
+                creds = {"subdomain": subdomain, "email": email, "token": api_token}
+                return zendesk_support(credentials=creds)
+            except ImportError:
+                return self._rest_api_fallback(
+                    f"https://{subdomain}.zendesk.com/",
+                    None,
+                    dlt_config.get("resources") or [
+                        {"name": "tickets", "endpoint": {"path": "api/v2/tickets.json"}},
+                        {"name": "users", "endpoint": {"path": "api/v2/users.json"}},
+                        {"name": "organizations", "endpoint": {
+                            "path": "api/v2/organizations.json",
+                        }},
+                    ],
+                    headers={"Authorization": f"Bearer {api_token}"},
+                )
+
+        if connection_type == "airtable":
+            api_key = config.get("api_key") or config.get("access_token", "")
+            base_id = config.get("base_id", "") or dlt_config.get("base_id", "")
+            if not api_key or not base_id:
+                raise DltRunnerError("Airtable source requires 'api_key' and 'base_id'")
+            try:
+                from airtable import airtable_source
+
+                return airtable_source(base_id=base_id, access_token=api_key)
+            except ImportError:
+                return self._rest_api_fallback(
+                    f"https://api.airtable.com/v0/{base_id}/",
+                    {"type": "bearer", "token": api_key},
+                    dlt_config.get("resources") or [
+                        {"name": "tables", "endpoint": {"path": ""}},
+                    ],
+                )
+
+        if connection_type == "notion":
+            api_key = config.get("api_key") or config.get("access_token", "")
+            if not api_key:
+                raise DltRunnerError("Notion source requires 'api_key'")
+            try:
+                from notion import notion_databases
+
+                return notion_databases(api_key=api_key)
+            except ImportError:
+                return self._rest_api_fallback(
+                    "https://api.notion.com/v1/",
+                    {"type": "bearer", "token": api_key},
+                    dlt_config.get("resources") or [
+                        {"name": "databases", "endpoint": {"path": "databases"}},
+                        {"name": "pages", "endpoint": {"path": "pages"}},
+                    ],
+                    headers={"Notion-Version": "2022-06-28"},
+                )
+
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
+
+    def _build_kafka_source(self, config: dict, dlt_config: dict):
+        """Build a Kafka consumer source."""
+        bootstrap_servers = config.get("bootstrap_servers", "")
+        topics = dlt_config.get("topics") or config.get("topics", [])
+        group_id = config.get("group_id", "datanika-consumer")
+        if not bootstrap_servers:
+            raise DltRunnerError("Kafka source requires 'bootstrap_servers'")
+        if not topics:
+            raise DltRunnerError("Kafka source requires 'topics'")
+        try:
+            from kafka import kafka_consumer
+
+            return kafka_consumer(
+                topics=topics if isinstance(topics, list) else [topics],
+                bootstrap_servers=bootstrap_servers,
+                group_id=group_id,
+            )
+        except ImportError:
+            raise DltRunnerError(
+                "Kafka verified source not installed (run dlt init kafka)"
+            ) from None
 
     @staticmethod
     def _rest_api_fallback(

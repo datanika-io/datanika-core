@@ -556,6 +556,165 @@ def jira_fields() -> rx.Component:
     )
 
 
+def google_analytics_fields() -> rx.Component:
+    """Fields for google_analytics source."""
+    return rx.vstack(
+        rx.text(_t["connections.property_id"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_property_id"],
+            value=ConnectionState.form_property_id,
+            on_change=ConnectionState.set_form_property_id,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
+        rx.text_area(
+            placeholder=_t["connections.ph_service_account_json"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def google_ads_fields() -> rx.Component:
+    """Fields for google_ads source."""
+    return rx.vstack(
+        rx.text(_t["connections.customer_id"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_customer_id"],
+            value=ConnectionState.form_customer_id,
+            on_change=ConnectionState.set_form_customer_id,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
+        rx.text_area(
+            placeholder=_t["connections.ph_service_account_json"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def facebook_ads_fields() -> rx.Component:
+    """Fields for facebook_ads source."""
+    return rx.vstack(
+        rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_fb_token"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.account_id"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_fb_account_id"],
+            value=ConnectionState.form_account_id,
+            on_change=ConnectionState.set_form_account_id,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def zendesk_fields() -> rx.Component:
+    """Fields for zendesk source."""
+    return rx.vstack(
+        rx.text(_t["connections.zendesk_subdomain"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_zendesk_subdomain"],
+            value=ConnectionState.form_domain,
+            on_change=ConnectionState.set_form_domain,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.jira_email"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_jira_email"],
+            value=ConnectionState.form_email,
+            on_change=ConnectionState.set_form_email,
+            width="100%",
+        ),
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_zendesk_token"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def airtable_fields() -> rx.Component:
+    """Fields for airtable source."""
+    return rx.vstack(
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_airtable_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.base_id"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_base_id"],
+            value=ConnectionState.form_base_id,
+            on_change=ConnectionState.set_form_base_id,
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
+def kafka_fields() -> rx.Component:
+    """Fields for kafka source."""
+    return rx.vstack(
+        rx.text(_t["connections.bootstrap_servers"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_bootstrap_servers"],
+            value=ConnectionState.form_bootstrap_servers,
+            on_change=ConnectionState.set_form_bootstrap_servers,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.topics"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_topics"],
+            value=ConnectionState.form_topics,
+            on_change=ConnectionState.set_form_topics,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.group_id"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_group_id"],
+            value=ConnectionState.form_group_id,
+            on_change=ConnectionState.set_form_group_id,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def mongodb_fields() -> rx.Component:
     """Fields for mongodb (host/port/user/pass/database — no schema)."""
     return rx.vstack(
@@ -639,4 +798,14 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "salesforce", salesforce_fields()),
         rx.cond(ConnectionState.form_type == "shopify", shopify_fields()),
         rx.cond(ConnectionState.form_type == "jira", jira_fields()),
+        rx.cond(ConnectionState.form_type == "google_analytics", google_analytics_fields()),
+        rx.cond(ConnectionState.form_type == "google_ads", google_ads_fields()),
+        rx.cond(ConnectionState.form_type == "facebook_ads", facebook_ads_fields()),
+        rx.cond(ConnectionState.form_type == "zendesk", zendesk_fields()),
+        rx.cond(ConnectionState.form_type == "airtable", airtable_fields()),
+        rx.cond(
+            ConnectionState.form_type == "notion",
+            saas_api_key_fields(),
+        ),
+        rx.cond(ConnectionState.form_type == "kafka", kafka_fields()),
     )

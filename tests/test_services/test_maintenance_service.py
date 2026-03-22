@@ -65,6 +65,52 @@ class TestCleanupOrphanedDltDirs:
         assert recent_dir.exists()
 
 
+class TestCleanupProtectsActiveRuns:
+    def test_skips_dir_for_running_upload(self, db_session, tmp_path, org):
+        """Maintenance must NOT delete dlt dirs for still-running uploads."""
+        # Create a "running" run in the DB
+        running_run = Run(
+            org_id=org.id, target_type="upload", target_id=1, status=RunStatus.RUNNING,
+        )
+        db_session.add(running_run)
+        db_session.flush()
+        run_id = running_run.id
+
+        # Create the corresponding pipeline dir (old enough to be cleaned)
+        pipeline_dir = tmp_path / f"pipeline_1_run_{run_id}"
+        pipeline_dir.mkdir()
+        (pipeline_dir / "state.json").write_text("{}")
+        old_time = time.time() - 48 * 3600
+        os.utime(pipeline_dir, (old_time, old_time))
+
+        # Run cleanup with session — should skip this dir
+        removed = cleanup_orphaned_dlt_dirs(
+            str(tmp_path), max_age_hours=24, session=db_session
+        )
+        assert removed == 0
+        assert pipeline_dir.exists()  # Protected!
+
+    def test_removes_dir_for_completed_run(self, db_session, tmp_path, org):
+        """Dirs for completed runs should be cleaned normally."""
+        done_run = Run(
+            org_id=org.id, target_type="upload", target_id=1, status=RunStatus.SUCCESS,
+        )
+        db_session.add(done_run)
+        db_session.flush()
+        run_id = done_run.id
+
+        pipeline_dir = tmp_path / f"pipeline_1_run_{run_id}"
+        pipeline_dir.mkdir()
+        old_time = time.time() - 48 * 3600
+        os.utime(pipeline_dir, (old_time, old_time))
+
+        removed = cleanup_orphaned_dlt_dirs(
+            str(tmp_path), max_age_hours=24, session=db_session
+        )
+        assert removed == 1
+        assert not pipeline_dir.exists()
+
+
 class TestCleanupDbtTargets:
     def test_removes_old_target(self, tmp_path):
         tenant_dir = tmp_path / "tenant_1" / "target"

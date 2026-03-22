@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import time
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -16,24 +16,61 @@ from datanika.models.uploaded_file import UploadedFile
 logger = logging.getLogger(__name__)
 
 
-def cleanup_orphaned_dlt_dirs(pipelines_dir: str, max_age_hours: int = 24) -> int:
+def cleanup_orphaned_dlt_dirs(
+    pipelines_dir: str,
+    max_age_hours: int = 24,
+    session: Session | None = None,
+) -> int:
     """Remove dlt pipeline working directories older than max_age_hours.
+
+    When a DB session is provided, skips directories whose run is still
+    RUNNING or PENDING — prevents deleting files mid-upload.
 
     Returns count of removed directories.
     """
     if not os.path.isdir(pipelines_dir):
         return 0
 
+    # Collect active run IDs to protect their dirs
+    active_run_ids: set[int] = set()
+    if session is not None:
+        active_runs = session.execute(
+            select(Run.id).where(
+                Run.status.in_([RunStatus.RUNNING, RunStatus.PENDING]),
+                Run.deleted_at.is_(None),
+            )
+        ).scalars().all()
+        active_run_ids = set(active_runs)
+
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
 
     for entry in os.scandir(pipelines_dir):
-        if entry.is_dir() and entry.stat().st_mtime < cutoff:
-            shutil.rmtree(entry.path, ignore_errors=True)
-            logger.info("Removed orphaned dlt dir: %s", entry.path)
-            removed += 1
+        if not entry.is_dir():
+            continue
+        if entry.stat().st_mtime >= cutoff:
+            continue
+        # Extract run_id from dir name: pipeline_{id}_run_{run_id}
+        run_id = _extract_run_id(entry.name)
+        if run_id is not None and run_id in active_run_ids:
+            logger.debug("Skipping dlt dir (run still active): %s", entry.path)
+            continue
+        shutil.rmtree(entry.path, ignore_errors=True)
+        logger.info("Removed orphaned dlt dir: %s", entry.path)
+        removed += 1
 
     return removed
+
+
+def _extract_run_id(dirname: str) -> int | None:
+    """Extract run_id from a dlt pipeline directory name like 'pipeline_5_run_42'."""
+    parts = dirname.rsplit("_run_", 1)
+    if len(parts) == 2:
+        try:
+            return int(parts[1])
+        except ValueError:
+            pass
+    return None
 
 
 def cleanup_dbt_targets(projects_dir: str, max_age_hours: int = 48) -> int:

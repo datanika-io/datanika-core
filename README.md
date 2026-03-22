@@ -25,12 +25,13 @@ Datanika replaces it with one platform.
 
 ## What You Can Do
 
-- Connect databases, APIs, and files
+- Connect databases, SaaS APIs, and files (32 connectors)
 - Load data into warehouses with incremental sync
 - Transform data using dbt SQL models
 - Schedule pipelines with cron
 - Monitor runs in real time
 - Manage multiple organizations securely
+- Invite team members by email with role-based access
 - Browse schemas and tables in the data catalog
 - Write and preview SQL in a full-screen editor
 - Upload CSV, JSON, and Parquet files directly
@@ -53,7 +54,7 @@ Datanika is built for:
 
 ## Key Features
 
-- **15 connectors** — PostgreSQL, MySQL, MSSQL, SQLite, BigQuery, Snowflake, Redshift, ClickHouse, MongoDB, Google Sheets, REST API, S3, CSV, JSON, Parquet
+- **32 connectors** — databases (PostgreSQL, MySQL, MSSQL, SQLite, ClickHouse, DuckDB, Databricks, Synapse), warehouses (BigQuery, Snowflake, Redshift), SaaS (Stripe, GitHub, HubSpot, Salesforce, Shopify, Jira, Slack, Zendesk, Airtable, Notion), analytics (Google Analytics, Google Ads, Facebook Ads), files (S3, CSV, JSON, Parquet), streams (Kafka), plus Google Sheets, MongoDB, and REST API
 - **dbt transformations** — SQL models with materialization control, tests, snapshots, packages, and source freshness
 - **DAG orchestration** — dependency graphs with topological execution
 - **Cron scheduling** — persistent schedules with APScheduler
@@ -64,6 +65,8 @@ Datanika is built for:
 - **SQL editor** — full-screen editor with autocomplete and compiled SQL preview
 - **File uploads** — drag-and-drop CSV/JSON/Parquet ingestion
 - **Backups** — metadata backup and restore
+- **Email invitations** — invite team members by email, accept via link, JWT-based tokens
+- **Email verification** — optional signup verification (configurable via SMTP settings)
 - **9 languages** — en, ru, el, de, fr, es, zh, ar, sr with runtime switching
 - **Multi-tenant** — org-level isolation with 4-tier RBAC (owner/admin/editor/viewer)
 - **Role-based access & audit logs** — full action history with old/new values
@@ -71,6 +74,7 @@ Datanika is built for:
 - **OAuth SSO** — Google + GitHub social login
 - **Bot protection** — reCAPTCHA v3 on login/signup
 - **Monitoring** — Prometheus + Grafana + Node Exporter + cAdvisor
+- **Automated maintenance** — hourly cleanup of orphaned pipeline files, stale artifacts, old runs
 - **Hooks system** — event bus for plugin extensibility
 - **Python-native stack** — no JavaScript frontend to maintain
 
@@ -85,48 +89,46 @@ Sources → dlt (extract + load) → dbt (transform) → Analytics
 ## Tech Stack
 
 - Python + Reflex UI + PostgreSQL + Celery + Redis
-- dlt for extraction & loading
-- dbt-core for transformations
+- dlt for extraction & loading (32 source/destination types)
+- dbt-core for transformations (11 adapters)
 
 ---
 
 ## Status
 
-Core platform works locally and is under active development.
+Core platform is live at https://app.datanika.io and under active development.
 
-**Current counts**: 14 tables, 26 services, 15 pages, 15 state classes, 5 components, 43 test files, 9 locales.
+**Current counts**: 15 tables, 31 services, 18 pages, 18 state classes, 7 components, 62 test files, 1224 unit tests, 9 locales.
 
 Looking for design partners and early adopters.
 
-Contact: founders@datanika.io
+Contact: info@datanika.io
 
 ---
 
 ## Roadmap
 
-- [x] ClickHouse connector
+- [x] 32 connectors (databases, SaaS APIs, files, streams)
 - [x] Usage-based billing (datanika-cloud plugin)
+- [x] Email invitations and verification
+- [x] Automated maintenance and cleanup
+- [x] Security test suite (73 tests)
+- [x] E2E test suite (22 tests on real databases)
 - [ ] Slack / Telegram alerts
 - [ ] Kubernetes deployment
-- [ ] Hosted SaaS version
 
 ---
 
 ## Quick Start
 
 ```bash
-# Source environment for docker-compose
+# Via Docker (recommended)
 set -a && source .env.docker && set +a
+docker compose up -d --build
 
-# Start infrastructure
-docker-compose up -d postgres redis
-
-# Create virtualenv and install
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
-
-# Run app
+# Or locally for development
+uv venv && source .venv/bin/activate && uv pip install -e ".[dev]"
+set -a && source .env.docker && set +a && docker-compose up -d postgres redis
 uv run reflex run
 ```
 
@@ -142,13 +144,15 @@ See full setup instructions in [CLAUDE.md](CLAUDE.md).
 | Multi-tenant SaaS-ready | Yes | No | No |
 | Self-hosted | Yes | Yes | No |
 | Python-native stack | Yes | No | No |
+| 32 built-in connectors | Yes | 300+ (separate) | No |
+| dbt transformations | Yes | No | Yes |
 
 ---
 
 ## Open-Core Strategy
 
-Core platform will be open-source.
-Hosted cloud version with monitoring, autoscaling, and enterprise security will be paid.
+Core platform is open-source (AGPL-3.0).
+Cloud version adds billing, quotas, and usage metering via the `datanika-cloud` plugin.
 
 ---
 
@@ -156,7 +160,7 @@ Hosted cloud version with monitoring, autoscaling, and enterprise security will 
 
 We welcome contributors and design partners.
 
-Open an issue or contact founders@datanika.io
+Open an issue or contact info@datanika.io
 
 ---
 

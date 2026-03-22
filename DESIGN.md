@@ -77,14 +77,15 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Migrations** | Alembic |
 | **Task Queue** | Celery 5.4+ with Redis 7 broker |
 | **Scheduling** | APScheduler with PostgreSQL job store |
-| **Extract & Load** | dlt with adapters for Postgres, Snowflake, BigQuery, MSSQL, ClickHouse, MongoDB, Google Sheets |
-| **Transform** | dbt-core with adapters for Postgres, Snowflake, BigQuery, Redshift, MySQL, MSSQL, SQLite |
-| **Auth** | bcrypt + JWT (python-jose), Google/GitHub OAuth2 |
+| **Extract & Load** | dlt with 27 source types + 11 destination types (databases, SaaS APIs, files, streams) |
+| **Transform** | dbt-core with 11 adapters (Postgres, Snowflake, BigQuery, Redshift, MySQL, MSSQL, SQLite, ClickHouse, DuckDB, Databricks, Synapse) |
+| **Auth** | bcrypt + JWT (python-jose), Google/GitHub OAuth2, email verification |
+| **Email** | SMTP via smtplib (verification + invitations), async via Celery |
 | **Encryption** | Fernet (cryptography) |
 | **Package Manager** | uv |
 | **Linting** | Ruff |
 | **i18n** | 9 languages (en, ru, el, de, fr, es, zh, ar, sr) with runtime switching |
-| **Testing** | pytest + pytest-asyncio, SQLite in-memory for model tests |
+| **Testing** | pytest + pytest-asyncio, SQLite in-memory (1224 unit + 73 security + 22 E2E) |
 | **Monitoring** | Prometheus (metrics collection), Grafana (dashboards), Node Exporter (host metrics), cAdvisor (container metrics) |
 
 ## Database Design
@@ -110,12 +111,12 @@ All configuration tables live in the `public` schema, isolated by `org_id`. Data
 
 `PUBLIC_TABLES` in `migrations/helpers.py` must include every model table name or Alembic won't generate migrations for them.
 
-### Tables (14)
+### Tables (15)
 
 | Table | Model File | Description |
 |-------|-----------|-------------|
 | `organizations` | `user.py` | Tenant organizations |
-| `users` | `user.py` | User accounts (global) |
+| `users` | `user.py` | User accounts (global, with `email_verified` flag) |
 | `memberships` | `user.py` | User↔org relationships with roles |
 | `connections` | `connection.py` | Source/destination connections (encrypted credentials) |
 | `uploads` | `upload.py` | dlt extract+load configurations |
@@ -128,6 +129,7 @@ All configuration tables live in the `public` schema, isolated by `org_id`. Data
 | `audit_logs` | `audit_log.py` | User action audit trail |
 | `catalog_entries` | `catalog_entry.py` | Data catalog (schemas, tables, columns) |
 | `uploaded_files` | `uploaded_file.py` | File upload references |
+| `invitations` | `invitation.py` | Pending org invitations (email, role, JWT token, expiry) |
 
 ### Async Session Management
 
@@ -342,7 +344,9 @@ All services are defined in `docker-compose.yml` (requires `source .env.docker` 
 - **Layout**: Test files mirror source — `datanika/services/foo.py` → `tests/test_services/test_foo.py`
 - **TDD**: Failing test first, then implementation, then refactor
 - **Bug fixes**: Every fix requires a regression test
-- **Test files**: 43 files across 6 directories (`test_models/`, `test_services/`, `test_tasks/`, `test_ui/`, `test_i18n/`, `test_migrations/`, plus top-level hook tests)
+- **Test files**: 62 files across 7 directories (`test_models/`, `test_services/`, `test_tasks/`, `test_ui/`, `test_i18n/`, `test_migrations/`, `test_security/`, plus top-level hook tests)
+- **Security tests**: 73 tests covering injection, path traversal, auth attacks, input validation, tenant isolation
+- **E2E tests**: 22 tests in `datanika-examples/tests/` running against real Docker databases
 
 ## Project Structure
 
@@ -365,15 +369,15 @@ datanika/
 ├── hooks.py           # Event bus (on/off/emit/clear)
 ├── config.py          # Pydantic Settings from .env
 ├── i18n/              # Translations (en, ru, el, de, fr, es, zh, ar, sr)
-├── services/          # Business logic (26 services)
-│   ├── auth.py        #   JWT + bcrypt + RBAC
-│   ├── user_service.py    # Registration, org provisioning
-│   ├── connection_service.py  # Encrypted connection CRUD
+├── services/          # Business logic (31 services)
+│   ├── auth.py        #   JWT + bcrypt + RBAC + email verification tokens
+│   ├── user_service.py    # Registration, org provisioning, email_verified
+│   ├── connection_service.py  # Encrypted connection CRUD (32 types)
 │   ├── upload_service.py      # Upload (dlt) validation + CRUD
 │   ├── pipeline_service.py    # Pipeline (dbt) validation + CRUD
-│   ├── dlt_runner.py      # dlt source/destination factory
+│   ├── dlt_runner.py      # dlt source/destination factory (32 connectors)
 │   ├── transformation_service.py  # dbt model CRUD
-│   ├── dbt_project.py     # Per-tenant dbt project + command execution
+│   ├── dbt_project.py     # Per-tenant dbt project + command execution + clean_target
 │   ├── schedule_service.py    # Cron validation + CRUD
 │   ├── scheduler_integration.py  # APScheduler bridge
 │   ├── execution_service.py   # Run lifecycle management
@@ -384,6 +388,10 @@ datanika/
 │   ├── audit_service.py       # Audit logging
 │   ├── oauth_service.py       # Google + GitHub OAuth2
 │   ├── oauth_routes.py        # Starlette OAuth2 callback routes
+│   ├── email_service.py       # SMTP email sending (verification + invitations)
+│   ├── email_routes.py        # Starlette email verification + invite acceptance
+│   ├── invitation_service.py  # Org invitation lifecycle (create/accept/cancel)
+│   ├── maintenance_service.py # Cleanup orphaned files, old runs, stale artifacts
 │   ├── tenant.py              # Tenant provisioning
 │   ├── captcha_service.py     # reCAPTCHA v3 verification
 │   ├── catalog_service.py     # Data catalog management
@@ -392,30 +400,34 @@ datanika/
 │   ├── google_sheets_source.py # Google Sheets dlt source
 │   ├── mongodb_source.py      # MongoDB dlt source
 │   └── naming.py              # Name/slug generation utilities
-├── tasks/             # Celery async tasks (4 task files)
-│   ├── celery_app.py          # Celery configuration
-│   ├── upload_tasks.py        # run_upload (dlt extract+load)
-│   ├── pipeline_tasks.py      # run_pipeline (dbt commands)
+├── tasks/             # Celery async tasks (7 task files)
+│   ├── celery_app.py          # Celery configuration + Beat schedule
+│   ├── upload_tasks.py        # run_upload (dlt extract+load + cleanup)
+│   ├── pipeline_tasks.py      # run_pipeline (dbt commands + target cleanup)
 │   ├── transformation_tasks.py    # run_transformation
-│   └── dependency_helpers.py  # DAG resolution utilities
+│   ├── dependency_helpers.py  # DAG resolution utilities
+│   ├── email_tasks.py         # Async email dispatch (verification, invitations)
+│   └── maintenance_tasks.py   # Hourly cleanup (orphaned dirs, old runs, archives)
 ├── ui/
-│   ├── state/         # Reflex state classes (15 files)
+│   ├── state/         # Reflex state classes (18 files)
 │   │   ├── base_state.py      # Base state with auth context
 │   │   ├── auth_state.py      # Login/signup/session
-│   │   ├── i18n_state.py      # Language switching
+│   │   ├── i18n_state.py      # Language switching + ensure_loaded
 │   │   ├── dashboard_state.py # Dashboard stats
-│   │   ├── connection_state.py # Connection management
-│   │   ├── upload_state.py    # Upload management
+│   │   ├── connection_state.py # Connection management (32 types)
+│   │   ├── upload_state.py    # Upload management + SaaS endpoint picker
 │   │   ├── pipeline_state.py  # Pipeline management
 │   │   ├── transformation_state.py # Transformation management
 │   │   ├── schedule_state.py  # Schedule management
 │   │   ├── run_state.py       # Run history
 │   │   ├── dag_state.py       # DAG visualization
-│   │   ├── settings_state.py  # User/org settings
+│   │   ├── settings_state.py  # User/org settings + invitations
 │   │   ├── backup_state.py    # Backup management
+│   │   ├── api_key_state.py   # API key management
+│   │   ├── audit_state.py     # Audit log browsing
 │   │   ├── model_state.py     # Data catalog browse
 │   │   └── model_detail_state.py # Data catalog detail
-│   ├── pages/         # Route handlers (15 pages)
+│   ├── pages/         # Route handlers (18 pages)
 │   │   ├── login.py           # /login
 │   │   ├── signup.py          # /signup
 │   │   ├── auth_complete.py   # /auth/complete (OAuth)
@@ -429,11 +441,14 @@ datanika/
 │   │   ├── runs.py            # /runs
 │   │   ├── dag.py             # /dag
 │   │   ├── settings.py        # /settings
+│   │   ├── api_keys.py        # /api-keys
+│   │   ├── audit_logs.py      # /audit-log
 │   │   ├── models.py          # /models (data catalog)
 │   │   └── model_detail.py    # /models/{id} (catalog detail)
-│   └── components/    # Reusable UI components (5 files)
+│   └── components/    # Reusable UI components (7 files)
 │       ├── layout.py              # Sidebar + header layout
-│       ├── connection_config_fields.py # Dynamic connection form
+│       ├── connection_config_fields.py # Dynamic connection form (32 types)
+│       ├── searchable_select.py   # Searchable dropdown for large lists
 │       ├── language_switcher.py   # Language selection dropdown
 │       ├── captcha.py             # reCAPTCHA v3 widget
 │       └── sql_autocomplete.py    # SQL editor autocomplete

@@ -82,33 +82,41 @@ class DltRunnerError(ValueError):
     """Raised when dlt runner encounters an unsupported configuration."""
 
 
-DRIVERNAME_MAP = {
+# Drivernames used by sql_database() source (SQLAlchemy connections)
+SOURCE_DRIVERNAME_MAP = {
     "postgres": "postgresql",
     "mysql": "mysql+pymysql",
     "mssql": "mssql+pymssql",
     "sqlite": "sqlite",
     "redshift": "redshift+redshift_connector",
-    "clickhouse": "clickhouse",
+    "clickhouse": "clickhousedb+connect",
     "duckdb": "duckdb",
 }
 
 # Types where user→username renaming is needed
-_RENAME_USER_TYPES = {"postgres", "mysql", "mssql", "sqlite", "redshift", "snowflake"}
+_RENAME_USER_TYPES = {
+    "postgres", "mysql", "mssql", "sqlite", "redshift", "snowflake", "clickhouse",
+}
+
+# ClickHouse table engine types supported by dlt
+CLICKHOUSE_ENGINE_TYPES = {"merge_tree", "replicated_merge_tree", "shared_merge_tree"}
 
 
 class DltRunnerService:
     """Builds dlt pipeline objects from connection configs and pipeline settings."""
 
-    SUPPORTED_SOURCE_TYPES = {"postgres", "mysql", "mssql", "sqlite"}
+    SUPPORTED_SOURCE_TYPES = {
+        "postgres", "mysql", "mssql", "sqlite", "clickhouse", "duckdb",
+    }
     SUPPORTED_DESTINATION_TYPES = (
-        SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift", "clickhouse", "duckdb"}
+        SUPPORTED_SOURCE_TYPES | {"bigquery", "snowflake", "redshift"}
     )
 
     @staticmethod
     def _to_dlt_credentials(connection_type: str, config: dict) -> dict:
         """Convert stored connection config to dlt-compatible credentials.
 
-        Adds drivername for SQL types, renames user→username.
+        Adds drivername for SQL source types, renames user→username.
         """
         creds = dict(config)
 
@@ -116,11 +124,14 @@ class DltRunnerService:
         if connection_type in _RENAME_USER_TYPES and "user" in creds:
             creds["username"] = creds.pop("user")
 
-        drivername = DRIVERNAME_MAP.get(connection_type)
+        drivername = SOURCE_DRIVERNAME_MAP.get(connection_type)
         if drivername:
             creds["drivername"] = drivername
             # SQLite: path stored as "path", dlt expects "database"
             if connection_type == "sqlite" and "path" in creds:
+                creds["database"] = creds.pop("path")
+            # DuckDB: path stored as "path", dlt expects "database"
+            if connection_type == "duckdb" and "path" in creds:
                 creds["database"] = creds.pop("path")
 
         return creds
@@ -129,13 +140,23 @@ class DltRunnerService:
         """Map ConnectionType to a dlt destination factory.
 
         Supports SQL databases and cloud warehouses.
+        ClickHouse accepts ``table_engine_type`` in config
+        (merge_tree | replicated_merge_tree | shared_merge_tree).
         Raises DltRunnerError for unsupported types.
         """
         if connection_type not in self.SUPPORTED_DESTINATION_TYPES:
             raise DltRunnerError(f"Unsupported destination type: {connection_type}")
 
         factory = getattr(dlt.destinations, connection_type)
-        return factory(credentials=self._to_dlt_credentials(connection_type, config))
+        kwargs: dict = {"credentials": self._to_dlt_credentials(connection_type, config)}
+
+        # ClickHouse: pass table_engine_type for cluster support
+        if connection_type == "clickhouse":
+            engine = config.get("table_engine_type", "merge_tree")
+            if engine in CLICKHOUSE_ENGINE_TYPES:
+                kwargs["table_engine_type"] = engine
+
+        return factory(**kwargs)
 
     def build_source(
         self,

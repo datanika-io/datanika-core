@@ -1178,33 +1178,74 @@ class TestBuildMongodbSource:
 # ---------------------------------------------------------------------------
 # Phase A connectors: ClickHouse, DuckDB, Stripe, GitHub
 # ---------------------------------------------------------------------------
-class TestClickHouseDestination:
+class TestClickHouseConnector:
+    def test_clickhouse_in_supported_sources(self, svc):
+        assert "clickhouse" in svc.SUPPORTED_SOURCE_TYPES
+
     def test_clickhouse_in_supported_destinations(self, svc):
         assert "clickhouse" in svc.SUPPORTED_DESTINATION_TYPES
 
-    def test_clickhouse_drivername(self, svc):
+    def test_clickhouse_source_drivername(self, svc):
         creds = svc._to_dlt_credentials(
             "clickhouse", {"host": "ch", "port": 8123, "user": "default", "database": "db"}
         )
-        assert creds["drivername"] == "clickhouse"
+        assert creds["drivername"] == "clickhousedb+connect"
+        assert creds["username"] == "default"
+        assert "user" not in creds
 
     @patch("datanika.services.dlt_runner.dlt")
-    def test_build_clickhouse_destination(self, mock_dlt, svc):
+    def test_build_clickhouse_destination_default_engine(self, mock_dlt, svc):
         mock_dlt.destinations.clickhouse.return_value = "ch_dest"
         result = svc.build_destination(
             "clickhouse", {"host": "ch", "port": 8123, "user": "default", "database": "db"}
         )
         assert result == "ch_dest"
-        mock_dlt.destinations.clickhouse.assert_called_once()
+        call_kwargs = mock_dlt.destinations.clickhouse.call_args[1]
+        assert call_kwargs["table_engine_type"] == "merge_tree"
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_clickhouse_destination_replicated_engine(self, mock_dlt, svc):
+        mock_dlt.destinations.clickhouse.return_value = "ch_dest"
+        svc.build_destination(
+            "clickhouse",
+            {"host": "ch", "user": "default", "table_engine_type": "replicated_merge_tree"},
+        )
+        call_kwargs = mock_dlt.destinations.clickhouse.call_args[1]
+        assert call_kwargs["table_engine_type"] == "replicated_merge_tree"
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_clickhouse_destination_shared_engine(self, mock_dlt, svc):
+        mock_dlt.destinations.clickhouse.return_value = "ch_dest"
+        svc.build_destination(
+            "clickhouse",
+            {"host": "ch", "user": "default", "table_engine_type": "shared_merge_tree"},
+        )
+        call_kwargs = mock_dlt.destinations.clickhouse.call_args[1]
+        assert call_kwargs["table_engine_type"] == "shared_merge_tree"
+
+    @patch("datanika.services.dlt_runner.dlt")
+    def test_build_clickhouse_destination_invalid_engine_uses_default(self, mock_dlt, svc):
+        mock_dlt.destinations.clickhouse.return_value = "ch_dest"
+        svc.build_destination(
+            "clickhouse",
+            {"host": "ch", "user": "default", "table_engine_type": "invalid_engine"},
+        )
+        call_kwargs = mock_dlt.destinations.clickhouse.call_args[1]
+        assert "table_engine_type" not in call_kwargs
 
 
-class TestDuckDBDestination:
+class TestDuckDBConnector:
+    def test_duckdb_in_supported_sources(self, svc):
+        assert "duckdb" in svc.SUPPORTED_SOURCE_TYPES
+
     def test_duckdb_in_supported_destinations(self, svc):
         assert "duckdb" in svc.SUPPORTED_DESTINATION_TYPES
 
     def test_duckdb_drivername(self, svc):
         creds = svc._to_dlt_credentials("duckdb", {"path": "/data/my.duckdb"})
         assert creds["drivername"] == "duckdb"
+        assert creds["database"] == "/data/my.duckdb"
+        assert "path" not in creds
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_build_duckdb_destination(self, mock_dlt, svc):

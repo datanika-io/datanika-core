@@ -205,6 +205,9 @@ def run_pipeline(
         # Build selector
         selector = PipelineService.build_selector(pipeline.models, pipeline.custom_selector)
 
+        # Clean stale dbt artifacts before run
+        dbt_svc.clean_target(org_id)
+
         # Execute dbt command
         result = dbt_svc.run_command(
             org_id,

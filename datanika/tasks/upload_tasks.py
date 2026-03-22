@@ -153,16 +153,19 @@ def run_upload(
                 dlt_config["bucket_url"] = extracted_dir
 
         try:
-            runner = DltRunnerService()
+            from datanika.config import settings as app_cfg
+
+            runner = DltRunnerService(pipelines_dir=app_cfg.dlt_pipelines_dir)
             dataset_name = to_dataset_name(upload.name)
             result = runner.execute(
-                pipeline_id=upload.id,
+                pipeline_id=run_id,
                 source_type=src_conn.connection_type.value,
                 source_config=src_config,
                 destination_type=dst_conn.connection_type.value,
                 destination_config=dst_config,
                 dlt_config=dlt_config,
                 dataset_name=dataset_name,
+                run_id=run_id,
             )
             rows = result["rows_loaded"]
             logs = str(result["load_info"])
@@ -215,6 +218,15 @@ def run_upload(
             session.commit()
 
     finally:
+        # Clean up dlt working directory regardless of success/failure
+        try:
+            from datanika.config import settings as _cleanup_cfg
+
+            DltRunnerService(
+                pipelines_dir=_cleanup_cfg.dlt_pipelines_dir
+            ).cleanup_pipeline(pipeline_id=run_id, run_id=run_id)
+        except Exception:
+            pass
         if own_session:
             session.close()
 

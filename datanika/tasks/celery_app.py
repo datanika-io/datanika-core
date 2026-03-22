@@ -24,4 +24,13 @@ celery_app.conf.include = [
     "datanika.tasks.transformation_tasks",
     "datanika.tasks.pipeline_tasks",
     "datanika.tasks.email_tasks",
+    "datanika.tasks.maintenance_tasks",
 ]
+
+# Schedule hourly maintenance task via Celery Beat
+celery_app.conf.beat_schedule = {
+    "hourly-maintenance": {
+        "task": "datanika.run_maintenance",
+        "schedule": 3600.0,  # every hour
+    },
+}

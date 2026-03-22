@@ -1,11 +1,15 @@
 """DbtProjectService — manages per-tenant dbt project directories and executes dbt commands."""
 
 import json
+import logging
 import re
+import shutil
 from pathlib import Path
 
 import yaml
 from dbt.cli.main import dbtRunner
+
+logger = logging.getLogger(__name__)
 
 
 def _to_plain(obj):
@@ -100,6 +104,13 @@ class DbtProjectService:
     def get_project_path(self, org_id: int) -> Path:
         """Return path: {projects_dir}/tenant_{org_id}/"""
         return self._projects_dir / f"tenant_{org_id}"
+
+    def clean_target(self, org_id: int) -> None:
+        """Remove dbt target/ directory to prevent stale artifacts."""
+        target_dir = self.get_project_path(org_id) / "target"
+        if target_dir.is_dir():
+            shutil.rmtree(target_dir, ignore_errors=True)
+            logger.info("Cleaned dbt target dir: %s", target_dir)
 
     def ensure_project(self, org_id: int) -> Path:
         """Create dbt project scaffold if it doesn't exist. Returns project path."""

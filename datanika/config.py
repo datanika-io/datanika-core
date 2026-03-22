@@ -39,8 +39,16 @@ class Settings(BaseSettings):
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 
+    # dlt pipeline working directories (extract buffers, load packages)
+    dlt_pipelines_dir: str = "./dlt_pipelines"
+
     # File uploads
     file_uploads_dir: str = "./uploaded_files"
+
+    # Maintenance
+    maintenance_dlt_max_age_hours: int = 24
+    maintenance_dbt_max_age_hours: int = 48
+    maintenance_run_retention_days: int = 90
 
     # Email / SMTP (disabled when smtp_host is empty)
     smtp_host: str = ""

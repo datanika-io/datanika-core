@@ -1,9 +1,15 @@
 """DltRunnerService — builds dlt pipeline/source/destination and executes pipelines."""
 
+import logging
+import os
+import shutil
+
 import dlt
 from dlt.sources.filesystem import filesystem
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 10_000
 
@@ -118,6 +124,9 @@ class DltRunnerService:
         SUPPORTED_SOURCE_TYPES
         | {"bigquery", "snowflake", "redshift", "databricks", "synapse"}
     )
+
+    def __init__(self, pipelines_dir: str | None = None):
+        self._pipelines_dir = pipelines_dir
 
     @staticmethod
     def _to_dlt_credentials(connection_type: str, config: dict) -> dict:
@@ -692,16 +701,38 @@ class DltRunnerService:
         destination_type: str,
         destination_config: dict,
         dataset_name: str | None = None,
+        run_id: int | None = None,
     ):
-        """Create a dlt.Pipeline with the given destination."""
+        """Create a dlt.Pipeline with the given destination.
+
+        When ``run_id`` is provided, pipeline name includes it to avoid
+        cross-run state pollution.  ``pipelines_dir`` isolates working files.
+        """
         destination = self.build_destination(destination_type, destination_config)
-        kwargs = {
-            "pipeline_name": f"pipeline_{pipeline_id}",
+        name = f"pipeline_{pipeline_id}"
+        if run_id is not None:
+            name = f"{name}_run_{run_id}"
+        kwargs: dict = {
+            "pipeline_name": name,
             "destination": destination,
         }
+        if self._pipelines_dir:
+            kwargs["pipelines_dir"] = self._pipelines_dir
         if dataset_name is not None:
             kwargs["dataset_name"] = dataset_name
         return dlt.pipeline(**kwargs)
+
+    def cleanup_pipeline(self, pipeline_id: int, run_id: int | None = None) -> None:
+        """Remove dlt working directory for a pipeline run."""
+        if not self._pipelines_dir:
+            return
+        name = f"pipeline_{pipeline_id}"
+        if run_id is not None:
+            name = f"{name}_run_{run_id}"
+        pipeline_dir = os.path.join(self._pipelines_dir, name)
+        if os.path.isdir(pipeline_dir):
+            shutil.rmtree(pipeline_dir, ignore_errors=True)
+            logger.info("Cleaned up dlt pipeline dir: %s", pipeline_dir)
 
     def execute(
         self,
@@ -713,6 +744,7 @@ class DltRunnerService:
         dlt_config: dict,
         batch_size: int | None = None,
         dataset_name: str | None = None,
+        run_id: int | None = None,
     ) -> dict:
         """Execute a dlt pipeline.
 
@@ -725,7 +757,8 @@ class DltRunnerService:
             batch_size = dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
 
         pipeline = self.build_pipeline(
-            pipeline_id, destination_type, destination_config, dataset_name=dataset_name
+            pipeline_id, destination_type, destination_config,
+            dataset_name=dataset_name, run_id=run_id,
         )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 

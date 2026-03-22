@@ -161,6 +161,7 @@ def run_transformation(
             materialization=transformation.materialization.value,
             incremental_config=transformation.incremental_config,
         )
+        dbt_svc.clean_target(org_id)
         result = dbt_svc.run_model(org_id, transformation.name)
         rows = result["rows_affected"]
         logs = result["logs"]

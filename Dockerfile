@@ -22,12 +22,14 @@ RUN uv sync --frozen --no-dev
 # Copy full application code
 COPY datanika/ .
 
-# Install cloud edition plugin
+# Copy cloud edition plugin source
 COPY datanika-cloud/ /cloud/
-RUN uv pip install /cloud
 
-# Reflex needs to initialize on first run
+# Reflex needs to initialize on first run (recreates .venv)
 RUN uv run reflex init
+
+# Install cloud plugin AFTER reflex init (which recreates the venv)
+RUN uv pip install /cloud
 
 EXPOSE 3000 8000
 

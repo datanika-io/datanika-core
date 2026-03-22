@@ -14,3 +14,11 @@ class I18nState(rx.State):
             return
         self.locale = locale
         self.translations = get_translations(locale)
+
+    def ensure_loaded(self):
+        """Re-fetch translations for the current locale.
+
+        Picks up keys registered after import time (e.g. cloud plugin).
+        Called from check_auth so every protected page has fresh translations.
+        """
+        self.translations = get_translations(self.locale)

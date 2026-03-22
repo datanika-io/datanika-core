@@ -100,6 +100,11 @@ def run_transformation(
         session = SyncSession(engine)
 
     try:
+        # Check run quota before starting (cloud plugin may block)
+        from datanika.hooks import emit
+
+        emit("run.before_execute", session=session, org_id=org_id)
+
         execution_service.start_run(session, run_id)
         if own_session:
             session.commit()

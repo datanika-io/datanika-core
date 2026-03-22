@@ -217,6 +217,11 @@ class AuthState(rx.State):
                     break
         return rx.redirect("/")
 
-    def check_auth(self):
+    async def check_auth(self):
         if not self.access_token:
             return rx.redirect("/login")
+        # Refresh translations so plugin keys (e.g. billing.*) are available
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        i18n.ensure_loaded()

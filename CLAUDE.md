@@ -22,12 +22,16 @@ uv add --dev <package>     # dev dependency
 
 # Infrastructure (PostgreSQL 16 + Redis 7)
 # Must source .env.docker first — docker-compose.yml interpolates variables from it
-set -a && source .env.docker && set +a && docker-compose up -d
+set -a && source .env.docker && set +a && docker-compose up -d postgres redis
 
-# Run app (starts frontend on :3000, backend on :8000)
+# Run full stack via Docker (production-like, includes datanika-cloud plugin)
+# Dockerfile build context is monorepo root (..) — copies both datanika/ and datanika-cloud/
+set -a && source .env.docker && set +a && docker compose up -d --build
+
+# Run app locally (dev only, starts frontend on :3000, backend on :8000)
 uv run reflex run
 
-# Celery worker (separate terminal)
+# Celery worker (separate terminal, dev only)
 uv run celery -A datanika.tasks worker -l info
 
 # Lint

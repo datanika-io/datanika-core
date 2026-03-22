@@ -114,51 +114,79 @@ def upload_form() -> rx.Component:
                 placeholder=_t["uploads.ph_destination"],
                 width="100%",
             ),
-            # Mode selection
-            rx.select(
-                ["full_database", "single_table"],
-                value=UploadState.form_mode,
-                on_change=UploadState.set_form_mode,
-                width="100%",
-            ),
-            # Write disposition
-            rx.select(
-                ["append", "replace", "merge"],
-                value=UploadState.form_write_disposition,
-                on_change=UploadState.set_form_write_disposition,
-                width="100%",
-            ),
-            # Primary key (merge + single_table only)
+            # SaaS endpoint selector (shown for SaaS sources)
             rx.cond(
-                (UploadState.form_write_disposition == "merge")
-                & (UploadState.form_mode == "single_table"),
-                rx.input(
-                    placeholder=_t["uploads.ph_primary_key"],
-                    value=UploadState.form_primary_key,
-                    on_change=UploadState.set_form_primary_key,
+                UploadState.form_is_saas_source,
+                rx.vstack(
+                    rx.text(_t["uploads.select_endpoints"], size="2", weight="bold"),
+                    rx.foreach(
+                        UploadState.form_available_endpoints,
+                        lambda ep: rx.hstack(
+                            rx.checkbox(
+                                ep,
+                                checked=UploadState.form_selected_endpoints.contains(ep),
+                                on_change=lambda _val: UploadState.toggle_endpoint(ep),
+                            ),
+                            spacing="2",
+                        ),
+                    ),
+                    spacing="2",
                     width="100%",
                 ),
             ),
-            # Merge config (merge + full_database only)
+            # SQL-specific fields (hidden for SaaS sources)
             rx.cond(
-                (UploadState.form_write_disposition == "merge")
-                & (UploadState.form_mode == "full_database"),
-                rx.text_area(
-                    placeholder=_t["uploads.ph_merge_config"],
-                    value=UploadState.form_merge_config,
-                    on_change=UploadState.set_form_merge_config,
+                ~UploadState.form_is_saas_source,
+                rx.vstack(
+                    # Mode selection
+                    rx.select(
+                        ["full_database", "single_table"],
+                        value=UploadState.form_mode,
+                        on_change=UploadState.set_form_mode,
+                        width="100%",
+                    ),
+                    # Write disposition
+                    rx.select(
+                        ["append", "replace", "merge"],
+                        value=UploadState.form_write_disposition,
+                        on_change=UploadState.set_form_write_disposition,
+                        width="100%",
+                    ),
+                    # Primary key (merge + single_table only)
+                    rx.cond(
+                        (UploadState.form_write_disposition == "merge")
+                        & (UploadState.form_mode == "single_table"),
+                        rx.input(
+                            placeholder=_t["uploads.ph_primary_key"],
+                            value=UploadState.form_primary_key,
+                            on_change=UploadState.set_form_primary_key,
+                            width="100%",
+                        ),
+                    ),
+                    # Merge config (merge + full_database only)
+                    rx.cond(
+                        (UploadState.form_write_disposition == "merge")
+                        & (UploadState.form_mode == "full_database"),
+                        rx.text_area(
+                            placeholder=_t["uploads.ph_merge_config"],
+                            value=UploadState.form_merge_config,
+                            on_change=UploadState.set_form_merge_config,
+                            width="100%",
+                        ),
+                    ),
+                    # Source schema
+                    rx.input(
+                        placeholder=_t["uploads.ph_source_schema"],
+                        value=UploadState.form_source_schema,
+                        on_change=UploadState.set_form_source_schema,
+                        width="100%",
+                    ),
+                    # Mode-specific fields
+                    _mode_fields(),
+                    spacing="2",
                     width="100%",
                 ),
             ),
-            # Source schema
-            rx.input(
-                placeholder=_t["uploads.ph_source_schema"],
-                value=UploadState.form_source_schema,
-                on_change=UploadState.set_form_source_schema,
-                width="100%",
-            ),
-            # Mode-specific fields
-            _mode_fields(),
             # Batch size
             rx.input(
                 placeholder=_t["uploads.ph_batch_size"],

@@ -343,5 +343,6 @@
   "connections.ph_jira_domain": "yourcompany (without .atlassian.net)",
   "connections.jira_email": "E-mail",
   "connections.ph_jira_email": "user@company.com",
-  "connections.ph_jira_token": "Jeton API Jira"
+  "connections.ph_jira_token": "Jeton API Jira",
+  "uploads.select_endpoints": "Sélectionnez les endpoints à charger"
 }

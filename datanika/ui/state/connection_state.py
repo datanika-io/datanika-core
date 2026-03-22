@@ -25,6 +25,14 @@ SOURCE_TYPES = {
     "google_sheets",
     "mongodb",
     "clickhouse",
+    "duckdb",
+    "stripe",
+    "github",
+    "hubspot",
+    "salesforce",
+    "shopify",
+    "jira",
+    "slack",
 }
 # Types that can serve as destinations (databases + cloud warehouses)
 DESTINATION_TYPES = {
@@ -36,6 +44,25 @@ DESTINATION_TYPES = {
     "snowflake",
     "redshift",
     "clickhouse",
+    "duckdb",
+    "databricks",
+    "synapse",
+}
+
+# SaaS source types that use endpoint/resource selection (not SQL mode)
+SAAS_SOURCE_TYPES = {
+    "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
+}
+
+# Default available endpoints per SaaS connector
+SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
+    "stripe": ["Subscription", "Account", "Coupon", "Customer", "Invoice", "Product", "Price"],
+    "github": ["issues", "pulls", "commits", "stargazers"],
+    "hubspot": ["contacts", "companies", "deals", "products", "tickets", "quotes"],
+    "salesforce": ["Account", "Contact", "Opportunity", "Lead", "Campaign", "Case"],
+    "shopify": ["orders", "products", "customers"],
+    "jira": ["issues", "users", "workflows", "projects"],
+    "slack": ["channels", "messages", "users", "threads"],
 }
 
 # Default ports for database connection types

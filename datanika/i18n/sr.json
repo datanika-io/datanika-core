@@ -343,5 +343,6 @@
   "connections.ph_jira_domain": "yourcompany (without .atlassian.net)",
   "connections.jira_email": "Имејл",
   "connections.ph_jira_email": "user@company.com",
-  "connections.ph_jira_token": "Jira API токен"
+  "connections.ph_jira_token": "Jira API токен",
+  "uploads.select_endpoints": "Изаберите крајње тачке за учитавање"
 }

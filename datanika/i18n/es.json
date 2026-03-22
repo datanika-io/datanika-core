@@ -343,5 +343,6 @@
   "connections.ph_jira_domain": "yourcompany (without .atlassian.net)",
   "connections.jira_email": "Correo",
   "connections.ph_jira_email": "user@company.com",
-  "connections.ph_jira_token": "Token API de Jira"
+  "connections.ph_jira_token": "Token API de Jira",
+  "uploads.select_endpoints": "Seleccione los endpoints a cargar"
 }

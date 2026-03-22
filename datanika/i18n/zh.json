@@ -343,5 +343,6 @@
   "connections.ph_jira_domain": "yourcompany (without .atlassian.net)",
   "connections.jira_email": "邮箱",
   "connections.ph_jira_email": "user@company.com",
-  "connections.ph_jira_token": "Jira API 令牌"
+  "connections.ph_jira_token": "Jira API 令牌",
+  "uploads.select_endpoints": "选择要加载的端点"
 }

@@ -144,6 +144,7 @@
   "connections.jira_email": "Email",
   "connections.ph_jira_email": "user@company.com",
   "connections.ph_jira_token": "Jira API token",
+  "uploads.select_endpoints": "Select endpoints to load",
   "uploads.new": "New Upload",
   "uploads.edit": "Edit Upload",
   "uploads.create": "Create Upload",

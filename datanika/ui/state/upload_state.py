@@ -14,7 +14,12 @@ from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
 from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.ui.state.connection_state import DESTINATION_TYPES, SOURCE_TYPES
+from datanika.ui.state.connection_state import (
+    DESTINATION_TYPES,
+    SAAS_DEFAULT_ENDPOINTS,
+    SAAS_SOURCE_TYPES,
+    SOURCE_TYPES,
+)
 
 
 class UploadItem(BaseModel):
@@ -54,6 +59,11 @@ class UploadState(BaseState):
     form_sc_tables: str = ""
     form_sc_columns: str = ""
     form_sc_data_type: str = ""
+    # SaaS endpoint selection
+    form_available_endpoints: list[str] = []
+    form_selected_endpoints: list[str] = []
+    form_is_saas_source: bool = False
+
     # Raw JSON fallback
     form_config: str = "{}"
     form_use_raw_json: bool = False
@@ -68,6 +78,32 @@ class UploadState(BaseState):
 
     def set_form_source_id(self, value: str):
         self.form_source_id = value
+        # Detect SaaS source type and populate available endpoints
+        conn_type = self._extract_conn_type(value)
+        if conn_type in SAAS_SOURCE_TYPES:
+            self.form_is_saas_source = True
+            self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
+            self.form_selected_endpoints = list(self.form_available_endpoints)
+        else:
+            self.form_is_saas_source = False
+            self.form_available_endpoints = []
+            self.form_selected_endpoints = []
+
+    @staticmethod
+    def _extract_conn_type(option_str: str) -> str:
+        """Extract connection type from formatted option string like '1 — MyConn (stripe)'."""
+        if "(" in option_str and ")" in option_str:
+            return option_str.rsplit("(", 1)[-1].rstrip(")")
+        return ""
+
+    def toggle_endpoint(self, endpoint: str):
+        """Toggle an endpoint in the selected list."""
+        if endpoint in self.form_selected_endpoints:
+            self.form_selected_endpoints = [
+                e for e in self.form_selected_endpoints if e != endpoint
+            ]
+        else:
+            self.form_selected_endpoints = self.form_selected_endpoints + [endpoint]
 
     def set_form_dest_id(self, value: str):
         self.form_dest_id = value
@@ -181,6 +217,10 @@ class UploadState(BaseState):
             sc["data_type"] = self.form_sc_data_type
         if sc:
             config["schema_contract"] = sc
+
+        # SaaS endpoint selection → stored as "endpoints" in dlt_config
+        if self.form_is_saas_source and self.form_selected_endpoints:
+            config["endpoints"] = self.form_selected_endpoints
 
         return config
 
@@ -299,6 +339,9 @@ class UploadState(BaseState):
         self.form_sc_data_type = ""
         self.form_config = "{}"
         self.form_use_raw_json = False
+        self.form_is_saas_source = False
+        self.form_available_endpoints = []
+        self.form_selected_endpoints = []
         self.error_message = ""
 
     def _populate_form_from_upload(self, upload, conn_options_src, conn_options_dst):
@@ -339,6 +382,20 @@ class UploadState(BaseState):
 
         self.form_use_raw_json = False
         self.form_config = "{}"
+
+        # Restore SaaS endpoint selection
+        conn_type = self._extract_conn_type(self.form_source_id)
+        if conn_type in SAAS_SOURCE_TYPES:
+            self.form_is_saas_source = True
+            self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
+            saved_endpoints = config.get("endpoints", [])
+            self.form_selected_endpoints = (
+                saved_endpoints if saved_endpoints else list(self.form_available_endpoints)
+            )
+        else:
+            self.form_is_saas_source = False
+            self.form_available_endpoints = []
+            self.form_selected_endpoints = []
 
     async def edit_upload(self, upload_id: int):
         """Load an upload into the form for editing."""

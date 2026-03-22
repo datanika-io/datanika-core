@@ -343,5 +343,6 @@
   "connections.ph_jira_domain": "yourcompany (without .atlassian.net)",
   "connections.jira_email": "البريد الإلكتروني",
   "connections.ph_jira_email": "user@company.com",
-  "connections.ph_jira_token": "رمز Jira API"
+  "connections.ph_jira_token": "رمز Jira API",
+  "uploads.select_endpoints": "حدد نقاط النهاية للتحميل"
 }

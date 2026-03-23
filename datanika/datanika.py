@@ -170,3 +170,9 @@ from datanika.services.email_routes import email_routes  # noqa: E402
 
 for _route in email_routes:
     app._api.routes.append(_route)
+
+# Mount SSO (SAML/OIDC) routes
+from datanika.services.sso_routes import sso_routes  # noqa: E402
+
+for _route in sso_routes:
+    app._api.routes.append(_route)

@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     smtp_use_tls: bool = True
     email_verification_required: bool = False
 
+    # SSO
+    sso_sp_entity_id: str = "datanika"
+
     # App
     app_name: str = "Datanika"
     debug: bool = False

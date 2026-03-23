@@ -23,6 +23,7 @@ PUBLIC_TABLES: set[str] = {
     "catalog_entries",
     "uploaded_files",
     "invitations",
+    "sso_configs",
     "plans",
     "subscriptions",
     "usage_ledger",

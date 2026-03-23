@@ -17,17 +17,19 @@ dependencies = [
     "dbt-sqlserver>=1.7,<1.8",
     "dbt-clickhouse>=1.7,<1.8",
     "dbt-duckdb>=1.7,<1.8",
-    "dbt-databricks>=1.7,<1.8",
-    "dbt-synapse>=1.7,<1.8",
+    # dbt-databricks requires sqlalchemy<2.0, incompatible with our stack
+    # dbt-synapse requires sqlalchemy<2.0, incompatible with our stack
+    # Both platforms work as dlt destinations — dbt transforms deferred until adapter compat
 
-    # SaaS source dependencies (used by dlt verified sources)
-    "stripe>=5.0",
-    "simple-salesforce>=1.12",
-    "pyairtable>=2.0",
-    "facebook-business>=19.0",
-    "google-analytics-data>=0.18",
-    "google-ads>=24.0",
-    "confluent-kafka>=2.3",
+    # SaaS source dependencies (optional — needed only for dlt verified sources,
+    # REST API fallback works without these)
+    # "stripe>=5.0",
+    # "simple-salesforce>=1.12",
+    # "pyairtable>=2.0",
+    # "facebook-business>=19.0",
+    # "google-analytics-data>=0.18",
+    # "google-ads>=24.0",
+    # "confluent-kafka>=2.3",
 
     # Google Sheets
     "gspread>=6.0",

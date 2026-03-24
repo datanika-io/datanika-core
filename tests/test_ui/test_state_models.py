@@ -1,7 +1,8 @@
 """Tests for rx.Base data model classes used in UI state."""
 
 from datanika.models.connection import ConnectionDirection
-from datanika.ui.state.connection_state import ConnectionItem, _infer_direction
+from datanika.services.connection_service import infer_direction
+from datanika.ui.state.connection_state import ConnectionItem
 from datanika.ui.state.run_state import RunItem
 from datanika.ui.state.schedule_state import ScheduleItem
 from datanika.ui.state.transformation_state import TransformationItem
@@ -25,15 +26,15 @@ class TestConnectionItem:
 class TestInferDirection:
     def test_both_for_database_types(self):
         for t in ("postgres", "mysql", "mssql", "sqlite"):
-            assert _infer_direction(t) == ConnectionDirection.BOTH
+            assert infer_direction(t) == ConnectionDirection.BOTH
 
     def test_source_only_for_file_and_rest(self):
         for t in ("csv", "json", "parquet", "s3", "rest_api"):
-            assert _infer_direction(t) == ConnectionDirection.SOURCE
+            assert infer_direction(t) == ConnectionDirection.SOURCE
 
     def test_destination_only_for_cloud_warehouses(self):
         for t in ("bigquery", "snowflake", "redshift"):
-            assert _infer_direction(t) == ConnectionDirection.DESTINATION
+            assert infer_direction(t) == ConnectionDirection.DESTINATION
 
 
 class TestUploadItem:

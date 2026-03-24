@@ -46,12 +46,8 @@ def other_org(db_session):
 @pytest.fixture
 def dest_conn(conn_svc, db_session, org):
     return conn_svc.create_connection(
-        db_session,
-        org.id,
-        "Dest DB",
-        ConnectionType.POSTGRES,
-        ConnectionDirection.DESTINATION,
-        {"host": "localhost"},
+        db_session, org.id, "Dest DB", ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
 
 

@@ -189,16 +189,14 @@ class TestUploadHookEmission:
             org.id,
             "S",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "src", "port": 5432},
         )
         dst = conn_svc.create_connection(
             db_session,
             org.id,
             "D",
-            ConnectionType.POSTGRES,
-            ConnectionDirection.DESTINATION,
-            {"host": "dst", "port": 5432},
+            ConnectionType.BIGQUERY,
+            {"project": "p", "dataset": "d"},
         )
         upload = upload_svc.create_upload(
             db_session,
@@ -349,7 +347,6 @@ class TestConnectionBeforeCreateHook:
                 org.id,
                 "My DB",
                 ConnectionType.POSTGRES,
-                ConnectionDirection.SOURCE,
                 {"host": "localhost"},
             )
 
@@ -364,7 +361,6 @@ class TestConnectionBeforeCreateHook:
             org.id,
             "My DB",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "localhost"},
         )
         assert conn.id is not None
@@ -388,16 +384,14 @@ class TestScheduleBeforeCreateHook:
             org.id,
             "S",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "src", "port": 5432},
         )
         dst = conn_svc.create_connection(
             db_session,
             org.id,
             "D",
-            ConnectionType.POSTGRES,
-            ConnectionDirection.DESTINATION,
-            {"host": "dst", "port": 5432},
+            ConnectionType.BIGQUERY,
+            {"project": "p", "dataset": "d"},
         )
         upload = upload_svc.create_upload(
             db_session,

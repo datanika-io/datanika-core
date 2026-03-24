@@ -3,7 +3,7 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.user import Organization
 from datanika.services.backup_service import BackupService, ImportErrorCode, ImportValidationError
 from datanika.services.connection_service import ConnectionService
@@ -43,7 +43,6 @@ def sample_connections(db_session, conn_svc, org):
         org.id,
         "My Postgres",
         ConnectionType.POSTGRES,
-        ConnectionDirection.SOURCE,
         {"host": "localhost", "port": 5432, "user": "admin", "password": "secret123"},
     )
     dst = conn_svc.create_connection(
@@ -51,7 +50,6 @@ def sample_connections(db_session, conn_svc, org):
         org.id,
         "Target DWH",
         ConnectionType.BIGQUERY,
-        ConnectionDirection.DESTINATION,
         {"project": "my-proj", "dataset": "raw", "service_account_json": '{"key": "val"}'},
     )
     return src, dst
@@ -139,14 +137,12 @@ class TestImportBackup:
                 {
                     "name": "Src",
                     "connection_type": "postgres",
-                    "direction": "source",
                     "config": {"host": "localhost", "port": 5432},
                     "freshness_config": None,
                 },
                 {
                     "name": "Dst",
                     "connection_type": "bigquery",
-                    "direction": "destination",
                     "config": {"project": "p", "dataset": "d"},
                     "freshness_config": None,
                 },
@@ -177,14 +173,12 @@ class TestImportBackup:
                 {
                     "name": "A",
                     "connection_type": "postgres",
-                    "direction": "source",
                     "config": {"host": "h"},
                     "freshness_config": None,
                 },
                 {
                     "name": "B",
                     "connection_type": "postgres",
-                    "direction": "destination",
                     "config": {"host": "h"},
                     "freshness_config": None,
                 },
@@ -217,7 +211,6 @@ class TestImportBackup:
             org.id,
             "Existing",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "old"},
         )
         data = self._make_backup(
@@ -225,7 +218,6 @@ class TestImportBackup:
                 {
                     "name": "Existing",
                     "connection_type": "mysql",
-                    "direction": "source",
                     "config": {"host": "new"},
                     "freshness_config": None,
                 },
@@ -254,7 +246,6 @@ class TestImportBackup:
             org.id,
             "Overwrite Me",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "old"},
         )
         data = self._make_backup(
@@ -262,7 +253,6 @@ class TestImportBackup:
                 {
                     "name": "Overwrite Me",
                     "connection_type": "mysql",
-                    "direction": "source",
                     "config": {"host": "new"},
                     "freshness_config": None,
                 },
@@ -289,7 +279,6 @@ class TestImportBackup:
             org.id,
             "Dupe",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "old"},
         )
         data = self._make_backup(
@@ -297,7 +286,6 @@ class TestImportBackup:
                 {
                     "name": "Dupe",
                     "connection_type": "mysql",
-                    "direction": "source",
                     "config": {"host": "new"},
                     "freshness_config": None,
                 },
@@ -333,7 +321,6 @@ class TestImportBackup:
                 {
                     "name": "OnlySrc",
                     "connection_type": "postgres",
-                    "direction": "source",
                     "config": {"host": "h"},
                     "freshness_config": None,
                 },
@@ -365,7 +352,6 @@ class TestDetectConflicts:
             org.id,
             "PG",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "h"},
         )
         dst = conn_svc.create_connection(
@@ -373,7 +359,6 @@ class TestDetectConflicts:
             org.id,
             "BQ",
             ConnectionType.BIGQUERY,
-            ConnectionDirection.DESTINATION,
             {"project": "p", "dataset": "d"},
         )
         upload_svc.create_upload(db_session, org.id, "My Upload", None, src.id, dst.id, {})
@@ -383,14 +368,12 @@ class TestDetectConflicts:
                 {
                     "name": "PG",
                     "connection_type": "postgres",
-                    "direction": "source",
                     "config": {},
                     "freshness_config": None,
                 },
                 {
                     "name": "New",
                     "connection_type": "mysql",
-                    "direction": "source",
                     "config": {},
                     "freshness_config": None,
                 },
@@ -421,7 +404,6 @@ class TestDetectConflicts:
                 {
                     "name": "Brand New",
                     "connection_type": "postgres",
-                    "direction": "source",
                     "config": {},
                     "freshness_config": None,
                 },
@@ -462,7 +444,6 @@ class TestValidateBackup:
         base = {
             "name": "Src",
             "connection_type": "postgres",
-            "direction": "source",
             "config": {"host": "h"},
         }
         base.update(overrides)
@@ -472,7 +453,6 @@ class TestValidateBackup:
         base = {
             "name": "Dst",
             "connection_type": "bigquery",
-            "direction": "destination",
             "config": {"project": "p"},
         }
         base.update(overrides)
@@ -481,7 +461,7 @@ class TestValidateBackup:
     # --- Connection validation ---
 
     def test_connection_missing_name(self, db_session, org):
-        data = self._make_backup(connections=[{"connection_type": "postgres", "direction": "source", "config": {}}])
+        data = self._make_backup(connections=[{"connection_type": "postgres", "config": {}}])
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
         self._assert_has_error(exc_info.value.errors, ImportErrorCode.MISSING_FIELD, "connection", "name")
@@ -498,14 +478,6 @@ class TestValidateBackup:
             BackupService.validate_backup(db_session, org.id, data)
         self._assert_has_error(
             exc_info.value.errors, ImportErrorCode.INVALID_CONNECTION_TYPE, "connection", "connection_type"
-        )
-
-    def test_connection_invalid_direction(self, db_session, org):
-        data = self._make_backup(connections=[self._conn(direction="sideways")])
-        with pytest.raises(ImportValidationError) as exc_info:
-            BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(
-            exc_info.value.errors, ImportErrorCode.INVALID_ENUM_VALUE, "connection", "direction"
         )
 
     def test_connection_missing_config(self, db_session, org):
@@ -631,48 +603,6 @@ class TestValidateBackup:
             "destination_connection_name",
         )
 
-    def test_upload_source_direction_mismatch(self, db_session, org):
-        data = self._make_backup(
-            connections=[
-                self._conn(name="WrongDir", direction="destination"),
-                self._dst_conn(),
-            ],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "WrongDir",
-                "destination_connection_name": "Dst",
-            }],
-        )
-        with pytest.raises(ImportValidationError) as exc_info:
-            BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(
-            exc_info.value.errors,
-            ImportErrorCode.DIRECTION_MISMATCH,
-            "upload",
-            "source_connection_name",
-        )
-
-    def test_upload_dest_direction_mismatch(self, db_session, org):
-        data = self._make_backup(
-            connections=[
-                self._conn(),
-                self._dst_conn(name="WrongDir", direction="source"),
-            ],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "WrongDir",
-            }],
-        )
-        with pytest.raises(ImportValidationError) as exc_info:
-            BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(
-            exc_info.value.errors,
-            ImportErrorCode.DIRECTION_MISMATCH,
-            "upload",
-            "destination_connection_name",
-        )
-
     def test_upload_refs_connection_from_file(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn(), self._dst_conn()],
@@ -691,22 +621,6 @@ class TestValidateBackup:
                 "name": "Up",
                 "source_connection_name": "My Postgres",
                 "destination_connection_name": "Target DWH",
-            }],
-        )
-        BackupService.validate_backup(db_session, org.id, data)  # should not raise
-
-    def test_upload_direction_both_works(self, db_session, org):
-        data = self._make_backup(
-            connections=[{
-                "name": "BothConn",
-                "connection_type": "postgres",
-                "direction": "both",
-                "config": {"host": "h"},
-            }],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "BothConn",
-                "destination_connection_name": "BothConn",
             }],
         )
         BackupService.validate_backup(db_session, org.id, data)  # should not raise
@@ -775,20 +689,6 @@ class TestValidateBackup:
         self._assert_has_error(
             exc_info.value.errors,
             ImportErrorCode.UNKNOWN_CONNECTION_REF,
-            "pipeline",
-            "destination_connection_name",
-        )
-
-    def test_pipeline_dest_direction_mismatch(self, db_session, org):
-        data = self._make_backup(
-            connections=[self._conn()],
-            pipelines=[{"name": "P", "destination_connection_name": "Src"}],
-        )
-        with pytest.raises(ImportValidationError) as exc_info:
-            BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(
-            exc_info.value.errors,
-            ImportErrorCode.DIRECTION_MISMATCH,
             "pipeline",
             "destination_connection_name",
         )
@@ -903,7 +803,7 @@ class TestValidateBackup:
 
     def test_collects_all_errors(self, db_session, org):
         data = self._make_backup(
-            connections=[{"connection_type": "bogus"}],  # missing name, invalid type, missing dir, missing config
+            connections=[{"connection_type": "bogus"}],  # missing name, invalid type, missing config
             uploads=[{"name": "Up"}],  # missing source_ref, missing dest_ref
             pipelines=[{"name": ""}],  # empty name, missing dest_ref
             transformations=[{"name": "123bad"}],  # invalid format, missing sql_body
@@ -968,24 +868,6 @@ class TestValidateBackup:
         # No connections should have been created
         conns = conn_svc.list_connections(db_session, org.id)
         assert len(conns) == 0
-
-    def test_direction_check_skipped_for_unresolvable(self, db_session, org):
-        data = self._make_backup(
-            connections=[self._conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Ghost",
-            }],
-        )
-        with pytest.raises(ImportValidationError) as exc_info:
-            BackupService.validate_backup(db_session, org.id, data)
-        errs = exc_info.value.errors
-        # Should have UNKNOWN_CONNECTION_REF but NOT DIRECTION_MISMATCH
-        ref_errors = [e for e in errs if e["code"] == ImportErrorCode.UNKNOWN_CONNECTION_REF]
-        dir_errors = [e for e in errs if e["code"] == ImportErrorCode.DIRECTION_MISMATCH]
-        assert len(ref_errors) == 1
-        assert len(dir_errors) == 0
 
     def test_empty_backup_passes(self, db_session, org):
         data = self._make_backup()

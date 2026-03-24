@@ -1,0 +1,444 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus" }
+  ],
+  "title": "Datanika Server Overview",
+  "uid": "datanika-server",
+  "tags": ["datanika", "node-exporter"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "CPU Usage %",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "gradientMode": "scheme"
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU Usage"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Load Average",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_load1",
+          "legendFormat": "1m"
+        },
+        {
+          "expr": "node_load5",
+          "legendFormat": "5m"
+        },
+        {
+          "expr": "node_load15",
+          "legendFormat": "15m"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "RAM Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "stacking": { "mode": "normal" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Total" },
+            "properties": [
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "custom.stacking", "value": { "mode": "none" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "Used"
+        },
+        {
+          "expr": "node_memory_Cached_bytes + node_memory_Buffers_bytes",
+          "legendFormat": "Cache + Buffers"
+        },
+        {
+          "expr": "node_memory_MemAvailable_bytes",
+          "legendFormat": "Available"
+        },
+        {
+          "expr": "node_memory_MemTotal_bytes",
+          "legendFormat": "Total"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "RAM %",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 4, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
+          "legendFormat": "RAM"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Disk Used %",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 4, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "(1 - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}) * 100",
+          "legendFormat": "/"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "CPU %",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 4, "x": 20, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Disk Space",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}",
+          "legendFormat": "Total"
+        },
+        {
+          "expr": "node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}",
+          "legendFormat": "Used"
+        },
+        {
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"}",
+          "legendFormat": "Available"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Disk I/O",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Write" },
+            "properties": [
+              { "id": "custom.transform", "value": "negative-Y" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(node_disk_read_bytes_total{device=~\"sd.*|vd.*|nvme.*\"}[5m])",
+          "legendFormat": "Read"
+        },
+        {
+          "expr": "rate(node_disk_written_bytes_total{device=~\"sd.*|vd.*|nvme.*\"}[5m])",
+          "legendFormat": "Write"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Network Traffic",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Outbound" },
+            "properties": [
+              { "id": "custom.transform", "value": "negative-Y" }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_bytes_total{device=~\"eth.*|ens.*\"}[5m]) * 8",
+          "legendFormat": "Inbound"
+        },
+        {
+          "expr": "rate(node_network_transmit_bytes_total{device=~\"eth.*|ens.*\"}[5m]) * 8",
+          "legendFormat": "Outbound"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Network Errors & Drops",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_errs_total{device=~\"eth.*|ens.*\"}[5m])",
+          "legendFormat": "RX Errors"
+        },
+        {
+          "expr": "rate(node_network_transmit_errs_total{device=~\"eth.*|ens.*\"}[5m])",
+          "legendFormat": "TX Errors"
+        },
+        {
+          "expr": "rate(node_network_receive_drop_total{device=~\"eth.*|ens.*\"}[5m])",
+          "legendFormat": "RX Drops"
+        },
+        {
+          "expr": "rate(node_network_transmit_drop_total{device=~\"eth.*|ens.*\"}[5m])",
+          "legendFormat": "TX Drops"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "System Uptime",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations"
+        }
+      },
+      "targets": [
+        {
+          "expr": "time() - node_boot_time_seconds",
+          "legendFormat": "Uptime"
+        }
+      ],
+      "options": {
+        "colorMode": "none",
+        "textMode": "value"
+      }
+    },
+    {
+      "id": 12,
+      "title": "Open File Descriptors",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50000 },
+              { "color": "red", "value": 90000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_filefd_allocated",
+          "legendFormat": "Allocated"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Disk I/O Utilization %",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(node_disk_io_time_seconds_total{device=~\"sd.*|vd.*|nvme.*\"}[5m]) * 100",
+          "legendFormat": "IO %"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Swap Usage",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 32 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 104857600 },
+              { "color": "red", "value": 524288000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes",
+          "legendFormat": "Swap Used"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "version": 1
+}

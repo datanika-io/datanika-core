@@ -55,16 +55,14 @@ def setup_upload(upload_svc, conn_svc, exec_svc, db_session, encryption):
         org.id,
         "S",
         ConnectionType.POSTGRES,
-        ConnectionDirection.SOURCE,
         {"host": "src", "port": 5432},
     )
     dst = conn_svc.create_connection(
         db_session,
         org.id,
         "D",
-        ConnectionType.POSTGRES,
-        ConnectionDirection.DESTINATION,
-        {"host": "dst", "port": 5432},
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     upload = upload_svc.create_upload(
         db_session,
@@ -210,20 +208,10 @@ class TestRunUploadTask:
         db_session.add(org)
         db_session.flush()
         src = conn_svc.create_connection(
-            db_session,
-            org.id,
-            "S",
-            ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
-            {"host": "src", "port": 5432},
+            db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432},
         )
         dst = conn_svc.create_connection(
-            db_session,
-            org.id,
-            "D",
-            ConnectionType.POSTGRES,
-            ConnectionDirection.DESTINATION,
-            {"host": "dst", "port": 5432},
+            db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
         )
         upload = upload_svc.create_upload(
             db_session,

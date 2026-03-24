@@ -58,12 +58,10 @@ def org(db_session):
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "SrcCheck", ConnectionType.POSTGRES, ConnectionDirection.SOURCE,
-        {"h": "x"},
+        db_session, org.id, "SrcCheck", ConnectionType.POSTGRES, {"h": "x"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "DstCheck", ConnectionType.POSTGRES, ConnectionDirection.DESTINATION,
-        {"h": "y"},
+        db_session, org.id, "DstCheck", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(db_session, org.id, "checkupload", "desc", src.id, dst.id, {})
 
@@ -71,12 +69,10 @@ def upload(upload_svc, conn_svc, db_session, org):
 @pytest.fixture
 def upload2(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "Src2Check", ConnectionType.POSTGRES, ConnectionDirection.SOURCE,
-        {"h": "x"},
+        db_session, org.id, "Src2Check", ConnectionType.POSTGRES, {"h": "x"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "Dst2Check", ConnectionType.POSTGRES, ConnectionDirection.DESTINATION,
-        {"h": "y"},
+        db_session, org.id, "Dst2Check", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(
         db_session, org.id, "checkupload2", "desc", src.id, dst.id, {},

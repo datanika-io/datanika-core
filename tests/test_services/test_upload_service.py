@@ -3,7 +3,7 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.upload import Upload, UploadStatus
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
@@ -55,7 +55,6 @@ def source_conn(conn_svc, db_session, org):
         org.id,
         "Source DB",
         ConnectionType.POSTGRES,
-        ConnectionDirection.SOURCE,
         {"host": "src"},
     )
 
@@ -66,9 +65,8 @@ def dest_conn(conn_svc, db_session, org):
         db_session,
         org.id,
         "Dest DB",
-        ConnectionType.POSTGRES,
-        ConnectionDirection.DESTINATION,
-        {"host": "dst"},
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
 
 
@@ -79,7 +77,6 @@ def both_conn(conn_svc, db_session, org):
         org.id,
         "Both DB",
         ConnectionType.POSTGRES,
-        ConnectionDirection.BOTH,
         {"host": "both"},
     )
 
@@ -122,32 +119,6 @@ class TestCreateUpload:
                 "d",
                 99999,
                 dest_conn.id,
-                {},
-            )
-
-    def test_wrong_direction_source(self, svc, db_session, org, dest_conn):
-        """A DESTINATION-only connection cannot be used as source."""
-        with pytest.raises(ValueError, match="source"):
-            svc.create_upload(
-                db_session,
-                org.id,
-                "p",
-                "d",
-                dest_conn.id,
-                dest_conn.id,
-                {},
-            )
-
-    def test_wrong_direction_dest(self, svc, db_session, org, source_conn):
-        """A SOURCE-only connection cannot be used as destination."""
-        with pytest.raises(ValueError, match="destination"):
-            svc.create_upload(
-                db_session,
-                org.id,
-                "p",
-                "d",
-                source_conn.id,
-                source_conn.id,
                 {},
             )
 
@@ -287,16 +258,14 @@ class TestListUploads:
             other_org.id,
             "S2",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         other_dst = conn_svc.create_connection(
             db_session,
             other_org.id,
             "D2",
-            ConnectionType.POSTGRES,
-            ConnectionDirection.DESTINATION,
-            {},
+            ConnectionType.BIGQUERY,
+            {"project": "p", "dataset": "d"},
         )
         svc.create_upload(
             db_session,

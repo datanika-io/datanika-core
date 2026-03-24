@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.user import Organization
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import ConnectionService, infer_direction
 from datanika.services.encryption import EncryptionService
 
 
@@ -43,7 +43,6 @@ class TestCreateConnection:
             org.id,
             "My DB",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "localhost", "port": 5432},
         )
         assert isinstance(conn, Connection)
@@ -57,7 +56,6 @@ class TestCreateConnection:
             org.id,
             "My DB",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "localhost"},
         )
         # The raw encrypted field should not contain the plaintext
@@ -72,7 +70,6 @@ class TestCreateConnection:
             org.id,
             "X",
             ConnectionType.MYSQL,
-            ConnectionDirection.DESTINATION,
             {},
         )
         assert conn.org_id == org.id
@@ -83,11 +80,11 @@ class TestCreateConnection:
             org.id,
             "X",
             ConnectionType.REST_API,
-            ConnectionDirection.BOTH,
             {},
         )
         assert conn.connection_type == ConnectionType.REST_API
-        assert conn.direction == ConnectionDirection.BOTH
+        # REST_API is source-only, so direction should be SOURCE
+        assert conn.direction == ConnectionDirection.SOURCE
 
 
 class TestGetConnection:
@@ -97,7 +94,6 @@ class TestGetConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         fetched = svc.get_connection(db_session, org.id, created.id)
@@ -113,7 +109,6 @@ class TestGetConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         assert svc.get_connection(db_session, other_org.id, created.id) is None
@@ -124,7 +119,6 @@ class TestGetConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         svc.delete_connection(db_session, org.id, created.id)
@@ -139,7 +133,6 @@ class TestGetConnectionConfig:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             config,
         )
         result = svc.get_connection_config(db_session, org.id, created.id)
@@ -160,7 +153,6 @@ class TestListConnections:
             org.id,
             "A",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         svc.create_connection(
@@ -168,7 +160,6 @@ class TestListConnections:
             org.id,
             "B",
             ConnectionType.MYSQL,
-            ConnectionDirection.DESTINATION,
             {},
         )
         result = svc.list_connections(db_session, org.id)
@@ -180,7 +171,6 @@ class TestListConnections:
             org.id,
             "A",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         svc.create_connection(
@@ -188,7 +178,6 @@ class TestListConnections:
             org.id,
             "B",
             ConnectionType.MYSQL,
-            ConnectionDirection.DESTINATION,
             {},
         )
         svc.delete_connection(db_session, org.id, created.id)
@@ -202,7 +191,6 @@ class TestListConnections:
             org.id,
             "A",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         svc.create_connection(
@@ -210,7 +198,6 @@ class TestListConnections:
             other_org.id,
             "B",
             ConnectionType.MYSQL,
-            ConnectionDirection.DESTINATION,
             {},
         )
         result = svc.list_connections(db_session, org.id)
@@ -225,7 +212,6 @@ class TestUpdateConnection:
             org.id,
             "Old",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         updated = svc.update_connection(db_session, org.id, created.id, name="New")
@@ -238,7 +224,6 @@ class TestUpdateConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "old"},
         )
         old_encrypted = created.config_encrypted
@@ -260,7 +245,6 @@ class TestUpdateConnection:
             org.id,
             "Keep",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {"host": "keep"},
         )
         old_encrypted = created.config_encrypted
@@ -276,7 +260,6 @@ class TestDeleteConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         result = svc.delete_connection(db_session, org.id, created.id)
@@ -295,7 +278,6 @@ class TestDeleteConnection:
             org.id,
             "X",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         svc.delete_connection(db_session, org.id, created.id)
@@ -637,7 +619,6 @@ class TestConnectionNameValidation:
             org.id,
             "My DB 1",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         assert conn.name == "My DB 1"
@@ -649,7 +630,6 @@ class TestConnectionNameValidation:
                 org.id,
                 "   ",
                 ConnectionType.POSTGRES,
-                ConnectionDirection.SOURCE,
                 {},
             )
 
@@ -660,7 +640,6 @@ class TestConnectionNameValidation:
                 org.id,
                 "My-DB!",
                 ConnectionType.POSTGRES,
-                ConnectionDirection.SOURCE,
                 {},
             )
 
@@ -671,7 +650,6 @@ class TestConnectionNameValidation:
                 org.id,
                 "",
                 ConnectionType.POSTGRES,
-                ConnectionDirection.SOURCE,
                 {},
             )
 
@@ -681,11 +659,45 @@ class TestConnectionNameValidation:
             org.id,
             "Valid",
             ConnectionType.POSTGRES,
-            ConnectionDirection.SOURCE,
             {},
         )
         with pytest.raises(ValueError, match="alphanumeric"):
             svc.update_connection(db_session, org.id, conn.id, name="bad@name")
+
+
+class TestInferDirection:
+    def test_source_only_type(self):
+        assert infer_direction("rest_api") == ConnectionDirection.SOURCE
+        assert infer_direction("s3") == ConnectionDirection.SOURCE
+        assert infer_direction("stripe") == ConnectionDirection.SOURCE
+
+    def test_destination_only_type(self):
+        assert infer_direction("bigquery") == ConnectionDirection.DESTINATION
+        assert infer_direction("snowflake") == ConnectionDirection.DESTINATION
+        assert infer_direction("redshift") == ConnectionDirection.DESTINATION
+
+    def test_both_direction_type(self):
+        assert infer_direction("postgres") == ConnectionDirection.BOTH
+        assert infer_direction("mysql") == ConnectionDirection.BOTH
+        assert infer_direction("clickhouse") == ConnectionDirection.BOTH
+
+    def test_accepts_connection_type_enum(self):
+        assert infer_direction(ConnectionType.POSTGRES) == ConnectionDirection.BOTH
+        assert infer_direction(ConnectionType.BIGQUERY) == ConnectionDirection.DESTINATION
+        assert infer_direction(ConnectionType.S3) == ConnectionDirection.SOURCE
+
+    def test_auto_direction_on_create(self, svc, db_session, org):
+        conn = svc.create_connection(db_session, org.id, "PG", ConnectionType.POSTGRES, {})
+        assert conn.direction == ConnectionDirection.BOTH
+
+        conn2 = svc.create_connection(db_session, org.id, "BQ", ConnectionType.BIGQUERY, {})
+        assert conn2.direction == ConnectionDirection.DESTINATION
+
+    def test_auto_direction_on_update_type(self, svc, db_session, org):
+        conn = svc.create_connection(db_session, org.id, "X", ConnectionType.POSTGRES, {})
+        assert conn.direction == ConnectionDirection.BOTH
+        svc.update_connection(db_session, org.id, conn.id, connection_type=ConnectionType.BIGQUERY)
+        assert conn.direction == ConnectionDirection.DESTINATION
 
 
 class TestExecuteQueryRejection:

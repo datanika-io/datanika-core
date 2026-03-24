@@ -26,7 +26,6 @@ A connection is a source or destination database/API/file that Datanika connects
 {
   "name": "My Postgres Source",
   "connection_type": "postgres",
-  "direction": "source",
   "config": {
     "host": "db.example.com",
     "port": 5432,
@@ -43,8 +42,9 @@ A connection is a source or destination database/API/file that Datanika connects
 |-------|------|-------------|
 | `name` | string | Unique name within the organization |
 | `connection_type` | string | One of the supported types below |
-| `direction` | string | `"source"`, `"destination"`, or `"both"` |
 | `config` | object | Connection-specific settings (see below) |
+
+Direction (source/destination/both) is automatically determined from `connection_type`. You don't need to specify it.
 
 ### Optional fields
 
@@ -60,165 +60,165 @@ Set sensitive values (`password`, `api_key`, `aws_secret_access_key`, `service_a
 
 **postgres**
 ```json
-{"connection_type": "postgres", "direction": "both", "config": {"host": "db.example.com", "port": 5432, "database": "mydb", "user": "admin", "password": "CHANGE_ME"}}
+{"connection_type": "postgres", "config": {"host": "db.example.com", "port": 5432, "database": "mydb", "user": "admin", "password": "CHANGE_ME"}}
 ```
 
 **mysql**
 ```json
-{"connection_type": "mysql", "direction": "both", "config": {"host": "mysql.example.com", "port": 3306, "database": "mydb", "user": "root", "password": "CHANGE_ME"}}
+{"connection_type": "mysql", "config": {"host": "mysql.example.com", "port": 3306, "database": "mydb", "user": "root", "password": "CHANGE_ME"}}
 ```
 
 **mssql**
 ```json
-{"connection_type": "mssql", "direction": "both", "config": {"host": "sql.example.com", "port": 1433, "database": "mydb", "user": "sa", "password": "CHANGE_ME"}}
+{"connection_type": "mssql", "config": {"host": "sql.example.com", "port": 1433, "database": "mydb", "user": "sa", "password": "CHANGE_ME"}}
 ```
 
 **sqlite**
 ```json
-{"connection_type": "sqlite", "direction": "both", "config": {"path": "/data/local.db"}}
+{"connection_type": "sqlite", "config": {"path": "/data/local.db"}}
 ```
 
 **clickhouse**
 ```json
-{"connection_type": "clickhouse", "direction": "both", "config": {"host": "ch.example.com", "port": 8123, "database": "default", "user": "default", "password": "CHANGE_ME", "secure": false}}
+{"connection_type": "clickhouse", "config": {"host": "ch.example.com", "port": 8123, "database": "default", "user": "default", "password": "CHANGE_ME", "secure": false}}
 ```
 
 **duckdb**
 ```json
-{"connection_type": "duckdb", "direction": "both", "config": {"path": "/data/analytics.duckdb"}}
+{"connection_type": "duckdb", "config": {"path": "/data/analytics.duckdb"}}
 ```
 
 #### Cloud Warehouses (destination, some also source)
 
 **bigquery**
 ```json
-{"connection_type": "bigquery", "direction": "destination", "config": {"project": "my-gcp-project", "dataset": "raw_data", "service_account_json": "CHANGE_ME"}}
+{"connection_type": "bigquery", "config": {"project": "my-gcp-project", "dataset": "raw_data", "service_account_json": "CHANGE_ME"}}
 ```
 
 **snowflake**
 ```json
-{"connection_type": "snowflake", "direction": "destination", "config": {"account": "xy12345.us-east-1", "user": "ETL_USER", "password": "CHANGE_ME", "database": "ANALYTICS", "warehouse": "ETL_WH", "schema": "RAW", "role": "ETL_ROLE"}}
+{"connection_type": "snowflake", "config": {"account": "xy12345.us-east-1", "user": "ETL_USER", "password": "CHANGE_ME", "database": "ANALYTICS", "warehouse": "ETL_WH", "schema": "RAW", "role": "ETL_ROLE"}}
 ```
 
 **redshift**
 ```json
-{"connection_type": "redshift", "direction": "destination", "config": {"host": "cluster.abc.us-east-1.redshift.amazonaws.com", "port": 5439, "database": "analytics", "user": "etl", "password": "CHANGE_ME"}}
+{"connection_type": "redshift", "config": {"host": "cluster.abc.us-east-1.redshift.amazonaws.com", "port": 5439, "database": "analytics", "user": "etl", "password": "CHANGE_ME"}}
 ```
 
 **databricks**
 ```json
-{"connection_type": "databricks", "direction": "destination", "config": {"host": "adb-123.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/abc", "token": "CHANGE_ME", "catalog": "main"}}
+{"connection_type": "databricks", "config": {"host": "adb-123.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/abc", "token": "CHANGE_ME", "catalog": "main"}}
 ```
 
 **synapse**
 ```json
-{"connection_type": "synapse", "direction": "destination", "config": {"host": "synapse.sql.azuresynapse.net", "port": 1433, "database": "pool", "user": "sqladmin", "password": "CHANGE_ME"}}
+{"connection_type": "synapse", "config": {"host": "synapse.sql.azuresynapse.net", "port": 1433, "database": "pool", "user": "sqladmin", "password": "CHANGE_ME"}}
 ```
 
 #### SaaS APIs (source only)
 
 **stripe**
 ```json
-{"connection_type": "stripe", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+{"connection_type": "stripe", "config": {"api_key": "CHANGE_ME"}}
 ```
 
 **github**
 ```json
-{"connection_type": "github", "direction": "source", "config": {"access_token": "CHANGE_ME", "owner": "my-org", "repo": "my-repo"}}
+{"connection_type": "github", "config": {"access_token": "CHANGE_ME", "owner": "my-org", "repo": "my-repo"}}
 ```
 
 **hubspot**
 ```json
-{"connection_type": "hubspot", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+{"connection_type": "hubspot", "config": {"api_key": "CHANGE_ME"}}
 ```
 
 **salesforce**
 ```json
-{"connection_type": "salesforce", "direction": "source", "config": {"client_id": "CHANGE_ME", "client_secret": "CHANGE_ME", "username": "user@example.com", "password": "CHANGE_ME", "security_token": "CHANGE_ME"}}
+{"connection_type": "salesforce", "config": {"client_id": "CHANGE_ME", "client_secret": "CHANGE_ME", "username": "user@example.com", "password": "CHANGE_ME", "security_token": "CHANGE_ME"}}
 ```
 
 **shopify**
 ```json
-{"connection_type": "shopify", "direction": "source", "config": {"shop_url": "my-store.myshopify.com", "access_token": "CHANGE_ME"}}
+{"connection_type": "shopify", "config": {"shop_url": "my-store.myshopify.com", "access_token": "CHANGE_ME"}}
 ```
 
 **jira**
 ```json
-{"connection_type": "jira", "direction": "source", "config": {"server_url": "https://mycompany.atlassian.net", "email": "user@example.com", "api_token": "CHANGE_ME"}}
+{"connection_type": "jira", "config": {"server_url": "https://mycompany.atlassian.net", "email": "user@example.com", "api_token": "CHANGE_ME"}}
 ```
 
 **slack**
 ```json
-{"connection_type": "slack", "direction": "source", "config": {"token": "CHANGE_ME"}}
+{"connection_type": "slack", "config": {"token": "CHANGE_ME"}}
 ```
 
 **zendesk**
 ```json
-{"connection_type": "zendesk", "direction": "source", "config": {"subdomain": "mycompany", "email": "admin@example.com", "api_token": "CHANGE_ME"}}
+{"connection_type": "zendesk", "config": {"subdomain": "mycompany", "email": "admin@example.com", "api_token": "CHANGE_ME"}}
 ```
 
 **airtable**
 ```json
-{"connection_type": "airtable", "direction": "source", "config": {"api_key": "CHANGE_ME", "base_id": "appXXXXXXXXXXXXXX"}}
+{"connection_type": "airtable", "config": {"api_key": "CHANGE_ME", "base_id": "appXXXXXXXXXXXXXX"}}
 ```
 
 **notion**
 ```json
-{"connection_type": "notion", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+{"connection_type": "notion", "config": {"api_key": "CHANGE_ME"}}
 ```
 
 **google_analytics**
 ```json
-{"connection_type": "google_analytics", "direction": "source", "config": {"property_id": "123456789", "service_account_json": "CHANGE_ME"}}
+{"connection_type": "google_analytics", "config": {"property_id": "123456789", "service_account_json": "CHANGE_ME"}}
 ```
 
 **google_ads**
 ```json
-{"connection_type": "google_ads", "direction": "source", "config": {"customer_id": "123-456-7890", "service_account_json": "CHANGE_ME"}}
+{"connection_type": "google_ads", "config": {"customer_id": "123-456-7890", "service_account_json": "CHANGE_ME"}}
 ```
 
 **facebook_ads**
 ```json
-{"connection_type": "facebook_ads", "direction": "source", "config": {"access_token": "CHANGE_ME", "account_id": "act_123456789"}}
+{"connection_type": "facebook_ads", "config": {"access_token": "CHANGE_ME", "account_id": "act_123456789"}}
 ```
 
 **google_sheets**
 ```json
-{"connection_type": "google_sheets", "direction": "source", "config": {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms", "service_account_json": "CHANGE_ME"}}
+{"connection_type": "google_sheets", "config": {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms", "service_account_json": "CHANGE_ME"}}
 ```
 
 **mongodb**
 ```json
-{"connection_type": "mongodb", "direction": "source", "config": {"connection_string": "mongodb://user:CHANGE_ME@mongo.example.com:27017", "database": "mydb"}}
+{"connection_type": "mongodb", "config": {"connection_string": "mongodb://user:CHANGE_ME@mongo.example.com:27017", "database": "mydb"}}
 ```
 
 #### Files (source only)
 
 **s3**
 ```json
-{"connection_type": "s3", "direction": "source", "config": {"bucket": "my-data-bucket", "aws_access_key_id": "CHANGE_ME", "aws_secret_access_key": "CHANGE_ME", "region": "us-east-1"}}
+{"connection_type": "s3", "config": {"bucket": "my-data-bucket", "aws_access_key_id": "CHANGE_ME", "aws_secret_access_key": "CHANGE_ME", "region": "us-east-1"}}
 ```
 
 **csv**
 ```json
-{"connection_type": "csv", "direction": "source", "config": {"path": "/data/exports/orders.csv"}}
+{"connection_type": "csv", "config": {"path": "/data/exports/orders.csv"}}
 ```
 
 **json**
 ```json
-{"connection_type": "json", "direction": "source", "config": {"path": "/data/exports/events.json"}}
+{"connection_type": "json", "config": {"path": "/data/exports/events.json"}}
 ```
 
 **parquet**
 ```json
-{"connection_type": "parquet", "direction": "source", "config": {"path": "/data/exports/transactions.parquet"}}
+{"connection_type": "parquet", "config": {"path": "/data/exports/transactions.parquet"}}
 ```
 
 #### Streaming (source only)
 
 **kafka**
 ```json
-{"connection_type": "kafka", "direction": "source", "config": {"bootstrap_servers": "kafka1:9092,kafka2:9092", "topics": "orders,events", "group_id": "datanika-consumer"}}
+{"connection_type": "kafka", "config": {"bootstrap_servers": "kafka1:9092,kafka2:9092", "topics": "orders,events", "group_id": "datanika-consumer"}}
 ```
 
 ---
@@ -455,7 +455,6 @@ User request: *"I have a MySQL database with orders and customers. I want to loa
     {
       "name": "MySQL Production",
       "connection_type": "mysql",
-      "direction": "source",
       "config": {
         "host": "mysql.example.com",
         "port": 3306,
@@ -467,7 +466,6 @@ User request: *"I have a MySQL database with orders and customers. I want to loa
     {
       "name": "Analytics Postgres",
       "connection_type": "postgres",
-      "direction": "destination",
       "config": {
         "host": "pg.example.com",
         "port": 5432,
@@ -563,10 +561,10 @@ User request: *"I have a MySQL database with orders and customers. I want to loa
 The import validates the entire file before making any changes. If any errors are found, nothing is imported. All errors are returned at once so you can fix them in one pass.
 
 ### Connection rules
-- Required fields: `name`, `connection_type`, `direction`, `config`
+- Required fields: `name`, `connection_type`, `config`
 - `name` must be a non-empty string (after trimming whitespace)
 - `connection_type` must be one of the supported types listed above
-- `direction` must be `"source"`, `"destination"`, or `"both"`
+- Direction is auto-determined from `connection_type` (no need to specify)
 - No two connections in the same file can have the same name
 
 ### Upload rules
@@ -574,8 +572,8 @@ The import validates the entire file before making any changes. If any errors ar
 - `name` must be non-empty
 - `source_connection_name` must reference a connection in the file OR one already in Datanika
 - `destination_connection_name` must reference a connection in the file OR one already in Datanika
-- Source connection must have direction `"source"` or `"both"` (not `"destination"`)
-- Destination connection must have direction `"destination"` or `"both"` (not `"source"`)
+- Source connection must be a type that supports reading (databases, APIs, files)
+- Destination connection must be a type that supports writing (databases, warehouses)
 - `status` (if provided) must be `"draft"`, `"active"`, `"paused"`, or `"error"`
 - No duplicate upload names in the file
 
@@ -602,11 +600,10 @@ If validation fails, you'll get errors with these codes:
 | `MISSING_FIELD` | A required field is not present in the JSON |
 | `EMPTY_FIELD` | A required field is empty or whitespace-only |
 | `INVALID_CONNECTION_TYPE` | `connection_type` is not a recognized value |
-| `INVALID_ENUM_VALUE` | An enum field (`direction`, `status`, `command`, `materialization`) has an invalid value |
+| `INVALID_ENUM_VALUE` | An enum field (`status`, `command`, `materialization`) has an invalid value |
 | `INVALID_NAME_FORMAT` | Transformation name doesn't match the required pattern |
 | `DUPLICATE_NAME` | Two items of the same type have the same name in the file |
 | `UNKNOWN_CONNECTION_REF` | Upload/pipeline/transformation references a connection that doesn't exist |
-| `DIRECTION_MISMATCH` | A source-only connection is used as destination, or vice versa |
 
 ---
 

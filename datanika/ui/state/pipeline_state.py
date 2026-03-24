@@ -13,7 +13,7 @@ from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.ui.state.connection_state import DESTINATION_TYPES
+from datanika.services.connection_service import DESTINATION_TYPES
 
 
 class PipelineItem(BaseModel):

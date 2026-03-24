@@ -13,6 +13,33 @@ from datanika.services.naming import validate_name
 
 validate_connection_name = partial(validate_name, entity_label="Connection")
 
+# Types that can serve as sources (databases + files + rest_api + sheets)
+SOURCE_TYPES = {
+    "postgres", "mysql", "mssql", "sqlite", "rest_api", "s3", "csv", "json", "parquet",
+    "google_sheets", "mongodb", "clickhouse", "duckdb", "stripe", "github", "hubspot",
+    "salesforce", "shopify", "jira", "slack", "google_analytics", "google_ads",
+    "facebook_ads", "zendesk", "airtable", "notion", "kafka",
+}
+
+# Types that can serve as destinations (databases + cloud warehouses)
+DESTINATION_TYPES = {
+    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift",
+    "clickhouse", "duckdb", "databricks", "synapse",
+}
+
+
+def infer_direction(connection_type: str | ConnectionType) -> ConnectionDirection:
+    """Derive direction from connection type."""
+    ct = connection_type.value if isinstance(connection_type, ConnectionType) else connection_type
+    is_src = ct in SOURCE_TYPES
+    is_dst = ct in DESTINATION_TYPES
+    if is_src and is_dst:
+        return ConnectionDirection.BOTH
+    if is_dst:
+        return ConnectionDirection.DESTINATION
+    return ConnectionDirection.SOURCE
+
+
 # Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
 _NON_DB_TYPES = {
     ConnectionType.S3,
@@ -140,13 +167,13 @@ class ConnectionService:
         org_id: int,
         name: str,
         connection_type: ConnectionType,
-        direction: ConnectionDirection,
         config: dict,
     ) -> Connection:
         from datanika.hooks import emit
 
         emit("connection.before_create", session=session, org_id=org_id)
         validate_connection_name(name)
+        direction = infer_direction(connection_type)
         conn = Connection(
             org_id=org_id,
             name=name,
@@ -190,10 +217,9 @@ class ConnectionService:
         if "name" in kwargs:
             validate_connection_name(kwargs["name"])
             conn.name = kwargs["name"]
-        if "direction" in kwargs:
-            conn.direction = kwargs["direction"]
         if "connection_type" in kwargs:
             conn.connection_type = kwargs["connection_type"]
+            conn.direction = infer_direction(kwargs["connection_type"])
         if "config" in kwargs:
             conn.config_encrypted = self._encryption.encrypt(kwargs["config"])
 

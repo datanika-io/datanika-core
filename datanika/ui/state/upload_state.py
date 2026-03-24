@@ -14,12 +14,11 @@ from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
 from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
+from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES
 from datanika.ui.state.connection_state import (
-    DESTINATION_TYPES,
     NON_SQL_SOURCE_TYPES,
     SAAS_DEFAULT_ENDPOINTS,
     SAAS_SOURCE_TYPES,
-    SOURCE_TYPES,
 )
 
 

@@ -6,7 +6,6 @@ from functools import partial
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from datanika.models.connection import ConnectionDirection
 from datanika.models.upload import Upload, UploadStatus
 from datanika.services.connection_service import ConnectionService
 from datanika.services.naming import to_snake_case, validate_name
@@ -52,26 +51,18 @@ class UploadService:
     ) -> Upload:
         validate_upload_name(name)
 
-        # Validate source connection
+        # Validate source connection exists
         src = self._conn_svc.get_connection(session, org_id, source_connection_id)
-        if src is None or src.direction not in (
-            ConnectionDirection.SOURCE,
-            ConnectionDirection.BOTH,
-        ):
+        if src is None:
             raise ValueError(
-                f"Invalid source connection {source_connection_id}: "
-                "must exist and have direction SOURCE or BOTH"
+                f"Invalid source connection {source_connection_id}: must exist"
             )
 
-        # Validate destination connection
+        # Validate destination connection exists
         dst = self._conn_svc.get_connection(session, org_id, destination_connection_id)
-        if dst is None or dst.direction not in (
-            ConnectionDirection.DESTINATION,
-            ConnectionDirection.BOTH,
-        ):
+        if dst is None:
             raise ValueError(
-                f"Invalid destination connection {destination_connection_id}: "
-                "must exist and have direction DESTINATION or BOTH"
+                f"Invalid destination connection {destination_connection_id}: must exist"
             )
 
         self.validate_upload_config(dlt_config)

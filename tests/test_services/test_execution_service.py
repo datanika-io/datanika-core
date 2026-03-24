@@ -53,20 +53,10 @@ def other_org(db_session):
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session,
-        org.id,
-        "S",
-        ConnectionType.POSTGRES,
-        ConnectionDirection.SOURCE,
-        {"host": "src"},
+        db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src"},
     )
     dst = conn_svc.create_connection(
-        db_session,
-        org.id,
-        "D",
-        ConnectionType.POSTGRES,
-        ConnectionDirection.DESTINATION,
-        {"host": "dst"},
+        db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(
         db_session,

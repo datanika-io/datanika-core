@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.models.connection import Connection, ConnectionType
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
@@ -75,36 +75,23 @@ class BackupService:
                 )
                 return False
 
-        # Build file_conn_map: name -> direction for valid entries in backup
-        file_conn_map: dict[str, str] = {}
+        # Build set of known connection names (from file + DB) for reference checks
+        file_conn_names: set[str] = set()
         for c in data.get("connections", []):
             name = c.get("name")
-            direction = c.get("direction")
-            if isinstance(name, str) and name.strip() and isinstance(direction, str):
-                # Only include if direction is actually valid
-                try:
-                    ConnectionDirection(direction)
-                    file_conn_map[name.strip()] = direction
-                except (ValueError, KeyError):
-                    pass
+            if isinstance(name, str) and name.strip():
+                file_conn_names.add(name.strip())
 
-        # Build db_conn_map from existing DB connections
-        db_conn_map: dict[str, str] = {}
+        db_conn_names: set[str] = set()
         rows = session.execute(
-            select(Connection.name, Connection.direction).where(
+            select(Connection.name).where(
                 Connection.org_id == org_id, Connection.deleted_at.is_(None)
             )
         ).all()
-        for name, direction in rows:
-            db_conn_map[name] = direction.value if hasattr(direction, "value") else direction
+        for (name,) in rows:
+            db_conn_names.add(name)
 
-        def _resolve_conn_direction(conn_name: str) -> str | None:
-            """Look up direction for a connection name. Returns None if unresolvable."""
-            if conn_name in file_conn_map:
-                return file_conn_map[conn_name]
-            if conn_name in db_conn_map:
-                return db_conn_map[conn_name]
-            return None
+        known_conn_names = file_conn_names | db_conn_names
 
         def _check_required_str(entry, field, entity_type, index) -> bool:
             """Check field exists and is non-empty. Returns True if valid."""
@@ -134,27 +121,15 @@ class BackupService:
             entity_type: str,
             index: int,
             field: str,
-            expected_directions: set[str],
         ) -> None:
-            """Check connection reference exists and has valid direction."""
-            direction = _resolve_conn_direction(conn_name)
-            if direction is None:
+            """Check connection reference exists."""
+            if conn_name not in known_conn_names:
                 _err(
                     ImportErrorCode.UNKNOWN_CONNECTION_REF,
                     entity_type,
                     index,
                     field,
                     f"Unknown connection '{conn_name}' referenced in {entity_type}[{index}]",
-                )
-                return
-            if direction not in expected_directions:
-                _err(
-                    ImportErrorCode.DIRECTION_MISMATCH,
-                    entity_type,
-                    index,
-                    field,
-                    f"Connection '{conn_name}' has direction '{direction}', "
-                    f"expected one of {expected_directions} in {entity_type}[{index}]",
                 )
 
         # --- Validate connections ---
@@ -183,19 +158,6 @@ class BackupService:
                         "connection_type",
                         f"Invalid connection_type '{ct}' in connection[{i}]",
                     )
-
-            # direction
-            direction = c.get("direction")
-            if direction is None:
-                _err(
-                    ImportErrorCode.MISSING_FIELD,
-                    "connection",
-                    i,
-                    "direction",
-                    f"Missing required field 'direction' in connection[{i}]",
-                )
-            else:
-                _check_enum(direction, ConnectionDirection, "connection", i, "direction")
 
             # config
             if c.get("config") is None:
@@ -235,9 +197,7 @@ class BackupService:
                     f"Missing required field 'source_connection_name' in upload[{i}]",
                 )
             else:
-                _check_ref(
-                    src_name, "upload", i, "source_connection_name", {"source", "both"}
-                )
+                _check_ref(src_name, "upload", i, "source_connection_name")
 
             dst_name = u.get("destination_connection_name")
             if dst_name is None:
@@ -249,13 +209,7 @@ class BackupService:
                     f"Missing required field 'destination_connection_name' in upload[{i}]",
                 )
             else:
-                _check_ref(
-                    dst_name,
-                    "upload",
-                    i,
-                    "destination_connection_name",
-                    {"destination", "both"},
-                )
+                _check_ref(dst_name, "upload", i, "destination_connection_name")
 
             # status (optional)
             status = u.get("status")
@@ -290,13 +244,7 @@ class BackupService:
                     f"Missing required field 'destination_connection_name' in pipeline[{i}]",
                 )
             else:
-                _check_ref(
-                    dst_name,
-                    "pipeline",
-                    i,
-                    "destination_connection_name",
-                    {"destination", "both"},
-                )
+                _check_ref(dst_name, "pipeline", i, "destination_connection_name")
 
             # command (optional)
             command = p.get("command")
@@ -348,13 +296,7 @@ class BackupService:
             # destination_connection_name (optional)
             dst_name = t.get("destination_connection_name")
             if dst_name is not None:
-                _check_ref(
-                    dst_name,
-                    "transformation",
-                    i,
-                    "destination_connection_name",
-                    {"destination", "both"},
-                )
+                _check_ref(dst_name, "transformation", i, "destination_connection_name")
 
             # duplicate name
             if name_valid:
@@ -398,7 +340,6 @@ class BackupService:
                 {
                     "name": c.name,
                     "connection_type": c.connection_type.value,
-                    "direction": c.direction.value,
                     "config": masked,
                     "freshness_config": c.freshness_config,
                 }
@@ -544,7 +485,6 @@ class BackupService:
                         conn_name_to_id[name],
                         name=name,
                         connection_type=ConnectionType(c_data["connection_type"]),
-                        direction=ConnectionDirection(c_data["direction"]),
                         config=c_data["config"],
                     )
                     name_to_new_id[name] = conn_name_to_id[name]
@@ -563,7 +503,6 @@ class BackupService:
                 org_id,
                 name,
                 ConnectionType(c_data["connection_type"]),
-                ConnectionDirection(c_data["direction"]),
                 c_data["config"],
             )
             # Map the original backup name to the new ID

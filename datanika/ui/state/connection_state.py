@@ -7,54 +7,14 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.connection import ConnectionDirection, ConnectionType
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import (
+    ConnectionService,
+    DESTINATION_TYPES,
+    SOURCE_TYPES,
+    infer_direction,
+)
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
-
-# Types that can serve as sources (databases + files + rest_api + sheets)
-SOURCE_TYPES = {
-    "postgres",
-    "mysql",
-    "mssql",
-    "sqlite",
-    "rest_api",
-    "s3",
-    "csv",
-    "json",
-    "parquet",
-    "google_sheets",
-    "mongodb",
-    "clickhouse",
-    "duckdb",
-    "stripe",
-    "github",
-    "hubspot",
-    "salesforce",
-    "shopify",
-    "jira",
-    "slack",
-    "google_analytics",
-    "google_ads",
-    "facebook_ads",
-    "zendesk",
-    "airtable",
-    "notion",
-    "kafka",
-}
-# Types that can serve as destinations (databases + cloud warehouses)
-DESTINATION_TYPES = {
-    "postgres",
-    "mysql",
-    "mssql",
-    "sqlite",
-    "bigquery",
-    "snowflake",
-    "redshift",
-    "clickhouse",
-    "duckdb",
-    "databricks",
-    "synapse",
-}
 
 # SaaS source types that use endpoint/resource selection (not SQL mode)
 SAAS_SOURCE_TYPES = {
@@ -170,17 +130,6 @@ def _validate_connection_form(
         if not base_url.strip():
             return "Base URL is required"
     return ""
-
-
-def _infer_direction(connection_type: str) -> ConnectionDirection:
-    """Infer direction from connection type."""
-    is_source = connection_type in SOURCE_TYPES
-    is_dest = connection_type in DESTINATION_TYPES
-    if is_source and is_dest:
-        return ConnectionDirection.BOTH
-    if is_dest:
-        return ConnectionDirection.DESTINATION
-    return ConnectionDirection.SOURCE
 
 
 class ConnectionItem(BaseModel):
@@ -830,7 +779,6 @@ class ConnectionState(BaseState):
                         self.editing_conn_id,
                         name=self.form_name,
                         connection_type=ConnectionType(self.form_type),
-                        direction=_infer_direction(self.form_type),
                         config=config,
                     )
                 else:
@@ -839,7 +787,6 @@ class ConnectionState(BaseState):
                         org_id,
                         self.form_name,
                         ConnectionType(self.form_type),
-                        _infer_direction(self.form_type),
                         config,
                     )
                 session.commit()

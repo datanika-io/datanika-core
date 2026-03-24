@@ -12,7 +12,7 @@ from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.ui.state.connection_state import DESTINATION_TYPES
+from datanika.services.connection_service import DESTINATION_TYPES
 
 _REF_PATTERN = re.compile(r"""\{\{\s*ref\(\s*['"]([^'"]*?)$""")
 _SOURCE_TABLE_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*?)$""")

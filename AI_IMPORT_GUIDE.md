@@ -52,54 +52,174 @@ A connection is a source or destination database/API/file that Datanika connects
 |-------|------|-------------|
 | `freshness_config` | object | dbt source freshness settings (loaded_at_field, warn_after, error_after) |
 
-### Supported connection types
+### Supported connection types with config examples
 
-**Databases (source + destination):**
-- `postgres` — host, port, database, user, password
-- `mysql` — host, port, database, user, password
-- `mssql` — host, port, database, user, password
-- `sqlite` — path
-- `clickhouse` — host, port, database, user, password, secure (bool)
-- `duckdb` — path
+Set sensitive values (`password`, `api_key`, `aws_secret_access_key`, `service_account_json`) to `"CHANGE_ME"`. The user will enter real credentials after import.
 
-**Cloud warehouses (destination, some also source):**
-- `bigquery` — project, dataset, service_account_json
-- `snowflake` — account, user, password, database, warehouse, schema, role
-- `redshift` — host, port, database, user, password
-- `databricks` — host, http_path, token, catalog
-- `synapse` — host, port, database, user, password
+#### Databases (source + destination)
 
-**SaaS APIs (source only):**
-- `stripe` — api_key
-- `github` — access_token, owner, repo
-- `hubspot` — api_key
-- `salesforce` — client_id, client_secret, username, password, security_token
-- `shopify` — shop_url, access_token
-- `jira` — server_url, email, api_token
-- `slack` — token
-- `zendesk` — subdomain, email, api_token
-- `airtable` — api_key, base_id
-- `notion` — api_key
-- `google_analytics` — property_id, service_account_json
-- `google_ads` — customer_id, service_account_json
-- `facebook_ads` — access_token, account_id
-- `google_sheets` — spreadsheet_id, service_account_json
-- `mongodb` — connection_string, database
+**postgres**
+```json
+{"connection_type": "postgres", "direction": "both", "config": {"host": "db.example.com", "port": 5432, "database": "mydb", "user": "admin", "password": "CHANGE_ME"}}
+```
 
-**Files (source only):**
-- `s3` — bucket, aws_access_key_id, aws_secret_access_key, region
-- `csv` — path
-- `json` — path
-- `parquet` — path
+**mysql**
+```json
+{"connection_type": "mysql", "direction": "both", "config": {"host": "mysql.example.com", "port": 3306, "database": "mydb", "user": "root", "password": "CHANGE_ME"}}
+```
 
-**Streaming (source only):**
-- `kafka` — bootstrap_servers, topics, group_id
+**mssql**
+```json
+{"connection_type": "mssql", "direction": "both", "config": {"host": "sql.example.com", "port": 1433, "database": "mydb", "user": "sa", "password": "CHANGE_ME"}}
+```
 
-### Passwords and secrets
+**sqlite**
+```json
+{"connection_type": "sqlite", "direction": "both", "config": {"path": "/data/local.db"}}
+```
 
-Set sensitive values to `"CHANGE_ME"` — the user will enter real credentials in the Datanika UI after import.
+**clickhouse**
+```json
+{"connection_type": "clickhouse", "direction": "both", "config": {"host": "ch.example.com", "port": 8123, "database": "default", "user": "default", "password": "CHANGE_ME", "secure": false}}
+```
 
-Sensitive keys: `password`, `aws_secret_access_key`, `service_account_json`, `api_key`.
+**duckdb**
+```json
+{"connection_type": "duckdb", "direction": "both", "config": {"path": "/data/analytics.duckdb"}}
+```
+
+#### Cloud Warehouses (destination, some also source)
+
+**bigquery**
+```json
+{"connection_type": "bigquery", "direction": "destination", "config": {"project": "my-gcp-project", "dataset": "raw_data", "service_account_json": "CHANGE_ME"}}
+```
+
+**snowflake**
+```json
+{"connection_type": "snowflake", "direction": "destination", "config": {"account": "xy12345.us-east-1", "user": "ETL_USER", "password": "CHANGE_ME", "database": "ANALYTICS", "warehouse": "ETL_WH", "schema": "RAW", "role": "ETL_ROLE"}}
+```
+
+**redshift**
+```json
+{"connection_type": "redshift", "direction": "destination", "config": {"host": "cluster.abc.us-east-1.redshift.amazonaws.com", "port": 5439, "database": "analytics", "user": "etl", "password": "CHANGE_ME"}}
+```
+
+**databricks**
+```json
+{"connection_type": "databricks", "direction": "destination", "config": {"host": "adb-123.azuredatabricks.net", "http_path": "/sql/1.0/warehouses/abc", "token": "CHANGE_ME", "catalog": "main"}}
+```
+
+**synapse**
+```json
+{"connection_type": "synapse", "direction": "destination", "config": {"host": "synapse.sql.azuresynapse.net", "port": 1433, "database": "pool", "user": "sqladmin", "password": "CHANGE_ME"}}
+```
+
+#### SaaS APIs (source only)
+
+**stripe**
+```json
+{"connection_type": "stripe", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+```
+
+**github**
+```json
+{"connection_type": "github", "direction": "source", "config": {"access_token": "CHANGE_ME", "owner": "my-org", "repo": "my-repo"}}
+```
+
+**hubspot**
+```json
+{"connection_type": "hubspot", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+```
+
+**salesforce**
+```json
+{"connection_type": "salesforce", "direction": "source", "config": {"client_id": "CHANGE_ME", "client_secret": "CHANGE_ME", "username": "user@example.com", "password": "CHANGE_ME", "security_token": "CHANGE_ME"}}
+```
+
+**shopify**
+```json
+{"connection_type": "shopify", "direction": "source", "config": {"shop_url": "my-store.myshopify.com", "access_token": "CHANGE_ME"}}
+```
+
+**jira**
+```json
+{"connection_type": "jira", "direction": "source", "config": {"server_url": "https://mycompany.atlassian.net", "email": "user@example.com", "api_token": "CHANGE_ME"}}
+```
+
+**slack**
+```json
+{"connection_type": "slack", "direction": "source", "config": {"token": "CHANGE_ME"}}
+```
+
+**zendesk**
+```json
+{"connection_type": "zendesk", "direction": "source", "config": {"subdomain": "mycompany", "email": "admin@example.com", "api_token": "CHANGE_ME"}}
+```
+
+**airtable**
+```json
+{"connection_type": "airtable", "direction": "source", "config": {"api_key": "CHANGE_ME", "base_id": "appXXXXXXXXXXXXXX"}}
+```
+
+**notion**
+```json
+{"connection_type": "notion", "direction": "source", "config": {"api_key": "CHANGE_ME"}}
+```
+
+**google_analytics**
+```json
+{"connection_type": "google_analytics", "direction": "source", "config": {"property_id": "123456789", "service_account_json": "CHANGE_ME"}}
+```
+
+**google_ads**
+```json
+{"connection_type": "google_ads", "direction": "source", "config": {"customer_id": "123-456-7890", "service_account_json": "CHANGE_ME"}}
+```
+
+**facebook_ads**
+```json
+{"connection_type": "facebook_ads", "direction": "source", "config": {"access_token": "CHANGE_ME", "account_id": "act_123456789"}}
+```
+
+**google_sheets**
+```json
+{"connection_type": "google_sheets", "direction": "source", "config": {"spreadsheet_id": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms", "service_account_json": "CHANGE_ME"}}
+```
+
+**mongodb**
+```json
+{"connection_type": "mongodb", "direction": "source", "config": {"connection_string": "mongodb://user:CHANGE_ME@mongo.example.com:27017", "database": "mydb"}}
+```
+
+#### Files (source only)
+
+**s3**
+```json
+{"connection_type": "s3", "direction": "source", "config": {"bucket": "my-data-bucket", "aws_access_key_id": "CHANGE_ME", "aws_secret_access_key": "CHANGE_ME", "region": "us-east-1"}}
+```
+
+**csv**
+```json
+{"connection_type": "csv", "direction": "source", "config": {"path": "/data/exports/orders.csv"}}
+```
+
+**json**
+```json
+{"connection_type": "json", "direction": "source", "config": {"path": "/data/exports/events.json"}}
+```
+
+**parquet**
+```json
+{"connection_type": "parquet", "direction": "source", "config": {"path": "/data/exports/transactions.parquet"}}
+```
+
+#### Streaming (source only)
+
+**kafka**
+```json
+{"connection_type": "kafka", "direction": "source", "config": {"bootstrap_servers": "kafka1:9092,kafka2:9092", "topics": "orders,events", "group_id": "datanika-consumer"}}
+```
 
 ---
 
@@ -153,6 +273,33 @@ An upload extracts data from a source connection and loads it into a destination
 
 Filter operators: `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`.
 
+### Upload examples
+
+**Single table, full replace:**
+```json
+{"name": "Load products", "source_connection_name": "MySQL Prod", "destination_connection_name": "Warehouse", "dlt_config": {"load_mode": "single_table", "table_name": "products", "write_disposition": "replace", "schema_name": "raw"}}
+```
+
+**Single table, incremental merge:**
+```json
+{"name": "Sync orders", "source_connection_name": "MySQL Prod", "destination_connection_name": "Warehouse", "dlt_config": {"load_mode": "single_table", "table_name": "orders", "write_disposition": "merge", "primary_key": "id", "incremental_key": "updated_at", "schema_name": "raw"}}
+```
+
+**Full database sync:**
+```json
+{"name": "Replicate CRM", "source_connection_name": "CRM Postgres", "destination_connection_name": "Warehouse", "dlt_config": {"load_mode": "full_database", "write_disposition": "replace", "schema_name": "raw_crm"}}
+```
+
+**Full database with table filter:**
+```json
+{"name": "Load selected tables", "source_connection_name": "MySQL Prod", "destination_connection_name": "Warehouse", "dlt_config": {"load_mode": "full_database", "tables": ["orders", "customers", "products"], "write_disposition": "append", "schema_name": "raw"}}
+```
+
+**With row-level filter:**
+```json
+{"name": "Load active users", "source_connection_name": "App DB", "destination_connection_name": "Warehouse", "dlt_config": {"load_mode": "single_table", "table_name": "users", "write_disposition": "replace", "filters": [{"column": "status", "operator": "eq", "value": "active"}]}}
+```
+
 ---
 
 ## Pipelines (dbt Transform Orchestration)
@@ -190,6 +337,33 @@ A pipeline runs dbt commands (run, build, test, seed, snapshot, compile) against
 | `models` | list of objects | Each object must have a `"name"` key (dbt selector) |
 | `custom_selector` | string | Raw dbt `--select` expression (overrides models list) |
 | `status` | string | `"draft"` (default), `"active"`, `"paused"`, or `"error"` |
+
+### Pipeline examples
+
+**Run all models:**
+```json
+{"name": "Run everything", "destination_connection_name": "Warehouse", "command": "run"}
+```
+
+**Build specific model groups:**
+```json
+{"name": "Build staging", "destination_connection_name": "Warehouse", "command": "build", "models": [{"name": "staging"}]}
+```
+
+**Run tests only:**
+```json
+{"name": "Test data quality", "destination_connection_name": "Warehouse", "command": "test", "models": [{"name": "marts"}]}
+```
+
+**Full refresh with custom selector:**
+```json
+{"name": "Full rebuild marts", "destination_connection_name": "Warehouse", "command": "run", "full_refresh": true, "custom_selector": "marts.* --exclude marts.mart_temp"}
+```
+
+**Run dbt seed (load CSV reference data):**
+```json
+{"name": "Load seeds", "destination_connection_name": "Warehouse", "command": "seed"}
+```
 
 ---
 
@@ -240,6 +414,33 @@ A transformation is a dbt SQL model that transforms loaded data.
 ```
 
 Supported tests: `not_null`, `unique`, `accepted_values`, `relationships`.
+
+### Transformation examples
+
+**Simple staging view:**
+```json
+{"name": "stg_orders", "sql_body": "SELECT id, customer_id, CAST(amount AS numeric(12,2)) AS amount, status, created_at FROM {{ source('raw', 'orders') }} WHERE status != 'cancelled'", "materialization": "view", "schema_name": "staging", "tags": ["staging"]}
+```
+
+**Table materialization with tests:**
+```json
+{"name": "mart_revenue", "sql_body": "SELECT date_trunc('month', o.created_at) AS month, SUM(o.amount) AS total_revenue, COUNT(*) AS order_count FROM {{ ref('stg_orders') }} o GROUP BY 1", "materialization": "table", "schema_name": "marts", "tags": ["marts", "finance"], "tests_config": {"columns": {"month": {"not_null": true, "unique": true}, "total_revenue": {"not_null": true}}}}
+```
+
+**Incremental model:**
+```json
+{"name": "fct_events", "sql_body": "SELECT id, user_id, event_type, created_at FROM {{ source('raw', 'events') }} {% if is_incremental() %} WHERE created_at > (SELECT MAX(created_at) FROM {{ this }}) {% endif %}", "materialization": "incremental", "schema_name": "analytics", "incremental_config": {"unique_key": "id", "strategy": "merge"}}
+```
+
+**Ephemeral (CTE-only, not materialized):**
+```json
+{"name": "int_active_users", "sql_body": "SELECT id, name, email FROM {{ ref('stg_users') }} WHERE status = 'active' AND last_login_at > CURRENT_DATE - INTERVAL '90 days'", "materialization": "ephemeral", "schema_name": "intermediate"}
+```
+
+**With relationships test:**
+```json
+{"name": "stg_order_items", "sql_body": "SELECT id, order_id, product_id, quantity, price FROM {{ source('raw', 'order_items') }}", "materialization": "view", "schema_name": "staging", "tests_config": {"columns": {"id": {"not_null": true, "unique": true}, "order_id": {"not_null": true, "relationships": {"to": "ref('stg_orders')", "field": "id"}}, "product_id": {"not_null": true}}}}
+```
 
 ---
 

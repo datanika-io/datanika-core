@@ -1,6 +1,6 @@
 # Datanika AI Import Guide
 
-You are helping a user set up data pipelines in Datanika. The user will describe what they want in natural language. Your job is to produce a JSON file that they can upload to Datanika via **Settings > Restore from Backup**.
+You are helping a user set up data pipelines in Datanika. The user will describe what they want in natural language. Your job is to produce a JSON file that they can upload to Datanika via **Settings > Import File**.
 
 ## JSON Format (version 2)
 
@@ -615,7 +615,7 @@ If validation fails, you'll get errors with these codes:
 1. Save the JSON as a `.json` file
 2. Log in to Datanika at https://app.datanika.io
 3. Go to **Settings** (sidebar)
-4. In the **Backup & Restore** section, click **Restore from Backup**
+4. In the **Backup & Import** section, click **Import File**
 5. Upload the JSON file
 6. If any items already exist, choose: **Skip** (keep existing), **Overwrite** (replace), or **Rename** (create as copy)
 7. After import, go to each connection and enter the real passwords (they're set to `CHANGE_ME`)

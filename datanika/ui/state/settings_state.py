@@ -105,12 +105,54 @@ class SettingsState(BaseState):
 
     async def add_member_by_email(self):
         auth_state = await self.get_state(AuthState)
+        from datanika.config import settings
+
+        if settings.smtp_host:
+            # SMTP configured — use email invitation flow
+            await self._send_invitation(auth_state)
+        else:
+            # No SMTP — fall back to direct add (user must already exist)
+            await self._add_existing_user(auth_state)
+
+    async def _send_invitation(self, auth_state):
+        try:
+            from datanika.models.user import MemberRole
+            from datanika.services.invitation_service import InvitationService
+            from datanika.tasks.email_tasks import send_invitation_email_task
+
+            inv_svc = InvitationService()
+            with get_sync_session() as session:
+                invitation = inv_svc.create_invitation(
+                    session,
+                    auth_state.current_org.id,
+                    self.invite_email,
+                    MemberRole(self.invite_role),
+                    auth_state.current_user.id,
+                )
+                session.commit()
+
+                send_invitation_email_task.delay(
+                    self.invite_email,
+                    auth_state.current_org.name,
+                    auth_state.current_user.full_name or auth_state.current_user.email,
+                    invitation.token,
+                )
+        except Exception as e:
+            self.error_message = self._safe_error(e, "Failed to send invitation")
+            return
+        self.invite_email = ""
+        self.error_message = ""
+        await self.load_settings()
+
+    async def _add_existing_user(self, auth_state):
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
                 user = svc.get_user_by_email(session, self.invite_email)
                 if user is None:
-                    self.error_message = "User not found"
+                    self.error_message = (
+                        "User not found. Configure SMTP to send email invitations."
+                    )
                     return
                 from datanika.models.user import MemberRole
 

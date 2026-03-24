@@ -1,5 +1,7 @@
 """Backup & restore service — export/import connections, uploads, pipelines, and transformations as JSON."""
 
+import enum
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -18,8 +20,358 @@ from datanika.services.upload_service import UploadService
 SENSITIVE_KEYS = {"password", "aws_secret_access_key", "service_account_json", "api_key"}
 BACKUP_VERSION = 2
 
+_TRANSFORMATION_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+
+
+class ImportErrorCode(enum.StrEnum):
+    MISSING_FIELD = "MISSING_FIELD"
+    EMPTY_FIELD = "EMPTY_FIELD"
+    INVALID_CONNECTION_TYPE = "INVALID_CONNECTION_TYPE"
+    INVALID_ENUM_VALUE = "INVALID_ENUM_VALUE"
+    INVALID_NAME_FORMAT = "INVALID_NAME_FORMAT"
+    DUPLICATE_NAME = "DUPLICATE_NAME"
+    UNKNOWN_CONNECTION_REF = "UNKNOWN_CONNECTION_REF"
+    DIRECTION_MISMATCH = "DIRECTION_MISMATCH"
+
+
+class ImportValidationError(ValueError):
+    """Raised when backup data fails validation. Contains all collected errors."""
+
+    def __init__(self, errors: list[dict]):
+        self.errors = errors
+        messages = "; ".join(e["message"] for e in errors)
+        super().__init__(f"Import validation failed ({len(errors)} errors): {messages}")
+
 
 class BackupService:
+    @staticmethod
+    def validate_backup(session: Session, org_id: int, data: dict) -> None:
+        """Validate backup data without writing to DB. Raises ImportValidationError if invalid."""
+        errors: list[dict] = []
+
+        def _err(code: str, entity_type: str, index: int, field: str, message: str):
+            errors.append(
+                {
+                    "code": code,
+                    "entity_type": entity_type,
+                    "index": index,
+                    "field": field,
+                    "message": message,
+                }
+            )
+
+        def _check_enum(value, enum_cls, entity_type, index, field):
+            """Return True if value is a valid enum member string."""
+            try:
+                enum_cls(value)
+                return True
+            except (ValueError, KeyError):
+                _err(
+                    ImportErrorCode.INVALID_ENUM_VALUE,
+                    entity_type,
+                    index,
+                    field,
+                    f"Invalid {field} '{value}' for {entity_type}[{index}]",
+                )
+                return False
+
+        # Build file_conn_map: name -> direction for valid entries in backup
+        file_conn_map: dict[str, str] = {}
+        for c in data.get("connections", []):
+            name = c.get("name")
+            direction = c.get("direction")
+            if isinstance(name, str) and name.strip() and isinstance(direction, str):
+                # Only include if direction is actually valid
+                try:
+                    ConnectionDirection(direction)
+                    file_conn_map[name.strip()] = direction
+                except (ValueError, KeyError):
+                    pass
+
+        # Build db_conn_map from existing DB connections
+        db_conn_map: dict[str, str] = {}
+        rows = session.execute(
+            select(Connection.name, Connection.direction).where(
+                Connection.org_id == org_id, Connection.deleted_at.is_(None)
+            )
+        ).all()
+        for name, direction in rows:
+            db_conn_map[name] = direction.value if hasattr(direction, "value") else direction
+
+        def _resolve_conn_direction(conn_name: str) -> str | None:
+            """Look up direction for a connection name. Returns None if unresolvable."""
+            if conn_name in file_conn_map:
+                return file_conn_map[conn_name]
+            if conn_name in db_conn_map:
+                return db_conn_map[conn_name]
+            return None
+
+        def _check_required_str(entry, field, entity_type, index) -> bool:
+            """Check field exists and is non-empty. Returns True if valid."""
+            val = entry.get(field)
+            if val is None or (not isinstance(val, str)):
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    entity_type,
+                    index,
+                    field,
+                    f"Missing required field '{field}' in {entity_type}[{index}]",
+                )
+                return False
+            if not val.strip():
+                _err(
+                    ImportErrorCode.EMPTY_FIELD,
+                    entity_type,
+                    index,
+                    field,
+                    f"Field '{field}' is empty in {entity_type}[{index}]",
+                )
+                return False
+            return True
+
+        def _check_ref(
+            conn_name: str,
+            entity_type: str,
+            index: int,
+            field: str,
+            expected_directions: set[str],
+        ) -> None:
+            """Check connection reference exists and has valid direction."""
+            direction = _resolve_conn_direction(conn_name)
+            if direction is None:
+                _err(
+                    ImportErrorCode.UNKNOWN_CONNECTION_REF,
+                    entity_type,
+                    index,
+                    field,
+                    f"Unknown connection '{conn_name}' referenced in {entity_type}[{index}]",
+                )
+                return
+            if direction not in expected_directions:
+                _err(
+                    ImportErrorCode.DIRECTION_MISMATCH,
+                    entity_type,
+                    index,
+                    field,
+                    f"Connection '{conn_name}' has direction '{direction}', "
+                    f"expected one of {expected_directions} in {entity_type}[{index}]",
+                )
+
+        # --- Validate connections ---
+        seen_conn_names: set[str] = set()
+        for i, c in enumerate(data.get("connections", [])):
+            name_valid = _check_required_str(c, "name", "connection", i)
+
+            # connection_type
+            ct = c.get("connection_type")
+            if ct is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "connection",
+                    i,
+                    "connection_type",
+                    f"Missing required field 'connection_type' in connection[{i}]",
+                )
+            else:
+                try:
+                    ConnectionType(ct)
+                except (ValueError, KeyError):
+                    _err(
+                        ImportErrorCode.INVALID_CONNECTION_TYPE,
+                        "connection",
+                        i,
+                        "connection_type",
+                        f"Invalid connection_type '{ct}' in connection[{i}]",
+                    )
+
+            # direction
+            direction = c.get("direction")
+            if direction is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "connection",
+                    i,
+                    "direction",
+                    f"Missing required field 'direction' in connection[{i}]",
+                )
+            else:
+                _check_enum(direction, ConnectionDirection, "connection", i, "direction")
+
+            # config
+            if c.get("config") is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "connection",
+                    i,
+                    "config",
+                    f"Missing required field 'config' in connection[{i}]",
+                )
+
+            # duplicate name
+            if name_valid:
+                name = c["name"].strip()
+                if name in seen_conn_names:
+                    _err(
+                        ImportErrorCode.DUPLICATE_NAME,
+                        "connection",
+                        i,
+                        "name",
+                        f"Duplicate connection name '{name}' at index {i}",
+                    )
+                seen_conn_names.add(name)
+
+        # --- Validate uploads ---
+        seen_upload_names: set[str] = set()
+        for i, u in enumerate(data.get("uploads", [])):
+            name_valid = _check_required_str(u, "name", "upload", i)
+
+            src_name = u.get("source_connection_name")
+            if src_name is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "upload",
+                    i,
+                    "source_connection_name",
+                    f"Missing required field 'source_connection_name' in upload[{i}]",
+                )
+            else:
+                _check_ref(
+                    src_name, "upload", i, "source_connection_name", {"source", "both"}
+                )
+
+            dst_name = u.get("destination_connection_name")
+            if dst_name is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "upload",
+                    i,
+                    "destination_connection_name",
+                    f"Missing required field 'destination_connection_name' in upload[{i}]",
+                )
+            else:
+                _check_ref(
+                    dst_name,
+                    "upload",
+                    i,
+                    "destination_connection_name",
+                    {"destination", "both"},
+                )
+
+            # status (optional)
+            status = u.get("status")
+            if status is not None:
+                _check_enum(status, UploadStatus, "upload", i, "status")
+
+            # duplicate name
+            if name_valid:
+                name = u["name"].strip()
+                if name in seen_upload_names:
+                    _err(
+                        ImportErrorCode.DUPLICATE_NAME,
+                        "upload",
+                        i,
+                        "name",
+                        f"Duplicate upload name '{name}' at index {i}",
+                    )
+                seen_upload_names.add(name)
+
+        # --- Validate pipelines ---
+        seen_pipeline_names: set[str] = set()
+        for i, p in enumerate(data.get("pipelines", [])):
+            name_valid = _check_required_str(p, "name", "pipeline", i)
+
+            dst_name = p.get("destination_connection_name")
+            if dst_name is None:
+                _err(
+                    ImportErrorCode.MISSING_FIELD,
+                    "pipeline",
+                    i,
+                    "destination_connection_name",
+                    f"Missing required field 'destination_connection_name' in pipeline[{i}]",
+                )
+            else:
+                _check_ref(
+                    dst_name,
+                    "pipeline",
+                    i,
+                    "destination_connection_name",
+                    {"destination", "both"},
+                )
+
+            # command (optional)
+            command = p.get("command")
+            if command is not None:
+                _check_enum(command, DbtCommand, "pipeline", i, "command")
+
+            # status (optional)
+            status = p.get("status")
+            if status is not None:
+                _check_enum(status, PipelineStatus, "pipeline", i, "status")
+
+            # duplicate name
+            if name_valid:
+                name = p["name"].strip()
+                if name in seen_pipeline_names:
+                    _err(
+                        ImportErrorCode.DUPLICATE_NAME,
+                        "pipeline",
+                        i,
+                        "name",
+                        f"Duplicate pipeline name '{name}' at index {i}",
+                    )
+                seen_pipeline_names.add(name)
+
+        # --- Validate transformations ---
+        seen_transform_names: set[str] = set()
+        for i, t in enumerate(data.get("transformations", [])):
+            name_valid = _check_required_str(t, "name", "transformation", i)
+
+            # Additional name format check
+            if name_valid:
+                name = t["name"].strip()
+                if not _TRANSFORMATION_NAME_RE.match(name):
+                    _err(
+                        ImportErrorCode.INVALID_NAME_FORMAT,
+                        "transformation",
+                        i,
+                        "name",
+                        f"Invalid transformation name format '{name}' at index {i}",
+                    )
+
+            _check_required_str(t, "sql_body", "transformation", i)
+
+            # materialization (optional)
+            mat = t.get("materialization")
+            if mat is not None:
+                _check_enum(mat, Materialization, "transformation", i, "materialization")
+
+            # destination_connection_name (optional)
+            dst_name = t.get("destination_connection_name")
+            if dst_name is not None:
+                _check_ref(
+                    dst_name,
+                    "transformation",
+                    i,
+                    "destination_connection_name",
+                    {"destination", "both"},
+                )
+
+            # duplicate name
+            if name_valid:
+                name = t["name"].strip()
+                if name in seen_transform_names:
+                    _err(
+                        ImportErrorCode.DUPLICATE_NAME,
+                        "transformation",
+                        i,
+                        "name",
+                        f"Duplicate transformation name '{name}' at index {i}",
+                    )
+                seen_transform_names.add(name)
+
+        if errors:
+            raise ImportValidationError(errors)
+
     @staticmethod
     def export_backup(session: Session, org_id: int, encryption: EncryptionService) -> dict:
         """Export all non-deleted connections and uploads for an org.
@@ -162,6 +514,8 @@ class BackupService:
         version = data.get("version")
         if version not in (1, BACKUP_VERSION):
             raise ValueError(f"Unsupported backup version {version}, expected {BACKUP_VERSION}")
+
+        BackupService.validate_backup(session, org_id, data)
 
         existing_conns = conn_svc.list_connections(session, org_id)
         conn_name_to_id: dict[str, int] = {c.name: c.id for c in existing_conns}

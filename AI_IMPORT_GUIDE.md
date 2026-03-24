@@ -357,6 +357,58 @@ User request: *"I have a MySQL database with orders and customers. I want to loa
 }
 ```
 
+## Validation Rules
+
+The import validates the entire file before making any changes. If any errors are found, nothing is imported. All errors are returned at once so you can fix them in one pass.
+
+### Connection rules
+- Required fields: `name`, `connection_type`, `direction`, `config`
+- `name` must be a non-empty string (after trimming whitespace)
+- `connection_type` must be one of the supported types listed above
+- `direction` must be `"source"`, `"destination"`, or `"both"`
+- No two connections in the same file can have the same name
+
+### Upload rules
+- Required fields: `name`, `source_connection_name`, `destination_connection_name`
+- `name` must be non-empty
+- `source_connection_name` must reference a connection in the file OR one already in Datanika
+- `destination_connection_name` must reference a connection in the file OR one already in Datanika
+- Source connection must have direction `"source"` or `"both"` (not `"destination"`)
+- Destination connection must have direction `"destination"` or `"both"` (not `"source"`)
+- `status` (if provided) must be `"draft"`, `"active"`, `"paused"`, or `"error"`
+- No duplicate upload names in the file
+
+### Pipeline rules
+- Required fields: `name`, `destination_connection_name`
+- `name` must be non-empty
+- `destination_connection_name` must reference a valid destination connection
+- `command` (if provided) must be `"run"`, `"build"`, `"test"`, `"seed"`, `"snapshot"`, or `"compile"`
+- No duplicate pipeline names in the file
+
+### Transformation rules
+- Required fields: `name`, `sql_body`
+- `name` must match pattern: starts with a letter or underscore, followed by letters, digits, underscores, or hyphens (`^[a-zA-Z_][a-zA-Z0-9_-]*$`)
+- `sql_body` must be non-empty
+- `materialization` (if provided) must be `"view"`, `"table"`, `"incremental"`, `"ephemeral"`, or `"snapshot"`
+- No duplicate transformation names in the file
+
+### Error codes
+
+If validation fails, you'll get errors with these codes:
+
+| Code | Description |
+|------|-------------|
+| `MISSING_FIELD` | A required field is not present in the JSON |
+| `EMPTY_FIELD` | A required field is empty or whitespace-only |
+| `INVALID_CONNECTION_TYPE` | `connection_type` is not a recognized value |
+| `INVALID_ENUM_VALUE` | An enum field (`direction`, `status`, `command`, `materialization`) has an invalid value |
+| `INVALID_NAME_FORMAT` | Transformation name doesn't match the required pattern |
+| `DUPLICATE_NAME` | Two items of the same type have the same name in the file |
+| `UNKNOWN_CONNECTION_REF` | Upload/pipeline/transformation references a connection that doesn't exist |
+| `DIRECTION_MISMATCH` | A source-only connection is used as destination, or vice versa |
+
+---
+
 ## How to Import
 
 1. Save the JSON as a `.json` file

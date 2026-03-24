@@ -25,7 +25,7 @@ def upgrade() -> None:
             max_connections = 50,
             runs_included = 50000,
             hard_cap_runs = false
-        WHERE slug = 'enterprise'
+        WHERE slug = 'enterprise-monthly'
         """
     )
 
@@ -40,6 +40,6 @@ def downgrade() -> None:
             max_connections = 999999,
             runs_included = 999999,
             hard_cap_runs = false
-        WHERE slug = 'enterprise'
+        WHERE slug = 'enterprise-monthly'
         """
     )

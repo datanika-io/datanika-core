@@ -118,12 +118,12 @@ class TestExportBackup:
         self, db_session, encryption, org, sample_connections
     ):
         backup = BackupService.export_backup(db_session, org.id, encryption)
-        assert backup["version"] == 1
+        assert backup["version"] == 2
         assert "exported_at" in backup
 
 
 class TestImportBackup:
-    def _make_backup(self, connections=None, uploads=None, version=1):
+    def _make_backup(self, connections=None, uploads=None, version=2):
         return {
             "version": version,
             "exported_at": "2026-02-24T12:00:00Z",

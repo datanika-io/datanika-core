@@ -1,7 +1,6 @@
 import reflex as rx
 
 from datanika.scheduler import scheduler_integration
-from datanika.ui.pages.api_keys import api_keys_page
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
@@ -136,13 +135,7 @@ app.add_page(
     settings_page,
     route="/settings",
     title="Settings | Datanika",
-    on_load=[AuthState.check_auth, SettingsState.load_settings],
-)
-app.add_page(
-    api_keys_page,
-    route="/api-keys",
-    title="API Keys | Datanika",
-    on_load=[AuthState.check_auth, ApiKeyState.load_api_keys],
+    on_load=[AuthState.check_auth, SettingsState.load_settings, ApiKeyState.load_api_keys],
 )
 app.add_page(
     audit_logs_page,

@@ -82,7 +82,6 @@ def sidebar() -> rx.Component:
                 sidebar_link(_t["nav.dependencies"], "/dag", "network"),
                 sidebar_link(_t["nav.schedules"], "/schedules", "clock"),
                 sidebar_link(_t["nav.runs"], "/runs", "play"),
-                sidebar_link(_t["nav.api_keys"], "/api-keys", "key"),
                 sidebar_link(_t["nav.audit_log"], "/audit-log", "scroll-text"),
                 spacing="1",
                 width="100%",

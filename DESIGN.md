@@ -352,7 +352,7 @@ All services are defined in `docker-compose.yml` (requires `source .env.docker` 
 
 ```
 datanika/
-├── models/            # SQLAlchemy ORM (14 tables)
+├── models/            # SQLAlchemy ORM (15 tables)
 │   ├── base.py        #   Base, TimestampMixin, TenantMixin
 │   ├── user.py        #   User, Organization, Membership
 │   ├── connection.py  #   Connection (encrypted credentials)
@@ -365,7 +365,8 @@ datanika/
 │   ├── api_key.py     #   Service account keys
 │   ├── audit_log.py   #   Audit trail
 │   ├── catalog_entry.py   # Data catalog
-│   └── uploaded_file.py   # File upload references
+│   ├── uploaded_file.py   # File upload references
+│   └── invitation.py     # Pending org invitations
 ├── hooks.py           # Event bus (on/off/emit/clear)
 ├── config.py          # Pydantic Settings from .env
 ├── i18n/              # Translations (en, ru, el, de, fr, es, zh, ar, sr)

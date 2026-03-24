@@ -1,5 +1,7 @@
 # Datanika - Implementation Plan
 
+> **Note:** Phases 1–5 below reflect the *original* design from project inception. Several early decisions were later changed — notably: multi-tenancy moved from schema-per-tenant to public schema with `org_id` filtering, passlib was replaced with direct bcrypt, and the Reflex backend uses Starlette (not FastAPI). See `CLAUDE.md` and `DESIGN.md` for the current architecture.
+
 ## Project Overview
 
 **Datanika** is a multi-tenant data pipeline management platform built with:
@@ -490,7 +492,7 @@ Organization (tenant)
 
 1. **Reflex for UI** — Pure Python, compiles to React, supports complex multi-page apps with state management. Eliminates the need for a separate frontend codebase.
 
-2. **Schema-per-tenant** — Strong data isolation in PostgreSQL. Each org's pipeline data is in its own schema, preventing cross-tenant data leaks.
+2. **~~Schema-per-tenant~~ → Public schema with org_id** — Originally planned as schema-per-tenant, changed to all tables in `public` schema with `org_id` column filtering for simplicity. Per-tenant dbt project directories provide data isolation.
 
 3. **Celery + Redis** — Battle-tested async task execution. Pipeline and dbt runs are long-running and must not block the web server.
 

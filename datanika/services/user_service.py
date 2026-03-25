@@ -57,14 +57,14 @@ class UserService:
         if not self._auth.verify_password(password, user.password_hash):
             return None
 
-        # Find the user's first org membership
+        # Find the user's most recent org membership (last invited org takes priority)
         stmt = (
             select(Membership)
             .where(
                 Membership.user_id == user.id,
                 Membership.deleted_at.is_(None),
             )
-            .order_by(Membership.id)
+            .order_by(Membership.id.desc())
             .limit(1)
         )
         membership = session.execute(stmt).scalar_one_or_none()

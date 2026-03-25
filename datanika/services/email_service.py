@@ -62,14 +62,14 @@ class EmailService:
     # ------------------------------------------------------------------
 
     def send_verification_email(self, to: str, token: str) -> bool:
-        url = f"{self._frontend_url}/verify-email?token={token}"
+        url = f"{self._frontend_url}/api/verify-email?token={token}"
         html = _VERIFY_EMAIL_TEMPLATE.format(url=url, app_name="Datanika")
         return self.send(to, "Verify your email — Datanika", html)
 
     def send_invitation_email(
         self, to: str, org_name: str, inviter_name: str, token: str
     ) -> bool:
-        url = f"{self._frontend_url}/accept-invite?token={token}"
+        url = f"{self._frontend_url}/api/accept-invite?token={token}"
         html = _INVITATION_TEMPLATE.format(
             url=url, org_name=org_name, inviter_name=inviter_name, app_name="Datanika"
         )

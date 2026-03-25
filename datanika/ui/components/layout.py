@@ -37,6 +37,16 @@ def sidebar_user_section() -> rx.Component:
         language_switcher(),
         sidebar_link(_t["nav.settings"], "/settings", "settings"),
         *[sidebar_link(_t[key], href, icon) for key, href, icon in extra_sidebar_links],
+        rx.cond(
+            AuthState.user_orgs.length() > 1,
+            rx.select(
+                AuthState.org_name_options,
+                value=AuthState.current_org.name,
+                on_change=AuthState.switch_org_by_name,
+                size="1",
+                width="100%",
+            ),
+        ),
         rx.hstack(
             rx.vstack(
                 rx.text(AuthState.current_user.full_name, size="2", weight="medium"),

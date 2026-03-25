@@ -146,6 +146,35 @@ class AuthState(rx.State):
                 )
                 self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
+
+                # Accept pending invitation if signup came from invite link
+                invite_token = self.router.page.params.get("invite_token", "")
+                if invite_token:
+                    try:
+                        from datanika.services.invitation_service import InvitationService
+
+                        inv_svc = InvitationService(AuthService(settings.secret_key))
+                        membership = inv_svc.accept_invitation(session, invite_token)
+                        if membership:
+                            invited_org = session.get(
+                                type(org), membership.org_id
+                            )
+                            if invited_org:
+                                invited = OrgInfo(
+                                    id=invited_org.id,
+                                    name=invited_org.name,
+                                    slug=invited_org.slug,
+                                )
+                                self.user_orgs.append(invited)
+                                # Switch to the invited org
+                                self.current_org = invited
+                                auth = AuthService(settings.secret_key)
+                                self.access_token = auth.create_access_token(
+                                    result["user"].id, invited_org.id
+                                )
+                            session.commit()
+                    except Exception:
+                        pass  # Invitation acceptance is best-effort
         except Exception:
             self.auth_error = "Signup failed. Please try again."
             return
@@ -159,6 +188,15 @@ class AuthState(rx.State):
         self.user_orgs = []
         self.auth_error = ""
         return rx.redirect("/login")
+
+    @rx.var
+    def org_name_options(self) -> list[str]:
+        return [o.name for o in self.user_orgs]
+
+    def switch_org_by_name(self, name: str):
+        for o in self.user_orgs:
+            if o.name == name:
+                return self.switch_org(o.id)
 
     def switch_org(self, org_id: int):
         self.auth_error = ""

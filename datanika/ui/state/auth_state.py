@@ -105,6 +105,20 @@ class AuthState(rx.State):
         self.user_orgs = orgs
 
         auth = AuthService(settings.secret_key)
+
+        # If redirected from invite acceptance, switch to the invited org
+        invite_org_id = self.router.page.params.get("org_id", "")
+        if invite_org_id:
+            try:
+                target_org_id = int(invite_org_id)
+                for o in self.user_orgs:
+                    if o.id == target_org_id:
+                        self.current_org = o
+                        self.access_token = auth.create_access_token(user_id, target_org_id)
+                        return rx.redirect("/")
+            except (ValueError, TypeError):
+                pass
+
         payload = auth.decode_token(access_token, expected_type="access")
         if payload is None:
             self.auth_error = "Invalid access token"

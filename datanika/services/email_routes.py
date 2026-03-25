@@ -104,7 +104,8 @@ async def accept_invite(request: Request) -> RedirectResponse:
         )
 
     return RedirectResponse(
-        url=f"{settings.frontend_url}/login?invite_accepted=1", status_code=302
+        url=f"{settings.frontend_url}/login?invite_accepted=1&org_id={invitation.org_id}",
+        status_code=302,
     )
 
 

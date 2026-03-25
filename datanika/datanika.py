@@ -62,6 +62,7 @@ app.add_page(
     signup_page,
     route="/signup",
     title="Sign Up | Datanika",
+    on_load=[AuthState.prefill_invite_email],
 )
 
 # Protected pages

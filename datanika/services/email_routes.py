@@ -80,9 +80,12 @@ async def accept_invite(request: Request) -> RedirectResponse:
             ).scalar_one_or_none()
 
             if user is None:
-                # User needs to register first — redirect to signup with token
+                # User needs to register first — redirect to signup with token + email
+                from urllib.parse import quote
+
+                email_param = quote(invitation.email)
                 return RedirectResponse(
-                    url=f"{settings.frontend_url}/signup?invite_token={token}",
+                    url=f"{settings.frontend_url}/signup?invite_token={token}&email={email_param}",
                     status_code=302,
                 )
 

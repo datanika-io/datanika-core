@@ -40,6 +40,7 @@ def signup_page() -> rx.Component:
                     rx.input(
                         placeholder=_t["auth.ph_email"],
                         name="email",
+                        default_value=AuthState.invite_email,
                         width="100%",
                     ),
                     rx.text(_t["auth.password"], size="2", weight="medium"),

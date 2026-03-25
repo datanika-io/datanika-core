@@ -38,9 +38,16 @@ class AuthState(rx.State):
     user_orgs: list[OrgInfo] = []
 
     auth_error: str = ""
+    invite_email: str = ""
 
     def clear_auth_error(self):
         self.auth_error = ""
+
+    def prefill_invite_email(self):
+        """Pre-fill email from invite link query param."""
+        email = self.router.page.params.get("email", "")
+        if email:
+            self.invite_email = email
 
     @rx.var
     def is_authenticated(self) -> bool:

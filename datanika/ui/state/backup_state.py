@@ -90,6 +90,10 @@ class BackupState(BaseState):
         self.restore_data = {}
 
     async def _do_import(self, org_id: int, data: dict, resolutions: dict[tuple[str, str], str]):
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        user_id = auth_state.current_user.id
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)
         upload_svc = UploadService(conn_svc)
@@ -97,6 +101,14 @@ class BackupState(BaseState):
             with get_sync_session() as session:
                 result = BackupService.import_backup(
                     session, org_id, encryption, conn_svc, upload_svc, data, resolutions
+                )
+                self._audit(
+                    session, org_id, user_id, "create", "import",
+                    new_values={
+                        "connections_imported": result["connections_imported"],
+                        "uploads_imported": result["uploads_imported"],
+                        "skipped": result["skipped"],
+                    },
                 )
                 session.commit()
         except Exception as e:

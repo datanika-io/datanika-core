@@ -301,7 +301,11 @@ class UploadState(BaseState):
         if not self.form_name.strip():
             self.error_message = "Upload name cannot be empty"
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         upload_svc, _ = self._get_services()
         try:
             config = self._build_config()
@@ -327,8 +331,13 @@ class UploadState(BaseState):
                         destination_connection_id=dst_id,
                         dlt_config=config,
                     )
+                    self._audit(
+                        session, org_id, user_id, "update", "upload",
+                        resource_id=self.editing_upload_id,
+                        new_values={"name": self.form_name, "source": str(src_id), "destination": str(dst_id)},
+                    )
                 else:
-                    upload_svc.create_upload(
+                    upload = upload_svc.create_upload(
                         session,
                         org_id,
                         self.form_name,
@@ -336,6 +345,11 @@ class UploadState(BaseState):
                         src_id,
                         dst_id,
                         config,
+                    )
+                    self._audit(
+                        session, org_id, user_id, "create", "upload",
+                        resource_id=upload.id,
+                        new_values={"name": self.form_name, "source": str(src_id), "destination": str(dst_id)},
                     )
                 session.commit()
         except Exception as e:
@@ -500,20 +514,38 @@ class UploadState(BaseState):
     async def delete_upload(self, upload_id: int):
         if not await self._check_role("admin"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         upload_svc, _ = self._get_services()
         with get_sync_session() as session:
+            upload = upload_svc.get_upload(session, org_id, upload_id)
+            old_values = {"name": upload.name} if upload else {}
             upload_svc.delete_upload(session, org_id, upload_id)
+            self._audit(
+                session, org_id, user_id, "delete", "upload",
+                resource_id=upload_id, old_values=old_values,
+            )
             session.commit()
         await self.load_uploads()
 
     async def run_upload(self, upload_id: int):
         if not await self._check_role("editor"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         exec_svc = ExecutionService()
         with get_sync_session() as session:
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
+            self._audit(
+                session, org_id, user_id, "run", "upload",
+                resource_id=upload_id, new_values={"target_type": "upload", "target_id": upload_id},
+            )
             session.commit()
             run_id = run.id
         run_upload_task.delay(run_id=run_id, org_id=org_id)

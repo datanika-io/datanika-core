@@ -197,7 +197,11 @@ class ScheduleState(BaseState):
     async def save_schedule(self):
         if not await self._check_role("editor"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         svc = self._get_schedule_service()
         target_id = self._target_name_to_id.get(self.form_target_name)
         if target_id is None:
@@ -215,14 +219,24 @@ class ScheduleState(BaseState):
                         cron_expression=self.form_cron,
                         timezone=self.form_timezone,
                     )
+                    self._audit(
+                        session, org_id, user_id, "update", "schedule",
+                        resource_id=self.editing_schedule_id,
+                        new_values={"name": self.form_target_name, "cron": self.form_cron, "is_active": True},
+                    )
                 else:
-                    svc.create_schedule(
+                    schedule = svc.create_schedule(
                         session,
                         org_id,
                         NodeType(self.form_target_type),
                         target_id,
                         self.form_cron,
                         timezone=self.form_timezone,
+                    )
+                    self._audit(
+                        session, org_id, user_id, "create", "schedule",
+                        resource_id=schedule.id,
+                        new_values={"name": self.form_target_name, "cron": self.form_cron, "is_active": True},
                     )
                 session.commit()
         except Exception as e:
@@ -276,19 +290,39 @@ class ScheduleState(BaseState):
     async def toggle_schedule(self, schedule_id: int):
         if not await self._check_role("editor"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         svc = self._get_schedule_service()
         with get_sync_session() as session:
-            svc.toggle_active(session, org_id, schedule_id)
+            schedule = svc.toggle_active(session, org_id, schedule_id)
+            if schedule:
+                self._audit(
+                    session, org_id, user_id, "update", "schedule",
+                    resource_id=schedule_id,
+                    new_values={"is_active": schedule.is_active},
+                )
             session.commit()
         await self.load_schedules()
 
     async def delete_schedule(self, schedule_id: int):
         if not await self._check_role("admin"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         svc = self._get_schedule_service()
         with get_sync_session() as session:
+            schedule = svc.get_schedule(session, org_id, schedule_id)
+            old_values = {"cron": schedule.cron_expression, "is_active": schedule.is_active} if schedule else {}
             svc.delete_schedule(session, org_id, schedule_id)
+            self._audit(
+                session, org_id, user_id, "delete", "schedule",
+                resource_id=schedule_id, old_values=old_values,
+            )
             session.commit()
         await self.load_schedules()

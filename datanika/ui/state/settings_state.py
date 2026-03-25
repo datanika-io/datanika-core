@@ -118,6 +118,13 @@ class SettingsState(BaseState):
                     slug=self.edit_org_slug,
                     default_dbt_schema=self.edit_default_dbt_schema,
                 )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "update", "org",
+                    resource_id=auth_state.current_org.id,
+                    old_values={"name": self.org_name, "slug": self.org_slug},
+                    new_values={"name": self.edit_org_name, "slug": self.edit_org_slug},
+                )
                 session.commit()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to update organization")
@@ -164,6 +171,11 @@ class SettingsState(BaseState):
                     MemberRole(self.invite_role),
                     auth_state.current_user.id,
                 )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "create", "member",
+                    new_values={"email": self.invite_email, "role": self.invite_role},
+                )
                 session.commit()
 
                 send_invitation_email_task.delay(
@@ -197,6 +209,11 @@ class SettingsState(BaseState):
                     user.id,
                     MemberRole(self.invite_role),
                 )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "create", "member",
+                    new_values={"email": self.invite_email, "role": self.invite_role},
+                )
                 session.commit()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to add member")
@@ -214,11 +231,20 @@ class SettingsState(BaseState):
             with get_sync_session() as session:
                 from datanika.models.user import MemberRole
 
+                member_info = next((m for m in self.members if m.id == membership_id), None)
+                old_role = member_info.role if member_info else ""
                 svc.change_role(
                     session,
                     auth_state.current_org.id,
                     membership_id,
                     MemberRole(new_role),
+                )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "update", "member",
+                    resource_id=membership_id,
+                    old_values={"role": old_role},
+                    new_values={"role": new_role},
                 )
                 session.commit()
         except Exception as e:
@@ -234,7 +260,15 @@ class SettingsState(BaseState):
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
+                # Capture member info for audit before removal
+                member_info = next((m for m in self.members if m.id == membership_id), None)
+                old_values = {"email": member_info.email, "role": member_info.role} if member_info else {}
                 svc.remove_member(session, auth_state.current_org.id, membership_id)
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "delete", "member",
+                    resource_id=membership_id, old_values=old_values,
+                )
                 session.commit()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to remove member")
@@ -251,8 +285,15 @@ class SettingsState(BaseState):
 
             inv_svc = InvitationService(AuthService(app_settings.secret_key))
             with get_sync_session() as session:
+                inv_info = next((i for i in self.pending_invitations if i.id == invitation_id), None)
+                old_values = {"email": inv_info.email, "role": inv_info.role} if inv_info else {}
                 inv_svc.cancel_invitation(
                     session, auth_state.current_org.id, invitation_id
+                )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "delete", "member",
+                    resource_id=invitation_id, old_values=old_values,
                 )
                 session.commit()
         except Exception as e:

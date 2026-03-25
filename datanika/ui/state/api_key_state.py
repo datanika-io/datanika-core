@@ -62,11 +62,17 @@ class ApiKeyState(BaseState):
         svc = ApiKeyService()
         try:
             with get_sync_session() as session:
-                _, raw_key = svc.create_api_key(
+                api_key, raw_key = svc.create_api_key(
                     session,
                     org_id=auth_state.current_org.id,
                     user_id=auth_state.current_user.id,
                     name=self.new_key_name.strip(),
+                )
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "create", "api_key",
+                    resource_id=api_key.id,
+                    new_values={"name": self.new_key_name.strip()},
                 )
                 session.commit()
             self.new_key_raw = raw_key
@@ -83,7 +89,14 @@ class ApiKeyState(BaseState):
         svc = ApiKeyService()
         try:
             with get_sync_session() as session:
+                key_info = next((k for k in self.keys if k.id == key_id), None)
+                old_values = {"name": key_info.name} if key_info else {}
                 svc.revoke_api_key(session, auth_state.current_org.id, key_id)
+                self._audit(
+                    session, auth_state.current_org.id, auth_state.current_user.id,
+                    "delete", "api_key",
+                    resource_id=key_id, old_values=old_values,
+                )
                 session.commit()
             self.error_message = ""
             await self.load_api_keys()

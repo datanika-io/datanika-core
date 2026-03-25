@@ -116,6 +116,21 @@ class AuthState(rx.State):
             self.auth_error = "Invalid email or password"
             return
 
+        # Audit login
+        try:
+            from datanika.models.audit_log import AuditAction
+            from datanika.services.audit_service import AuditService
+
+            with get_sync_session() as audit_session:
+                org_id_for_audit = orgs[0].id if orgs else 0
+                AuditService().log_action(
+                    audit_session, org_id_for_audit, user_id,
+                    AuditAction.LOGIN, "session",
+                )
+                audit_session.commit()
+        except Exception:
+            pass  # Audit logging should never break login
+
         # Apply auth state
         self.access_token = access_token
         self.refresh_token = refresh_token
@@ -224,6 +239,21 @@ class AuthState(rx.State):
         return rx.redirect("/")
 
     def logout(self):
+        # Audit logout before clearing state
+        try:
+            from datanika.models.audit_log import AuditAction
+            from datanika.services.audit_service import AuditService
+
+            if self.current_user.id and self.current_org.id:
+                with get_sync_session() as audit_session:
+                    AuditService().log_action(
+                        audit_session, self.current_org.id, self.current_user.id,
+                        AuditAction.LOGOUT, "session",
+                    )
+                    audit_session.commit()
+        except Exception:
+            pass  # Audit logging should never break logout
+
         self.access_token = ""
         self.refresh_token = ""
         self.current_user = UserInfo()

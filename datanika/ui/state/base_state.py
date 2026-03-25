@@ -47,6 +47,35 @@ class BaseState(rx.State):
         return True
 
     @staticmethod
+    def _audit(
+        session: Session,
+        org_id: int,
+        user_id: int,
+        action: str,
+        resource_type: str,
+        resource_id: int | None = None,
+        old_values: dict | None = None,
+        new_values: dict | None = None,
+    ):
+        """Log an audit entry. Silently ignores failures."""
+        try:
+            from datanika.models.audit_log import AuditAction
+            from datanika.services.audit_service import AuditService
+
+            AuditService().log_action(
+                session,
+                org_id,
+                user_id,
+                AuditAction(action),
+                resource_type,
+                resource_id=resource_id,
+                old_values=old_values,
+                new_values=new_values,
+            )
+        except Exception:
+            pass  # Audit logging should never break the main operation
+
+    @staticmethod
     def _safe_error(exc: Exception, fallback: str = "An error occurred") -> str:
         """Return a user-safe error message. Logs the full exception."""
         _log.exception("Caught exception in state handler")

@@ -764,7 +764,11 @@ class ConnectionState(BaseState):
         if validation_error:
             self.error_message = validation_error
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         try:
@@ -783,13 +787,23 @@ class ConnectionState(BaseState):
                         connection_type=ConnectionType(self.form_type),
                         config=config,
                     )
+                    self._audit(
+                        session, org_id, user_id, "update", "connection",
+                        resource_id=self.editing_conn_id,
+                        new_values={"name": self.form_name, "connection_type": self.form_type},
+                    )
                 else:
-                    svc.create_connection(
+                    conn = svc.create_connection(
                         session,
                         org_id,
                         self.form_name,
                         ConnectionType(self.form_type),
                         config,
+                    )
+                    self._audit(
+                        session, org_id, user_id, "create", "connection",
+                        resource_id=conn.id,
+                        new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
                 session.commit()
         except Exception as e:
@@ -833,11 +847,21 @@ class ConnectionState(BaseState):
     async def delete_connection(self, conn_id: int):
         if not await self._check_role("admin"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
+            conn = svc.get_connection(session, org_id, conn_id)
+            old_values = {"name": conn.name, "connection_type": conn.connection_type.value} if conn else {}
             svc.delete_connection(session, org_id, conn_id)
+            self._audit(
+                session, org_id, user_id, "delete", "connection",
+                resource_id=conn_id, old_values=old_values,
+            )
             session.commit()
         await self.load_connections()
 

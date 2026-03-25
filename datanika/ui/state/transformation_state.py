@@ -245,7 +245,11 @@ class TransformationState(BaseState):
     async def save_transformation(self):
         if not await self._check_role("editor"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         svc = TransformationService()
         conn_id = self._parse_connection_id()
         tags = self._parse_tags()
@@ -266,8 +270,13 @@ class TransformationState(BaseState):
                         tags=tags,
                         incremental_config=inc_cfg,
                     )
+                    self._audit(
+                        session, org_id, user_id, "update", "transformation",
+                        resource_id=self.editing_transformation_id,
+                        new_values={"name": self.form_name, "materialization": self.form_materialization},
+                    )
                 else:
-                    svc.create_transformation(
+                    t = svc.create_transformation(
                         session,
                         org_id,
                         self.form_name,
@@ -278,6 +287,11 @@ class TransformationState(BaseState):
                         destination_connection_id=conn_id,
                         tags=tags,
                         incremental_config=inc_cfg,
+                    )
+                    self._audit(
+                        session, org_id, user_id, "create", "transformation",
+                        resource_id=t.id,
+                        new_values={"name": self.form_name, "materialization": self.form_materialization},
                     )
                 session.commit()
         except Exception as e:
@@ -454,10 +468,20 @@ class TransformationState(BaseState):
     async def delete_transformation(self, transformation_id: int):
         if not await self._check_role("admin"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         svc = TransformationService()
         with get_sync_session() as session:
+            t = svc.get_transformation(session, org_id, transformation_id)
+            old_values = {"name": t.name, "materialization": t.materialization.value} if t else {}
             svc.delete_transformation(session, org_id, transformation_id)
+            self._audit(
+                session, org_id, user_id, "delete", "transformation",
+                resource_id=transformation_id, old_values=old_values,
+            )
             session.commit()
         await self.load_transformations()
 

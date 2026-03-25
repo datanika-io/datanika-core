@@ -222,7 +222,11 @@ class PipelineState(BaseState):
         if not self.form_name.strip():
             self.error_message = "Pipeline name cannot be empty"
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         pipeline_svc, _ = self._get_services()
         try:
             dst_id = int(self.form_dest_id.split(" — ")[0])
@@ -256,8 +260,13 @@ class PipelineState(BaseState):
                         models=models,
                         custom_selector=self.form_custom_selector or None,
                     )
+                    self._audit(
+                        session, org_id, user_id, "update", "pipeline",
+                        resource_id=self.editing_pipeline_id,
+                        new_values={"name": self.form_name, "command": self.form_command},
+                    )
                 else:
-                    pipeline_svc.create_pipeline(
+                    pipeline = pipeline_svc.create_pipeline(
                         session,
                         org_id,
                         self.form_name,
@@ -267,6 +276,11 @@ class PipelineState(BaseState):
                         full_refresh=self.form_full_refresh,
                         models=models,
                         custom_selector=self.form_custom_selector or None,
+                    )
+                    self._audit(
+                        session, org_id, user_id, "create", "pipeline",
+                        resource_id=pipeline.id,
+                        new_values={"name": self.form_name, "command": self.form_command},
                     )
                 session.commit()
         except Exception as e:
@@ -358,20 +372,38 @@ class PipelineState(BaseState):
     async def delete_pipeline(self, pipeline_id: int):
         if not await self._check_role("admin"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         pipeline_svc, _ = self._get_services()
         with get_sync_session() as session:
+            pipeline = pipeline_svc.get_pipeline(session, org_id, pipeline_id)
+            old_values = {"name": pipeline.name, "command": pipeline.command.value} if pipeline else {}
             pipeline_svc.delete_pipeline(session, org_id, pipeline_id)
+            self._audit(
+                session, org_id, user_id, "delete", "pipeline",
+                resource_id=pipeline_id, old_values=old_values,
+            )
             session.commit()
         await self.load_pipelines()
 
     async def run_pipeline(self, pipeline_id: int):
         if not await self._check_role("editor"):
             return
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
+        org_id = auth_state.current_org.id
+        user_id = auth_state.current_user.id
         exec_svc = ExecutionService()
         with get_sync_session() as session:
             run = exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
+            self._audit(
+                session, org_id, user_id, "run", "pipeline",
+                resource_id=pipeline_id, new_values={"target_type": "pipeline", "target_id": pipeline_id},
+            )
             session.commit()
             run_id = run.id
         run_pipeline_task.delay(run_id=run_id, org_id=org_id)

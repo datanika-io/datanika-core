@@ -1,6 +1,6 @@
 """Regression tests: run_upload must dispatch Celery task, not just create a Run."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -20,13 +20,17 @@ class TestUploadRunDispatchesCeleryTask:
         # Get the underlying function from the Reflex EventHandler
         fn = UploadState.run_upload.fn
 
-        # Build a fake state with the _get_org_id coroutine
+        # Build a fake state with the auth-state pattern
         state = MagicMock()
 
-        async def fake_get_org_id():
-            return 1
+        # Mock _check_role to return True
+        state._check_role = AsyncMock(return_value=True)
 
-        state._get_org_id = fake_get_org_id
+        # Mock get_state(AuthState) to return a fake auth state
+        mock_auth = MagicMock()
+        mock_auth.current_org.id = 1
+        mock_auth.current_user.id = 10
+        state.get_state = AsyncMock(return_value=mock_auth)
 
         # Mock the sync session and ExecutionService
         mock_run = MagicMock(spec=Run)
@@ -43,6 +47,7 @@ class TestUploadRunDispatchesCeleryTask:
                 return_value=mock_exec_svc,
             ),
             patch("datanika.ui.state.upload_state.run_upload_task") as mock_task,
+            patch("datanika.ui.state.base_state.BaseState._audit"),
         ):
             mock_session = MagicMock()
             mock_get_session.return_value.__enter__ = MagicMock(return_value=mock_session)

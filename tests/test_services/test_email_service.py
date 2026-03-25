@@ -92,6 +92,12 @@ class TestEmailTemplates:
             assert "abc123token" in html_body
             assert "https://app.datanika.io" in html_body
 
+    def test_verification_email_url_has_api_prefix(self, svc):
+        with patch.object(svc, "send", return_value=True) as mock_send:
+            svc.send_verification_email("user@test.com", "tok123")
+            html_body = mock_send.call_args[0][2]
+            assert "/api/verify-email?token=tok123" in html_body
+
     def test_invitation_email_contains_org_name(self, svc):
         with patch.object(svc, "send", return_value=True) as mock_send:
             result = svc.send_invitation_email(
@@ -104,3 +110,9 @@ class TestEmailTemplates:
             assert "Acme Corp" in html_body
             assert "John Doe" in html_body
             assert "invite_token_xyz" in html_body
+
+    def test_invitation_email_url_has_api_prefix(self, svc):
+        with patch.object(svc, "send", return_value=True) as mock_send:
+            svc.send_invitation_email("a@b.com", "Org", "User", "inv_tok")
+            html_body = mock_send.call_args[0][2]
+            assert "/api/accept-invite?token=inv_tok" in html_body

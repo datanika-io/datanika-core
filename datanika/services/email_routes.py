@@ -92,21 +92,22 @@ async def accept_invite(request: Request) -> RedirectResponse:
             # User exists — accept the invitation
             membership = inv_svc.accept_invitation(session, token)
             if membership is None:
+                # Already accepted or expired — redirect to login
                 return RedirectResponse(
-                    url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
+                    url=f"{settings.frontend_url}/login?invite_accepted=1&org_id={invitation.org_id}",
+                    status_code=302,
                 )
             session.commit()
+            return RedirectResponse(
+                url=f"{settings.frontend_url}/login?invite_accepted=1&org_id={invitation.org_id}",
+                status_code=302,
+            )
 
     except Exception:
         logger.exception("Failed to process invitation")
         return RedirectResponse(
             url=f"{settings.frontend_url}/login?invite_error=1", status_code=302
         )
-
-    return RedirectResponse(
-        url=f"{settings.frontend_url}/login?invite_accepted=1&org_id={invitation.org_id}",
-        status_code=302,
-    )
 
 
 email_routes = [

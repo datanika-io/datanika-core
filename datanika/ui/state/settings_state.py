@@ -116,12 +116,13 @@ class SettingsState(BaseState):
 
     async def _send_invitation(self, auth_state):
         try:
+            from datanika.config import settings
             from datanika.models.user import MemberRole
             from datanika.services.auth import AuthService
             from datanika.services.invitation_service import InvitationService
             from datanika.tasks.email_tasks import send_invitation_email_task
 
-            inv_svc = InvitationService(AuthService())
+            inv_svc = InvitationService(AuthService(settings.secret_key))
             with get_sync_session() as session:
                 invitation = inv_svc.create_invitation(
                     session,

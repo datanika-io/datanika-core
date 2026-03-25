@@ -43,6 +43,8 @@ class BackupState(BaseState):
         return rx.download(data=json_str, filename="backup.json")
 
     async def handle_restore_upload(self, files: list[rx.UploadFile]):
+        if not await self._check_role("admin"):
+            return
         if not files:
             return
         self.restore_result = ""

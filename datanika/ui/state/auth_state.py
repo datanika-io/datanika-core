@@ -36,6 +36,7 @@ class AuthState(rx.State):
     current_user: UserInfo = UserInfo()
     current_org: OrgInfo = OrgInfo()
     user_orgs: list[OrgInfo] = []
+    current_role: str = ""
 
     auth_error: str = ""
     invite_email: str = ""
@@ -60,6 +61,23 @@ class AuthState(rx.State):
     def _get_user_service(self) -> UserService:
         auth = AuthService(settings.secret_key)
         return UserService(auth)
+
+    def _load_current_role(self, user_id: int, org_id: int):
+        """Load the user's role for the given org from the membership table."""
+        from sqlalchemy import select
+
+        from datanika.models.user import Membership
+        from datanika.ui.state.base_state import get_sync_session
+
+        with get_sync_session() as session:
+            membership = session.execute(
+                select(Membership).where(
+                    Membership.user_id == user_id,
+                    Membership.org_id == org_id,
+                    Membership.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+            self.current_role = membership.role.value if membership else ""
 
     def login(self, form_data: dict):
         self.auth_error = ""
@@ -115,6 +133,7 @@ class AuthState(rx.State):
                     if o.id == target_org_id:
                         self.current_org = o
                         self.access_token = auth.create_access_token(user_id, target_org_id)
+                        self._load_current_role(user_id, target_org_id)
                         return rx.redirect("/")
             except (ValueError, TypeError):
                 pass
@@ -128,6 +147,7 @@ class AuthState(rx.State):
             if o.id == org_id:
                 self.current_org = o
                 break
+        self._load_current_role(user_id, org_id)
         return rx.redirect("/")
 
     def signup(self, form_data: dict):
@@ -167,6 +187,7 @@ class AuthState(rx.State):
                 )
                 self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
+                self.current_role = "owner"
 
                 # Accept pending invitation if signup came from invite link
                 invite_token = self.router.page.params.get("invite_token", "")
@@ -189,6 +210,7 @@ class AuthState(rx.State):
                                 self.user_orgs.append(invited)
                                 # Switch to the invited org
                                 self.current_org = invited
+                                self.current_role = membership.role.value if membership.role else ""
                                 auth = AuthService(settings.secret_key)
                                 self.access_token = auth.create_access_token(
                                     result["user"].id, invited_org.id
@@ -207,6 +229,7 @@ class AuthState(rx.State):
         self.current_user = UserInfo()
         self.current_org = OrgInfo()
         self.user_orgs = []
+        self.current_role = ""
         self.auth_error = ""
         return rx.redirect("/login")
 
@@ -235,6 +258,7 @@ class AuthState(rx.State):
             if o.id == org_id:
                 self.current_org = o
                 break
+        self._load_current_role(self.current_user.id, org_id)
         return rx.redirect("/")
 
     def handle_oauth_complete(self):
@@ -274,11 +298,15 @@ class AuthState(rx.State):
                 if o.id == org_id:
                     self.current_org = o
                     break
+        self._load_current_role(user_id, org_id)
         return rx.redirect("/")
 
     async def check_auth(self):
         if not self.access_token:
             return rx.redirect("/login")
+        # Ensure current_role is loaded (e.g. after page refresh)
+        if not self.current_role and self.current_user.id and self.current_org.id:
+            self._load_current_role(self.current_user.id, self.current_org.id)
         # Refresh translations so plugin keys (e.g. billing.*) are available
         from datanika.ui.state.i18n_state import I18nState
 

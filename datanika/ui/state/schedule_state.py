@@ -195,6 +195,8 @@ class ScheduleState(BaseState):
         return f"transformation: {name}"
 
     async def save_schedule(self):
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         svc = self._get_schedule_service()
         target_id = self._target_name_to_id.get(self.form_target_name)
@@ -272,6 +274,8 @@ class ScheduleState(BaseState):
         self._reset_form()
 
     async def toggle_schedule(self, schedule_id: int):
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         svc = self._get_schedule_service()
         with get_sync_session() as session:
@@ -280,6 +284,8 @@ class ScheduleState(BaseState):
         await self.load_schedules()
 
     async def delete_schedule(self, schedule_id: int):
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         svc = self._get_schedule_service()
         with get_sync_session() as session:

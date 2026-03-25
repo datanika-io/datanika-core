@@ -296,6 +296,8 @@ class UploadState(BaseState):
         self.error_message = ""
 
     async def save_upload(self):
+        if not await self._check_role("editor"):
+            return
         if not self.form_name.strip():
             self.error_message = "Upload name cannot be empty"
             return
@@ -496,6 +498,8 @@ class UploadState(BaseState):
         self._reset_form()
 
     async def delete_upload(self, upload_id: int):
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         upload_svc, _ = self._get_services()
         with get_sync_session() as session:
@@ -504,6 +508,8 @@ class UploadState(BaseState):
         await self.load_uploads()
 
     async def run_upload(self, upload_id: int):
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         exec_svc = ExecutionService()
         with get_sync_session() as session:

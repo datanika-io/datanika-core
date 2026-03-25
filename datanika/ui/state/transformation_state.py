@@ -243,6 +243,8 @@ class TransformationState(BaseState):
             self.form_on_schema_change = "ignore"
 
     async def save_transformation(self):
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         svc = TransformationService()
         conn_id = self._parse_connection_id()
@@ -450,6 +452,8 @@ class TransformationState(BaseState):
         return rx.redirect("/transformations")
 
     async def delete_transformation(self, transformation_id: int):
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         svc = TransformationService()
         with get_sync_session() as session:

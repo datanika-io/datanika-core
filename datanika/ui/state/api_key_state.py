@@ -53,6 +53,8 @@ class ApiKeyState(BaseState):
             ]
 
     async def create_api_key(self):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         if not self.new_key_name.strip():
             self.error_message = "Name is required"
@@ -75,6 +77,8 @@ class ApiKeyState(BaseState):
             self.error_message = self._safe_error(e, "Failed to create API key")
 
     async def revoke_api_key(self, key_id: int):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         svc = ApiKeyService()
         try:

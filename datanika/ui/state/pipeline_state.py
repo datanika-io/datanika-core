@@ -217,6 +217,8 @@ class PipelineState(BaseState):
         await self._load_model_names()
 
     async def save_pipeline(self):
+        if not await self._check_role("editor"):
+            return
         if not self.form_name.strip():
             self.error_message = "Pipeline name cannot be empty"
             return
@@ -354,6 +356,8 @@ class PipelineState(BaseState):
         self._reset_form()
 
     async def delete_pipeline(self, pipeline_id: int):
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         pipeline_svc, _ = self._get_services()
         with get_sync_session() as session:
@@ -362,6 +366,8 @@ class PipelineState(BaseState):
         await self.load_pipelines()
 
     async def run_pipeline(self, pipeline_id: int):
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         exec_svc = ExecutionService()
         with get_sync_session() as session:

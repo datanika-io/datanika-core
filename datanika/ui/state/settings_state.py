@@ -104,6 +104,8 @@ class SettingsState(BaseState):
         self.error_message = ""
 
     async def update_org(self):
+        if not await self._check_role("owner"):
+            return
         auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
@@ -133,6 +135,8 @@ class SettingsState(BaseState):
         self.error_message = ""
 
     async def add_member_by_email(self):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         from datanika.config import settings
 
@@ -202,6 +206,8 @@ class SettingsState(BaseState):
         await self.load_settings()
 
     async def change_member_role(self, membership_id: int, new_role: str):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
@@ -222,6 +228,8 @@ class SettingsState(BaseState):
         await self.load_settings()
 
     async def remove_member(self, membership_id: int):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:
@@ -235,6 +243,8 @@ class SettingsState(BaseState):
         await self.load_settings()
 
     async def cancel_invitation(self, invitation_id: int):
+        if not await self._check_role("admin"):
+            return
         auth_state = await self.get_state(AuthState)
         try:
             from datanika.services.invitation_service import InvitationService

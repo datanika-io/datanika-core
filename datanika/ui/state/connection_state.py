@@ -758,6 +758,8 @@ class ConnectionState(BaseState):
 
     async def save_connection(self):
         """Create a new connection or update an existing one."""
+        if not await self._check_role("editor"):
+            return
         validation_error = self._validate_form()
         if validation_error:
             self.error_message = validation_error
@@ -829,6 +831,8 @@ class ConnectionState(BaseState):
         self._reset_form_fields()
 
     async def delete_connection(self, conn_id: int):
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)

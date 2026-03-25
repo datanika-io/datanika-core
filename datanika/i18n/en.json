@@ -319,6 +319,8 @@
   "settings.org_profile": "Organization Profile",
   "settings.members": "Members",
   "settings.invite_member": "Invite Member",
+  "settings.pending_invitations": "Pending Invitations",
+  "settings.sent_at": "Sent",
   "settings.email": "Email",
   "settings.role": "Role",
   "settings.slug": "Slug",

@@ -264,6 +264,8 @@
   "settings.org_profile": "Профиль организации",
   "settings.members": "Участники",
   "settings.invite_member": "Пригласить участника",
+  "settings.pending_invitations": "Ожидающие приглашения",
+  "settings.sent_at": "Отправлено",
   "settings.email": "Эл. почта",
   "settings.role": "Роль",
   "settings.slug": "Слаг",

@@ -264,6 +264,8 @@
   "settings.org_profile": "组织信息",
   "settings.members": "成员",
   "settings.invite_member": "邀请成员",
+  "settings.pending_invitations": "待处理邀请",
+  "settings.sent_at": "发送时间",
   "settings.email": "电子邮件",
   "settings.role": "角色",
   "settings.slug": "标识符",

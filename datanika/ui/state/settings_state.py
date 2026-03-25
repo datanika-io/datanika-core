@@ -17,10 +17,18 @@ class MemberItem(BaseModel):
     role: str = ""
 
 
+class InvitationItem(BaseModel):
+    id: int = 0
+    email: str = ""
+    role: str = ""
+    created_at: str = ""
+
+
 class SettingsState(BaseState):
     org_name: str = ""
     org_slug: str = ""
     members: list[MemberItem] = []
+    pending_invitations: list[InvitationItem] = []
     invite_email: str = ""
     invite_role: str = "viewer"
     edit_org_name: str = ""
@@ -72,6 +80,27 @@ class SettingsState(BaseState):
                         role=m.role.value,
                     )
                 )
+
+            # Load pending invitations
+            from datanika.services.invitation_service import InvitationService
+
+            inv_svc = InvitationService(AuthService(app_settings.secret_key))
+            invitations = inv_svc.list_pending_invitations(
+                session, auth_state.current_org.id
+            )
+            self.pending_invitations = [
+                InvitationItem(
+                    id=inv.id,
+                    email=inv.email,
+                    role=inv.role.value,
+                    created_at=(
+                        inv.created_at.strftime("%Y-%m-%d %H:%M")
+                        if inv.created_at
+                        else ""
+                    ),
+                )
+                for inv in invitations
+            ]
         self.error_message = ""
 
     async def update_org(self):
@@ -201,6 +230,23 @@ class SettingsState(BaseState):
                 session.commit()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to remove member")
+            return
+        self.error_message = ""
+        await self.load_settings()
+
+    async def cancel_invitation(self, invitation_id: int):
+        auth_state = await self.get_state(AuthState)
+        try:
+            from datanika.services.invitation_service import InvitationService
+
+            inv_svc = InvitationService(AuthService(app_settings.secret_key))
+            with get_sync_session() as session:
+                inv_svc.cancel_invitation(
+                    session, auth_state.current_org.id, invitation_id
+                )
+                session.commit()
+        except Exception as e:
+            self.error_message = self._safe_error(e, "Failed to cancel invitation")
             return
         self.error_message = ""
         await self.load_settings()

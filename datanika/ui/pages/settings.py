@@ -6,7 +6,7 @@ from datanika.ui.components.layout import page_layout
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
 from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
-from datanika.ui.state.settings_state import MemberItem, SettingsState
+from datanika.ui.state.settings_state import InvitationItem, MemberItem, SettingsState
 
 _t = I18nState.translations
 
@@ -70,6 +70,23 @@ def member_row(member: MemberItem) -> rx.Component:
     )
 
 
+def _invitation_row(inv: InvitationItem) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(inv.email),
+        rx.table.cell(inv.role),
+        rx.table.cell(inv.created_at),
+        rx.table.cell(
+            rx.button(
+                _t["common.cancel"],
+                on_click=SettingsState.cancel_invitation(inv.id),
+                size="1",
+                color_scheme="red",
+                variant="ghost",
+            ),
+        ),
+    )
+
+
 def members_card() -> rx.Component:
     return rx.card(
         rx.vstack(
@@ -87,6 +104,29 @@ def members_card() -> rx.Component:
                     rx.foreach(SettingsState.members, member_row),
                 ),
                 width="100%",
+            ),
+            rx.cond(
+                SettingsState.pending_invitations.length() > 0,
+                rx.vstack(
+                    rx.separator(),
+                    rx.heading(_t["settings.pending_invitations"], size="3"),
+                    rx.table.root(
+                        rx.table.header(
+                            rx.table.row(
+                                rx.table.column_header_cell(_t["settings.email"]),
+                                rx.table.column_header_cell(_t["settings.role"]),
+                                rx.table.column_header_cell(_t["settings.sent_at"]),
+                                rx.table.column_header_cell(_t["common.actions"]),
+                            ),
+                        ),
+                        rx.table.body(
+                            rx.foreach(SettingsState.pending_invitations, _invitation_row),
+                        ),
+                        width="100%",
+                    ),
+                    spacing="3",
+                    width="100%",
+                ),
             ),
             rx.separator(),
             rx.heading(_t["settings.invite_member"], size="3"),

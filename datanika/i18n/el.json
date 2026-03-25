@@ -264,6 +264,8 @@
   "settings.org_profile": "Προφίλ οργανισμού",
   "settings.members": "Μέλη",
   "settings.invite_member": "Πρόσκληση μέλους",
+  "settings.pending_invitations": "Εκκρεμείς προσκλήσεις",
+  "settings.sent_at": "Στάλθηκε",
   "settings.email": "Email",
   "settings.role": "Ρόλος",
   "settings.slug": "Slug",

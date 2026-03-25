@@ -264,6 +264,8 @@
   "settings.org_profile": "Profil de l'organisation",
   "settings.members": "Membres",
   "settings.invite_member": "Inviter un membre",
+  "settings.pending_invitations": "Invitations en attente",
+  "settings.sent_at": "Envoyé",
   "settings.email": "E-mail",
   "settings.role": "Rôle",
   "settings.slug": "Slug",

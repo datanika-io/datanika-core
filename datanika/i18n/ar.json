@@ -264,6 +264,8 @@
   "settings.org_profile": "ملف المؤسسة",
   "settings.members": "الأعضاء",
   "settings.invite_member": "دعوة عضو",
+  "settings.pending_invitations": "دعوات معلقة",
+  "settings.sent_at": "أرسلت",
   "settings.email": "البريد الإلكتروني",
   "settings.role": "الدور",
   "settings.slug": "المعرّف",

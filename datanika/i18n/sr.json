@@ -264,6 +264,8 @@
   "settings.org_profile": "Профил организације",
   "settings.members": "Чланови",
   "settings.invite_member": "Позови члана",
+  "settings.pending_invitations": "Позивнице на чекању",
+  "settings.sent_at": "Послато",
   "settings.email": "Е-пошта",
   "settings.role": "Улога",
   "settings.slug": "Идентификатор",

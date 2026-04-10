@@ -52,7 +52,30 @@ jobs:
       - name: Run tests
         run: pytest tests/ --tb=short -q
 
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Reflex compile check
+        run: reflex export --no-zip --frontend-only 2>&1 | tee /tmp/reflex-compile.log; test ${PIPESTATUS[0]} -eq 0
+        env:
+          DATABASE_URL_SYNC: "sqlite:///test.db"
+          DATABASE_URL: "sqlite+aiosqlite:///test.db"
+
   deploy:
+    needs: [lint, test, compile]
     needs: [lint, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest

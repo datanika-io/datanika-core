@@ -1,4 +1,4 @@
-"""Settings page — org profile, members, API keys, and backup/import."""
+"""Settings page — org profile, members, API keys, notifications, and backup/import."""
 
 import reflex as rx
 
@@ -7,6 +7,7 @@ from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
 from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
+from datanika.ui.state.notification_state import ChannelItem, NotificationState
 from datanika.ui.state.settings_state import InvitationItem, MemberItem, SettingsState
 
 _t = I18nState.translations
@@ -343,6 +344,181 @@ def api_keys_card() -> rx.Component:
     )
 
 
+def channel_row(ch: ChannelItem) -> rx.Component:
+    return rx.table.row(
+        rx.table.cell(ch.name),
+        rx.table.cell(ch.channel_type),
+        rx.table.cell(", ".join(ch.events)),
+        rx.table.cell(
+            rx.cond(ch.is_active, rx.badge("On", color_scheme="green"), rx.badge("Off")),
+        ),
+        rx.table.cell(
+            rx.hstack(
+                rx.button(
+                    rx.icon("power", size=14),
+                    on_click=NotificationState.toggle_channel_active(ch.id),
+                    variant="ghost",
+                    size="1",
+                ),
+                rx.button(
+                    rx.icon("pencil", size=14),
+                    on_click=NotificationState.edit_channel(ch.id),
+                    variant="ghost",
+                    size="1",
+                ),
+                rx.button(
+                    rx.icon("trash_2", size=14),
+                    on_click=NotificationState.delete_channel(ch.id),
+                    variant="ghost",
+                    size="1",
+                    color_scheme="red",
+                ),
+                spacing="1",
+            ),
+        ),
+    )
+
+
+def notification_form() -> rx.Component:
+    return rx.vstack(
+        rx.input(
+            placeholder=_t["notifications.name"],
+            value=NotificationState.form_name,
+            on_change=NotificationState.set_form_name,
+            width="100%",
+        ),
+        rx.select(
+            ["slack", "telegram", "email", "webhook"],
+            value=NotificationState.form_channel_type,
+            on_change=NotificationState.set_form_channel_type,
+            width="100%",
+        ),
+        rx.cond(
+            NotificationState.form_channel_type == "slack",
+            rx.input(
+                placeholder=_t["notifications.webhook_url"],
+                value=NotificationState.form_webhook_url,
+                on_change=NotificationState.set_form_webhook_url,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            NotificationState.form_channel_type == "telegram",
+            rx.vstack(
+                rx.input(
+                    placeholder=_t["notifications.telegram_token"],
+                    value=NotificationState.form_telegram_token,
+                    on_change=NotificationState.set_form_telegram_token,
+                    width="100%",
+                ),
+                rx.input(
+                    placeholder=_t["notifications.telegram_chat_id"],
+                    value=NotificationState.form_telegram_chat_id,
+                    on_change=NotificationState.set_form_telegram_chat_id,
+                    width="100%",
+                ),
+                spacing="2",
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            NotificationState.form_channel_type == "email",
+            rx.input(
+                placeholder=_t["notifications.email_address"],
+                value=NotificationState.form_email,
+                on_change=NotificationState.set_form_email,
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            NotificationState.form_channel_type == "webhook",
+            rx.input(
+                placeholder=_t["notifications.custom_url"],
+                value=NotificationState.form_custom_url,
+                on_change=NotificationState.set_form_custom_url,
+                width="100%",
+            ),
+        ),
+        rx.hstack(
+            rx.checkbox(
+                _t["notifications.on_failure"],
+                checked=NotificationState.form_on_failure,
+                on_change=NotificationState.set_form_on_failure,
+            ),
+            rx.checkbox(
+                _t["notifications.on_success"],
+                checked=NotificationState.form_on_success,
+                on_change=NotificationState.set_form_on_success,
+            ),
+            spacing="4",
+        ),
+        rx.hstack(
+            rx.button(
+                _t["notifications.save"],
+                on_click=NotificationState.save_channel,
+                size="2",
+            ),
+            rx.button(
+                _t["common.cancel"],
+                on_click=NotificationState.toggle_form,
+                variant="outline",
+                size="2",
+            ),
+            spacing="2",
+        ),
+        spacing="3",
+        width="100%",
+    )
+
+
+def notifications_card() -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.hstack(
+                rx.heading(_t["notifications.title"], size="4"),
+                rx.spacer(),
+                rx.button(
+                    _t["notifications.add"],
+                    on_click=NotificationState.toggle_form,
+                    size="2",
+                ),
+                width="100%",
+                align="center",
+            ),
+            rx.cond(
+                NotificationState.show_form,
+                notification_form(),
+            ),
+            rx.cond(
+                NotificationState.channels.length() == 0,
+                rx.text(
+                    _t["notifications.no_channels"],
+                    color="gray",
+                    size="2",
+                ),
+                rx.table.root(
+                    rx.table.header(
+                        rx.table.row(
+                            rx.table.column_header_cell(_t["common.name"]),
+                            rx.table.column_header_cell(_t["notifications.type"]),
+                            rx.table.column_header_cell(_t["notifications.events"]),
+                            rx.table.column_header_cell(_t["notifications.active"]),
+                            rx.table.column_header_cell(""),
+                        ),
+                    ),
+                    rx.table.body(
+                        rx.foreach(NotificationState.channels, channel_row),
+                    ),
+                    width="100%",
+                ),
+            ),
+            spacing="4",
+            width="100%",
+        ),
+        width="100%",
+    )
+
+
 def settings_page() -> rx.Component:
     return page_layout(
         rx.vstack(
@@ -352,6 +528,7 @@ def settings_page() -> rx.Component:
             ),
             org_profile_card(),
             members_card(),
+            notifications_card(),
             api_keys_card(),
             backup_restore_card(),
             spacing="6",

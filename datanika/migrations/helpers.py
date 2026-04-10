@@ -24,6 +24,7 @@ PUBLIC_TABLES: set[str] = {
     "uploaded_files",
     "invitations",
     "sso_configs",
+    "notification_channels",
     "plans",
     "subscriptions",
     "usage_ledger",

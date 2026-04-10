@@ -8,7 +8,9 @@ contactPoints:
         type: telegram
         settings:
           bottoken: "${TELEGRAM_BOT_TOKEN}"
-          chatid: "${TELEGRAM_CHAT_ID}"
+          # Hardcoded: Grafana env var expansion strips string type when value is all-digit
+          # (https://github.com/grafana/grafana/issues/90353). Chat ID isn't a secret.
+          chatid: "1201995"
           parse_mode: HTML
           message: |
             <b>{{ .Status | toUpper }}</b>

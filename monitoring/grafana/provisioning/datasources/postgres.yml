@@ -1,0 +1,35 @@
+# Grafana datasource provisioning for the Datanika Postgres database.
+#
+# Drop this file into Grafana's datasources provisioning directory:
+#   /etc/grafana/provisioning/datasources/postgres.yml
+#
+# Or, in the Hetzner setup, into:
+#   /opt/datanika/datanika/monitoring/grafana/provisioning/datasources/postgres.yml
+#
+# Restart grafana to pick up changes:
+#   docker compose restart grafana
+#
+# Required env vars (set in .env.docker on the host):
+#   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+
+apiVersion: 1
+
+datasources:
+  - name: Datanika Postgres
+    uid: datanika-postgres
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: ${POSTGRES_USER}
+    secureJsonData:
+      password: ${POSTGRES_PASSWORD}
+    jsonData:
+      database: ${POSTGRES_DB}
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+      postgresVersion: 1500
+      timescaledb: false
+    isDefault: false
+    editable: false

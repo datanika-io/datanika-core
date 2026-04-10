@@ -1,0 +1,21 @@
+# Grafana dashboard provisioning config — auto-loads dashboards from a folder.
+#
+# Drop into:
+#   /etc/grafana/provisioning/dashboards/cloud.yml
+#
+# Or in the Hetzner setup:
+#   /opt/datanika/datanika/monitoring/grafana/provisioning/dashboards/cloud.yml
+
+apiVersion: 1
+
+providers:
+  - name: 'datanika-cloud'
+    orgId: 1
+    folder: 'Datanika Cloud'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 60
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards/cloud
+      foldersFromFilesStructure: false

@@ -397,6 +397,127 @@ class TestConnectionIntrospection:
             assert resp.status_code == 400
 
 
+class TestCatalogEndpoints:
+    """Tests for /api/v1/catalog endpoints (#40)."""
+
+    def _seed_catalog(self, session, org_id, **overrides):
+        from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
+        from datanika.models.dependency import NodeType
+
+        defaults = {
+            "org_id": org_id,
+            "entry_type": CatalogEntryType.SOURCE_TABLE,
+            "origin_type": NodeType.UPLOAD,
+            "origin_id": 1,
+            "schema_name": "raw",
+            "table_name": "orders",
+            "dataset_name": "raw_data",
+            "columns": [{"name": "id", "data_type": "INTEGER"}],
+        }
+        defaults.update(overrides)
+        entry = CatalogEntry(**defaults)
+        session.add(entry)
+        session.flush()
+        return entry
+
+    def test_list_empty(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.get("/api/v1/catalog", headers=_auth_headers())
+            assert resp.status_code == 200
+            assert resp.json()["items"] == []
+
+    def test_list_returns_seeded_entries(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            self._seed_catalog(session, fake_api_key.org_id, table_name="orders")
+            self._seed_catalog(session, fake_api_key.org_id, table_name="customers")
+            session.commit()
+
+            resp = client.get("/api/v1/catalog", headers=_auth_headers())
+            assert resp.status_code == 200
+            items = resp.json()["items"]
+            names = {e["table_name"] for e in items}
+            assert names == {"orders", "customers"}
+
+    def test_list_filters_by_schema(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            self._seed_catalog(session, fake_api_key.org_id, schema_name="raw", table_name="orders")
+            self._seed_catalog(
+                session, fake_api_key.org_id, schema_name="staging", table_name="stg_orders"
+            )
+            session.commit()
+
+            resp = client.get("/api/v1/catalog?schema=staging", headers=_auth_headers())
+            items = resp.json()["items"]
+            assert len(items) == 1
+            assert items[0]["schema_name"] == "staging"
+
+    def test_list_filters_by_entry_type(self, client, fake_api_key, rate_limit_ok):
+        from datanika.models.catalog_entry import CatalogEntryType
+
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            self._seed_catalog(
+                session,
+                fake_api_key.org_id,
+                entry_type=CatalogEntryType.SOURCE_TABLE,
+                table_name="orders",
+            )
+            self._seed_catalog(
+                session,
+                fake_api_key.org_id,
+                entry_type=CatalogEntryType.DBT_MODEL,
+                table_name="stg_orders",
+            )
+            session.commit()
+
+            resp = client.get("/api/v1/catalog?entry_type=dbt_model", headers=_auth_headers())
+            items = resp.json()["items"]
+            assert len(items) == 1
+            assert items[0]["entry_type"] == "dbt_model"
+
+    def test_list_invalid_entry_type(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.get("/api/v1/catalog?entry_type=bogus", headers=_auth_headers())
+            assert resp.status_code == 400
+
+    def test_list_filters_by_connection_id(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            self._seed_catalog(session, fake_api_key.org_id, table_name="a", connection_id=42)
+            self._seed_catalog(session, fake_api_key.org_id, table_name="b", connection_id=99)
+            session.commit()
+
+            resp = client.get("/api/v1/catalog?connection_id=42", headers=_auth_headers())
+            items = resp.json()["items"]
+            assert len(items) == 1
+            assert items[0]["table_name"] == "a"
+
+    def test_get_returns_entry(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            entry = self._seed_catalog(session, fake_api_key.org_id, table_name="orders")
+            session.commit()
+
+            resp = client.get(f"/api/v1/catalog/{entry.id}", headers=_auth_headers())
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["id"] == entry.id
+            assert data["table_name"] == "orders"
+            assert data["columns"] == [{"name": "id", "data_type": "INTEGER"}]
+
+    def test_get_404_for_unknown_entry(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.get("/api/v1/catalog/9999", headers=_auth_headers())
+            assert resp.status_code == 404
+
+    def test_tenant_isolation(self, client, fake_api_key, rate_limit_ok):
+        """Org A cannot read org B's catalog entry."""
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            other_entry = self._seed_catalog(session, org_id=999, table_name="other_org")
+            session.commit()
+
+            # fake_api_key.org_id is 10, not 999
+            resp = client.get(f"/api/v1/catalog/{other_entry.id}", headers=_auth_headers())
+            assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # Transformation endpoints
 # ---------------------------------------------------------------------------

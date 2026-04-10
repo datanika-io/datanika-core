@@ -265,6 +265,106 @@ async def test_connection(request, api_key, session):
     return JSONResponse({"success": ok, "message": msg})
 
 
+def _load_conn_and_config(session, api_key, conn_id):
+    """Helper: load connection + decrypted config, or return error tuple."""
+    config = _get_conn_svc().get_connection_config(session, api_key.org_id, conn_id)
+    if config is None:
+        return None, None, _error(404, "Connection not found")
+    conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
+    return conn, config, None
+
+
+@api_endpoint(required_scope="connections:read")
+async def introspect_connection(request, api_key, session):
+    """List schemas/tables (and optionally columns) of a source connection."""
+    conn_id = int(request.path_params["id"])
+    conn, config, err = _load_conn_and_config(session, api_key, conn_id)
+    if err is not None:
+        return err
+    data = await _body(request)
+    schema = data.get("schema")
+    try:
+        tables = ConnectionService.list_tables(config, conn.connection_type, schema=schema)
+    except ValueError as exc:
+        return _error(400, str(exc))
+    except Exception as exc:
+        logger.exception("Introspection failed for connection %s", conn_id)
+        return _error(500, f"Introspection failed: {exc}")
+    return JSONResponse({"tables": tables})
+
+
+@api_endpoint(required_scope="connections:read")
+async def list_connection_columns(request, api_key, session):
+    """List columns of a single table."""
+    conn_id = int(request.path_params["id"])
+    conn, config, err = _load_conn_and_config(session, api_key, conn_id)
+    if err is not None:
+        return err
+    data = await _body(request)
+    table = data.get("table")
+    if not table:
+        return _error(400, "table is required")
+    schema = data.get("schema")
+    try:
+        columns = ConnectionService.list_columns(
+            config, conn.connection_type, table=table, schema=schema
+        )
+    except ValueError as exc:
+        return _error(400, str(exc))
+    except Exception as exc:
+        logger.exception("Column listing failed for connection %s", conn_id)
+        return _error(500, f"Column listing failed: {exc}")
+    return JSONResponse({"columns": columns})
+
+
+@api_endpoint(required_scope="connections:read")
+async def preview_connection(request, api_key, session):
+    """Return the first N rows of a table."""
+    conn_id = int(request.path_params["id"])
+    conn, config, err = _load_conn_and_config(session, api_key, conn_id)
+    if err is not None:
+        return err
+    data = await _body(request)
+    table = data.get("table")
+    if not table:
+        return _error(400, "table is required")
+    schema = data.get("schema")
+    limit = data.get("limit", 100)
+    try:
+        cols, rows = ConnectionService.preview_table(
+            config, conn.connection_type, table=table, schema=schema, limit=limit
+        )
+    except ValueError as exc:
+        return _error(400, str(exc))
+    except Exception as exc:
+        logger.exception("Preview failed for connection %s", conn_id)
+        return _error(500, f"Preview failed: {exc}")
+    return JSONResponse({"columns": cols, "rows": rows})
+
+
+@api_endpoint(required_scope="connections:read")
+async def query_connection(request, api_key, session):
+    """Execute a read-only SQL query against a SQL source connection."""
+    conn_id = int(request.path_params["id"])
+    conn, config, err = _load_conn_and_config(session, api_key, conn_id)
+    if err is not None:
+        return err
+    data = await _body(request)
+    query = data.get("query")
+    if not query:
+        return _error(400, "query is required")
+    if not ConnectionService.is_select_only(query):
+        return _error(400, "Only single SELECT statements are allowed")
+    try:
+        cols, rows = ConnectionService.execute_query(config, conn.connection_type, query)
+    except ValueError as exc:
+        return _error(400, str(exc))
+    except Exception as exc:
+        logger.exception("Query failed for connection %s", conn_id)
+        return _error(500, f"Query failed: {exc}")
+    return JSONResponse({"columns": cols, "rows": rows})
+
+
 # ---------------------------------------------------------------------------
 # Uploads
 # ---------------------------------------------------------------------------
@@ -747,6 +847,26 @@ api_v1_routes = [
     Route("/api/v1/connections/{id:int}", update_connection, methods=["PUT"]),
     Route("/api/v1/connections/{id:int}", delete_connection, methods=["DELETE"]),
     Route("/api/v1/connections/{id:int}/test", test_connection, methods=["POST"]),
+    Route(
+        "/api/v1/connections/{id:int}/introspect",
+        introspect_connection,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/v1/connections/{id:int}/columns",
+        list_connection_columns,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/v1/connections/{id:int}/preview",
+        preview_connection,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/v1/connections/{id:int}/query",
+        query_connection,
+        methods=["POST"],
+    ),
     # Uploads
     Route("/api/v1/uploads", list_uploads, methods=["GET"]),
     Route("/api/v1/uploads/{id:int}", get_upload, methods=["GET"]),

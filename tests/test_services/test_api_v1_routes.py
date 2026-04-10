@@ -239,6 +239,164 @@ class TestConnectionEndpoints:
             assert resp.status_code == 400
 
 
+class TestConnectionIntrospection:
+    """Tests for introspect/columns/preview/query endpoints (#39)."""
+
+    def _create_sqlite_conn_with_table(self, client, db_path):
+        """Create a SQLite connection and seed it with a test table."""
+        # Seed the SQLite file
+        import sqlite3
+
+        c = sqlite3.connect(db_path)
+        c.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, name TEXT, total REAL)")
+        c.executemany(
+            "INSERT INTO orders (name, total) VALUES (?, ?)",
+            [("Alice", 10.5), ("Bob", 20.0), ("Carol", 15.75)],
+        )
+        c.commit()
+        c.close()
+        # Create connection via API
+        resp = client.post(
+            "/api/v1/connections",
+            json={
+                "name": "Sample SQLite",
+                "connection_type": "sqlite",
+                "config": {"path": str(db_path)},
+            },
+            headers=_auth_headers(),
+        )
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    def test_introspect_lists_tables(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/introspect",
+                json={},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 200
+            tables = resp.json()["tables"]
+            names = [t["name"] for t in tables]
+            assert "orders" in names
+
+    def test_columns_lists_columns(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/columns",
+                json={"table": "orders"},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 200
+            cols = resp.json()["columns"]
+            names = [c["name"] for c in cols]
+            assert names == ["id", "name", "total"]
+
+    def test_columns_requires_table(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/columns",
+                json={},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 400
+
+    def test_preview_returns_rows(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/preview",
+                json={"table": "orders", "limit": 2},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["columns"] == ["id", "name", "total"]
+            assert len(data["rows"]) == 2
+
+    def test_query_executes_select(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/query",
+                json={"query": "SELECT name FROM orders ORDER BY id"},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["columns"] == ["name"]
+            assert data["rows"] == [["Alice"], ["Bob"], ["Carol"]]
+
+    def test_query_rejects_drop(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/query",
+                json={"query": "DROP TABLE orders"},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 400
+
+    def test_query_rejects_insert(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/query",
+                json={"query": "INSERT INTO orders (name, total) VALUES ('X', 1)"},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 400
+
+    def test_query_rejects_multiple_statements(self, client, fake_api_key, rate_limit_ok, tmp_path):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            db = tmp_path / "test.db"
+            conn_id = self._create_sqlite_conn_with_table(client, db)
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/query",
+                json={"query": "SELECT 1; DROP TABLE orders"},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 400
+
+    def test_introspect_404_for_unknown_connection(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post(
+                "/api/v1/connections/9999/introspect",
+                json={},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 404
+
+    def test_introspect_rejects_non_db_connection(self, client, fake_api_key, rate_limit_ok):
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post(
+                "/api/v1/connections",
+                json={
+                    "name": "Stripe",
+                    "connection_type": "stripe",
+                    "config": {"api_key": "sk_test"},
+                },
+                headers=_auth_headers(),
+            )
+            conn_id = resp.json()["id"]
+            resp = client.post(
+                f"/api/v1/connections/{conn_id}/introspect",
+                json={},
+                headers=_auth_headers(),
+            )
+            assert resp.status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # Transformation endpoints
 # ---------------------------------------------------------------------------

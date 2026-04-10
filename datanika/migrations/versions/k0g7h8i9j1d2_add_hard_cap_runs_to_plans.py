@@ -5,16 +5,16 @@ Revises: j9f6g7h8i0c1
 Create Date: 2026-03-22 12:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy import inspect
 
 revision: str = "k0g7h8i9j1d2"
-down_revision: Union[str, None] = "j9f6g7h8i0c1"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "j9f6g7h8i0c1"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _table_exists(table_name: str) -> bool:

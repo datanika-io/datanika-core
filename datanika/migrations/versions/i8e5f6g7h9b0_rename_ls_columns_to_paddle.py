@@ -5,15 +5,15 @@ Revises: h7d4e5f6g8a9
 Create Date: 2026-03-17 19:23:44.709276
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 from sqlalchemy import inspect
 
 revision: str = "i8e5f6g7h9b0"
-down_revision: Union[str, None] = "h7d4e5f6g8a9"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "h7d4e5f6g8a9"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def _table_exists(table_name: str) -> bool:

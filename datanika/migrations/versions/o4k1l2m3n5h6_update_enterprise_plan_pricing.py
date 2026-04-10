@@ -5,14 +5,14 @@ Revises: n3j0k1l2m4g5
 Create Date: 2026-03-24 18:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 revision: str = "o4k1l2m3n5h6"
-down_revision: Union[str, None] = "n3j0k1l2m4g5"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "n3j0k1l2m4g5"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

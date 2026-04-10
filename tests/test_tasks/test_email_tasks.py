@@ -39,9 +39,7 @@ class TestSendInvitationEmailTask:
             mock_svc = mock_cls.return_value
             mock_svc.send_invitation_email.return_value = True
 
-            result = send_invitation_email_task(
-                "to@test.com", "Acme Corp", "John", "inv_token"
-            )
+            result = send_invitation_email_task("to@test.com", "Acme Corp", "John", "inv_token")
 
             assert result is True
             mock_svc.send_invitation_email.assert_called_once_with(

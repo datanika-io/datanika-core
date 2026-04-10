@@ -84,13 +84,16 @@ class TestJWTManipulation:
     def test_none_algorithm_attack(self, auth):
         """Attacker tries 'none' algorithm to bypass signature verification."""
         payload = {
-            "user_id": 1, "org_id": 1, "type": "access",
+            "user_id": 1,
+            "org_id": 1,
+            "type": "access",
             "exp": datetime.now(UTC) + timedelta(hours=1),
             "iat": datetime.now(UTC),
         }
         # Manually craft with alg=none
         import base64
         import json
+
         hdr_bytes = json.dumps({"alg": "none", "typ": "JWT"}).encode()
         header = base64.urlsafe_b64encode(hdr_bytes).rstrip(b"=")
         body_bytes = json.dumps(payload, default=str).encode()
@@ -105,6 +108,7 @@ class TestJWTManipulation:
         parts = token.split(".")
         import base64
         import json
+
         # Pad the payload
         padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
         body = json.loads(base64.urlsafe_b64decode(padded))
@@ -120,6 +124,7 @@ class TestJWTManipulation:
         parts = token.split(".")
         import base64
         import json
+
         padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
         body = json.loads(base64.urlsafe_b64decode(padded))
         body["org_id"] = 999  # Cross-tenant attempt

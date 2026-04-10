@@ -73,7 +73,10 @@ def acquire(org_id: int) -> bool:
         # Over limit — roll back the increment
         r.decr(key)
         logger.info(
-            "Concurrency limit reached for org %s (%s/%s)", org_id, current - 1, limit,
+            "Concurrency limit reached for org %s (%s/%s)",
+            org_id,
+            current - 1,
+            limit,
         )
         return False
 

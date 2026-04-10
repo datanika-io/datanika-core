@@ -1,7 +1,5 @@
 """Tests for OpenAPI spec and Swagger UI."""
 
-import json
-
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
@@ -27,8 +25,12 @@ class TestOpenAPISpec:
         spec = build_openapi_spec()
         paths = spec["paths"]
         for resource in [
-            "connections", "uploads", "pipelines",
-            "transformations", "schedules", "runs",
+            "connections",
+            "uploads",
+            "pipelines",
+            "transformations",
+            "schedules",
+            "runs",
         ]:
             assert f"/api/v1/{resource}" in paths, f"Missing {resource} list path"
 
@@ -53,8 +55,14 @@ class TestOpenAPISpec:
         spec = build_openapi_spec()
         schemas = spec["components"]["schemas"]
         for name in [
-            "Connection", "Upload", "Pipeline", "Transformation",
-            "Schedule", "Run", "NotificationChannel", "Error",
+            "Connection",
+            "Upload",
+            "Pipeline",
+            "Transformation",
+            "Schedule",
+            "Run",
+            "NotificationChannel",
+            "Error",
         ]:
             assert name in schemas, f"Missing schema {name}"
 

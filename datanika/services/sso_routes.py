@@ -64,9 +64,7 @@ async def sso_login(request: Request) -> RedirectResponse:
     elif sso.protocol.value == "saml":
         return await _saml_login(request, sso, org_slug)
 
-    return RedirectResponse(
-        url=_frontend("/login?error=Unsupported+SSO+protocol"), status_code=302
-    )
+    return RedirectResponse(url=_frontend("/login?error=Unsupported+SSO+protocol"), status_code=302)
 
 
 async def _oidc_login(request: Request, sso, org_slug: str) -> RedirectResponse:
@@ -93,19 +91,19 @@ async def _oidc_login(request: Request, sso, org_slug: str) -> RedirectResponse:
 
     state = secrets.token_urlsafe(32)
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/sso/callback"
-    params = urlencode({
-        "response_type": "code",
-        "client_id": sso.oidc_client_id,
-        "redirect_uri": redirect_uri,
-        "scope": "openid email profile",
-        "state": f"{org_slug}:{state}",
-    })
+    params = urlencode(
+        {
+            "response_type": "code",
+            "client_id": sso.oidc_client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "openid email profile",
+            "state": f"{org_slug}:{state}",
+        }
+    )
 
     response = RedirectResponse(url=f"{authorize_url}?{params}", status_code=302)
     signed = f"{org_slug}:{state}:{_sign_state(state)}"
-    response.set_cookie(
-        _SSO_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax"
-    )
+    response.set_cookie(_SSO_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax")
     return response
 
 
@@ -143,24 +141,20 @@ async def _saml_login(request: Request, sso, org_slug: str) -> RedirectResponse:
         saml_request = base64.b64encode(deflated).decode()
 
         state = secrets.token_urlsafe(32)
-        params = urlencode({
-            "SAMLRequest": saml_request,
-            "RelayState": f"{org_slug}:{state}",
-        })
+        params = urlencode(
+            {
+                "SAMLRequest": saml_request,
+                "RelayState": f"{org_slug}:{state}",
+            }
+        )
 
-        response = RedirectResponse(
-            url=f"{sso.saml_idp_sso_url}?{params}", status_code=302
-        )
+        response = RedirectResponse(url=f"{sso.saml_idp_sso_url}?{params}", status_code=302)
         signed = f"{org_slug}:{state}:{_sign_state(state)}"
-        response.set_cookie(
-            _SSO_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax"
-        )
+        response.set_cookie(_SSO_STATE_COOKIE, signed, max_age=600, httponly=True, samesite="lax")
         return response
     except Exception:
         logger.exception("Failed to build SAML AuthnRequest for %s", org_slug)
-        return RedirectResponse(
-            url=_frontend("/login?error=SAML+request+failed"), status_code=302
-        )
+        return RedirectResponse(url=_frontend("/login?error=SAML+request+failed"), status_code=302)
 
 
 async def sso_callback(request: Request) -> RedirectResponse:
@@ -169,18 +163,14 @@ async def sso_callback(request: Request) -> RedirectResponse:
     cookie_value = request.cookies.get(_SSO_STATE_COOKIE, "")
     parts = cookie_value.split(":")
     if len(parts) < 3:
-        return RedirectResponse(
-            url=_frontend("/login?error=Invalid+SSO+state"), status_code=302
-        )
+        return RedirectResponse(url=_frontend("/login?error=Invalid+SSO+state"), status_code=302)
 
     org_slug = parts[0]
     stored_state = parts[1]
     signature = parts[2]
 
     if not _verify_state(stored_state, signature):
-        return RedirectResponse(
-            url=_frontend("/login?error=Invalid+SSO+state"), status_code=302
-        )
+        return RedirectResponse(url=_frontend("/login?error=Invalid+SSO+state"), status_code=302)
 
     with _get_session() as session:
         svc = _sso_service()
@@ -212,16 +202,18 @@ async def sso_callback(request: Request) -> RedirectResponse:
             provider_name = f"{sso.protocol.value}:{org_slug}"
 
             user, is_new = user_svc.find_or_create_oauth_user(
-                session, email, full_name or email.split("@")[0],
+                session,
+                email,
+                full_name or email.split("@")[0],
                 oauth_provider=provider_name,
                 oauth_provider_id=email,
             )
 
             # Ensure user is a member of the SSO org
             org = session.execute(
-                __import__("sqlalchemy").select(
-                    __import__("datanika.models.user", fromlist=["Organization"]).Organization
-                ).where(
+                __import__("sqlalchemy")
+                .select(__import__("datanika.models.user", fromlist=["Organization"]).Organization)
+                .where(
                     __import__("datanika.models.user", fromlist=["Organization"]).Organization.slug
                     == org_slug
                 )
@@ -255,9 +247,7 @@ async def sso_callback(request: Request) -> RedirectResponse:
             if membership is None:
                 from datanika.models.user import MemberRole
 
-                membership = Membership(
-                    user_id=user.id, org_id=org.id, role=MemberRole.VIEWER
-                )
+                membership = Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER)
                 session.add(membership)
                 session.flush()
 
@@ -265,10 +255,13 @@ async def sso_callback(request: Request) -> RedirectResponse:
         else:
             # Fallback to user's first org
             membership = session.execute(
-                select(Membership).where(
+                select(Membership)
+                .where(
                     Membership.user_id == user.id,
                     Membership.deleted_at.is_(None),
-                ).order_by(Membership.id).limit(1)
+                )
+                .order_by(Membership.id)
+                .limit(1)
             ).scalar_one_or_none()
             org_id = membership.org_id if membership else 0
 
@@ -276,11 +269,13 @@ async def sso_callback(request: Request) -> RedirectResponse:
         refresh_token = auth.create_refresh_token(user.id)
         session.commit()
 
-    params = urlencode({
-        "token": access_token,
-        "refresh": refresh_token,
-        "is_new": "1" if is_new else "0",
-    })
+    params = urlencode(
+        {
+            "token": access_token,
+            "refresh": refresh_token,
+            "is_new": "1" if is_new else "0",
+        }
+    )
     response = RedirectResponse(url=_frontend(f"/auth/complete?{params}"), status_code=302)
     response.delete_cookie(_SSO_STATE_COOKIE)
     return response
@@ -306,13 +301,16 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
         client_secret = svc.get_oidc_client_secret(sso)
         redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/sso/callback"
 
-        token_resp = await client.post(token_endpoint, data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": sso.oidc_client_id,
-            "client_secret": client_secret,
-        })
+        token_resp = await client.post(
+            token_endpoint,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": sso.oidc_client_id,
+                "client_secret": client_secret,
+            },
+        )
         token_resp.raise_for_status()
         tokens = token_resp.json()
 
@@ -374,8 +372,8 @@ async def _saml_parse(request: Request, sso) -> tuple[str, str]:
             and val_elem.text
             and ("displayName" in attr_name or "name" in attr_name.lower())
         ):
-                full_name = val_elem.text
-                break
+            full_name = val_elem.text
+            break
 
     return email, full_name
 

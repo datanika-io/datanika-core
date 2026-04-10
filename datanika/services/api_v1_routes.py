@@ -45,6 +45,7 @@ def _get_conn_svc():
     global _conn_svc
     if _conn_svc is None:
         from datanika.config import settings as _s
+
         _conn_svc = ConnectionService(EncryptionService(_s.credential_encryption_key))
     return _conn_svc
 
@@ -82,6 +83,7 @@ async def _body(request: Request) -> dict:
 # ---------------------------------------------------------------------------
 # Serializers
 # ---------------------------------------------------------------------------
+
 
 def _ser_connection(c):
     return {
@@ -184,6 +186,7 @@ def _ser_channel(ch):
 # Connections
 # ---------------------------------------------------------------------------
 
+
 @api_endpoint(required_scope="connections:read")
 async def list_connections(request, api_key, session):
     items = _get_conn_svc().list_connections(session, api_key.org_id)
@@ -266,6 +269,7 @@ async def test_connection(request, api_key, session):
 # Uploads
 # ---------------------------------------------------------------------------
 
+
 @api_endpoint(required_scope="uploads:read")
 async def list_uploads(request, api_key, session):
     items = _get_upload_svc().list_uploads(session, api_key.org_id)
@@ -336,6 +340,7 @@ async def trigger_upload(request, api_key, session):
     run = _exec_svc.create_run(session, api_key.org_id, NodeType.UPLOAD, upload_id)
     session.commit()
     from datanika.tasks.upload_tasks import run_upload_task
+
     run_upload_task.delay(run_id=run.id, org_id=api_key.org_id)
     return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
 
@@ -343,6 +348,7 @@ async def trigger_upload(request, api_key, session):
 # ---------------------------------------------------------------------------
 # Pipelines
 # ---------------------------------------------------------------------------
+
 
 @api_endpoint(required_scope="pipelines:read")
 async def list_pipelines(request, api_key, session):
@@ -428,6 +434,7 @@ async def trigger_pipeline(request, api_key, session):
     run = _exec_svc.create_run(session, api_key.org_id, NodeType.PIPELINE, pipeline_id)
     session.commit()
     from datanika.tasks.pipeline_tasks import run_pipeline_task
+
     run_pipeline_task.delay(run_id=run.id, org_id=api_key.org_id)
     return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
 
@@ -435,6 +442,7 @@ async def trigger_pipeline(request, api_key, session):
 # ---------------------------------------------------------------------------
 # Transformations
 # ---------------------------------------------------------------------------
+
 
 @api_endpoint(required_scope="transformations:read")
 async def list_transformations(request, api_key, session):
@@ -491,8 +499,13 @@ async def update_transformation(request, api_key, session):
     data = await _body(request)
     kwargs = {}
     for key in (
-        "name", "description", "sql_body", "schema_name",
-        "tests_config", "tags", "incremental_config",
+        "name",
+        "description",
+        "sql_body",
+        "schema_name",
+        "tests_config",
+        "tags",
+        "incremental_config",
     ):
         if key in data:
             kwargs[key] = data[key]
@@ -503,9 +516,7 @@ async def update_transformation(request, api_key, session):
             return _error(400, f"Invalid materialization: {data['materialization']}")
     if "destination_connection_id" in data:
         kwargs["destination_connection_id"] = (
-            int(data["destination_connection_id"])
-            if data["destination_connection_id"]
-            else None
+            int(data["destination_connection_id"]) if data["destination_connection_id"] else None
         )
     try:
         t = _transform_svc.update_transformation(session, api_key.org_id, tid, **kwargs)
@@ -533,6 +544,7 @@ async def trigger_transformation(request, api_key, session):
     run = _exec_svc.create_run(session, api_key.org_id, NodeType.TRANSFORMATION, tid)
     session.commit()
     from datanika.tasks.transformation_tasks import run_transformation_task
+
     run_transformation_task.delay(run_id=run.id, org_id=api_key.org_id)
     return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
 
@@ -540,6 +552,7 @@ async def trigger_transformation(request, api_key, session):
 # ---------------------------------------------------------------------------
 # Schedules
 # ---------------------------------------------------------------------------
+
 
 @api_endpoint(required_scope="schedules:read")
 async def list_schedules(request, api_key, session):
@@ -609,6 +622,7 @@ async def delete_schedule(request, api_key, session):
 # Runs
 # ---------------------------------------------------------------------------
 
+
 @api_endpoint(required_scope="runs:read")
 async def list_runs(request, api_key, session):
     target_type = request.query_params.get("target_type")
@@ -656,6 +670,7 @@ async def get_run_logs(request, api_key, session):
 # ---------------------------------------------------------------------------
 # Notification Channels
 # ---------------------------------------------------------------------------
+
 
 @api_endpoint(required_scope="notifications:read")
 async def list_notification_channels(request, api_key, session):

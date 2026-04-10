@@ -46,9 +46,7 @@ async def verify_email(request: Request) -> RedirectResponse:
             url=f"{settings.frontend_url}/login?verify_error=1", status_code=302
         )
 
-    return RedirectResponse(
-        url=f"{settings.frontend_url}/login?verified=1", status_code=302
-    )
+    return RedirectResponse(url=f"{settings.frontend_url}/login?verified=1", status_code=302)
 
 
 async def accept_invite(request: Request) -> RedirectResponse:

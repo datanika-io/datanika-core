@@ -58,9 +58,7 @@ def send_verification_email_task(to: str, token: str) -> bool:
     retry_backoff_max=300,
     max_retries=3,
 )
-def send_invitation_email_task(
-    to: str, org_name: str, inviter_name: str, token: str
-) -> bool:
+def send_invitation_email_task(to: str, org_name: str, inviter_name: str, token: str) -> bool:
     from datanika.config import settings
     from datanika.services.email_service import EmailService
 

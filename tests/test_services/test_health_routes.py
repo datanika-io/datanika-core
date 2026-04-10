@@ -1,6 +1,6 @@
 """Tests for health check endpoints."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.applications import Starlette

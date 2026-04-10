@@ -117,16 +117,20 @@ def _write_transformation_models(
     Includes transformations with ``destination_connection_id`` matching the
     pipeline's destination **or** NULL (inherits the pipeline destination).
     """
-    transformations = session.execute(
-        select(Transformation).where(
-            Transformation.org_id == org_id,
-            Transformation.deleted_at.is_(None),
-            or_(
-                Transformation.destination_connection_id == destination_connection_id,
-                Transformation.destination_connection_id.is_(None),
-            ),
+    transformations = (
+        session.execute(
+            select(Transformation).where(
+                Transformation.org_id == org_id,
+                Transformation.deleted_at.is_(None),
+                or_(
+                    Transformation.destination_connection_id == destination_connection_id,
+                    Transformation.destination_connection_id.is_(None),
+                ),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for t in transformations:
         dbt_svc.write_model(
@@ -269,9 +273,7 @@ def run_pipeline(
         run_obj = session.get(Run, run_id)
         if run_obj:
             pipe = session.execute(
-                select(Pipeline).where(
-                    Pipeline.id == run_obj.target_id, Pipeline.org_id == org_id
-                )
+                select(Pipeline).where(Pipeline.id == run_obj.target_id, Pipeline.org_id == org_id)
             ).scalar_one_or_none()
             if pipe:
                 pipe.status = PipelineStatus.ERROR

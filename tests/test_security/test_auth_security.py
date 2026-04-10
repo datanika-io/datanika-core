@@ -32,7 +32,9 @@ def org(db_session):
 class TestTokenAttacks:
     def test_expired_access_token_rejected(self, auth):
         payload = {
-            "user_id": 1, "org_id": 1, "type": "access",
+            "user_id": 1,
+            "org_id": 1,
+            "type": "access",
             "exp": datetime.now(UTC) - timedelta(seconds=10),
             "iat": datetime.now(UTC) - timedelta(hours=1),
         }
@@ -57,7 +59,9 @@ class TestTokenAttacks:
 
     def test_token_with_wrong_secret_rejected(self, auth):
         payload = {
-            "user_id": 1, "org_id": 1, "type": "access",
+            "user_id": 1,
+            "org_id": 1,
+            "type": "access",
             "exp": datetime.now(UTC) + timedelta(hours=1),
             "iat": datetime.now(UTC),
         }

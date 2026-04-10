@@ -43,9 +43,7 @@ def check_deps_or_retry(
         if run is None:
             return
 
-        result = check_upstream_dependencies(
-            session, org_id, node_type, run.target_id
-        )
+        result = check_upstream_dependencies(session, org_id, node_type, run.target_id)
 
         if result.satisfied:
             return

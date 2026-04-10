@@ -23,8 +23,17 @@ class DbtProjectError(ValueError):
 
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {
-    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift",
-    "clickhouse", "duckdb", "databricks", "synapse",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "bigquery",
+    "snowflake",
+    "redshift",
+    "clickhouse",
+    "duckdb",
+    "databricks",
+    "synapse",
 }
 
 

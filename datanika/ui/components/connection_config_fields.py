@@ -791,8 +791,7 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "stripe", stripe_fields()),
         rx.cond(ConnectionState.form_type == "github", github_fields()),
         rx.cond(
-            (ConnectionState.form_type == "hubspot")
-            | (ConnectionState.form_type == "slack"),
+            (ConnectionState.form_type == "hubspot") | (ConnectionState.form_type == "slack"),
             saas_api_key_fields(),
         ),
         rx.cond(ConnectionState.form_type == "salesforce", salesforce_fields()),

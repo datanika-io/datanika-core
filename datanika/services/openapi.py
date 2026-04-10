@@ -89,14 +89,16 @@ SCHEMAS = {
     "Error": _ERROR,
     "Deleted": _DELETED,
     "TriggerResult": _TRIGGER,
-    "Connection": _obj({
-        "id": {"type": "integer"},
-        "name": {"type": "string"},
-        "connection_type": {"type": "string"},
-        "direction": {"type": "string", "enum": _DIRECTIONS},
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Connection": _obj(
+        {
+            "id": {"type": "integer"},
+            "name": {"type": "string"},
+            "connection_type": {"type": "string"},
+            "direction": {"type": "string", "enum": _DIRECTIONS},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "ConnectionCreate": _obj(
         {
             "name": {"type": "string"},
@@ -105,17 +107,19 @@ SCHEMAS = {
         },
         required=["name", "connection_type", "config"],
     ),
-    "Upload": _obj({
-        "id": {"type": "integer"},
-        "name": {"type": "string"},
-        "description": {"type": "string", "nullable": True},
-        "source_connection_id": {"type": "integer"},
-        "destination_connection_id": {"type": "integer"},
-        "dlt_config": {"type": "object"},
-        "status": {"type": "string"},
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Upload": _obj(
+        {
+            "id": {"type": "integer"},
+            "name": {"type": "string"},
+            "description": {"type": "string", "nullable": True},
+            "source_connection_id": {"type": "integer"},
+            "destination_connection_id": {"type": "integer"},
+            "dlt_config": {"type": "object"},
+            "status": {"type": "string"},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "UploadCreate": _obj(
         {
             "name": {"type": "string"},
@@ -125,23 +129,26 @@ SCHEMAS = {
             "dlt_config": {"type": "object"},
         },
         required=[
-            "name", "source_connection_id",
+            "name",
+            "source_connection_id",
             "destination_connection_id",
         ],
     ),
-    "Pipeline": _obj({
-        "id": {"type": "integer"},
-        "name": {"type": "string"},
-        "description": {"type": "string", "nullable": True},
-        "destination_connection_id": {"type": "integer"},
-        "command": {"type": "string", "enum": _DBT_CMDS},
-        "full_refresh": {"type": "boolean"},
-        "models": {"type": "array", "items": {"type": "object"}},
-        "custom_selector": {"type": "string", "nullable": True},
-        "status": {"type": "string"},
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Pipeline": _obj(
+        {
+            "id": {"type": "integer"},
+            "name": {"type": "string"},
+            "description": {"type": "string", "nullable": True},
+            "destination_connection_id": {"type": "integer"},
+            "command": {"type": "string", "enum": _DBT_CMDS},
+            "full_refresh": {"type": "boolean"},
+            "models": {"type": "array", "items": {"type": "object"}},
+            "custom_selector": {"type": "string", "nullable": True},
+            "status": {"type": "string"},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "PipelineCreate": _obj(
         {
             "name": {"type": "string"},
@@ -154,25 +161,28 @@ SCHEMAS = {
         },
         required=["name", "destination_connection_id"],
     ),
-    "Transformation": _obj({
-        "id": {"type": "integer"},
-        "name": {"type": "string"},
-        "description": {"type": "string", "nullable": True},
-        "sql_body": {"type": "string"},
-        "materialization": {"type": "string", "enum": _MAT_TYPES},
-        "schema_name": {"type": "string"},
-        "tests_config": {"type": "object"},
-        "destination_connection_id": {
-            "type": "integer", "nullable": True,
-        },
-        "tags": {
-            "type": "array",
-            "items": {"type": "string"},
-            "nullable": True,
-        },
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Transformation": _obj(
+        {
+            "id": {"type": "integer"},
+            "name": {"type": "string"},
+            "description": {"type": "string", "nullable": True},
+            "sql_body": {"type": "string"},
+            "materialization": {"type": "string", "enum": _MAT_TYPES},
+            "schema_name": {"type": "string"},
+            "tests_config": {"type": "object"},
+            "destination_connection_id": {
+                "type": "integer",
+                "nullable": True,
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "nullable": True,
+            },
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "TransformationCreate": _obj(
         {
             "name": {"type": "string"},
@@ -183,20 +193,23 @@ SCHEMAS = {
         },
         required=["name", "sql_body"],
     ),
-    "Schedule": _obj({
-        "id": {"type": "integer"},
-        "target_type": {"type": "string", "enum": _NODE_TYPES},
-        "target_id": {"type": "integer"},
-        "cron_expression": {"type": "string"},
-        "timezone": {"type": "string"},
-        "is_active": {"type": "boolean"},
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Schedule": _obj(
+        {
+            "id": {"type": "integer"},
+            "target_type": {"type": "string", "enum": _NODE_TYPES},
+            "target_id": {"type": "integer"},
+            "cron_expression": {"type": "string"},
+            "timezone": {"type": "string"},
+            "is_active": {"type": "boolean"},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "ScheduleCreate": _obj(
         {
             "target_type": {
-                "type": "string", "enum": _NODE_TYPES,
+                "type": "string",
+                "enum": _NODE_TYPES,
             },
             "target_id": {"type": "integer"},
             "cron_expression": {"type": "string"},
@@ -205,36 +218,43 @@ SCHEMAS = {
         },
         required=["target_type", "target_id", "cron_expression"],
     ),
-    "Run": _obj({
-        "id": {"type": "integer"},
-        "target_type": {"type": "string"},
-        "target_id": {"type": "integer"},
-        "status": {"type": "string", "enum": _RUN_STATUSES},
-        "started_at": _TS,
-        "finished_at": _TS,
-        "rows_loaded": {"type": "integer", "nullable": True},
-        "error_message": {"type": "string", "nullable": True},
-        "created_at": _TS,
-    }),
-    "RunLogs": _obj({
-        "run_id": {"type": "integer"},
-        "logs": {"type": "string"},
-    }),
-    "NotificationChannel": _obj({
-        "id": {"type": "integer"},
-        "name": {"type": "string"},
-        "channel_type": {"type": "string", "enum": _CHANNEL_TYPES},
-        "config": {"type": "object"},
-        "events": {"type": "array", "items": {"type": "string"}},
-        "is_active": {"type": "boolean"},
-        "created_at": _TS,
-        "updated_at": _TS,
-    }),
+    "Run": _obj(
+        {
+            "id": {"type": "integer"},
+            "target_type": {"type": "string"},
+            "target_id": {"type": "integer"},
+            "status": {"type": "string", "enum": _RUN_STATUSES},
+            "started_at": _TS,
+            "finished_at": _TS,
+            "rows_loaded": {"type": "integer", "nullable": True},
+            "error_message": {"type": "string", "nullable": True},
+            "created_at": _TS,
+        }
+    ),
+    "RunLogs": _obj(
+        {
+            "run_id": {"type": "integer"},
+            "logs": {"type": "string"},
+        }
+    ),
+    "NotificationChannel": _obj(
+        {
+            "id": {"type": "integer"},
+            "name": {"type": "string"},
+            "channel_type": {"type": "string", "enum": _CHANNEL_TYPES},
+            "config": {"type": "object"},
+            "events": {"type": "array", "items": {"type": "string"}},
+            "is_active": {"type": "boolean"},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     "NotificationChannelCreate": _obj(
         {
             "name": {"type": "string"},
             "channel_type": {
-                "type": "string", "enum": _CHANNEL_TYPES,
+                "type": "string",
+                "enum": _CHANNEL_TYPES,
             },
             "config": {"type": "object"},
             "events": {"type": "array", "items": {"type": "string"}},
@@ -263,6 +283,7 @@ _ID_PARAM = {
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
+
 
 def _list_op(tag, schema, summary, params=None):
     op = {
@@ -391,13 +412,19 @@ def _crud(tag, schema, create_schema, name):
         base: {
             "get": _list_op(tag, schema, f"List {plural}"),
             "post": _create_op(
-                tag, create_schema, schema, f"Create {cap}",
+                tag,
+                create_schema,
+                schema,
+                f"Create {cap}",
             ),
         },
         by_id: {
             "get": _get_op(tag, schema, f"Get {cap}"),
             "put": _update_op(
-                tag, create_schema, schema, f"Update {cap}",
+                tag,
+                create_schema,
+                schema,
+                f"Update {cap}",
             ),
             "delete": _delete_op(tag, f"Delete {cap}"),
         },
@@ -436,6 +463,7 @@ _RUNS_PARAMS = [
 # Full spec
 # ---------------------------------------------------------------------------
 
+
 def build_openapi_spec() -> dict:
     paths = {}
 
@@ -445,8 +473,10 @@ def build_openapi_spec() -> dict:
         ("Uploads", "Upload", "UploadCreate", "upload"),
         ("Pipelines", "Pipeline", "PipelineCreate", "pipeline"),
         (
-            "Transformations", "Transformation",
-            "TransformationCreate", "transformation",
+            "Transformations",
+            "Transformation",
+            "TransformationCreate",
+            "transformation",
         ),
         ("Schedules", "Schedule", "ScheduleCreate", "schedule"),
     ]:
@@ -483,13 +513,19 @@ def build_openapi_spec() -> dict:
     paths["/api/v1/notifications/channels"] = {
         "get": _list_op(nt, nc, "List notification channels"),
         "post": _create_op(
-            nt, ncc, nc, "Create notification channel",
+            nt,
+            ncc,
+            nc,
+            "Create notification channel",
         ),
     }
     paths["/api/v1/notifications/channels/{id}"] = {
         "get": _get_op(nt, nc, "Get notification channel"),
         "put": _update_op(
-            nt, ncc, nc, "Update notification channel",
+            nt,
+            ncc,
+            nc,
+            "Update notification channel",
         ),
         "delete": _delete_op(nt, "Delete notification channel"),
     }
@@ -507,9 +543,7 @@ def build_openapi_spec() -> dict:
                 "BearerApiKey": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": (
-                        "API key from Settings > API Keys"
-                    ),
+                    "description": ("API key from Settings > API Keys"),
                 },
             },
             "schemas": SCHEMAS,

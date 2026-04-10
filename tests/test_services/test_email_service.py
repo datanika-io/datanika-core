@@ -9,22 +9,42 @@ from datanika.services.email_service import EmailService
 
 class TestEmailServiceDisabled:
     def test_disabled_when_no_host(self):
-        svc = EmailService(smtp_host="", smtp_port=587, smtp_user="", smtp_password="",
-                           smtp_from_email="no@test.com", smtp_from_name="Test",
-                           smtp_use_tls=True, frontend_url="http://localhost:3000")
+        svc = EmailService(
+            smtp_host="",
+            smtp_port=587,
+            smtp_user="",
+            smtp_password="",
+            smtp_from_email="no@test.com",
+            smtp_from_name="Test",
+            smtp_use_tls=True,
+            frontend_url="http://localhost:3000",
+        )
         assert svc.is_enabled() is False
 
     def test_enabled_when_host_set(self):
-        svc = EmailService(smtp_host="smtp.test.com", smtp_port=587, smtp_user="user",
-                           smtp_password="pass", smtp_from_email="no@test.com",
-                           smtp_from_name="Test", smtp_use_tls=True,
-                           frontend_url="http://localhost:3000")
+        svc = EmailService(
+            smtp_host="smtp.test.com",
+            smtp_port=587,
+            smtp_user="user",
+            smtp_password="pass",
+            smtp_from_email="no@test.com",
+            smtp_from_name="Test",
+            smtp_use_tls=True,
+            frontend_url="http://localhost:3000",
+        )
         assert svc.is_enabled() is True
 
     def test_send_returns_false_when_disabled(self):
-        svc = EmailService(smtp_host="", smtp_port=587, smtp_user="", smtp_password="",
-                           smtp_from_email="no@test.com", smtp_from_name="Test",
-                           smtp_use_tls=True, frontend_url="http://localhost:3000")
+        svc = EmailService(
+            smtp_host="",
+            smtp_port=587,
+            smtp_user="",
+            smtp_password="",
+            smtp_from_email="no@test.com",
+            smtp_from_name="Test",
+            smtp_use_tls=True,
+            frontend_url="http://localhost:3000",
+        )
         assert svc.send("to@test.com", "Subject", "<p>Body</p>") is False
 
 
@@ -32,9 +52,13 @@ class TestEmailServiceSend:
     @pytest.fixture
     def svc(self):
         return EmailService(
-            smtp_host="smtp.test.com", smtp_port=587, smtp_user="user",
-            smtp_password="pass", smtp_from_email="noreply@datanika.io",
-            smtp_from_name="Datanika", smtp_use_tls=True,
+            smtp_host="smtp.test.com",
+            smtp_port=587,
+            smtp_user="user",
+            smtp_password="pass",
+            smtp_from_email="noreply@datanika.io",
+            smtp_from_name="Datanika",
+            smtp_use_tls=True,
             frontend_url="http://localhost:3000",
         )
 
@@ -76,9 +100,13 @@ class TestEmailTemplates:
     @pytest.fixture
     def svc(self):
         return EmailService(
-            smtp_host="smtp.test.com", smtp_port=587, smtp_user="user",
-            smtp_password="pass", smtp_from_email="noreply@datanika.io",
-            smtp_from_name="Datanika", smtp_use_tls=True,
+            smtp_host="smtp.test.com",
+            smtp_port=587,
+            smtp_user="user",
+            smtp_password="pass",
+            smtp_from_email="noreply@datanika.io",
+            smtp_from_name="Datanika",
+            smtp_use_tls=True,
             frontend_url="https://app.datanika.io",
         )
 

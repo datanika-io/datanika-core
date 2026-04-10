@@ -114,9 +114,10 @@ def _normalize_path(path: str) -> str:
 
 # --- Celery signal handlers ---
 
+
 def setup_celery_metrics(celery_app) -> None:
     """Register Celery signal handlers for task metrics."""
-    from celery.signals import task_failure, task_prerun, task_postrun, task_retry
+    from celery.signals import task_failure, task_postrun, task_prerun, task_retry
 
     _task_start_times: dict[str, float] = {}
 
@@ -130,9 +131,7 @@ def setup_celery_metrics(celery_app) -> None:
         celery_tasks_total.labels(task_name, state or "SUCCESS").inc()
         start = _task_start_times.pop(task_id, None)
         if start is not None:
-            celery_task_duration_seconds.labels(task_name).observe(
-                time.perf_counter() - start
-            )
+            celery_task_duration_seconds.labels(task_name).observe(time.perf_counter() - start)
 
     @task_failure.connect
     def on_task_failure(sender=None, task_id=None, **kwargs):
@@ -148,11 +147,13 @@ def setup_celery_metrics(celery_app) -> None:
 
 # --- /metrics endpoint ---
 
+
 async def metrics_endpoint(request: Request) -> Response:
     """Expose Prometheus metrics."""
     # Update queue length before responding
     try:
         import redis as redis_lib
+
         from datanika.config import settings
 
         r = redis_lib.from_url(settings.redis_url, socket_timeout=2)

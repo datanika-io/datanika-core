@@ -85,9 +85,7 @@ class SSOService:
             return None
         return self.get_sso_config(session, org.id)
 
-    def update_sso_config(
-        self, session: Session, org_id: int, config: dict
-    ) -> SSOConfig | None:
+    def update_sso_config(self, session: Session, org_id: int, config: dict) -> SSOConfig | None:
         """Update SSO config fields."""
         sso = self.get_sso_config(session, org_id)
         if sso is None:

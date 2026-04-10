@@ -8,13 +8,12 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.dependency import NodeType
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
 from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES
 from datanika.ui.state.connection_state import (
     NON_SQL_SOURCE_TYPES,
     SAAS_DEFAULT_ENDPOINTS,
@@ -332,9 +331,17 @@ class UploadState(BaseState):
                         dlt_config=config,
                     )
                     self._audit(
-                        session, org_id, user_id, "update", "upload",
+                        session,
+                        org_id,
+                        user_id,
+                        "update",
+                        "upload",
                         resource_id=self.editing_upload_id,
-                        new_values={"name": self.form_name, "source": str(src_id), "destination": str(dst_id)},
+                        new_values={
+                            "name": self.form_name,
+                            "source": str(src_id),
+                            "destination": str(dst_id),
+                        },
                     )
                 else:
                     upload = upload_svc.create_upload(
@@ -347,9 +354,17 @@ class UploadState(BaseState):
                         config,
                     )
                     self._audit(
-                        session, org_id, user_id, "create", "upload",
+                        session,
+                        org_id,
+                        user_id,
+                        "create",
+                        "upload",
                         resource_id=upload.id,
-                        new_values={"name": self.form_name, "source": str(src_id), "destination": str(dst_id)},
+                        new_values={
+                            "name": self.form_name,
+                            "source": str(src_id),
+                            "destination": str(dst_id),
+                        },
                     )
                 session.commit()
         except Exception as e:
@@ -525,8 +540,13 @@ class UploadState(BaseState):
             old_values = {"name": upload.name} if upload else {}
             upload_svc.delete_upload(session, org_id, upload_id)
             self._audit(
-                session, org_id, user_id, "delete", "upload",
-                resource_id=upload_id, old_values=old_values,
+                session,
+                org_id,
+                user_id,
+                "delete",
+                "upload",
+                resource_id=upload_id,
+                old_values=old_values,
             )
             session.commit()
         await self.load_uploads()
@@ -543,8 +563,13 @@ class UploadState(BaseState):
         with get_sync_session() as session:
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
             self._audit(
-                session, org_id, user_id, "run", "upload",
-                resource_id=upload_id, new_values={"target_type": "upload", "target_id": upload_id},
+                session,
+                org_id,
+                user_id,
+                "run",
+                "upload",
+                resource_id=upload_id,
+                new_values={"target_type": "upload", "target_id": upload_id},
             )
             session.commit()
             run_id = run.id

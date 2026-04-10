@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.upload import UploadStatus
@@ -208,10 +208,18 @@ class TestRunUploadTask:
         db_session.add(org)
         db_session.flush()
         src = conn_svc.create_connection(
-            db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432},
+            db_session,
+            org.id,
+            "S",
+            ConnectionType.POSTGRES,
+            {"host": "src", "port": 5432},
         )
         dst = conn_svc.create_connection(
-            db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+            db_session,
+            org.id,
+            "D",
+            ConnectionType.BIGQUERY,
+            {"project": "p", "dataset": "d"},
         )
         upload = upload_svc.create_upload(
             db_session,

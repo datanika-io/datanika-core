@@ -39,15 +39,11 @@ def upgrade() -> None:
                 "extra_seat_price_cents", sa.Integer(), nullable=False, server_default="1200"
             ),
             sa.Column("runs_included", sa.Integer(), nullable=False, server_default="500"),
-            sa.Column(
-                "overage_run_price_cents", sa.Integer(), nullable=False, server_default="1"
-            ),
+            sa.Column("overage_run_price_cents", sa.Integer(), nullable=False, server_default="1"),
             sa.Column("max_connections", sa.Integer(), nullable=False, server_default="5"),
             sa.Column("max_schedules", sa.Integer(), nullable=False, server_default="10"),
             sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
-            sa.Column(
-                "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True
-            ),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
             sa.Column("deleted_at", sa.DateTime(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
@@ -72,9 +68,7 @@ def upgrade() -> None:
             sa.Column("ends_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("card_brand", sa.String(20), nullable=True),
             sa.Column("card_last_four", sa.String(4), nullable=True),
-            sa.Column(
-                "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True
-            ),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
             sa.Column("deleted_at", sa.DateTime(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
@@ -93,9 +87,7 @@ def upgrade() -> None:
             sa.Column("metric", sa.String(50), nullable=False),
             sa.Column("quantity", sa.Integer(), nullable=False, server_default="0"),
             sa.Column("reported_to_paddle", sa.Boolean(), nullable=False, server_default="false"),
-            sa.Column(
-                "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True
-            ),
+            sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True),
             sa.Column("updated_at", sa.DateTime(), nullable=True),
             sa.Column("deleted_at", sa.DateTime(), nullable=True),
             sa.PrimaryKeyConstraint("id"),

@@ -41,9 +41,15 @@ def other_org(db_session):
 class TestCreateSSOConfig:
     def test_create_oidc_config(self, db_session, svc, org):
         sso = svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Azure AD",
-            {"issuer_url": "https://login.microsoftonline.com/tenant/v2.0",
-             "client_id": "abc123", "client_secret": "secret456"},
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Azure AD",
+            {
+                "issuer_url": "https://login.microsoftonline.com/tenant/v2.0",
+                "client_id": "abc123",
+                "client_secret": "secret456",
+            },
         )
         assert sso.id is not None
         assert sso.protocol == SSOProtocol.OIDC
@@ -55,9 +61,16 @@ class TestCreateSSOConfig:
 
     def test_create_saml_config(self, db_session, svc, org):
         sso = svc.create_sso_config(
-            db_session, org.id, SSOProtocol.SAML, "Okta",
-            {"idp_sso_url": "https://okta.com/sso", "idp_entity_id": "okta-entity",
-             "idp_cert": "MIIC...", "sp_entity_id": "datanika-prod"},
+            db_session,
+            org.id,
+            SSOProtocol.SAML,
+            "Okta",
+            {
+                "idp_sso_url": "https://okta.com/sso",
+                "idp_entity_id": "okta-entity",
+                "idp_cert": "MIIC...",
+                "sp_entity_id": "datanika-prod",
+            },
         )
         assert sso.protocol == SSOProtocol.SAML
         assert sso.saml_idp_sso_url == "https://okta.com/sso"
@@ -65,12 +78,18 @@ class TestCreateSSOConfig:
 
     def test_one_config_per_org(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "First",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "First",
             {"issuer_url": "https://first.com", "client_id": "a"},
         )
         with pytest.raises(SSOServiceError, match="already has"):
             svc.create_sso_config(
-                db_session, org.id, SSOProtocol.SAML, "Second",
+                db_session,
+                org.id,
+                SSOProtocol.SAML,
+                "Second",
                 {"idp_sso_url": "https://second.com"},
             )
 
@@ -78,7 +97,10 @@ class TestCreateSSOConfig:
 class TestGetSSOConfig:
     def test_get_existing(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Test",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Test",
             {"issuer_url": "https://test.com", "client_id": "x"},
         )
         result = svc.get_sso_config(db_session, org.id)
@@ -91,7 +113,10 @@ class TestGetSSOConfig:
 
     def test_get_by_org_slug(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Slug Test",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Slug Test",
             {"issuer_url": "https://slug.com", "client_id": "y"},
         )
         result = svc.get_sso_config_by_org_slug(db_session, org.slug)
@@ -104,7 +129,10 @@ class TestGetSSOConfig:
 
     def test_different_orgs_isolated(self, db_session, svc, org, other_org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Org A SSO",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Org A SSO",
             {"issuer_url": "https://a.com", "client_id": "a"},
         )
         result = svc.get_sso_config(db_session, other_org.id)
@@ -114,7 +142,10 @@ class TestGetSSOConfig:
 class TestUpdateSSOConfig:
     def test_update_display_name(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Old Name",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Old Name",
             {"issuer_url": "https://old.com", "client_id": "x"},
         )
         updated = svc.update_sso_config(db_session, org.id, {"display_name": "New Name"})
@@ -122,11 +153,15 @@ class TestUpdateSSOConfig:
 
     def test_update_oidc_fields(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Test",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Test",
             {"issuer_url": "https://old.com", "client_id": "old"},
         )
         updated = svc.update_sso_config(
-            db_session, org.id,
+            db_session,
+            org.id,
             {"issuer_url": "https://new.com", "client_id": "new"},
         )
         assert updated.oidc_issuer_url == "https://new.com"
@@ -140,7 +175,10 @@ class TestUpdateSSOConfig:
 class TestDeleteSSOConfig:
     def test_soft_deletes(self, db_session, svc, org):
         svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "To Delete",
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "To Delete",
             {"issuer_url": "https://del.com", "client_id": "d"},
         )
         result = svc.delete_sso_config(db_session, org.id)
@@ -156,9 +194,11 @@ class TestDeleteSSOConfig:
 class TestOIDCClientSecret:
     def test_secret_encrypted_and_decryptable(self, db_session, svc, org):
         sso = svc.create_sso_config(
-            db_session, org.id, SSOProtocol.OIDC, "Secret Test",
-            {"issuer_url": "https://sec.com", "client_id": "c",
-             "client_secret": "my-super-secret"},
+            db_session,
+            org.id,
+            SSOProtocol.OIDC,
+            "Secret Test",
+            {"issuer_url": "https://sec.com", "client_id": "c", "client_secret": "my-super-secret"},
         )
         # Stored value is encrypted
         assert "my-super-secret" not in (sso.oidc_client_secret_encrypted or "")

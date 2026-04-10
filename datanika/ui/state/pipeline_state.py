@@ -6,14 +6,13 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import DbtCommand
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.services.connection_service import DESTINATION_TYPES
 
 
 class PipelineItem(BaseModel):
@@ -261,7 +260,11 @@ class PipelineState(BaseState):
                         custom_selector=self.form_custom_selector or None,
                     )
                     self._audit(
-                        session, org_id, user_id, "update", "pipeline",
+                        session,
+                        org_id,
+                        user_id,
+                        "update",
+                        "pipeline",
                         resource_id=self.editing_pipeline_id,
                         new_values={"name": self.form_name, "command": self.form_command},
                     )
@@ -278,7 +281,11 @@ class PipelineState(BaseState):
                         custom_selector=self.form_custom_selector or None,
                     )
                     self._audit(
-                        session, org_id, user_id, "create", "pipeline",
+                        session,
+                        org_id,
+                        user_id,
+                        "create",
+                        "pipeline",
                         resource_id=pipeline.id,
                         new_values={"name": self.form_name, "command": self.form_command},
                     )
@@ -380,11 +387,18 @@ class PipelineState(BaseState):
         pipeline_svc, _ = self._get_services()
         with get_sync_session() as session:
             pipeline = pipeline_svc.get_pipeline(session, org_id, pipeline_id)
-            old_values = {"name": pipeline.name, "command": pipeline.command.value} if pipeline else {}
+            old_values = (
+                {"name": pipeline.name, "command": pipeline.command.value} if pipeline else {}
+            )
             pipeline_svc.delete_pipeline(session, org_id, pipeline_id)
             self._audit(
-                session, org_id, user_id, "delete", "pipeline",
-                resource_id=pipeline_id, old_values=old_values,
+                session,
+                org_id,
+                user_id,
+                "delete",
+                "pipeline",
+                resource_id=pipeline_id,
+                old_values=old_values,
             )
             session.commit()
         await self.load_pipelines()
@@ -401,8 +415,13 @@ class PipelineState(BaseState):
         with get_sync_session() as session:
             run = exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
             self._audit(
-                session, org_id, user_id, "run", "pipeline",
-                resource_id=pipeline_id, new_values={"target_type": "pipeline", "target_id": pipeline_id},
+                session,
+                org_id,
+                user_id,
+                "run",
+                "pipeline",
+                resource_id=pipeline_id,
+                new_values={"target_type": "pipeline", "target_id": pipeline_id},
             )
             session.commit()
             run_id = run.id

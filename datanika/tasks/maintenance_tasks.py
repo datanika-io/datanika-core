@@ -29,7 +29,8 @@ def run_maintenance_task() -> dict:
         with get_sync_session() as session:
             # Pass session so active runs are protected from cleanup
             results["dlt_dirs"] = cleanup_orphaned_dlt_dirs(
-                settings.dlt_pipelines_dir, settings.maintenance_dlt_max_age_hours,
+                settings.dlt_pipelines_dir,
+                settings.maintenance_dlt_max_age_hours,
                 session=session,
             )
             results["purged_runs"] = purge_old_runs(

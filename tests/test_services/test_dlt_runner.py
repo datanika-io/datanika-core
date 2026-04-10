@@ -1366,9 +1366,7 @@ class TestShopifySaasSource:
     @patch("datanika.services.dlt_runner.rest_api_source")
     def test_shopify_builds_rest_api(self, mock_rest, svc):
         mock_rest.return_value = "sh_src"
-        result = svc._build_saas_source(
-            "shopify", {"api_key": "shpat_123", "store": "mystore"}, {}
-        )
+        result = svc._build_saas_source("shopify", {"api_key": "shpat_123", "store": "mystore"}, {})
         assert result == "sh_src"
         call_config = mock_rest.call_args[0][0]
         assert "mystore.myshopify.com" in call_config["client"]["base_url"]
@@ -1438,9 +1436,7 @@ class TestZendeskSource:
     @patch("datanika.services.dlt_runner.DltRunnerService._rest_api_fallback")
     def test_zendesk_fallback_to_rest(self, mock_fallback, svc):
         mock_fallback.return_value = "zd_src"
-        result = svc._build_saas_source(
-            "zendesk", {"subdomain": "test", "api_key": "tok"}, {}
-        )
+        result = svc._build_saas_source("zendesk", {"subdomain": "test", "api_key": "tok"}, {})
         assert result == "zd_src"
         call_args = mock_fallback.call_args
         assert "test.zendesk.com" in call_args[0][0]
@@ -1454,9 +1450,7 @@ class TestAirtableSource:
     @patch("datanika.services.dlt_runner.DltRunnerService._rest_api_fallback")
     def test_airtable_fallback_to_rest(self, mock_fallback, svc):
         mock_fallback.return_value = "at_src"
-        result = svc._build_saas_source(
-            "airtable", {"api_key": "pat123", "base_id": "appXXX"}, {}
-        )
+        result = svc._build_saas_source("airtable", {"api_key": "pat123", "base_id": "appXXX"}, {})
         assert result == "at_src"
         call_args = mock_fallback.call_args
         assert "airtable.com" in call_args[0][0]

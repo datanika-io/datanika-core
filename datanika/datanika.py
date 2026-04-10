@@ -28,10 +28,10 @@ from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
+from datanika.ui.state.notification_state import NotificationState
 from datanika.ui.state.pipeline_state import PipelineState
 from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
-from datanika.ui.state.notification_state import NotificationState
 from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState

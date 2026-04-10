@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
 from datanika.models.transformation import Materialization
@@ -58,10 +58,18 @@ def org(db_session):
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "SrcCheck", ConnectionType.POSTGRES, {"h": "x"},
+        db_session,
+        org.id,
+        "SrcCheck",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "DstCheck", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+        db_session,
+        org.id,
+        "DstCheck",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(db_session, org.id, "checkupload", "desc", src.id, dst.id, {})
 
@@ -69,13 +77,27 @@ def upload(upload_svc, conn_svc, db_session, org):
 @pytest.fixture
 def upload2(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "Src2Check", ConnectionType.POSTGRES, {"h": "x"},
+        db_session,
+        org.id,
+        "Src2Check",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "Dst2Check", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+        db_session,
+        org.id,
+        "Dst2Check",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(
-        db_session, org.id, "checkupload2", "desc", src.id, dst.id, {},
+        db_session,
+        org.id,
+        "checkupload2",
+        "desc",
+        src.id,
+        dst.id,
+        {},
     )
 
 
@@ -96,28 +118,30 @@ class TestCheckUpstreamDependencies:
         assert result.satisfied is True
         assert result.unsatisfied_nodes == []
 
-    def test_metadata_only_dep_is_skipped(
-        self, db_session, org, dep_svc, upload, transformation
-    ):
+    def test_metadata_only_dep_is_skipped(self, db_session, org, dep_svc, upload, transformation):
         """Dependencies without check_timeframe_value are metadata-only and skipped."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
         )
         result = check_upstream_dependencies(
             db_session, org.id, NodeType.TRANSFORMATION, transformation.id, dep_service=dep_svc
         )
         assert result.satisfied is True
 
-    def test_unsatisfied_when_no_recent_run(
-        self, db_session, org, dep_svc, upload, transformation
-    ):
+    def test_unsatisfied_when_no_recent_run(self, db_session, org, dep_svc, upload, transformation):
         """Dependency with timeframe but no recent SUCCESS run is unsatisfied."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -132,9 +156,12 @@ class TestCheckUpstreamDependencies:
     ):
         """Dependency is satisfied when upstream has a SUCCESS run within the timeframe."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -150,8 +177,12 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is True
 
@@ -160,9 +191,12 @@ class TestCheckUpstreamDependencies:
     ):
         """A SUCCESS run that's older than the timeframe doesn't satisfy the dep."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -178,17 +212,24 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is False
 
     def test_hours_unit(self, db_session, org, dep_svc, upload, transformation):
         """Timeframe with 'hours' unit works correctly."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=2,
             check_timeframe_unit="hours",
         )
@@ -204,19 +245,24 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is True
 
-    def test_failed_run_does_not_satisfy(
-        self, db_session, org, dep_svc, upload, transformation
-    ):
+    def test_failed_run_does_not_satisfy(self, db_session, org, dep_svc, upload, transformation):
         """Only SUCCESS runs count — FAILED doesn't satisfy."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -232,8 +278,12 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is False
 
@@ -242,16 +292,22 @@ class TestCheckUpstreamDependencies:
     ):
         """When there are multiple upstream deps with timeframes, all must be satisfied."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload2.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload2.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -268,8 +324,12 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is False
         assert len(result.unsatisfied_nodes) == 1
@@ -280,16 +340,22 @@ class TestCheckUpstreamDependencies:
     ):
         """All upstream deps satisfied → overall result is satisfied."""
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
         dep_svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload2.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload2.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -306,7 +372,11 @@ class TestCheckUpstreamDependencies:
         db_session.flush()
 
         result = check_upstream_dependencies(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id,
-            dep_service=dep_svc, now=now,
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            dep_service=dep_svc,
+            now=now,
         )
         assert result.satisfied is True

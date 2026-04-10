@@ -128,24 +128,37 @@ class NotificationState(BaseState):
             with get_sync_session() as session:
                 if self.editing_id:
                     svc.update_channel(
-                        session, self.editing_id, auth.current_org.id,
-                        name=self.form_name, config=config, events=events,
+                        session,
+                        self.editing_id,
+                        auth.current_org.id,
+                        name=self.form_name,
+                        config=config,
+                        events=events,
                     )
                     self._audit(
-                        session, auth.current_org.id, auth.current_user.id,
-                        "update", "notification_channel",
+                        session,
+                        auth.current_org.id,
+                        auth.current_user.id,
+                        "update",
+                        "notification_channel",
                         resource_id=self.editing_id,
                         new_values={"name": self.form_name},
                     )
                 else:
                     ch = svc.create_channel(
-                        session, auth.current_org.id,
-                        name=self.form_name, channel_type=ct,
-                        config=config, events=events,
+                        session,
+                        auth.current_org.id,
+                        name=self.form_name,
+                        channel_type=ct,
+                        config=config,
+                        events=events,
                     )
                     self._audit(
-                        session, auth.current_org.id, auth.current_user.id,
-                        "create", "notification_channel",
+                        session,
+                        auth.current_org.id,
+                        auth.current_user.id,
+                        "create",
+                        "notification_channel",
                         resource_id=ch.id,
                         new_values={"name": self.form_name, "type": self.form_channel_type},
                     )
@@ -167,9 +180,13 @@ class NotificationState(BaseState):
                 old_values = {"name": ch_info.name} if ch_info else {}
                 svc.delete_channel(session, channel_id, auth.current_org.id)
                 self._audit(
-                    session, auth.current_org.id, auth.current_user.id,
-                    "delete", "notification_channel",
-                    resource_id=channel_id, old_values=old_values,
+                    session,
+                    auth.current_org.id,
+                    auth.current_user.id,
+                    "delete",
+                    "notification_channel",
+                    resource_id=channel_id,
+                    old_values=old_values,
                 )
                 session.commit()
             self.error_message = ""
@@ -188,7 +205,9 @@ class NotificationState(BaseState):
                 return
             with get_sync_session() as session:
                 svc.update_channel(
-                    session, channel_id, auth.current_org.id,
+                    session,
+                    channel_id,
+                    auth.current_org.id,
                     is_active=not ch_item.is_active,
                 )
                 session.commit()

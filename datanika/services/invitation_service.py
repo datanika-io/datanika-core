@@ -105,9 +105,7 @@ class InvitationService:
         session.flush()
         return membership
 
-    def cancel_invitation(
-        self, session: Session, org_id: int, invitation_id: int
-    ) -> bool:
+    def cancel_invitation(self, session: Session, org_id: int, invitation_id: int) -> bool:
         """Cancel a pending invitation.  Returns True if cancelled."""
         invitation = session.execute(
             select(Invitation).where(
@@ -122,9 +120,7 @@ class InvitationService:
         session.flush()
         return True
 
-    def list_pending_invitations(
-        self, session: Session, org_id: int
-    ) -> list[Invitation]:
+    def list_pending_invitations(self, session: Session, org_id: int) -> list[Invitation]:
         """List all pending invitations for an org."""
         return list(
             session.execute(
@@ -137,9 +133,7 @@ class InvitationService:
             .all()
         )
 
-    def get_invitation_by_token(
-        self, session: Session, token: str
-    ) -> Invitation | None:
+    def get_invitation_by_token(self, session: Session, token: str) -> Invitation | None:
         """Look up an invitation by its token."""
         return session.execute(
             select(Invitation).where(Invitation.token == token)

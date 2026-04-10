@@ -3,7 +3,7 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.dependency import Dependency, NodeType
 from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
@@ -58,11 +58,13 @@ def other_org(db_session):
 
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
-    src = conn_svc.create_connection(
-        db_session, org.id, "Src", ConnectionType.POSTGRES, {"h": "x"}
-    )
+    src = conn_svc.create_connection(db_session, org.id, "Src", ConnectionType.POSTGRES, {"h": "x"})
     dst = conn_svc.create_connection(
-        db_session, org.id, "Dst", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+        db_session,
+        org.id,
+        "Dst",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
 
@@ -70,10 +72,18 @@ def upload(upload_svc, conn_svc, db_session, org):
 @pytest.fixture
 def upload2(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "Src2", ConnectionType.POSTGRES, {"h": "x"},
+        db_session,
+        org.id,
+        "Src2",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "Dst2", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+        db_session,
+        org.id,
+        "Dst2",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(db_session, org.id, "pipe2", "desc", src.id, dst.id, {})
 
@@ -192,9 +202,12 @@ class TestAddDependency:
 class TestAddDependencyTimeframe:
     def test_with_valid_timeframe(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=30,
             check_timeframe_unit="minutes",
         )
@@ -203,9 +216,12 @@ class TestAddDependencyTimeframe:
 
     def test_with_hours_unit(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
             check_timeframe_value=2,
             check_timeframe_unit="hours",
         )
@@ -214,9 +230,12 @@ class TestAddDependencyTimeframe:
 
     def test_none_timeframe_is_metadata_only(self, svc, db_session, org, upload, transformation):
         dep = svc.add_dependency(
-            db_session, org.id,
-            NodeType.UPLOAD, upload.id,
-            NodeType.TRANSFORMATION, transformation.id,
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
         )
         assert dep.check_timeframe_value is None
         assert dep.check_timeframe_unit is None
@@ -224,9 +243,12 @@ class TestAddDependencyTimeframe:
     def test_negative_value_rejected(self, svc, db_session, org, upload, transformation):
         with pytest.raises(DependencyConfigError, match="positive"):
             svc.add_dependency(
-                db_session, org.id,
-                NodeType.UPLOAD, upload.id,
-                NodeType.TRANSFORMATION, transformation.id,
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                upload.id,
+                NodeType.TRANSFORMATION,
+                transformation.id,
                 check_timeframe_value=-5,
                 check_timeframe_unit="minutes",
             )
@@ -234,9 +256,12 @@ class TestAddDependencyTimeframe:
     def test_zero_value_rejected(self, svc, db_session, org, upload, transformation):
         with pytest.raises(DependencyConfigError, match="positive"):
             svc.add_dependency(
-                db_session, org.id,
-                NodeType.UPLOAD, upload.id,
-                NodeType.TRANSFORMATION, transformation.id,
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                upload.id,
+                NodeType.TRANSFORMATION,
+                transformation.id,
                 check_timeframe_value=0,
                 check_timeframe_unit="minutes",
             )
@@ -244,9 +269,12 @@ class TestAddDependencyTimeframe:
     def test_invalid_unit_rejected(self, svc, db_session, org, upload, transformation):
         with pytest.raises(DependencyConfigError, match="check_timeframe_unit"):
             svc.add_dependency(
-                db_session, org.id,
-                NodeType.UPLOAD, upload.id,
-                NodeType.TRANSFORMATION, transformation.id,
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                upload.id,
+                NodeType.TRANSFORMATION,
+                transformation.id,
                 check_timeframe_value=30,
                 check_timeframe_unit="days",
             )
@@ -254,9 +282,12 @@ class TestAddDependencyTimeframe:
     def test_unit_without_value_rejected(self, svc, db_session, org, upload, transformation):
         with pytest.raises(DependencyConfigError, match="requires check_timeframe_value"):
             svc.add_dependency(
-                db_session, org.id,
-                NodeType.UPLOAD, upload.id,
-                NodeType.TRANSFORMATION, transformation.id,
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                upload.id,
+                NodeType.TRANSFORMATION,
+                transformation.id,
                 check_timeframe_unit="minutes",
             )
 

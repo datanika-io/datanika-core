@@ -19,9 +19,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column(
         "organizations",
-        sa.Column(
-            "default_dbt_schema", sa.String(255), nullable=False, server_default="datanika"
-        ),
+        sa.Column("default_dbt_schema", sa.String(255), nullable=False, server_default="datanika"),
     )
 
 

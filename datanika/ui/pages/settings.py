@@ -350,7 +350,7 @@ def channel_row(ch: ChannelItem) -> rx.Component:
     return rx.table.row(
         rx.table.cell(ch.name),
         rx.table.cell(ch.channel_type),
-        rx.table.cell(", ".join(ch.events)),
+        rx.table.cell(ch.events.join(", ")),
         rx.table.cell(
             rx.cond(ch.is_active, rx.badge("On", color_scheme="green"), rx.badge("Off")),
         ),

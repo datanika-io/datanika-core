@@ -371,5 +371,7 @@
   "connections.topics": "Topics (χωρισμένα με κόμμα)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID ομάδας καταναλωτών",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Αναβαθμίστε το πλάνο σας για περισσότερη χωρητικότητα.",
+  "quota.upgrade_button": "Αναβάθμιση πλάνου"
 }

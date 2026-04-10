@@ -371,5 +371,7 @@
   "connections.topics": "المواضيع (مفصولة بفواصل)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "معرف مجموعة المستهلكين",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "قم بترقية خطتك لفتح المزيد من السعة.",
+  "quota.upgrade_button": "ترقية الخطة"
 }

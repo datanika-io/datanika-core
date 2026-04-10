@@ -807,7 +807,7 @@ class ConnectionState(BaseState):
                     )
                 session.commit()
         except Exception as e:
-            self.error_message = self._safe_error(e, "Failed to save connection")
+            self._set_error(e, "Failed to save connection")
             return
         self._reset_form_fields()
         await self.load_connections()

@@ -371,5 +371,7 @@
   "connections.topics": "Топики (через запятую)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID группы потребителей",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Перейдите на более высокий тариф для увеличения лимитов.",
+  "quota.upgrade_button": "Улучшить тариф"
 }

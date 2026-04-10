@@ -4,6 +4,7 @@ import reflex as rx
 
 from datanika.ui.components.connection_config_fields import type_fields
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
@@ -74,12 +75,7 @@ def connection_form() -> rx.Component:
                     width="100%",
                 ),
             ),
-            rx.cond(
-                ConnectionState.error_message,
-                rx.callout(
-                    ConnectionState.error_message, icon="triangle_alert", color_scheme="red"
-                ),
-            ),
+            error_or_quota_callout(ConnectionState),
             rx.cond(
                 ConnectionState.test_message,
                 rx.callout(

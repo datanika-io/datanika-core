@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.notification_channel import ChannelType
@@ -19,6 +20,7 @@ from datanika.models.pipeline import DbtCommand
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
+from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
@@ -179,6 +181,24 @@ def _ser_channel(ch):
         "is_active": ch.is_active,
         "created_at": ch.created_at.isoformat() if ch.created_at else None,
         "updated_at": ch.updated_at.isoformat() if ch.updated_at else None,
+    }
+
+
+def _ser_catalog_entry(e):
+    return {
+        "id": e.id,
+        "entry_type": e.entry_type.value,
+        "origin_type": e.origin_type.value,
+        "origin_id": e.origin_id,
+        "schema_name": e.schema_name,
+        "table_name": e.table_name,
+        "dataset_name": e.dataset_name,
+        "connection_id": e.connection_id,
+        "description": e.description,
+        "columns": e.columns or [],
+        "dbt_config": e.dbt_config or {},
+        "created_at": e.created_at.isoformat() if e.created_at else None,
+        "updated_at": e.updated_at.isoformat() if e.updated_at else None,
     }
 
 
@@ -768,6 +788,49 @@ async def get_run_logs(request, api_key, session):
 
 
 # ---------------------------------------------------------------------------
+# Catalog
+# ---------------------------------------------------------------------------
+
+
+@api_endpoint(required_scope="catalog:read")
+async def list_catalog_entries(request, api_key, session):
+    """List catalog entries for the org. Optional filters: entry_type,
+    schema, connection_id."""
+    entry_type_str = request.query_params.get("entry_type")
+    schema_filter = request.query_params.get("schema")
+    connection_id_str = request.query_params.get("connection_id")
+
+    entry_type = None
+    if entry_type_str:
+        try:
+            entry_type = CatalogEntryType(entry_type_str)
+        except ValueError:
+            return _error(400, f"Invalid entry_type: {entry_type_str}")
+
+    items = CatalogService.list_entries(session, api_key.org_id, entry_type=entry_type)
+
+    if schema_filter:
+        items = [e for e in items if e.schema_name == schema_filter]
+    if connection_id_str:
+        try:
+            cid = int(connection_id_str)
+        except ValueError:
+            return _error(400, "connection_id must be an integer")
+        items = [e for e in items if e.connection_id == cid]
+
+    return JSONResponse({"items": [_ser_catalog_entry(e) for e in items]})
+
+
+@api_endpoint(required_scope="catalog:read")
+async def get_catalog_entry(request, api_key, session):
+    entry_id = int(request.path_params["id"])
+    entry = CatalogService.get_entry(session, api_key.org_id, entry_id)
+    if entry is None:
+        return _error(404, "Catalog entry not found")
+    return JSONResponse(_ser_catalog_entry(entry))
+
+
+# ---------------------------------------------------------------------------
 # Notification Channels
 # ---------------------------------------------------------------------------
 
@@ -898,6 +961,9 @@ api_v1_routes = [
     Route("/api/v1/runs", list_runs, methods=["GET"]),
     Route("/api/v1/runs/{id:int}", get_run, methods=["GET"]),
     Route("/api/v1/runs/{id:int}/logs", get_run_logs, methods=["GET"]),
+    # Catalog
+    Route("/api/v1/catalog", list_catalog_entries, methods=["GET"]),
+    Route("/api/v1/catalog/{id:int}", get_catalog_entry, methods=["GET"]),
     # Notification channels
     Route("/api/v1/notifications/channels", list_notification_channels, methods=["GET"]),
     Route("/api/v1/notifications/channels/{id:int}", get_notification_channel, methods=["GET"]),

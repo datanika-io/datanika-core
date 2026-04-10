@@ -288,7 +288,7 @@ def run_pipeline(
             session.close()
 
 
-@celery_app.task(bind=True, name="datanika.run_pipeline")
+@celery_app.task(bind=True, name="datanika.run_pipeline", max_retries=60)
 def run_pipeline_task(self, run_id: int, org_id: int, scheduled: bool = False):
     """Celery entry point for dbt pipeline execution."""
     if scheduled:

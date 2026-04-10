@@ -231,7 +231,7 @@ def run_upload(
             session.close()
 
 
-@celery_app.task(bind=True, name="datanika.run_upload")
+@celery_app.task(bind=True, name="datanika.run_upload", max_retries=60)
 def run_upload_task(self, run_id: int, org_id: int, scheduled: bool = False):
     """Celery entry point for upload execution."""
     if scheduled:

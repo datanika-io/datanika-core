@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     # SSO
     sso_sp_entity_id: str = "datanika"
 
+    # API rate limiting (requests per minute, per API key)
+    api_rate_limit_rpm: int = 60
+    api_rate_limit_burst: int = 10
+
     # App
     app_name: str = "Datanika"
     debug: bool = False

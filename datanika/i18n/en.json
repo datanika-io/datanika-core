@@ -371,5 +371,21 @@
   "audit.resource_type": "Resource Type",
   "audit.resource_id": "Resource ID",
   "audit.ip_address": "IP Address",
-  "audit.no_logs": "No audit log entries found."
+  "audit.no_logs": "No audit log entries found.",
+  "notifications.active": "Active",
+  "notifications.add": "Add Channel",
+  "notifications.custom_url": "Webhook URL",
+  "notifications.delete_confirm": "Delete this channel?",
+  "notifications.email_address": "Email Address",
+  "notifications.events": "Events",
+  "notifications.name": "Channel Name",
+  "notifications.no_channels": "No notification channels configured.",
+  "notifications.on_failure": "On Failure",
+  "notifications.on_success": "On Success",
+  "notifications.save": "Save Channel",
+  "notifications.telegram_chat_id": "Chat ID",
+  "notifications.telegram_token": "Bot Token",
+  "notifications.title": "Notifications",
+  "notifications.type": "Channel Type",
+  "notifications.webhook_url": "Webhook URL"
 }

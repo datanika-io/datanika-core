@@ -371,5 +371,21 @@
   "connections.topics": "Topics (séparés par des virgules)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID du groupe de consommateurs",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "notifications.active": "Actif",
+  "notifications.add": "Ajouter un canal",
+  "notifications.custom_url": "URL du webhook",
+  "notifications.delete_confirm": "Supprimer ce canal ?",
+  "notifications.email_address": "Adresse email",
+  "notifications.events": "Événements",
+  "notifications.name": "Nom du canal",
+  "notifications.no_channels": "Aucun canal de notification configuré.",
+  "notifications.on_failure": "En cas d'échec",
+  "notifications.on_success": "En cas de succès",
+  "notifications.save": "Enregistrer le canal",
+  "notifications.telegram_chat_id": "ID du chat",
+  "notifications.telegram_token": "Token du bot",
+  "notifications.title": "Notifications",
+  "notifications.type": "Type de canal",
+  "notifications.webhook_url": "URL du webhook"
 }

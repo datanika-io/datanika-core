@@ -371,5 +371,21 @@
   "connections.topics": "Теме (раздвојене зарезом)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID групе потрошача",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "notifications.active": "Активан",
+  "notifications.add": "Додај канал",
+  "notifications.custom_url": "Webhook URL",
+  "notifications.delete_confirm": "Обрисати овај канал?",
+  "notifications.email_address": "Имејл адреса",
+  "notifications.events": "Догађаји",
+  "notifications.name": "Назив канала",
+  "notifications.no_channels": "Нема конфигурисаних канала обавештења.",
+  "notifications.on_failure": "При грешци",
+  "notifications.on_success": "При успеху",
+  "notifications.save": "Сачувај канал",
+  "notifications.telegram_chat_id": "ID чата",
+  "notifications.telegram_token": "Бот токен",
+  "notifications.title": "Обавештења",
+  "notifications.type": "Тип канала",
+  "notifications.webhook_url": "Webhook URL"
 }

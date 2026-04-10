@@ -371,5 +371,21 @@
   "connections.topics": "Topics (χωρισμένα με κόμμα)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID ομάδας καταναλωτών",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "notifications.active": "Ενεργό",
+  "notifications.add": "Προσθήκη καναλιού",
+  "notifications.custom_url": "URL Webhook",
+  "notifications.delete_confirm": "Διαγραφή αυτού του καναλιού;",
+  "notifications.email_address": "Διεύθυνση email",
+  "notifications.events": "Συμβάντα",
+  "notifications.name": "Όνομα καναλιού",
+  "notifications.no_channels": "Δεν έχουν ρυθμιστεί κανάλια ειδοποιήσεων.",
+  "notifications.on_failure": "Σε αποτυχία",
+  "notifications.on_success": "Σε επιτυχία",
+  "notifications.save": "Αποθήκευση καναλιού",
+  "notifications.telegram_chat_id": "ID Συνομιλίας",
+  "notifications.telegram_token": "Token Bot",
+  "notifications.title": "Ειδοποιήσεις",
+  "notifications.type": "Τύπος καναλιού",
+  "notifications.webhook_url": "URL Webhook"
 }

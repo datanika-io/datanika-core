@@ -29,6 +29,7 @@ from datanika.ui.state.model_state import ModelState
 from datanika.ui.state.pipeline_state import PipelineState
 from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
+from datanika.ui.state.notification_state import NotificationState
 from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState
@@ -136,7 +137,12 @@ app.add_page(
     settings_page,
     route="/settings",
     title="Settings | Datanika",
-    on_load=[AuthState.check_auth, SettingsState.load_settings, ApiKeyState.load_api_keys],
+    on_load=[
+        AuthState.check_auth,
+        SettingsState.load_settings,
+        ApiKeyState.load_api_keys,
+        NotificationState.load_channels,
+    ],
 )
 app.add_page(
     audit_logs_page,
@@ -170,3 +176,8 @@ from datanika.services.sso_routes import sso_routes  # noqa: E402
 
 for _route in sso_routes:
     app._api.routes.append(_route)
+
+# Wire notification hooks (dispatch on run completion)
+from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
+
+register_hooks(NotificationService())

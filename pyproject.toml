@@ -6,9 +6,9 @@ readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
-    # Data pipeline
-    "dlt[postgres,snowflake,bigquery,mssql,clickhouse,duckdb,databricks,synapse]>=1.5",
-    "dbt-core>=1.7,<1.8",
+    # Data pipeline — pinned to tested versions; bump deliberately
+    "dlt[postgres,snowflake,bigquery,mssql,clickhouse,duckdb,databricks,synapse]>=1.21,<2",
+    "dbt-core>=1.7.19,<1.8",
     "dbt-postgres>=1.7,<1.8",
     "dbt-snowflake>=1.7,<1.8",
     "dbt-bigquery>=1.7,<1.8",

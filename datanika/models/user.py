@@ -1,6 +1,7 @@
 import enum
+from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, Enum, ForeignKey, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from datanika.models.base import Base, TimestampMixin
@@ -35,6 +36,9 @@ class User(Base, TimestampMixin):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    onboarding_checklist_dismissed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     memberships: Mapped[list["Membership"]] = relationship(back_populates="user")
 

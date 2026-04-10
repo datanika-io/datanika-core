@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.getting_started_checklist import getting_started_checklist
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.i18n_state import I18nState
@@ -195,6 +196,7 @@ def dashboard_page() -> rx.Component:
                 ),
                 width="100%",
             ),
+            getting_started_checklist(),
             getting_started_card(),
             rx.hstack(
                 stat_card(

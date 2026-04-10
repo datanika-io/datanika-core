@@ -391,5 +391,14 @@
   "quota.upgrade_button": "升级计划",
   "dashboard.usage_title": "计划使用情况",
   "dashboard.usage_runs": "本月模型运行次数",
-  "dashboard.usage_upgrade": "升级获取更多"
+  "dashboard.usage_upgrade": "升级获取更多",
+  "onboarding.title": "开始使用 Datanika",
+  "onboarding.subtitle": "通过 5 个步骤搭建您的第一个数据管道",
+  "onboarding.dismiss": "隐藏",
+  "onboarding.all_done": "全部完成，一切就绪。",
+  "onboarding.step_connection": "添加第一个连接",
+  "onboarding.step_pipeline": "创建管道",
+  "onboarding.step_run": "运行管道",
+  "onboarding.step_transformation": "添加转换",
+  "onboarding.step_schedule": "设置定时调度"
 }

@@ -391,5 +391,14 @@
   "quota.upgrade_button": "Улучшить тариф",
   "dashboard.usage_title": "Использование тарифа",
   "dashboard.usage_runs": "запусков моделей в этом месяце",
-  "dashboard.usage_upgrade": "Улучшить для большего"
+  "dashboard.usage_upgrade": "Улучшить для большего",
+  "onboarding.title": "Начните работу с Datanika",
+  "onboarding.subtitle": "Настройте первый пайплайн за 5 шагов",
+  "onboarding.dismiss": "Скрыть",
+  "onboarding.all_done": "Готово — вы всё настроили.",
+  "onboarding.step_connection": "Добавьте первое подключение",
+  "onboarding.step_pipeline": "Создайте пайплайн",
+  "onboarding.step_run": "Запустите пайплайн",
+  "onboarding.step_transformation": "Добавьте трансформацию",
+  "onboarding.step_schedule": "Настройте расписание"
 }

@@ -173,6 +173,12 @@ from datanika.services.sso_routes import sso_routes  # noqa: E402
 for _route in sso_routes:
     app._api.routes.append(_route)
 
+# Mount REST API v1 routes
+from datanika.services.api_v1_routes import api_v1_routes  # noqa: E402
+
+for _route in api_v1_routes:
+    app._api.routes.append(_route)
+
 # Mount health check routes
 from datanika.services.health_routes import health_routes  # noqa: E402
 

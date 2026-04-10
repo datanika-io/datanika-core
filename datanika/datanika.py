@@ -185,6 +185,12 @@ from datanika.services.api_v1_routes import api_v1_routes  # noqa: E402
 for _route in api_v1_routes:
     app._api.routes.append(_route)
 
+# Mount discovery (meta) routes — /api/v1/meta/*
+from datanika.services.meta_routes import meta_routes  # noqa: E402
+
+for _route in meta_routes:
+    app._api.routes.append(_route)
+
 # Mount health check routes
 from datanika.services.health_routes import health_routes  # noqa: E402
 

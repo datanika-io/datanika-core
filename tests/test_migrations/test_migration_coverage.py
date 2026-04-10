@@ -42,26 +42,20 @@ def _scan_migration_files() -> tuple[set[str], dict[str, set[str]]]:
     - op.rename_table("old", "new") — registers the new name
     - op.add_column("table", sa.Column("col", ...)) — registers column addition
     """
-    versions_dir = (
-        Path(__file__).parent.parent.parent / "datanika" / "migrations" / "versions"
-    )
+    versions_dir = Path(__file__).parent.parent.parent / "datanika" / "migrations" / "versions"
     tables: set[str] = set()
     columns: dict[str, set[str]] = {}
 
     create_table_re = re.compile(r'op\.create_table\(\s*"(\w+)"')
     rename_table_re = re.compile(r'op\.rename_table\(\s*"\w+"\s*,\s*"(\w+)"')
     column_in_create_re = re.compile(r'sa\.Column\(\s*"(\w+)"')
-    add_column_re = re.compile(
-        r'op\.add_column\(\s*"(\w+)"\s*,\s*sa\.Column\(\s*"(\w+)"'
-    )
+    add_column_re = re.compile(r'op\.add_column\(\s*"(\w+)"\s*,\s*sa\.Column\(\s*"(\w+)"')
 
     for f in sorted(versions_dir.glob("*.py")):
         content = f.read_text(encoding="utf-8")
 
         # Only look at upgrade() function
-        upgrade_match = re.search(
-            r"def upgrade\(\).*?(?=\ndef |\Z)", content, re.DOTALL
-        )
+        upgrade_match = re.search(r"def upgrade\(\).*?(?=\ndef |\Z)", content, re.DOTALL)
         if not upgrade_match:
             continue
         upgrade_body = upgrade_match.group(0)

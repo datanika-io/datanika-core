@@ -75,6 +75,75 @@ def _guide_step(title: rx.Var[str], desc: rx.Var[str]) -> rx.Component:
     )
 
 
+def usage_bar() -> rx.Component:
+    return rx.cond(
+        DashboardState.has_usage_data,
+        rx.card(
+            rx.vstack(
+                rx.hstack(
+                    rx.text(_t["dashboard.usage_title"], weight="bold", size="3"),
+                    rx.badge(DashboardState.plan_name, color_scheme="violet", size="1"),
+                    align="center",
+                    spacing="2",
+                ),
+                rx.hstack(
+                    rx.text(
+                        DashboardState.runs_used,
+                        " / ",
+                        DashboardState.runs_limit,
+                        " ",
+                        _t["dashboard.usage_runs"],
+                        size="2",
+                    ),
+                    rx.text(
+                        DashboardState.runs_percent,
+                        "%",
+                        size="2",
+                        weight="bold",
+                        color=rx.cond(
+                            DashboardState.runs_percent >= 80,
+                            "var(--red-11)",
+                            rx.cond(
+                                DashboardState.runs_percent >= 60,
+                                "var(--amber-11)",
+                                "var(--green-11)",
+                            ),
+                        ),
+                    ),
+                    justify="between",
+                    width="100%",
+                ),
+                rx.progress(
+                    value=DashboardState.runs_percent,
+                    max=100,
+                    color_scheme=DashboardState.runs_color,
+                    width="100%",
+                ),
+                rx.cond(
+                    DashboardState.runs_percent >= 80,
+                    rx.hstack(
+                        rx.icon("alert-triangle", size=14, color="var(--red-11)"),
+                        rx.link(
+                            rx.text(
+                                _t["dashboard.usage_upgrade"],
+                                size="2",
+                                color="var(--red-11)",
+                                weight="medium",
+                            ),
+                            href="/settings?tab=billing",
+                        ),
+                        align="center",
+                        spacing="1",
+                    ),
+                ),
+                spacing="2",
+                width="100%",
+            ),
+            width="100%",
+        ),
+    )
+
+
 def getting_started_card() -> rx.Component:
     return rx.accordion.root(
         rx.accordion.item(
@@ -161,6 +230,7 @@ def dashboard_page() -> rx.Component:
                 spacing="4",
                 wrap="wrap",
             ),
+            usage_bar(),
             recent_runs_table(),
             spacing="6",
             width="100%",

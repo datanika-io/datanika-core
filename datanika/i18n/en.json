@@ -371,5 +371,8 @@
   "audit.resource_type": "Resource Type",
   "audit.resource_id": "Resource ID",
   "audit.ip_address": "IP Address",
-  "audit.no_logs": "No audit log entries found."
+  "audit.no_logs": "No audit log entries found.",
+  "dashboard.usage_title": "Plan Usage",
+  "dashboard.usage_runs": "model runs this month",
+  "dashboard.usage_upgrade": "Upgrade for more"
 }

@@ -371,5 +371,8 @@
   "connections.topics": "主题（逗号分隔）",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "消费者组 ID",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "dashboard.usage_title": "计划使用情况",
+  "dashboard.usage_runs": "本月模型运行次数",
+  "dashboard.usage_upgrade": "升级获取更多"
 }

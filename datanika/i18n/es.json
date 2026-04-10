@@ -371,5 +371,8 @@
   "connections.topics": "Topics (separados por comas)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID del grupo de consumidores",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "dashboard.usage_title": "Uso del plan",
+  "dashboard.usage_runs": "ejecuciones de modelos este mes",
+  "dashboard.usage_upgrade": "Mejorar para más"
 }

@@ -371,5 +371,8 @@
   "connections.topics": "Теме (раздвојене зарезом)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID групе потрошача",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "dashboard.usage_title": "Коришћење плана",
+  "dashboard.usage_runs": "покретања модела овог месеца",
+  "dashboard.usage_upgrade": "Надогради за више"
 }

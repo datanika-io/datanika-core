@@ -191,6 +191,12 @@ from datanika.services.health_routes import health_routes  # noqa: E402
 for _route in health_routes:
     app._api.routes.append(_route)
 
+# Mount OpenAPI/Swagger docs
+from datanika.services.openapi import openapi_routes  # noqa: E402
+
+for _route in openapi_routes:
+    app._api.routes.append(_route)
+
 # Wire notification hooks (dispatch on run completion)
 from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
 

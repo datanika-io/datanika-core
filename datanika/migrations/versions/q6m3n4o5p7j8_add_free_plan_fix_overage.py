@@ -5,14 +5,14 @@ Revises: p5l2m3n4o6i7
 Create Date: 2026-03-24 21:00:00.000000
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 revision: str = "q6m3n4o5p7j8"
-down_revision: Union[str, None] = "p5l2m3n4o6i7"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "p5l2m3n4o6i7"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

@@ -1,3 +1,4 @@
+import contextlib
 import re
 from logging.config import fileConfig
 
@@ -11,10 +12,8 @@ from datanika.migrations.helpers import (
 )
 from datanika.models.base import Base
 
-try:
+with contextlib.suppress(ImportError):
     import datanika_cloud.billing.models  # noqa: F401
-except ImportError:
-    pass
 
 _TENANT_SCHEMA_RE = re.compile(r"^tenant_\d+$")
 

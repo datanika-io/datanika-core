@@ -1,0 +1,364 @@
+"""Centralized JSON Schemas for connection configs.
+
+Single source of truth for what fields each connection type expects.
+Used by:
+- /api/v1/meta/connection-types discovery endpoint
+- (future) UI form rendering
+- (future) Connection.config validation
+
+Each schema follows JSON Schema Draft 7. Sensitive fields are marked
+with `"format": "password"` so the UI can render them as password inputs
+and AI agents know not to log them.
+"""
+
+from datanika.models.connection import ConnectionType
+from datanika.services.connection_service import (
+    DESTINATION_TYPES,
+    SOURCE_TYPES,
+    infer_direction,
+)
+
+
+def _str(description: str, sensitive: bool = False) -> dict:
+    s = {"type": "string", "description": description}
+    if sensitive:
+        s["format"] = "password"
+    return s
+
+
+def _int(description: str, default: int | None = None) -> dict:
+    s = {"type": "integer", "description": description}
+    if default is not None:
+        s["default"] = default
+    return s
+
+
+def _bool(description: str, default: bool = False) -> dict:
+    return {"type": "boolean", "description": description, "default": default}
+
+
+def _schema(properties: dict, required: list[str]) -> dict:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+# JSON Schemas for each connection type's `config` field
+CONFIG_SCHEMAS: dict[str, dict] = {
+    # ---- Databases ----
+    "postgres": _schema(
+        {
+            "host": _str("Database hostname"),
+            "port": _int("Port number", default=5432),
+            "database": _str("Database name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    "mysql": _schema(
+        {
+            "host": _str("Database hostname"),
+            "port": _int("Port number", default=3306),
+            "database": _str("Database name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    "mssql": _schema(
+        {
+            "host": _str("SQL Server hostname"),
+            "port": _int("Port number", default=1433),
+            "database": _str("Database name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    "sqlite": _schema(
+        {
+            "path": _str("Path to SQLite file (or :memory:)"),
+        },
+        required=["path"],
+    ),
+    "clickhouse": _schema(
+        {
+            "host": _str("ClickHouse hostname"),
+            "port": _int("HTTP port", default=8123),
+            "database": _str("Database name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+            "secure": _bool("Use HTTPS"),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    "duckdb": _schema(
+        {
+            "path": _str("Path to DuckDB file (or :memory:)"),
+        },
+        required=["path"],
+    ),
+    # ---- Cloud warehouses ----
+    "bigquery": _schema(
+        {
+            "project": _str("GCP project ID"),
+            "dataset": _str("BigQuery dataset name"),
+            "service_account_json": _str(
+                "Service account JSON (paste the full JSON)",
+                sensitive=True,
+            ),
+        },
+        required=["project", "dataset", "service_account_json"],
+    ),
+    "snowflake": _schema(
+        {
+            "account": _str("Snowflake account identifier (e.g. xy12345.us-east-1)"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+            "database": _str("Database name"),
+            "warehouse": _str("Warehouse name"),
+            "schema": _str("Schema name"),
+            "role": _str("Role (optional)"),
+        },
+        required=["account", "user", "password", "database", "warehouse", "schema"],
+    ),
+    "redshift": _schema(
+        {
+            "host": _str("Redshift cluster endpoint"),
+            "port": _int("Port number", default=5439),
+            "database": _str("Database name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    "databricks": _schema(
+        {
+            "host": _str("Databricks workspace host"),
+            "http_path": _str("SQL warehouse HTTP path"),
+            "token": _str("Personal access token", sensitive=True),
+            "catalog": _str("Unity Catalog name"),
+        },
+        required=["host", "http_path", "token", "catalog"],
+    ),
+    "synapse": _schema(
+        {
+            "host": _str("Synapse SQL endpoint"),
+            "port": _int("Port number", default=1433),
+            "database": _str("Database/pool name"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
+    # ---- SaaS APIs (source only) ----
+    "stripe": _schema(
+        {"api_key": _str("Stripe secret key", sensitive=True)},
+        required=["api_key"],
+    ),
+    "github": _schema(
+        {
+            "access_token": _str("GitHub personal access token", sensitive=True),
+            "owner": _str("Repository owner (org or user)"),
+            "repo": _str("Repository name"),
+        },
+        required=["access_token", "owner", "repo"],
+    ),
+    "hubspot": _schema(
+        {"api_key": _str("HubSpot API key", sensitive=True)},
+        required=["api_key"],
+    ),
+    "salesforce": _schema(
+        {
+            "client_id": _str("Connected app client ID"),
+            "client_secret": _str("Connected app client secret", sensitive=True),
+            "username": _str("Salesforce username"),
+            "password": _str("Salesforce password", sensitive=True),
+            "security_token": _str("Security token", sensitive=True),
+        },
+        required=[
+            "client_id",
+            "client_secret",
+            "username",
+            "password",
+            "security_token",
+        ],
+    ),
+    "shopify": _schema(
+        {
+            "shop_url": _str("Shop URL (e.g. my-store.myshopify.com)"),
+            "access_token": _str("Admin API access token", sensitive=True),
+        },
+        required=["shop_url", "access_token"],
+    ),
+    "jira": _schema(
+        {
+            "server_url": _str("Jira server URL"),
+            "email": _str("Account email"),
+            "api_token": _str("API token", sensitive=True),
+        },
+        required=["server_url", "email", "api_token"],
+    ),
+    "slack": _schema(
+        {"token": _str("Slack bot token", sensitive=True)},
+        required=["token"],
+    ),
+    "zendesk": _schema(
+        {
+            "subdomain": _str("Zendesk subdomain"),
+            "email": _str("Account email"),
+            "api_token": _str("API token", sensitive=True),
+        },
+        required=["subdomain", "email", "api_token"],
+    ),
+    "airtable": _schema(
+        {
+            "api_key": _str("Airtable personal access token", sensitive=True),
+            "base_id": _str("Base ID"),
+        },
+        required=["api_key", "base_id"],
+    ),
+    "notion": _schema(
+        {"api_key": _str("Notion integration token", sensitive=True)},
+        required=["api_key"],
+    ),
+    "google_analytics": _schema(
+        {
+            "property_id": _str("GA4 property ID"),
+            "service_account_json": _str(
+                "Service account JSON",
+                sensitive=True,
+            ),
+        },
+        required=["property_id", "service_account_json"],
+    ),
+    "google_ads": _schema(
+        {
+            "customer_id": _str("Google Ads customer ID"),
+            "service_account_json": _str(
+                "Service account JSON",
+                sensitive=True,
+            ),
+        },
+        required=["customer_id", "service_account_json"],
+    ),
+    "facebook_ads": _schema(
+        {
+            "access_token": _str("Marketing API access token", sensitive=True),
+            "account_id": _str("Ad account ID"),
+        },
+        required=["access_token", "account_id"],
+    ),
+    "google_sheets": _schema(
+        {
+            "spreadsheet_id": _str("Google Sheets spreadsheet ID"),
+            "service_account_json": _str(
+                "Service account JSON",
+                sensitive=True,
+            ),
+        },
+        required=["spreadsheet_id", "service_account_json"],
+    ),
+    "mongodb": _schema(
+        {
+            "connection_string": _str(
+                "MongoDB connection string (with credentials)",
+                sensitive=True,
+            ),
+            "database": _str("Database name"),
+        },
+        required=["connection_string", "database"],
+    ),
+    # ---- REST API ----
+    "rest_api": _schema(
+        {
+            "base_url": _str("API base URL"),
+            "auth_type": {
+                "type": "string",
+                "enum": ["none", "bearer", "api_key", "basic"],
+                "default": "none",
+                "description": "Authentication type",
+            },
+            "auth_token": _str("Auth token (for bearer/api_key)", sensitive=True),
+            "auth_user": _str("Username (for basic auth)"),
+            "auth_password": _str("Password (for basic auth)", sensitive=True),
+        },
+        required=["base_url"],
+    ),
+    # ---- Files ----
+    "s3": _schema(
+        {
+            "bucket": _str("S3 bucket name"),
+            "aws_access_key_id": _str("AWS access key ID", sensitive=True),
+            "aws_secret_access_key": _str("AWS secret access key", sensitive=True),
+            "region": _str("AWS region (e.g. us-east-1)"),
+            "prefix": _str("Optional key prefix"),
+        },
+        required=["bucket", "aws_access_key_id", "aws_secret_access_key", "region"],
+    ),
+    "csv": _schema(
+        {"path": _str("Path to CSV file or directory")},
+        required=["path"],
+    ),
+    "json": _schema(
+        {"path": _str("Path to JSON file or directory")},
+        required=["path"],
+    ),
+    "parquet": _schema(
+        {"path": _str("Path to Parquet file or directory")},
+        required=["path"],
+    ),
+    # ---- Streaming ----
+    "kafka": _schema(
+        {
+            "bootstrap_servers": _str("Comma-separated Kafka brokers"),
+            "topics": _str("Comma-separated topic names"),
+            "group_id": _str("Consumer group ID"),
+            "sasl_username": _str("SASL username (optional)"),
+            "sasl_password": _str("SASL password (optional)", sensitive=True),
+        },
+        required=["bootstrap_servers", "topics", "group_id"],
+    ),
+}
+
+
+def list_connection_types() -> list[dict]:
+    """Return a list of all connection types with their schemas and direction."""
+    items = []
+    for ct in ConnectionType:
+        slug = ct.value
+        if slug not in CONFIG_SCHEMAS:
+            # Should not happen — every connection type should have a schema
+            continue
+        direction = infer_direction(ct).value
+        items.append(
+            {
+                "type": slug,
+                "direction": direction,
+                "is_source": slug in SOURCE_TYPES,
+                "is_destination": slug in DESTINATION_TYPES,
+                "config_schema": CONFIG_SCHEMAS[slug],
+            }
+        )
+    return items
+
+
+def get_connection_type(slug: str) -> dict | None:
+    """Return a single connection type's schema, or None if unknown."""
+    if slug not in CONFIG_SCHEMAS:
+        return None
+    try:
+        ct = ConnectionType(slug)
+    except ValueError:
+        return None
+    return {
+        "type": slug,
+        "direction": infer_direction(ct).value,
+        "is_source": slug in SOURCE_TYPES,
+        "is_destination": slug in DESTINATION_TYPES,
+        "config_schema": CONFIG_SCHEMAS[slug],
+    }

@@ -3,9 +3,8 @@
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy import create_engine, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from sqlalchemy.orm import Session as SyncSession
 
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
@@ -118,10 +117,9 @@ class SchedulerIntegrationService:
     @staticmethod
     def _dispatch_target(org_id: int, target_type: str, target_id: int) -> None:
         """Callback for APScheduler: create Run + dispatch Celery task."""
-        from datanika.config import settings
+        from datanika.db import get_sync_session
 
-        engine = create_engine(settings.database_url_sync)
-        session = SyncSession(engine)
+        session = get_sync_session()
 
         try:
             exec_svc = ExecutionService()

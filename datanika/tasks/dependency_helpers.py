@@ -34,13 +34,9 @@ def check_deps_or_retry(
     """
     own_session = session is None
     if own_session:
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import Session as SyncSession
+        from datanika.db import get_sync_session
 
-        from datanika.config import settings
-
-        engine = create_engine(settings.database_url_sync)
-        session = SyncSession(engine)
+        session = get_sync_session()
 
     try:
         run = session.get(Run, run_id)

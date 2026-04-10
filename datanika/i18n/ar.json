@@ -375,7 +375,6 @@
   "notifications.active": "نشط",
   "notifications.add": "إضافة قناة",
   "notifications.custom_url": "رابط Webhook",
-  "notifications.delete_confirm": "حذف هذه القناة؟",
   "notifications.email_address": "عنوان البريد الإلكتروني",
   "notifications.events": "الأحداث",
   "notifications.name": "اسم القناة",

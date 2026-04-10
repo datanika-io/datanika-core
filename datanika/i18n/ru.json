@@ -375,7 +375,6 @@
   "notifications.active": "Активный",
   "notifications.add": "Добавить канал",
   "notifications.custom_url": "URL вебхука",
-  "notifications.delete_confirm": "Удалить этот канал?",
   "notifications.email_address": "Email адрес",
   "notifications.events": "События",
   "notifications.name": "Название канала",

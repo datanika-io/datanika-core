@@ -375,7 +375,6 @@
   "notifications.active": "Активан",
   "notifications.add": "Додај канал",
   "notifications.custom_url": "Webhook URL",
-  "notifications.delete_confirm": "Обрисати овај канал?",
   "notifications.email_address": "Имејл адреса",
   "notifications.events": "Догађаји",
   "notifications.name": "Назив канала",

@@ -3,12 +3,10 @@
 import logging
 
 import reflex as rx
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from datanika.config import settings
+from datanika.db import get_sync_session  # noqa: F401 — re-exported
 
-_engine = create_engine(settings.database_url_sync)
 _log = logging.getLogger(__name__)
 
 ROLE_HIERARCHY = {"owner": 4, "admin": 3, "editor": 2, "viewer": 1}
@@ -17,11 +15,6 @@ ROLE_HIERARCHY = {"owner": 4, "admin": 3, "editor": 2, "viewer": 1}
 def check_role_hierarchy(current_role: str, required_role: str) -> bool:
     """Check if current_role meets or exceeds required_role."""
     return ROLE_HIERARCHY.get(current_role, 0) >= ROLE_HIERARCHY.get(required_role, 0)
-
-
-def get_sync_session() -> Session:
-    """Create a sync session for use in Reflex event handlers."""
-    return Session(_engine)
 
 
 class BaseState(rx.State):

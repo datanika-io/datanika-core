@@ -375,7 +375,6 @@
   "notifications.active": "Ενεργό",
   "notifications.add": "Προσθήκη καναλιού",
   "notifications.custom_url": "URL Webhook",
-  "notifications.delete_confirm": "Διαγραφή αυτού του καναλιού;",
   "notifications.email_address": "Διεύθυνση email",
   "notifications.events": "Συμβάντα",
   "notifications.name": "Όνομα καναλιού",

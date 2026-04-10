@@ -207,4 +207,12 @@ def run_transformation_task(self, run_id: int, org_id: int, scheduled: bool = Fa
         from datanika.tasks.dependency_helpers import check_deps_or_retry
 
         check_deps_or_retry(self, run_id, org_id, NodeType.TRANSFORMATION)
-    run_transformation(run_id=run_id, org_id=org_id)
+
+    from datanika.services.concurrency_service import acquire, release
+
+    if not acquire(org_id):
+        raise self.retry(countdown=30, max_retries=60)
+    try:
+        run_transformation(run_id=run_id, org_id=org_id)
+    finally:
+        release(org_id)

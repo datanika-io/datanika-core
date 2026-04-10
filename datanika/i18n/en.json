@@ -371,5 +371,7 @@
   "audit.resource_type": "Resource Type",
   "audit.resource_id": "Resource ID",
   "audit.ip_address": "IP Address",
-  "audit.no_logs": "No audit log entries found."
+  "audit.no_logs": "No audit log entries found.",
+  "quota.upgrade_hint": "Upgrade your plan to unlock more capacity.",
+  "quota.upgrade_button": "Upgrade Plan"
 }

@@ -371,5 +371,7 @@
   "connections.topics": "Topics (kommagetrennt)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "Konsumentengruppen-ID",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Upgraden Sie Ihren Plan, um mehr Kapazität freizuschalten.",
+  "quota.upgrade_button": "Plan upgraden"
 }

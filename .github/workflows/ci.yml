@@ -76,7 +76,6 @@ jobs:
 
   deploy:
     needs: [lint, test, compile]
-    needs: [lint, test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production

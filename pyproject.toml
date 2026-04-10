@@ -65,6 +65,9 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "cryptography>=44.0",
+
+    # Monitoring
+    "prometheus-client>=0.21",
 ]
 
 [project.optional-dependencies]

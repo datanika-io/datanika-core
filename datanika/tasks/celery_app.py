@@ -22,6 +22,11 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
 )
 
+# Register Prometheus metrics for task execution
+from datanika.services.metrics import setup_celery_metrics  # noqa: E402
+
+setup_celery_metrics(celery_app)
+
 celery_app.conf.include = [
     "datanika.tasks.upload_tasks",
     "datanika.tasks.transformation_tasks",

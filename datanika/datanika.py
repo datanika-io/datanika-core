@@ -197,6 +197,13 @@ from datanika.services.openapi import openapi_routes  # noqa: E402
 for _route in openapi_routes:
     app._api.routes.append(_route)
 
+# Mount Prometheus metrics endpoint and middleware
+from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # noqa: E402
+
+for _route in metrics_routes:
+    app._api.routes.append(_route)
+app._api.add_middleware(PrometheusMiddleware)
+
 # Wire notification hooks (dispatch on run completion)
 from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
 

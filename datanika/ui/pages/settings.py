@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
 from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
@@ -523,12 +524,7 @@ def settings_page() -> rx.Component:
         rx.vstack(
             rx.cond(
                 SettingsState.error_message != "",
-                rx.callout(
-                    SettingsState.error_message,
-                    icon="triangle_alert",
-                    color_scheme="red",
-                    width="100%",
-                ),
+                error_or_quota_callout(SettingsState),
             ),
             org_profile_card(),
             members_card(),

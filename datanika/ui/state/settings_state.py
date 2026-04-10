@@ -216,7 +216,7 @@ class SettingsState(BaseState):
                 )
                 session.commit()
         except Exception as e:
-            self.error_message = self._safe_error(e, "Failed to add member")
+            self._set_error(e, "Failed to add member")
             return
         self.invite_email = ""
         self.error_message = ""

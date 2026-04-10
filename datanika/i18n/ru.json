@@ -387,5 +387,7 @@
   "notifications.telegram_token": "Токен бота",
   "notifications.title": "Уведомления",
   "notifications.type": "Тип канала",
-  "notifications.webhook_url": "URL вебхука"
+  "notifications.webhook_url": "URL вебхука",
+  "quota.upgrade_hint": "Перейдите на более высокий тариф для увеличения лимитов.",
+  "quota.upgrade_button": "Улучшить тариф"
 }

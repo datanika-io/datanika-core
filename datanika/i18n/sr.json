@@ -387,5 +387,7 @@
   "notifications.telegram_token": "Бот токен",
   "notifications.title": "Обавештења",
   "notifications.type": "Тип канала",
-  "notifications.webhook_url": "Webhook URL"
+  "notifications.webhook_url": "Webhook URL",
+  "quota.upgrade_hint": "Надоградите свој план за више капацитета.",
+  "quota.upgrade_button": "Надогради план"
 }

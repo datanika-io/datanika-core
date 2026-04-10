@@ -387,5 +387,7 @@
   "notifications.telegram_token": "رمز البوت",
   "notifications.title": "الإشعارات",
   "notifications.type": "نوع القناة",
-  "notifications.webhook_url": "رابط Webhook"
+  "notifications.webhook_url": "رابط Webhook",
+  "quota.upgrade_hint": "قم بترقية خطتك لفتح المزيد من السعة.",
+  "quota.upgrade_button": "ترقية الخطة"
 }

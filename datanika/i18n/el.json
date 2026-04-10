@@ -387,5 +387,7 @@
   "notifications.telegram_token": "Token Bot",
   "notifications.title": "Ειδοποιήσεις",
   "notifications.type": "Τύπος καναλιού",
-  "notifications.webhook_url": "URL Webhook"
+  "notifications.webhook_url": "URL Webhook",
+  "quota.upgrade_hint": "Αναβαθμίστε το πλάνο σας για περισσότερη χωρητικότητα.",
+  "quota.upgrade_button": "Αναβάθμιση πλάνου"
 }

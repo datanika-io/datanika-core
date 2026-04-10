@@ -387,5 +387,7 @@
   "notifications.telegram_token": "Bot Token",
   "notifications.title": "通知",
   "notifications.type": "渠道类型",
-  "notifications.webhook_url": "Webhook URL"
+  "notifications.webhook_url": "Webhook URL",
+  "quota.upgrade_hint": "升级您的计划以解锁更多容量。",
+  "quota.upgrade_button": "升级计划"
 }

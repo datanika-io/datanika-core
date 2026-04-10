@@ -1,6 +1,9 @@
 from celery import Celery
 
 from datanika.config import settings
+from datanika.logging_config import setup_logging
+
+setup_logging(debug=settings.debug)
 
 celery_app = Celery(
     "datanika",

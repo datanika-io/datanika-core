@@ -1,5 +1,7 @@
 import reflex as rx
 
+from datanika.config import settings as _settings
+from datanika.logging_config import setup_logging
 from datanika.scheduler import scheduler_integration
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
@@ -34,6 +36,8 @@ from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState
 
+setup_logging(debug=_settings.debug)
+
 app = rx.App(
     head_components=[
         rx.el.link(rel="icon", href="/favicon.ico", type="image/x-icon"),
@@ -41,8 +45,6 @@ app = rx.App(
 )
 
 # Load cloud plugin if running in cloud edition
-from datanika.config import settings as _settings  # noqa: E402
-
 if _settings.datanika_edition == "cloud":
     from datanika_cloud.plugin import init_cloud  # noqa: E402
 
@@ -175,6 +177,18 @@ for _route in email_routes:
 from datanika.services.sso_routes import sso_routes  # noqa: E402
 
 for _route in sso_routes:
+    app._api.routes.append(_route)
+
+# Mount REST API v1 routes
+from datanika.services.api_v1_routes import api_v1_routes  # noqa: E402
+
+for _route in api_v1_routes:
+    app._api.routes.append(_route)
+
+# Mount health check routes
+from datanika.services.health_routes import health_routes  # noqa: E402
+
+for _route in health_routes:
     app._api.routes.append(_route)
 
 # Wire notification hooks (dispatch on run completion)

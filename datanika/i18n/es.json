@@ -387,5 +387,7 @@
   "notifications.telegram_token": "Token del bot",
   "notifications.title": "Notificaciones",
   "notifications.type": "Tipo de canal",
-  "notifications.webhook_url": "URL del webhook"
+  "notifications.webhook_url": "URL del webhook",
+  "quota.upgrade_hint": "Actualice su plan para desbloquear más capacidad.",
+  "quota.upgrade_button": "Mejorar plan"
 }

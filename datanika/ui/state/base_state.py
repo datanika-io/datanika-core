@@ -28,6 +28,7 @@ class BaseState(rx.State):
     """Base state with org_id from AuthState available to all substates."""
 
     error_message: str = ""
+    is_quota_error: bool = False
 
     async def _get_org_id(self) -> int:
         from datanika.ui.state.auth_state import AuthState
@@ -74,6 +75,15 @@ class BaseState(rx.State):
             )
         except Exception:
             pass  # Audit logging should never break the main operation
+
+    def _set_error(self, exc: Exception, fallback: str = "An error occurred") -> None:
+        """Set error_message and is_quota_error from an exception."""
+        _log.exception("Caught exception in state handler")
+        self.is_quota_error = type(exc).__name__ == "QuotaExceededError"
+        if isinstance(exc, ValueError):
+            self.error_message = str(exc)
+        else:
+            self.error_message = fallback
 
     @staticmethod
     def _safe_error(exc: Exception, fallback: str = "An error occurred") -> str:

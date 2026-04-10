@@ -371,5 +371,7 @@
   "connections.topics": "主题（逗号分隔）",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "消费者组 ID",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "升级您的计划以解锁更多容量。",
+  "quota.upgrade_button": "升级计划"
 }

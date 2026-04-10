@@ -353,7 +353,7 @@ class UploadState(BaseState):
                     )
                 session.commit()
         except Exception as e:
-            self.error_message = self._safe_error(e, "Failed to save upload")
+            self._set_error(e, "Failed to save upload")
             return
         self._reset_form()
         await self.load_uploads()

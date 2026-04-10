@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
@@ -242,11 +243,8 @@ def pipeline_form() -> rx.Component:
                 on_change=PipelineState.set_form_custom_selector,
                 width="100%",
             ),
-            # Error
-            rx.cond(
-                PipelineState.error_message,
-                rx.callout(PipelineState.error_message, icon="triangle_alert", color_scheme="red"),
-            ),
+            # Error / quota upgrade
+            error_or_quota_callout(PipelineState),
             # Buttons
             rx.hstack(
                 rx.button(

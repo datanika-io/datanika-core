@@ -371,5 +371,7 @@
   "connections.topics": "Теме (раздвојене зарезом)",
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID групе потрошача",
-  "connections.ph_group_id": "datanika-consumer"
+  "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Надоградите свој план за више капацитета.",
+  "quota.upgrade_button": "Надогради план"
 }

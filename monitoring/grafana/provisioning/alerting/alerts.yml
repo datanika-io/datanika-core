@@ -202,7 +202,7 @@ groups:
           severity: warning
         annotations:
           summary: "Container {{ $labels.name }} memory > 1.5GB"
-          description: "Container {{ $labels.name }} is using {{ $value | humanize }} of memory."
+          description: "Container {{ $labels.name }} is using more than 1.5GB of memory."
 
   - orgId: 1
     name: Application Alerts

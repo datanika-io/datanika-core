@@ -1,8 +1,10 @@
 """Dashboard state — stats and recent runs."""
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
+from datanika.hooks import emit
 from datanika.models.run import RunStatus
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -28,6 +30,30 @@ class DashboardStats(BaseModel):
 class DashboardState(BaseState):
     stats: DashboardStats = DashboardStats()
     recent_runs: list[RunItem] = []
+
+    # Usage bar (populated via hook — zero when cloud plugin not active)
+    runs_used: int = 0
+    runs_limit: int = 0
+    plan_name: str = ""
+
+    @rx.var
+    def runs_percent(self) -> int:
+        if self.runs_limit <= 0:
+            return 0
+        return min(int(self.runs_used / self.runs_limit * 100), 100)
+
+    @rx.var
+    def runs_color(self) -> str:
+        pct = self.runs_percent
+        if pct >= 80:
+            return "red"
+        if pct >= 60:
+            return "yellow"
+        return "green"
+
+    @rx.var
+    def has_usage_data(self) -> bool:
+        return self.runs_limit > 0
 
     async def load_dashboard(self):
         org_id = await self._get_org_id()
@@ -82,6 +108,19 @@ class DashboardState(BaseState):
                 )
                 for r in recent
             ]
+
+        # Load usage data via hook (cloud plugin fills this in)
+        usage_ctx = {
+            "org_id": org_id,
+            "runs_used": 0,
+            "runs_limit": 0,
+            "plan_name": "",
+        }
+        emit("usage.get_summary", context=usage_ctx)
+        self.runs_used = usage_ctx["runs_used"]
+        self.runs_limit = usage_ctx["runs_limit"]
+        self.plan_name = usage_ctx["plan_name"]
+
         self.error_message = ""
 
     @staticmethod

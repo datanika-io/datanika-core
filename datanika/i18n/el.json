@@ -389,5 +389,8 @@
   "notifications.type": "Τύπος καναλιού",
   "notifications.webhook_url": "URL Webhook",
   "quota.upgrade_hint": "Αναβαθμίστε το πλάνο σας για περισσότερη χωρητικότητα.",
-  "quota.upgrade_button": "Αναβάθμιση πλάνου"
+  "quota.upgrade_button": "Αναβάθμιση πλάνου",
+  "dashboard.usage_title": "Χρήση πλάνου",
+  "dashboard.usage_runs": "εκτελέσεις μοντέλων αυτόν τον μήνα",
+  "dashboard.usage_upgrade": "Αναβάθμιση για περισσότερα"
 }

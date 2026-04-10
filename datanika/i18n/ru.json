@@ -389,5 +389,8 @@
   "notifications.type": "Тип канала",
   "notifications.webhook_url": "URL вебхука",
   "quota.upgrade_hint": "Перейдите на более высокий тариф для увеличения лимитов.",
-  "quota.upgrade_button": "Улучшить тариф"
+  "quota.upgrade_button": "Улучшить тариф",
+  "dashboard.usage_title": "Использование тарифа",
+  "dashboard.usage_runs": "запусков моделей в этом месяце",
+  "dashboard.usage_upgrade": "Улучшить для большего"
 }

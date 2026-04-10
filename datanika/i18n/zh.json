@@ -389,5 +389,8 @@
   "notifications.type": "渠道类型",
   "notifications.webhook_url": "Webhook URL",
   "quota.upgrade_hint": "升级您的计划以解锁更多容量。",
-  "quota.upgrade_button": "升级计划"
+  "quota.upgrade_button": "升级计划",
+  "dashboard.usage_title": "计划使用情况",
+  "dashboard.usage_runs": "本月模型运行次数",
+  "dashboard.usage_upgrade": "升级获取更多"
 }

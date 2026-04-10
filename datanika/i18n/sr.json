@@ -389,5 +389,8 @@
   "notifications.type": "Тип канала",
   "notifications.webhook_url": "Webhook URL",
   "quota.upgrade_hint": "Надоградите свој план за више капацитета.",
-  "quota.upgrade_button": "Надогради план"
+  "quota.upgrade_button": "Надогради план",
+  "dashboard.usage_title": "Коришћење плана",
+  "dashboard.usage_runs": "покретања модела овог месеца",
+  "dashboard.usage_upgrade": "Надогради за више"
 }

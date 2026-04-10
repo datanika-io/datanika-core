@@ -389,5 +389,8 @@
   "notifications.type": "Channel Type",
   "notifications.webhook_url": "Webhook URL",
   "quota.upgrade_hint": "Upgrade your plan to unlock more capacity.",
-  "quota.upgrade_button": "Upgrade Plan"
+  "quota.upgrade_button": "Upgrade Plan",
+  "dashboard.usage_title": "Plan Usage",
+  "dashboard.usage_runs": "model runs this month",
+  "dashboard.usage_upgrade": "Upgrade for more"
 }

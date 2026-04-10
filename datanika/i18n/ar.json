@@ -389,5 +389,8 @@
   "notifications.type": "نوع القناة",
   "notifications.webhook_url": "رابط Webhook",
   "quota.upgrade_hint": "قم بترقية خطتك لفتح المزيد من السعة.",
-  "quota.upgrade_button": "ترقية الخطة"
+  "quota.upgrade_button": "ترقية الخطة",
+  "dashboard.usage_title": "استخدام الخطة",
+  "dashboard.usage_runs": "عمليات تشغيل النماذج هذا الشهر",
+  "dashboard.usage_upgrade": "ترقية للمزيد"
 }

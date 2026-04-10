@@ -389,5 +389,8 @@
   "notifications.type": "Tipo de canal",
   "notifications.webhook_url": "URL del webhook",
   "quota.upgrade_hint": "Actualice su plan para desbloquear más capacidad.",
-  "quota.upgrade_button": "Mejorar plan"
+  "quota.upgrade_button": "Mejorar plan",
+  "dashboard.usage_title": "Uso del plan",
+  "dashboard.usage_runs": "ejecuciones de modelos este mes",
+  "dashboard.usage_upgrade": "Mejorar para más"
 }

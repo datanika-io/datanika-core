@@ -3,7 +3,13 @@
 from datanika.tasks.celery_app import celery_app
 
 
-@celery_app.task(name="datanika.send_email")
+@celery_app.task(
+    name="datanika.send_email",
+    autoretry_for=(OSError, ConnectionError, TimeoutError),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+)
 def send_email_task(to: str, subject: str, html_body: str) -> bool:
     from datanika.config import settings
     from datanika.services.email_service import EmailService
@@ -21,7 +27,13 @@ def send_email_task(to: str, subject: str, html_body: str) -> bool:
     return svc.send(to, subject, html_body)
 
 
-@celery_app.task(name="datanika.send_verification_email")
+@celery_app.task(
+    name="datanika.send_verification_email",
+    autoretry_for=(OSError, ConnectionError, TimeoutError),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+)
 def send_verification_email_task(to: str, token: str) -> bool:
     from datanika.config import settings
     from datanika.services.email_service import EmailService
@@ -39,7 +51,13 @@ def send_verification_email_task(to: str, token: str) -> bool:
     return svc.send_verification_email(to, token)
 
 
-@celery_app.task(name="datanika.send_invitation_email")
+@celery_app.task(
+    name="datanika.send_invitation_email",
+    autoretry_for=(OSError, ConnectionError, TimeoutError),
+    retry_backoff=30,
+    retry_backoff_max=300,
+    max_retries=3,
+)
 def send_invitation_email_task(
     to: str, org_name: str, inviter_name: str, token: str
 ) -> bool:

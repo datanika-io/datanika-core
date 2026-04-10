@@ -199,7 +199,7 @@ def run_transformation(
             session.close()
 
 
-@celery_app.task(bind=True, name="datanika.run_transformation")
+@celery_app.task(bind=True, name="datanika.run_transformation", max_retries=60)
 def run_transformation_task(self, run_id: int, org_id: int, scheduled: bool = False):
     """Celery entry point for transformation execution."""
     if scheduled:

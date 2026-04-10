@@ -193,8 +193,7 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("datanika.services.scheduler_integration.create_engine"),
-            patch("datanika.services.scheduler_integration.SyncSession"),
+            patch("datanika.db.get_sync_session"),
         ):
             SchedulerIntegrationService._dispatch_target(1, "upload", 10)
 
@@ -212,8 +211,7 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("datanika.services.scheduler_integration.create_engine"),
-            patch("datanika.services.scheduler_integration.SyncSession"),
+            patch("datanika.db.get_sync_session"),
         ):
             SchedulerIntegrationService._dispatch_target(1, "transformation", 20)
 
@@ -231,8 +229,7 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("datanika.services.scheduler_integration.create_engine"),
-            patch("datanika.services.scheduler_integration.SyncSession"),
+            patch("datanika.db.get_sync_session"),
         ):
             SchedulerIntegrationService._dispatch_target(3, "upload", 7)
 
@@ -247,8 +244,7 @@ class TestDispatchTarget:
         mock_svc.create_run.return_value = mock_run
 
         with (
-            patch("datanika.services.scheduler_integration.create_engine"),
-            patch("datanika.services.scheduler_integration.SyncSession"),
+            patch("datanika.db.get_sync_session"),
         ):
             SchedulerIntegrationService._dispatch_target(1, "pipeline", 30)
 

@@ -375,7 +375,6 @@
   "notifications.active": "启用",
   "notifications.add": "添加渠道",
   "notifications.custom_url": "Webhook URL",
-  "notifications.delete_confirm": "删除此渠道？",
   "notifications.email_address": "邮箱地址",
   "notifications.events": "事件",
   "notifications.name": "渠道名称",

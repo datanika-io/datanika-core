@@ -2,16 +2,15 @@
 
 import logging
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from datanika.config import settings
+from datanika.db import sync_engine
 
 logger = logging.getLogger(__name__)
-
-_engine = create_engine(settings.database_url_sync, pool_pre_ping=True)
 
 
 async def healthz(request: Request) -> JSONResponse:
@@ -25,7 +24,7 @@ async def readyz(request: Request) -> JSONResponse:
 
     # Database
     try:
-        with _engine.connect() as conn:
+        with sync_engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception as exc:

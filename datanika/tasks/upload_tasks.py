@@ -99,13 +99,9 @@ def run_upload(
     """
     own_session = session is None
     if own_session:
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import Session as SyncSession
+        from datanika.db import get_sync_session
 
-        from datanika.config import settings
-
-        engine = create_engine(settings.database_url_sync)
-        session = SyncSession(engine)
+        session = get_sync_session()
 
     if encryption is None:
         from datanika.config import settings

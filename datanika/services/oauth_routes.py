@@ -42,11 +42,9 @@ def _get_service() -> OAuthService:
 
 
 def _get_session():
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
+    from datanika.db import get_sync_session
 
-    engine = create_engine(settings.database_url_sync)
-    return SASession(engine)
+    return get_sync_session()
 
 
 def _frontend(path: str) -> str:

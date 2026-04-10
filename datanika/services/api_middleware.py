@@ -4,24 +4,22 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from datanika.config import settings
+from datanika.db import get_sync_session
 from datanika.services.api_key_service import ApiKeyService
 from datanika.services.rate_limit_service import RateLimitService
 
 logger = logging.getLogger(__name__)
 
-_engine = create_engine(settings.database_url_sync)
 _api_key_svc = ApiKeyService()
 _rate_limit_svc = RateLimitService()
 
 
-def _get_session() -> Session:
-    return Session(_engine)
+def _get_session():
+    return get_sync_session()
 
 
 def _error(status: int, message: str, headers: dict[str, str] | None = None) -> JSONResponse:

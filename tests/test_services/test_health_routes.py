@@ -23,7 +23,7 @@ class TestHealthz:
 
 
 class TestReadyz:
-    @patch("datanika.services.health_routes._engine")
+    @patch("datanika.services.health_routes.sync_engine")
     def test_readiness_all_ok(self, mock_engine, client):
         # Mock database check
         mock_conn = MagicMock()
@@ -43,7 +43,7 @@ class TestReadyz:
             assert data["checks"]["database"] == "ok"
             assert data["checks"]["redis"] == "ok"
 
-    @patch("datanika.services.health_routes._engine")
+    @patch("datanika.services.health_routes.sync_engine")
     def test_readiness_db_down(self, mock_engine, client):
         mock_engine.connect.side_effect = Exception("DB down")
 

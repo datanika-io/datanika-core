@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # SSO
     sso_sp_entity_id: str = "datanika"
 
+    # Database connection pool
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 1800  # 30 minutes
+
     # API rate limiting (requests per minute, per API key)
     api_rate_limit_rpm: int = 60
     api_rate_limit_burst: int = 10

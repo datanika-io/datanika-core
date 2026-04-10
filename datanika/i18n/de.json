@@ -375,7 +375,6 @@
   "notifications.active": "Aktiv",
   "notifications.add": "Kanal hinzufügen",
   "notifications.custom_url": "Webhook-URL",
-  "notifications.delete_confirm": "Diesen Kanal löschen?",
   "notifications.email_address": "E-Mail-Adresse",
   "notifications.events": "Ereignisse",
   "notifications.name": "Kanalname",

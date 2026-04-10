@@ -391,5 +391,14 @@
   "quota.upgrade_button": "Mejorar plan",
   "dashboard.usage_title": "Uso del plan",
   "dashboard.usage_runs": "ejecuciones de modelos este mes",
-  "dashboard.usage_upgrade": "Mejorar para más"
+  "dashboard.usage_upgrade": "Mejorar para más",
+  "onboarding.title": "Empieza con Datanika",
+  "onboarding.subtitle": "Configura tu primer pipeline en 5 pasos",
+  "onboarding.dismiss": "Ocultar",
+  "onboarding.all_done": "Listo: todo está en marcha.",
+  "onboarding.step_connection": "Añade tu primera conexión",
+  "onboarding.step_pipeline": "Crea un pipeline",
+  "onboarding.step_run": "Ejecuta un pipeline",
+  "onboarding.step_transformation": "Añade una transformación",
+  "onboarding.step_schedule": "Programa un pipeline"
 }

@@ -29,6 +29,7 @@ from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
 from datanika.ui.state.notification_state import NotificationState
+from datanika.ui.state.onboarding_state import OnboardingState
 from datanika.ui.state.pipeline_state import PipelineState
 from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
@@ -73,7 +74,11 @@ app.add_page(
     dashboard_page,
     route="/",
     title="Dashboard | Datanika",
-    on_load=[AuthState.check_auth, DashboardState.load_dashboard],
+    on_load=[
+        AuthState.check_auth,
+        DashboardState.load_dashboard,
+        OnboardingState.load_checklist,
+    ],
 )
 app.add_page(
     connections_page,

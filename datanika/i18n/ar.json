@@ -391,5 +391,14 @@
   "quota.upgrade_button": "ترقية الخطة",
   "dashboard.usage_title": "استخدام الخطة",
   "dashboard.usage_runs": "عمليات تشغيل النماذج هذا الشهر",
-  "dashboard.usage_upgrade": "ترقية للمزيد"
+  "dashboard.usage_upgrade": "ترقية للمزيد",
+  "onboarding.title": "ابدأ باستخدام Datanika",
+  "onboarding.subtitle": "أعدّ أول خط معالجة لديك في 5 خطوات",
+  "onboarding.dismiss": "إخفاء",
+  "onboarding.all_done": "اكتمل الإعداد — أنت جاهز.",
+  "onboarding.step_connection": "أضف اتصالك الأول",
+  "onboarding.step_pipeline": "أنشئ خط معالجة",
+  "onboarding.step_run": "شغّل خط معالجة",
+  "onboarding.step_transformation": "أضف تحويلاً",
+  "onboarding.step_schedule": "جدوِل خط معالجة"
 }

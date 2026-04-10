@@ -391,5 +391,14 @@
   "quota.upgrade_button": "Надогради план",
   "dashboard.usage_title": "Коришћење плана",
   "dashboard.usage_runs": "покретања модела овог месеца",
-  "dashboard.usage_upgrade": "Надогради за више"
+  "dashboard.usage_upgrade": "Надогради за више",
+  "onboarding.title": "Почните са Datanika",
+  "onboarding.subtitle": "Подесите свој први пајплајн у 5 корака",
+  "onboarding.dismiss": "Сакриј",
+  "onboarding.all_done": "Готово — све ради.",
+  "onboarding.step_connection": "Додајте прву конекцију",
+  "onboarding.step_pipeline": "Направите пајплајн",
+  "onboarding.step_run": "Покрените пајплајн",
+  "onboarding.step_transformation": "Додајте трансформацију",
+  "onboarding.step_schedule": "Закажите пајплајн"
 }

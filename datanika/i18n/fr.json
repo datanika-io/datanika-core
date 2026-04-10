@@ -391,5 +391,14 @@
   "quota.upgrade_button": "Mettre à niveau",
   "dashboard.usage_title": "Utilisation du plan",
   "dashboard.usage_runs": "exécutions de modèles ce mois",
-  "dashboard.usage_upgrade": "Passer au niveau supérieur"
+  "dashboard.usage_upgrade": "Passer au niveau supérieur",
+  "onboarding.title": "Prise en main de Datanika",
+  "onboarding.subtitle": "Configurez votre premier pipeline en 5 étapes",
+  "onboarding.dismiss": "Masquer",
+  "onboarding.all_done": "C'est prêt — tout est opérationnel.",
+  "onboarding.step_connection": "Ajoutez votre première connexion",
+  "onboarding.step_pipeline": "Créez un pipeline",
+  "onboarding.step_run": "Exécutez un pipeline",
+  "onboarding.step_transformation": "Ajoutez une transformation",
+  "onboarding.step_schedule": "Planifiez un pipeline"
 }

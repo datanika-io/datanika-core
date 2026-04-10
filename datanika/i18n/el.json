@@ -391,5 +391,14 @@
   "quota.upgrade_button": "Αναβάθμιση πλάνου",
   "dashboard.usage_title": "Χρήση πλάνου",
   "dashboard.usage_runs": "εκτελέσεις μοντέλων αυτόν τον μήνα",
-  "dashboard.usage_upgrade": "Αναβάθμιση για περισσότερα"
+  "dashboard.usage_upgrade": "Αναβάθμιση για περισσότερα",
+  "onboarding.title": "Ξεκινήστε με το Datanika",
+  "onboarding.subtitle": "Ρυθμίστε το πρώτο σας pipeline σε 5 βήματα",
+  "onboarding.dismiss": "Απόκρυψη",
+  "onboarding.all_done": "Έτοιμο — όλα σε λειτουργία.",
+  "onboarding.step_connection": "Προσθέστε την πρώτη σύνδεση",
+  "onboarding.step_pipeline": "Δημιουργήστε ένα pipeline",
+  "onboarding.step_run": "Εκτελέστε ένα pipeline",
+  "onboarding.step_transformation": "Προσθέστε έναν μετασχηματισμό",
+  "onboarding.step_schedule": "Προγραμματίστε ένα pipeline"
 }

@@ -706,3 +706,61 @@ class TestExecuteQueryRejection:
             ConnectionService.execute_query(
                 {"host": "localhost"}, ConnectionType.MONGODB, "SELECT 1"
             )
+
+
+class TestIsSelectOnly:
+    """Validation for the read-only SQL guard used by /connections/{id}/query."""
+
+    def test_simple_select(self):
+        assert ConnectionService.is_select_only("SELECT 1")
+        assert ConnectionService.is_select_only("select * from t")
+        assert ConnectionService.is_select_only("SELECT * FROM t WHERE id = 1")
+
+    def test_select_with_trailing_semicolon(self):
+        assert ConnectionService.is_select_only("SELECT 1;")
+        assert ConnectionService.is_select_only("SELECT 1 ; ")
+
+    def test_with_cte(self):
+        assert ConnectionService.is_select_only("WITH x AS (SELECT 1) SELECT * FROM x")
+
+    def test_rejects_drop(self):
+        assert not ConnectionService.is_select_only("DROP TABLE t")
+        assert not ConnectionService.is_select_only("drop table t")
+
+    def test_rejects_insert(self):
+        assert not ConnectionService.is_select_only("INSERT INTO t (a) VALUES (1)")
+
+    def test_rejects_update(self):
+        assert not ConnectionService.is_select_only("UPDATE t SET a = 1")
+
+    def test_rejects_delete(self):
+        assert not ConnectionService.is_select_only("DELETE FROM t")
+
+    def test_rejects_create(self):
+        assert not ConnectionService.is_select_only("CREATE TABLE t (a INT)")
+
+    def test_rejects_alter(self):
+        assert not ConnectionService.is_select_only("ALTER TABLE t ADD b INT")
+
+    def test_rejects_truncate(self):
+        assert not ConnectionService.is_select_only("TRUNCATE TABLE t")
+
+    def test_rejects_multiple_statements(self):
+        assert not ConnectionService.is_select_only("SELECT 1; SELECT 2")
+        assert not ConnectionService.is_select_only("SELECT 1; DROP TABLE t")
+
+    def test_rejects_cte_with_mutation(self):
+        assert not ConnectionService.is_select_only(
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x"
+        )
+
+    def test_rejects_empty(self):
+        assert not ConnectionService.is_select_only("")
+        assert not ConnectionService.is_select_only("   ")
+        assert not ConnectionService.is_select_only(None)
+
+    def test_strips_line_comments(self):
+        assert ConnectionService.is_select_only("-- comment\nSELECT 1")
+
+    def test_strips_block_comments(self):
+        assert ConnectionService.is_select_only("/* hi */ SELECT 1")

@@ -1,10 +1,11 @@
 """Connection management service — CRUD with encrypted credentials."""
 
+import re
 from datetime import UTC, datetime
 from functools import partial
 from urllib.parse import quote_plus
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
@@ -349,5 +350,138 @@ class ConnectionService:
             return False, f"Driver not installed for {connection_type.value}"
         except Exception:
             return False, "Connection failed — check your credentials and network settings"
+        finally:
+            engine.dispose()
+
+    @staticmethod
+    def is_select_only(query: str) -> bool:
+        """Return True if a query is a single read-only SELECT statement.
+
+        Rejects DDL/DML, multiple statements, and CTE-prefixed mutations.
+        Comments and leading/trailing whitespace are ignored.
+        """
+        if not query or not query.strip():
+            return False
+        # Strip line and block comments
+        cleaned_lines = []
+        in_block_comment = False
+        for line in query.splitlines():
+            i = 0
+            line_chars = []
+            while i < len(line):
+                if in_block_comment:
+                    if line[i : i + 2] == "*/":
+                        in_block_comment = False
+                        i += 2
+                    else:
+                        i += 1
+                elif line[i : i + 2] == "/*":
+                    in_block_comment = True
+                    i += 2
+                elif line[i : i + 2] == "--":
+                    break
+                else:
+                    line_chars.append(line[i])
+                    i += 1
+            cleaned_lines.append("".join(line_chars))
+        cleaned = " ".join(cleaned_lines).strip().rstrip(";").strip()
+        if not cleaned:
+            return False
+        # Reject multiple statements
+        if ";" in cleaned:
+            return False
+        upper = cleaned.upper()
+        forbidden_re = re.compile(
+            r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|"
+            r"GRANT|REVOKE|MERGE)\b"
+        )
+        if upper.startswith("SELECT"):
+            return forbidden_re.search(upper) is None
+        if upper.startswith("WITH "):
+            # CTE — must contain SELECT and no mutating keywords anywhere
+            if forbidden_re.search(upper):
+                return False
+            return re.search(r"\bSELECT\b", upper) is not None
+        return False
+
+    @staticmethod
+    def list_tables(
+        config: dict, connection_type: ConnectionType, schema: str | None = None
+    ) -> list[dict]:
+        """List tables in a SQL connection. Returns [{schema, name}].
+
+        Raises ValueError for non-SQL connection types.
+        """
+        if connection_type in _NON_DB_TYPES:
+            raise ValueError(f"Cannot list tables for {connection_type.value} connections")
+        url = _build_sa_url(config, connection_type)
+        engine = create_engine(url)
+        try:
+            insp = inspect(engine)
+            schemas = [schema] if schema else insp.get_schema_names()
+            tables = []
+            for sch in schemas:
+                # Skip system schemas
+                if sch in ("information_schema", "pg_catalog", "sys"):
+                    continue
+                try:
+                    for name in insp.get_table_names(schema=sch):
+                        tables.append({"schema": sch, "name": name})
+                except Exception:
+                    continue
+            return tables
+        finally:
+            engine.dispose()
+
+    @staticmethod
+    def list_columns(
+        config: dict,
+        connection_type: ConnectionType,
+        table: str,
+        schema: str | None = None,
+    ) -> list[dict]:
+        """List columns of a table. Returns [{name, type, nullable}]."""
+        if connection_type in _NON_DB_TYPES:
+            raise ValueError(f"Cannot list columns for {connection_type.value} connections")
+        url = _build_sa_url(config, connection_type)
+        engine = create_engine(url)
+        try:
+            insp = inspect(engine)
+            cols = insp.get_columns(table, schema=schema)
+            return [
+                {
+                    "name": c["name"],
+                    "type": str(c["type"]),
+                    "nullable": c.get("nullable", True),
+                }
+                for c in cols
+            ]
+        finally:
+            engine.dispose()
+
+    @staticmethod
+    def preview_table(
+        config: dict,
+        connection_type: ConnectionType,
+        table: str,
+        schema: str | None = None,
+        limit: int = 100,
+    ) -> tuple[list[str], list[list]]:
+        """Return the first N rows of a table. Returns (columns, rows)."""
+        limit = max(1, min(int(limit), 1000))
+        # Quote identifiers safely with the engine's preparer
+        url = _build_sa_url(config, connection_type)
+        engine = create_engine(url)
+        try:
+            preparer = engine.dialect.identifier_preparer
+            qualified = preparer.quote(table)
+            if schema:
+                qualified = f"{preparer.quote_schema(schema)}.{qualified}"
+            query = f"SELECT * FROM {qualified} LIMIT {limit}"
+            with engine.connect() as conn:
+                result = conn.execute(text(query))
+                columns = list(result.keys())
+                rows = [list(row) for row in result.fetchall()]
+                return columns, rows
         finally:
             engine.dispose()

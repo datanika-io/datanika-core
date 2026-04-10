@@ -218,9 +218,9 @@ def run_upload(
         try:
             from datanika.config import settings as _cleanup_cfg
 
-            DltRunnerService(
-                pipelines_dir=_cleanup_cfg.dlt_pipelines_dir
-            ).cleanup_pipeline(pipeline_id=run_id, run_id=run_id)
+            DltRunnerService(pipelines_dir=_cleanup_cfg.dlt_pipelines_dir).cleanup_pipeline(
+                pipeline_id=run_id, run_id=run_id
+            )
         except Exception:
             pass
         if own_session:

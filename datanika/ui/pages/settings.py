@@ -148,7 +148,9 @@ def members_card() -> rx.Component:
                         on_change=SettingsState.set_invite_role,
                         size="2",
                     ),
-                    rx.button(_t["common.add"], on_click=SettingsState.add_member_by_email, size="2"),
+                    rx.button(
+                        _t["common.add"], on_click=SettingsState.add_member_by_email, size="2"
+                    ),
                     spacing="2",
                 ),
                 spacing="3",

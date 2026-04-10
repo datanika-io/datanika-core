@@ -130,9 +130,7 @@ class SchedulerIntegrationService:
             if target_type == "upload":
                 run_upload_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
             elif target_type == "transformation":
-                run_transformation_task.delay(
-                    run_id=run.id, org_id=org_id, scheduled=True
-                )
+                run_transformation_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
             elif target_type == "pipeline":
                 run_pipeline_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
         finally:

@@ -26,8 +26,19 @@ SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 SUPPORTED_MONGODB_TYPES = {"mongodb"}
 
 SUPPORTED_SAAS_TYPES = {
-    "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
-    "google_analytics", "google_ads", "facebook_ads", "zendesk", "airtable", "notion",
+    "stripe",
+    "github",
+    "hubspot",
+    "salesforce",
+    "shopify",
+    "jira",
+    "slack",
+    "google_analytics",
+    "google_ads",
+    "facebook_ads",
+    "zendesk",
+    "airtable",
+    "notion",
 }
 
 # Kafka is a streaming source with its own builder
@@ -107,7 +118,13 @@ SOURCE_DRIVERNAME_MAP = {
 
 # Types where user→username renaming is needed
 _RENAME_USER_TYPES = {
-    "postgres", "mysql", "mssql", "sqlite", "redshift", "snowflake", "clickhouse",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "redshift",
+    "snowflake",
+    "clickhouse",
 }
 
 # ClickHouse table engine types supported by dlt
@@ -118,12 +135,20 @@ class DltRunnerService:
     """Builds dlt pipeline objects from connection configs and pipeline settings."""
 
     SUPPORTED_SOURCE_TYPES = {
-        "postgres", "mysql", "mssql", "sqlite", "clickhouse", "duckdb",
+        "postgres",
+        "mysql",
+        "mssql",
+        "sqlite",
+        "clickhouse",
+        "duckdb",
     }
-    SUPPORTED_DESTINATION_TYPES = (
-        SUPPORTED_SOURCE_TYPES
-        | {"bigquery", "snowflake", "redshift", "databricks", "synapse"}
-    )
+    SUPPORTED_DESTINATION_TYPES = SUPPORTED_SOURCE_TYPES | {
+        "bigquery",
+        "snowflake",
+        "redshift",
+        "databricks",
+        "synapse",
+    }
 
     def __init__(self, pipelines_dir: str | None = None):
         self._pipelines_dir = pipelines_dir
@@ -363,7 +388,8 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     "https://api.stripe.com/v1/",
                     {"type": "bearer", "token": api_key},
-                    dlt_config.get("resources") or [
+                    dlt_config.get("resources")
+                    or [
                         {"name": "customers", "endpoint": {"path": "customers"}},
                         {"name": "invoices", "endpoint": {"path": "invoices"}},
                         {"name": "subscriptions", "endpoint": {"path": "subscriptions"}},
@@ -387,26 +413,37 @@ class DltRunnerService:
                 source_type = dlt_config.get("github_source_type", "reactions")
                 if source_type == "events":
                     return github_repo_events(owner, repo, access_token=access_token)
-                return github_reactions(
-                    owner, repo, access_token=access_token, items_per_page=100
-                )
+                return github_reactions(owner, repo, access_token=access_token, items_per_page=100)
             except ImportError:
                 return self._rest_api_fallback(
                     "https://api.github.com/",
                     None,
-                    dlt_config.get("resources") or [
-                        {"name": "issues", "endpoint": {
-                            "path": f"repos/{owner}/{repo}/issues",
-                        }},
-                        {"name": "pulls", "endpoint": {
-                            "path": f"repos/{owner}/{repo}/pulls",
-                        }},
-                        {"name": "commits", "endpoint": {
-                            "path": f"repos/{owner}/{repo}/commits",
-                        }},
-                        {"name": "stargazers", "endpoint": {
-                            "path": f"repos/{owner}/{repo}/stargazers",
-                        }},
+                    dlt_config.get("resources")
+                    or [
+                        {
+                            "name": "issues",
+                            "endpoint": {
+                                "path": f"repos/{owner}/{repo}/issues",
+                            },
+                        },
+                        {
+                            "name": "pulls",
+                            "endpoint": {
+                                "path": f"repos/{owner}/{repo}/pulls",
+                            },
+                        },
+                        {
+                            "name": "commits",
+                            "endpoint": {
+                                "path": f"repos/{owner}/{repo}/commits",
+                            },
+                        },
+                        {
+                            "name": "stargazers",
+                            "endpoint": {
+                                "path": f"repos/{owner}/{repo}/stargazers",
+                            },
+                        },
                     ],
                     headers={
                         "Authorization": f"Bearer {access_token}",
@@ -426,16 +463,26 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     "https://api.hubapi.com/",
                     {"type": "bearer", "token": api_key},
-                    dlt_config.get("resources") or [
-                        {"name": "contacts", "endpoint": {
-                            "path": "crm/v3/objects/contacts",
-                        }},
-                        {"name": "companies", "endpoint": {
-                            "path": "crm/v3/objects/companies",
-                        }},
-                        {"name": "deals", "endpoint": {
-                            "path": "crm/v3/objects/deals",
-                        }},
+                    dlt_config.get("resources")
+                    or [
+                        {
+                            "name": "contacts",
+                            "endpoint": {
+                                "path": "crm/v3/objects/contacts",
+                            },
+                        },
+                        {
+                            "name": "companies",
+                            "endpoint": {
+                                "path": "crm/v3/objects/companies",
+                            },
+                        },
+                        {
+                            "name": "deals",
+                            "endpoint": {
+                                "path": "crm/v3/objects/deals",
+                            },
+                        },
                     ],
                 )
 
@@ -443,9 +490,7 @@ class DltRunnerService:
             access_token = config.get("access_token") or config.get("api_key", "")
             instance_url = config.get("instance_url", "")
             if not access_token or not instance_url:
-                raise DltRunnerError(
-                    "Salesforce source requires 'access_token' and 'instance_url'"
-                )
+                raise DltRunnerError("Salesforce source requires 'access_token' and 'instance_url'")
             try:
                 from salesforce import salesforce_source
 
@@ -454,16 +499,26 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     instance_url.rstrip("/") + "/",
                     {"type": "bearer", "token": access_token},
-                    dlt_config.get("resources") or [
-                        {"name": "accounts", "endpoint": {
-                            "path": "services/data/v59.0/sobjects/Account",
-                        }},
-                        {"name": "contacts", "endpoint": {
-                            "path": "services/data/v59.0/sobjects/Contact",
-                        }},
-                        {"name": "opportunities", "endpoint": {
-                            "path": "services/data/v59.0/sobjects/Opportunity",
-                        }},
+                    dlt_config.get("resources")
+                    or [
+                        {
+                            "name": "accounts",
+                            "endpoint": {
+                                "path": "services/data/v59.0/sobjects/Account",
+                            },
+                        },
+                        {
+                            "name": "contacts",
+                            "endpoint": {
+                                "path": "services/data/v59.0/sobjects/Contact",
+                            },
+                        },
+                        {
+                            "name": "opportunities",
+                            "endpoint": {
+                                "path": "services/data/v59.0/sobjects/Opportunity",
+                            },
+                        },
                     ],
                 )
 
@@ -483,16 +538,26 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     f"https://{store}.myshopify.com/",
                     None,
-                    dlt_config.get("resources") or [
-                        {"name": "orders", "endpoint": {
-                            "path": "admin/api/2024-01/orders.json",
-                        }},
-                        {"name": "products", "endpoint": {
-                            "path": "admin/api/2024-01/products.json",
-                        }},
-                        {"name": "customers", "endpoint": {
-                            "path": "admin/api/2024-01/customers.json",
-                        }},
+                    dlt_config.get("resources")
+                    or [
+                        {
+                            "name": "orders",
+                            "endpoint": {
+                                "path": "admin/api/2024-01/orders.json",
+                            },
+                        },
+                        {
+                            "name": "products",
+                            "endpoint": {
+                                "path": "admin/api/2024-01/products.json",
+                            },
+                        },
+                        {
+                            "name": "customers",
+                            "endpoint": {
+                                "path": "admin/api/2024-01/customers.json",
+                            },
+                        },
                     ],
                     headers={"X-Shopify-Access-Token": api_key},
                 )
@@ -518,7 +583,8 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     f"https://{domain}.atlassian.net/",
                     None,
-                    dlt_config.get("resources") or [
+                    dlt_config.get("resources")
+                    or [
                         {"name": "issues", "endpoint": {"path": "rest/api/3/search"}},
                         {"name": "projects", "endpoint": {"path": "rest/api/3/project"}},
                     ],
@@ -537,10 +603,14 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     "https://slack.com/",
                     {"type": "bearer", "token": bot_token},
-                    dlt_config.get("resources") or [
-                        {"name": "channels", "endpoint": {
-                            "path": "api/conversations.list",
-                        }},
+                    dlt_config.get("resources")
+                    or [
+                        {
+                            "name": "channels",
+                            "endpoint": {
+                                "path": "api/conversations.list",
+                            },
+                        },
                         {"name": "users", "endpoint": {"path": "api/users.list"}},
                     ],
                 )
@@ -580,15 +650,11 @@ class DltRunnerService:
             access_token = config.get("access_token") or config.get("api_key", "")
             account_id = config.get("account_id", "") or dlt_config.get("account_id", "")
             if not access_token or not account_id:
-                raise DltRunnerError(
-                    "Facebook Ads source requires 'access_token' and 'account_id'"
-                )
+                raise DltRunnerError("Facebook Ads source requires 'access_token' and 'account_id'")
             try:
                 from facebook_ads import facebook_ads_source
 
-                return facebook_ads_source(
-                    account_id=account_id, access_token=access_token
-                )
+                return facebook_ads_source(account_id=account_id, access_token=access_token)
             except ImportError:
                 raise DltRunnerError(
                     "Facebook Ads verified source not installed (run dlt init facebook_ads)"
@@ -609,12 +675,16 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     f"https://{subdomain}.zendesk.com/",
                     None,
-                    dlt_config.get("resources") or [
+                    dlt_config.get("resources")
+                    or [
                         {"name": "tickets", "endpoint": {"path": "api/v2/tickets.json"}},
                         {"name": "users", "endpoint": {"path": "api/v2/users.json"}},
-                        {"name": "organizations", "endpoint": {
-                            "path": "api/v2/organizations.json",
-                        }},
+                        {
+                            "name": "organizations",
+                            "endpoint": {
+                                "path": "api/v2/organizations.json",
+                            },
+                        },
                     ],
                     headers={"Authorization": f"Bearer {api_token}"},
                 )
@@ -632,7 +702,8 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     f"https://api.airtable.com/v0/{base_id}/",
                     {"type": "bearer", "token": api_key},
-                    dlt_config.get("resources") or [
+                    dlt_config.get("resources")
+                    or [
                         {"name": "tables", "endpoint": {"path": ""}},
                     ],
                 )
@@ -649,7 +720,8 @@ class DltRunnerService:
                 return self._rest_api_fallback(
                     "https://api.notion.com/v1/",
                     {"type": "bearer", "token": api_key},
-                    dlt_config.get("resources") or [
+                    dlt_config.get("resources")
+                    or [
                         {"name": "databases", "endpoint": {"path": "databases"}},
                         {"name": "pages", "endpoint": {"path": "pages"}},
                     ],
@@ -757,8 +829,11 @@ class DltRunnerService:
             batch_size = dlt_config.get("batch_size", DEFAULT_BATCH_SIZE)
 
         pipeline = self.build_pipeline(
-            pipeline_id, destination_type, destination_config,
-            dataset_name=dataset_name, run_id=run_id,
+            pipeline_id,
+            destination_type,
+            destination_config,
+            dataset_name=dataset_name,
+            run_id=run_id,
         )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 

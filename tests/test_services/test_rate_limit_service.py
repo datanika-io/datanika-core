@@ -1,7 +1,6 @@
 """TDD tests for RateLimitService — Redis-based API rate limiting."""
 
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -102,9 +101,7 @@ class TestCheckRateLimit:
         """Burst limit (per-second) blocks before minute limit if exceeded."""
         for _ in range(5):
             svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=300, burst_per_sec=5)
-        result = svc.check_rate_limit(
-            api_key_id=1, org_id=10, limit_rpm=300, burst_per_sec=5
-        )
+        result = svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=300, burst_per_sec=5)
         assert result.allowed is False
 
 

@@ -8,11 +8,10 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.services.connection_service import DESTINATION_TYPES
 
 _REF_PATTERN = re.compile(r"""\{\{\s*ref\(\s*['"]([^'"]*?)$""")
 _SOURCE_TABLE_PATTERN = re.compile(r"""\{\{\s*source\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]*?)$""")
@@ -271,9 +270,16 @@ class TransformationState(BaseState):
                         incremental_config=inc_cfg,
                     )
                     self._audit(
-                        session, org_id, user_id, "update", "transformation",
+                        session,
+                        org_id,
+                        user_id,
+                        "update",
+                        "transformation",
                         resource_id=self.editing_transformation_id,
-                        new_values={"name": self.form_name, "materialization": self.form_materialization},
+                        new_values={
+                            "name": self.form_name,
+                            "materialization": self.form_materialization,
+                        },
                     )
                 else:
                     t = svc.create_transformation(
@@ -289,9 +295,16 @@ class TransformationState(BaseState):
                         incremental_config=inc_cfg,
                     )
                     self._audit(
-                        session, org_id, user_id, "create", "transformation",
+                        session,
+                        org_id,
+                        user_id,
+                        "create",
+                        "transformation",
                         resource_id=t.id,
-                        new_values={"name": self.form_name, "materialization": self.form_materialization},
+                        new_values={
+                            "name": self.form_name,
+                            "materialization": self.form_materialization,
+                        },
                     )
                 session.commit()
         except Exception as e:
@@ -479,8 +492,13 @@ class TransformationState(BaseState):
             old_values = {"name": t.name, "materialization": t.materialization.value} if t else {}
             svc.delete_transformation(session, org_id, transformation_id)
             self._audit(
-                session, org_id, user_id, "delete", "transformation",
-                resource_id=transformation_id, old_values=old_values,
+                session,
+                org_id,
+                user_id,
+                "delete",
+                "transformation",
+                resource_id=transformation_id,
+                old_values=old_values,
             )
             session.commit()
         await self.load_transformations()

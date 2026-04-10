@@ -31,13 +31,9 @@ def upgrade() -> None:
         ) ON CONFLICT (slug) DO NOTHING
         """
     )
-    op.execute(
-        "UPDATE plans SET overage_run_price_cents = 1 WHERE slug = 'enterprise-monthly'"
-    )
+    op.execute("UPDATE plans SET overage_run_price_cents = 1 WHERE slug = 'enterprise-monthly'")
 
 
 def downgrade() -> None:
     op.execute("DELETE FROM plans WHERE slug = 'free'")
-    op.execute(
-        "UPDATE plans SET overage_run_price_cents = 0 WHERE slug = 'enterprise-monthly'"
-    )
+    op.execute("UPDATE plans SET overage_run_price_cents = 0 WHERE slug = 'enterprise-monthly'")

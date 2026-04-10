@@ -1,4 +1,7 @@
-"""Backup & restore service — export/import connections, uploads, pipelines, and transformations as JSON."""
+"""Backup & restore service.
+
+Export/import connections, uploads, pipelines, and transformations as JSON.
+"""
 
 import enum
 import re
@@ -370,9 +373,7 @@ class BackupService:
 
         pipelines = list(
             session.execute(
-                select(Pipeline).where(
-                    Pipeline.org_id == org_id, Pipeline.deleted_at.is_(None)
-                )
+                select(Pipeline).where(Pipeline.org_id == org_id, Pipeline.deleted_at.is_(None))
             )
             .scalars()
             .all()
@@ -650,9 +651,7 @@ class BackupService:
                         transform_name_to_id[tname],
                         name=tname,
                         sql_body=t_data["sql_body"],
-                        materialization=Materialization(
-                            t_data.get("materialization", "view")
-                        ),
+                        materialization=Materialization(t_data.get("materialization", "view")),
                         description=t_data.get("description"),
                         schema_name=t_data.get("schema_name", "staging"),
                         tests_config=t_data.get("tests_config", {}),

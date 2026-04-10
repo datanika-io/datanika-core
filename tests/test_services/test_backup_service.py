@@ -340,7 +340,9 @@ class TestImportBackup:
             BackupService.import_backup(
                 db_session, org.id, encryption, conn_svc, upload_svc, data, {}
             )
-        assert any(e["code"] == ImportErrorCode.UNKNOWN_CONNECTION_REF for e in exc_info.value.errors)
+        assert any(
+            e["code"] == ImportErrorCode.UNKNOWN_CONNECTION_REF for e in exc_info.value.errors
+        )
 
 
 class TestDetectConflicts:
@@ -464,20 +466,27 @@ class TestValidateBackup:
         data = self._make_backup(connections=[{"connection_type": "postgres", "config": {}}])
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(exc_info.value.errors, ImportErrorCode.MISSING_FIELD, "connection", "name")
+        self._assert_has_error(
+            exc_info.value.errors, ImportErrorCode.MISSING_FIELD, "connection", "name"
+        )
 
     def test_connection_empty_name(self, db_session, org):
         data = self._make_backup(connections=[self._conn(name="  ")])
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(exc_info.value.errors, ImportErrorCode.EMPTY_FIELD, "connection", "name")
+        self._assert_has_error(
+            exc_info.value.errors, ImportErrorCode.EMPTY_FIELD, "connection", "name"
+        )
 
     def test_connection_invalid_type(self, db_session, org):
         data = self._make_backup(connections=[self._conn(connection_type="nosql_magic")])
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
         self._assert_has_error(
-            exc_info.value.errors, ImportErrorCode.INVALID_CONNECTION_TYPE, "connection", "connection_type"
+            exc_info.value.errors,
+            ImportErrorCode.INVALID_CONNECTION_TYPE,
+            "connection",
+            "connection_type",
         )
 
     def test_connection_missing_config(self, db_session, org):
@@ -511,16 +520,20 @@ class TestValidateBackup:
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(exc_info.value.errors, ImportErrorCode.MISSING_FIELD, "upload", "name")
+        self._assert_has_error(
+            exc_info.value.errors, ImportErrorCode.MISSING_FIELD, "upload", "name"
+        )
 
     def test_upload_empty_name(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn(), self._dst_conn()],
-            uploads=[{
-                "name": "  ",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Dst",
-            }],
+            uploads=[
+                {
+                    "name": "  ",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Dst",
+                }
+            ],
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
@@ -554,12 +567,14 @@ class TestValidateBackup:
     def test_upload_invalid_status(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn(), self._dst_conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Dst",
-                "status": "bogus",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Dst",
+                    "status": "bogus",
+                }
+            ],
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
@@ -570,11 +585,13 @@ class TestValidateBackup:
     def test_upload_unknown_source_ref(self, db_session, org):
         data = self._make_backup(
             connections=[self._dst_conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Ghost",
-                "destination_connection_name": "Dst",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Ghost",
+                    "destination_connection_name": "Dst",
+                }
+            ],
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
@@ -588,11 +605,13 @@ class TestValidateBackup:
     def test_upload_unknown_dest_ref(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Ghost",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Ghost",
+                }
+            ],
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
@@ -606,22 +625,26 @@ class TestValidateBackup:
     def test_upload_refs_connection_from_file(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn(), self._dst_conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Dst",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Dst",
+                }
+            ],
         )
         BackupService.validate_backup(db_session, org.id, data)  # should not raise
 
     def test_upload_refs_connection_from_db(self, db_session, org, sample_connections):
         # sample_connections creates "My Postgres" (source) and "Target DWH" (destination)
         data = self._make_backup(
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "My Postgres",
-                "destination_connection_name": "Target DWH",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "My Postgres",
+                    "destination_connection_name": "Target DWH",
+                }
+            ],
         )
         BackupService.validate_backup(db_session, org.id, data)  # should not raise
 
@@ -643,7 +666,9 @@ class TestValidateBackup:
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
-        self._assert_has_error(exc_info.value.errors, ImportErrorCode.DUPLICATE_NAME, "upload", "name")
+        self._assert_has_error(
+            exc_info.value.errors, ImportErrorCode.DUPLICATE_NAME, "upload", "name"
+        )
 
     # --- Pipeline validation ---
 
@@ -771,11 +796,13 @@ class TestValidateBackup:
 
     def test_transformation_invalid_materialization(self, db_session, org):
         data = self._make_backup(
-            transformations=[{
-                "name": "my_model",
-                "sql_body": "SELECT 1",
-                "materialization": "magic",
-            }],
+            transformations=[
+                {
+                    "name": "my_model",
+                    "sql_body": "SELECT 1",
+                    "materialization": "magic",
+                }
+            ],
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.validate_backup(db_session, org.id, data)
@@ -803,7 +830,9 @@ class TestValidateBackup:
 
     def test_collects_all_errors(self, db_session, org):
         data = self._make_backup(
-            connections=[{"connection_type": "bogus"}],  # missing name, invalid type, missing config
+            connections=[
+                {"connection_type": "bogus"}
+            ],  # missing name, invalid type, missing config
             uploads=[{"name": "Up"}],  # missing source_ref, missing dest_ref
             pipelines=[{"name": ""}],  # empty name, missing dest_ref
             transformations=[{"name": "123bad"}],  # invalid format, missing sql_body
@@ -822,24 +851,30 @@ class TestValidateBackup:
     def test_valid_backup_passes(self, db_session, org):
         data = self._make_backup(
             connections=[self._conn(), self._dst_conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Dst",
-                "status": "draft",
-            }],
-            pipelines=[{
-                "name": "Pipe",
-                "destination_connection_name": "Dst",
-                "command": "run",
-                "status": "draft",
-            }],
-            transformations=[{
-                "name": "my_model",
-                "sql_body": "SELECT 1",
-                "materialization": "view",
-                "destination_connection_name": "Dst",
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Dst",
+                    "status": "draft",
+                }
+            ],
+            pipelines=[
+                {
+                    "name": "Pipe",
+                    "destination_connection_name": "Dst",
+                    "command": "run",
+                    "status": "draft",
+                }
+            ],
+            transformations=[
+                {
+                    "name": "my_model",
+                    "sql_body": "SELECT 1",
+                    "materialization": "view",
+                    "destination_connection_name": "Dst",
+                }
+            ],
         )
         BackupService.validate_backup(db_session, org.id, data)  # should not raise
 
@@ -855,11 +890,13 @@ class TestValidateBackup:
     def test_no_partial_state_on_error(self, db_session, encryption, conn_svc, upload_svc, org):
         data = self._make_backup(
             connections=[self._conn()],
-            uploads=[{
-                "name": "Up",
-                "source_connection_name": "Src",
-                "destination_connection_name": "Ghost",  # will fail validation
-            }],
+            uploads=[
+                {
+                    "name": "Up",
+                    "source_connection_name": "Src",
+                    "destination_connection_name": "Ghost",  # will fail validation
+                }
+            ],
         )
         with pytest.raises(ImportValidationError):
             BackupService.import_backup(

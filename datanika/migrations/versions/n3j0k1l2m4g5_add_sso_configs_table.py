@@ -20,9 +20,7 @@ def upgrade() -> None:
     op.create_table(
         "sso_configs",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column(
-            "org_id", sa.BigInteger(), sa.ForeignKey("organizations.id"), nullable=False
-        ),
+        sa.Column("org_id", sa.BigInteger(), sa.ForeignKey("organizations.id"), nullable=False),
         sa.Column("protocol", sa.String(10), nullable=False),
         sa.Column("display_name", sa.String(100), nullable=False),
         sa.Column("oidc_issuer_url", sa.String(500), nullable=True),
@@ -32,13 +30,9 @@ def upgrade() -> None:
         sa.Column("saml_idp_entity_id", sa.String(500), nullable=True),
         sa.Column("saml_idp_sso_url", sa.String(500), nullable=True),
         sa.Column("saml_idp_cert", sa.Text(), nullable=True),
-        sa.Column(
-            "saml_sp_entity_id", sa.String(255), nullable=True, server_default="datanika"
-        ),
+        sa.Column("saml_sp_entity_id", sa.String(255), nullable=True, server_default="datanika"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default="true"),
-        sa.Column(
-            "created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True
-        ),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
         sa.PrimaryKeyConstraint("id"),

@@ -34,6 +34,4 @@ class Invitation(Base, TenantMixin, TimestampMixin):
         nullable=False,
         default=InvitationStatus.PENDING,
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

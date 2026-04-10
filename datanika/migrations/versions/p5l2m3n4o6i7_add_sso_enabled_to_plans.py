@@ -21,9 +21,7 @@ def upgrade() -> None:
         "plans",
         sa.Column("sso_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
     )
-    op.execute(
-        "UPDATE plans SET sso_enabled = true WHERE slug = 'enterprise-monthly'"
-    )
+    op.execute("UPDATE plans SET sso_enabled = true WHERE slug = 'enterprise-monthly'")
 
 
 def downgrade() -> None:

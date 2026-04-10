@@ -66,9 +66,7 @@ class EmailService:
         html = _VERIFY_EMAIL_TEMPLATE.format(url=url, app_name="Datanika")
         return self.send(to, "Verify your email — Datanika", html)
 
-    def send_invitation_email(
-        self, to: str, org_name: str, inviter_name: str, token: str
-    ) -> bool:
+    def send_invitation_email(self, to: str, org_name: str, inviter_name: str, token: str) -> bool:
         url = f"{self._frontend_url}/api/accept-invite?token={token}"
         html = _INVITATION_TEMPLATE.format(
             url=url, org_name=org_name, inviter_name=inviter_name, app_name="Datanika"
@@ -94,9 +92,7 @@ class EmailService:
             upgrade_url=upgrade_url,
             app_name="Datanika",
         )
-        return self.send(
-            to, f"You've used {percent}% of your {plan_name} plan — Datanika", html
-        )
+        return self.send(to, f"You've used {percent}% of your {plan_name} plan — Datanika", html)
 
 
 # ------------------------------------------------------------------

@@ -255,8 +255,13 @@ class TestGenerateProfilesYml:
         path = svc.generate_profiles_yml(
             1,
             "clickhouse",
-            {"host": "ch.example.com", "port": 8123, "user": "default", "password": "secret",
-             "database": "analytics"},
+            {
+                "host": "ch.example.com",
+                "port": 8123,
+                "user": "default",
+                "password": "secret",
+                "database": "analytics",
+            },
         )
         content = yaml.safe_load(path.read_text())
         profile = content["tenant_1"]["outputs"]["default"]
@@ -268,9 +273,7 @@ class TestGenerateProfilesYml:
 
     def test_duckdb_profile(self, svc):
         svc.ensure_project(1)
-        path = svc.generate_profiles_yml(
-            1, "duckdb", {"path": "/data/warehouse.duckdb"}
-        )
+        path = svc.generate_profiles_yml(1, "duckdb", {"path": "/data/warehouse.duckdb"})
         content = yaml.safe_load(path.read_text())
         profile = content["tenant_1"]["outputs"]["default"]
         assert profile["type"] == "duckdb"

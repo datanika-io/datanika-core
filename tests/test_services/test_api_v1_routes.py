@@ -6,11 +6,11 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+import datanika.models.invitation  # noqa: F401
+
 # Import all models so Base.metadata knows about all tables
 import datanika.models.notification_channel  # noqa: F401
-import datanika.models.invitation  # noqa: F401
 import datanika.models.sso_config  # noqa: F401
-
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.rate_limit_service import RateLimitResult
 
@@ -29,8 +29,12 @@ def fake_api_key():
 @pytest.fixture
 def rate_limit_ok():
     return RateLimitResult(
-        allowed=True, current_count=1, limit=60,
-        remaining=59, retry_after=0, reset_at=9999999999,
+        allowed=True,
+        current_count=1,
+        limit=60,
+        remaining=59,
+        retry_after=0,
+        reset_at=9999999999,
     )
 
 
@@ -112,6 +116,7 @@ def _patch_auth(fake_api_key, rate_limit_ok):
 # Auth tests
 # ---------------------------------------------------------------------------
 
+
 class TestApiAuth:
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/v1/connections")
@@ -130,6 +135,7 @@ class TestApiAuth:
 # ---------------------------------------------------------------------------
 # Connection endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestConnectionEndpoints:
     def test_list_connections_empty(self, client, fake_api_key, rate_limit_ok):
@@ -155,8 +161,13 @@ class TestConnectionEndpoints:
                 json={
                     "name": "Test PG",
                     "connection_type": "postgres",
-                    "config": {"host": "localhost", "port": 5432, "user": "u", "password": "p",
-                               "database": "db"},
+                    "config": {
+                        "host": "localhost",
+                        "port": 5432,
+                        "user": "u",
+                        "password": "p",
+                        "database": "db",
+                    },
                 },
                 headers=_auth_headers(),
             )
@@ -232,6 +243,7 @@ class TestConnectionEndpoints:
 # Transformation endpoints
 # ---------------------------------------------------------------------------
 
+
 class TestTransformationEndpoints:
     def test_list_transformations_empty(self, client, fake_api_key, rate_limit_ok):
         with _patch_auth(fake_api_key, rate_limit_ok):
@@ -303,6 +315,7 @@ class TestTransformationEndpoints:
 # Pipeline endpoints
 # ---------------------------------------------------------------------------
 
+
 class TestPipelineEndpoints:
     def _create_destination(self, client):
         resp = client.post(
@@ -351,6 +364,7 @@ class TestPipelineEndpoints:
 # Schedule endpoints
 # ---------------------------------------------------------------------------
 
+
 class TestScheduleEndpoints:
     def test_list_schedules_empty(self, client, fake_api_key, rate_limit_ok):
         with _patch_auth(fake_api_key, rate_limit_ok):
@@ -385,6 +399,7 @@ class TestScheduleEndpoints:
 # Run endpoints
 # ---------------------------------------------------------------------------
 
+
 class TestRunEndpoints:
     def test_list_runs_empty(self, client, fake_api_key, rate_limit_ok):
         with _patch_auth(fake_api_key, rate_limit_ok):
@@ -409,6 +424,7 @@ class TestRunEndpoints:
 # ---------------------------------------------------------------------------
 # Notification channel endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestNotificationChannelEndpoints:
     def test_list_channels_empty(self, client, fake_api_key, rate_limit_ok):

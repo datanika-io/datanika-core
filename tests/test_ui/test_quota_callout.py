@@ -1,7 +1,5 @@
 """Tests for quota error detection and upgrade prompt logic."""
 
-import pytest
-
 
 class FakeQuotaExceededError(ValueError):
     """Mimic the cloud plugin's QuotaExceededError."""
@@ -39,9 +37,7 @@ class TestSetError:
 
     def test_quota_error_detected(self):
         state = self._make_state()
-        exc = FakeQuotaExceededError(
-            "Connection limit reached (5 on Free plan)"
-        )
+        exc = FakeQuotaExceededError("Connection limit reached (5 on Free plan)")
         state._set_error(exc, "Failed to save connection")
 
         assert state.is_quota_error is True
@@ -65,9 +61,7 @@ class TestSetError:
 
     def test_schedule_quota_error(self):
         state = self._make_state()
-        exc = FakeQuotaExceededError(
-            "Schedule limit reached (2 on Free plan)"
-        )
+        exc = FakeQuotaExceededError("Schedule limit reached (2 on Free plan)")
         state._set_error(exc, "Failed to save schedule")
 
         assert state.is_quota_error is True

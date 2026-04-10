@@ -85,18 +85,14 @@ class SettingsState(BaseState):
             from datanika.services.invitation_service import InvitationService
 
             inv_svc = InvitationService(AuthService(app_settings.secret_key))
-            invitations = inv_svc.list_pending_invitations(
-                session, auth_state.current_org.id
-            )
+            invitations = inv_svc.list_pending_invitations(session, auth_state.current_org.id)
             self.pending_invitations = [
                 InvitationItem(
                     id=inv.id,
                     email=inv.email,
                     role=inv.role.value,
                     created_at=(
-                        inv.created_at.strftime("%Y-%m-%d %H:%M")
-                        if inv.created_at
-                        else ""
+                        inv.created_at.strftime("%Y-%m-%d %H:%M") if inv.created_at else ""
                     ),
                 )
                 for inv in invitations
@@ -119,8 +115,11 @@ class SettingsState(BaseState):
                     default_dbt_schema=self.edit_default_dbt_schema,
                 )
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "update", "org",
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "update",
+                    "org",
                     resource_id=auth_state.current_org.id,
                     old_values={"name": self.org_name, "slug": self.org_slug},
                     new_values={"name": self.edit_org_name, "slug": self.edit_org_slug},
@@ -172,8 +171,11 @@ class SettingsState(BaseState):
                     auth_state.current_user.id,
                 )
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "create", "member",
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "create",
+                    "member",
                     new_values={"email": self.invite_email, "role": self.invite_role},
                 )
                 session.commit()
@@ -197,9 +199,7 @@ class SettingsState(BaseState):
             with get_sync_session() as session:
                 user = svc.get_user_by_email(session, self.invite_email)
                 if user is None:
-                    self.error_message = (
-                        "User not found. Configure SMTP to send email invitations."
-                    )
+                    self.error_message = "User not found. Configure SMTP to send email invitations."
                     return
                 from datanika.models.user import MemberRole
 
@@ -210,8 +210,11 @@ class SettingsState(BaseState):
                     MemberRole(self.invite_role),
                 )
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "create", "member",
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "create",
+                    "member",
                     new_values={"email": self.invite_email, "role": self.invite_role},
                 )
                 session.commit()
@@ -240,8 +243,11 @@ class SettingsState(BaseState):
                     MemberRole(new_role),
                 )
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "update", "member",
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "update",
+                    "member",
                     resource_id=membership_id,
                     old_values={"role": old_role},
                     new_values={"role": new_role},
@@ -262,12 +268,18 @@ class SettingsState(BaseState):
             with get_sync_session() as session:
                 # Capture member info for audit before removal
                 member_info = next((m for m in self.members if m.id == membership_id), None)
-                old_values = {"email": member_info.email, "role": member_info.role} if member_info else {}
+                old_values = (
+                    {"email": member_info.email, "role": member_info.role} if member_info else {}
+                )
                 svc.remove_member(session, auth_state.current_org.id, membership_id)
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "delete", "member",
-                    resource_id=membership_id, old_values=old_values,
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "delete",
+                    "member",
+                    resource_id=membership_id,
+                    old_values=old_values,
                 )
                 session.commit()
         except Exception as e:
@@ -285,15 +297,19 @@ class SettingsState(BaseState):
 
             inv_svc = InvitationService(AuthService(app_settings.secret_key))
             with get_sync_session() as session:
-                inv_info = next((i for i in self.pending_invitations if i.id == invitation_id), None)
-                old_values = {"email": inv_info.email, "role": inv_info.role} if inv_info else {}
-                inv_svc.cancel_invitation(
-                    session, auth_state.current_org.id, invitation_id
+                inv_info = next(
+                    (i for i in self.pending_invitations if i.id == invitation_id), None
                 )
+                old_values = {"email": inv_info.email, "role": inv_info.role} if inv_info else {}
+                inv_svc.cancel_invitation(session, auth_state.current_org.id, invitation_id)
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "delete", "member",
-                    resource_id=invitation_id, old_values=old_values,
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "delete",
+                    "member",
+                    resource_id=invitation_id,
+                    old_values=old_values,
                 )
                 session.commit()
         except Exception as e:

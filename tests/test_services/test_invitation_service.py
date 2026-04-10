@@ -64,9 +64,7 @@ class TestCreateInvitation:
         assert inv.invited_by_user_id == owner.id
 
     def test_duplicate_pending_invitation_rejected(self, db_session, inv_svc, org, owner):
-        inv_svc.create_invitation(
-            db_session, org.id, "dup@test.com", MemberRole.VIEWER, owner.id
-        )
+        inv_svc.create_invitation(db_session, org.id, "dup@test.com", MemberRole.VIEWER, owner.id)
         with pytest.raises(ValueError, match="pending invitation"):
             inv_svc.create_invitation(
                 db_session, org.id, "dup@test.com", MemberRole.VIEWER, owner.id
@@ -74,9 +72,7 @@ class TestCreateInvitation:
 
     def test_already_member_rejected(self, db_session, inv_svc, org, owner):
         with pytest.raises(ValueError, match="already a member"):
-            inv_svc.create_invitation(
-                db_session, org.id, owner.email, MemberRole.EDITOR, owner.id
-            )
+            inv_svc.create_invitation(db_session, org.id, owner.email, MemberRole.EDITOR, owner.id)
 
 
 class TestAcceptInvitation:
@@ -104,9 +100,7 @@ class TestAcceptInvitation:
         result = inv_svc.accept_invitation(db_session, "bogus-token")
         assert result is None
 
-    def test_accept_already_accepted_returns_none(
-        self, db_session, inv_svc, user_svc, org, owner
-    ):
+    def test_accept_already_accepted_returns_none(self, db_session, inv_svc, user_svc, org, owner):
         inv = inv_svc.create_invitation(
             db_session, org.id, "twice@test.com", MemberRole.VIEWER, owner.id
         )

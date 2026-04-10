@@ -65,8 +65,9 @@ def conn_b(db_session, org_b, encryption):
 
 
 class TestConnectionIsolation:
-    def test_list_connections_filtered_by_org(self, db_session, org_a, org_b, conn_a, conn_b,
-                                              encryption):
+    def test_list_connections_filtered_by_org(
+        self, db_session, org_a, org_b, conn_a, conn_b, encryption
+    ):
         svc = ConnectionService(encryption)
         a_conns = svc.list_connections(db_session, org_a.id)
         b_conns = svc.list_connections(db_session, org_b.id)
@@ -77,26 +78,34 @@ class TestConnectionIsolation:
         assert conn_b.id in b_ids
         assert conn_a.id not in b_ids
 
-    def test_get_connection_wrong_org_returns_none(self, db_session, org_a, org_b, conn_a,
-                                                    encryption):
+    def test_get_connection_wrong_org_returns_none(
+        self, db_session, org_a, org_b, conn_a, encryption
+    ):
         svc = ConnectionService(encryption)
         result = svc.get_connection(db_session, org_b.id, conn_a.id)
         assert result is None
 
 
 class TestUploadIsolation:
-    def test_list_uploads_filtered_by_org(self, db_session, org_a, org_b, conn_a, conn_b,
-                                           encryption):
+    def test_list_uploads_filtered_by_org(
+        self, db_session, org_a, org_b, conn_a, conn_b, encryption
+    ):
         conn_svc = ConnectionService(encryption)
         svc = UploadService(conn_svc)
         # Create uploads in each org
         u_a = Upload(
-            org_id=org_a.id, name="Upload A", source_connection_id=conn_a.id,
-            destination_connection_id=conn_a.id, dlt_config={},
+            org_id=org_a.id,
+            name="Upload A",
+            source_connection_id=conn_a.id,
+            destination_connection_id=conn_a.id,
+            dlt_config={},
         )
         u_b = Upload(
-            org_id=org_b.id, name="Upload B", source_connection_id=conn_b.id,
-            destination_connection_id=conn_b.id, dlt_config={},
+            org_id=org_b.id,
+            name="Upload B",
+            source_connection_id=conn_b.id,
+            destination_connection_id=conn_b.id,
+            dlt_config={},
         )
         db_session.add_all([u_a, u_b])
         db_session.flush()
@@ -109,10 +118,12 @@ class TestUploadIsolation:
 class TestRunIsolation:
     def test_list_runs_filtered_by_org(self, db_session, org_a, org_b):
         svc = ExecutionService()
-        r_a = Run(org_id=org_a.id, target_type=NodeType.UPLOAD, target_id=1,
-                   status=RunStatus.SUCCESS)
-        r_b = Run(org_id=org_b.id, target_type=NodeType.UPLOAD, target_id=1,
-                   status=RunStatus.SUCCESS)
+        r_a = Run(
+            org_id=org_a.id, target_type=NodeType.UPLOAD, target_id=1, status=RunStatus.SUCCESS
+        )
+        r_b = Run(
+            org_id=org_b.id, target_type=NodeType.UPLOAD, target_id=1, status=RunStatus.SUCCESS
+        )
         db_session.add_all([r_a, r_b])
         db_session.flush()
 

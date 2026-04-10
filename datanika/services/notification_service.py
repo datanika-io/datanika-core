@@ -17,10 +17,12 @@ _CONFIG_REQUIRED = {
     ChannelType.WEBHOOK: ["url"],
 }
 
+
 def _validate_config(ct, config):
     for f in _CONFIG_REQUIRED[ct]:
         if not config.get(f):
             raise ValueError(f"config.{f} is required for {ct} channels")
+
 
 def _validate_events(events):
     bad = set(events) - VALID_EVENTS
@@ -35,8 +37,12 @@ class NotificationService:
         _validate_config(channel_type, config)
         _validate_events(events)
         ch = NotificationChannel(
-            org_id=org_id, name=name.strip(), channel_type=channel_type,
-            config=config, events=events, is_active=True,
+            org_id=org_id,
+            name=name.strip(),
+            channel_type=channel_type,
+            config=config,
+            events=events,
+            is_active=True,
         )
         session.add(ch)
         session.flush()
@@ -101,7 +107,9 @@ class NotificationService:
             except Exception:
                 logger.exception(
                     "Failed to dispatch %s notification via channel %s (id=%s)",
-                    event_type, ch.name, ch.id,
+                    event_type,
+                    ch.name,
+                    ch.id,
                 )
 
     def _dispatch(self, channel, event_type, payload, *, email_service=None):

@@ -184,9 +184,7 @@ class TestCatalogSyncAfterTransformation:
         assert run.status == RunStatus.SUCCESS
         assert run.rows_loaded == 3
 
-    def test_transformation_catalog_sync_introspects_columns(
-        self, db_session, encryption
-    ):
+    def test_transformation_catalog_sync_introspects_columns(self, db_session, encryption):
         """_sync_catalog_after_transformation introspects columns from the DB
         when dst_conn and dst_config are provided."""
         import uuid

@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from datanika.hooks import clear, emit, on
 
 

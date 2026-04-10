@@ -124,8 +124,11 @@ class AuthState(rx.State):
             with get_sync_session() as audit_session:
                 org_id_for_audit = orgs[0].id if orgs else 0
                 AuditService().log_action(
-                    audit_session, org_id_for_audit, user_id,
-                    AuditAction.LOGIN, "session",
+                    audit_session,
+                    org_id_for_audit,
+                    user_id,
+                    AuditAction.LOGIN,
+                    "session",
                 )
                 audit_session.commit()
         except Exception:
@@ -213,9 +216,7 @@ class AuthState(rx.State):
                         inv_svc = InvitationService(AuthService(settings.secret_key))
                         membership = inv_svc.accept_invitation(session, invite_token)
                         if membership:
-                            invited_org = session.get(
-                                type(org), membership.org_id
-                            )
+                            invited_org = session.get(type(org), membership.org_id)
                             if invited_org:
                                 invited = OrgInfo(
                                     id=invited_org.id,
@@ -247,8 +248,11 @@ class AuthState(rx.State):
             if self.current_user.id and self.current_org.id:
                 with get_sync_session() as audit_session:
                     AuditService().log_action(
-                        audit_session, self.current_org.id, self.current_user.id,
-                        AuditAction.LOGOUT, "session",
+                        audit_session,
+                        self.current_org.id,
+                        self.current_user.id,
+                        AuditAction.LOGOUT,
+                        "session",
                     )
                     audit_session.commit()
         except Exception:

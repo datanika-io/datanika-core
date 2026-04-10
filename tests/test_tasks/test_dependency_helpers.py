@@ -58,9 +58,7 @@ class TestCheckDepsOrRetry:
         mock_task.retry.side_effect = Retry()
 
         with pytest.raises(Retry):
-            check_deps_or_retry(
-                mock_task, run.id, org.id, NodeType.UPLOAD, session=db_session
-            )
+            check_deps_or_retry(mock_task, run.id, org.id, NodeType.UPLOAD, session=db_session)
 
         mock_task.retry.assert_called_once_with(
             countdown=DEPENDENCY_RETRY_COUNTDOWN,
@@ -77,9 +75,7 @@ class TestCheckDepsOrRetry:
         mock_task.retry.side_effect = MaxRetriesExceededError()
 
         with pytest.raises(MaxRetriesExceededError):
-            check_deps_or_retry(
-                mock_task, run.id, org.id, NodeType.UPLOAD, session=db_session
-            )
+            check_deps_or_retry(mock_task, run.id, org.id, NodeType.UPLOAD, session=db_session)
 
         db_session.refresh(run)
         assert run.status == RunStatus.FAILED

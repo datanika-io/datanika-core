@@ -15,16 +15,48 @@ validate_connection_name = partial(validate_name, entity_label="Connection")
 
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
-    "postgres", "mysql", "mssql", "sqlite", "rest_api", "s3", "csv", "json", "parquet",
-    "google_sheets", "mongodb", "clickhouse", "duckdb", "stripe", "github", "hubspot",
-    "salesforce", "shopify", "jira", "slack", "google_analytics", "google_ads",
-    "facebook_ads", "zendesk", "airtable", "notion", "kafka",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "rest_api",
+    "s3",
+    "csv",
+    "json",
+    "parquet",
+    "google_sheets",
+    "mongodb",
+    "clickhouse",
+    "duckdb",
+    "stripe",
+    "github",
+    "hubspot",
+    "salesforce",
+    "shopify",
+    "jira",
+    "slack",
+    "google_analytics",
+    "google_ads",
+    "facebook_ads",
+    "zendesk",
+    "airtable",
+    "notion",
+    "kafka",
 }
 
 # Types that can serve as destinations (databases + cloud warehouses)
 DESTINATION_TYPES = {
-    "postgres", "mysql", "mssql", "sqlite", "bigquery", "snowflake", "redshift",
-    "clickhouse", "duckdb", "databricks", "synapse",
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "bigquery",
+    "snowflake",
+    "redshift",
+    "clickhouse",
+    "duckdb",
+    "databricks",
+    "synapse",
 }
 
 

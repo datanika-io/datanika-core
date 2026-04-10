@@ -62,9 +62,7 @@ class TestEmailVerificationToken:
 
 class TestRegisterUserEmailVerified:
     def test_new_user_email_not_verified(self, db_session, svc):
-        user = svc.register_user(
-            db_session, "newuser@test.com", "password123", "New User"
-        )
+        user = svc.register_user(db_session, "newuser@test.com", "password123", "New User")
         assert user.email_verified is False
 
     def test_oauth_user_email_verified(self, db_session, svc):
@@ -81,24 +79,22 @@ class TestRegisterUserEmailVerified:
 
 class TestAuthenticateWithVerification:
     def test_login_fails_when_email_not_verified(self, db_session, svc, org):
-        user = svc.register_user(
-            db_session, "unverified@test.com", "password123", "Unverified"
-        )
+        user = svc.register_user(db_session, "unverified@test.com", "password123", "Unverified")
         # user.email_verified is False by default
         m = Membership(user_id=user.id, org_id=org.id, role=MemberRole.OWNER)
         db_session.add(m)
         db_session.flush()
 
         result = svc.authenticate(
-            db_session, "unverified@test.com", "password123",
+            db_session,
+            "unverified@test.com",
+            "password123",
             require_email_verified=True,
         )
         assert result is None
 
     def test_login_succeeds_after_verification(self, db_session, svc, org):
-        user = svc.register_user(
-            db_session, "verified@test.com", "password123", "Verified"
-        )
+        user = svc.register_user(db_session, "verified@test.com", "password123", "Verified")
         user.email_verified = True
         db_session.flush()
         m = Membership(user_id=user.id, org_id=org.id, role=MemberRole.OWNER)
@@ -106,16 +102,16 @@ class TestAuthenticateWithVerification:
         db_session.flush()
 
         result = svc.authenticate(
-            db_session, "verified@test.com", "password123",
+            db_session,
+            "verified@test.com",
+            "password123",
             require_email_verified=True,
         )
         assert result is not None
         assert result["user"].id == user.id
 
     def test_login_works_without_verification_requirement(self, db_session, svc, org):
-        user = svc.register_user(
-            db_session, "norequire@test.com", "password123", "NoRequire"
-        )
+        user = svc.register_user(db_session, "norequire@test.com", "password123", "NoRequire")
         # email_verified=False but require_email_verified=False (default)
         m = Membership(user_id=user.id, org_id=org.id, role=MemberRole.OWNER)
         db_session.add(m)

@@ -3,7 +3,7 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
@@ -46,7 +46,10 @@ def other_org(db_session):
 @pytest.fixture
 def dest_conn(conn_svc, db_session, org):
     return conn_svc.create_connection(
-        db_session, org.id, "Dest DB", ConnectionType.BIGQUERY,
+        db_session,
+        org.id,
+        "Dest DB",
+        ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
     )
 

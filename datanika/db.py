@@ -28,7 +28,9 @@ engine = create_async_engine(
     **_pool_kwargs,
 )
 async_session_factory = async_sessionmaker(
-    engine, class_=AsyncSession, expire_on_commit=False,
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
 )
 
 

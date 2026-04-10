@@ -72,9 +72,7 @@ class ModelState(BaseState):
                 pipelines_by_dest[p.destination_connection_id].append(p)
 
             # Query all pipeline runs and keep only the latest per pipeline
-            all_pipeline_runs = exec_svc.list_runs(
-                session, org_id, target_type=NodeType.PIPELINE
-            )
+            all_pipeline_runs = exec_svc.list_runs(session, org_id, target_type=NodeType.PIPELINE)
             latest_pipeline_run: dict[int, object] = {}
             for r in all_pipeline_runs:
                 prev = latest_pipeline_run.get(r.target_id)
@@ -114,9 +112,7 @@ class ModelState(BaseState):
                         # Find pipelines sharing the same destination (or all if
                         # the transformation inherits destination via NULL)
                         matching_pipelines = (
-                            pipelines_by_dest.get(dest_id, [])
-                            if dest_id is not None
-                            else pipelines
+                            pipelines_by_dest.get(dest_id, []) if dest_id is not None else pipelines
                         )
                         for p in matching_pipelines:
                             pr = latest_pipeline_run.get(p.id)

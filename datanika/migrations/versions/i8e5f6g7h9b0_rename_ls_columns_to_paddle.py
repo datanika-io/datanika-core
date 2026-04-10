@@ -36,9 +36,7 @@ def upgrade() -> None:
         op.alter_column("plans", "ls_product_id", new_column_name="paddle_product_id")
 
     if _table_exists("subscriptions") and _column_exists("subscriptions", "ls_customer_id"):
-        op.alter_column(
-            "subscriptions", "ls_customer_id", new_column_name="paddle_customer_id"
-        )
+        op.alter_column("subscriptions", "ls_customer_id", new_column_name="paddle_customer_id")
         op.alter_column(
             "subscriptions", "ls_subscription_id", new_column_name="paddle_subscription_id"
         )
@@ -47,14 +45,10 @@ def upgrade() -> None:
             "ls_subscription_item_id",
             new_column_name="paddle_subscription_item_id",
         )
-        op.alter_column(
-            "subscriptions", "ls_usage_item_id", new_column_name="paddle_usage_item_id"
-        )
+        op.alter_column("subscriptions", "ls_usage_item_id", new_column_name="paddle_usage_item_id")
 
     if _table_exists("usage_ledger") and _column_exists("usage_ledger", "reported_to_ls"):
-        op.alter_column(
-            "usage_ledger", "reported_to_ls", new_column_name="reported_to_paddle"
-        )
+        op.alter_column("usage_ledger", "reported_to_ls", new_column_name="reported_to_paddle")
 
 
 def downgrade() -> None:
@@ -63,9 +57,7 @@ def downgrade() -> None:
         op.alter_column("plans", "paddle_product_id", new_column_name="ls_product_id")
 
     if _table_exists("subscriptions") and _column_exists("subscriptions", "paddle_customer_id"):
-        op.alter_column(
-            "subscriptions", "paddle_customer_id", new_column_name="ls_customer_id"
-        )
+        op.alter_column("subscriptions", "paddle_customer_id", new_column_name="ls_customer_id")
         op.alter_column(
             "subscriptions", "paddle_subscription_id", new_column_name="ls_subscription_id"
         )
@@ -74,11 +66,7 @@ def downgrade() -> None:
             "paddle_subscription_item_id",
             new_column_name="ls_subscription_item_id",
         )
-        op.alter_column(
-            "subscriptions", "paddle_usage_item_id", new_column_name="ls_usage_item_id"
-        )
+        op.alter_column("subscriptions", "paddle_usage_item_id", new_column_name="ls_usage_item_id")
 
     if _table_exists("usage_ledger") and _column_exists("usage_ledger", "reported_to_paddle"):
-        op.alter_column(
-            "usage_ledger", "reported_to_paddle", new_column_name="reported_to_ls"
-        )
+        op.alter_column("usage_ledger", "reported_to_paddle", new_column_name="reported_to_ls")

@@ -2,9 +2,17 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [master]
   push:
-    branches: [main]
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: datanika-io/datanika
 
 jobs:
   lint:
@@ -47,3 +55,98 @@ jobs:
 
       - name: Run tests
         run: pytest tests/ --tb=short -q
+
+  build:
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: datanika
+
+      - name: Checkout datanika-cloud
+        uses: actions/checkout@v4
+        with:
+          repository: datanika-io/datanika-cloud
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: datanika-cloud
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: datanika/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy to Hetzner
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: root
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /opt/datanika/datanika
+            git pull origin master
+
+            cd /opt/datanika/datanika-cloud
+            git pull origin master
+
+            cd /opt/datanika/datanika
+
+            # Source env vars for docker-compose interpolation
+            set -a && source .env.docker && set +a
+
+            # Build and restart with zero-downtime (one at a time)
+            docker compose build app celery
+
+            # Restart app first, wait for health, then celery
+            docker compose up -d --no-deps app
+            echo "Waiting for app to be healthy..."
+            timeout 120 bash -c 'until docker inspect --format="{{.State.Health.Status}}" datanika-app 2>/dev/null | grep -q healthy; do sleep 3; done' || {
+              echo "App failed health check — rolling back"
+              docker compose up -d --no-deps app
+              exit 1
+            }
+
+            docker compose up -d --no-deps celery
+            echo "Deploy complete"
+
+            # Cleanup old images
+            docker image prune -f

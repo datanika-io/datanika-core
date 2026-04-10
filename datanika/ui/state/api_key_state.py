@@ -69,8 +69,11 @@ class ApiKeyState(BaseState):
                     name=self.new_key_name.strip(),
                 )
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "create", "api_key",
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "create",
+                    "api_key",
                     resource_id=api_key.id,
                     new_values={"name": self.new_key_name.strip()},
                 )
@@ -93,9 +96,13 @@ class ApiKeyState(BaseState):
                 old_values = {"name": key_info.name} if key_info else {}
                 svc.revoke_api_key(session, auth_state.current_org.id, key_id)
                 self._audit(
-                    session, auth_state.current_org.id, auth_state.current_user.id,
-                    "delete", "api_key",
-                    resource_id=key_id, old_values=old_values,
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "delete",
+                    "api_key",
+                    resource_id=key_id,
+                    old_values=old_values,
                 )
                 session.commit()
             self.error_message = ""

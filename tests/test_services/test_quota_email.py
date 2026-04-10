@@ -1,9 +1,5 @@
 """Tests for email nudge at 80% quota usage."""
 
-import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
 from datanika.hooks import clear, emit, on
 
 
@@ -21,14 +17,20 @@ class TestQuotaThresholdHook:
 
         def handler(*, org_id, metric, used, limit, plan_name, **kw):
             received.update(
-                org_id=org_id, metric=metric, used=used,
-                limit=limit, plan_name=plan_name,
+                org_id=org_id,
+                metric=metric,
+                used=used,
+                limit=limit,
+                plan_name=plan_name,
             )
 
         on("quota.threshold_reached", handler)
         emit(
             "quota.threshold_reached",
-            org_id=1, metric="model_runs", used=420, limit=500,
+            org_id=1,
+            metric="model_runs",
+            used=420,
+            limit=500,
             plan_name="Free",
         )
         assert received["org_id"] == 1
@@ -39,7 +41,10 @@ class TestQuotaThresholdHook:
     def test_no_handler_does_not_fail(self):
         emit(
             "quota.threshold_reached",
-            org_id=1, metric="model_runs", used=420, limit=500,
+            org_id=1,
+            metric="model_runs",
+            used=420,
+            limit=500,
             plan_name="Free",
         )
 

@@ -1,5 +1,7 @@
 """Audit log state — list and filter."""
 
+import contextlib
+
 from pydantic import BaseModel
 
 from datanika.models.audit_log import AuditAction
@@ -35,10 +37,8 @@ class AuditState(BaseState):
         svc = AuditService()
         action = None
         if self.filter_action and self.filter_action != "all":
-            try:
+            with contextlib.suppress(ValueError):
                 action = AuditAction(self.filter_action)
-            except ValueError:
-                pass
         resource_type = None
         if self.filter_resource_type and self.filter_resource_type != "all":
             resource_type = self.filter_resource_type

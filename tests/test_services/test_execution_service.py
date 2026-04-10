@@ -3,7 +3,7 @@
 import pytest
 from cryptography.fernet import Fernet
 
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
 from datanika.models.user import Organization
@@ -53,10 +53,18 @@ def other_org(db_session):
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
     src = conn_svc.create_connection(
-        db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src"},
+        db_session,
+        org.id,
+        "S",
+        ConnectionType.POSTGRES,
+        {"host": "src"},
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"},
+        db_session,
+        org.id,
+        "D",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
     )
     return upload_svc.create_upload(
         db_session,

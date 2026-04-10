@@ -15,6 +15,7 @@ from datanika.services.rate_limit_service import RateLimitResult, RateLimitServi
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_redis():
     """Fresh per-test fake Redis with sliding-window semantics."""
@@ -85,14 +86,19 @@ def _fake_api_key(*, key_id=1, org_id=10, scopes=None):
 
 def _rate_ok():
     return RateLimitResult(
-        allowed=True, current_count=1, limit=60,
-        remaining=59, retry_after=0, reset_at=9999999999,
+        allowed=True,
+        current_count=1,
+        limit=60,
+        remaining=59,
+        retry_after=0,
+        reset_at=9999999999,
     )
 
 
 # ---------------------------------------------------------------------------
 # Header injection attacks
 # ---------------------------------------------------------------------------
+
 
 class TestHeaderInjection:
     """Authorization header injection — newlines, nulls, oversized values."""
@@ -173,6 +179,7 @@ class TestHeaderInjection:
 # Rate limit bypass attempts
 # ---------------------------------------------------------------------------
 
+
 class TestRateLimitBypass:
     def test_keys_from_same_org_have_independent_limits(self, svc):
         """Different API keys in the same org get independent counters (by design).
@@ -203,7 +210,10 @@ class TestRateLimitBypass:
         for _ in range(3):
             svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=100, burst_per_sec=3)
         result = svc.check_rate_limit(
-            api_key_id=1, org_id=10, limit_rpm=100, burst_per_sec=3,
+            api_key_id=1,
+            org_id=10,
+            limit_rpm=100,
+            burst_per_sec=3,
         )
         assert result.allowed is False
         assert result.current_count <= 100  # minute limit not reached
@@ -212,6 +222,7 @@ class TestRateLimitBypass:
 # ---------------------------------------------------------------------------
 # Redis failure scenarios
 # ---------------------------------------------------------------------------
+
 
 class TestRedisFailure:
     def test_redis_connection_error_propagates(self):
@@ -235,6 +246,7 @@ class TestRedisFailure:
 # Scope enforcement at middleware level
 # ---------------------------------------------------------------------------
 
+
 class TestScopeEnforcement:
     @patch("datanika.services.api_middleware._rate_limit_svc")
     @patch("datanika.services.api_middleware._api_key_svc")
@@ -252,7 +264,9 @@ class TestScopeEnforcement:
         resp = client.get("/api/test", headers={"Authorization": "Bearer etf_valid"})
         assert resp.status_code == 401
         mock_svc.authenticate_api_key.assert_called_once_with(
-            session_ctx, "etf_valid", required_scope="pipeline:read",
+            session_ctx,
+            "etf_valid",
+            required_scope="pipeline:read",
         )
 
     @patch("datanika.services.api_middleware._rate_limit_svc")
@@ -272,13 +286,16 @@ class TestScopeEnforcement:
         resp = client.get("/api/test", headers={"Authorization": "Bearer etf_valid"})
         assert resp.status_code == 200
         mock_svc.authenticate_api_key.assert_called_once_with(
-            session_ctx, "etf_valid", required_scope=None,
+            session_ctx,
+            "etf_valid",
+            required_scope=None,
         )
 
 
 # ---------------------------------------------------------------------------
 # Error response info leakage
 # ---------------------------------------------------------------------------
+
 
 class TestInfoLeakage:
     @patch("datanika.services.api_middleware._api_key_svc")
@@ -310,8 +327,12 @@ class TestInfoLeakage:
         mock_svc.authenticate_api_key.return_value = _fake_api_key(key_id=42, org_id=99)
         mock_rl.get_limit_for_org.return_value = 60
         mock_rl.check_rate_limit.return_value = RateLimitResult(
-            allowed=False, current_count=61, limit=60,
-            remaining=0, retry_after=30, reset_at=9999999999,
+            allowed=False,
+            current_count=61,
+            limit=60,
+            remaining=0,
+            retry_after=30,
+            reset_at=9999999999,
         )
 
         app = Starlette(routes=[Route("/api/test", unscoped_handler)])

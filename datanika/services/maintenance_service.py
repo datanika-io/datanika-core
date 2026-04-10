@@ -34,12 +34,16 @@ def cleanup_orphaned_dlt_dirs(
     # Collect active run IDs to protect their dirs
     active_run_ids: set[int] = set()
     if session is not None:
-        active_runs = session.execute(
-            select(Run.id).where(
-                Run.status.in_([RunStatus.RUNNING, RunStatus.PENDING]),
-                Run.deleted_at.is_(None),
+        active_runs = (
+            session.execute(
+                select(Run.id).where(
+                    Run.status.in_([RunStatus.RUNNING, RunStatus.PENDING]),
+                    Run.deleted_at.is_(None),
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         active_run_ids = set(active_runs)
 
     cutoff = time.time() - (max_age_hours * 3600)
@@ -123,9 +127,11 @@ def cleanup_orphaned_archives(session: Session, uploads_dir: str) -> int:
 
     Returns count of removed files.
     """
-    deleted_files = session.execute(
-        select(UploadedFile).where(UploadedFile.deleted_at.is_not(None))
-    ).scalars().all()
+    deleted_files = (
+        session.execute(select(UploadedFile).where(UploadedFile.deleted_at.is_not(None)))
+        .scalars()
+        .all()
+    )
 
     removed = 0
     for record in deleted_files:

@@ -103,7 +103,11 @@ class BackupState(BaseState):
                     session, org_id, encryption, conn_svc, upload_svc, data, resolutions
                 )
                 self._audit(
-                    session, org_id, user_id, "create", "import",
+                    session,
+                    org_id,
+                    user_id,
+                    "create",
+                    "import",
                     new_values={
                         "connections_imported": result["connections_imported"],
                         "uploads_imported": result["uploads_imported"],

@@ -3,11 +3,10 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.testclient import TestClient
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import Route
+from starlette.testclient import TestClient
 
 from datanika.services.api_middleware import api_endpoint
 from datanika.services.rate_limit_service import RateLimitResult
@@ -36,16 +35,24 @@ def fake_api_key():
 @pytest.fixture
 def rate_limit_ok():
     return RateLimitResult(
-        allowed=True, current_count=1, limit=60,
-        remaining=59, retry_after=0, reset_at=9999999999,
+        allowed=True,
+        current_count=1,
+        limit=60,
+        remaining=59,
+        retry_after=0,
+        reset_at=9999999999,
     )
 
 
 @pytest.fixture
 def rate_limit_exceeded():
     return RateLimitResult(
-        allowed=False, current_count=61, limit=60,
-        remaining=0, retry_after=45, reset_at=9999999999,
+        allowed=False,
+        current_count=61,
+        limit=60,
+        remaining=0,
+        retry_after=45,
+        reset_at=9999999999,
     )
 
 

@@ -6,29 +6,44 @@ import re
 from pydantic import BaseModel
 
 from datanika.config import settings
-from datanika.models.connection import ConnectionDirection, ConnectionType
+from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     ConnectionService,
-    DESTINATION_TYPES,
-    SOURCE_TYPES,
-    infer_direction,
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 # SaaS source types that use endpoint/resource selection (not SQL mode)
 SAAS_SOURCE_TYPES = {
-    "stripe", "github", "hubspot", "salesforce", "shopify", "jira", "slack",
-    "google_analytics", "google_ads", "facebook_ads", "zendesk", "airtable", "notion",
+    "stripe",
+    "github",
+    "hubspot",
+    "salesforce",
+    "shopify",
+    "jira",
+    "slack",
+    "google_analytics",
+    "google_ads",
+    "facebook_ads",
+    "zendesk",
+    "airtable",
+    "notion",
 }
 
 # File-based source types
 FILE_SOURCE_TYPES = {"s3", "csv", "json", "parquet"}
 
 # Source types that need their own config instead of SQL mode
-NON_SQL_SOURCE_TYPES = SAAS_SOURCE_TYPES | FILE_SOURCE_TYPES | {
-    "google_sheets", "mongodb", "rest_api", "kafka",
-}
+NON_SQL_SOURCE_TYPES = (
+    SAAS_SOURCE_TYPES
+    | FILE_SOURCE_TYPES
+    | {
+        "google_sheets",
+        "mongodb",
+        "rest_api",
+        "kafka",
+    }
+)
 
 # Default available endpoints per SaaS connector
 SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
@@ -788,7 +803,11 @@ class ConnectionState(BaseState):
                         config=config,
                     )
                     self._audit(
-                        session, org_id, user_id, "update", "connection",
+                        session,
+                        org_id,
+                        user_id,
+                        "update",
+                        "connection",
                         resource_id=self.editing_conn_id,
                         new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
@@ -801,7 +820,11 @@ class ConnectionState(BaseState):
                         config,
                     )
                     self._audit(
-                        session, org_id, user_id, "create", "connection",
+                        session,
+                        org_id,
+                        user_id,
+                        "create",
+                        "connection",
                         resource_id=conn.id,
                         new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
@@ -856,11 +879,18 @@ class ConnectionState(BaseState):
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
             conn = svc.get_connection(session, org_id, conn_id)
-            old_values = {"name": conn.name, "connection_type": conn.connection_type.value} if conn else {}
+            old_values = (
+                {"name": conn.name, "connection_type": conn.connection_type.value} if conn else {}
+            )
             svc.delete_connection(session, org_id, conn_id)
             self._audit(
-                session, org_id, user_id, "delete", "connection",
-                resource_id=conn_id, old_values=old_values,
+                session,
+                org_id,
+                user_id,
+                "delete",
+                "connection",
+                resource_id=conn_id,
+                old_values=old_values,
             )
             session.commit()
         await self.load_connections()

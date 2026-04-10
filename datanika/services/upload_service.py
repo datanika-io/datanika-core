@@ -54,9 +54,7 @@ class UploadService:
         # Validate source connection exists
         src = self._conn_svc.get_connection(session, org_id, source_connection_id)
         if src is None:
-            raise ValueError(
-                f"Invalid source connection {source_connection_id}: must exist"
-            )
+            raise ValueError(f"Invalid source connection {source_connection_id}: must exist")
 
         # Validate destination connection exists
         dst = self._conn_svc.get_connection(session, org_id, destination_connection_id)

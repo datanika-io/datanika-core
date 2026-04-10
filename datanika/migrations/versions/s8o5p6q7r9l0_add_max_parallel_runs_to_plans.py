@@ -19,9 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         "plans",
-        sa.Column(
-            "max_parallel_runs", sa.Integer(), nullable=False, server_default=sa.text("5")
-        ),
+        sa.Column("max_parallel_runs", sa.Integer(), nullable=False, server_default=sa.text("5")),
     )
     op.execute("UPDATE plans SET max_parallel_runs = 2 WHERE slug = 'free'")
     op.execute("UPDATE plans SET max_parallel_runs = 5 WHERE slug = 'pro-monthly'")

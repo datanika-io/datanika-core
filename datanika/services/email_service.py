@@ -75,6 +75,29 @@ class EmailService:
         )
         return self.send(to, f"You're invited to {org_name} — Datanika", html)
 
+    def send_quota_warning_email(
+        self,
+        to: str,
+        plan_name: str,
+        metric_label: str,
+        used: int,
+        limit: int,
+    ) -> bool:
+        percent = int(used / limit * 100) if limit else 0
+        upgrade_url = f"{self._frontend_url}/settings?tab=billing"
+        html = _QUOTA_WARNING_TEMPLATE.format(
+            plan_name=plan_name,
+            metric_label=metric_label,
+            used=used,
+            limit=limit,
+            percent=percent,
+            upgrade_url=upgrade_url,
+            app_name="Datanika",
+        )
+        return self.send(
+            to, f"You've used {percent}% of your {plan_name} plan — Datanika", html
+        )
+
 
 # ------------------------------------------------------------------
 # HTML templates (simple string.format — no Jinja dependency)
@@ -120,6 +143,30 @@ border-radius: 6px; text-decoration: none; font-weight: 600;">Accept Invitation<
   </p>
   <p style="color: #888; font-size: 13px;">
     Or copy this link: {url}
+  </p>
+</body>
+</html>"""
+
+_QUOTA_WARNING_TEMPLATE = """\
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; \
+max-width: 560px; margin: 0 auto; padding: 40px 20px;">
+  <h2 style="color: #1a1a2e;">You've used {percent}% of your {plan_name} plan</h2>
+  <p style="color: #444; line-height: 1.6;">
+    Your organization has used <strong>{used}</strong> of <strong>{limit}</strong>
+    {metric_label} this billing period.
+  </p>
+  <p style="color: #444; line-height: 1.6;">
+    Upgrade your plan to avoid hitting the limit.
+  </p>
+  <p style="margin: 32px 0;">
+    <a href="{upgrade_url}" style="background: #7c3aed; color: #fff; padding: 12px 28px; \
+border-radius: 6px; text-decoration: none; font-weight: 600;">Upgrade Plan</a>
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    This is an automated notification from {app_name}. You will receive this email
+    once per billing period when your usage crosses 80%.
   </p>
 </body>
 </html>"""

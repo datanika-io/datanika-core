@@ -372,6 +372,8 @@
   "connections.ph_topics": "events, orders",
   "connections.group_id": "معرف مجموعة المستهلكين",
   "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "قم بترقية خطتك لفتح المزيد من السعة.",
+  "quota.upgrade_button": "ترقية الخطة",
   "dashboard.usage_title": "استخدام الخطة",
   "dashboard.usage_runs": "عمليات تشغيل النماذج هذا الشهر",
   "dashboard.usage_upgrade": "ترقية للمزيد"

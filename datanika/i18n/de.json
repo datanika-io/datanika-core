@@ -372,6 +372,8 @@
   "connections.ph_topics": "events, orders",
   "connections.group_id": "Konsumentengruppen-ID",
   "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Upgraden Sie Ihren Plan, um mehr Kapazität freizuschalten.",
+  "quota.upgrade_button": "Plan upgraden",
   "dashboard.usage_title": "Plannutzung",
   "dashboard.usage_runs": "Modellausführungen diesen Monat",
   "dashboard.usage_upgrade": "Upgrade für mehr"

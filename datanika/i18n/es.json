@@ -372,6 +372,8 @@
   "connections.ph_topics": "events, orders",
   "connections.group_id": "ID del grupo de consumidores",
   "connections.ph_group_id": "datanika-consumer",
+  "quota.upgrade_hint": "Actualice su plan para desbloquear más capacidad.",
+  "quota.upgrade_button": "Mejorar plan",
   "dashboard.usage_title": "Uso del plan",
   "dashboard.usage_runs": "ejecuciones de modelos este mes",
   "dashboard.usage_upgrade": "Mejorar para más"

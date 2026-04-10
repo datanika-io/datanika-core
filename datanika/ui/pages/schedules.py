@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.schedule_state import ScheduleState
 
@@ -126,14 +127,7 @@ def schedule_form() -> rx.Component:
                 on_change=ScheduleState.set_form_timezone,
                 width="100%",
             ),
-            rx.cond(
-                ScheduleState.error_message,
-                rx.callout(
-                    ScheduleState.error_message,
-                    icon="triangle_alert",
-                    color_scheme="red",
-                ),
-            ),
+            error_or_quota_callout(ScheduleState),
             rx.hstack(
                 rx.button(
                     rx.cond(

@@ -7,16 +7,15 @@ aren't accidentally removed or weakened.
 
 import ast
 import inspect
-import re
 
 import pytest
 
 from datanika.ui.state.base_state import ROLE_HIERARCHY, check_role_hierarchy
 
-
 # ---------------------------------------------------------------------------
 # Source-level verification: every mutating handler has _check_role
 # ---------------------------------------------------------------------------
+
 
 def _extract_check_role_calls(module_path: str) -> dict[str, str]:
     """Parse a Python file and return {method_name: required_role} for _check_role calls."""
@@ -105,9 +104,7 @@ class TestRoleEnforcementInSource:
         actual = _extract_check_role_calls(source_file)
 
         for method, required_role in expected.items():
-            assert method in actual, (
-                f"{state_module}.{method} is missing _check_role() call"
-            )
+            assert method in actual, f"{state_module}.{method} is missing _check_role() call"
             assert actual[method] == required_role, (
                 f"{state_module}.{method} requires '{actual[method]}' "
                 f"but expected '{required_role}'"
@@ -117,6 +114,7 @@ class TestRoleEnforcementInSource:
 # ---------------------------------------------------------------------------
 # Role hierarchy edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestRoleHierarchyEdgeCases:
     """Additional edge case tests for role hierarchy checks."""
@@ -158,6 +156,7 @@ class TestRoleHierarchyEdgeCases:
 # ---------------------------------------------------------------------------
 # Permission matrix: which roles can do which operations
 # ---------------------------------------------------------------------------
+
 
 class TestPermissionMatrix:
     """Verify the intended permission matrix from the engineering plan."""

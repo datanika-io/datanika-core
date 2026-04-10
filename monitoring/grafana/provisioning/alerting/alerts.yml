@@ -1,0 +1,309 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: Infrastructure Alerts
+    folder: Datanika
+    interval: 1m
+    rules:
+      # --- Container Health ---
+      - uid: container-down
+        title: Container Down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'time() - container_last_seen{name=~"datanika-(app|celery|postgres|redis)"} > 60'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.name }} is down"
+          description: "Container {{ $labels.name }} has not been seen for over 60 seconds."
+
+      # --- High CPU ---
+      - uid: high-cpu
+        title: High CPU Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: '100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage: {{ $value }}%"
+          description: "CPU usage has been above 85% for 5 minutes."
+
+      # --- High Memory ---
+      - uid: high-memory
+        title: High Memory Usage
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: '(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage: {{ $value }}%"
+          description: "Memory usage has been above 90% for 5 minutes."
+
+      # --- Disk Space ---
+      - uid: disk-space-critical
+        title: Disk Space Critical
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: '(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 80'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk usage above 80%: {{ $value }}%"
+          description: "Root filesystem is running low on space."
+
+      # --- Container Restart Loop ---
+      - uid: container-restart-loop
+        title: Container Restart Loop
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'increase(container_start_time_seconds{name=~"datanika-.*"}[1h]) > 3'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Container {{ $labels.name }} is restart-looping"
+          description: "Container {{ $labels.name }} has restarted more than 3 times in the last hour."
+
+      # --- Container High Memory ---
+      - uid: container-high-memory
+        title: Container High Memory
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'container_memory_usage_bytes{name=~"datanika-(app|celery)"} > 1.5e+9'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} memory > 1.5GB"
+          description: "Container {{ $labels.name }} is using {{ $value | humanize }} of memory."
+
+  - orgId: 1
+    name: Application Alerts
+    folder: Datanika
+    interval: 1m
+    rules:
+      # --- App Health Endpoint ---
+      - uid: app-unhealthy
+        title: App Unhealthy
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'up{job="datanika-app"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Datanika app metrics endpoint is down"
+          description: "Prometheus cannot scrape the app metrics endpoint for 2 minutes."
+
+      # --- Celery Task Failures ---
+      - uid: celery-task-failures
+        title: High Celery Task Failure Rate
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'rate(celery_tasks_total{state="FAILURE"}[15m]) > 0.1'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Celery task failure rate"
+          description: "More than 0.1 task failures per second over the last 15 minutes."
+
+      # --- Celery Queue Depth ---
+      - uid: celery-queue-depth
+        title: Celery Queue Backlog
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'celery_queue_length > 50'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery queue backlog: {{ $value }} tasks"
+          description: "Celery queue has had more than 50 pending tasks for 10 minutes."

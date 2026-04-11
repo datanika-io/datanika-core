@@ -98,6 +98,20 @@ services:
       - "--storage.tsdb.retention.time=30d"
     restart: unless-stopped
 
+  # Blackbox Exporter — probes external HTTP(S) endpoints and exposes metrics.
+  # Used for sitemap health checks and the SEO probe. Prometheus scrapes this
+  # via the scrape configs in monitoring/prometheus.yml.
+  blackbox:
+    image: prom/blackbox-exporter:latest
+    container_name: datanika-blackbox
+    ports:
+      - "127.0.0.1:9115:9115"
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - "--config.file=/etc/blackbox_exporter/config.yml"
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:latest
     container_name: datanika-grafana

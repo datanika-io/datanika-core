@@ -307,3 +307,107 @@ groups:
         annotations:
           summary: "Celery queue backlog: {{ $value }} tasks"
           description: "Celery queue has had more than 50 pending tasks for 10 minutes."
+
+  - orgId: 1
+    name: External Probes
+    folder: Datanika
+    interval: 5m
+    rules:
+      # --- Sitemap health (SEO-critical) ---
+      - uid: sitemap-down
+        title: Sitemap Unreachable
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'probe_success{instance="https://datanika.io/sitemap-index.xml"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "datanika.io sitemap-index.xml is unreachable"
+          description: "Blackbox probe to https://datanika.io/sitemap-index.xml has failed for 15 minutes. Search engines cannot recrawl. Check Aweb, Nginx, and the landing deploy workflow."
+
+      # --- Landing site reachability ---
+      - uid: landing-down
+        title: Landing Site Down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'probe_success{instance="https://datanika.io/"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "datanika.io landing site is down"
+          description: "Blackbox probe to https://datanika.io/ has failed for 5 minutes."
+
+      # --- App external health ---
+      - uid: app-external-down
+        title: App External Health Down
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'probe_success{instance="https://app.datanika.io/healthz"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "app.datanika.io /healthz not reachable externally"
+          description: "External blackbox probe to https://app.datanika.io/healthz has failed for 5 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."

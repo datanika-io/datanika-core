@@ -18,3 +18,22 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["app:8000"]
+
+  # Blackbox probes — HTTP health checks for external endpoints.
+  # Targets are probed via the blackbox exporter's http_2xx module.
+  - job_name: "blackbox-http"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://datanika.io/sitemap-index.xml
+          - https://datanika.io/
+          - https://app.datanika.io/healthz
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115

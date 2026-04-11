@@ -261,6 +261,102 @@ SCHEMAS = {
         },
         required=["name", "channel_type"],
     ),
+    # --- Tier 2 Agent Compatibility: compile + preview ---
+    "CompileResult": _obj(
+        {
+            "compiled_sql": {
+                "type": "string",
+                "description": ("Fully rendered SQL after Jinja + ref/source resolution."),
+            },
+            "node": {
+                "type": "string",
+                "description": ("dbt fully-qualified node name, e.g. `model.tenant_1.stg_orders`."),
+            },
+        },
+        required=["compiled_sql", "node"],
+    ),
+    "CompileError": _obj(
+        {
+            "error": _obj(
+                {
+                    "code": {
+                        "type": "string",
+                        "enum": ["compilation_error"],
+                    },
+                    "message": {"type": "string"},
+                    "line": {"type": "integer", "nullable": True},
+                    "column": {"type": "integer", "nullable": True},
+                },
+                required=["code", "message"],
+            ),
+        },
+        required=["error"],
+    ),
+    "PreviewRequest": _obj(
+        {
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 100,
+                "description": ("Maximum rows to return. Clamped to [1, 1000]."),
+            },
+        },
+    ),
+    "PreviewColumn": _obj(
+        {
+            "name": {"type": "string"},
+            "type": {"type": "string"},
+        },
+        required=["name"],
+    ),
+    "PreviewResult": _obj(
+        {
+            "columns": {
+                "type": "array",
+                "items": _ref("PreviewColumn"),
+            },
+            "rows": {
+                "type": "array",
+                "items": {"type": "array"},
+                "description": (
+                    "Row-major result set. Each inner array matches the "
+                    "`columns` order. Values are JSON-serialized scalars "
+                    "or strings for unknown types."
+                ),
+            },
+            "row_count": {"type": "integer"},
+            "truncated": {
+                "type": "boolean",
+                "description": (
+                    "True when `row_count` equals the requested limit "
+                    "(the underlying result may have had more rows)."
+                ),
+            },
+        },
+        required=["columns", "rows", "row_count", "truncated"],
+    ),
+    "PreviewError": _obj(
+        {
+            "error": _obj(
+                {
+                    "code": {
+                        "type": "string",
+                        "enum": [
+                            "compilation_error",
+                            "execution_error",
+                            "missing_destination",
+                            "unsafe_sql",
+                            "invalid_request",
+                        ],
+                    },
+                    "message": {"type": "string"},
+                },
+                required=["code", "message"],
+            ),
+        },
+        required=["error"],
+    ),
 }
 
 # ---------------------------------------------------------------------------
@@ -494,6 +590,64 @@ def build_openapi_spec() -> dict:
         paths[f"/api/v1/{resource}/{{id}}/{suffix}"] = {
             "post": _trigger_op(tag, f"{action} {resource[:-1]}"),
         }
+
+    # Tier 2 Agent Compatibility: transformation compile + preview
+    paths["/api/v1/transformations/{id}/compile"] = {
+        "post": {
+            "tags": ["Transformations"],
+            "summary": "Compile a transformation via dbt",
+            "description": (
+                "Wraps `dbt compile` for the tenant dbt project. "
+                "Resolves Jinja and `{{ ref() }}` / `{{ source() }}` "
+                "references. No warehouse execution."
+            ),
+            "parameters": [_ID_PARAM],
+            "responses": {
+                "200": {
+                    "description": "Compilation succeeded",
+                    "content": _json_content(_ref("CompileResult")),
+                },
+                "400": {
+                    "description": "Compilation failed",
+                    "content": _json_content(_ref("CompileError")),
+                },
+                "401": _401,
+                "404": _404,
+                "429": _429,
+            },
+        },
+    }
+    paths["/api/v1/transformations/{id}/preview"] = {
+        "post": {
+            "tags": ["Transformations"],
+            "summary": "Preview a transformation's output",
+            "description": (
+                "Compiles the transformation and runs the resulting SQL "
+                "wrapped in `SELECT * FROM (...) LIMIT N` against the "
+                "destination warehouse. Defense-in-depth: the read-only "
+                "SQL validator re-checks the compiled output even after "
+                "dbt compile."
+            ),
+            "parameters": [_ID_PARAM],
+            "requestBody": {
+                "required": False,
+                "content": _json_content(_ref("PreviewRequest")),
+            },
+            "responses": {
+                "200": {
+                    "description": "Preview rows returned",
+                    "content": _json_content(_ref("PreviewResult")),
+                },
+                "400": {
+                    "description": ("Compilation, execution, or configuration error"),
+                    "content": _json_content(_ref("PreviewError")),
+                },
+                "401": _401,
+                "404": _404,
+                "429": _429,
+            },
+        },
+    }
 
     # Runs (read-only)
     paths["/api/v1/runs"] = {

@@ -72,6 +72,16 @@ def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse({"error": {"code": status, "message": message}}, status_code=status)
 
 
+def _typed_error(status: int, code: str, message: str, **extra) -> JSONResponse:
+    """Return an error response where `code` is a machine-readable string.
+
+    Used by Tier 2 agent endpoints (compile / preview) so AI agents can
+    branch on the error class without string-matching the message.
+    """
+    body = {"error": {"code": code, "message": message, **extra}}
+    return JSONResponse(body, status_code=status)
+
+
 async def _body(request: Request) -> dict:
     raw = await request.body()
     if not raw:
@@ -669,6 +679,96 @@ async def trigger_transformation(request, api_key, session):
     return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
 
 
+@api_endpoint(required_scope="transformations:read")
+async def compile_transformation_endpoint(request, api_key, session):
+    """POST /api/v1/transformations/{id}/compile — dbt compile only.
+
+    Agent uses this to validate Jinja + ref/source resolution before
+    triggering a full run. No warehouse execution, no side effects
+    beyond writing the tenant model file to disk.
+    """
+    from datanika.services.transformation_compile import (
+        TransformationNotFoundError,
+        compile_transformation,
+    )
+
+    tid = int(request.path_params["id"])
+    try:
+        result = compile_transformation(session, api_key.org_id, tid)
+    except TransformationNotFoundError:
+        return _error(404, "Transformation not found")
+
+    if not result.success:
+        payload: dict = {}
+        if result.line is not None:
+            payload["line"] = result.line
+        if result.column is not None:
+            payload["column"] = result.column
+        return _typed_error(
+            400,
+            "compilation_error",
+            result.error_message or "Compilation failed",
+            **payload,
+        )
+
+    return JSONResponse(
+        {
+            "compiled_sql": result.compiled_sql,
+            "node": result.node,
+        }
+    )
+
+
+@api_endpoint(required_scope="transformations:read")
+async def preview_transformation_endpoint(request, api_key, session):
+    """POST /api/v1/transformations/{id}/preview — compile + execute.
+
+    Body: ``{"limit"?: int}`` (default 100, max 1000).
+
+    Returns first N rows from the compiled SQL wrapped in a
+    ``SELECT * FROM (...) LIMIT N`` subquery (defense-in-depth: the
+    read-only SQL guard re-validates even after dbt compile).
+    """
+    from datanika.services.transformation_compile import (
+        DEFAULT_PREVIEW_LIMIT,
+        MissingDestinationError,
+        TransformationNotFoundError,
+        preview_transformation,
+    )
+
+    tid = int(request.path_params["id"])
+    data = await _body(request)
+    limit = data.get("limit", DEFAULT_PREVIEW_LIMIT)
+    if not isinstance(limit, int):
+        try:
+            limit = int(limit)
+        except (TypeError, ValueError):
+            return _typed_error(400, "invalid_request", "limit must be an integer")
+
+    try:
+        result = preview_transformation(session, api_key.org_id, tid, limit=limit)
+    except TransformationNotFoundError:
+        return _error(404, "Transformation not found")
+    except MissingDestinationError as exc:
+        return _typed_error(400, "missing_destination", str(exc))
+
+    if not result.success:
+        return _typed_error(
+            400,
+            result.error_code or "preview_failed",
+            result.error_message or "Preview failed",
+        )
+
+    return JSONResponse(
+        {
+            "columns": result.columns,
+            "rows": result.rows,
+            "row_count": result.row_count,
+            "truncated": result.truncated,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Schedules
 # ---------------------------------------------------------------------------
@@ -951,6 +1051,16 @@ api_v1_routes = [
     Route("/api/v1/transformations/{id:int}", update_transformation, methods=["PUT"]),
     Route("/api/v1/transformations/{id:int}", delete_transformation, methods=["DELETE"]),
     Route("/api/v1/transformations/{id:int}/run", trigger_transformation, methods=["POST"]),
+    Route(
+        "/api/v1/transformations/{id:int}/compile",
+        compile_transformation_endpoint,
+        methods=["POST"],
+    ),
+    Route(
+        "/api/v1/transformations/{id:int}/preview",
+        preview_transformation_endpoint,
+        methods=["POST"],
+    ),
     # Schedules
     Route("/api/v1/schedules", list_schedules, methods=["GET"]),
     Route("/api/v1/schedules/{id:int}", get_schedule, methods=["GET"]),

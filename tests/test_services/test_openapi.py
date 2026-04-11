@@ -66,6 +66,52 @@ class TestOpenAPISpec:
         ]:
             assert name in schemas, f"Missing schema {name}"
 
+    def test_spec_has_tier_2_compile_preview_paths(self):
+        """Tier 2 Agent Compatibility endpoints must be in OpenAPI spec (#52)."""
+        spec = build_openapi_spec()
+        compile_path = "/api/v1/transformations/{id}/compile"
+        preview_path = "/api/v1/transformations/{id}/preview"
+        assert compile_path in spec["paths"]
+        assert preview_path in spec["paths"]
+        assert "post" in spec["paths"][compile_path]
+        assert "post" in spec["paths"][preview_path]
+
+        # Preview accepts a request body with optional limit
+        preview_post = spec["paths"][preview_path]["post"]
+        assert "requestBody" in preview_post
+        # 200 responses reference typed schemas (no {type: object} placeholder)
+        compile_200 = spec["paths"][compile_path]["post"]["responses"]["200"]
+        compile_ref = compile_200["content"]["application/json"]["schema"]["$ref"]
+        assert compile_ref.endswith("CompileResult")
+        preview_200 = preview_post["responses"]["200"]
+        preview_ref = preview_200["content"]["application/json"]["schema"]["$ref"]
+        assert preview_ref.endswith("PreviewResult")
+        # 400 responses reference typed error schemas with string error codes
+        compile_400 = spec["paths"][compile_path]["post"]["responses"]["400"]
+        assert compile_400["content"]["application/json"]["schema"]["$ref"].endswith("CompileError")
+
+    def test_tier_2_schemas_have_required_fields(self):
+        spec = build_openapi_spec()
+        schemas = spec["components"]["schemas"]
+        for name in [
+            "CompileResult",
+            "CompileError",
+            "PreviewRequest",
+            "PreviewResult",
+            "PreviewColumn",
+            "PreviewError",
+        ]:
+            assert name in schemas, f"Missing Tier 2 schema {name}"
+
+        compile_result = schemas["CompileResult"]
+        assert "compiled_sql" in compile_result["properties"]
+        assert "node" in compile_result["properties"]
+        assert "compiled_sql" in compile_result["required"]
+
+        preview_result = schemas["PreviewResult"]
+        for field in ("columns", "rows", "row_count", "truncated"):
+            assert field in preview_result["properties"]
+
     def test_runs_path_has_query_params(self):
         spec = build_openapi_spec()
         runs_get = spec["paths"]["/api/v1/runs"]["get"]

@@ -10,6 +10,8 @@ groups:
       - uid: container-down
         title: Container Down
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -43,6 +45,8 @@ groups:
       - uid: high-cpu
         title: High CPU Usage
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -76,6 +80,8 @@ groups:
       - uid: high-memory
         title: High Memory Usage
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -109,6 +115,8 @@ groups:
       - uid: disk-space-critical
         title: Disk Space Critical
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -142,6 +150,8 @@ groups:
       - uid: container-restart-loop
         title: Container Restart Loop
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -175,6 +185,8 @@ groups:
       - uid: container-high-memory
         title: Container High Memory
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -213,6 +225,8 @@ groups:
       - uid: app-unhealthy
         title: App Unhealthy
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -246,6 +260,8 @@ groups:
       - uid: celery-task-failures
         title: High Celery Task Failure Rate
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -279,6 +295,8 @@ groups:
       - uid: celery-queue-depth
         title: Celery Queue Backlog
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -317,6 +335,8 @@ groups:
       - uid: sitemap-down
         title: Sitemap Unreachable
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -350,6 +370,8 @@ groups:
       - uid: landing-down
         title: Landing Site Down
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:
@@ -383,6 +405,8 @@ groups:
       - uid: app-external-down
         title: App External Health Down
         condition: C
+        noDataState: OK
+        execErrState: OK
         data:
           - refId: A
             relativeTimeRange:

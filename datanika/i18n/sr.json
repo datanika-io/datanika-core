@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Упозорење о квоти",
   "notifications.quota_exceeded.title": "Квота прекорачена",
   "notifications.dismiss": "Одбаци",
-  "notifications.view_run": "Прикажи покретање"
+  "notifications.view_run": "Прикажи покретање",
+  "templates.heading": "Шаблони цевовода",
+  "templates.subtitle": "Унапред конфигурисани почеци који прескачу досадне одлуке. Изаберите један, унесите своје акредитиве и добићете функционалан цевовод за неколико минута.",
+  "templates.use_this_template": "Користи овај шаблон",
+  "templates.help_text": "Шаблони унапред попуњавају само неосетљиве подразумеване вредности — шеме, портове, избор табела. Акредитиве увек уносите ви сами.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Учитајте Stripe купце, наплате, фактуре и претплате у ваш Postgres складиште за анализу прихода.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Синхронизујте вашу оперативну Postgres базу података са BigQuery — најчешћи аналитички цевовод.",
+  "templates.csv_to_duckdb.name": "CSV отпремање → DuckDB",
+  "templates.csv_to_duckdb.description": "Превуците CSV и одмах га упитајте помоћу DuckDB-а. Без акредитива — најбржи начин да испробате Datanika.",
+  "pipelines.empty_heading": "Још нема цевовода",
+  "pipelines.empty_subtitle": "Почните од унапред конфигурисаног шаблона или скролујте надоле да направите нови од нуле.",
+  "pipelines.start_from_template": "Почни од шаблона"
 }

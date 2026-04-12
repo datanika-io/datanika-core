@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Προειδοποίηση ορίου",
   "notifications.quota_exceeded.title": "Υπέρβαση ορίου",
   "notifications.dismiss": "Απόρριψη",
-  "notifications.view_run": "Προβολή εκτέλεσης"
+  "notifications.view_run": "Προβολή εκτέλεσης",
+  "templates.heading": "Πρότυπα Pipeline",
+  "templates.subtitle": "Προρυθμισμένα σημεία εκκίνησης που παρακάμπτουν τις βαρετές αποφάσεις. Επιλέξτε ένα, εισαγάγετε τα διαπιστευτήριά σας και αποκτήστε ένα λειτουργικό pipeline σε λίγα λεπτά.",
+  "templates.use_this_template": "Χρήση αυτού του προτύπου",
+  "templates.help_text": "Τα πρότυπα συμπληρώνουν μόνο μη ευαίσθητες προεπιλογές — σχήματα, θύρες, επιλογές πινάκων. Τα διαπιστευτήρια τα εισάγετε πάντα εσείς.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Φέρτε πελάτες, χρεώσεις, τιμολόγια και συνδρομές του Stripe στην αποθήκη Postgres για ανάλυση εσόδων.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Συγχρονίστε τη λειτουργική σας βάση Postgres στο BigQuery — το πιο συνηθισμένο αναλυτικό pipeline.",
+  "templates.csv_to_duckdb.name": "Μεταφόρτωση CSV → DuckDB",
+  "templates.csv_to_duckdb.description": "Σύρετε ένα CSV και κάντε αμέσως ερωτήματα με DuckDB. Δεν χρειάζονται διαπιστευτήρια — ο γρηγορότερος τρόπος να δοκιμάσετε το Datanika.",
+  "pipelines.empty_heading": "Δεν υπάρχουν ακόμα pipelines",
+  "pipelines.empty_subtitle": "Ξεκινήστε από ένα προρυθμισμένο πρότυπο ή κατεβείτε για να φτιάξετε ένα από την αρχή.",
+  "pipelines.start_from_template": "Ξεκινήστε από πρότυπο"
 }

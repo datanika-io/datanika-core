@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Avertissement de quota",
   "notifications.quota_exceeded.title": "Quota dépassé",
   "notifications.dismiss": "Ignorer",
-  "notifications.view_run": "Voir l'exécution"
+  "notifications.view_run": "Voir l'exécution",
+  "templates.heading": "Modèles de pipeline",
+  "templates.subtitle": "Démarrages préconfigurés qui évitent les décisions ennuyeuses. Choisissez-en un, saisissez vos identifiants et obtenez un pipeline fonctionnel en quelques minutes.",
+  "templates.use_this_template": "Utiliser ce modèle",
+  "templates.help_text": "Les modèles ne préremplissent que des valeurs par défaut non sensibles : schémas, ports, sélections de tables. Vous saisissez toujours vos identifiants vous-même.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Chargez les clients, paiements, factures et abonnements Stripe dans votre entrepôt Postgres pour l'analyse du chiffre d'affaires.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Synchronisez votre base Postgres opérationnelle avec BigQuery — le pipeline d'analyse le plus courant.",
+  "templates.csv_to_duckdb.name": "Téléversement CSV → DuckDB",
+  "templates.csv_to_duckdb.description": "Glissez un CSV, interrogez-le instantanément avec DuckDB. Aucun identifiant nécessaire — le moyen le plus rapide d'essayer Datanika.",
+  "pipelines.empty_heading": "Aucun pipeline pour le moment",
+  "pipelines.empty_subtitle": "Démarrez avec un modèle préconfiguré ou faites défiler vers le bas pour en créer un de zéro.",
+  "pipelines.start_from_template": "Démarrer avec un modèle"
 }

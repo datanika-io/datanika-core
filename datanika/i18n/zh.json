@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "配额预警",
   "notifications.quota_exceeded.title": "配额已用完",
   "notifications.dismiss": "忽略",
-  "notifications.view_run": "查看运行"
+  "notifications.view_run": "查看运行",
+  "templates.heading": "流水线模板",
+  "templates.subtitle": "预配置的入门模板,跳过繁琐的决策。选择一个,输入凭证,几分钟内就能拥有可用的流水线。",
+  "templates.use_this_template": "使用此模板",
+  "templates.help_text": "模板仅预填非敏感的默认值 —— 模式、端口、表选择。凭证始终由您自己输入。",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "将 Stripe 的客户、收款、发票和订阅数据载入您的 Postgres 数据仓库,用于收入分析。",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "将您的运营 Postgres 数据库同步到 BigQuery —— 最常见的分析流水线。",
+  "templates.csv_to_duckdb.name": "CSV 上传 → DuckDB",
+  "templates.csv_to_duckdb.description": "拖入一个 CSV 文件,使用 DuckDB 立即查询。无需凭证 —— 体验 Datanika 的最快方式。",
+  "pipelines.empty_heading": "尚无流水线",
+  "pipelines.empty_subtitle": "从预配置模板开始,或向下滚动从零开始构建。",
+  "pipelines.start_from_template": "从模板开始"
 }

@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Quota warning",
   "notifications.quota_exceeded.title": "Quota exceeded",
   "notifications.dismiss": "Dismiss",
-  "notifications.view_run": "View run"
+  "notifications.view_run": "View run",
+  "templates.heading": "Pipeline Templates",
+  "templates.subtitle": "Pre-configured starters that skip the boring decisions. Pick one, plug in your credentials, and have a working pipeline in minutes.",
+  "templates.use_this_template": "Use this template",
+  "templates.help_text": "Templates only prefill non-sensitive defaults — schemas, ports, table selections. You always enter your own credentials.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Land Stripe customers, charges, invoices and subscriptions in your Postgres warehouse for revenue analytics.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Sync your operational Postgres database into BigQuery — the most common analytics pipeline.",
+  "templates.csv_to_duckdb.name": "CSV Upload → DuckDB",
+  "templates.csv_to_duckdb.description": "Drag a CSV in, query it instantly with DuckDB. No credentials needed — the fastest way to try Datanika.",
+  "pipelines.empty_heading": "No pipelines yet",
+  "pipelines.empty_subtitle": "Start from a pre-configured template, or scroll down to build one from scratch.",
+  "pipelines.start_from_template": "Start from a template"
 }

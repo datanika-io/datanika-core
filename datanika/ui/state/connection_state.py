@@ -76,6 +76,32 @@ _DEFAULT_PORTS: dict[str, str] = {
 # Connection types that use the SQL database form group (host/port/user/pass/db/schema)
 _DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse", "synapse"}
 
+# Mapping of pipeline-template ``source_config_defaults`` keys to the
+# matching ConnectionState ``form_*`` attribute. Module-level (not a class
+# attribute) so it isn't picked up as a Reflex state var, and so the
+# template-prefill helper stays trivially testable via FakeState.
+#
+# Add new entries here when a template needs to prefill a non-credential
+# field that isn't already covered. Never add password / secret / api_key /
+# service_account_json — templates carry safe defaults only.
+_TEMPLATE_FORM_FIELD_MAP: dict[str, str] = {
+    "host": "form_host",
+    "port": "form_port",
+    "database": "form_database",
+    "schema": "form_schema",
+    "path": "form_path",
+    "project": "form_project",
+    "dataset": "form_dataset",
+    "account": "form_account",
+    "warehouse": "form_warehouse",
+    "role": "form_role",
+    "bucket_url": "form_bucket_url",
+    "base_url": "form_base_url",
+    "property_id": "form_property_id",
+    "bootstrap_servers": "form_bootstrap_servers",
+    "topics": "form_topics",
+}
+
 
 def _validate_connection_form(
     name: str,
@@ -231,6 +257,51 @@ class ConnectionState(BaseState):
     form_bootstrap_servers: str = ""  # Kafka
     form_topics: str = ""  # Kafka
     form_group_id: str = ""  # Kafka
+
+    # Pipeline template currently driving the form prefill (empty = none).
+    # Set when the user clicks a card on /pipelines/templates and arrives
+    # at /connections via ?template=<slug>. Used to show a banner explaining
+    # the multi-step flow.
+    selected_template_slug: str = ""
+
+    def _apply_template_defaults(self, slug: str) -> None:
+        """Look up a pipeline template and prefill matching form fields.
+
+        - No-op if ``slug`` is empty or doesn't match a known template.
+        - Sets ``form_type`` to the template's source connector.
+        - Copies entries from ``source_config_defaults`` into matching
+          ``form_*`` attributes via ``_TEMPLATE_FIELD_MAP``.
+        - Never touches credential fields (password, api_key, secrets,
+          service-account JSON). Templates only carry non-sensitive defaults.
+        - Stores the slug in ``selected_template_slug`` so the UI can show
+          a "you're following a template" banner.
+
+        Pure helper — testable without Reflex / DB / async context.
+        """
+        from datanika.data.pipeline_templates import get_template
+
+        tpl = get_template(slug)
+        if tpl is None:
+            return
+
+        self.form_type = str(tpl.source_type)
+        self.selected_template_slug = tpl.slug
+
+        for key, value in tpl.source_config_defaults.items():
+            attr = _TEMPLATE_FORM_FIELD_MAP.get(key)
+            if attr is None:
+                continue
+            setattr(self, attr, value)
+
+    async def load_template_from_query(self):
+        """Read ``?template=<slug>`` from the page URL and prefill the form.
+
+        Wired into the /connections page ``on_load`` so a user arriving from
+        the templates grid lands with the source connector preselected.
+        """
+        slug = self.router.page.params.get("template", "")
+        if slug:
+            self._apply_template_defaults(slug)
 
     def set_form_name(self, value: str):
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)

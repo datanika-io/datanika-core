@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Предупреждение о квоте",
   "notifications.quota_exceeded.title": "Квота превышена",
   "notifications.dismiss": "Скрыть",
-  "notifications.view_run": "Перейти к запуску"
+  "notifications.view_run": "Перейти к запуску",
+  "templates.heading": "Шаблоны пайплайнов",
+  "templates.subtitle": "Готовые шаблоны, которые избавляют от рутинных решений. Выберите один, введите свои учётные данные и получите рабочий пайплайн за считанные минуты.",
+  "templates.use_this_template": "Использовать этот шаблон",
+  "templates.help_text": "Шаблоны заполняют только нечувствительные значения — схемы, порты, выбор таблиц. Учётные данные вы всегда вводите сами.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Загружайте клиентов, платежи, счета и подписки Stripe в Postgres для аналитики выручки.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Синхронизируйте операционную базу Postgres с BigQuery — самый распространённый аналитический пайплайн.",
+  "templates.csv_to_duckdb.name": "Загрузка CSV → DuckDB",
+  "templates.csv_to_duckdb.description": "Перетащите CSV-файл и сразу запросите его с помощью DuckDB. Учётные данные не нужны — самый быстрый способ попробовать Datanika.",
+  "pipelines.empty_heading": "Пайплайнов пока нет",
+  "pipelines.empty_subtitle": "Начните с готового шаблона или прокрутите вниз, чтобы создать пайплайн с нуля.",
+  "pipelines.start_from_template": "Начать с шаблона"
 }

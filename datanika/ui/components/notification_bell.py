@@ -86,98 +86,87 @@ def _notification_row(n) -> rx.Component:
     )
 
 
-def notification_dropdown() -> rx.Component:
-    return rx.box(
-        rx.vstack(
-            rx.hstack(
-                rx.text(
-                    _t["notifications.center.title"],
-                    size="2",
-                    weight="bold",
-                ),
-                rx.spacer(),
-                rx.cond(
-                    NotificationCenterState.unread_count > 0,
-                    rx.button(
-                        _t["notifications.center.mark_all_read"],
-                        on_click=NotificationCenterState.mark_all_read,
-                        variant="ghost",
-                        size="1",
-                        color_scheme="violet",
-                    ),
-                    rx.fragment(),
-                ),
-                width="100%",
-                align="center",
+def _notification_dropdown_content() -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rx.text(
+                _t["notifications.center.title"],
+                size="2",
+                weight="bold",
             ),
-            rx.separator(),
+            rx.spacer(),
             rx.cond(
-                NotificationCenterState.notifications.length() == 0,
-                rx.vstack(
-                    rx.icon("bell-off", size=24, color="var(--slate-8)"),
-                    rx.text(
-                        _t["notifications.center.empty"],
-                        size="2",
-                        color="var(--slate-10)",
-                    ),
-                    align="center",
-                    padding_y="4",
+                NotificationCenterState.unread_count > 0,
+                rx.button(
+                    _t["notifications.center.mark_all_read"],
+                    on_click=NotificationCenterState.mark_all_read,
+                    variant="ghost",
+                    size="1",
+                    color_scheme="violet",
                 ),
-                rx.vstack(
-                    rx.foreach(
-                        NotificationCenterState.notifications,
-                        _notification_row,
-                    ),
-                    spacing="1",
-                    width="100%",
-                ),
+                rx.fragment(),
             ),
-            spacing="2",
-            padding="12px",
             width="100%",
+            align="center",
         ),
-        position="absolute",
-        bottom="56px",
-        left="8px",
-        width="320px",
-        max_height="400px",
-        overflow_y="auto",
-        border="1px solid var(--gray-a5)",
-        border_radius="8px",
-        bg="var(--color-background)",
-        box_shadow="0 4px 12px rgba(0,0,0,0.15)",
-        z_index="50",
+        rx.separator(),
+        rx.cond(
+            NotificationCenterState.notifications.length() == 0,
+            rx.vstack(
+                rx.icon("bell-off", size=24, color="var(--slate-8)"),
+                rx.text(
+                    _t["notifications.center.empty"],
+                    size="2",
+                    color="var(--slate-10)",
+                ),
+                align="center",
+                padding_y="4",
+            ),
+            rx.vstack(
+                rx.foreach(
+                    NotificationCenterState.notifications,
+                    _notification_row,
+                ),
+                spacing="1",
+                width="100%",
+            ),
+        ),
+        spacing="2",
+        width="100%",
     )
 
 
 def notification_bell() -> rx.Component:
-    return rx.box(
-        rx.icon_button(
-            rx.box(
-                rx.icon("bell", size=16),
-                rx.cond(
-                    NotificationCenterState.unread_count > 0,
-                    rx.badge(
-                        NotificationCenterState.unread_count,
-                        color_scheme="red",
-                        variant="solid",
-                        size="1",
-                        position="absolute",
-                        top="-4px",
-                        right="-4px",
+    return rx.popover.root(
+        rx.popover.trigger(
+            rx.icon_button(
+                rx.box(
+                    rx.icon("bell", size=16),
+                    rx.cond(
+                        NotificationCenterState.unread_count > 0,
+                        rx.badge(
+                            NotificationCenterState.unread_count,
+                            color_scheme="red",
+                            variant="solid",
+                            size="1",
+                            position="absolute",
+                            top="-4px",
+                            right="-4px",
+                        ),
+                        rx.fragment(),
                     ),
-                    rx.fragment(),
+                    position="relative",
                 ),
-                position="relative",
+                on_click=NotificationCenterState.load_notifications,
+                variant="ghost",
+                size="1",
             ),
-            on_click=NotificationCenterState.toggle_dropdown,
-            variant="ghost",
-            size="1",
         ),
-        rx.cond(
-            NotificationCenterState.dropdown_open,
-            notification_dropdown(),
-            rx.fragment(),
+        rx.popover.content(
+            _notification_dropdown_content(),
+            width="320px",
+            max_height="400px",
+            side="top",
+            align="start",
         ),
-        position="relative",
     )

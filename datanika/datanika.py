@@ -225,3 +225,10 @@ app._api.add_middleware(PrometheusMiddleware)
 from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
 
 register_hooks(NotificationService())
+
+# Wire in-app notification hooks (create Notification records on run completion)
+from datanika.services.in_app_notification_hooks import (  # noqa: E402
+    register_in_app_notification_hooks,
+)
+
+register_in_app_notification_hooks()

@@ -19,6 +19,10 @@ scrape_configs:
     static_configs:
       - targets: ["app:8000"]
 
+  - job_name: "postgres-exporter"
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
   # Blackbox probes — HTTP health checks for external endpoints.
   # Targets are probed via the blackbox exporter's http_2xx module.
   - job_name: "blackbox-http"

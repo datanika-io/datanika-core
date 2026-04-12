@@ -81,7 +81,24 @@ def api_endpoint(
                         headers=result.headers(),
                     )
 
-                # 4. Call the actual handler
+                # 4. Idempotency check (POST only, opt-in via header)
+                from datanika.services.idempotency import (
+                    cache_response,
+                    get_cached_response,
+                    get_idempotency_key,
+                )
+
+                idem_key = None
+                if request.method == "POST":
+                    idem_key = get_idempotency_key(request, api_key.org_id)
+                    if idem_key:
+                        cached = get_cached_response(idem_key)
+                        if cached is not None:
+                            for k, v in result.headers().items():
+                                cached.headers[k] = v
+                            return cached
+
+                # 5. Call the actual handler
                 try:
                     response = await handler(request, api_key=api_key, session=session)
                     session.commit()
@@ -90,7 +107,11 @@ def api_endpoint(
                     session.rollback()
                     return _error(500, "Internal server error")
 
-                # 5. Attach rate limit headers to successful responses
+                # 6. Cache response for idempotency
+                if idem_key:
+                    cache_response(idem_key, response)
+
+                # 7. Attach rate limit headers to successful responses
                 for k, v in result.headers().items():
                     response.headers[k] = v
 

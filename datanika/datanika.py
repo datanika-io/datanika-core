@@ -208,6 +208,12 @@ from datanika.services.openapi import openapi_routes  # noqa: E402
 for _route in openapi_routes:
     app._api.routes.append(_route)
 
+# Mount agent discovery docs (/llms.txt, /api/v1/agent-guide.md)
+from datanika.services.agent_docs import agent_doc_routes  # noqa: E402
+
+for _route in agent_doc_routes:
+    app._api.routes.append(_route)
+
 # Mount Prometheus metrics endpoint and middleware
 from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # noqa: E402
 
@@ -219,3 +225,10 @@ app._api.add_middleware(PrometheusMiddleware)
 from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
 
 register_hooks(NotificationService())
+
+# Wire in-app notification hooks (create Notification records on run completion)
+from datanika.services.in_app_notification_hooks import (  # noqa: E402
+    register_in_app_notification_hooks,
+)
+
+register_in_app_notification_hooks()

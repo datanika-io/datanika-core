@@ -979,6 +979,102 @@ async def get_catalog_entry(request, api_key, session):
 
 
 # ---------------------------------------------------------------------------
+# In-App Notifications
+# ---------------------------------------------------------------------------
+
+
+def _ser_notification(n):
+    return {
+        "id": n.id,
+        "type": n.type.value,
+        "title": n.title,
+        "message": n.message,
+        "resource_type": n.resource_type,
+        "resource_id": n.resource_id,
+        "read_at": n.read_at.isoformat() if n.read_at else None,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    }
+
+
+@api_endpoint(required_scope="notifications:read")
+async def list_in_app_notifications(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    unread_only = request.query_params.get("unread_only", "").lower() in ("true", "1")
+    limit = min(int(request.query_params.get("limit", "20")), 100)
+    offset = int(request.query_params.get("offset", "0"))
+
+    svc = InAppNotificationService()
+    items = svc.list_for_user(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        unread_only=unread_only,
+        limit=limit,
+        offset=offset,
+    )
+    total = svc.total_count(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        unread_only=unread_only,
+    )
+    unread = svc.unread_count(session, api_key.org_id, api_key.user_id)
+    return JSONResponse(
+        {
+            "items": [_ser_notification(n) for n in items],
+            "total": total,
+            "unread_count": unread,
+        }
+    )
+
+
+@api_endpoint(required_scope="notifications:read")
+async def get_unread_count(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    count = InAppNotificationService.unread_count(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+    )
+    return JSONResponse({"count": count})
+
+
+@api_endpoint(required_scope="notifications:write")
+async def mark_notification_read(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    nid = int(request.path_params["id"])
+    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id)
+    if notif is None:
+        return _error(404, "Notification not found")
+    return JSONResponse(_ser_notification(notif))
+
+
+@api_endpoint(required_scope="notifications:write")
+async def mark_all_notifications_read(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    count = InAppNotificationService.mark_all_read(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+    )
+    return JSONResponse({"marked": count})
+
+
+@api_endpoint(required_scope="notifications:write")
+async def dismiss_notification(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    nid = int(request.path_params["id"])
+    if not InAppNotificationService.dismiss(session, nid, api_key.org_id):
+        return _error(404, "Notification not found")
+    return JSONResponse({"deleted": True})
+
+
+# ---------------------------------------------------------------------------
 # Notification Channels
 # ---------------------------------------------------------------------------
 
@@ -1123,6 +1219,12 @@ api_v1_routes = [
     # Catalog
     Route("/api/v1/catalog", list_catalog_entries, methods=["GET"]),
     Route("/api/v1/catalog/{id:int}", get_catalog_entry, methods=["GET"]),
+    # In-app notifications
+    Route("/api/v1/notifications", list_in_app_notifications, methods=["GET"]),
+    Route("/api/v1/notifications/unread-count", get_unread_count, methods=["GET"]),
+    Route("/api/v1/notifications/{id:int}/read", mark_notification_read, methods=["PATCH"]),
+    Route("/api/v1/notifications/read-all", mark_all_notifications_read, methods=["POST"]),
+    Route("/api/v1/notifications/{id:int}", dismiss_notification, methods=["DELETE"]),
     # Notification channels
     Route("/api/v1/notifications/channels", list_notification_channels, methods=["GET"]),
     Route("/api/v1/notifications/channels/{id:int}", get_notification_channel, methods=["GET"]),

@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "أنشئ خط معالجة",
   "onboarding.step_run": "شغّل خط معالجة",
   "onboarding.step_transformation": "أضف تحويلاً",
-  "onboarding.step_schedule": "جدوِل خط معالجة"
+  "onboarding.step_schedule": "جدوِل خط معالجة",
+  "notifications.center.title": "الإشعارات",
+  "notifications.center.empty": "لا توجد إشعارات بعد",
+  "notifications.center.mark_all_read": "تعليم الكل كمقروء",
+  "notifications.run_failed.title": "فشل التشغيل",
+  "notifications.run_succeeded.title": "نجح التشغيل",
+  "notifications.quota_warning.title": "تحذير الحصة",
+  "notifications.quota_exceeded.title": "تجاوز الحصة",
+  "notifications.dismiss": "تجاهل",
+  "notifications.view_run": "عرض التشغيل"
 }

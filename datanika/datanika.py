@@ -28,6 +28,7 @@ from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
+from datanika.ui.state.notification_center_state import NotificationCenterState
 from datanika.ui.state.notification_state import NotificationState
 from datanika.ui.state.onboarding_state import OnboardingState
 from datanika.ui.state.pipeline_state import PipelineState
@@ -78,6 +79,7 @@ app.add_page(
         AuthState.check_auth,
         DashboardState.load_dashboard,
         OnboardingState.load_checklist,
+        NotificationCenterState.load_notifications,
     ],
 )
 app.add_page(

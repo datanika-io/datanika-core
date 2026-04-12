@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Pipeline erstellen",
   "onboarding.step_run": "Pipeline ausführen",
   "onboarding.step_transformation": "Transformation hinzufügen",
-  "onboarding.step_schedule": "Pipeline planen"
+  "onboarding.step_schedule": "Pipeline planen",
+  "notifications.center.title": "Benachrichtigungen",
+  "notifications.center.empty": "Noch keine Benachrichtigungen",
+  "notifications.center.mark_all_read": "Alle als gelesen markieren",
+  "notifications.run_failed.title": "Ausführung fehlgeschlagen",
+  "notifications.run_succeeded.title": "Ausführung erfolgreich",
+  "notifications.quota_warning.title": "Kontingentwarnung",
+  "notifications.quota_exceeded.title": "Kontingent überschritten",
+  "notifications.dismiss": "Verwerfen",
+  "notifications.view_run": "Ausführung anzeigen"
 }

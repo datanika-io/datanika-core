@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Créez un pipeline",
   "onboarding.step_run": "Exécutez un pipeline",
   "onboarding.step_transformation": "Ajoutez une transformation",
-  "onboarding.step_schedule": "Planifiez un pipeline"
+  "onboarding.step_schedule": "Planifiez un pipeline",
+  "notifications.center.title": "Notifications",
+  "notifications.center.empty": "Aucune notification",
+  "notifications.center.mark_all_read": "Tout marquer comme lu",
+  "notifications.run_failed.title": "Exécution échouée",
+  "notifications.run_succeeded.title": "Exécution réussie",
+  "notifications.quota_warning.title": "Avertissement de quota",
+  "notifications.quota_exceeded.title": "Quota dépassé",
+  "notifications.dismiss": "Ignorer",
+  "notifications.view_run": "Voir l'exécution"
 }

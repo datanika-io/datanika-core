@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Create a pipeline",
   "onboarding.step_run": "Run a pipeline",
   "onboarding.step_transformation": "Add a transformation",
-  "onboarding.step_schedule": "Schedule a pipeline"
+  "onboarding.step_schedule": "Schedule a pipeline",
+  "notifications.center.title": "Notifications",
+  "notifications.center.empty": "No notifications yet",
+  "notifications.center.mark_all_read": "Mark all as read",
+  "notifications.run_failed.title": "Run failed",
+  "notifications.run_succeeded.title": "Run succeeded",
+  "notifications.quota_warning.title": "Quota warning",
+  "notifications.quota_exceeded.title": "Quota exceeded",
+  "notifications.dismiss": "Dismiss",
+  "notifications.view_run": "View run"
 }

@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Δημιουργήστε ένα pipeline",
   "onboarding.step_run": "Εκτελέστε ένα pipeline",
   "onboarding.step_transformation": "Προσθέστε έναν μετασχηματισμό",
-  "onboarding.step_schedule": "Προγραμματίστε ένα pipeline"
+  "onboarding.step_schedule": "Προγραμματίστε ένα pipeline",
+  "notifications.center.title": "Ειδοποιήσεις",
+  "notifications.center.empty": "Δεν υπάρχουν ειδοποιήσεις",
+  "notifications.center.mark_all_read": "Σήμανση όλων ως αναγνωσμένων",
+  "notifications.run_failed.title": "Η εκτέλεση απέτυχε",
+  "notifications.run_succeeded.title": "Η εκτέλεση ολοκληρώθηκε",
+  "notifications.quota_warning.title": "Προειδοποίηση ορίου",
+  "notifications.quota_exceeded.title": "Υπέρβαση ορίου",
+  "notifications.dismiss": "Απόρριψη",
+  "notifications.view_run": "Προβολή εκτέλεσης"
 }

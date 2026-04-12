@@ -123,7 +123,7 @@ def usage_bar() -> rx.Component:
                 rx.cond(
                     DashboardState.runs_percent >= 80,
                     rx.hstack(
-                        rx.icon("alert-triangle", size=14, color="var(--red-11)"),
+                        rx.icon("triangle-alert", size=14, color="var(--red-11)"),
                         rx.link(
                             rx.text(
                                 _t["dashboard.usage_upgrade"],

@@ -8,7 +8,7 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 NOTIFICATION_TYPE_ICONS: dict[str, str] = {
     "run_failed": "circle-x",
     "run_succeeded": "circle-check",
-    "quota_warning": "alert-triangle",
+    "quota_warning": "triangle-alert",
     "quota_exceeded": "octagon-alert",
 }
 

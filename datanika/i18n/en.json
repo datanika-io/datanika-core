@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Create a pipeline",
   "onboarding.step_run": "Run a pipeline",
   "onboarding.step_transformation": "Add a transformation",
-  "onboarding.step_schedule": "Schedule a pipeline"
+  "onboarding.step_schedule": "Schedule a pipeline",
+  "empty.connections.title": "No connections yet",
+  "empty.connections.body": "Connections store the credentials Datanika needs to read from a source or write to a destination. Add one above to get started.",
+  "empty.connections.cta": "Add your first connection",
+  "empty.pipelines.title": "No pipelines yet",
+  "empty.pipelines.body": "Pipelines chain dbt models into orchestrated transformation jobs. Create one above once you have a connection and an upload.",
+  "empty.pipelines.cta": "Create your first pipeline",
+  "empty.transformations.title": "No transformations yet",
+  "empty.transformations.body": "Transformations are SQL models powered by dbt-core. Add one above to turn raw data into analytics-ready tables.",
+  "empty.transformations.cta": "Add your first transformation"
 }

@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Направите пајплајн",
   "onboarding.step_run": "Покрените пајплајн",
   "onboarding.step_transformation": "Додајте трансформацију",
-  "onboarding.step_schedule": "Закажите пајплајн"
+  "onboarding.step_schedule": "Закажите пајплајн",
+  "empty.connections.title": "Нема конекција за сада",
+  "empty.connections.body": "Конекције чувају податке за приступ изворима и одредиштима. Додајте једну изнад да бисте почели.",
+  "empty.connections.cta": "Додајте прву конекцију",
+  "empty.pipelines.title": "Нема пајплајнова за сада",
+  "empty.pipelines.body": "Пајплајнови повезују dbt моделе у оркестриране задатке. Направите један након додавања конекције.",
+  "empty.pipelines.cta": "Направите први пајплајн",
+  "empty.transformations.title": "Нема трансформација за сада",
+  "empty.transformations.body": "Трансформације су SQL модели на dbt-core. Додајте једну да претворите сирове податке у аналитичке табеле.",
+  "empty.transformations.cta": "Додајте прву трансформацију"
 }

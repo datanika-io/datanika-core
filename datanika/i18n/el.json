@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Δημιουργήστε ένα pipeline",
   "onboarding.step_run": "Εκτελέστε ένα pipeline",
   "onboarding.step_transformation": "Προσθέστε έναν μετασχηματισμό",
-  "onboarding.step_schedule": "Προγραμματίστε ένα pipeline"
+  "onboarding.step_schedule": "Προγραμματίστε ένα pipeline",
+  "empty.connections.title": "Δεν υπάρχουν συνδέσεις ακόμα",
+  "empty.connections.body": "Οι συνδέσεις αποθηκεύουν τα διαπιστευτήρια που χρειάζεται το Datanika. Προσθέστε μία παραπάνω για να ξεκινήσετε.",
+  "empty.connections.cta": "Προσθέστε την πρώτη σύνδεση",
+  "empty.pipelines.title": "Δεν υπάρχουν pipelines ακόμα",
+  "empty.pipelines.body": "Τα pipelines αλυσιδώνουν μοντέλα dbt σε οργανωμένες εργασίες. Δημιουργήστε ένα αφού έχετε σύνδεση.",
+  "empty.pipelines.cta": "Δημιουργήστε το πρώτο pipeline",
+  "empty.transformations.title": "Δεν υπάρχουν μετασχηματισμοί ακόμα",
+  "empty.transformations.body": "Οι μετασχηματισμοί είναι SQL μοντέλα dbt-core. Προσθέστε έναν για να μετατρέψετε ακατέργαστα δεδομένα σε αναλυτικούς πίνακες.",
+  "empty.transformations.cta": "Προσθέστε τον πρώτο μετασχηματισμό"
 }

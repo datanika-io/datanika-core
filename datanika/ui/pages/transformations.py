@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.empty_state import empty_state
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.sql_autocomplete import (
@@ -364,8 +365,12 @@ def transformations_table() -> rx.Component:
 def transformations_page() -> rx.Component:
     return page_layout(
         rx.vstack(
-            transformation_form(),
-            transformations_table(),
+            rx.box(transformation_form(), id="transformation-form"),
+            rx.cond(
+                TransformationState.transformations.length() == 0,
+                empty_state("transformations"),
+                transformations_table(),
+            ),
             preview_display(),
             spacing="6",
             width="100%",

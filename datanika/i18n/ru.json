@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Создайте пайплайн",
   "onboarding.step_run": "Запустите пайплайн",
   "onboarding.step_transformation": "Добавьте трансформацию",
-  "onboarding.step_schedule": "Настройте расписание"
+  "onboarding.step_schedule": "Настройте расписание",
+  "empty.connections.title": "Подключений пока нет",
+  "empty.connections.body": "Подключения хранят учётные данные для чтения из источника или записи в хранилище. Добавьте первое выше, чтобы начать.",
+  "empty.connections.cta": "Добавьте первое подключение",
+  "empty.pipelines.title": "Пайплайнов пока нет",
+  "empty.pipelines.body": "Пайплайны объединяют модели dbt в оркестрированные задания. Создайте первый после добавления подключения и загрузки.",
+  "empty.pipelines.cta": "Создайте первый пайплайн",
+  "empty.transformations.title": "Трансформаций пока нет",
+  "empty.transformations.body": "Трансформации — это SQL-модели на dbt-core. Добавьте первую, чтобы превратить сырые данные в аналитические таблицы.",
+  "empty.transformations.cta": "Добавьте первую трансформацию"
 }

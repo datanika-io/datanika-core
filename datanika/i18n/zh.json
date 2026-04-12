@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "创建管道",
   "onboarding.step_run": "运行管道",
   "onboarding.step_transformation": "添加转换",
-  "onboarding.step_schedule": "设置定时调度"
+  "onboarding.step_schedule": "设置定时调度",
+  "empty.connections.title": "暂无连接",
+  "empty.connections.body": "连接存储 Datanika 读取来源或写入目标所需的凭据。在上方添加一个连接即可开始。",
+  "empty.connections.cta": "添加第一个连接",
+  "empty.pipelines.title": "暂无管道",
+  "empty.pipelines.body": "管道将 dbt 模型编排为自动化任务。添加连接和上传后即可创建。",
+  "empty.pipelines.cta": "创建第一个管道",
+  "empty.transformations.title": "暂无转换",
+  "empty.transformations.body": "转换是基于 dbt-core 的 SQL 模型。添加一个转换，将原始数据变为分析表。",
+  "empty.transformations.cta": "添加第一个转换"
 }

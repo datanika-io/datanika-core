@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Pipeline erstellen",
   "onboarding.step_run": "Pipeline ausführen",
   "onboarding.step_transformation": "Transformation hinzufügen",
-  "onboarding.step_schedule": "Pipeline planen"
+  "onboarding.step_schedule": "Pipeline planen",
+  "empty.connections.title": "Noch keine Verbindungen",
+  "empty.connections.body": "Verbindungen speichern die Zugangsdaten, die Datanika zum Lesen oder Schreiben benötigt. Füge oben eine hinzu, um loszulegen.",
+  "empty.connections.cta": "Erste Verbindung hinzufügen",
+  "empty.pipelines.title": "Noch keine Pipelines",
+  "empty.pipelines.body": "Pipelines verketten dbt-Modelle zu orchestrierten Jobs. Erstelle eine, sobald du eine Verbindung und einen Upload hast.",
+  "empty.pipelines.cta": "Erste Pipeline erstellen",
+  "empty.transformations.title": "Noch keine Transformationen",
+  "empty.transformations.body": "Transformationen sind SQL-Modelle mit dbt-core. Füge eine hinzu, um Rohdaten in Analysetabellen umzuwandeln.",
+  "empty.transformations.cta": "Erste Transformation hinzufügen"
 }

@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "أنشئ خط معالجة",
   "onboarding.step_run": "شغّل خط معالجة",
   "onboarding.step_transformation": "أضف تحويلاً",
-  "onboarding.step_schedule": "جدوِل خط معالجة"
+  "onboarding.step_schedule": "جدوِل خط معالجة",
+  "empty.connections.title": "لا توجد اتصالات بعد",
+  "empty.connections.body": "تخزن الاتصالات بيانات الاعتماد التي يحتاجها Datanika. أضف واحدًا أعلاه للبدء.",
+  "empty.connections.cta": "أضف اتصالك الأول",
+  "empty.pipelines.title": "لا توجد خطوط معالجة بعد",
+  "empty.pipelines.body": "تربط خطوط المعالجة نماذج dbt في مهام منسقة. أنشئ واحدًا بعد إضافة اتصال.",
+  "empty.pipelines.cta": "أنشئ أول خط معالجة",
+  "empty.transformations.title": "لا توجد تحويلات بعد",
+  "empty.transformations.body": "التحويلات هي نماذج SQL مبنية على dbt-core. أضف واحدًا لتحويل البيانات الخام إلى جداول تحليلية.",
+  "empty.transformations.cta": "أضف تحويلك الأول"
 }

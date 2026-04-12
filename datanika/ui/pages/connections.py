@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.connection_config_fields import type_fields
+from datanika.ui.components.empty_state import empty_state
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
@@ -190,6 +191,15 @@ def connections_table() -> rx.Component:
 
 def connections_page() -> rx.Component:
     return page_layout(
-        rx.vstack(connection_form(), connections_table(), spacing="6", width="100%"),
+        rx.vstack(
+            rx.box(connection_form(), id="connection-form"),
+            rx.cond(
+                ConnectionState.connections.length() == 0,
+                empty_state("connections"),
+                connections_table(),
+            ),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.connections"],
     )

@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.empty_state import empty_state
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
@@ -338,6 +339,15 @@ def pipelines_table() -> rx.Component:
 
 def pipelines_page() -> rx.Component:
     return page_layout(
-        rx.vstack(pipeline_form(), pipelines_table(), spacing="6", width="100%"),
+        rx.vstack(
+            rx.box(pipeline_form(), id="pipeline-form"),
+            rx.cond(
+                PipelineState.pipelines.length() == 0,
+                empty_state("pipelines"),
+                pipelines_table(),
+            ),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.pipelines"],
     )

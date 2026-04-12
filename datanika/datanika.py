@@ -208,6 +208,12 @@ from datanika.services.openapi import openapi_routes  # noqa: E402
 for _route in openapi_routes:
     app._api.routes.append(_route)
 
+# Mount agent discovery docs (/llms.txt, /api/v1/agent-guide.md)
+from datanika.services.agent_docs import agent_doc_routes  # noqa: E402
+
+for _route in agent_doc_routes:
+    app._api.routes.append(_route)
+
 # Mount Prometheus metrics endpoint and middleware
 from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # noqa: E402
 

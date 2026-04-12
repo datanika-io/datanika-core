@@ -359,6 +359,13 @@ SCHEMAS = {
     ),
 }
 
+# Inline per-type Connection.config and per-mode Upload.dlt_config schemas
+# from the single source of truth. This replaces the placeholder
+# `{type: object}` entries with discriminated `oneOf` branches.
+from datanika.services.openapi_inline import apply_inlined_schemas  # noqa: E402
+
+apply_inlined_schemas(SCHEMAS)
+
 # ---------------------------------------------------------------------------
 # Response shortcuts
 # ---------------------------------------------------------------------------

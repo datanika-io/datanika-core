@@ -121,6 +121,142 @@ class TestOpenAPISpec:
         assert "limit" in param_names
 
 
+# ---------------------------------------------------------------------------
+# Tier 3: inlined per-type schemas (#57)
+# ---------------------------------------------------------------------------
+
+
+class TestTier3InlinedSchemas:
+    """Verify ConnectionCreate and UploadCreate use discriminator-based
+    oneOf instead of opaque {type: object} placeholders."""
+
+    def test_spec_round_trips_through_json(self):
+        """Spec must serialize and deserialize without loss."""
+        import json
+
+        spec = build_openapi_spec()
+        raw = json.dumps(spec)
+        parsed = json.loads(raw)
+        assert parsed["openapi"] == "3.0.3"
+        assert "ConnectionCreate" in parsed["components"]["schemas"]
+
+    def test_connection_create_is_oneof_with_discriminator(self):
+        spec = build_openapi_spec()
+        cc = spec["components"]["schemas"]["ConnectionCreate"]
+        assert "oneOf" in cc, "ConnectionCreate should be a oneOf"
+        assert cc["discriminator"]["propertyName"] == "connection_type"
+        assert len(cc["oneOf"]) >= 27  # at least 27 source types
+
+    def test_every_connection_type_has_a_branch(self):
+        from datanika.models.connection import ConnectionType
+
+        spec = build_openapi_spec()
+        cc = spec["components"]["schemas"]["ConnectionCreate"]
+        mapping = cc["discriminator"]["mapping"]
+        for ct in ConnectionType:
+            assert ct.value in mapping, (
+                f"ConnectionType.{ct.name} ({ct.value}) missing from discriminator mapping"
+            )
+
+    def test_per_type_config_schemas_have_properties_and_required(self):
+        from datanika.services.connection_schemas import CONFIG_SCHEMAS
+        from datanika.services.openapi_inline import _to_pascal
+
+        spec = build_openapi_spec()
+        schemas = spec["components"]["schemas"]
+        for slug in CONFIG_SCHEMAS:
+            config_name = f"{_to_pascal(slug)}ConnectionConfig"
+            assert config_name in schemas, f"Missing schema {config_name}"
+            schema = schemas[config_name]
+            assert "properties" in schema
+            assert "required" in schema
+            assert schema["type"] == "object"
+
+    def test_per_type_create_schemas_have_example(self):
+        from datanika.services.connection_schemas import CONFIG_SCHEMAS
+        from datanika.services.openapi_inline import _to_pascal
+
+        spec = build_openapi_spec()
+        schemas = spec["components"]["schemas"]
+        for slug in CONFIG_SCHEMAS:
+            create_name = f"Create{_to_pascal(slug)}Connection"
+            assert create_name in schemas, f"Missing {create_name}"
+            assert "example" in schemas[create_name], f"{create_name} missing example"
+            example = schemas[create_name]["example"]
+            assert example["connection_type"] == slug
+
+    def test_no_type_object_placeholder_in_connection_create(self):
+        """The old `config: {type: object}` must be gone."""
+        import json
+
+        spec = build_openapi_spec()
+        cc_raw = json.dumps(spec["components"]["schemas"]["ConnectionCreate"])
+        # The top-level ConnectionCreate has no `properties.config` anymore —
+        # it's a oneOf parent. And each branch references a typed schema.
+        assert '"config":{"type":"object"}' not in cc_raw
+
+    def test_connection_type_is_enum_on_read_schema(self):
+        from datanika.models.connection import ConnectionType
+
+        spec = build_openapi_spec()
+        conn = spec["components"]["schemas"]["Connection"]
+        ct_prop = conn["properties"]["connection_type"]
+        assert "enum" in ct_prop
+        assert set(ct_prop["enum"]) == {ct.value for ct in ConnectionType}
+
+    def test_upload_create_dlt_config_is_ref_to_dlt_config(self):
+        spec = build_openapi_spec()
+        uc = spec["components"]["schemas"]["UploadCreate"]
+        dlt_ref = uc["properties"]["dlt_config"].get("$ref", "")
+        assert dlt_ref.endswith("DltConfig")
+
+    def test_dlt_config_has_discriminator_on_mode(self):
+        spec = build_openapi_spec()
+        dc = spec["components"]["schemas"]["DltConfig"]
+        assert "oneOf" in dc
+        assert dc["discriminator"]["propertyName"] == "mode"
+        mapping = dc["discriminator"]["mapping"]
+        assert "single_table" in mapping
+        assert "full_database" in mapping
+
+    def test_single_table_config_has_table_field(self):
+        spec = build_openapi_spec()
+        st = spec["components"]["schemas"]["SingleTableDltConfig"]
+        assert "table" in st["properties"]
+        assert "table" in st["required"]
+        assert st["properties"]["mode"]["enum"] == ["single_table"]
+
+    def test_full_database_config_has_table_names(self):
+        spec = build_openapi_spec()
+        fd = spec["components"]["schemas"]["FullDatabaseDltConfig"]
+        assert "table_names" in fd["properties"]
+        assert fd["properties"]["mode"]["enum"] == ["full_database"]
+
+    def test_no_type_object_placeholder_in_upload_create(self):
+        import json
+
+        spec = build_openapi_spec()
+        uc_raw = json.dumps(spec["components"]["schemas"]["UploadCreate"])
+        assert '"dlt_config":{"type":"object"}' not in uc_raw
+
+    def test_upload_create_has_example(self):
+        spec = build_openapi_spec()
+        uc = spec["components"]["schemas"]["UploadCreate"]
+        assert "example" in uc
+        assert uc["example"]["dlt_config"]["mode"] == "single_table"
+
+    def test_sensitive_fields_have_password_format(self):
+        """Spot-check that password/API key fields keep format: password."""
+
+        spec = build_openapi_spec()
+        schemas = spec["components"]["schemas"]
+        pg = schemas["PostgresConnectionConfig"]
+        assert pg["properties"]["password"]["format"] == "password"
+
+        stripe = schemas["StripeConnectionConfig"]
+        assert stripe["properties"]["api_key"]["format"] == "password"
+
+
 class TestOpenAPIEndpoints:
     def test_openapi_json_returns_200(self, client):
         resp = client.get("/api/v1/openapi.json")

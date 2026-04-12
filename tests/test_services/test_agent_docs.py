@@ -46,6 +46,15 @@ class TestLlmsTxt:
         assert "Validate" in resp.text
         assert "Execute" in resp.text
 
+    def test_capabilities_header_has_no_tier_count(self, client):
+        # Regression for #80: header used to say "Capabilities (5 tiers)"
+        # while listing 6 items. The "5 tiers" label is internal roadmap
+        # language and doesn't belong in user-facing /llms.txt.
+        resp = client.get("/llms.txt")
+        assert "## Capabilities" in resp.text
+        assert "5 tiers" not in resp.text
+        assert "(5 tiers)" not in resp.text
+
     def test_no_auth_required(self, client):
         resp = client.get("/llms.txt")
         assert resp.status_code == 200

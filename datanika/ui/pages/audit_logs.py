@@ -34,6 +34,7 @@ def audit_logs_page() -> rx.Component:
                         size="2",
                     ),
                     spacing="1",
+                    width="220px",
                 ),
                 rx.vstack(
                     rx.text(_t["audit.filter_resource"], size="2", weight="medium"),
@@ -53,6 +54,7 @@ def audit_logs_page() -> rx.Component:
                         size="2",
                     ),
                     spacing="1",
+                    width="220px",
                 ),
                 rx.button(
                     _t["audit.apply"],

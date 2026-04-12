@@ -27,7 +27,6 @@ class NotificationItem(BaseModel):
 class NotificationCenterState(BaseState):
     notifications: list[NotificationItem] = []
     unread_count: int = 0
-    dropdown_open: bool = False
 
     async def load_notifications(self):
         from datanika.ui.state.auth_state import AuthState
@@ -111,6 +110,3 @@ class NotificationCenterState(BaseState):
             svc.dismiss(session, notification_id, org_id)
             session.commit()
         await self.load_notifications()
-
-    def toggle_dropdown(self):
-        self.dropdown_open = not self.dropdown_open

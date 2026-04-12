@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Kontingentwarnung",
   "notifications.quota_exceeded.title": "Kontingent überschritten",
   "notifications.dismiss": "Verwerfen",
-  "notifications.view_run": "Ausführung anzeigen"
+  "notifications.view_run": "Ausführung anzeigen",
+  "templates.heading": "Pipeline-Vorlagen",
+  "templates.subtitle": "Vorkonfigurierte Starter, die langweilige Entscheidungen überspringen. Wähle eine, gib deine Zugangsdaten ein und du hast in wenigen Minuten eine funktionierende Pipeline.",
+  "templates.use_this_template": "Diese Vorlage verwenden",
+  "templates.help_text": "Vorlagen füllen nur unkritische Standardwerte vor — Schemas, Ports, Tabellenauswahl. Zugangsdaten gibst du immer selbst ein.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Lade Stripe-Kunden, Zahlungen, Rechnungen und Abonnements in dein Postgres-Warehouse für Umsatzanalysen.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Synchronisiere deine operative Postgres-Datenbank in BigQuery — die häufigste Analyse-Pipeline.",
+  "templates.csv_to_duckdb.name": "CSV-Upload → DuckDB",
+  "templates.csv_to_duckdb.description": "Zieh eine CSV-Datei hinein und frag sie sofort mit DuckDB ab. Keine Zugangsdaten nötig — der schnellste Weg, Datanika auszuprobieren.",
+  "pipelines.empty_heading": "Noch keine Pipelines",
+  "pipelines.empty_subtitle": "Starte mit einer vorkonfigurierten Vorlage oder scrolle nach unten, um eine von Grund auf zu erstellen.",
+  "pipelines.start_from_template": "Mit einer Vorlage starten"
 }

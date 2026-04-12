@@ -11,6 +11,7 @@ from datanika.ui.pages.dashboard import dashboard_page
 from datanika.ui.pages.login import login_page
 from datanika.ui.pages.model_detail import model_detail_page
 from datanika.ui.pages.models import models_page
+from datanika.ui.pages.pipeline_templates import pipeline_templates_page
 from datanika.ui.pages.pipelines import pipelines_page
 from datanika.ui.pages.runs import runs_page
 from datanika.ui.pages.schedules import schedules_page
@@ -86,7 +87,11 @@ app.add_page(
     connections_page,
     route="/connections",
     title="Connections | Datanika",
-    on_load=[AuthState.check_auth, ConnectionState.load_connections],
+    on_load=[
+        AuthState.check_auth,
+        ConnectionState.load_connections,
+        ConnectionState.load_template_from_query,
+    ],
 )
 app.add_page(
     uploads_page,
@@ -111,6 +116,12 @@ app.add_page(
     route="/pipelines",
     title="Pipelines | Datanika",
     on_load=[AuthState.check_auth, PipelineState.load_pipelines],
+)
+app.add_page(
+    pipeline_templates_page,
+    route="/pipelines/templates",
+    title="Pipeline Templates | Datanika",
+    on_load=[AuthState.check_auth],
 )
 app.add_page(
     schedules_page,

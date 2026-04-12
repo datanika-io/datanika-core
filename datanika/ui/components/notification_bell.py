@@ -31,7 +31,7 @@ def _type_icon(ntype: rx.Var[str]) -> rx.Component:
             rx.icon("circle-check", size=16, color="var(--green-9)"),
             rx.cond(
                 ntype == "quota_warning",
-                rx.icon("alert-triangle", size=16, color="var(--amber-9)"),
+                rx.icon("triangle-alert", size=16, color="var(--amber-9)"),
                 rx.icon("octagon-alert", size=16, color="var(--red-9)"),
             ),
         ),

@@ -42,6 +42,20 @@ class TestTypeIcons:
             assert isinstance(icon, str)
             assert len(icon) > 0
 
+    def test_no_deprecated_lucide_names(self):
+        # Regression for #88: lucide-react renamed `alert-triangle` to
+        # `triangle-alert` in v0.359.0 (March 2024). Reflex emits a
+        # deprecation warning at compile time for the old name. Pin
+        # the new name so we don't drift back.
+        deprecated = {"alert-triangle"}
+        for type_name, icon in NOTIFICATION_TYPE_ICONS.items():
+            assert icon not in deprecated, (
+                f"{type_name} uses deprecated lucide icon {icon!r}; use the new name"
+            )
+
+    def test_quota_warning_uses_triangle_alert(self):
+        assert NOTIFICATION_TYPE_ICONS["quota_warning"] == "triangle-alert"
+
 
 class TestNotificationCenterStateStructure:
     def test_has_required_fields(self):

@@ -1,14 +1,33 @@
-"""Machine-readable agent context: /llms.txt and /api/v1/agent-guide.md.
+"""Machine-readable agent context: /llms.txt, agent-guide.md, agent-tiers.json.
 
 Tier 5 of the AI Agent Compatibility roadmap (#37). These are
 discovery documents — no auth required, tenant-agnostic.
+
+The actual tier and capability data lives in `agent_tiers.py`. This
+module is a thin renderer that interpolates the SoT into the markdown
+templates and serves them via Starlette routes. **Do not hardcode any
+tier counts, capability lists, error codes, or golden-path steps in
+this file** — derive them from `agent_tiers` so a single edit there
+updates every surface.
 """
 
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
 
-LLMS_TXT = """\
+from datanika.services.agent_tiers import (
+    capability_count,
+    render_error_codes_table,
+    render_golden_path,
+    render_llms_capabilities,
+    render_ui_only_operations,
+    tier_count,
+    to_json_dict,
+)
+
+
+def _render_llms_txt() -> str:
+    return f"""\
 # Datanika — AI Agent Discovery
 
 > Datanika is an open-source data pipeline platform that combines
@@ -20,6 +39,9 @@ https://app.datanika.io/api/v1/openapi.json
 
 ## Agent Guide
 https://app.datanika.io/api/v1/agent-guide.md
+
+## Agent Tiers (JSON)
+https://app.datanika.io/api/v1/meta/agent-tiers
 
 ## Base URL
 https://app.datanika.io/api/v1/
@@ -36,17 +58,7 @@ Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
 
 ## Capabilities
 
-1. **Discover** — GET /meta/connection-types, /meta/dlt-config-schema, \
-/meta/dbt-tests, /meta/materializations
-2. **Introspect** — POST /connections/{id}/introspect, /columns, /preview, \
-/query
-3. **Build** — CRUD for /connections, /uploads, /pipelines, \
-/transformations, /schedules, /notifications/channels
-4. **Validate** — POST /transformations/{id}/compile, /preview
-5. **Execute** — POST /uploads/{id}/run, /pipelines/{id}/run, \
-/transformations/{id}/run (?wait=true supported)
-6. **Control** — POST /runs/{id}/cancel, GET /runs/{id}/logs, \
-GET /catalog
+{render_llms_capabilities()}
 
 ## Idempotency
 POST requests accept an Idempotency-Key header. Same key within 24h \
@@ -57,50 +69,29 @@ API keys are scoped to an organization. All resources are filtered \
 by org_id — you cannot read or modify another org's data.
 """
 
-AGENT_GUIDE_MD = """\
+
+def _render_agent_guide() -> str:
+    return f"""\
 # Datanika Agent Guide
 
 > How to build a complete data integration with the Datanika API.
 > This is a strategy guide, not an API reference — see the
 > [OpenAPI spec](https://app.datanika.io/api/v1/openapi.json) for
-> full request/response schemas.
+> full request/response schemas. For machine-readable tier structure,
+> fetch [/api/v1/meta/agent-tiers](https://app.datanika.io/api/v1/meta/agent-tiers).
 
 ## Quick-Start Loop
 
 The golden-path sequence for building a pipeline from scratch:
 
-1. `GET /api/v1/meta/connection-types` — discover available source \
-and destination types with their config schemas
-2. `POST /api/v1/connections` — create a source connection (e.g. postgres)
-3. `POST /api/v1/connections` — create a destination connection (e.g. bigquery)
-4. `POST /api/v1/connections/{id}/test` — verify both connections work
-5. `POST /api/v1/connections/{id}/introspect` — list source tables
-6. `POST /api/v1/connections/{id}/columns` — inspect column types
-7. `GET /api/v1/meta/dlt-config-schema` — learn dlt_config options
-8. `POST /api/v1/uploads` — create an extract+load job
-9. `POST /api/v1/uploads/{id}/run?wait=true` — trigger and wait for completion
-10. `GET /api/v1/catalog` — discover loaded tables in the destination
-11. `GET /api/v1/meta/materializations` — learn dbt materialization types
-12. `GET /api/v1/meta/dbt-tests` — learn available test types
-13. `POST /api/v1/transformations` — create a dbt SQL model
-14. `POST /api/v1/transformations/{id}/compile` — validate Jinja + refs
-15. `POST /api/v1/transformations/{id}/preview` — see sample output rows
-16. `POST /api/v1/schedules` — schedule the pipeline on a cron
-17. `GET /api/v1/runs` — monitor run history
+{render_golden_path()}
 
 ## Error Handling
 
 Tier 2+ endpoints return typed string error codes so you can branch
 without regex-matching messages:
 
-| Code | Meaning | Action |
-|------|---------|--------|
-| `compilation_error` | Jinja/ref error in dbt compile | Fix the SQL and re-compile |
-| `execution_error` | Warehouse query failed | Check table names and SQL syntax |
-| `missing_destination` | Transformation has no destination set | Set destination_connection_id |
-| `unsafe_sql` | Compiled SQL failed read-only check | Review the transformation |
-| `invalid_request` | Malformed request body | Check field types and required fields |
-| `not_cancellable` | Run already completed | No action needed |
+{render_error_codes_table()}
 
 ## Idempotency
 
@@ -115,7 +106,7 @@ Authorization: Bearer etf_...
 Idempotency-Key: my-unique-key-123
 Content-Type: application/json
 
-{"name": "Prod PG", "connection_type": "postgres", "config": {...}}
+{{"name": "Prod PG", "connection_type": "postgres", "config": {{...}}}}
 ```
 
 ## Tenant Isolation
@@ -129,9 +120,9 @@ Content-Type: application/json
 
 - **Compile before preview** — `POST /compile` is cheap (no warehouse
   call). Always compile first to catch Jinja errors, then preview.
-- **Use `?wait=true`** on run triggers instead of polling `GET /runs/{id}`
+- **Use `?wait=true`** on run triggers instead of polling `GET /runs/{{id}}`
   in a loop. Default timeout is 120s, max 300s.
-- **Cancel + retry** if a run appears stuck — `POST /runs/{id}/cancel`
+- **Cancel + retry** if a run appears stuck — `POST /runs/{{id}}/cancel`
   then re-trigger.
 - **Introspect before building** — list source tables and columns
   before writing the upload config. Don't guess table names.
@@ -140,15 +131,17 @@ Content-Type: application/json
 
 These operations are only available in the Datanika UI:
 
-- **User management** — create/invite users, assign roles
-- **Billing** — change plans, view invoices
-- **SSO configuration** — SAML/OIDC setup
-- **File uploads** — CSV/JSON/Parquet drag-and-drop (UI only)
-- **OAuth connections** — Google/GitHub login setup
-- **Organization creation** — orgs are created via the signup flow
+{render_ui_only_operations()}
 
 Do not attempt these via the API — there are no endpoints for them.
 """
+
+
+# Module-level constants for backwards compatibility with existing tests
+# and any code that imports the rendered strings directly. Computed once at
+# import time from the SoT in agent_tiers.py.
+LLMS_TXT: str = _render_llms_txt()
+AGENT_GUIDE_MD: str = _render_agent_guide()
 
 
 async def llms_txt(request: Request) -> PlainTextResponse:
@@ -162,7 +155,32 @@ async def agent_guide(request: Request) -> Response:
     )
 
 
+async def agent_tiers_json(request: Request) -> JSONResponse:
+    """Machine-readable tier + capability structure.
+
+    Used by the landing site at build time to render `/ai-agents` and
+    `/docs/ai-agents` from a single source of truth, eliminating the
+    drift bug that hit core PR #80 and landing PR #97.
+
+    No auth required — same posture as `/llms.txt`.
+    """
+    return JSONResponse(to_json_dict())
+
+
 agent_doc_routes = [
     Route("/llms.txt", llms_txt, methods=["GET"]),
     Route("/api/v1/agent-guide.md", agent_guide, methods=["GET"]),
+    Route("/api/v1/meta/agent-tiers", agent_tiers_json, methods=["GET"]),
+]
+
+
+__all__ = [
+    "LLMS_TXT",
+    "AGENT_GUIDE_MD",
+    "agent_doc_routes",
+    "agent_tiers_json",
+    "agent_guide",
+    "llms_txt",
+    "tier_count",
+    "capability_count",
 ]

@@ -34,7 +34,7 @@ Default: 60 requests/minute per API key.
 Plan-based overrides: Free 30 RPM, Pro 120 RPM, Enterprise 300 RPM.
 Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
 
-## Capabilities (5 tiers)
+## Capabilities
 
 1. **Discover** — GET /meta/connection-types, /meta/dlt-config-schema, \
 /meta/dbt-tests, /meta/materializations

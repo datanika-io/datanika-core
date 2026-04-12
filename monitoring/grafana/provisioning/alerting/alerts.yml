@@ -435,3 +435,43 @@ groups:
         annotations:
           summary: "app.datanika.io /healthz not reachable externally"
           description: "External blackbox probe to https://app.datanika.io/healthz has failed for 5 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."
+
+  - orgId: 1
+    name: Database Alerts
+    folder: Datanika
+    interval: 5m
+    rules:
+      # --- Slow query rate spike ---
+      - uid: pg-slow-queries
+        title: PostgreSQL Slow Query Spike
+        condition: C
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'rate(pg_stat_statements_seconds_total{datname="datanika"}[5m]) > 0.5'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL slow query rate elevated"
+          description: "pg_stat_statements reports elevated query time. Check docker logs datanika-postgres for queries over 500ms."

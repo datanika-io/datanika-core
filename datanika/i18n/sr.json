@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Колона чија вредност расте (updated_at, id). Учитавају се само нови/измењени редови.",
   "tooltip.schema_contract": "Понашање при промени шеме: evolve = прилагођавање, freeze = одбијање, discard_value = нове колоне null.",
   "tooltip.load_mode": "full_database = све табеле. single_table = једна табела са детаљном контролом.",
-  "tooltip.materialization": "Начин изградње модела: view = поглед, table = табела, incremental = нови редови, ephemeral = CTE."
+  "tooltip.materialization": "Начин изградње модела: view = поглед, table = табела, incremental = нови редови, ephemeral = CTE.",
+  "notifications.center.title": "Обавештења",
+  "notifications.center.empty": "Нема обавештења за сада",
+  "notifications.center.mark_all_read": "Означи све као прочитано",
+  "notifications.run_failed.title": "Покретање неуспешно",
+  "notifications.run_succeeded.title": "Покретање успешно",
+  "notifications.quota_warning.title": "Упозорење о квоти",
+  "notifications.quota_exceeded.title": "Квота прекорачена",
+  "notifications.dismiss": "Одбаци",
+  "notifications.view_run": "Прикажи покретање"
 }

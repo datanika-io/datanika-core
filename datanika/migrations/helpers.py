@@ -25,6 +25,7 @@ PUBLIC_TABLES: set[str] = {
     "invitations",
     "sso_configs",
     "notification_channels",
+    "notifications",
     "plans",
     "subscriptions",
     "usage_ledger",

@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Eine Spalte, die nur steigt (updated_at, id). Nur neue/geänderte Zeilen werden geladen.",
   "tooltip.schema_contract": "Verhalten bei Schema-Änderung: evolve = anpassen, freeze = ablehnen, discard_value = neue Spalten nullen.",
   "tooltip.load_mode": "full_database = alle Tabellen. single_table = eine Tabelle mit feiner Kontrolle.",
-  "tooltip.materialization": "Wie dbt das Modell baut: view = View, table = Tabelle, incremental = neue Zeilen, ephemeral = inline CTE."
+  "tooltip.materialization": "Wie dbt das Modell baut: view = View, table = Tabelle, incremental = neue Zeilen, ephemeral = inline CTE.",
+  "notifications.center.title": "Benachrichtigungen",
+  "notifications.center.empty": "Noch keine Benachrichtigungen",
+  "notifications.center.mark_all_read": "Alle als gelesen markieren",
+  "notifications.run_failed.title": "Ausführung fehlgeschlagen",
+  "notifications.run_succeeded.title": "Ausführung erfolgreich",
+  "notifications.quota_warning.title": "Kontingentwarnung",
+  "notifications.quota_exceeded.title": "Kontingent überschritten",
+  "notifications.dismiss": "Verwerfen",
+  "notifications.view_run": "Ausführung anzeigen"
 }

@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Στήλη που μόνο αυξάνεται (updated_at, id). Φέρνει μόνο νέες/αλλαγμένες γραμμές.",
   "tooltip.schema_contract": "Τι γίνεται όταν αλλάζει η δομή: evolve = προσαρμογή, freeze = απόρριψη, discard_value = μηδενισμός νέων στηλών.",
   "tooltip.load_mode": "full_database = όλοι οι πίνακες. single_table = ένας πίνακας με λεπτομερή έλεγχο.",
-  "tooltip.materialization": "Πώς χτίζεται το μοντέλο: view = SQL view, table = πίνακας, incremental = νέες γραμμές, ephemeral = CTE."
+  "tooltip.materialization": "Πώς χτίζεται το μοντέλο: view = SQL view, table = πίνακας, incremental = νέες γραμμές, ephemeral = CTE.",
+  "notifications.center.title": "Ειδοποιήσεις",
+  "notifications.center.empty": "Δεν υπάρχουν ειδοποιήσεις",
+  "notifications.center.mark_all_read": "Σήμανση όλων ως αναγνωσμένων",
+  "notifications.run_failed.title": "Η εκτέλεση απέτυχε",
+  "notifications.run_succeeded.title": "Η εκτέλεση ολοκληρώθηκε",
+  "notifications.quota_warning.title": "Προειδοποίηση ορίου",
+  "notifications.quota_exceeded.title": "Υπέρβαση ορίου",
+  "notifications.dismiss": "Απόρριψη",
+  "notifications.view_run": "Προβολή εκτέλεσης"
 }

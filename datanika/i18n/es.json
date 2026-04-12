@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Columna que solo crece (updated_at, id). Solo se cargan filas nuevas o modificadas.",
   "tooltip.schema_contract": "Comportamiento ante cambios de esquema: evolve = adaptar, freeze = rechazar, discard_value = nulificar nuevas columnas.",
   "tooltip.load_mode": "full_database = todas las tablas. single_table = una tabla con control detallado.",
-  "tooltip.materialization": "Cómo dbt construye el modelo: view = vista, table = tabla, incremental = filas nuevas, ephemeral = CTE inline."
+  "tooltip.materialization": "Cómo dbt construye el modelo: view = vista, table = tabla, incremental = filas nuevas, ephemeral = CTE inline.",
+  "notifications.center.title": "Notificaciones",
+  "notifications.center.empty": "Sin notificaciones aún",
+  "notifications.center.mark_all_read": "Marcar todo como leído",
+  "notifications.run_failed.title": "Ejecución fallida",
+  "notifications.run_succeeded.title": "Ejecución exitosa",
+  "notifications.quota_warning.title": "Advertencia de cuota",
+  "notifications.quota_exceeded.title": "Cuota excedida",
+  "notifications.dismiss": "Descartar",
+  "notifications.view_run": "Ver ejecución"
 }

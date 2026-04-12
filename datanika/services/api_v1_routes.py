@@ -461,6 +461,35 @@ async def delete_upload(request, api_key, session):
     return JSONResponse({"deleted": True})
 
 
+async def _trigger_and_maybe_wait(request, api_key, run):
+    """Shared helper: fire-and-forget (202) or wait for completion (200/408).
+
+    If ``?wait=true`` is set, polls the run until it reaches a terminal
+    status or the timeout expires. Default timeout 120s, max 300s.
+    """
+    wait = request.query_params.get("wait", "").lower() in ("true", "1")
+    if not wait:
+        return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
+
+    from datanika.services.run_waiter import DEFAULT_TIMEOUT, wait_for_run
+
+    timeout_str = request.query_params.get("timeout", str(DEFAULT_TIMEOUT))
+    try:
+        timeout = int(timeout_str)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_TIMEOUT
+
+    final_run = await wait_for_run(run.id, api_key.org_id, timeout=timeout)
+    if final_run is None:
+        return _error(404, "Run not found after dispatch")
+
+    result = _ser_run(final_run)
+    if final_run.status.value in ("pending", "running"):
+        result["timed_out"] = True
+        return JSONResponse(result, status_code=408)
+    return JSONResponse(result)
+
+
 @api_endpoint(required_scope="uploads:write")
 async def trigger_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
@@ -472,7 +501,7 @@ async def trigger_upload(request, api_key, session):
     from datanika.tasks.upload_tasks import run_upload_task
 
     run_upload_task.delay(run_id=run.id, org_id=api_key.org_id)
-    return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
+    return await _trigger_and_maybe_wait(request, api_key, run)
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +595,7 @@ async def trigger_pipeline(request, api_key, session):
     from datanika.tasks.pipeline_tasks import run_pipeline_task
 
     run_pipeline_task.delay(run_id=run.id, org_id=api_key.org_id)
-    return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
+    return await _trigger_and_maybe_wait(request, api_key, run)
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +705,7 @@ async def trigger_transformation(request, api_key, session):
     from datanika.tasks.transformation_tasks import run_transformation_task
 
     run_transformation_task.delay(run_id=run.id, org_id=api_key.org_id)
-    return JSONResponse({"run_id": run.id, "status": "pending"}, status_code=202)
+    return await _trigger_and_maybe_wait(request, api_key, run)
 
 
 @api_endpoint(required_scope="transformations:read")
@@ -887,6 +916,25 @@ async def get_run_logs(request, api_key, session):
     return JSONResponse({"run_id": run.id, "logs": run.logs or ""})
 
 
+@api_endpoint(required_scope="runs:write")
+async def cancel_run(request, api_key, session):
+    """POST /api/v1/runs/{id}/cancel — cancel a pending or running run."""
+    run_id = int(request.path_params["id"])
+    run = _exec_svc.get_run(session, api_key.org_id, run_id)
+    if run is None:
+        return _error(404, "Run not found")
+    if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
+        return _typed_error(
+            409,
+            "not_cancellable",
+            f"Run is already {run.status.value} and cannot be cancelled",
+        )
+    cancelled = _exec_svc.cancel_run(session, run_id)
+    if cancelled is None:
+        return _error(500, "Failed to cancel run")
+    return JSONResponse(_ser_run(cancelled))
+
+
 # ---------------------------------------------------------------------------
 # Catalog
 # ---------------------------------------------------------------------------
@@ -928,6 +976,102 @@ async def get_catalog_entry(request, api_key, session):
     if entry is None:
         return _error(404, "Catalog entry not found")
     return JSONResponse(_ser_catalog_entry(entry))
+
+
+# ---------------------------------------------------------------------------
+# In-App Notifications
+# ---------------------------------------------------------------------------
+
+
+def _ser_notification(n):
+    return {
+        "id": n.id,
+        "type": n.type.value,
+        "title": n.title,
+        "message": n.message,
+        "resource_type": n.resource_type,
+        "resource_id": n.resource_id,
+        "read_at": n.read_at.isoformat() if n.read_at else None,
+        "created_at": n.created_at.isoformat() if n.created_at else None,
+    }
+
+
+@api_endpoint(required_scope="notifications:read")
+async def list_in_app_notifications(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    unread_only = request.query_params.get("unread_only", "").lower() in ("true", "1")
+    limit = min(int(request.query_params.get("limit", "20")), 100)
+    offset = int(request.query_params.get("offset", "0"))
+
+    svc = InAppNotificationService()
+    items = svc.list_for_user(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        unread_only=unread_only,
+        limit=limit,
+        offset=offset,
+    )
+    total = svc.total_count(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        unread_only=unread_only,
+    )
+    unread = svc.unread_count(session, api_key.org_id, api_key.user_id)
+    return JSONResponse(
+        {
+            "items": [_ser_notification(n) for n in items],
+            "total": total,
+            "unread_count": unread,
+        }
+    )
+
+
+@api_endpoint(required_scope="notifications:read")
+async def get_unread_count(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    count = InAppNotificationService.unread_count(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+    )
+    return JSONResponse({"count": count})
+
+
+@api_endpoint(required_scope="notifications:write")
+async def mark_notification_read(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    nid = int(request.path_params["id"])
+    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id)
+    if notif is None:
+        return _error(404, "Notification not found")
+    return JSONResponse(_ser_notification(notif))
+
+
+@api_endpoint(required_scope="notifications:write")
+async def mark_all_notifications_read(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    count = InAppNotificationService.mark_all_read(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+    )
+    return JSONResponse({"marked": count})
+
+
+@api_endpoint(required_scope="notifications:write")
+async def dismiss_notification(request, api_key, session):
+    from datanika.services.in_app_notification_service import InAppNotificationService
+
+    nid = int(request.path_params["id"])
+    if not InAppNotificationService.dismiss(session, nid, api_key.org_id):
+        return _error(404, "Notification not found")
+    return JSONResponse({"deleted": True})
 
 
 # ---------------------------------------------------------------------------
@@ -1071,9 +1215,16 @@ api_v1_routes = [
     Route("/api/v1/runs", list_runs, methods=["GET"]),
     Route("/api/v1/runs/{id:int}", get_run, methods=["GET"]),
     Route("/api/v1/runs/{id:int}/logs", get_run_logs, methods=["GET"]),
+    Route("/api/v1/runs/{id:int}/cancel", cancel_run, methods=["POST"]),
     # Catalog
     Route("/api/v1/catalog", list_catalog_entries, methods=["GET"]),
     Route("/api/v1/catalog/{id:int}", get_catalog_entry, methods=["GET"]),
+    # In-app notifications
+    Route("/api/v1/notifications", list_in_app_notifications, methods=["GET"]),
+    Route("/api/v1/notifications/unread-count", get_unread_count, methods=["GET"]),
+    Route("/api/v1/notifications/{id:int}/read", mark_notification_read, methods=["PATCH"]),
+    Route("/api/v1/notifications/read-all", mark_all_notifications_read, methods=["POST"]),
+    Route("/api/v1/notifications/{id:int}", dismiss_notification, methods=["DELETE"]),
     # Notification channels
     Route("/api/v1/notifications/channels", list_notification_channels, methods=["GET"]),
     Route("/api/v1/notifications/channels/{id:int}", get_notification_channel, methods=["GET"]),

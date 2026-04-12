@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Столбец, значения которого только растут (updated_at, id). Загружаются только новые/изменённые строки.",
   "tooltip.schema_contract": "Поведение при изменении схемы: evolve — адаптация, freeze — отклонение, discard_value — обнуление новых столбцов.",
   "tooltip.load_mode": "full_database — все таблицы источника. single_table — одна таблица с контролем режима записи и ключа.",
-  "tooltip.materialization": "Как dbt строит модель: view — представление, table — таблица, incremental — только новые строки, ephemeral — inline CTE."
+  "tooltip.materialization": "Как dbt строит модель: view — представление, table — таблица, incremental — только новые строки, ephemeral — inline CTE.",
+  "notifications.center.title": "Уведомления",
+  "notifications.center.empty": "Уведомлений пока нет",
+  "notifications.center.mark_all_read": "Отметить все как прочитанные",
+  "notifications.run_failed.title": "Запуск не удался",
+  "notifications.run_succeeded.title": "Запуск завершён",
+  "notifications.quota_warning.title": "Предупреждение о квоте",
+  "notifications.quota_exceeded.title": "Квота превышена",
+  "notifications.dismiss": "Скрыть",
+  "notifications.view_run": "Перейти к запуску"
 }

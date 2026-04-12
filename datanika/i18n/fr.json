@@ -410,5 +410,14 @@
   "tooltip.incremental_cursor": "Colonne qui ne fait qu'augmenter (updated_at, id). Seules les lignes nouvelles/modifiées sont chargées.",
   "tooltip.schema_contract": "Comportement lors d'un changement de schéma : evolve = adapter, freeze = rejeter, discard_value = nullifier les nouvelles colonnes.",
   "tooltip.load_mode": "full_database = toutes les tables. single_table = une table avec contrôle fin.",
-  "tooltip.materialization": "Comment dbt construit le modèle : view = vue, table = table, incremental = nouvelles lignes, ephemeral = CTE inline."
+  "tooltip.materialization": "Comment dbt construit le modèle : view = vue, table = table, incremental = nouvelles lignes, ephemeral = CTE inline.",
+  "notifications.center.title": "Notifications",
+  "notifications.center.empty": "Aucune notification",
+  "notifications.center.mark_all_read": "Tout marquer comme lu",
+  "notifications.run_failed.title": "Exécution échouée",
+  "notifications.run_succeeded.title": "Exécution réussie",
+  "notifications.quota_warning.title": "Avertissement de quota",
+  "notifications.quota_exceeded.title": "Quota dépassé",
+  "notifications.dismiss": "Ignorer",
+  "notifications.view_run": "Voir l'exécution"
 }

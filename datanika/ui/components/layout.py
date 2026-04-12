@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.language_switcher import language_switcher
+from datanika.ui.components.notification_bell import notification_bell
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -54,6 +55,7 @@ def sidebar_user_section() -> rx.Component:
                 spacing="0",
             ),
             rx.spacer(),
+            notification_bell(),
             rx.icon_button(
                 rx.icon("log-out", size=16),
                 on_click=AuthState.logout,

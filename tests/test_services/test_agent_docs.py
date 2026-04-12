@@ -1,10 +1,15 @@
-"""Tests for /llms.txt and /api/v1/agent-guide.md (#64)."""
+"""Tests for /llms.txt, /api/v1/agent-guide.md, /api/v1/meta/agent-tiers (#64, #85)."""
 
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from datanika.services.agent_docs import agent_doc_routes
+from datanika.services.agent_docs import AGENT_GUIDE_MD, LLMS_TXT, agent_doc_routes
+from datanika.services.agent_tiers import (
+    all_capabilities,
+    capability_count,
+    tier_count,
+)
 
 
 @pytest.fixture
@@ -48,12 +53,26 @@ class TestLlmsTxt:
 
     def test_capabilities_header_has_no_tier_count(self, client):
         # Regression for #80: header used to say "Capabilities (5 tiers)"
-        # while listing 6 items. The "5 tiers" label is internal roadmap
-        # language and doesn't belong in user-facing /llms.txt.
+        # while listing 6 items. The SoT renderer in agent_tiers.py never
+        # emits a hardcoded count — this assertion guards against either
+        # the old "5 tiers" or any new "N tiers" label being re-introduced.
         resp = client.get("/llms.txt")
         assert "## Capabilities" in resp.text
         assert "5 tiers" not in resp.text
+        assert "6 tiers" not in resp.text
         assert "(5 tiers)" not in resp.text
+
+    def test_lists_every_capability_from_sot(self, client):
+        # Every capability defined in agent_tiers.TIERS must appear in
+        # the rendered LLMS_TXT. If you add a new capability to the
+        # SoT, this test passes automatically — no llms.txt edit needed.
+        resp = client.get("/llms.txt")
+        for cap in all_capabilities():
+            assert cap.name in resp.text, f"Capability {cap.name!r} missing from /llms.txt"
+
+    def test_advertises_agent_tiers_json_endpoint(self, client):
+        resp = client.get("/llms.txt")
+        assert "/api/v1/meta/agent-tiers" in resp.text
 
     def test_no_auth_required(self, client):
         resp = client.get("/llms.txt")
@@ -108,3 +127,70 @@ class TestAgentGuide:
     def test_no_auth_required(self, client):
         resp = client.get("/api/v1/agent-guide.md")
         assert resp.status_code == 200
+
+
+class TestAgentTiersJson:
+    def test_returns_200(self, client):
+        resp = client.get("/api/v1/meta/agent-tiers")
+        assert resp.status_code == 200
+
+    def test_content_type_is_json(self, client):
+        resp = client.get("/api/v1/meta/agent-tiers")
+        assert "application/json" in resp.headers["content-type"]
+
+    def test_no_auth_required(self, client):
+        # Same posture as /llms.txt — pre-auth discovery surface.
+        resp = client.get("/api/v1/meta/agent-tiers")
+        assert resp.status_code == 200
+
+    def test_top_level_shape(self, client):
+        data = client.get("/api/v1/meta/agent-tiers").json()
+        assert set(data.keys()) == {
+            "tier_count",
+            "capability_count",
+            "tiers",
+            "golden_path",
+            "error_codes",
+            "ui_only_operations",
+        }
+
+    def test_counts_match_sot(self, client):
+        data = client.get("/api/v1/meta/agent-tiers").json()
+        assert data["tier_count"] == tier_count()
+        assert data["capability_count"] == capability_count()
+
+    def test_tier_count_is_five(self, client):
+        data = client.get("/api/v1/meta/agent-tiers").json()
+        assert data["tier_count"] == 5
+        assert len(data["tiers"]) == 5
+
+    def test_tiers_are_numbered_sequentially(self, client):
+        data = client.get("/api/v1/meta/agent-tiers").json()
+        for expected, tier in enumerate(data["tiers"], start=1):
+            assert tier["number"] == expected
+
+
+class TestSoTWiring:
+    """Guard rails ensuring agent_docs.py renders from the SoT, not hardcoded text."""
+
+    def test_llms_txt_module_constant_is_rendered_from_sot(self):
+        # Every capability name should appear in the module-level constant.
+        # If a future edit hardcodes the markdown back, the SoT addition
+        # of a new capability would fail this test.
+        for cap in all_capabilities():
+            assert cap.name in LLMS_TXT, f"Capability {cap.name!r} missing from LLMS_TXT"
+
+    def test_agent_guide_md_includes_all_error_codes(self):
+        from datanika.services.agent_tiers import ERROR_CODES
+
+        for ec in ERROR_CODES:
+            assert ec.code in AGENT_GUIDE_MD, f"Error code {ec.code!r} missing from agent guide"
+
+    def test_agent_guide_md_includes_all_golden_path_steps(self):
+        from datanika.services.agent_tiers import GOLDEN_PATH_LOOP
+
+        for step in GOLDEN_PATH_LOOP:
+            # Step is a backtick-wrapped endpoint plus prose; the
+            # endpoint substring is the stable part to assert on.
+            endpoint = step.split("`")[1] if "`" in step else step
+            assert endpoint in AGENT_GUIDE_MD, f"Golden path step {endpoint!r} missing"

@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Направите пајплајн",
   "onboarding.step_run": "Покрените пајплајн",
   "onboarding.step_transformation": "Додајте трансформацију",
-  "onboarding.step_schedule": "Закажите пајплајн"
+  "onboarding.step_schedule": "Закажите пајплајн",
+  "notifications.center.title": "Обавештења",
+  "notifications.center.empty": "Нема обавештења за сада",
+  "notifications.center.mark_all_read": "Означи све као прочитано",
+  "notifications.run_failed.title": "Покретање неуспешно",
+  "notifications.run_succeeded.title": "Покретање успешно",
+  "notifications.quota_warning.title": "Упозорење о квоти",
+  "notifications.quota_exceeded.title": "Квота прекорачена",
+  "notifications.dismiss": "Одбаци",
+  "notifications.view_run": "Прикажи покретање"
 }

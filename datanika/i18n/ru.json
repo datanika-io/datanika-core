@@ -400,5 +400,14 @@
   "onboarding.step_pipeline": "Создайте пайплайн",
   "onboarding.step_run": "Запустите пайплайн",
   "onboarding.step_transformation": "Добавьте трансформацию",
-  "onboarding.step_schedule": "Настройте расписание"
+  "onboarding.step_schedule": "Настройте расписание",
+  "notifications.center.title": "Уведомления",
+  "notifications.center.empty": "Уведомлений пока нет",
+  "notifications.center.mark_all_read": "Отметить все как прочитанные",
+  "notifications.run_failed.title": "Запуск не удался",
+  "notifications.run_succeeded.title": "Запуск завершён",
+  "notifications.quota_warning.title": "Предупреждение о квоте",
+  "notifications.quota_exceeded.title": "Квота превышена",
+  "notifications.dismiss": "Скрыть",
+  "notifications.view_run": "Перейти к запуску"
 }

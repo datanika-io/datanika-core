@@ -400,5 +400,15 @@
   "onboarding.step_pipeline": "Créez un pipeline",
   "onboarding.step_run": "Exécutez un pipeline",
   "onboarding.step_transformation": "Ajoutez une transformation",
-  "onboarding.step_schedule": "Planifiez un pipeline"
+  "onboarding.step_schedule": "Planifiez un pipeline",
+  "uploads.load_mode": "Mode de chargement",
+  "uploads.write_disposition": "Mode d'écriture",
+  "tooltip.write_disposition": "Contrôle comment les données sont écrites. append = ajouter, replace = recréer, merge = mettre à jour par clé primaire.",
+  "tooltip.write_disposition_append": "Ajoute de nouvelles lignes sans toucher aux existantes. Idéal pour les journaux.",
+  "tooltip.write_disposition_replace": "Supprime et recrée la table à chaque exécution. Simple pour les petites tables.",
+  "tooltip.write_disposition_merge": "Insère les nouvelles lignes et met à jour les existantes par clé primaire.",
+  "tooltip.incremental_cursor": "Colonne qui ne fait qu'augmenter (updated_at, id). Seules les lignes nouvelles/modifiées sont chargées.",
+  "tooltip.schema_contract": "Comportement lors d'un changement de schéma : evolve = adapter, freeze = rejeter, discard_value = nullifier les nouvelles colonnes.",
+  "tooltip.load_mode": "full_database = toutes les tables. single_table = une table avec contrôle fin.",
+  "tooltip.materialization": "Comment dbt construit le modèle : view = vue, table = table, incremental = nouvelles lignes, ephemeral = CTE inline."
 }

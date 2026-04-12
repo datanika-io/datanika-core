@@ -400,5 +400,15 @@
   "onboarding.step_pipeline": "创建管道",
   "onboarding.step_run": "运行管道",
   "onboarding.step_transformation": "添加转换",
-  "onboarding.step_schedule": "设置定时调度"
+  "onboarding.step_schedule": "设置定时调度",
+  "uploads.load_mode": "加载模式",
+  "uploads.write_disposition": "写入方式",
+  "tooltip.write_disposition": "控制数据写入方式。append = 追加行，replace = 重建表，merge = 按主键更新。",
+  "tooltip.write_disposition_append": "添加新行，不影响已有数据。适用于日志和仅追加表。",
+  "tooltip.write_disposition_replace": "每次运行时删除并重建表。适用于小型查找表。",
+  "tooltip.write_disposition_merge": "按主键插入新行并更新已有行。适用于大表。",
+  "tooltip.incremental_cursor": "只会递增的列（如 updated_at、id）。仅提取新增或变更的行。",
+  "tooltip.schema_contract": "源架构变化时的行为。evolve = 自动适应，freeze = 拒绝，discard_value = 新列置空。",
+  "tooltip.load_mode": "full_database = 同步所有表。single_table = 单表，精细控制写入和主键。",
+  "tooltip.materialization": "dbt 构建方式：view = 视图，table = 物理表，incremental = 仅新增行，ephemeral = 内联 CTE。"
 }

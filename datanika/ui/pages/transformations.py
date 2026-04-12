@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.sql_autocomplete import (
@@ -204,7 +205,12 @@ def transformation_form() -> rx.Component:
             ref_hidden_buttons(),
             rx.script(REF_AUTOCOMPLETE_JS),
             _sql_action_buttons(),
-            rx.text(_t["transformations.materialization"], size="2", weight="bold"),
+            rx.hstack(
+                rx.text(_t["transformations.materialization"], size="2", weight="bold"),
+                info_tooltip("tooltip.materialization"),
+                align="center",
+                spacing="1",
+            ),
             rx.select(
                 ["view", "table", "incremental", "ephemeral"],
                 value=TransformationState.form_materialization,

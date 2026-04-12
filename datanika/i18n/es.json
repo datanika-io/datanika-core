@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "Advertencia de cuota",
   "notifications.quota_exceeded.title": "Cuota excedida",
   "notifications.dismiss": "Descartar",
-  "notifications.view_run": "Ver ejecución"
+  "notifications.view_run": "Ver ejecución",
+  "templates.heading": "Plantillas de pipeline",
+  "templates.subtitle": "Inicios preconfigurados que evitan decisiones aburridas. Elige uno, introduce tus credenciales y consigue una canalización funcional en minutos.",
+  "templates.use_this_template": "Usar esta plantilla",
+  "templates.help_text": "Las plantillas solo rellenan valores no sensibles: esquemas, puertos, selección de tablas. Las credenciales las introduces siempre tú.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "Lleva clientes, cargos, facturas y suscripciones de Stripe a tu almacén Postgres para análisis de ingresos.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "Sincroniza tu base de datos operativa Postgres con BigQuery — la canalización analítica más común.",
+  "templates.csv_to_duckdb.name": "Subida de CSV → DuckDB",
+  "templates.csv_to_duckdb.description": "Arrastra un CSV y consúltalo al instante con DuckDB. Sin credenciales — la forma más rápida de probar Datanika.",
+  "pipelines.empty_heading": "Aún no hay canalizaciones",
+  "pipelines.empty_subtitle": "Comienza con una plantilla preconfigurada o desplázate para crear una desde cero.",
+  "pipelines.start_from_template": "Empezar con una plantilla"
 }

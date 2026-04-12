@@ -419,5 +419,18 @@
   "notifications.quota_warning.title": "تحذير الحصة",
   "notifications.quota_exceeded.title": "تجاوز الحصة",
   "notifications.dismiss": "تجاهل",
-  "notifications.view_run": "عرض التشغيل"
+  "notifications.view_run": "عرض التشغيل",
+  "templates.heading": "قوالب خطوط الأنابيب",
+  "templates.subtitle": "نقاط بداية معدّة مسبقًا تتخطى القرارات المملة. اختر واحدة، أدخل بيانات الاعتماد، واحصل على خط أنابيب يعمل خلال دقائق.",
+  "templates.use_this_template": "استخدم هذا القالب",
+  "templates.help_text": "تملأ القوالب فقط القيم الافتراضية غير الحساسة — المخططات والمنافذ واختيارات الجداول. تدخل بيانات الاعتماد دائمًا بنفسك.",
+  "templates.stripe_to_postgres.name": "Stripe → PostgreSQL",
+  "templates.stripe_to_postgres.description": "حمّل عملاء Stripe والمدفوعات والفواتير والاشتراكات في مستودع Postgres الخاص بك لتحليل الإيرادات.",
+  "templates.postgres_to_bigquery.name": "PostgreSQL → BigQuery",
+  "templates.postgres_to_bigquery.description": "زامن قاعدة بيانات Postgres التشغيلية الخاصة بك مع BigQuery — أكثر خطوط الأنابيب التحليلية شيوعًا.",
+  "templates.csv_to_duckdb.name": "رفع CSV → DuckDB",
+  "templates.csv_to_duckdb.description": "اسحب ملف CSV واستعلم عنه فورًا باستخدام DuckDB. لا حاجة لبيانات اعتماد — أسرع طريقة لتجربة Datanika.",
+  "pipelines.empty_heading": "لا توجد خطوط أنابيب بعد",
+  "pipelines.empty_subtitle": "ابدأ من قالب معدّ مسبقًا، أو مرر للأسفل لبناء واحد من الصفر.",
+  "pipelines.start_from_template": "ابدأ من قالب"
 }

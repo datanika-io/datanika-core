@@ -336,8 +336,51 @@ def pipelines_table() -> rx.Component:
     )
 
 
+def pipelines_empty_state() -> rx.Component:
+    """First-time CTA shown when the user has zero pipelines.
+
+    Surfaces the templates page as the recommended path. The form below
+    stays available for users who want to skip templates and configure
+    everything by hand.
+    """
+    return rx.card(
+        rx.vstack(
+            rx.icon("sparkles", size=32, color="var(--accent-9)"),
+            rx.heading(_t["pipelines.empty_heading"], size="5"),
+            rx.text(
+                _t["pipelines.empty_subtitle"],
+                size="2",
+                color="var(--slate-11)",
+                text_align="center",
+            ),
+            rx.link(
+                rx.button(
+                    _t["pipelines.start_from_template"],
+                    size="3",
+                ),
+                href="/pipelines/templates",
+                underline="none",
+            ),
+            spacing="3",
+            align="center",
+            padding_y="2rem",
+        ),
+        width="100%",
+    )
+
+
 def pipelines_page() -> rx.Component:
     return page_layout(
-        rx.vstack(pipeline_form(), pipelines_table(), spacing="6", width="100%"),
+        rx.vstack(
+            rx.cond(
+                PipelineState.pipelines.length() == 0,
+                pipelines_empty_state(),
+                rx.fragment(),
+            ),
+            pipeline_form(),
+            pipelines_table(),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.pipelines"],
     )

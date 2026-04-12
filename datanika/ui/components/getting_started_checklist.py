@@ -79,7 +79,7 @@ def getting_started_checklist() -> rx.Component:
                 _step_row(
                     OnboardingState.progress.has_pipeline,
                     _t["onboarding.step_pipeline"],
-                    "/pipelines",
+                    "/pipelines/templates",
                 ),
                 _step_row(
                     OnboardingState.progress.has_run,

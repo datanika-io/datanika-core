@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
@@ -32,10 +33,15 @@ def _mode_fields() -> rx.Component:
                     on_change=UploadState.set_form_table,
                     width="100%",
                 ),
-                rx.checkbox(
-                    _t["uploads.enable_incremental"],
-                    checked=UploadState.form_enable_incremental,
-                    on_change=UploadState.set_form_enable_incremental,
+                rx.hstack(
+                    rx.checkbox(
+                        _t["uploads.enable_incremental"],
+                        checked=UploadState.form_enable_incremental,
+                        on_change=UploadState.set_form_enable_incremental,
+                    ),
+                    info_tooltip("tooltip.incremental_cursor"),
+                    align="center",
+                    spacing="1",
                 ),
                 rx.cond(
                     UploadState.form_enable_incremental,
@@ -184,14 +190,24 @@ def upload_form() -> rx.Component:
             rx.cond(
                 ~UploadState.form_is_non_sql_source,
                 rx.vstack(
-                    # Mode selection
+                    rx.hstack(
+                        rx.text(_t["uploads.load_mode"], size="2", weight="bold"),
+                        info_tooltip("tooltip.load_mode"),
+                        align="center",
+                        spacing="1",
+                    ),
                     rx.select(
                         ["full_database", "single_table"],
                         value=UploadState.form_mode,
                         on_change=UploadState.set_form_mode,
                         width="100%",
                     ),
-                    # Write disposition
+                    rx.hstack(
+                        rx.text(_t["uploads.write_disposition"], size="2", weight="bold"),
+                        info_tooltip("tooltip.write_disposition"),
+                        align="center",
+                        spacing="1",
+                    ),
                     rx.select(
                         ["append", "replace", "merge"],
                         value=UploadState.form_write_disposition,
@@ -241,7 +257,12 @@ def upload_form() -> rx.Component:
                 width="100%",
             ),
             # Schema contract
-            rx.text(_t["uploads.schema_contract"], size="2", weight="bold"),
+            rx.hstack(
+                rx.text(_t["uploads.schema_contract"], size="2", weight="bold"),
+                info_tooltip("tooltip.schema_contract"),
+                align="center",
+                spacing="1",
+            ),
             rx.hstack(
                 rx.text(_t["uploads.tables"], size="2", weight="bold", width="33%"),
                 rx.text(_t["uploads.columns"], size="2", weight="bold", width="33%"),

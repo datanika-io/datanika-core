@@ -20,6 +20,8 @@ import datanika.ui.analytics as analytics_module
 from datanika.config import settings
 from datanika.ui.analytics import (
     ANALYTICS_EVENTS,
+    google_ads_conversion_event_js,
+    google_ads_head_components,
     plausible_head_component,
 )
 
@@ -32,6 +34,16 @@ def reset_analytics_settings():
     yield
     settings.analytics_domain = original_domain
     settings.analytics_script_src = original_src
+
+
+@pytest.fixture
+def reset_google_ads_settings():
+    """Snapshot + restore Google Ads settings around each test."""
+    original_tag_id = settings.google_ads_tag_id
+    original_label = settings.google_ads_conversion_label_signup
+    yield
+    settings.google_ads_tag_id = original_tag_id
+    settings.google_ads_conversion_label_signup = original_label
 
 
 class TestAnalyticsEvents:
@@ -94,6 +106,101 @@ class TestPlausibleHeadComponent:
         # The rendered string should mention the configured domain and src.
         assert "app.datanika.io" in rendered
         assert "plausible.datanika.io" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Google Ads head components: gtag.js loader + init script, dormant-by-default
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleAdsHeadComponents:
+    def test_returns_empty_list_when_tag_id_empty(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = ""
+        settings.google_ads_conversion_label_signup = "EHgmCLWVmpscEM_1-K1D"
+        assert google_ads_head_components() == []
+
+    def test_returns_empty_list_when_both_empty(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = ""
+        settings.google_ads_conversion_label_signup = ""
+        assert google_ads_head_components() == []
+
+    def test_returns_components_when_tag_id_set(self, reset_google_ads_settings):
+        # Only tag_id is required to emit the gtag loader — the conversion
+        # label is only needed to fire the signup event. We intentionally
+        # allow tag_id alone so the gtag global can load even before the
+        # conversion label is wired (e.g. during staged rollout).
+        settings.google_ads_tag_id = "AW-18081528527"
+        settings.google_ads_conversion_label_signup = ""
+        components = google_ads_head_components()
+        assert isinstance(components, list)
+        assert len(components) >= 1
+
+    def test_components_carry_tag_id(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        settings.google_ads_conversion_label_signup = "EHgmCLWVmpscEM_1-K1D"
+        rendered = "".join(str(c) for c in google_ads_head_components())
+        assert "AW-18081528527" in rendered
+
+    def test_components_reference_googletagmanager_loader(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        rendered = "".join(str(c) for c in google_ads_head_components())
+        assert "googletagmanager.com/gtag/js" in rendered
+
+    def test_components_include_gtag_config_call(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        rendered = "".join(str(c) for c in google_ads_head_components())
+        # The init script should call gtag('config', 'AW-...').
+        assert "gtag(" in rendered or "gtag (" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Google Ads conversion event JS builder — pure function, easy to unit test
+# ---------------------------------------------------------------------------
+
+
+class TestGoogleAdsConversionEventJs:
+    def test_returns_empty_string_when_label_empty(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        assert google_ads_conversion_event_js("") == ""
+
+    def test_returns_empty_string_when_tag_id_empty(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = ""
+        assert google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D") == ""
+
+    def test_contains_window_gtag_guard(self, reset_google_ads_settings):
+        # The JS must guard on window.gtag so it's a silent no-op when
+        # gtag.js hasn't loaded (staged rollout, local dev, etc).
+        settings.google_ads_tag_id = "AW-18081528527"
+        js = google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D")
+        assert "window.gtag" in js
+        assert "&&" in js
+
+    def test_contains_conversion_event_name(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        js = google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D")
+        assert "'conversion'" in js or '"conversion"' in js
+
+    def test_send_to_uses_tag_id_and_label(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        js = google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D")
+        assert "AW-18081528527/EHgmCLWVmpscEM_1-K1D" in js
+
+    def test_sets_value_and_currency(self, reset_google_ads_settings):
+        settings.google_ads_tag_id = "AW-18081528527"
+        js = google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D")
+        assert "'value'" in js or '"value"' in js
+        assert "1.0" in js
+        assert "'currency'" in js or '"currency"' in js
+        assert "EUR" in js
+
+    def test_no_python_format_leaks(self, reset_google_ads_settings):
+        # Regression: make sure the JS doesn't contain unrendered {placeholder}
+        # tokens from an accidental raw f-string template.
+        settings.google_ads_tag_id = "AW-18081528527"
+        js = google_ads_conversion_event_js("EHgmCLWVmpscEM_1-K1D")
+        assert "{label}" not in js
+        assert "{tag_id}" not in js
+        assert "{send_to}" not in js
 
 
 # ---------------------------------------------------------------------------

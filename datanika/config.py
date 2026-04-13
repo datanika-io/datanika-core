@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     recaptcha_site_key: str = ""
     recaptcha_secret_key: str = ""
 
+    # Analytics (Plausible CE) — issue #92. Both must be set to enable.
+    # When either is empty, no script tag is emitted and inline event
+    # scripts become no-ops. This lets the code ship before Infra creates
+    # the app.datanika.io site in the Plausible dashboard.
+    analytics_domain: str = ""
+    analytics_script_src: str = ""
+
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 

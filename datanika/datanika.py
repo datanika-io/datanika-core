@@ -3,6 +3,7 @@ import reflex as rx
 from datanika.config import settings as _settings
 from datanika.logging_config import setup_logging
 from datanika.scheduler import scheduler_integration
+from datanika.ui.analytics import plausible_head_component
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
@@ -41,11 +42,18 @@ from datanika.ui.state.upload_state import UploadState
 
 setup_logging(debug=_settings.debug)
 
-app = rx.App(
-    head_components=[
-        rx.el.link(rel="icon", href="/favicon.ico", type="image/x-icon"),
-    ],
-)
+# Analytics head tag is conditional — gated on settings.analytics_domain +
+# settings.analytics_script_src (issue #92). Returns None when disabled,
+# in which case the inline event scripts in the UI become no-ops on the
+# client because window.plausible is undefined.
+_head_components: list[rx.Component] = [
+    rx.el.link(rel="icon", href="/favicon.ico", type="image/x-icon"),
+]
+_plausible = plausible_head_component()
+if _plausible is not None:
+    _head_components.append(_plausible)
+
+app = rx.App(head_components=_head_components)
 
 # Load cloud plugin if running in cloud edition
 if _settings.datanika_edition == "cloud":

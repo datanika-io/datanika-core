@@ -1,5 +1,16 @@
 # Datanika AI Import Guide
 
+> **If you have an API key, use the REST API directly instead.** This file describes the JSON-file-import path for agents helping a human user through the UI. Autonomous agents with credentials have a cleaner option:
+>
+> - [`/llms.txt`](https://app.datanika.io/llms.txt) — discovery document, no auth required
+> - [`/api/v1/agent-guide.md`](https://app.datanika.io/api/v1/agent-guide.md) — 17-step golden-path loop
+> - [`/api/v1/openapi.json`](https://app.datanika.io/api/v1/openapi.json) — OpenAPI spec with typed inline schemas per connector
+> - [`/api/v1/meta/agent-tiers`](https://app.datanika.io/api/v1/meta/agent-tiers) — JSON description of the 5-tier capability stack
+>
+> The REST API supports compile + preview validation, typed error codes, `?wait=true` for synchronous completion, `Idempotency-Key` for safe retries, and run cancellation. The rest of this document covers the UI-import flow for agents without API access.
+
+---
+
 You are helping a user set up data pipelines in Datanika. The user will describe what they want in natural language. Your job is to produce a JSON file that they can upload to Datanika via **Settings > Import File**.
 
 ## JSON Format (version 2)

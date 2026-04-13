@@ -72,3 +72,63 @@ class TestAuthStateFormFields:
         sig = inspect.signature(fn)
         params = list(sig.parameters.keys())
         assert "form_data" in params
+
+    def test_signup_imports_google_ads_conversion_helper(self):
+        """Regression for #96: auth_state must import the conversion-event
+        helper so the signup success path can fire it. A future refactor
+        that drops this import silently breaks Google Ads attribution.
+        """
+        import datanika.ui.state.auth_state as auth_state_module
+
+        assert hasattr(auth_state_module, "google_ads_conversion_event_js"), (
+            "auth_state.py must import google_ads_conversion_event_js from "
+            "datanika.ui.analytics so signup() can fire the Phase 2 "
+            "conversion event. See issue #96."
+        )
+
+    def test_signup_source_references_call_script_and_conversion_helper(self):
+        """Source scan: signup() must reference both rx.call_script and the
+        conversion helper. Catches regressions that drop the event fire
+        while keeping the import intact (e.g. "oops, removed one call").
+        """
+        import inspect
+
+        import datanika.ui.state.auth_state as auth_state_module
+
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+        assert "google_ads_conversion_event_js" in source, (
+            "signup() no longer calls google_ads_conversion_event_js — "
+            "the Phase 2 conversion event will not fire"
+        )
+        assert "call_script" in source, (
+            "signup() no longer returns rx.call_script — the conversion "
+            "event JS will not be sent to the client"
+        )
+
+
+class TestConfigHasGoogleAdsSettings:
+    """Regression for #96: settings fields must exist so the dormant
+    check in google_ads_conversion_event_js() doesn't AttributeError.
+    """
+
+    def test_google_ads_tag_id_exists(self):
+        from datanika.config import settings
+
+        assert hasattr(settings, "google_ads_tag_id")
+        assert isinstance(settings.google_ads_tag_id, str)
+
+    def test_google_ads_conversion_label_signup_exists(self):
+        from datanika.config import settings
+
+        assert hasattr(settings, "google_ads_conversion_label_signup")
+        assert isinstance(settings.google_ads_conversion_label_signup, str)
+
+    def test_defaults_are_empty_strings(self):
+        # Dormant-by-default contract: the test environment must not
+        # accidentally emit live gtag scripts. Empty string is the
+        # dormant signal in both analytics.py helpers.
+        from datanika.config import Settings
+
+        fresh = Settings()
+        assert fresh.google_ads_tag_id == ""
+        assert fresh.google_ads_conversion_label_signup == ""

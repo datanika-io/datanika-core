@@ -55,7 +55,8 @@ This document describes the internal architecture, design patterns, and technica
 | **UI State** | `datanika/ui/state/` | Reflex state classes — bridge between UI and services |
 | **UI Pages** | `datanika/ui/pages/` | Route handlers returning Reflex components |
 | **UI Components** | `datanika/ui/components/` | Reusable building blocks |
-| **Hooks** | `datanika/hooks.py` | Event bus for plugin extensibility |
+| **Hooks** | `datanika/hooks.py` | Event bus for plugin extensibility (`on`/`emit`/`collect_events`) |
+| **Plugin Registry** | `datanika/plugin_registry.py` | Plugin-contributed head components + per-page inline scripts |
 | **i18n** | `datanika/i18n/` | Translation JSON files (9 locales) and loader |
 | **Migrations** | `migrations/` | Alembic database migrations |
 
@@ -85,7 +86,7 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Package Manager** | uv |
 | **Linting** | Ruff |
 | **i18n** | 9 languages (en, ru, el, de, fr, es, zh, ar, sr) with runtime switching |
-| **Testing** | pytest + pytest-asyncio, SQLite in-memory (1224 unit + 73 security + 22 E2E) |
+| **Testing** | pytest + pytest-asyncio, SQLite in-memory, 1,700+ tests across unit / security / E2E |
 | **Monitoring** | Prometheus (metrics collection), Grafana (dashboards), Node Exporter (host metrics), cAdvisor (container metrics) |
 
 ## Database Design
@@ -111,7 +112,9 @@ All configuration tables live in the `public` schema, isolated by `org_id`. Data
 
 `PUBLIC_TABLES` in `migrations/helpers.py` must include every model table name or Alembic won't generate migrations for them.
 
-### Tables (15)
+### Tables (18 core + 3 cloud-plugin)
+
+`PUBLIC_TABLES` in `migrations/helpers.py` is the canonical list. The 3 cloud-plugin tables (`plans`, `subscriptions`, `usage_ledger`) live alongside core tables in the `public` schema — they're owned by `datanika-cloud` and only populated when `DATANIKA_EDITION=cloud`.
 
 | Table | Model File | Description |
 |-------|-----------|-------------|
@@ -130,6 +133,9 @@ All configuration tables live in the `public` schema, isolated by `org_id`. Data
 | `catalog_entries` | `catalog_entry.py` | Data catalog (schemas, tables, columns) |
 | `uploaded_files` | `uploaded_file.py` | File upload references |
 | `invitations` | `invitation.py` | Pending org invitations (email, role, JWT token, expiry) |
+| `sso_configs` | `sso_config.py` | SAML/OIDC SSO configuration per org (Enterprise plan) |
+| `notification_channels` | `notification_channel.py` | Slack/Telegram/Email/Webhook channel definitions per org |
+| `notifications` | `notification.py` | In-app notification records (unread count, category, action URL) |
 
 ### Async Session Management
 
@@ -237,24 +243,44 @@ A generic event bus (`datanika/hooks.py`) for plugin extensibility. Plugins (lik
 ### API
 
 ```python
-from datanika.hooks import on, off, emit, clear
+from datanika.hooks import on, off, emit, collect_events, clear
 
-on(event, handler)      # Register a handler for an event
-off(event, handler)     # Remove a handler
-emit(event, **kwargs)   # Emit event to all registered handlers
-clear()                 # Remove all handlers (testing)
+on(event, handler)              # Register a handler for an event
+off(event, handler)             # Remove a handler
+emit(event, **kwargs)           # Emit event to all registered handlers (return values discarded)
+collect_events(event, **kwargs) # Emit + gather non-None handler returns into a flat list
+clear()                         # Remove all handlers (testing)
 ```
+
+`collect_events` is the emit variant used when core code needs to splice plugin-contributed return values into its own. List returns are flattened one level, `None` returns are skipped, scalar returns are appended, handler order is preserved. The signup flow uses it to let the cloud plugin contribute an `rx.call_script` (Google Ads conversion) that core then splices into its post-signup Reflex event list before the redirect.
 
 ### Events Emitted by Core
 
-| Event | Emitted By | kwargs | Purpose |
-|-------|-----------|--------|---------|
-| `connection.before_create` | `connection_service.py` | `session`, `org_id` | Pre-creation hook for quota checks |
-| `schedule.before_create` | `schedule_service.py` | `session`, `org_id` | Pre-creation hook for quota checks |
-| `membership.before_create` | `user_service.py` | `session`, `org_id` | Pre-creation hook for seat limit checks |
-| `run.upload_completed` | `upload_tasks.py` | `org_id`, `table_count` | Post-upload metering |
-| `run.models_completed` | `pipeline_tasks.py` | `org_id`, `count` | Post-pipeline metering (billable model runs) |
-| `run.transformation_completed` | `transformation_tasks.py` | `org_id` | Post-transformation metering |
+| Event | Emitted By | kwargs | Purpose | Collector |
+|-------|-----------|--------|---------|-----------|
+| `connection.before_create` | `connection_service.py` | `session`, `org_id` | Pre-creation hook for quota checks | `emit` |
+| `schedule.before_create` | `schedule_service.py` | `session`, `org_id` | Pre-creation hook for quota checks | `emit` |
+| `membership.before_create` | `user_service.py` | `session`, `org_id` | Pre-creation hook for seat limit checks | `emit` |
+| `sso_config.before_create` | `sso_service.py` | `session`, `org_id` | Pre-creation hook for SSO-on-Enterprise quota | `emit` |
+| `run.before_execute` | `upload_tasks.py`, `pipeline_tasks.py`, `transformation_tasks.py` | `session`, `org_id` | Pre-execution hook for run quota (Free plan hard cap) | `emit` |
+| `run.upload_completed` | `upload_tasks.py` | `org_id`, `table_count` | Post-upload metering | `emit` |
+| `run.models_completed` | `pipeline_tasks.py` | `org_id`, `count` | Post-pipeline metering (billable model runs) | `emit` |
+| `run.transformation_completed` | `transformation_tasks.py` | `org_id` | Post-transformation metering | `emit` |
+| `user.signup_completed` | `ui/state/auth_state.py::signup` | `user_id` | Post-signup, plugins can contribute Reflex events (e.g. conversion tracking) | `collect_events` |
+
+Handlers raising exceptions propagate to the emitter — this is how quota enforcement blocks resource creation (cloud's `QuotaExceededError` subclasses `ValueError`).
+
+## Plugin Registry
+
+`datanika/plugin_registry.py` is the other half of the plugin seam. It lets a plugin contribute UI artifacts (head components, per-page inline scripts) into the Reflex app without the core page files importing the plugin. Two halves:
+
+**Head components**: `register_head_component(c)` + `plugin_head_components() -> list[rx.Component]`. Plugin calls `register_head_component` during its early bootstrap phase; `datanika/datanika.py` reads the list and includes it in `rx.App(head_components=[...])` before construction.
+
+**Page scripts**: `register_page_script(page_key, js)` + `get_page_scripts(page_key) -> list[rx.Component]`. Plugin registers inline JS under a short key like `pipeline_templates` or `connections`; core page functions splat the result with `*get_page_scripts("pipeline_templates")`. In open-source builds with no plugin loaded, `get_page_scripts` returns `[]` and no scripts are emitted.
+
+Both halves are additive — there's no `unregister` API. Plugins register once at module import time and stay registered for the process lifetime.
+
+This seam is how the cloud plugin contributes Plausible + Google Ads instrumentation without a single SaaS-specific reference in the open-source core.
 
 ## Configuration
 
@@ -287,11 +313,18 @@ All settings are managed via Pydantic Settings (`datanika/config.py`), loaded fr
 
 ### App Entry Point (`datanika/datanika.py`)
 
-1. `rx.App()` creates the Reflex application
-2. Pages registered via `app.add_page()` — protected pages include `on_load=[AuthState.check_auth, ...]`
-3. OAuth Starlette routes appended to `app._api.routes`
-4. APScheduler started and synced on app startup
-5. If `DATANIKA_EDITION=cloud`, calls `init_cloud(app)` to bootstrap the billing plugin
+The startup flow is a strict two-phase cloud plugin init, load-bearing because plugin-contributed head components must reach `rx.App(head_components=[...])` at construction time:
+
+1. **Phase 1 — `bootstrap_cloud()` (if `DATANIKA_EDITION=cloud`)**. Runs *before* `rx.App(...)`. The plugin subscribes every hook handler (metering, quota, signup conversion, …) and contributes head components + per-page inline scripts into `plugin_registry`. No app instance exists yet.
+2. **`_head_components` assembled** — favicon + `plugin_head_components()`.
+3. **`rx.App(head_components=_head_components)` constructs the Reflex app.**
+4. **Phase 2 — `init_cloud(app)` (if `DATANIKA_EDITION=cloud`)**. Runs *after* `rx.App(...)`. Registers the billing page, sidebar link, i18n overrides, and Paddle webhook route — all concerns that need the live app instance.
+5. **Core pages registered** via `app.add_page()` — protected pages include `on_load=[AuthState.check_auth, ...]`.
+6. **Core Starlette routes appended** to `app._api.routes` — OAuth, email verification, SSO, REST API v1, discovery meta routes, agent docs (`/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/meta/agent-tiers`), OpenAPI/Swagger, health checks, Prometheus metrics.
+7. **APScheduler started and synced** on app startup.
+8. **Notification hooks wired** (`NotificationService.register_hooks` + `register_in_app_notification_hooks`) for run-completion fanout to channels and the in-app notification center.
+
+The two-phase split is pinned by `tests/test_app_plugin_init.py::TestCloudInitOrdering`, which source-scans `datanika.py` and fails if `bootstrap_cloud()` moves after `rx.App(...)` or `init_cloud(app)` moves before it.
 
 ### State Pattern
 
@@ -300,6 +333,78 @@ State classes in `ui/state/` bridge UI and services. Common patterns:
 - **Edit/Copy**: `editing_*_id: int = 0` (0 = create mode, >0 = edit mode). `save_*()` branches on this value.
 - **Connection options**: formatted as `"{id} — {name} ({type})"` for select dropdowns
 - **Name resolution**: build `{id: name}` dicts from service list methods for display
+
+## AI Agent Compatibility
+
+Datanika exposes a 5-tier capability stack designed for autonomous LLM agents to build complete data pipelines without human intervention. The surface is intentionally narrow — an agent only needs to learn five idea-clusters before it can go end-to-end.
+
+### The five tiers
+
+| Tier | Name | What it gives the agent |
+|------|------|-------------------------|
+| 1 | Discover & Introspect | Full JSON Schema for every connection type, dlt config, dbt test, and materialization via `/api/v1/meta/*`; list tables, inspect columns, preview rows, run read-only SQL on any source connection |
+| 2 | Build | Full CRUD for connections, uploads, pipelines, transformations, schedules, notification channels |
+| 3 | Validate | Compile dbt transformations without touching the warehouse (`POST /transformations/{id}/compile`); preview output rows via a sandboxed `SELECT * FROM (...) LIMIT N` (`POST /transformations/{id}/preview`). Both surface typed error codes |
+| 4 | Execute & Control | `POST /{resource}/{id}/run?wait=true` for synchronous completion (default 120s, max 300s), `POST /runs/{id}/cancel`, `Idempotency-Key` header for safe retry, `/runs`, `/runs/{id}/logs`, `/catalog` |
+| 5 | Machine-Readable Discovery | Plain-text / Markdown / JSON documents an agent fetches without auth before it has an API key: `/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/openapi.json`, `/api/v1/meta/agent-tiers` |
+
+### Single source of truth
+
+`datanika/services/agent_tiers.py` is a pure-Python frozen-dataclass module that defines the 5-tier structure, the 7-capability decomposition, the 17-step golden-path loop, the 6 typed error codes (`compilation_error`, `execution_error`, `missing_destination`, `unsafe_sql`, `invalid_request`, `not_cancellable`), and the 6 UI-only operations. `services/agent_docs.py` renders `LLMS_TXT` and `AGENT_GUIDE_MD` from this SoT at import time, and `GET /api/v1/meta/agent-tiers` serializes the same structure as JSON. Consumers (landing site, blog posts, docs) fetch the JSON endpoint at build time instead of hardcoding tier counts — this makes the 5-vs-6 drift bug class (core PR #80, landing PR #97) structurally impossible.
+
+### Typed error codes
+
+Tier 3/4 endpoints return a new typed `error_code` field alongside the human message, built via `_typed_error()` in the API middleware. Agents branch on the error class without regex-matching messages. Error code invariants are frozen by contract tests in `tests/test_services/test_agent_tiers.py`.
+
+### Inline OpenAPI schemas with discriminator
+
+`datanika/services/openapi_inline.py` walks the `CONFIG_SCHEMAS` dict at import time and injects per-connector config schemas into the OpenAPI spec as a `oneOf` with a discriminator on `connection_type`. Adding a new connection type auto-updates the spec — zero manual sync. OpenAPI 3.0.3 native discriminator was chosen over `allOf` / JSON Schema `if/then` because it's the widest-supported pattern across LLM agents and codegen tools.
+
+### Compile + preview safety
+
+`transformation_compile.py` runs `dbt compile` via `dbtRunner().invoke()`, wraps the resulting SQL in `SELECT * FROM (...) LIMIT N`, and re-validates via `is_select_only()` before executing against the warehouse. Defense in depth: a compromised or buggy dbt compile output cannot reach DDL/DML. The read-only guard uses regex word boundaries (not a full SQL parser) for lightness while still rejecting DDL, DML, multi-statement, and CTE-with-mutation payloads.
+
+## Notification Center
+
+Datanika has two notification surfaces that share the same `notifications` table:
+
+**In-app notification center** — bell icon in the top header (`datanika/ui/components/notification_bell.py` built on `rx.popover`), drop-down with unread count, category, and action URL per entry. Managed by `notification_center_state.py` + `services/in_app_notification_service.py`. Hooks in `services/in_app_notification_hooks.py` create `Notification` rows on run completion events (upload / pipeline / transformation) — no explicit API calls from the task code.
+
+**Channel fanout** — `notification_channels` table stores per-org Slack / Telegram / Email / Webhook channel definitions, `services/notification_service.py` routes events to each configured channel, and `register_hooks()` subscribes to the same `run.*_completed` events.
+
+REST API surface (5 endpoints, all tenant-scoped):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/notifications` | List notifications for the current user |
+| `GET` | `/api/v1/notifications/unread_count` | Poll for badge count |
+| `POST` | `/api/v1/notifications/{id}/mark_read` | Mark a single notification read |
+| `POST` | `/api/v1/notifications/mark_all_read` | Mark every notification read |
+| `POST` | `/api/v1/notifications/channels` | CRUD for channel definitions (also used by the Settings page) |
+
+The whole subsystem was shipped in PR #70 (backend) + PR #74 (UI). Bell dropdown conversion from hand-rolled `rx.box` to `rx.popover.root` was a PR #82 regression fix; the audit confirmed `notification_bell.py` was the only hand-rolled popover in `datanika/ui/`.
+
+## Pipeline Templates
+
+`datanika/data/pipeline_templates.py` defines `LAUNCH_TEMPLATES` — a frozen list of `PipelineTemplate` dataclasses, each with a slug, source/destination type, icon names, and i18n-key references for the display name + description. Three templates ship today:
+
+- **Stripe → Postgres** — Stripe source connector → Postgres destination, pre-seeded with an incremental `orders` upload
+- **Postgres → BigQuery** — warehouse replication starter
+- **CSV → DuckDB** — zero-credentials template for first-touch users, no external service required
+
+`/pipelines/templates` (`ui/pages/pipeline_templates.py`) renders a grid of `_template_card` components. Clicking a card navigates to `/connections?template=<slug>`; `ConnectionState.load_template_from_query` runs `on_load`, matches the slug against the registry, and prefills the connection form so the user only enters credentials. `data-template-slug` attributes on each card are preserved even in open-source builds so plugin-contributed click listeners (registered via `plugin_registry.register_page_script`) can delegate off a single document-level listener.
+
+## Plugin Extension Points (open-core)
+
+Core stays open-source; SaaS concerns live in `datanika-cloud`. The seam is:
+
+1. **`datanika/hooks.py`** — event bus (see §Hooks System)
+2. **`datanika/plugin_registry.py`** — head component + page script registries
+3. **Two-phase cloud init in `datanika/datanika.py`** — `bootstrap_cloud()` before `rx.App(...)`, `init_cloud(app)` after
+
+These three seams are used by the cloud plugin to contribute Plausible + Google Ads telemetry, Paddle webhook routes, billing UI, quota enforcement, usage metering, and the signup conversion tracking event — without a single SaaS-specific reference leaking into the open-source core. A regression test on the cloud side (`TestNoAnalyticsLeakIntoCore`) walks the `datanika/` package tree and fails on any future leak, making the separation load-bearing.
+
+Adding a new extension point to the core is intentionally a high-friction operation: it's a plugin API boundary, not general-purpose refactoring surface. Prefer putting new plugin functionality behind existing hooks or the plugin_registry halves before proposing a new seam.
 
 ## Docker Compose
 
@@ -344,15 +449,16 @@ All services are defined in `docker-compose.yml` (requires `source .env.docker` 
 - **Layout**: Test files mirror source — `datanika/services/foo.py` → `tests/test_services/test_foo.py`
 - **TDD**: Failing test first, then implementation, then refactor
 - **Bug fixes**: Every fix requires a regression test
-- **Test files**: 62 files across 7 directories (`test_models/`, `test_services/`, `test_tasks/`, `test_ui/`, `test_i18n/`, `test_migrations/`, `test_security/`, plus top-level hook tests)
-- **Security tests**: 73 tests covering injection, path traversal, auth attacks, input validation, tenant isolation
-- **E2E tests**: 22 tests in `datanika-examples/tests/` running against real Docker databases
+- **Test count**: 1,700+ across unit / service / UI / migration / security suites (see `pytest tests/ --collect-only -q` for the live number)
+- **Test directories**: `test_models/`, `test_services/`, `test_tasks/`, `test_ui/`, `test_i18n/`, `test_migrations/`, `test_security/`, plus top-level `test_hooks.py`, `test_hooks_integration.py`, `test_plugin_registry.py`, `test_app_plugin_init.py`
+- **Security tests**: coverage for injection, path traversal, auth attacks, input validation, tenant isolation
+- **E2E tests**: `datanika-examples/tests/` running against real Docker databases (Postgres, MySQL, MSSQL, MongoDB seed scripts + Compose)
 
 ## Project Structure
 
 ```
 datanika/
-├── models/            # SQLAlchemy ORM (15 tables)
+├── models/            # SQLAlchemy ORM (18 core tables + 3 cloud-plugin tables)
 │   ├── base.py        #   Base, TimestampMixin, TenantMixin
 │   ├── user.py        #   User, Organization, Membership
 │   ├── connection.py  #   Connection (encrypted credentials)
@@ -366,11 +472,15 @@ datanika/
 │   ├── audit_log.py   #   Audit trail
 │   ├── catalog_entry.py   # Data catalog
 │   ├── uploaded_file.py   # File upload references
-│   └── invitation.py     # Pending org invitations
-├── hooks.py           # Event bus (on/off/emit/clear)
+│   ├── invitation.py  #   Pending org invitations
+│   ├── sso_config.py  #   SAML/OIDC SSO config per org (Enterprise)
+│   ├── notification_channel.py  # Slack/Telegram/Email/Webhook channel defs
+│   └── notification.py  # In-app notification records
+├── hooks.py           # Event bus (on/off/emit/collect_events/clear)
+├── plugin_registry.py # Plugin head component + page script registry
 ├── config.py          # Pydantic Settings from .env
 ├── i18n/              # Translations (en, ru, el, de, fr, es, zh, ar, sr)
-├── services/          # Business logic (31 services)
+├── services/          # Business logic (~50 service modules — see `ls datanika/services`)
 │   ├── auth.py        #   JWT + bcrypt + RBAC + email verification tokens
 │   ├── user_service.py    # Registration, org provisioning, email_verified
 │   ├── connection_service.py  # Encrypted connection CRUD (32 types)
@@ -400,7 +510,26 @@ datanika/
 │   ├── file_upload_service.py # File upload handling
 │   ├── google_sheets_source.py # Google Sheets dlt source
 │   ├── mongodb_source.py      # MongoDB dlt source
-│   └── naming.py              # Name/slug generation utilities
+│   ├── naming.py              # Name/slug generation utilities
+│   ├── notification_service.py     # Channel fanout (Slack, Telegram, Email, Webhook)
+│   ├── in_app_notification_service.py # In-app bell notifications (per-user)
+│   ├── in_app_notification_hooks.py  # Run-completion → notification row bridge
+│   ├── onboarding.py               # New-user checklist / getting-started flow
+│   ├── transformation_compile.py   # dbt compile + sandboxed preview (agent validation tier)
+│   ├── agent_docs.py               # /llms.txt + /api/v1/agent-guide.md renderers
+│   ├── agent_tiers.py              # Frozen SoT for 5-tier + 7-capability + golden-path + error codes
+│   ├── meta_routes.py              # /api/v1/meta/* discovery endpoints
+│   ├── meta_schemas.py             # JSON Schema catalog for connection/dlt/dbt config
+│   ├── api_v1_routes.py            # REST API v1 top-level mounting
+│   ├── api_middleware.py           # Typed error codes, rate limit, Idempotency-Key handling
+│   ├── health_routes.py            # /healthz + /readyz
+│   ├── idempotency.py              # Idempotency-Key storage + replay
+│   ├── metrics.py                  # Prometheus middleware + /metrics route
+│   ├── openapi.py                  # Swagger UI + ReDoc + spec serving
+│   ├── openapi_inline.py           # Per-connector config schemas via discriminator
+│   ├── sso_service.py              # SAML/OIDC config + SP metadata + ACS
+│   ├── sso_routes.py               # Starlette SSO callback routes
+│   └── concurrency_service.py      # Run concurrency gate + lock management
 ├── tasks/             # Celery async tasks (7 task files)
 │   ├── celery_app.py          # Celery configuration + Beat schedule
 │   ├── upload_tasks.py        # run_upload (dlt extract+load + cleanup)
@@ -410,12 +539,12 @@ datanika/
 │   ├── email_tasks.py         # Async email dispatch (verification, invitations)
 │   └── maintenance_tasks.py   # Hourly cleanup (orphaned dirs, old runs, archives)
 ├── ui/
-│   ├── state/         # Reflex state classes (18 files)
+│   ├── state/         # Reflex state classes (19 active states + base_state)
 │   │   ├── base_state.py      # Base state with auth context
-│   │   ├── auth_state.py      # Login/signup/session
+│   │   ├── auth_state.py      # Login/signup/session (emits user.signup_completed)
 │   │   ├── i18n_state.py      # Language switching + ensure_loaded
 │   │   ├── dashboard_state.py # Dashboard stats
-│   │   ├── connection_state.py # Connection management (32 types)
+│   │   ├── connection_state.py # Connection management (32 types, load_template_from_query)
 │   │   ├── upload_state.py    # Upload management + SaaS endpoint picker
 │   │   ├── pipeline_state.py  # Pipeline management
 │   │   ├── transformation_state.py # Transformation management
@@ -427,17 +556,21 @@ datanika/
 │   │   ├── api_key_state.py   # API key management
 │   │   ├── audit_state.py     # Audit log browsing
 │   │   ├── model_state.py     # Data catalog browse
-│   │   └── model_detail_state.py # Data catalog detail
+│   │   ├── model_detail_state.py # Data catalog detail
+│   │   ├── notification_state.py  # Notification channel CRUD (Settings page)
+│   │   ├── notification_center_state.py # In-app bell notifications (unread count, list, mark read)
+│   │   └── onboarding_state.py    # Getting-started checklist state
 │   ├── pages/         # Route handlers (18 pages)
 │   │   ├── login.py           # /login
 │   │   ├── signup.py          # /signup
 │   │   ├── auth_complete.py   # /auth/complete (OAuth)
 │   │   ├── dashboard.py       # /
-│   │   ├── connections.py     # /connections
+│   │   ├── connections.py     # /connections (+ plugin page_scripts seam)
 │   │   ├── uploads.py         # /uploads
 │   │   ├── pipelines.py       # /pipelines
+│   │   ├── pipeline_templates.py  # /pipelines/templates (+ plugin page_scripts seam)
 │   │   ├── transformations.py # /transformations
-│   │   ├── sql_editor.py      # /sql-editor
+│   │   ├── sql_editor.py      # /transformations/sql-editor
 │   │   ├── schedules.py       # /schedules
 │   │   ├── runs.py            # /runs
 │   │   ├── dag.py             # /dag
@@ -445,14 +578,18 @@ datanika/
 │   │   ├── api_keys.py        # /api-keys
 │   │   ├── audit_logs.py      # /audit-log
 │   │   ├── models.py          # /models (data catalog)
-│   │   └── model_detail.py    # /models/{id} (catalog detail)
-│   └── components/    # Reusable UI components (7 files)
-│       ├── layout.py              # Sidebar + header layout
+│   │   └── model_detail.py    # /models/[id] (catalog detail)
+│   └── components/    # Reusable UI components (10 files)
+│       ├── layout.py              # Sidebar + header layout, extra_sidebar_links plugin hook
 │       ├── connection_config_fields.py # Dynamic connection form (32 types)
 │       ├── searchable_select.py   # Searchable dropdown for large lists
 │       ├── language_switcher.py   # Language selection dropdown
 │       ├── captcha.py             # reCAPTCHA v3 widget
-│       └── sql_autocomplete.py    # SQL editor autocomplete
+│       ├── sql_autocomplete.py    # SQL editor autocomplete
+│       ├── notification_bell.py   # Header bell icon + dropdown (rx.popover-based)
+│       ├── getting_started_checklist.py # Onboarding checklist widget
+│       ├── info_tooltip.py        # Hover tooltip for form field help text
+│       └── quota_callout.py       # Plan-limit warning callout (used by cloud quota hooks)
 ├── migrations/        # Alembic migrations
 └── dbt_projects/      # Generated per-tenant dbt projects
 ```

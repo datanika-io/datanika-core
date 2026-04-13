@@ -24,7 +24,9 @@ Datanika combines [dlt](https://dlthub.com) (extract + load) with [dbt-core](htt
 🔐 **Enterprise Security** — RBAC, SSO (SAML/OIDC), audit logging, encrypted credentials
 🌍 **9 Languages** — English, German, French, Spanish, Russian, Greek, Chinese, Arabic, Serbian
 🔌 **REST API** — Full CRUD with OpenAPI/Swagger docs, rate limiting, and scoped API keys
-🔔 **Notifications** — Slack, Telegram, email, and webhook alerts on run completion
+🤖 **AI-Agent Ready** — `/llms.txt`, agent-guide.md, 5-tier capability API, compile+preview validation, typed error codes, `?wait=true`, `Idempotency-Key`, run cancellation
+🚀 **Pipeline Templates** — One-click starter templates (Stripe→Postgres, Postgres→BigQuery, CSV→DuckDB) with prefilled connection configs
+🔔 **Notifications** — Slack, Telegram, email, and webhook alerts on run completion, plus an in-app notification center
 📦 **Self-Hostable** — Single `docker compose up` — no Kubernetes required
 
 ---
@@ -87,13 +89,14 @@ uv run reflex run                     # starts on :3000 + :8000
 
 - [x] 32 connectors (databases, SaaS APIs, files, streaming)
 - [x] dbt transformations, tests, snapshots, packages
-- [x] REST API v1 with OpenAPI/Swagger
-- [x] Notification channels (Slack, Telegram, Email, Webhook)
+- [x] REST API v1 with OpenAPI/Swagger and typed per-connector inline schemas
+- [x] AI-agent compatibility (`/llms.txt`, agent-guide, 5-tier API, golden-path loop, `?wait=true`, `Idempotency-Key`, run cancel)
+- [x] Pipeline templates (one-click setup)
+- [x] In-app notification center with Slack, Telegram, Email, Webhook channels
 - [x] SSO (SAML/OIDC) for Enterprise
 - [x] Usage-based billing (cloud plugin)
-- [x] 73 security tests + 22 E2E tests
+- [x] 1,700+ tests across unit, security, and E2E (SQLite in-memory for speed)
 - [ ] Kubernetes Helm chart
-- [ ] Pipeline templates (one-click setup)
 - [ ] Data lineage visualization
 
 ---

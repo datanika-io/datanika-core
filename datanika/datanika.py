@@ -3,7 +3,7 @@ import reflex as rx
 from datanika.config import settings as _settings
 from datanika.logging_config import setup_logging
 from datanika.scheduler import scheduler_integration
-from datanika.ui.analytics import plausible_head_component
+from datanika.ui.analytics import google_ads_head_components, plausible_head_component
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
@@ -42,16 +42,21 @@ from datanika.ui.state.upload_state import UploadState
 
 setup_logging(debug=_settings.debug)
 
-# Analytics head tag is conditional — gated on settings.analytics_domain +
-# settings.analytics_script_src (issue #92). Returns None when disabled,
-# in which case the inline event scripts in the UI become no-ops on the
-# client because window.plausible is undefined.
+# Analytics head tags are both conditional and dormant-by-default:
+# - Plausible (issue #92): gated on settings.analytics_domain +
+#   settings.analytics_script_src. Returns None when disabled; inline
+#   window.plausible(...) calls in UI pages become no-ops on the client
+#   because the global is undefined.
+# - Google Ads (issue #96): gated on settings.google_ads_tag_id. Returns
+#   an empty list when disabled; conversion events fired via
+#   rx.call_script also no-op because they guard on `window.gtag &&`.
 _head_components: list[rx.Component] = [
     rx.el.link(rel="icon", href="/favicon.ico", type="image/x-icon"),
 ]
 _plausible = plausible_head_component()
 if _plausible is not None:
     _head_components.append(_plausible)
+_head_components.extend(google_ads_head_components())
 
 app = rx.App(head_components=_head_components)
 

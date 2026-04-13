@@ -9,6 +9,7 @@ from datanika.config import settings
 from datanika.services.auth import AuthService
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.user_service import UserService
+from datanika.ui.analytics import google_ads_conversion_event_js
 from datanika.ui.state.base_state import get_sync_session
 
 
@@ -237,6 +238,17 @@ class AuthState(rx.State):
         except Exception:
             self.auth_error = "Signup failed. Please try again."
             return
+        # Fire the Google Ads "Account signup completed" conversion event
+        # (issue #96 Phase 2). Dormant-by-default: returns "" when either
+        # google_ads_tag_id or google_ads_conversion_label_signup is empty,
+        # in which case we skip rx.call_script entirely and just redirect.
+        # When set, the JS guards on `window.gtag &&` so it's still a
+        # no-op if the gtag loader hasn't emitted in the page head (belt
+        # + suspenders — both config flags must be set AND gtag.js must
+        # have loaded for an actual conversion to fire).
+        conversion_js = google_ads_conversion_event_js(settings.google_ads_conversion_label_signup)
+        if conversion_js:
+            return [rx.call_script(conversion_js), rx.redirect("/")]
         return rx.redirect("/")
 
     def logout(self):

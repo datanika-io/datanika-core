@@ -10,6 +10,7 @@ underlying registry.
 import reflex as rx
 
 from datanika.data.pipeline_templates import LAUNCH_TEMPLATES, PipelineTemplate
+from datanika.plugin_registry import get_page_scripts
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.i18n_state import I18nState
 
@@ -36,8 +37,9 @@ def _template_card(tpl: PipelineTemplate) -> rx.Component:
     Built at import time from a static template — no Reflex state vars needed,
     so we render the source/destination labels as plain Python strings.
     """
-    # ``data-template-slug`` is what the inline click listener below
-    # delegates off of to fire the ``template_selected`` Plausible event
+    # ``data-template-slug`` carries the slug to any delegated click
+    # listener the active plugin registers for the ``pipeline_templates``
+    # page. Keep the attribute even in open-source builds — it's cheap
     # (issue #92). The attribute also serves as a stable selector for any
     # future e2e/visual test that wants to click a specific card.
     return rx.link(
@@ -77,32 +79,6 @@ def _template_card(tpl: PipelineTemplate) -> rx.Component:
     )
 
 
-# Delegated click listener on the templates page. Fires a Plausible
-# ``template_selected`` event the first time a click bubbles up through an
-# element carrying ``data-template-slug``. The guard on ``window.plausible``
-# makes this a silent no-op when analytics isn't configured (issue #92).
-#
-# Delegation (one listener on document) is deliberate — it survives Reflex
-# re-renders that would blow away listeners attached to individual cards.
-# The ``once`` flag via a module-level ``__templateSelectedBound`` guards
-# against double-binding if the page is mounted twice in one session.
-_TEMPLATES_ANALYTICS_JS = """
-(function() {
-    if (window.__templateSelectedBound) return;
-    window.__templateSelectedBound = true;
-    document.addEventListener('click', function(e) {
-        var el = e.target.closest && e.target.closest('[data-template-slug]');
-        if (!el) return;
-        var slug = el.getAttribute('data-template-slug');
-        if (!slug) return;
-        if (window.plausible) {
-            window.plausible('template_selected', { props: { slug: slug } });
-        }
-    }, true);
-})();
-"""
-
-
 def pipeline_templates_page() -> rx.Component:
     return page_layout(
         rx.vstack(
@@ -125,7 +101,10 @@ def pipeline_templates_page() -> rx.Component:
                 size="1",
                 margin_top="1rem",
             ),
-            rx.script(_TEMPLATES_ANALYTICS_JS),
+            # Plugin-contributed scripts (e.g. cloud-edition Plausible
+            # ``template_selected`` click listener). Empty in open-source
+            # builds — open-core separation lives in the plugin registry.
+            *get_page_scripts("pipeline_templates"),
             spacing="4",
             width="100%",
             align="stretch",

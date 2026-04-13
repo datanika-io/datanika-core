@@ -36,28 +36,6 @@ class Settings(BaseSettings):
     recaptcha_site_key: str = ""
     recaptcha_secret_key: str = ""
 
-    # Analytics (Plausible CE) — issue #92. Both must be set to enable.
-    # When either is empty, no script tag is emitted and inline event
-    # scripts become no-ops. This lets the code ship before Infra creates
-    # the app.datanika.io site in the Plausible dashboard.
-    analytics_domain: str = ""
-    analytics_script_src: str = ""
-
-    # Google Ads conversion tracking — issue #96 Phase 2. Both settings
-    # are dormant-by-default. When google_ads_tag_id is empty, no gtag
-    # script tags are emitted in the Reflex app head. When
-    # google_ads_conversion_label_signup is empty, auth_state.signup
-    # doesn't fire an rx.call_script — so local dev + tests work with no
-    # config, and production only activates after Infra sets both in
-    # .env.docker on Hetzner.
-    #
-    # The tag ID (AW-18081528527) is the same account used by the landing
-    # site gtag config — a public property, safe to commit as a default.
-    # Left empty here so tests don't accidentally emit live gtag scripts;
-    # production reads it from .env.docker.
-    google_ads_tag_id: str = ""
-    google_ads_conversion_label_signup: str = ""
-
     # dbt
     dbt_projects_dir: str = "./dbt_projects"
 

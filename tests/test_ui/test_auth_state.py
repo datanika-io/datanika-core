@@ -73,62 +73,47 @@ class TestAuthStateFormFields:
         params = list(sig.parameters.keys())
         assert "form_data" in params
 
-    def test_signup_imports_google_ads_conversion_helper(self):
-        """Regression for #96: auth_state must import the conversion-event
-        helper so the signup success path can fire it. A future refactor
-        that drops this import silently breaks Google Ads attribution.
+    def test_signup_does_not_import_analytics_from_core(self):
+        """Regression for #99 (open-core refactor): auth_state must NOT
+        import anything from ``datanika.ui.analytics`` — that module has
+        been deleted and analytics instrumentation lives in the cloud
+        plugin. Any import of it from core is the exact regression this
+        test catches.
         """
+        import inspect
+
         import datanika.ui.state.auth_state as auth_state_module
 
-        assert hasattr(auth_state_module, "google_ads_conversion_event_js"), (
-            "auth_state.py must import google_ads_conversion_event_js from "
-            "datanika.ui.analytics so signup() can fire the Phase 2 "
-            "conversion event. See issue #96."
+        source = inspect.getsource(auth_state_module)
+        assert "datanika.ui.analytics" not in source, (
+            "auth_state.py imports from datanika.ui.analytics — that "
+            "module was deleted in issue #99. Analytics lives in the "
+            "cloud plugin now and reaches signup() via the "
+            "user.signup_completed hook."
+        )
+        assert "google_ads_conversion_event_js" not in source, (
+            "auth_state.py references google_ads_conversion_event_js "
+            "directly — that helper moved to datanika_cloud in #99. Use "
+            "hooks.collect_events('user.signup_completed', ...) instead."
         )
 
-    def test_signup_source_references_call_script_and_conversion_helper(self):
-        """Source scan: signup() must reference both rx.call_script and the
-        conversion helper. Catches regressions that drop the event fire
-        while keeping the import intact (e.g. "oops, removed one call").
+    def test_signup_uses_collect_events_hook_for_plugin_contributions(self):
+        """Source scan: signup() must call ``collect_events`` on the
+        ``user.signup_completed`` event and splice the returned list into
+        its Reflex event return value. That's how the cloud plugin's
+        Google Ads conversion tracking fires post-refactor.
         """
         import inspect
 
         import datanika.ui.state.auth_state as auth_state_module
 
         source = inspect.getsource(auth_state_module.AuthState.signup.fn)
-        assert "google_ads_conversion_event_js" in source, (
-            "signup() no longer calls google_ads_conversion_event_js — "
-            "the Phase 2 conversion event will not fire"
+        assert "collect_events" in source, (
+            "signup() must use hooks.collect_events to gather plugin-"
+            "contributed Reflex events (e.g. Google Ads conversion). "
+            "See issue #99."
         )
-        assert "call_script" in source, (
-            "signup() no longer returns rx.call_script — the conversion "
-            "event JS will not be sent to the client"
+        assert "user.signup_completed" in source, (
+            "signup() must emit the 'user.signup_completed' event so "
+            "cloud plugin handlers can fire on successful signup"
         )
-
-
-class TestConfigHasGoogleAdsSettings:
-    """Regression for #96: settings fields must exist so the dormant
-    check in google_ads_conversion_event_js() doesn't AttributeError.
-    """
-
-    def test_google_ads_tag_id_exists(self):
-        from datanika.config import settings
-
-        assert hasattr(settings, "google_ads_tag_id")
-        assert isinstance(settings.google_ads_tag_id, str)
-
-    def test_google_ads_conversion_label_signup_exists(self):
-        from datanika.config import settings
-
-        assert hasattr(settings, "google_ads_conversion_label_signup")
-        assert isinstance(settings.google_ads_conversion_label_signup, str)
-
-    def test_defaults_are_empty_strings(self):
-        # Dormant-by-default contract: the test environment must not
-        # accidentally emit live gtag scripts. Empty string is the
-        # dormant signal in both analytics.py helpers.
-        from datanika.config import Settings
-
-        fresh = Settings()
-        assert fresh.google_ads_tag_id == ""
-        assert fresh.google_ads_conversion_label_signup == ""

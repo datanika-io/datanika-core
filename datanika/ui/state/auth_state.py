@@ -6,10 +6,10 @@ import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
+from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.user_service import UserService
-from datanika.ui.analytics import google_ads_conversion_event_js
 from datanika.ui.state.base_state import get_sync_session
 
 # Option C auth bridge: valid template slug pattern + max length. Cold-traffic
@@ -266,19 +266,18 @@ class AuthState(rx.State):
         except Exception:
             self.auth_error = "Signup failed. Please try again."
             return
-        # Fire the Google Ads "Account signup completed" conversion event
-        # (issue #96 Phase 2). Dormant-by-default: returns "" when either
-        # google_ads_tag_id or google_ads_conversion_label_signup is empty,
-        # in which case we skip rx.call_script entirely and just redirect.
-        # When set, the JS guards on `window.gtag &&` so it's still a
-        # no-op if the gtag loader hasn't emitted in the page head (belt
-        # + suspenders — both config flags must be set AND gtag.js must
-        # have loaded for an actual conversion to fire).
-        conversion_js = google_ads_conversion_event_js(settings.google_ads_conversion_label_signup)
-        redirect_target = self._post_auth_redirect_target()
-        if conversion_js:
-            return [rx.call_script(conversion_js), rx.redirect(redirect_target)]
-        return rx.redirect(redirect_target)
+        # Let plugins contribute Reflex events on signup success (issue
+        # #99 open-core split). The cloud plugin subscribes to
+        # user.signup_completed and returns an rx.call_script firing the
+        # Google Ads conversion event; on open-source core with no plugin
+        # loaded, collect_events returns an empty list and we just redirect.
+        #
+        # The redirect target is computed by _post_auth_redirect_target()
+        # from #101 — honours ?template=<slug> query-string propagation
+        # so Option C template-landing signups go to
+        # /connections?template=<slug> instead of the default /.
+        extra_events = collect_events("user.signup_completed", user_id=self.current_user.id)
+        return [*extra_events, rx.redirect(self._post_auth_redirect_target())]
 
     def logout(self):
         # Audit logout before clearing state

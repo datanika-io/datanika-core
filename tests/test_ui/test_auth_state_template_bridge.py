@@ -106,12 +106,17 @@ class TestAuthStateSourceWiring:
             "landing pages will drop the template intent."
         )
 
-    def test_signup_preserves_google_ads_conversion_event_when_templating(self):
-        """Regression guard: the Option C change must not delete the Phase 2
-        Google Ads conversion event path from PR #96. Both the conversion
-        call_script and the template redirect must coexist in signup().
+    def test_signup_preserves_plugin_event_collection_when_templating(self):
+        """Regression guard: the Option C change must not delete the plugin
+        event collection path from PR #102 (open-core split). Both the
+        collect_events call (which the cloud plugin subscribes to and turns
+        into a Google Ads conversion event via rx.call_script) AND the
+        template redirect target must coexist in signup(). Updated from the
+        earlier google_ads_conversion_event_js assertion — that helper moved
+        from datanika/ui/analytics.py to datanika_cloud/analytics.py as part
+        of the open-core refactor (#99/#102).
         """
         source = inspect.getsource(auth_state_module.AuthState.signup.fn)
-        assert "google_ads_conversion_event_js" in source
-        assert "call_script" in source
+        assert "collect_events" in source
+        assert "user.signup_completed" in source
         assert "_post_auth_redirect_target" in source

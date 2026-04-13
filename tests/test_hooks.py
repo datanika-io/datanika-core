@@ -84,3 +84,45 @@ class TestEventIsolation:
         hooks.emit("event.a")
         assert len(calls_a) == 1
         assert len(calls_b) == 0
+
+
+class TestCollectEvents:
+    # collect_events() is the emit variant used when the core code needs
+    # to splice plugin-contributed values into its own return — e.g.
+    # auth_state.signup() accumulating Reflex events from a plugin hook
+    # before returning [*events, rx.redirect(...)]. It must stay simple:
+    # call every handler, flatten list returns, skip None, preserve order.
+
+    def test_no_handlers_returns_empty_list(self):
+        result = hooks.collect_events("nope", x=1)
+        assert result == []
+
+    def test_single_scalar_return_is_appended(self):
+        hooks.on("evt", lambda **kw: "value")
+        assert hooks.collect_events("evt") == ["value"]
+
+    def test_none_return_is_skipped(self):
+        hooks.on("evt", lambda **kw: None)
+        assert hooks.collect_events("evt") == []
+
+    def test_list_return_is_flattened(self):
+        hooks.on("evt", lambda **kw: ["a", "b"])
+        assert hooks.collect_events("evt") == ["a", "b"]
+
+    def test_mixed_handlers_preserve_order(self):
+        hooks.on("evt", lambda **kw: "first")
+        hooks.on("evt", lambda **kw: None)
+        hooks.on("evt", lambda **kw: ["second", "third"])
+        hooks.on("evt", lambda **kw: "fourth")
+        assert hooks.collect_events("evt") == ["first", "second", "third", "fourth"]
+
+    def test_kwargs_passed_through(self):
+        seen = {}
+        hooks.on("evt", lambda **kw: seen.update(kw) or "ok")
+        hooks.collect_events("evt", user_id=42, name="alice")
+        assert seen == {"user_id": 42, "name": "alice"}
+
+    def test_empty_list_return_contributes_nothing(self):
+        hooks.on("evt", lambda **kw: [])
+        hooks.on("evt", lambda **kw: "x")
+        assert hooks.collect_events("evt") == ["x"]

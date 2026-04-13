@@ -36,6 +36,10 @@ def _template_card(tpl: PipelineTemplate) -> rx.Component:
     Built at import time from a static template — no Reflex state vars needed,
     so we render the source/destination labels as plain Python strings.
     """
+    # ``data-template-slug`` is what the inline click listener below
+    # delegates off of to fire the ``template_selected`` Plausible event
+    # (issue #92). The attribute also serves as a stable selector for any
+    # future e2e/visual test that wants to click a specific card.
     return rx.link(
         rx.card(
             rx.vstack(
@@ -69,7 +73,34 @@ def _template_card(tpl: PipelineTemplate) -> rx.Component:
         href=f"/connections?template={tpl.slug}",
         underline="none",
         width="100%",
+        custom_attrs={"data-template-slug": tpl.slug},
     )
+
+
+# Delegated click listener on the templates page. Fires a Plausible
+# ``template_selected`` event the first time a click bubbles up through an
+# element carrying ``data-template-slug``. The guard on ``window.plausible``
+# makes this a silent no-op when analytics isn't configured (issue #92).
+#
+# Delegation (one listener on document) is deliberate — it survives Reflex
+# re-renders that would blow away listeners attached to individual cards.
+# The ``once`` flag via a module-level ``__templateSelectedBound`` guards
+# against double-binding if the page is mounted twice in one session.
+_TEMPLATES_ANALYTICS_JS = """
+(function() {
+    if (window.__templateSelectedBound) return;
+    window.__templateSelectedBound = true;
+    document.addEventListener('click', function(e) {
+        var el = e.target.closest && e.target.closest('[data-template-slug]');
+        if (!el) return;
+        var slug = el.getAttribute('data-template-slug');
+        if (!slug) return;
+        if (window.plausible) {
+            window.plausible('template_selected', { props: { slug: slug } });
+        }
+    }, true);
+})();
+"""
 
 
 def pipeline_templates_page() -> rx.Component:
@@ -94,6 +125,7 @@ def pipeline_templates_page() -> rx.Component:
                 size="1",
                 margin_top="1rem",
             ),
+            rx.script(_TEMPLATES_ANALYTICS_JS),
             spacing="4",
             width="100%",
             align="stretch",

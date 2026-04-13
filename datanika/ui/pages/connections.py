@@ -11,6 +11,40 @@ from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
 
+# Inline Plausible event firing for the template-prefill funnel step
+# (issue #92). When the user lands on /connections with ``?template=<slug>``,
+# ConnectionState.load_template_from_query runs on_load and prefills the
+# form. This script fires the ``template_prefill_applied`` event from the
+# client side so Plausible sees a first-party event with the slug prop.
+#
+# Why client-side instead of returning rx.call_script from the state
+# handler: the on_load handler runs server-side and its return value
+# would arrive at the client asynchronously after the initial HTML render.
+# Firing from DOMContentLoaded ensures the event lands during the same page
+# view as the prefill, which is what Growth's funnel dashboard expects.
+#
+# Guarded on ``window.plausible`` so this is a silent no-op when analytics
+# is disabled via empty settings.analytics_domain / analytics_script_src.
+_CONNECTIONS_TEMPLATE_ANALYTICS_JS = """
+(function() {
+    if (window.__templatePrefillBound) return;
+    window.__templatePrefillBound = true;
+    function fire() {
+        var params = new URLSearchParams(window.location.search);
+        var slug = params.get('template');
+        if (!slug) return;
+        if (window.plausible) {
+            window.plausible('template_prefill_applied', { props: { slug: slug } });
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', fire, { once: true });
+    } else {
+        fire();
+    }
+})();
+"""
+
 
 def connection_form() -> rx.Component:
     return rx.card(
@@ -190,6 +224,12 @@ def connections_table() -> rx.Component:
 
 def connections_page() -> rx.Component:
     return page_layout(
-        rx.vstack(connection_form(), connections_table(), spacing="6", width="100%"),
+        rx.vstack(
+            connection_form(),
+            connections_table(),
+            rx.script(_CONNECTIONS_TEMPLATE_ANALYTICS_JS),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.connections"],
     )

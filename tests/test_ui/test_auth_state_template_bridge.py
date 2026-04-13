@@ -1,0 +1,117 @@
+"""Option C auth bridge: ?template=<slug> must survive the signup wall.
+
+When a cold-traffic visitor clicks "Try this template" on a public landing
+page at ``datanika.io/templates/<slug>`` and signs up, the post-auth
+redirect must land on ``/connections?template=<slug>`` so
+``ConnectionState.load_template_from_query`` (shipped in PR #81) can
+prefill the connection form.
+
+See plans/product/SPEC_PUBLIC_TEMPLATE_LANDING.md "The auth bridge" section
+and datanika-io/datanika-landing#125.
+"""
+
+import inspect
+
+import datanika.ui.state.auth_state as auth_state_module
+from datanika.ui.state.auth_state import AuthState
+
+
+class _FakePage:
+    def __init__(self, params: dict):
+        self.params = params
+
+
+class _FakeRouter:
+    def __init__(self, params: dict):
+        self.page = _FakePage(params)
+
+
+def _make_state(query_params: dict) -> AuthState:
+    """Build an AuthState instance with a mocked router for unit tests.
+
+    Reflex state classes subclass ``rx.State`` and override ``__setattr__``
+    with parent-state delegation we don't care about. Bypass it with
+    ``object.__setattr__`` — the helper under test only reads
+    ``self.router.page.params``, nothing else.
+    """
+    state = AuthState.__new__(AuthState)
+    object.__setattr__(state, "router", _FakeRouter(query_params))
+    return state
+
+
+class TestPostAuthRedirectTarget:
+    """The shared helper that each auth entry point consults."""
+
+    def test_returns_connections_with_template_when_param_present(self):
+        state = _make_state({"template": "stripe-to-postgres"})
+        assert state._post_auth_redirect_target() == "/connections?template=stripe-to-postgres"
+
+    def test_returns_root_when_param_absent(self):
+        state = _make_state({})
+        assert state._post_auth_redirect_target() == "/"
+
+    def test_returns_root_when_param_is_empty_string(self):
+        state = _make_state({"template": ""})
+        assert state._post_auth_redirect_target() == "/"
+
+    def test_template_slug_is_urlencoded(self):
+        """A slug with only [a-z0-9-] characters needs no escaping, but the
+        helper must not break if Python's urlencode introduces one.
+        """
+        state = _make_state({"template": "postgres-to-bigquery"})
+        target = state._post_auth_redirect_target()
+        assert target == "/connections?template=postgres-to-bigquery"
+
+    def test_unknown_characters_in_slug_are_rejected(self):
+        """Only slugs matching the public template pattern should survive.
+        An attacker-controlled value like 'foo?injected=1' or 'foo bar' must
+        not produce an open-redirect vector. Reject by returning the root.
+        """
+        state = _make_state({"template": "foo bar/baz?x=1"})
+        assert state._post_auth_redirect_target() == "/"
+
+    def test_slug_length_limit(self):
+        """Overlong slugs are rejected to avoid amplification."""
+        state = _make_state({"template": "a" * 200})
+        assert state._post_auth_redirect_target() == "/"
+
+
+class TestAuthStateSourceWiring:
+    """Source-inspection regression tests — matches the PR #96 pattern in
+    tests/test_ui/test_auth_state.py. Catches a future refactor that
+    drops the helper call from one of the three auth entry points.
+    """
+
+    def test_signup_source_calls_post_auth_redirect_target(self):
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+        assert "_post_auth_redirect_target" in source, (
+            "signup() no longer consults _post_auth_redirect_target — "
+            "cold-traffic ?template=<slug> will be dropped at the signup wall. "
+            "See plans/product/SPEC_PUBLIC_TEMPLATE_LANDING.md auth bridge."
+        )
+
+    def test_login_source_calls_post_auth_redirect_target(self):
+        source = inspect.getsource(auth_state_module.AuthState.login.fn)
+        assert "_post_auth_redirect_target" in source, (
+            "login() no longer consults _post_auth_redirect_target — "
+            "a returning visitor with a bookmarked ?template=<slug> URL will "
+            "be redirected to / and lose their template intent."
+        )
+
+    def test_handle_oauth_complete_source_calls_post_auth_redirect_target(self):
+        source = inspect.getsource(auth_state_module.AuthState.handle_oauth_complete.fn)
+        assert "_post_auth_redirect_target" in source, (
+            "handle_oauth_complete() no longer consults "
+            "_post_auth_redirect_target — OAuth/SSO signups from template "
+            "landing pages will drop the template intent."
+        )
+
+    def test_signup_preserves_google_ads_conversion_event_when_templating(self):
+        """Regression guard: the Option C change must not delete the Phase 2
+        Google Ads conversion event path from PR #96. Both the conversion
+        call_script and the template redirect must coexist in signup().
+        """
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+        assert "google_ads_conversion_event_js" in source
+        assert "call_script" in source
+        assert "_post_auth_redirect_target" in source

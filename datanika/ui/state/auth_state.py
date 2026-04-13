@@ -12,6 +12,16 @@ from datanika.services.user_service import UserService
 from datanika.ui.analytics import google_ads_conversion_event_js
 from datanika.ui.state.base_state import get_sync_session
 
+# Option C auth bridge: valid template slug pattern + max length. Cold-traffic
+# visitors who click "Try this template" on a public /templates/<slug> landing
+# page must have the slug preserved across the signup wall so the post-auth
+# redirect can land on /connections?template=<slug>. The slug is compared
+# against this pattern (not against the in-app template registry) to keep the
+# auth layer decoupled from ConnectionState; unknown-but-well-formed slugs are
+# silently ignored downstream by ConnectionState.load_template_from_query.
+# Rejecting malformed or over-long slugs avoids an open-redirect vector.
+_TEMPLATE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
 
 class UserInfo(BaseModel):
     id: int = 0
@@ -62,6 +72,24 @@ class AuthState(rx.State):
     def _get_user_service(self) -> UserService:
         auth = AuthService(settings.secret_key)
         return UserService(auth)
+
+    def _post_auth_redirect_target(self) -> str:
+        """Return the path to redirect to after a successful login/signup.
+
+        When the URL carries a well-formed ``?template=<slug>`` query
+        parameter (from a public ``datanika.io/templates/<slug>`` landing
+        page CTA), redirect to ``/connections?template=<slug>`` so
+        ``ConnectionState.load_template_from_query`` prefills the form.
+        Otherwise fall back to the dashboard root.
+
+        Slugs are validated against ``_TEMPLATE_SLUG_RE`` to avoid an
+        open-redirect vector. Unknown-but-well-formed slugs pass through;
+        ConnectionState silently ignores them downstream.
+        """
+        slug = self.router.page.params.get("template", "")
+        if not slug or not _TEMPLATE_SLUG_RE.match(slug):
+            return "/"
+        return f"/connections?template={slug}"
 
     def _load_current_role(self, user_id: int, org_id: int):
         """Load the user's role for the given org from the membership table."""
@@ -167,7 +195,7 @@ class AuthState(rx.State):
                 self.current_org = o
                 break
         self._load_current_role(user_id, org_id)
-        return rx.redirect("/")
+        return rx.redirect(self._post_auth_redirect_target())
 
     def signup(self, form_data: dict):
         self.auth_error = ""
@@ -247,9 +275,10 @@ class AuthState(rx.State):
         # + suspenders — both config flags must be set AND gtag.js must
         # have loaded for an actual conversion to fire).
         conversion_js = google_ads_conversion_event_js(settings.google_ads_conversion_label_signup)
+        redirect_target = self._post_auth_redirect_target()
         if conversion_js:
-            return [rx.call_script(conversion_js), rx.redirect("/")]
-        return rx.redirect("/")
+            return [rx.call_script(conversion_js), rx.redirect(redirect_target)]
+        return rx.redirect(redirect_target)
 
     def logout(self):
         # Audit logout before clearing state
@@ -345,7 +374,7 @@ class AuthState(rx.State):
                     self.current_org = o
                     break
         self._load_current_role(user_id, org_id)
-        return rx.redirect("/")
+        return rx.redirect(self._post_auth_redirect_target())
 
     async def check_auth(self):
         if not self.access_token:

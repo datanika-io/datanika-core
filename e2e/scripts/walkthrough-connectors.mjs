@@ -1,14 +1,17 @@
 // QA walkthrough driver for landing#144 follow-up.
 //
 // Signs up a fresh user on staging, navigates to the New Connection form for
-// SQLite and CSV in turn, screenshots each form, dumps every visible form
-// field label + input type, and writes the findings to
-// e2e/.walkthrough-findings.json. Not a test — deliberately outside the
+// each connector in CONNECTOR_TYPES in turn, screenshots each form, dumps
+// every visible form field label + input type, and writes the findings to
+// e2e/.walkthrough-out/findings.json. Not a test — deliberately outside the
 // tests/ directory so Playwright test runners don't pick it up.
 //
 // Usage:
 //   DATANIKA_E2E_BASE_URL=https://staging-app.datanika.io/ \
-//     node scripts/walkthrough-sqlite-csv.mjs
+//     node scripts/walkthrough-connectors.mjs
+//
+// Override the connector list:
+//   DATANIKA_E2E_CONNECTORS=duckdb,postgres node scripts/walkthrough-connectors.mjs
 //
 // Owner: QA. Referenced from the landing#144 comment thread.
 
@@ -33,13 +36,22 @@ const EMAIL = `qa-walkthrough-${STAMP}@datanika.test`;
 const PASSWORD = "QaWalkthrough-2026!";
 const FULL_NAME = `QA Walkthrough ${STAMP}`;
 
+const CONNECTOR_TYPES = (
+  process.env.DATANIKA_E2E_CONNECTORS ?? "duckdb,sqlite,csv"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const findings = {
   base_url: BASE_URL,
   run_started_at: new Date().toISOString(),
+  connectors_requested: CONNECTOR_TYPES,
   auth: { email: EMAIL, path_taken: null, status: null, url_after: null, error: null },
-  sqlite: { status: null, fields: [], screenshot: null, notes: [], error: null },
-  csv: { status: null, fields: [], screenshot: null, notes: [], error: null },
 };
+for (const t of CONNECTOR_TYPES) {
+  findings[t] = { status: null, fields: [], screenshot: null, notes: [], error: null };
+}
 
 /** Dump every labelled form input on the current page. */
 async function dumpFormFields(page) {
@@ -270,7 +282,7 @@ try {
 }
 
 if (findings.auth.status === "ok") {
-  for (const t of ["sqlite", "csv"]) {
+  for (const t of CONNECTOR_TYPES) {
     // Reload fresh each iteration so the dropdown is back at "postgres"
     // (known starting state). Avoids having to track the currently-selected
     // connector label across runs.

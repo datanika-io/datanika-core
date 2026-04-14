@@ -239,10 +239,12 @@ class TestLlmsTxtStaticAsset:
         assert first.read_text(encoding="utf-8") == LLMS_TXT
 
     def test_default_assets_dir_is_project_root_assets(self):
-        """The default must resolve to the repo's assets/ directory,
-        next to datanika/, not to a subdir inside datanika/services/."""
+        """The default must resolve to a sibling `assets/` directory
+        next to the `datanika/` package, not a subdir inside it."""
         assert DEFAULT_ASSETS_DIR.name == "assets"
-        assert DEFAULT_ASSETS_DIR.parent.name in ("datanika-core-engineering", "datanika")
+        assert DEFAULT_ASSETS_DIR.is_absolute()
+        # The package dir `datanika/` must live alongside, not above.
+        assert (DEFAULT_ASSETS_DIR.parent / "datanika").is_dir()
 
     def test_app_bootstrap_writes_the_asset(self):
         """datanika.datanika imports and calls write_llms_txt_asset()

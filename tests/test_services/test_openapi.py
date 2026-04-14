@@ -257,6 +257,69 @@ class TestTier3InlinedSchemas:
         assert stripe["properties"]["api_key"]["format"] == "password"
 
 
+class TestStabilityTags:
+    """#137 — every operation in the OpenAPI spec must carry an
+    ``x-stability`` extension so enterprise buyers can distinguish
+    stable, beta, and experimental endpoints at a glance.
+    """
+
+    def test_all_operations_have_x_stability(self):
+        spec = build_openapi_spec()
+        for path_key, methods in spec["paths"].items():
+            for method, op in methods.items():
+                if not isinstance(op, dict) or "tags" not in op:
+                    continue
+                assert "x-stability" in op, (
+                    f"{method.upper()} {path_key} is missing x-stability tag. "
+                    "See docs/api_versioning.md and #137."
+                )
+                assert op["x-stability"] in ("stable", "beta", "experimental"), (
+                    f"{method.upper()} {path_key} has invalid x-stability "
+                    f"value {op['x-stability']!r}"
+                )
+
+    def test_crud_endpoints_are_stable(self):
+        spec = build_openapi_spec()
+        for resource in ("connections", "uploads", "pipelines", "transformations", "schedules"):
+            path = f"/api/v1/{resource}"
+            for method, op in spec["paths"][path].items():
+                if isinstance(op, dict) and "tags" in op:
+                    assert op["x-stability"] == "stable", (
+                        f"{method.upper()} {path} should be stable"
+                    )
+
+    def test_catalog_endpoints_are_beta(self):
+        spec = build_openapi_spec()
+        for path_key, methods in spec["paths"].items():
+            if not path_key.startswith("/api/v1/catalog"):
+                continue
+            for method, op in methods.items():
+                if isinstance(op, dict) and "tags" in op:
+                    assert op["x-stability"] == "beta", (
+                        f"{method.upper()} {path_key} should be beta"
+                    )
+
+    def test_at_least_three_stable_endpoints(self):
+        spec = build_openapi_spec()
+        stable_count = sum(
+            1
+            for methods in spec["paths"].values()
+            for op in methods.values()
+            if isinstance(op, dict) and op.get("x-stability") == "stable"
+        )
+        assert stable_count >= 3, f"Only {stable_count} stable endpoints found"
+
+    def test_at_least_one_beta_endpoint(self):
+        spec = build_openapi_spec()
+        beta_count = sum(
+            1
+            for methods in spec["paths"].values()
+            for op in methods.values()
+            if isinstance(op, dict) and op.get("x-stability") == "beta"
+        )
+        assert beta_count >= 1, "No beta endpoints found — catalog should be beta"
+
+
 class TestOpenAPIEndpoints:
     def test_openapi_json_returns_200(self, client):
         resp = client.get("/api/v1/openapi.json")

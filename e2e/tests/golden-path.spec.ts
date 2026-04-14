@@ -8,15 +8,14 @@ import { test, expect } from "../fixtures/auth";
  * the critical revenue-producing flow works end to end. If this is red,
  * no other E2E result matters.
  *
- * Blocked on:
- *   - e2e-seed script (Engineering) to reset DB to known state
- *   - DuckDB or local Postgres destination so we don't depend on a cloud warehouse
+ * Unblocked by core#109 (e2e-seed lands in dev). Still tagged @slow because
+ * the full stack exercise remains expensive on the GHA runner.
  */
 // @slow — full stack exercise (signup + run + destination query). Expensive on
 // the GHA runner (docker-compose + Celery + dbt), so gated to PRs targeting
 // master via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P0 #1.
 test.describe("Golden path: signup → connection → pipeline → run @slow", () => {
-  test.skip("new user signs up and runs their first pipeline", async ({ page }) => {
+  test("new user signs up and runs their first pipeline", async ({ page }) => {
     // 1. Signup
     await page.goto("/signup");
     await page.getByLabel(/email/i).fill(`qa-${Date.now()}@datanika.test`);

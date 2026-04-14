@@ -27,6 +27,19 @@ import type { FullConfig } from "@playwright/test";
  *
  * Skip seed execution by setting DATANIKA_E2E_SKIP_SEED=1 (useful when
  * iterating locally against an already-seeded stack).
+ *
+ * Override the seed command by setting DATANIKA_E2E_SEED_CMD. Whatever the
+ * value is, it's shelled verbatim in the repo root and its stdout is parsed
+ * as the same JSON payload. This is how the harness reaches a remote target
+ * (e.g., staging) without the seed script needing network access to the
+ * remote DB. Example for staging:
+ *
+ *   DATANIKA_E2E_BASE_URL=https://staging-app.datanika.io/ \
+ *   DATANIKA_E2E_SEED_CMD="ssh root@46.225.214.120 'docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'" \
+ *   npm test
+ *
+ * The local e2e_seed.py still runs inside the staging container and writes
+ * to the staging DB directly — we just execute it over SSH.
  */
 
 export type SeedFixture = {
@@ -55,13 +68,22 @@ async function globalSetup(_config: FullConfig): Promise<void> {
 
   // Core repo root is one level up from e2e/.
   const repoRoot = join(__dirname, "..");
-  const seedCommand = "uv run python -m datanika.scripts.e2e_seed";
+  const seedCommand =
+    process.env.DATANIKA_E2E_SEED_CMD ?? "uv run python -m datanika.scripts.e2e_seed";
   let stdout: string;
   try {
     stdout = execSync(seedCommand, {
       cwd: repoRoot,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      // E2E_SEED_ALLOW_ANY_HOST lets the seed script run even when
+      // DATABASE_URL matches a PROD_HOST_MARKER. For local + CI stacks
+      // the URL already passes the safety check, but the override keeps
+      // the call site uniform and prevents surprises if compose renames
+      // its postgres service later. For remote (SSH) seed commands the
+      // env var is forwarded but the override applies inside the remote
+      // shell only if the ssh call preserves it — callers wire that
+      // themselves via `ssh -o SendEnv=E2E_SEED_ALLOW_ANY_HOST ...`.
       env: { ...process.env, E2E_SEED_ALLOW_ANY_HOST: "1" },
     });
   } catch (err) {

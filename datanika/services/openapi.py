@@ -385,6 +385,64 @@ SCHEMAS = {
         },
         required=["error"],
     ),
+    # --- Bulk import ---
+    "ImportRequest": _obj(
+        {
+            "version": {"type": "integer", "enum": [2]},
+            "connections": {
+                "type": "array",
+                "items": _ref("ConnectionCreate"),
+                "description": "Connections to create (optional).",
+            },
+            "uploads": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": (
+                    "Uploads to create. Use connection_name references, "
+                    "not connection_id."
+                ),
+            },
+            "pipelines": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": (
+                    "Pipelines to create. Use destination_connection_name, "
+                    "not destination_connection_id."
+                ),
+            },
+            "transformations": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": "Transformations to create.",
+            },
+        },
+        required=["version"],
+    ),
+    "ImportResult": _obj(
+        {
+            "created": _obj(
+                {
+                    "connections": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                    "uploads": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                    "pipelines": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                    "transformations": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                }
+            ),
+        },
+        required=["created"],
+    ),
 }
 
 # Inline per-type Connection.config and per-mode Upload.dlt_config schemas
@@ -737,6 +795,36 @@ def build_openapi_spec() -> dict:
         "delete": _delete_op(nt, "Delete notification channel"),
     }
 
+    # Bulk import (#131)
+    paths["/api/v1/import"] = {
+        "post": {
+            "tags": ["Import"],
+            "summary": "Bulk-import resources from a JSON config",
+            "description": (
+                "Create connections, uploads, pipelines, and transformations "
+                "in a single call. Validates the entire payload first; if any "
+                "errors are found, nothing is created (atomic). Uses the same "
+                "JSON v2 format as AI_IMPORT_GUIDE.md."
+            ),
+            "requestBody": {
+                "required": True,
+                "content": _json_content(_ref("ImportRequest")),
+            },
+            "responses": {
+                "201": {
+                    "description": "All resources created",
+                    "content": _json_content(_ref("ImportResult")),
+                },
+                "400": {
+                    "description": "Validation errors — nothing created",
+                    "content": _err_content,
+                },
+                "401": _401,
+                "429": _429,
+            },
+        },
+    }
+
     # Catalog (beta — schema may change as we add lineage)
     paths["/api/v1/catalog"] = {
         "get": _list_op("Catalog", "CatalogEntry", "List catalog entries"),
@@ -777,6 +865,7 @@ def build_openapi_spec() -> dict:
             {"name": "Schedules"},
             {"name": "Runs"},
             {"name": "Notifications"},
+            {"name": "Import"},
             {"name": "Catalog"},
         ],
         "paths": paths,

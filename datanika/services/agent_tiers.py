@@ -84,7 +84,8 @@ TIERS: tuple[Tier, ...] = (
         summary=(
             "Full CRUD for every resource the agent needs to assemble a "
             "pipeline: connections, uploads, pipelines, transformations, "
-            "schedules, notification channels."
+            "schedules, notification channels. Bulk import creates all "
+            "resources in a single call."
         ),
         capabilities=(
             Capability(
@@ -100,6 +101,18 @@ TIERS: tuple[Tier, ...] = (
                     "POST /api/v1/transformations",
                     "POST /api/v1/schedules",
                     "POST /api/v1/notifications/channels",
+                ),
+            ),
+            Capability(
+                name="Bulk Import",
+                description=(
+                    "Create connections, uploads, pipelines, and "
+                    "transformations in a single call using the JSON v2 "
+                    "import format. Validates everything first — if any "
+                    "errors are found, nothing is created."
+                ),
+                endpoints=(
+                    "POST /api/v1/import",
                 ),
             ),
         ),

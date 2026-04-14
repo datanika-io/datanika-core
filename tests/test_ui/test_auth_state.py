@@ -117,3 +117,50 @@ class TestAuthStateFormFields:
             "signup() must emit the 'user.signup_completed' event so "
             "cloud plugin handlers can fire on successful signup"
         )
+
+    def test_signup_org_slug_includes_user_id_suffix(self):
+        """Regression for #127: two users with the same full_name must
+        produce distinct org slugs. The password-signup path used to
+        call ``_slugify(full_name)`` with no suffix, so a second user
+        named ``John Smith`` hit ``Slug already exists`` on create_org
+        (then swallowed into the generic toast per #128). The fix
+        mirrors ``user_service.find_or_create_oauth_user:308`` which
+        suffixes with ``{user.id}`` — making the slug globally unique
+        by construction (user ids are autoincrement).
+        """
+        import inspect
+        import re
+
+        import datanika.ui.state.auth_state as auth_state_module
+
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+
+        # The slug construction must reference both _slugify(full_name)
+        # and user.id on the same line. A loose substring check would
+        # pass on any future refactor that moves them apart.
+        pattern = re.compile(r"org_slug\s*=\s*f[\"'][^\"']*\{_slugify\(full_name\)\}-\{user\.id\}")
+        assert pattern.search(source), (
+            "Expected signup() to build org_slug as "
+            '`f"{_slugify(full_name)}-{user.id}"` — #127 regression. '
+            "Without the user.id suffix two users with the same full_name "
+            "collide on the organizations.slug unique constraint and the "
+            "second signup fails."
+        )
+
+    def test_signup_slug_pattern_matches_oauth_path(self):
+        """Both signup paths must use the same uniqueness strategy —
+        otherwise, password-signup and OAuth-signup diverge and the next
+        refactor picks whichever is in sight. #127.
+        """
+        import inspect
+
+        from datanika.services import user_service
+
+        oauth_source = inspect.getsource(user_service.UserService.find_or_create_oauth_user)
+        # The OAuth path builds: slug=f"{slug}-{user.id}"
+        assert 'f"{slug}-{user.id}"' in oauth_source, (
+            "find_or_create_oauth_user no longer uses the "
+            'f"{slug}-{user.id}" pattern — if you changed the OAuth '
+            "uniqueness strategy, update password-signup in auth_state.py "
+            "to match, and update #127."
+        )

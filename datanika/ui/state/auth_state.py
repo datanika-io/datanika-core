@@ -213,7 +213,10 @@ class AuthState(rx.State):
             with get_sync_session() as session:
                 user = svc.register_user(session, email, password, full_name)
                 org_name = f"{full_name}'s Org"
-                org_slug = _slugify(full_name)
+                # Suffix with user.id so two users with the same full_name
+                # don't collide on the org slug unique constraint. Mirrors
+                # the pattern in user_service.find_or_create_oauth_user. #127.
+                org_slug = f"{_slugify(full_name)}-{user.id}"
                 org = svc.create_org(session, org_name, org_slug, user.id)
                 # Capture id before commit expires ORM attributes
                 org_id = org.id

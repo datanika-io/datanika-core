@@ -40,11 +40,33 @@ class TestUploadRunDispatchesCeleryTask:
         mock_exec_svc = MagicMock()
         mock_exec_svc.create_run.return_value = mock_run
 
+        # #93 — run_upload now instantiates Encryption/Connection/Upload
+        # services to consume the template first-run latch. Mock them so
+        # the template path no-ops and Celery dispatch is the only signal
+        # this test asserts on.
+        mock_conn_svc = MagicMock()
+        mock_conn_svc.consume_template_first_run.return_value = None
+
+        mock_upload = MagicMock()
+        mock_upload.source_connection_id = 101
+        mock_upload.destination_connection_id = 202
+        mock_upload_svc = MagicMock()
+        mock_upload_svc.get_upload.return_value = mock_upload
+
         with (
             patch("datanika.ui.state.upload_state.get_sync_session") as mock_get_session,
             patch(
                 "datanika.ui.state.upload_state.ExecutionService",
                 return_value=mock_exec_svc,
+            ),
+            patch("datanika.ui.state.upload_state.EncryptionService"),
+            patch(
+                "datanika.ui.state.upload_state.ConnectionService",
+                return_value=mock_conn_svc,
+            ),
+            patch(
+                "datanika.ui.state.upload_state.UploadService",
+                return_value=mock_upload_svc,
             ),
             patch("datanika.ui.state.upload_state.run_upload_task") as mock_task,
             patch("datanika.ui.state.base_state.BaseState._audit"),

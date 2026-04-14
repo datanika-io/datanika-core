@@ -96,10 +96,12 @@ def run_transformation(
         session = get_sync_session()
 
     try:
-        # Check run quota before starting (cloud plugin may block)
+        # Check run quota before starting (cloud plugin may block).
+        # Standalone transformations are Path A with predicted_runs=1,
+        # per datanika-cloud/docs/billing_contract.md.
         from datanika.hooks import emit
 
-        emit("run.before_execute", session=session, org_id=org_id)
+        emit("run.before_execute", session=session, org_id=org_id, predicted_runs=1)
 
         execution_service.start_run(session, run_id)
         if own_session:

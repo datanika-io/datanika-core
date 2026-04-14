@@ -166,19 +166,29 @@ def run_pipeline(
         encryption = EncryptionService(settings.credential_encryption_key)
 
     try:
-        # Check run quota before starting (cloud plugin may block)
+        # Check run quota before starting (cloud plugin may block).
+        # Load the pipeline first so we can pass a cheap prediction
+        # (Path A in datanika-cloud/docs/billing_contract.md). Falls
+        # back to Path B (predicted_runs=None) for fan-out / custom
+        # selectors where the static model list under-counts.
         from datanika.hooks import emit as _emit_hook
-
-        _emit_hook("run.before_execute", session=session, org_id=org_id)
-
-        execution_service.start_run(session, run_id)
-        if own_session:
-            session.commit()
 
         run = session.get(Run, run_id)
         pipeline = session.execute(
             select(Pipeline).where(Pipeline.id == run.target_id, Pipeline.org_id == org_id)
         ).scalar_one()
+
+        predicted = PipelineService.predict_run_count(pipeline)
+        _emit_hook(
+            "run.before_execute",
+            session=session,
+            org_id=org_id,
+            predicted_runs=predicted,
+        )
+
+        execution_service.start_run(session, run_id)
+        if own_session:
+            session.commit()
 
         dst_conn = session.get(Connection, pipeline.destination_connection_id)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)

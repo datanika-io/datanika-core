@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [dev, master]
   push:
-    branches: [master]
+    branches: [master, dev]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -94,4 +94,41 @@ jobs:
             echo "Deploy complete"
 
             # Cleanup old images
+            docker image prune -f
+
+  deploy-staging:
+    needs: [lint, test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy to Hetzner staging
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: root
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            set -e
+
+            cd /opt/datanika-staging/datanika
+            git fetch origin dev
+            git reset --hard origin/dev
+
+            cd /opt/datanika-staging/datanika-cloud
+            git fetch origin dev
+            git reset --hard origin/dev
+
+            cd /opt/datanika-staging
+
+            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml up -d --build app celery
+
+            echo "Waiting for staging app to be healthy..."
+            timeout 180 bash -c 'until docker inspect --format="{{.State.Health.Status}}" datanika-staging-app 2>/dev/null | grep -q healthy; do sleep 3; done' || {
+              echo "Staging app failed health check"
+              docker logs --tail 50 datanika-staging-app
+              exit 1
+            }
+
+            echo "Staging deploy complete"
             docker image prune -f

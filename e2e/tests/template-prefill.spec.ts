@@ -8,7 +8,7 @@ import { test, expect } from "../fixtures/auth";
  * every Option C landing page drives users into a broken experience.
  */
 test.describe("Pipeline template prefill via ?template=", () => {
-  test.skip("stripe-to-postgres template prefills builder", async ({ loggedInPage: page }) => {
+  test("stripe-to-postgres template prefills builder", async ({ loggedInPage: page }) => {
     await page.goto("/pipelines/new?template=stripe-to-postgres");
     await expect(page.getByText(/stripe/i)).toBeVisible();
     await expect(page.getByText(/postgres/i)).toBeVisible();
@@ -17,7 +17,7 @@ test.describe("Pipeline template prefill via ?template=", () => {
     await expect(page.locator('[data-test="dest-type"]')).toHaveValue(/postgres/i);
   });
 
-  test.skip("template_selected Plausible event fires", async ({ page }) => {
+  test("template_selected Plausible event fires", async ({ page }) => {
     // Register the interception BEFORE navigation. Registering after
     // page.goto() is a race — the template_selected beacon fires from the
     // landing-page mount and would already be in flight by the time the

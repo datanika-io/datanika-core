@@ -261,6 +261,34 @@ SCHEMAS = {
         },
         required=["name", "channel_type"],
     ),
+    # --- Catalog ---
+    "CatalogEntry": _obj(
+        {
+            "id": {"type": "integer"},
+            "entry_type": {
+                "type": "string",
+                "enum": ["source_table", "dbt_model"],
+            },
+            "origin_type": {
+                "type": "string",
+                "enum": ["upload", "transformation", "pipeline"],
+            },
+            "origin_id": {"type": "integer"},
+            "table_name": {"type": "string"},
+            "schema_name": {"type": "string"},
+            "dataset_name": {"type": "string"},
+            "connection_id": {"type": "integer", "nullable": True},
+            "description": {"type": "string", "nullable": True},
+            "columns": {
+                "type": "array",
+                "items": {"type": "object"},
+                "nullable": True,
+            },
+            "dbt_config": {"type": "object", "nullable": True},
+            "created_at": _TS,
+            "updated_at": _TS,
+        }
+    ),
     # --- Tier 2 Agent Compatibility: compile + preview ---
     "CompileResult": _obj(
         {
@@ -563,6 +591,24 @@ _RUNS_PARAMS = [
 
 
 # ---------------------------------------------------------------------------
+# Stability annotations — docs/api_versioning.md, #137
+# ---------------------------------------------------------------------------
+
+
+def _annotate_stability(paths: dict) -> None:
+    """Tag every operation with ``x-stability`` (stable | beta | experimental).
+
+    Catalog endpoints are beta; everything else is stable. The tags show
+    up in Swagger UI and are consumed by enterprise procurement checklists.
+    """
+    for path_key, methods in paths.items():
+        stability = "beta" if path_key.startswith("/api/v1/catalog") else "stable"
+        for op in methods.values():
+            if isinstance(op, dict) and "tags" in op:
+                op["x-stability"] = stability
+
+
+# ---------------------------------------------------------------------------
 # Full spec
 # ---------------------------------------------------------------------------
 
@@ -691,6 +737,19 @@ def build_openapi_spec() -> dict:
         "delete": _delete_op(nt, "Delete notification channel"),
     }
 
+    # Catalog (beta — schema may change as we add lineage)
+    paths["/api/v1/catalog"] = {
+        "get": _list_op("Catalog", "CatalogEntry", "List catalog entries"),
+    }
+    paths["/api/v1/catalog/{id}"] = {
+        "get": _get_op("Catalog", "CatalogEntry", "Get catalog entry"),
+    }
+
+    # Annotate every operation with x-stability per the API versioning
+    # policy (docs/api_versioning.md, #137). Enterprise procurement
+    # requires a machine-readable stability signal in the OpenAPI spec.
+    _annotate_stability(paths)
+
     return {
         "openapi": "3.0.3",
         "info": {
@@ -718,6 +777,7 @@ def build_openapi_spec() -> dict:
             {"name": "Schedules"},
             {"name": "Runs"},
             {"name": "Notifications"},
+            {"name": "Catalog"},
         ],
         "paths": paths,
     }

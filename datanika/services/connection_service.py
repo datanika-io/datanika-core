@@ -201,22 +201,49 @@ class ConnectionService:
         name: str,
         connection_type: ConnectionType,
         config: dict,
+        source_template_slug: str | None = None,
     ) -> Connection:
         from datanika.hooks import emit
 
         emit("connection.before_create", session=session, org_id=org_id)
         validate_connection_name(name)
         direction = infer_direction(connection_type)
+        # Normalise "" → None so analytics queries can filter on a single
+        # NULL check. ConnectionState.selected_template_slug defaults to ""
+        # when a user creates a connection outside the template flow. #93.
         conn = Connection(
             org_id=org_id,
             name=name,
             connection_type=connection_type,
             direction=direction,
             config_encrypted=self._encryption.encrypt(config),
+            source_template_slug=source_template_slug or None,
         )
         session.add(conn)
         session.flush()
         return conn
+
+    def consume_template_first_run(self, session: Session, org_id: int, conn_id: int) -> str | None:
+        """Return the template slug on the connection's first eligible run,
+        then mark it so subsequent calls return None. Idempotent.
+
+        Feeds the ``template_first_run_triggered`` Plausible event (#93).
+        The caller (``PipelineState.run_pipeline`` / ``UploadState.run_upload``)
+        emits an ``rx.call_script`` when this returns a slug, and nothing
+        when it returns None — so a connection fires the funnel step 3
+        event exactly once over its lifetime, regardless of how many
+        runs it sees.
+        """
+        from datetime import UTC, datetime
+
+        conn = self.get_connection(session, org_id, conn_id)
+        if conn is None or not conn.source_template_slug:
+            return None
+        if conn.template_first_run_fired_at is not None:
+            return None
+        conn.template_first_run_fired_at = datetime.now(UTC)
+        session.flush()
+        return conn.source_template_slug
 
     def get_connection(self, session: Session, org_id: int, conn_id: int) -> Connection | None:
         stmt = select(Connection).where(

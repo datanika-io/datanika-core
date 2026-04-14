@@ -514,3 +514,106 @@ class TestPipelineCatalogSync:
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
         assert run.rows_loaded == 10
+
+
+class TestRunPipelinePredictedRuns:
+    """Verify run_pipeline passes predicted_runs to run.before_execute,
+    per datanika-cloud/docs/billing_contract.md Path A contract.
+
+    The cloud plugin subscribes to this hook with a handler that reads
+    the kwarg and gates on usage + predicted_runs. Core's job is to
+    compute the prediction and pass it; we test that forwarding here.
+    """
+
+    def test_flat_pipeline_passes_model_count(self, db_session, encryption, setup_pipeline):
+        """models=[a, b] (flat) → predicted_runs=2."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+        captured = {}
+
+        def _capture(event, **kwargs):
+            if event == "run.before_execute":
+                captured["predicted_runs"] = kwargs.get("predicted_runs")
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch("datanika.hooks.emit", side_effect=_capture),
+        ):
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        assert captured["predicted_runs"] == 2  # models=[src_order_items, src_users]
+
+    def test_custom_selector_pipeline_passes_none(self, db_session, encryption, setup_pipeline):
+        """custom_selector set → predicted_runs=None (Path B fallback)."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+        pipeline.custom_selector = "tag:nightly"
+        db_session.flush()
+
+        captured = {}
+
+        def _capture(event, **kwargs):
+            if event == "run.before_execute":
+                captured["predicted_runs"] = kwargs.get("predicted_runs", "NOT_PASSED")
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch("datanika.hooks.emit", side_effect=_capture),
+        ):
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        assert captured["predicted_runs"] is None
+
+    def test_upstream_fan_out_passes_none(self, db_session, encryption, setup_pipeline):
+        """Any upstream=True flag → predicted_runs=None."""
+        org, conn, pipeline, transformations, run = setup_pipeline
+        pipeline.models = [{"name": "src_order_items", "upstream": True}]
+        db_session.flush()
+
+        captured = {}
+
+        def _capture(event, **kwargs):
+            if event == "run.before_execute":
+                captured["predicted_runs"] = kwargs.get("predicted_runs", "NOT_PASSED")
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch("datanika.hooks.emit", side_effect=_capture),
+        ):
+            instance = mock_dbt_cls.return_value
+            instance.run_command.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+                "raw_result": [],
+            }
+            run_pipeline(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        assert captured["predicted_runs"] is None

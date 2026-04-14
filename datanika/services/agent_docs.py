@@ -9,7 +9,20 @@ templates and serves them via Starlette routes. **Do not hardcode any
 tier counts, capability lists, error codes, or golden-path steps in
 this file** — derive them from `agent_tiers` so a single edit there
 updates every surface.
+
+Delivery note (issue #124): `/llms.txt` is at the site root, not under
+the `/api/v1/*` backend prefix. Nginx routes `/` to the Reflex frontend
+(port 3000) and `/api/*` / `/_event` to Starlette (port 8000), so a
+Starlette route registered at `/llms.txt` never receives the request
+in production — the frontend 404s first. To match the published URL
+(`https://app.datanika.io/llms.txt`, referenced from landing / blog /
+comparison pages) we also materialise the rendered text into the
+Reflex `assets/` directory at app startup, which Reflex's frontend
+serves at root. The Starlette route is kept for tests + API clients
+that hit the backend directly.
 """
+
+from pathlib import Path
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
@@ -174,6 +187,28 @@ agent_doc_routes = [
 ]
 
 
+# Default path to the Reflex assets directory, relative to the project
+# root (the directory Reflex is run from). Reflex serves contents of
+# this directory at the site root, so writing `assets/llms.txt` makes
+# it reachable at `https://app.datanika.io/llms.txt` through nginx.
+DEFAULT_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+
+
+def write_llms_txt_asset(assets_dir: Path = DEFAULT_ASSETS_DIR) -> Path:
+    """Materialise LLMS_TXT into the Reflex assets directory.
+
+    Called from ``datanika.datanika`` at app bootstrap. Idempotent —
+    safe to call on every startup. The file is gitignored so it stays
+    in sync with the SoT (``agent_tiers.py``) automatically.
+
+    Returns the path the file was written to, for logging/testing.
+    """
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    target = assets_dir / "llms.txt"
+    target.write_text(LLMS_TXT, encoding="utf-8")
+    return target
+
+
 __all__ = [
     "LLMS_TXT",
     "AGENT_GUIDE_MD",
@@ -183,4 +218,6 @@ __all__ = [
     "llms_txt",
     "tier_count",
     "capability_count",
+    "write_llms_txt_asset",
+    "DEFAULT_ASSETS_DIR",
 ]

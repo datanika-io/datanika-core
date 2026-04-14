@@ -1,0 +1,6 @@
+node_modules/
+playwright-report/
+test-results/
+.pw-cache/
+.walkthrough-out/
+.e2e-fixture.json

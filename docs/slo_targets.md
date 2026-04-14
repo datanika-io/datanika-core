@@ -1,0 +1,109 @@
+# SLO Targets (v1) — k6 Baseline Reference
+
+> **Status**: Rough v1, agreed by Engineering for the QA P2 k6 work in
+> `plans/qa/PLAN_QA.md`. These are the numbers QA should bake into the
+> first baseline. Revise once the harness has run against staging for a
+> week and we have real p50/p95 curves to argue from.
+
+## Why these and not something else
+
+We do not have a perf harness today. The numbers below are derived from:
+
+1. **Manual probing** in prod — `/api/v1/meta/connection-types` returns
+   in ~40 ms over the VPN, `/healthz` in ~5 ms, signup completes in
+   ~600 ms on a warm container. Multiply by 3 for the first SLO cut.
+2. **Reflex event-driven UI** — the bottleneck is the WebSocket event
+   queue, not HTTP. Latency SLOs therefore target the REST API + the
+   first event round-trip, not full page render.
+3. **Celery worker throughput** — limited by the single-worker prod
+   setup. SLO is written against that topology, not a scaled-out one.
+4. **User-observable latency targets** for the agent-facing API —
+   LLM agents tolerate 1–2 s responses on discovery endpoints but
+   nothing slower, because downstream agents stack sequential calls.
+
+These are **targets**, not guarantees. Missing an SLO is a signal to
+investigate, not an auto-page.
+
+## Service-level indicators
+
+| Category | Indicator | Target (p95) | Target (p99) | Measurement |
+|---|---|---|---|---|
+| **REST API — read** | `/api/v1/meta/*`, `/api/v1/connections`, `/api/v1/pipelines` GET | **200 ms** | 500 ms | k6 against staging at 50 rps sustained |
+| **REST API — write** | `POST /api/v1/connections`, `POST /api/v1/pipelines` | **500 ms** | 1500 ms | k6 at 10 rps sustained |
+| **Auth** | `/api/v1/auth/signup`, `/api/v1/auth/login` | **800 ms** | 2000 ms | k6 at 5 rps sustained (bcrypt is the floor) |
+| **Agent API** | `/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/meta/agent-tiers` | **150 ms** | 400 ms | k6 at 20 rps sustained |
+| **Health probes** | `/healthz`, `/readyz` | **50 ms** | 150 ms | blackbox_exporter every 15 s |
+| **Landing** | `/`, `/pricing`, `/docs` (static) | **300 ms TTFB** | 800 ms TTFB | k6 against `datanika.io` |
+| **WebSocket event** | Reflex event round-trip for a state update | **250 ms** | 700 ms | custom Playwright probe, not k6 |
+
+## Throughput SLOs
+
+| Subsystem | Metric | Target |
+|---|---|---|
+| **REST API** | Sustained throughput before p95 regression | **≥ 100 rps** on `/api/v1/meta/*` |
+| **Celery worker** | Simple pipeline runs (DuckDB → DuckDB, ~1k rows) | **≥ 60 runs/min** on the prod box (8 GB RAM) |
+| **Celery worker** | Upload → staging runs (~10k rows, local CSV) | **≥ 20 runs/min** |
+| **Scheduler** | Schedule dispatch latency (fire time → task enqueue) | **p95 < 500 ms** |
+| **Signup → first event** | user hits submit → first Reflex event round-trip | **p95 < 1500 ms** |
+
+## Pipeline-level SLOs (out of k6 scope but documented here)
+
+| Event | Target |
+|---|---|
+| Pipeline trigger → task enqueued in Celery | **p95 < 500 ms** |
+| Task enqueued → dlt extract started | **p95 < 2 s** |
+| dlt extract complete → dbt transformation started | **p95 < 2 s** |
+| End-to-end (small pipeline, no scheduling delay) | **p95 < 30 s** for ≤ 10k rows |
+
+## Error-rate SLOs
+
+| Surface | Target |
+|---|---|
+| Any 5xx on REST API | **< 0.1 %** of requests over a 1 h window |
+| Webhook handler (Paddle) — HTTP 5xx | **0** (non-zero pages immediately; revenue-critical) |
+| Celery task failure rate (excluding user-error exceptions) | **< 1 %** |
+| Landing blackbox probe success rate | **≥ 99.5 %** over 24 h |
+
+## Saturation SLOs
+
+| Resource | Target (sustained 5 min) |
+|---|---|
+| App container CPU | **< 70 %** |
+| Celery worker CPU | **< 80 %** |
+| Postgres CPU | **< 60 %** |
+| Postgres connections in use | **< 70 %** of pool size (pool default: 10) |
+| Redis memory | **< 60 %** of maxmemory |
+| Disk free on `/opt/datanika` | **> 20 %** |
+
+## k6 scenarios QA should build first
+
+1. **`discovery_smoke.js`** — hammer `/api/v1/meta/*` at 20 rps for 2 min.
+   Asserts p95 < 200 ms, error rate < 0.1 %.
+2. **`signup_flow.js`** — ramp 0 → 5 rps over 1 min on `/api/v1/auth/signup`
+   with unique emails per VU. Asserts p95 < 800 ms, bcrypt is the floor.
+3. **`pipeline_trigger.js`** — seed a pipeline via the e2e-seed fixture,
+   hit `POST /api/v1/pipelines/{id}/run` at 10 rps for 2 min. Asserts
+   p95 enqueue-latency < 500 ms and Celery queue depth stays < 50.
+4. **`agent_discovery.js`** — `/llms.txt` + `/api/v1/meta/agent-tiers`
+   at 20 rps. Asserts p95 < 150 ms.
+
+## Reporting
+
+- Weekly k6 scheduled GHA run, diff vs last week's baseline.
+- Regression = any SLI crosses its target OR shifts > 20 % from the
+  previous week's median. Alert to Telegram.
+- Monthly roll-up into the QA health report described in
+  `plans/qa/PLAN_QA.md` §First 90 Days.
+
+## Revision policy
+
+Revise these numbers when **any** of the following happens:
+
+- Staging runs enough k6 cycles to produce a credible p95 curve (the
+  v1 numbers above are armchair estimates — real data trumps them).
+- Prod hardware changes (we are on a single 8 GB Hetzner box today).
+- A feature ships that materially changes the expected hot-path shape
+  (e.g. adding read replicas for SQL Editor will loosen the API read
+  target).
+
+Owner: Engineering Dev Lead sets the numbers; QA enforces them.

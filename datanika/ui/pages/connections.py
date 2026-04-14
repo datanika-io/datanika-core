@@ -12,6 +12,54 @@ from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
 
+# Picker options for the connection-type dropdown. Must cover every
+# ConnectionType the backend dispatches on — see the coverage test at
+# tests/test_ui/test_connection_picker_coverage.py. Grouped by category
+# for UX (databases first, then warehouses, files, APIs, SaaS, analytics,
+# messaging), not alphabetically.
+PICKER_TYPES: list[str] = [
+    # Databases
+    "postgres",
+    "mysql",
+    "mssql",
+    "sqlite",
+    "redshift",
+    "synapse",
+    "clickhouse",
+    "duckdb",
+    "mongodb",
+    # Cloud warehouses
+    "bigquery",
+    "snowflake",
+    "databricks",
+    # File / blob
+    "s3",
+    "csv",
+    "json",
+    "parquet",
+    # Generic APIs
+    "rest_api",
+    "google_sheets",
+    # SaaS / CRM
+    "stripe",
+    "salesforce",
+    "hubspot",
+    "shopify",
+    "zendesk",
+    "airtable",
+    "notion",
+    # Dev tools
+    "github",
+    "jira",
+    "slack",
+    # Analytics / ads
+    "google_analytics",
+    "google_ads",
+    "facebook_ads",
+    # Messaging
+    "kafka",
+]
+
 
 def connection_form() -> rx.Component:
     return rx.card(
@@ -34,23 +82,7 @@ def connection_form() -> rx.Component:
                 width="100%",
             ),
             searchable_select(
-                [
-                    "postgres",
-                    "mysql",
-                    "mssql",
-                    "sqlite",
-                    "rest_api",
-                    "bigquery",
-                    "snowflake",
-                    "redshift",
-                    "clickhouse",
-                    "mongodb",
-                    "s3",
-                    "csv",
-                    "json",
-                    "parquet",
-                    "google_sheets",
-                ],
+                PICKER_TYPES,
                 value=ConnectionState.form_type,
                 on_change=ConnectionState.set_form_type,
                 placeholder=_t["connections.ph_type"],

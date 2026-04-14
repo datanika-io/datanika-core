@@ -560,7 +560,12 @@ class UploadState(BaseState):
         org_id = auth_state.current_org.id
         user_id = auth_state.current_user.id
         exec_svc = ExecutionService()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
+        upload_svc = UploadService(conn_svc)
+        template_slug: str | None = None
         with get_sync_session() as session:
+            upload = upload_svc.get_upload(session, org_id, upload_id)
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
             self._audit(
                 session,
@@ -571,8 +576,24 @@ class UploadState(BaseState):
                 resource_id=upload_id,
                 new_values={"target_type": "upload", "target_id": upload_id},
             )
+            # Check both ends of the upload — the template flow could have
+            # created either the source or the destination. First eligible
+            # connection fires ``template_first_run_triggered``; subsequent
+            # runs see fired_at set and return None. #93.
+            if upload is not None:
+                for conn_id in (upload.source_connection_id, upload.destination_connection_id):
+                    template_slug = conn_svc.consume_template_first_run(session, org_id, conn_id)
+                    if template_slug:
+                        break
             session.commit()
             run_id = run.id
         run_upload_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
         yield rx.toast("Run triggered", position="top-right")
+        if template_slug:
+            import json
+
+            yield rx.call_script(
+                "if(window.plausible){window.plausible('template_first_run_triggered',"
+                f"{{props:{{slug:{json.dumps(template_slug)}}}}})}}"
+            )

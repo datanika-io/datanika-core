@@ -412,7 +412,10 @@ class PipelineState(BaseState):
         org_id = auth_state.current_org.id
         user_id = auth_state.current_user.id
         exec_svc = ExecutionService()
+        pipeline_svc = PipelineService()
+        template_slug: str | None = None
         with get_sync_session() as session:
+            pipeline = pipeline_svc.get_pipeline(session, org_id, pipeline_id)
             run = exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
             self._audit(
                 session,
@@ -423,8 +426,28 @@ class PipelineState(BaseState):
                 resource_id=pipeline_id,
                 new_values={"target_type": "pipeline", "target_id": pipeline_id},
             )
+            # Check the pipeline's destination connection for a template
+            # origin. First eligible run emits the ``template_first_run_triggered``
+            # Plausible event (funnel step 3). Idempotent via
+            # ``template_first_run_fired_at``. #93.
+            if pipeline is not None:
+                encryption = EncryptionService(settings.credential_encryption_key)
+                conn_svc = ConnectionService(encryption)
+                template_slug = conn_svc.consume_template_first_run(
+                    session, org_id, pipeline.destination_connection_id
+                )
             session.commit()
             run_id = run.id
         run_pipeline_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
         yield rx.toast("Run triggered", position="top-right")
+        if template_slug:
+            # Inline Plausible event — ``window.plausible`` is guarded so
+            # open-source self-hosted installs without the tracker loaded
+            # no-op cleanly instead of throwing. #93.
+            import json
+
+            yield rx.call_script(
+                "if(window.plausible){window.plausible('template_first_run_triggered',"
+                f"{{props:{{slug:{json.dumps(template_slug)}}}}})}}"
+            )

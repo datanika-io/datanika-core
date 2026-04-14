@@ -127,3 +127,32 @@ class PipelineService:
             suffix = "+" if m.get("downstream") else ""
             parts.append(f"{prefix}{name}{suffix}")
         return " ".join(parts)
+
+    @staticmethod
+    def predict_run_count(pipeline: Pipeline) -> int | None:
+        """Predict how many dbt nodes a pipeline run will execute.
+
+        Returns an int when the count is cheaply knowable from the
+        static pipeline config, or ``None`` when a real dbt graph
+        walk would be needed (fan-out flags or a custom selector).
+
+        Callers pass the result as ``predicted_runs`` to the
+        ``run.before_execute`` hook. ``None`` puts the run on Path B
+        (allow-then-block fallback) per
+        ``datanika-cloud/docs/billing_contract.md``.
+
+        Rules (cheap predictor, no dbt invocation):
+        - If ``custom_selector`` is set: return ``None`` (selector
+          could expand to anything).
+        - If any model entry has ``upstream=True`` or
+          ``downstream=True``: return ``None`` (fan-out).
+        - Otherwise: return ``len(pipeline.models)``, which is the
+          exact count dbt will run for a flat ``--select a b c`` list.
+        """
+        if pipeline.custom_selector and pipeline.custom_selector.strip():
+            return None
+        models = pipeline.models or []
+        for m in models:
+            if m.get("upstream") or m.get("downstream"):
+                return None
+        return len(models)

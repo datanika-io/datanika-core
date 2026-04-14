@@ -1,0 +1,16 @@
+{
+  "name": "datanika-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Playwright E2E harness for Datanika. See e2e/README.md.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "install-browsers": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "typescript": "^5.5.0"
+  }
+}

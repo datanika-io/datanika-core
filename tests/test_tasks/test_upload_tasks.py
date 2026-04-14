@@ -304,6 +304,35 @@ class TestCatalogSyncAfterUpload:
         )
         mock_dbt_instance.write_source_yml_for_connection.assert_called_once()
 
+    def test_passes_predicted_runs_one_to_hook(self, db_session, setup_upload):
+        """Upload tasks must emit run.before_execute with predicted_runs=1
+        per datanika-cloud/docs/billing_contract.md Path A contract
+        (1 submission = 1 run)."""
+        org, upload, run, encryption = setup_upload
+        captured = {}
+
+        def _capture(event, **kwargs):
+            if event == "run.before_execute":
+                captured["predicted_runs"] = kwargs.get("predicted_runs", "NOT_PASSED")
+
+        with (
+            _mock_dlt_runner() as mock_runner_cls,
+            patch("datanika.hooks.emit", side_effect=_capture),
+        ):
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {
+                "rows_loaded": 5,
+                "load_info": "ok",
+            }
+            run_upload(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+
+        assert captured["predicted_runs"] == 1
+
     def test_catalog_sync_failure_does_not_fail_run(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload
         with (

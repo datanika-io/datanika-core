@@ -77,6 +77,7 @@ dev = [
     "pytest-cov>=6.0",
     "ruff>=0.9",
     "httpx>=0.28",
+    "mcp>=1.0.0",
 ]
 
 [build-system]

@@ -118,6 +118,13 @@ Cloud version adds billing, quotas, and usage metering via the `datanika-cloud` 
 
 ---
 
+## Security
+
+Found a vulnerability? See [SECURITY.md](SECURITY.md) for our disclosure
+policy, supported versions, and reporting instructions.
+
+---
+
 ## Contributing
 
 We welcome contributors and design partners. Open an issue or contact info@datanika.io.

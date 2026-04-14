@@ -171,3 +171,17 @@ jobs:
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
+
+  # Post-deploy smoke gate. Fails loud if any curated URL 404s, returns an
+  # empty body, or serves the wrong content-type/body substring. See
+  # plans/growth/SMOKE_URLS.md (Growth-owned SoT) for the curation rationale.
+  # Non-empty body check is the critical guard — core#124 returned
+  # 404 Content-Length: 0, which a status-only check would have missed.
+  smoke:
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Smoke gate — app.datanika.io
+        run: bash .github/smoke-check.sh https://app.datanika.io .github/smoke-urls-core.txt

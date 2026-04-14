@@ -1,0 +1,18 @@
+# Post-deploy smoke gate URL list for app.datanika.io (core).
+# Format: path|content-type-substring|body-substring-or-empty
+# Source of truth: plans/growth/SMOKE_URLS.md (Growth-owned).
+# Sync from there on change; ping Infra in core#125 on edits.
+#
+# /llms.txt will FAIL the gate until core#124 lands and promotes to prod.
+# This is intentional — the entire point of this gate is that a 404 on
+# /llms.txt blocks the deploy instead of lingering in prod for a day.
+#
+# /healthz was considered per the plan as an operational probe but is
+# NOT included here: Reflex's SPA catch-all serves 200 + HTML shell for
+# any unregistered route, so /healthz would be a false-positive generator
+# until Engineering adds a real route with a distinguishing body. The
+# container-level Docker health check is sufficient for now.
+/llms.txt|text/plain|app.datanika.io/api/v1/openapi.json
+/api/v1/agent-guide.md|text/markdown|
+/api/v1/meta/agent-tiers|application/json|tiers
+/api/v1/openapi.json|application/json|openapi

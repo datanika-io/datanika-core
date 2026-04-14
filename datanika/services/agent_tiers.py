@@ -111,9 +111,7 @@ TIERS: tuple[Tier, ...] = (
                     "import format. Validates everything first — if any "
                     "errors are found, nothing is created."
                 ),
-                endpoints=(
-                    "POST /api/v1/import",
-                ),
+                endpoints=("POST /api/v1/import",),
             ),
         ),
     ),

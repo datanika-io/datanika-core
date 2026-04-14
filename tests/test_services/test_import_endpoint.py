@@ -163,9 +163,7 @@ def _full_payload():
 class TestImportEndpointHappyPath:
     def test_full_import_creates_all_resources(self, client, fake_api_key, rate_limit_ok):
         with _patch_auth(fake_api_key, rate_limit_ok):
-            resp = client.post(
-                "/api/v1/import", json=_full_payload(), headers=_auth_headers()
-            )
+            resp = client.post("/api/v1/import", json=_full_payload(), headers=_auth_headers())
             assert resp.status_code == 201, resp.json()
             data = resp.json()
             assert "created" in data
@@ -255,9 +253,7 @@ class TestImportEndpointHappyPath:
 
     def test_response_contains_created_ids(self, client, fake_api_key, rate_limit_ok):
         with _patch_auth(fake_api_key, rate_limit_ok):
-            resp = client.post(
-                "/api/v1/import", json=_full_payload(), headers=_auth_headers()
-            )
+            resp = client.post("/api/v1/import", json=_full_payload(), headers=_auth_headers())
             data = resp.json()
             for section in ("connections", "uploads", "pipelines", "transformations"):
                 for item_id in data["created"][section]:
@@ -309,9 +305,7 @@ class TestImportValidation:
                 "/api/v1/import",
                 json={
                     "version": 2,
-                    "connections": [
-                        {"name": "Bad", "connection_type": "no_such_db", "config": {}}
-                    ],
+                    "connections": [{"name": "Bad", "connection_type": "no_such_db", "config": {}}],
                 },
                 headers=_auth_headers(),
             )

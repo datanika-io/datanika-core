@@ -398,8 +398,7 @@ SCHEMAS = {
                 "type": "array",
                 "items": {"type": "object"},
                 "description": (
-                    "Uploads to create. Use connection_name references, "
-                    "not connection_id."
+                    "Uploads to create. Use connection_name references, not connection_id."
                 ),
             },
             "pipelines": {

@@ -164,3 +164,148 @@ class TestAuthStateFormFields:
             "uniqueness strategy, update password-signup in auth_state.py "
             "to match, and update #127."
         )
+
+
+class TestSignupExceptionHandling:
+    """#128 — ``signup()`` must surface typed ``UserServiceError`` messages
+    verbatim and log the catch-all path for observability.
+
+    Before this fix every signup failure (duplicate email, slug exists,
+    validation, DB drop, OAuth timeout) was replaced with the generic
+    string "Signup failed. Please try again." — users had no recovery
+    path and ops had no signal.
+    """
+
+    def test_user_service_error_imported(self):
+        import datanika.ui.state.auth_state as auth_state_module
+
+        assert hasattr(auth_state_module, "UserServiceError"), (
+            "auth_state.py must import UserServiceError so the typed "
+            "except branch can distinguish curated user-facing errors "
+            "from unexpected failures. See #128."
+        )
+
+    def test_module_logger_defined(self):
+        import datanika.ui.state.auth_state as auth_state_module
+
+        assert hasattr(auth_state_module, "logger"), (
+            "auth_state.py must define a module-level `logger` so the "
+            "catch-all except branch can emit traceable root causes. #128."
+        )
+
+    def test_signup_has_typed_user_service_error_branch(self):
+        import inspect
+
+        import datanika.ui.state.auth_state as auth_state_module
+
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+        assert "except UserServiceError" in source, (
+            "signup() must have a typed `except UserServiceError` branch "
+            "that surfaces the exception message verbatim. See #128."
+        )
+        assert "self.auth_error = str(exc)" in source, (
+            "The UserServiceError branch must set auth_error = str(exc), "
+            "not a hardcoded string. #128."
+        )
+
+    def test_signup_catch_all_logs_exception(self):
+        import inspect
+
+        import datanika.ui.state.auth_state as auth_state_module
+
+        source = inspect.getsource(auth_state_module.AuthState.signup.fn)
+        assert "logger.exception" in source, (
+            "signup()'s catch-all `except Exception` branch must call "
+            "logger.exception(...) so root causes land in container logs. "
+            "See #128."
+        )
+
+    def test_runtime_user_service_error_surfaces_message(self):
+        """End-to-end: a UserServiceError raised by the service layer
+        reaches the user as its real message, not the generic toast.
+
+        Uses ``SimpleNamespace`` as the state duck-type because Reflex's
+        ``rx.State.__setattr__`` requires full state init (dirty_vars,
+        parent state) that's expensive to stand up in a unit test — and
+        irrelevant here since the error path only touches ``self.auth_error``.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from datanika.services.user_service import UserServiceError
+        from datanika.ui.state.auth_state import AuthState
+
+        fake_svc = MagicMock()
+        fake_svc.register_user.side_effect = UserServiceError("Email already exists")
+
+        state = SimpleNamespace(
+            auth_error="",
+            _get_user_service=lambda: fake_svc,
+        )
+
+        with (
+            patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
+            patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+        ):
+            mock_captcha_cls.return_value.verify.return_value = True
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = False
+
+            result = AuthState.signup.fn(
+                state,
+                {
+                    "email": "alice@example.com",
+                    "password": "pw12345678",
+                    "full_name": "Alice",
+                    "captcha_token": "tok",
+                },
+            )
+
+        assert state.auth_error == "Email already exists"
+        assert result is None  # early return on error path
+
+    def test_runtime_unexpected_exception_logs_and_shows_generic_toast(self, caplog):
+        """End-to-end: a non-UserServiceError exception keeps the generic
+        user-facing message AND writes a log entry with the real cause."""
+        import logging
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        from datanika.ui.state.auth_state import AuthState
+
+        fake_svc = MagicMock()
+        fake_svc.register_user.side_effect = RuntimeError("DB connection lost")
+
+        state = SimpleNamespace(
+            auth_error="",
+            _get_user_service=lambda: fake_svc,
+        )
+
+        with (
+            patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
+            patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+            caplog.at_level(logging.ERROR, logger="datanika.ui.state.auth_state"),
+        ):
+            mock_captcha_cls.return_value.verify.return_value = True
+            mock_session.return_value.__enter__.return_value = MagicMock()
+            mock_session.return_value.__exit__.return_value = False
+
+            AuthState.signup.fn(
+                state,
+                {
+                    "email": "alice@example.com",
+                    "password": "pw12345678",
+                    "full_name": "Alice",
+                    "captcha_token": "tok",
+                },
+            )
+
+        assert state.auth_error == "Signup failed. Please try again."
+        assert any(
+            "DB connection lost" in rec.message
+            or (rec.exc_info and "DB connection lost" in str(rec.exc_info[1]))
+            for rec in caplog.records
+        ), (
+            "The catch-all branch must log the exception so ops can see "
+            "root causes in container logs. #128."
+        )

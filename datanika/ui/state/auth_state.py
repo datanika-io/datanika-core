@@ -1,5 +1,6 @@
 """Authentication state — login, signup, logout, org switching."""
 
+import logging
 import re
 
 import reflex as rx
@@ -9,8 +10,10 @@ from datanika.config import settings
 from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.captcha_service import CaptchaService
-from datanika.services.user_service import UserService
+from datanika.services.user_service import UserService, UserServiceError
 from datanika.ui.state.base_state import get_sync_session
+
+logger = logging.getLogger(__name__)
 
 # Option C auth bridge: valid template slug pattern + max length. Cold-traffic
 # visitors who click "Try this template" on a public /templates/<slug> landing
@@ -266,7 +269,19 @@ class AuthState(rx.State):
                             session.commit()
                     except Exception:
                         pass  # Invitation acceptance is best-effort
+        except UserServiceError as exc:
+            # Typed validation errors from user_service carry curated,
+            # user-facing messages ("Email already exists", "Name is
+            # required", etc.). Surface them verbatim so users can
+            # recover instead of bouncing off a generic toast. #128.
+            self.auth_error = str(exc)
+            return
         except Exception:
+            # Real failure of an unexpected kind — DB connection loss,
+            # CAPTCHA-service timeout, OAuth upstream exception, etc.
+            # Log the full traceback so ops can see root causes in
+            # container logs; show a generic message to the user. #128.
+            logger.exception("Unexpected signup failure")
             self.auth_error = "Signup failed. Please try again."
             return
         # Let plugins contribute Reflex events on signup success (issue

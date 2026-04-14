@@ -372,6 +372,110 @@ class TestBuildSelector:
         assert result is None
 
 
+class TestPredictRunCount:
+    """Path A prediction for the run.before_execute quota hook.
+
+    Returns an int when the count is cheaply knowable from the static
+    pipeline config, or None (→ Path B allow-then-block) when the
+    selector could fan out unpredictably. See
+    datanika-cloud/docs/billing_contract.md.
+    """
+
+    @staticmethod
+    def _make(models=None, custom_selector=None):
+        p = Pipeline(
+            org_id=1,
+            name="p",
+            destination_connection_id=1,
+            command=DbtCommand.BUILD,
+            full_refresh=False,
+            models=models or [],
+            custom_selector=custom_selector,
+        )
+        return p
+
+    def test_empty_models_returns_zero(self):
+        assert PipelineService.predict_run_count(self._make(models=[])) == 0
+
+    def test_flat_single_model(self):
+        assert PipelineService.predict_run_count(self._make(models=[{"name": "orders"}])) == 1
+
+    def test_flat_multiple_models(self):
+        assert (
+            PipelineService.predict_run_count(
+                self._make(
+                    models=[
+                        {"name": "orders"},
+                        {"name": "customers"},
+                        {"name": "products"},
+                    ]
+                )
+            )
+            == 3
+        )
+
+    def test_flat_models_with_false_flags(self):
+        """Explicit upstream=False / downstream=False should still be flat."""
+        assert (
+            PipelineService.predict_run_count(
+                self._make(
+                    models=[
+                        {"name": "orders", "upstream": False, "downstream": False},
+                        {"name": "customers", "upstream": False, "downstream": False},
+                    ]
+                )
+            )
+            == 2
+        )
+
+    def test_upstream_flag_triggers_fallback(self):
+        """+orders could expand to many nodes → Path B."""
+        assert (
+            PipelineService.predict_run_count(
+                self._make(models=[{"name": "orders", "upstream": True}])
+            )
+            is None
+        )
+
+    def test_downstream_flag_triggers_fallback(self):
+        assert (
+            PipelineService.predict_run_count(
+                self._make(models=[{"name": "orders", "downstream": True}])
+            )
+            is None
+        )
+
+    def test_mixed_flat_and_fanout_triggers_fallback(self):
+        assert (
+            PipelineService.predict_run_count(
+                self._make(
+                    models=[
+                        {"name": "a"},
+                        {"name": "b", "upstream": True},
+                    ]
+                )
+            )
+            is None
+        )
+
+    def test_custom_selector_triggers_fallback(self):
+        assert (
+            PipelineService.predict_run_count(
+                self._make(models=[{"name": "x"}], custom_selector="tag:nightly")
+            )
+            is None
+        )
+
+    def test_whitespace_only_custom_selector_does_not_trigger_fallback(self):
+        """Same rule as build_selector — whitespace custom_selector = no custom."""
+        assert (
+            PipelineService.predict_run_count(
+                self._make(models=[{"name": "x"}], custom_selector="   ")
+            )
+            == 1
+        )
+
+
 class TestValidateModels:
     def test_valid_models(self):
         PipelineService.validate_models(

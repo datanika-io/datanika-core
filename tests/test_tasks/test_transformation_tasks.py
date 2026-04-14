@@ -138,6 +138,34 @@ class TestRunTransformationTask:
 
         assert run_transformation_task.name == "datanika.run_transformation"
 
+    def test_passes_predicted_runs_one_to_hook(self, db_session, setup_transformation):
+        """Transformations emit run.before_execute with predicted_runs=1
+        per datanika-cloud/docs/billing_contract.md Path A contract."""
+        org, transformation, run = setup_transformation
+        captured = {}
+
+        def _capture(event, **kwargs):
+            if event == "run.before_execute":
+                captured["predicted_runs"] = kwargs.get("predicted_runs", "NOT_PASSED")
+
+        with (
+            _mock_dbt_project() as mock_dbt_cls,
+            patch("datanika.hooks.emit", side_effect=_capture),
+        ):
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": True,
+                "rows_affected": 0,
+                "logs": "",
+            }
+            run_transformation(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+            )
+
+        assert captured["predicted_runs"] == 1
+
 
 class TestCatalogSyncAfterTransformation:
     def test_syncs_catalog_after_success(self, db_session, setup_transformation):

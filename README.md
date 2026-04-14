@@ -90,7 +90,7 @@ uv run reflex run                     # starts on :3000 + :8000
 - [x] 32 connectors (databases, SaaS APIs, files, streaming)
 - [x] dbt transformations, tests, snapshots, packages
 - [x] REST API v1 with OpenAPI/Swagger and typed per-connector inline schemas
-- [x] AI-agent compatibility (`/llms.txt`, agent-guide, 5-tier API, golden-path loop, `?wait=true`, `Idempotency-Key`, run cancel)
+- [x] AI-agent compatibility (`/llms.txt`, agent-guide, 5-tier API, golden-path loop, `?wait=true`, `Idempotency-Key`, run cancel, MCP server)
 - [x] Pipeline templates (one-click setup)
 - [x] In-app notification center with Slack, Telegram, Email, Webhook channels
 - [x] SSO (SAML/OIDC) for Enterprise
@@ -98,6 +98,26 @@ uv run reflex run                     # starts on :3000 + :8000
 - [x] 1,700+ tests across unit, security, and E2E (SQLite in-memory for speed)
 - [ ] Kubernetes Helm chart
 - [ ] Data lineage visualization
+
+---
+
+## AI Agent Integration
+
+Datanika ships a first-class [MCP](https://modelcontextprotocol.io/) server so AI agents (Claude Desktop, Claude Code, etc.) can browse connections, preview data, compile transformations, and manage pipelines natively.
+
+```bash
+# Install and run (read-only by default)
+uvx --from "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp" \
+    datanika-mcp --url https://app.datanika.io --api-key YOUR_KEY
+```
+
+See [`datanika-mcp/README.md`](datanika-mcp/README.md) for Claude Desktop config snippets, the full tool list, and the `--allow-write` flag.
+
+Additional agent resources:
+- [`/llms.txt`](https://app.datanika.io/llms.txt) — discovery document
+- [`/api/v1/openapi.json`](https://app.datanika.io/api/v1/openapi.json) — OpenAPI spec with typed inline schemas
+- [`/api/v1/meta/agent-tiers`](https://app.datanika.io/api/v1/meta/agent-tiers) — 5-tier capability stack (JSON)
+- [`docs/api_versioning.md`](docs/api_versioning.md) — stability tiers and deprecation policy
 
 ---
 

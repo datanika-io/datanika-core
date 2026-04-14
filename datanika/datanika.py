@@ -239,11 +239,17 @@ from datanika.services.openapi import openapi_routes  # noqa: E402
 for _route in openapi_routes:
     app._api.routes.append(_route)
 
-# Mount agent discovery docs (/llms.txt, /api/v1/agent-guide.md)
-from datanika.services.agent_docs import agent_doc_routes  # noqa: E402
+# Mount agent discovery docs (/llms.txt, /api/v1/agent-guide.md).
+# Also materialise /llms.txt into the Reflex assets dir so the frontend
+# (nginx → :3000) serves it at the root URL published in our docs.
+# See the module docstring in services/agent_docs.py for why this is
+# needed on top of the Starlette route registration. Issue #124.
+from datanika.services.agent_docs import agent_doc_routes, write_llms_txt_asset  # noqa: E402
 
 for _route in agent_doc_routes:
     app._api.routes.append(_route)
+
+write_llms_txt_asset()
 
 # Mount Prometheus metrics endpoint and middleware
 from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # noqa: E402

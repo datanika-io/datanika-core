@@ -27,8 +27,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import asdict, dataclass
+import tempfile
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -47,7 +49,10 @@ FIXTURE_USER_EMAIL = "e2e@datanika.test"
 FIXTURE_USER_PASSWORD = "e2e-fixture-password-not-a-secret"  # noqa: S105
 FIXTURE_USER_NAME = "E2E Fixture User"
 FIXTURE_CONNECTION_NAME = "e2e_duckdb_fixture"
-FIXTURE_DUCKDB_PATH = "/tmp/e2e_fixture.duckdb"
+# Platform-agnostic path: tempfile.gettempdir() resolves to %TEMP% on
+# Windows and /tmp on POSIX, so Windows devs running the harness locally
+# don't trip over a hardcoded /tmp/ that doesn't exist.
+FIXTURE_DUCKDB_PATH = str(Path(tempfile.gettempdir()) / "e2e_fixture.duckdb")
 
 PROD_HOST_MARKERS = ("datanika.io", "app.datanika.io", "prod", "production")
 
@@ -62,6 +67,10 @@ class SeedResult:
     connection_id: int
     connection_name: str
     connection_type: str
+    # ISO-8601 UTC timestamp of the seed operation. Part of the stable
+    # JSON contract with Playwright: the harness uses this to detect
+    # stale `.e2e-fixture.json` artifacts across CI runs.
+    seeded_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class UnsafeTargetError(RuntimeError):
@@ -169,11 +178,7 @@ def main() -> int:
     except UnsafeTargetError as exc:
         print(f"e2e-seed refused: {exc}", file=sys.stderr)
         return 2
-    payload = {
-        **asdict(result),
-        "seeded_at": datetime.now(UTC).isoformat(),
-    }
-    print(json.dumps(payload, indent=2))
+    print(json.dumps(asdict(result), indent=2))
     return 0
 
 

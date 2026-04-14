@@ -883,12 +883,17 @@ class ConnectionState(BaseState):
                         new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
                 else:
+                    # Pass the template slug through so the Plausible
+                    # funnel step 3 (``template_first_run_triggered``)
+                    # can attribute this connection's first run back to
+                    # the template the user started from. #93.
                     conn = svc.create_connection(
                         session,
                         org_id,
                         self.form_name,
                         ConnectionType(self.form_type),
                         config,
+                        source_template_slug=self.selected_template_slug or None,
                     )
                     self._audit(
                         session,
@@ -903,6 +908,9 @@ class ConnectionState(BaseState):
         except Exception as e:
             self._set_error(e, "Failed to save connection")
             return
+        # Slug was persisted on the Connection row; detach from UI state so
+        # a subsequent non-template create doesn't inherit it. #93.
+        self.selected_template_slug = ""
         self._reset_form_fields()
         await self.load_connections()
 

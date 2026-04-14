@@ -764,3 +764,90 @@ class TestIsSelectOnly:
 
     def test_strips_block_comments(self):
         assert ConnectionService.is_select_only("/* hi */ SELECT 1")
+
+
+class TestSourceTemplateSlug:
+    """#93 — ``connections.source_template_slug`` records the Pipeline
+    Template a connection was created from, so the Plausible funnel
+    (``template_selected`` → ``template_prefill_applied`` →
+    ``template_first_run_triggered``) can attribute activation to the
+    right template across sessions.
+    """
+
+    def test_default_source_template_slug_is_none(self, svc, db_session, org):
+        conn = svc.create_connection(db_session, org.id, "Plain", ConnectionType.POSTGRES, {})
+        assert conn.source_template_slug is None
+
+    def test_stores_source_template_slug(self, svc, db_session, org):
+        conn = svc.create_connection(
+            db_session,
+            org.id,
+            "Shopify",
+            ConnectionType.SHOPIFY,
+            {},
+            source_template_slug="shopify-to-postgres",
+        )
+        assert conn.source_template_slug == "shopify-to-postgres"
+
+    def test_empty_slug_normalises_to_none(self, svc, db_session, org):
+        # ``ConnectionState.selected_template_slug`` defaults to "" so the
+        # service must treat the empty string the same as NULL — otherwise
+        # analytics queries for "template-sourced connections" would need
+        # a secondary `!= ""` filter and every non-template connection
+        # would show up as a phantom template-origin row.
+        conn = svc.create_connection(
+            db_session, org.id, "X", ConnectionType.MYSQL, {}, source_template_slug=""
+        )
+        assert conn.source_template_slug is None
+
+
+class TestConsumeTemplateFirstRun:
+    """#93 — ``consume_template_first_run`` is the idempotency latch. The
+    first call for a template-sourced connection returns the slug and
+    stamps ``template_first_run_fired_at``; every subsequent call
+    returns None. The Plausible event must fire exactly once per
+    connection lifetime.
+    """
+
+    def _create(self, svc, db_session, org, slug=None):
+        return svc.create_connection(
+            db_session,
+            org.id,
+            "Conn",
+            ConnectionType.POSTGRES,
+            {"host": "localhost"},
+            source_template_slug=slug,
+        )
+
+    def test_returns_slug_on_first_call(self, svc, db_session, org):
+        conn = self._create(svc, db_session, org, slug="shopify-to-pg")
+        assert svc.consume_template_first_run(db_session, org.id, conn.id) == "shopify-to-pg"
+
+    def test_sets_fired_at_on_first_call(self, svc, db_session, org):
+        conn = self._create(svc, db_session, org, slug="x")
+        assert conn.template_first_run_fired_at is None
+        svc.consume_template_first_run(db_session, org.id, conn.id)
+        db_session.refresh(conn)
+        assert conn.template_first_run_fired_at is not None
+
+    def test_returns_none_on_second_call(self, svc, db_session, org):
+        conn = self._create(svc, db_session, org, slug="x")
+        first = svc.consume_template_first_run(db_session, org.id, conn.id)
+        second = svc.consume_template_first_run(db_session, org.id, conn.id)
+        assert first == "x"
+        assert second is None
+
+    def test_returns_none_when_no_slug(self, svc, db_session, org):
+        conn = self._create(svc, db_session, org, slug=None)
+        assert svc.consume_template_first_run(db_session, org.id, conn.id) is None
+
+    def test_returns_none_for_missing_connection(self, svc, db_session, org):
+        assert svc.consume_template_first_run(db_session, org.id, 999_999) is None
+
+    def test_scoped_to_org(self, svc, db_session, org, other_org):
+        """A connection in another org is invisible. MUST NOT fire for the
+        wrong tenant, AND must remain eligible from the right tenant.
+        """
+        conn = self._create(svc, db_session, org, slug="x")
+        assert svc.consume_template_first_run(db_session, other_org.id, conn.id) is None
+        assert svc.consume_template_first_run(db_session, org.id, conn.id) == "x"

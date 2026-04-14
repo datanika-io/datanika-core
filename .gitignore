@@ -1,6 +1,9 @@
 .web
 .states
 assets/external/
+# Generated at app startup by services/agent_docs.py::write_llms_txt_asset()
+# from the agent_tiers.py SoT. Committing risks drift. See issue #124.
+assets/llms.txt
 *.db
 *.py[cod]
 # Byte-compiled / optimized / DLL files

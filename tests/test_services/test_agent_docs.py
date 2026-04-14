@@ -1,10 +1,18 @@
-"""Tests for /llms.txt, /api/v1/agent-guide.md, /api/v1/meta/agent-tiers (#64, #85)."""
+"""Tests for /llms.txt, /api/v1/agent-guide.md, /api/v1/meta/agent-tiers (#64, #85, #124)."""
+
+from pathlib import Path
 
 import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
-from datanika.services.agent_docs import AGENT_GUIDE_MD, LLMS_TXT, agent_doc_routes
+from datanika.services.agent_docs import (
+    AGENT_GUIDE_MD,
+    DEFAULT_ASSETS_DIR,
+    LLMS_TXT,
+    agent_doc_routes,
+    write_llms_txt_asset,
+)
 from datanika.services.agent_tiers import (
     all_capabilities,
     capability_count,
@@ -194,3 +202,60 @@ class TestSoTWiring:
             # endpoint substring is the stable part to assert on.
             endpoint = step.split("`")[1] if "`" in step else step
             assert endpoint in AGENT_GUIDE_MD, f"Golden path step {endpoint!r} missing"
+
+
+class TestLlmsTxtStaticAsset:
+    """Regression for issue #124.
+
+    `/llms.txt` is referenced from published landing content, blog
+    posts, and four comparison pages. It must be reachable at
+    `https://app.datanika.io/llms.txt` — which means it has to be
+    served by the Reflex frontend (port 3000), not the Starlette
+    backend, because nginx routes the root to the frontend. We
+    materialise the rendered LLMS_TXT into the Reflex assets dir at
+    app startup; these tests pin that contract so the fix can't drift.
+    """
+
+    def test_write_llms_txt_asset_creates_file(self, tmp_path):
+        target = write_llms_txt_asset(assets_dir=tmp_path)
+        assert target.exists()
+        assert target == tmp_path / "llms.txt"
+
+    def test_asset_content_matches_module_constant(self, tmp_path):
+        target = write_llms_txt_asset(assets_dir=tmp_path)
+        assert target.read_text(encoding="utf-8") == LLMS_TXT
+
+    def test_asset_is_non_empty_and_has_openapi_url(self, tmp_path):
+        target = write_llms_txt_asset(assets_dir=tmp_path)
+        content = target.read_text(encoding="utf-8")
+        assert len(content) > 500
+        assert "openapi.json" in content
+
+    def test_asset_is_idempotent(self, tmp_path):
+        """Calling twice leaves the same file, same content."""
+        first = write_llms_txt_asset(assets_dir=tmp_path)
+        second = write_llms_txt_asset(assets_dir=tmp_path)
+        assert first == second
+        assert first.read_text(encoding="utf-8") == LLMS_TXT
+
+    def test_default_assets_dir_is_project_root_assets(self):
+        """The default must resolve to the repo's assets/ directory,
+        next to datanika/, not to a subdir inside datanika/services/."""
+        assert DEFAULT_ASSETS_DIR.name == "assets"
+        assert DEFAULT_ASSETS_DIR.parent.name in ("datanika-core-engineering", "datanika")
+
+    def test_app_bootstrap_writes_the_asset(self):
+        """datanika.datanika imports and calls write_llms_txt_asset()
+        so the file exists after app startup. This is a source-level
+        assertion — a runtime check would require booting the full
+        Reflex app, which is out of scope for unit tests."""
+        src = Path(__file__).resolve().parents[2] / "datanika" / "datanika.py"
+        text = src.read_text(encoding="utf-8")
+        assert "write_llms_txt_asset" in text, (
+            "datanika/datanika.py must import and call write_llms_txt_asset() "
+            "at app bootstrap — see issue #124."
+        )
+        assert "write_llms_txt_asset()" in text, (
+            "datanika/datanika.py imports write_llms_txt_asset but never "
+            "calls it — the asset won't be materialised on startup."
+        )

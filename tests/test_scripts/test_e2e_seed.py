@@ -201,4 +201,26 @@ def test_seed_result_shape():
         "connection_id",
         "connection_name",
         "connection_type",
+        "seeded_at",
     }
+
+
+def test_seeded_at_is_iso_utc(db_session):
+    """seeded_at is pinned into the dataclass and emitted as ISO-8601 UTC,
+    so Playwright can detect stale .e2e-fixture.json artifacts across runs."""
+    from datetime import datetime
+
+    result = seed(session=db_session)
+    parsed = datetime.fromisoformat(result.seeded_at)
+    # Must carry explicit UTC tzinfo, not naive.
+    assert parsed.tzinfo is not None
+
+
+def test_fixture_duckdb_path_is_platform_agnostic():
+    """FIXTURE_DUCKDB_PATH must resolve under the OS temp dir, not hardcoded /tmp/."""
+    import tempfile
+
+    from datanika.scripts.e2e_seed import FIXTURE_DUCKDB_PATH
+
+    assert FIXTURE_DUCKDB_PATH.startswith(tempfile.gettempdir())
+    assert FIXTURE_DUCKDB_PATH.endswith("e2e_fixture.duckdb")

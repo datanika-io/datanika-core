@@ -475,3 +475,262 @@ groups:
         annotations:
           summary: "PostgreSQL slow query rate elevated"
           description: "pg_stat_statements reports elevated query time. Check docker logs datanika-postgres for queries over 500ms."
+
+  # Revenue-facing alerts. Data source is the Postgres `subscriptions` + `plans`
+  # tables rather than Prometheus counters — the Paddle webhook handler in
+  # datanika_cloud/billing/webhook.py updates row state directly, so `updated_at`
+  # is the freshest proxy for "last webhook successfully processed". No app-side
+  # metrics instrumentation is required; adding Prometheus counters would be
+  # nice-to-have (tracked as a follow-up in PLAN_INFRASTRUCTURE.md).
+  #
+  # Synthetic fire procedure (run once per rule after provisioning):
+  #   1. SSH to Hetzner, `docker exec -it datanika-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`
+  #   2. For webhook-silence: `UPDATE subscriptions SET updated_at = NOW() - INTERVAL '900 hours'
+  #      WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL;`
+  #      Wait ~35 minutes (5m eval interval + 30m `for`) and confirm Telegram alert.
+  #      Revert: `UPDATE subscriptions SET updated_at = NOW() WHERE ...`
+  #   3. For stuck-past-due: insert a test row with status='past_due' and updated_at older
+  #      than 72h, or flip an existing sub temporarily. Revert after confirming.
+  #   4. For MRR drop: temporarily flip one active sub to 'cancelled' (large drop) or use a
+  #      throwaway staging DB. Confirm alert, revert.
+  # Alternative: use Grafana's "Preview" button in the rule editor UI — runs the query
+  # once without waiting for the 5m evaluation cadence. See PR #139 body for details.
+  - orgId: 1
+    name: Revenue Alerts
+    folder: Datanika Cloud
+    interval: 5m
+    rules:
+      # --- Paddle webhook silence ---
+      # Fires if `MAX(subscriptions.updated_at)` is older than 840 hours
+      # (35 days ≈ one monthly billing cycle + 5-day grace) while at least one
+      # active/trialing/past_due subscription exists. The webhook handler
+      # touches `updated_at` on every subscription.* and transaction.completed
+      # event, so a month-plus silence across ALL active subs means no
+      # renewal event ever landed — a strong signal that webhook delivery
+      # from Paddle is broken (signature rotation, DNS/firewall change,
+      # handler exception, Paddle-side outage).
+      #
+      # Threshold is TUNED FOR THE CURRENT SMALL CUSTOMER BASE (2026-04-14).
+      # Verified against prod: max silence today is 487h on the single
+      # active Pro sub (mid-cycle, no events since signup 2026-03-25). Once
+      # the webhook handler populates `renews_at` (currently always NULL —
+      # `handle_subscription_created` accepts the kwarg but webhook.py never
+      # passes it), switch this rule to a missed-renewal query with a 12h
+      # threshold: `WHERE renews_at < NOW() - INTERVAL '12 hours' AND updated_at < renews_at`.
+      # Tracked as a follow-up in PLAN_INFRASTRUCTURE.md.
+      - uid: revenue-webhook-silence
+        title: Paddle Webhook Silence
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: datanika-postgres
+            model:
+              datasource:
+                type: postgres
+                uid: datanika-postgres
+              rawSql: |-
+                SELECT COALESCE(
+                  CASE
+                    WHEN (SELECT COUNT(*) FROM subscriptions
+                          WHERE status IN ('active','trialing','past_due')
+                            AND deleted_at IS NULL) > 0
+                    THEN EXTRACT(EPOCH FROM (NOW() - MAX(updated_at))) / 3600.0
+                    ELSE 0
+                  END, 0
+                )::numeric(10,2) AS hours_since_last_webhook
+                FROM subscriptions
+                WHERE status IN ('active','trialing','past_due')
+                  AND deleted_at IS NULL;
+              format: table
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [840]
+              refId: C
+        for: 30m
+        labels:
+          severity: warning
+          team: revenue
+        annotations:
+          summary: "No Paddle webhooks processed in 35+ days"
+          description: "Latest subscriptions.updated_at is older than 840 hours (35 days) while active/trialing/past_due subscriptions exist. A full monthly billing cycle should have produced at least one subscription.updated or transaction.completed event. Check the webhook handler logs (`docker logs datanika-app | grep webhook`), Paddle dashboard → Notifications → Webhooks for delivery errors, and `PADDLE_WEBHOOK_SECRET` in .env.docker. Note: threshold is coarse because `subscriptions.renews_at` is not currently populated — once it is, switch this rule to a missed-renewal query with a 12h grace."
+
+      # --- Stuck past_due subscription ---
+      # A subscription in past_due for > 72h should have transitioned to either
+      # active (dunning recovered) or cancelled/expired (dunning gave up) via a
+      # follow-up webhook. If it hasn't, the follow-up webhook was dropped —
+      # silent revenue state drift.
+      - uid: revenue-stuck-past-due
+        title: Stuck past_due Subscription
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: datanika-postgres
+            model:
+              datasource:
+                type: postgres
+                uid: datanika-postgres
+              rawSql: |-
+                SELECT COUNT(*)::int AS stuck_count
+                FROM subscriptions
+                WHERE status = 'past_due'
+                  AND updated_at < NOW() - INTERVAL '72 hours'
+                  AND deleted_at IS NULL;
+              format: table
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 0s
+        labels:
+          severity: critical
+          team: revenue
+        annotations:
+          summary: "Subscription stuck in past_due > 72h"
+          description: "One or more subscriptions have been in past_due for longer than 72 hours. Paddle's dunning cycle should resolve within 72h — either a follow-up webhook was dropped or the handler failed on it. Inspect: `SELECT id, paddle_subscription_id, updated_at FROM subscriptions WHERE status = 'past_due' AND updated_at < NOW() - INTERVAL '72 hours';`. Cross-check the Paddle dashboard for the corresponding subscription state."
+
+      # --- MRR drop week-over-week ---
+      # Business-anomaly detection. Compares today's MRR (sum of monthly-equiv
+      # price for active+trialing subs) against MRR as-of 7 days ago. The 10%
+      # threshold is tuned for the current small customer base — bump it to
+      # 5% once MRR exceeds ~$5k/mo to keep the warn floor meaningful.
+      - uid: revenue-mrr-drop-wow
+        title: MRR Drop Week-over-Week
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: datanika-postgres
+            model:
+              datasource:
+                type: postgres
+                uid: datanika-postgres
+              rawSql: |-
+                WITH current_mrr AS (
+                  SELECT COALESCE(SUM(
+                    CASE p.interval
+                      WHEN 'yearly'  THEN p.price_cents / 12.0 / 100.0
+                      WHEN 'monthly' THEN p.price_cents / 100.0
+                      ELSE 0
+                    END
+                  ), 0)::numeric AS mrr
+                  FROM subscriptions s
+                  JOIN plans p ON p.id = s.plan_id
+                  WHERE s.status IN ('active','trialing')
+                    AND s.deleted_at IS NULL
+                ),
+                last_week_mrr AS (
+                  SELECT COALESCE(SUM(
+                    CASE p.interval
+                      WHEN 'yearly'  THEN p.price_cents / 12.0 / 100.0
+                      WHEN 'monthly' THEN p.price_cents / 100.0
+                      ELSE 0
+                    END
+                  ), 0)::numeric AS mrr
+                  FROM subscriptions s
+                  JOIN plans p ON p.id = s.plan_id
+                  WHERE s.created_at <= NOW() - INTERVAL '7 days'
+                    AND (s.ends_at IS NULL OR s.ends_at > NOW() - INTERVAL '7 days')
+                    AND s.status IN ('active','trialing','past_due')
+                    AND s.deleted_at IS NULL
+                )
+                SELECT
+                  CASE
+                    WHEN lw.mrr = 0 THEN 0
+                    ELSE GREATEST(((lw.mrr - cm.mrr) / lw.mrr * 100)::numeric(10,2), 0)
+                  END AS mrr_drop_pct_wow
+                FROM current_mrr cm, last_week_mrr lw;
+              format: table
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [10]
+              refId: C
+        for: 30m
+        labels:
+          severity: warning
+          team: revenue
+        annotations:
+          summary: "MRR dropped more than 10% week-over-week"
+          description: "Current MRR is more than 10% below the week-ago baseline. Check the Revenue Metrics dashboard (Datanika Cloud → Revenue Metrics) for which plan tier moved. Likely causes: batch of cancellations landed, high-ARPU customer downgraded, or the MRR query is reading a stale snapshot. Compare the current_mrr vs last_week_mrr CTEs in `monitoring/grafana/provisioning/alerting/alerts.yml`."

@@ -483,18 +483,86 @@ groups:
   # metrics instrumentation is required; adding Prometheus counters would be
   # nice-to-have (tracked as a follow-up in PLAN_INFRASTRUCTURE.md).
   #
-  # Synthetic fire procedure (run once per rule after provisioning):
-  #   1. SSH to Hetzner, `docker exec -it datanika-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`
-  #   2. For webhook-silence: `UPDATE subscriptions SET updated_at = NOW() - INTERVAL '900 hours'
-  #      WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL;`
-  #      Wait ~35 minutes (5m eval interval + 30m `for`) and confirm Telegram alert.
-  #      Revert: `UPDATE subscriptions SET updated_at = NOW() WHERE ...`
-  #   3. For stuck-past-due: insert a test row with status='past_due' and updated_at older
-  #      than 72h, or flip an existing sub temporarily. Revert after confirming.
-  #   4. For MRR drop: temporarily flip one active sub to 'cancelled' (large drop) or use a
-  #      throwaway staging DB. Confirm alert, revert.
-  # Alternative: use Grafana's "Preview" button in the rule editor UI — runs the query
-  # once without waiting for the 5m evaluation cadence. See PR #139 body for details.
+  # Synthetic fire procedure (run once per rule after provisioning).
+  #
+  # Lesson from 2026-04-15 PM incident: a prior session ran the webhook-silence
+  # synthetic UPDATE but never reverted, leaving sub id=1 with updated_at 900h
+  # in the past. When PR #161 shipped the cleaned annotation wording, the
+  # still-stale row correctly tripped stuck-past-due and fired a live Telegram
+  # alert mid-sweep. Root cause was not a bug — it was an unclean test teardown
+  # combined with server-side hot-edits to this very file (violating the
+  # deploy-via-git rule). Both are now explicit pre/post steps below.
+  #
+  # --- Pre-flight (MANDATORY, fail loudly if any step surfaces drift) ---
+  # 0a. SSH to Hetzner: `ssh root@46.225.214.120`
+  # 0b. Verify the server checkout is CLEAN against master:
+  #       `cd /opt/datanika/datanika && git status --porcelain`
+  #     MUST return empty. If any file is dirty, STOP — someone hot-edited the
+  #     server. Reconcile via git (commit + push + pull, or checkout --)
+  #     before touching the DB. Never run a synthetic fire on top of drift;
+  #     a CD git pull on next deploy will silently clobber the edits.
+  # 0c. Verify no pre-existing stale rows (proves the DB starts clean):
+  #       `docker exec datanika-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "
+  #         SELECT id, status, updated_at, AGE(NOW(), updated_at) AS age
+  #         FROM subscriptions
+  #         WHERE deleted_at IS NULL
+  #           AND updated_at < NOW() - INTERVAL '30 days';"`
+  #     MUST return 0 rows. If rows come back, investigate each one (real
+  #     stuck sub? leftover test data?) and resolve BEFORE starting — otherwise
+  #     you cannot distinguish the synthetic fire signal from pre-existing noise.
+  # 0d. Snapshot the target IDs + current state you are about to mutate, so
+  #     you can revert exactly (copy this output into your scratchpad):
+  #       `SELECT id, status, updated_at, paddle_subscription_id FROM subscriptions
+  #          WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL
+  #          ORDER BY id;`
+  #
+  # --- Synthetic fire steps (each step MUST include its revert SQL) ---
+  # 1. Connect:
+  #      `docker exec -it datanika-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB`
+  # 2. For webhook-silence:
+  #      Fire:   `UPDATE subscriptions SET updated_at = NOW() - INTERVAL '900 hours'
+  #                 WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL;`
+  #      Wait:   ~35 minutes (5m eval interval + 30m `for`) and confirm Telegram alert.
+  #      REVERT: `UPDATE subscriptions SET updated_at = NOW()
+  #                 WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL;`
+  #      Verify: `SELECT id, status, AGE(NOW(), updated_at) FROM subscriptions
+  #                 WHERE status IN ('active','trialing','past_due') AND deleted_at IS NULL;`
+  #              All ages MUST be < 1 minute. If any age > 1 minute, your revert
+  #              missed a row — re-run the revert with a tighter WHERE.
+  # 3. For stuck-past-due:
+  #      Fire:   `UPDATE subscriptions SET status = 'past_due',
+  #                 updated_at = NOW() - INTERVAL '80 hours'
+  #                 WHERE id = <one-target-id-from-step-0d>;`
+  #              (Prefer flipping an existing active/trialing sub; do NOT INSERT.)
+  #      Wait:   ~5 minutes (expr uses `for: 0s`, eval interval 5m).
+  #      REVERT: `UPDATE subscriptions
+  #                 SET status = '<original-status-from-0d>',
+  #                     updated_at = NOW()
+  #                 WHERE id = <same-target-id>;`
+  #      Verify: `SELECT id, status, AGE(NOW(), updated_at) FROM subscriptions
+  #                 WHERE id = <target-id>;`
+  #              Status MUST match the 0d snapshot and age MUST be < 1 minute.
+  # 4. For MRR drop:
+  #      Fire:   `UPDATE subscriptions SET status = 'cancelled',
+  #                 ends_at = NOW() - INTERVAL '1 day'
+  #                 WHERE id = <one-target-id-from-step-0d>;`
+  #      Wait:   ~10 minutes (eval + for).
+  #      REVERT: `UPDATE subscriptions SET status = '<original-status-from-0d>',
+  #                 ends_at = NULL   -- or the original value from 0d
+  #                 WHERE id = <same-target-id>;`
+  #      Verify: same as step 3.
+  #
+  # --- Post-test verification (MANDATORY) ---
+  # 5. Re-run the 0c query. MUST return 0 rows. If not, you left drift — fix
+  #    NOW before walking away; a stale row will re-fire at the next eval.
+  # 6. Re-run the 0b `git status --porcelain` on the server. MUST be empty.
+  # 7. Watch Telegram for ~1h: none of the three rules should re-fire.
+  #
+  # --- Alternative: dry-run via Grafana UI (does NOT touch prod DB) ---
+  # Use the "Preview" button in the rule editor to execute the query without
+  # waiting for the 5m cadence. Catches query bugs but NOT annotation-template
+  # bugs (those only show up on real notifier dispatch — see PR #161).
+  # See PR #139 body for details.
   - orgId: 1
     name: Revenue Alerts
     folder: Datanika Cloud
@@ -734,3 +802,239 @@ groups:
         annotations:
           summary: "MRR dropped more than 10% week-over-week"
           description: "Current MRR is more than 10% below the week-ago baseline. Check the Revenue Metrics dashboard (Datanika Cloud → Revenue Metrics) for which plan tier moved. Likely causes: batch of cancellations landed, high-ARPU customer downgraded, or the MRR query is reading a stale snapshot. Compare the current_mrr vs last_week_mrr CTEs in the alerts.yml file."
+
+  # === Volume Alerts (V2 P1 plumbing, per plans/infra/SPEC_GB_THROUGHPUT_METRICS.md §7.1) ===
+  # Three Infra-owned Postgres-backed rules for the bytes_processed meter.
+  # Ships with `noDataState: OK` per §9.1 — silent until Engineering's V2 P1
+  # hook handlers start writing `bytes_processed` into `usage_ledger`. All
+  # annotations follow the §7.3 template sanity rule (no literal backtick,
+  # angle, or ampersand characters), carried over from the 2026-04-15
+  # synthetic-fire incident.
+  - orgId: 1
+    name: Volume Alerts
+    folder: Datanika Cloud
+    interval: 5m
+    rules:
+      # --- Tenant volume spike ---
+      # Fires if any org's bytes_processed in the last 24h is at least 10x
+      # its trailing 7-day daily mean (days -8..-1), OR exceeds 100 GB
+      # absolute in 24h (catches brand-new tenants with zero trailing
+      # history). Query assumes usage_ledger rows are per-run (one ledger
+      # row per run with a source_run_id, aggregated at query time) — lines
+      # up with Engineering's V2 P1 migration (core#162) adding
+      # `usage_ledger.source_run_id`. Returns COUNT of spiking orgs;
+      # threshold C fires at gt 0.
+      - uid: volume-tenant-spike
+        title: Tenant Volume Spike
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: datanika-postgres
+            model:
+              datasource:
+                type: postgres
+                uid: datanika-postgres
+              rawSql: |-
+                WITH last_24h AS (
+                  SELECT org_id, COALESCE(SUM(quantity), 0)::bigint AS bytes_24h
+                  FROM usage_ledger
+                  WHERE metric = 'bytes_processed'
+                    AND created_at >= NOW() - INTERVAL '24 hours'
+                  GROUP BY org_id
+                ),
+                trailing_7d AS (
+                  SELECT org_id, COALESCE(SUM(quantity), 0) / 7.0 AS daily_mean
+                  FROM usage_ledger
+                  WHERE metric = 'bytes_processed'
+                    AND created_at >= NOW() - INTERVAL '8 days'
+                    AND created_at <  NOW() - INTERVAL '1 day'
+                  GROUP BY org_id
+                )
+                SELECT COUNT(*)::int AS spiking_orgs
+                FROM last_24h l
+                LEFT JOIN trailing_7d t ON t.org_id = l.org_id
+                WHERE l.bytes_24h > 107374182400
+                   OR (COALESCE(t.daily_mean, 0) > 0 AND l.bytes_24h >= 10 * t.daily_mean);
+              format: table
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Tenant bytes_processed spiked 10x vs trailing 7-day mean or exceeded 100 GB in 24h"
+          description: "One or more orgs have a 24h bytes_processed total that is at least 10 times their trailing 7-day daily mean, or exceeds 100 GB absolute in 24h (which catches brand-new tenants with no trailing history). Catches runaway pipelines before the bill explodes — e.g. a scheduled full-table refresh of a TB table flipped on by accident. Inspect: SELECT org_id, SUM(quantity) FROM usage_ledger WHERE metric equals 'bytes_processed' AND created_at within the last 24 hours GROUP BY org_id ORDER BY SUM(quantity) DESC. Cross-check the Volume Metrics dashboard (Datanika Cloud folder) for the per-org breakdown panel."
+
+      # --- Plan cap exceeded ---
+      # Fires if any active or trialing subscription's bytes_processed for
+      # the current billing period has exceeded 2x the plan.bytes_included
+      # allowance. Product's 80% warning email covers the softer threshold;
+      # this is the Infra visibility signal that a bill surprise is already
+      # baked in. `for: 10m` smooths end-of-period race conditions.
+      #
+      # Only subscriptions whose plan has a non-NULL positive `bytes_included`
+      # are considered — legacy / comped / custom plans pass through.
+      - uid: volume-plan-cap-exceeded
+        title: Plan Cap Exceeded
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: datanika-postgres
+            model:
+              datasource:
+                type: postgres
+                uid: datanika-postgres
+              rawSql: |-
+                WITH current_usage AS (
+                  SELECT
+                    s.id AS sub_id,
+                    s.org_id,
+                    p.bytes_included,
+                    COALESCE(SUM(ul.quantity), 0)::bigint AS bytes_used
+                  FROM subscriptions s
+                  JOIN plans p ON p.id = s.plan_id
+                  LEFT JOIN usage_ledger ul
+                    ON ul.org_id = s.org_id
+                   AND ul.metric = 'bytes_processed'
+                   AND ul.period_start >= DATE_TRUNC('month', NOW())
+                  WHERE s.status IN ('active','trialing')
+                    AND s.deleted_at IS NULL
+                    AND p.bytes_included IS NOT NULL
+                    AND p.bytes_included > 0
+                  GROUP BY s.id, s.org_id, p.bytes_included
+                )
+                SELECT COUNT(*)::int AS over_cap_subs
+                FROM current_usage
+                WHERE bytes_used > bytes_included * 2;
+              format: table
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+              settings:
+                mode: replaceNN
+                replaceWithValue: 0
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "One or more subscriptions have used over 200% of plan.bytes_included this billing period"
+          description: "At least one active or trialing subscription has consumed more than twice its plan's included bytes allowance for the current billing month. Customer is heading for a bill surprise. Product's 80% warning email handles the softer threshold; this is the Infra visibility signal that a hard overage is already locked in. Inspect: SELECT s.id, s.org_id, p.bytes_included, SUM(ul.quantity) FROM subscriptions s JOIN plans p ON p.id equals s.plan_id LEFT JOIN usage_ledger ul ON ul.org_id equals s.org_id AND ul.metric equals 'bytes_processed' AND ul.period_start at or after the start of the current month WHERE s.status in active or trialing GROUP BY s.id, s.org_id, p.bytes_included HAVING SUM(ul.quantity) over 2x bytes_included. Cross-check the Volume Metrics dashboard usage-vs-cap panel."
+
+      # --- System throughput ceiling (capacity planning) ---
+      # Ships commented-out with threshold TBD per spec §7.1.3 and §9.4 P4.
+      # Fires when system-wide rate of bytes_processed exceeds a capacity
+      # ceiling that warrants a Hetzner scale-up decision. Flip this on
+      # after 30 days of baseline Prometheus data post-V2 P2 cutover, once
+      # `datanika_cloud_bytes_processed_total` (cloud plugin counter) has
+      # been flowing long enough to choose a non-arbitrary threshold. The
+      # datasourceUid below matches the existing Prometheus datasource
+      # already used by other rules in this file (PBFA97CFB590B2093).
+      #
+      # - uid: volume-system-throughput-ceiling
+      #   title: System Throughput Ceiling
+      #   condition: C
+      #   noDataState: OK
+      #   execErrState: Alerting
+      #   data:
+      #     - refId: A
+      #       relativeTimeRange:
+      #         from: 600
+      #         to: 0
+      #       datasourceUid: PBFA97CFB590B2093
+      #       model:
+      #         datasource:
+      #           type: prometheus
+      #           uid: PBFA97CFB590B2093
+      #         expr: sum(rate(datanika_cloud_bytes_processed_total[5m]))
+      #         refId: A
+      #     - refId: B
+      #       relativeTimeRange:
+      #         from: 600
+      #         to: 0
+      #       datasourceUid: __expr__
+      #       model:
+      #         type: reduce
+      #         reducer: last
+      #         expression: A
+      #         refId: B
+      #         settings:
+      #           mode: replaceNN
+      #           replaceWithValue: 0
+      #     - refId: C
+      #       relativeTimeRange:
+      #         from: 600
+      #         to: 0
+      #       datasourceUid: __expr__
+      #       model:
+      #         type: threshold
+      #         expression: B
+      #         conditions:
+      #           - evaluator:
+      #               type: gt
+      #               params: [0]  # TBD — set after 30d baseline per spec §9.4 P4
+      #         refId: C
+      #   for: 5m
+      #   labels:
+      #     severity: critical
+      #     team: infra
+      #   annotations:
+      #     summary: "System-wide bytes_processed rate exceeds capacity threshold"
+      #     description: "Total bytes_processed rate across all orgs is above the capacity planning ceiling. Consider scaling Hetzner worker nodes or throttling new scheduled runs. Cross-check the Volume Metrics dashboard system-wide throughput panel."

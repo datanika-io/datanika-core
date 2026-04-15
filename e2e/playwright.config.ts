@@ -2,6 +2,18 @@ import { defineConfig, devices } from "@playwright/test";
 
 const BASE_URL = process.env.DATANIKA_E2E_BASE_URL ?? "http://localhost:3000";
 
+// staging-app.datanika.io is fronted by Cloudflare Access (see
+// plans/infra/PLAN_INFRASTRUCTURE.md §P1). When both env vars are set,
+// every browser request is authenticated via CF Access service token;
+// unset (local dev against localhost:3000) they're harmlessly absent.
+const extraHTTPHeaders: Record<string, string> = {};
+const cfAccessClientId = process.env.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID;
+const cfAccessClientSecret = process.env.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET;
+if (cfAccessClientId && cfAccessClientSecret) {
+  extraHTTPHeaders["CF-Access-Client-Id"] = cfAccessClientId;
+  extraHTTPHeaders["CF-Access-Client-Secret"] = cfAccessClientSecret;
+}
+
 export default defineConfig({
   testDir: "./tests",
   timeout: 60_000,
@@ -24,6 +36,7 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
+    extraHTTPHeaders,
   },
   projects: [
     {

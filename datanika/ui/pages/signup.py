@@ -30,21 +30,33 @@ def signup_page() -> rx.Component:
             ),
             rx.form(
                 rx.vstack(
-                    rx.text(_t["auth.full_name"], size="2", weight="medium"),
+                    rx.el.label(
+                        rx.text(_t["auth.full_name"], size="2", weight="medium"),
+                        html_for="signup-full-name",
+                    ),
                     rx.input(
+                        id="signup-full-name",
                         placeholder=_t["auth.ph_full_name"],
                         name="full_name",
                         width="100%",
                     ),
-                    rx.text(_t["auth.email"], size="2", weight="medium"),
+                    rx.el.label(
+                        rx.text(_t["auth.email"], size="2", weight="medium"),
+                        html_for="signup-email",
+                    ),
                     rx.input(
+                        id="signup-email",
                         placeholder=_t["auth.ph_email"],
                         name="email",
                         default_value=AuthState.invite_email,
                         width="100%",
                     ),
-                    rx.text(_t["auth.password"], size="2", weight="medium"),
+                    rx.el.label(
+                        rx.text(_t["auth.password"], size="2", weight="medium"),
+                        html_for="signup-password",
+                    ),
                     rx.input(
+                        id="signup-password",
                         placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",

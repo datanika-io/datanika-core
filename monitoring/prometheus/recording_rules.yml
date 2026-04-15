@@ -1,0 +1,24 @@
+# Prometheus recording rules — placeholder / cardinality migration path.
+#
+# Intentionally empty for V2 P1 per plans/infra/SPEC_GB_THROUGHPUT_METRICS.md §3.5.
+#
+# The per-org `datanika_cloud_bytes_processed_total{org_id, mode}` counter is
+# cardinality-safe at the current scale (sub-1k active orgs). Once we cross
+# ~5k active orgs we should populate this file with system-wide rollup rules
+# that drop the `org_id` label, and simultaneously shorten the per-org
+# counter's retention from 30d to 7d. Spec §3.5 carries the exact shape:
+#
+#     groups:
+#       - name: bytes_rollups
+#         interval: 5m
+#         rules:
+#           - record: datanika:bytes_processed_by_mode:rate5m
+#             expr: sum without (org_id) (rate(datanika_cloud_bytes_processed_total[5m]))
+#
+# This file is not wired into `monitoring/prometheus.yml` yet — no
+# `rule_files:` entry, no docker-compose bind mount. Those get added at the
+# same time rules land, so an empty file can't accidentally load noise.
+#
+# Out of scope for v1 — do not populate speculatively.
+
+groups: []

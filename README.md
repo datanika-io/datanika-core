@@ -95,7 +95,7 @@ uv run reflex run                     # starts on :3000 + :8000
 - [x] In-app notification center with Slack, Telegram, Email, Webhook channels
 - [x] SSO (SAML/OIDC) for Enterprise
 - [x] Usage-based billing (cloud plugin)
-- [x] 1,700+ tests across unit, security, and E2E (SQLite in-memory for speed)
+- [x] 1,800+ tests across unit, security, and E2E (SQLite in-memory for speed)
 - [ ] Kubernetes Helm chart
 - [ ] Data lineage visualization
 

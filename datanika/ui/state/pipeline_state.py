@@ -54,6 +54,13 @@ class PipelineState(BaseState):
     model_warning: str = ""
     # 0 = creating new, >0 = editing existing
     editing_pipeline_id: int = 0
+    # V2 pricing pivot — dual-mode (ETL/ELT) form fields. Gated by
+    # settings.datanika_dual_mode_ux_enabled at the component level; values
+    # collected here are wired to DB only once Engineering's IR mode resolver
+    # lands (see PLAN_ENGINEERING.md V2 P1).
+    form_mode: str = "auto"
+    form_volume_estimate_gb: str = ""
+    form_mode_advanced_disclosure: bool = False
 
     def set_form_name(self, value: str):
         self.form_name = value
@@ -73,6 +80,16 @@ class PipelineState(BaseState):
 
     def set_form_custom_selector(self, value: str):
         self.form_custom_selector = value
+
+    def set_form_mode(self, value: str):
+        if value in ("auto", "etl", "elt"):
+            self.form_mode = value
+
+    def set_form_volume_estimate_gb(self, value: str):
+        self.form_volume_estimate_gb = value
+
+    def toggle_form_mode_advanced_disclosure(self):
+        self.form_mode_advanced_disclosure = not self.form_mode_advanced_disclosure
 
     def set_form_new_model_name(self, value: str):
         self.form_new_model_name = value
@@ -311,6 +328,9 @@ class PipelineState(BaseState):
         self.show_model_suggestions = False
         self.model_suggestion_index = -1
         self.model_warning = ""
+        self.form_mode = "auto"
+        self.form_volume_estimate_gb = ""
+        self.form_mode_advanced_disclosure = False
         self.error_message = ""
 
     def _populate_form_from_pipeline(self, pipeline, conn_options_dst):

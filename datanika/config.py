@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # Edition: "core" (open-source) or "cloud" (SaaS with billing)
     datanika_edition: str = "core"
 
+    # V2 pricing pivot — dual-mode (ETL/ELT) UX surface. Gated until Engineering's
+    # P1 plumbing (bytes quota hook, IR mode resolver) ships; safe to enable once
+    # SPEC_DUAL_MODE_UX v3 components are live on both core and cloud.
+    datanika_dual_mode_ux_enabled: bool = False
+
 
 settings = Settings()
 

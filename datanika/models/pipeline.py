@@ -23,6 +23,17 @@ class PipelineStatus(enum.StrEnum):
     ERROR = "error"
 
 
+class PipelineMode(enum.StrEnum):
+    """V2 P1 scaffolding — Source → IR → {dlt ETL, dbt ELT} dispatch.
+
+    ETL: existing dbt-over-dlt-raw path (default, back-compat).
+    ELT: dbt-over-parquet-raw path, lands in P3 (SPEC_ELT_IR_ARCHITECTURE.md §9).
+    """
+
+    ETL = "etl"
+    ELT = "elt"
+
+
 class Pipeline(Base, TenantMixin, TimestampMixin):
     __tablename__ = "pipelines"
 
@@ -44,6 +55,12 @@ class Pipeline(Base, TenantMixin, TimestampMixin):
         Enum(PipelineStatus, native_enum=False, length=20),
         nullable=False,
         default=PipelineStatus.DRAFT,
+    )
+    mode: Mapped[PipelineMode] = mapped_column(
+        Enum(PipelineMode, native_enum=False, length=20),
+        nullable=False,
+        default=PipelineMode.ETL,
+        server_default=PipelineMode.ETL.value,
     )
 
     destination_connection = relationship(

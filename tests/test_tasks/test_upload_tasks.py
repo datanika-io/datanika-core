@@ -162,6 +162,27 @@ class TestRunUploadTask:
         db_session.refresh(upload)
         assert upload.status == UploadStatus.ACTIVE
 
+    def test_elt_mode_raises_before_dlt_called(self, db_session, setup_upload):
+        """V2 P1 scaffolding — mode=elt fails fast with NotImplementedError."""
+        from datanika.models.upload import UploadMode
+
+        org, upload, run, encryption = setup_upload
+        upload.mode = UploadMode.ELT
+        db_session.flush()
+
+        with _mock_dlt_runner() as mock_runner_cls:
+            run_upload(
+                run_id=run.id,
+                org_id=org.id,
+                session=db_session,
+                encryption=encryption,
+            )
+            mock_runner_cls.return_value.execute.assert_not_called()
+
+        db_session.refresh(run)
+        assert run.status == RunStatus.FAILED
+        assert "P3" in (run.error_message or "")
+
     def test_upload_status_error_on_failure(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload
         assert upload.status == UploadStatus.DRAFT

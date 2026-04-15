@@ -226,6 +226,7 @@ class TestUpload:
         assert "destination_connection_id" in cols
         assert "dlt_config" in cols
         assert "status" in cols
+        assert "mode" in cols
         assert "created_at" in cols
         assert "updated_at" in cols
 
@@ -246,6 +247,90 @@ class TestUpload:
             UploadStatus.PAUSED,
             UploadStatus.ERROR,
         }
+
+    def test_mode_enum(self):
+        from datanika.models.upload import UploadMode
+
+        assert set(UploadMode) == {UploadMode.ETL, UploadMode.ELT}
+        assert UploadMode.ETL.value == "etl"
+        assert UploadMode.ELT.value == "elt"
+
+    def test_mode_defaults_to_etl(self, db_session):
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.upload import Upload, UploadMode
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-mode-default")
+        db_session.add(org)
+        db_session.flush()
+
+        src = Connection(
+            org_id=org.id,
+            name="src",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE,
+            config_encrypted="x",
+        )
+        dst = Connection(
+            org_id=org.id,
+            name="dst",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
+        )
+        db_session.add_all([src, dst])
+        db_session.flush()
+
+        upload = Upload(
+            org_id=org.id,
+            name="default_mode",
+            source_connection_id=src.id,
+            destination_connection_id=dst.id,
+        )
+        db_session.add(upload)
+        db_session.flush()
+        db_session.refresh(upload)
+
+        assert upload.mode == UploadMode.ETL
+
+    def test_mode_elt_roundtrips(self, db_session):
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.upload import Upload, UploadMode
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-mode-elt")
+        db_session.add(org)
+        db_session.flush()
+
+        src = Connection(
+            org_id=org.id,
+            name="src",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.SOURCE,
+            config_encrypted="x",
+        )
+        dst = Connection(
+            org_id=org.id,
+            name="dst",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
+        )
+        db_session.add_all([src, dst])
+        db_session.flush()
+
+        upload = Upload(
+            org_id=org.id,
+            name="elt_upload",
+            source_connection_id=src.id,
+            destination_connection_id=dst.id,
+            mode=UploadMode.ELT,
+        )
+        db_session.add(upload)
+        db_session.flush()
+
+        fetched = db_session.get(Upload, upload.id)
+        assert fetched.mode == UploadMode.ELT
 
     def test_create_upload(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
@@ -848,6 +933,7 @@ class TestPipeline:
         assert "models" in cols
         assert "custom_selector" in cols
         assert "status" in cols
+        assert "mode" in cols
         assert "created_at" in cols
         assert "updated_at" in cols
 
@@ -916,3 +1002,73 @@ class TestPipeline:
         assert pipeline.command == DbtCommand.BUILD
         assert pipeline.status == PipelineStatus.DRAFT
         assert pipeline.models == [{"name": "orders", "upstream": True, "downstream": False}]
+
+    def test_pipeline_mode_enum(self):
+        from datanika.models.pipeline import PipelineMode
+
+        assert set(PipelineMode) == {PipelineMode.ETL, PipelineMode.ELT}
+        assert PipelineMode.ETL.value == "etl"
+        assert PipelineMode.ELT.value == "elt"
+
+    def test_pipeline_mode_defaults_to_etl(self, db_session):
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.pipeline import DbtCommand, Pipeline, PipelineMode
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-pipe-mode-default")
+        db_session.add(org)
+        db_session.flush()
+
+        dst = Connection(
+            org_id=org.id,
+            name="dst",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
+        )
+        db_session.add(dst)
+        db_session.flush()
+
+        pipeline = Pipeline(
+            org_id=org.id,
+            name="default_mode_pipe",
+            destination_connection_id=dst.id,
+            command=DbtCommand.RUN,
+        )
+        db_session.add(pipeline)
+        db_session.flush()
+        db_session.refresh(pipeline)
+
+        assert pipeline.mode == PipelineMode.ETL
+
+    def test_pipeline_mode_elt_roundtrips(self, db_session):
+        from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+        from datanika.models.pipeline import DbtCommand, Pipeline, PipelineMode
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-pipe-mode-elt")
+        db_session.add(org)
+        db_session.flush()
+
+        dst = Connection(
+            org_id=org.id,
+            name="dst",
+            connection_type=ConnectionType.POSTGRES,
+            direction=ConnectionDirection.DESTINATION,
+            config_encrypted="y",
+        )
+        db_session.add(dst)
+        db_session.flush()
+
+        pipeline = Pipeline(
+            org_id=org.id,
+            name="elt_pipe",
+            destination_connection_id=dst.id,
+            command=DbtCommand.RUN,
+            mode=PipelineMode.ELT,
+        )
+        db_session.add(pipeline)
+        db_session.flush()
+
+        fetched = db_session.get(Pipeline, pipeline.id)
+        assert fetched.mode == PipelineMode.ELT

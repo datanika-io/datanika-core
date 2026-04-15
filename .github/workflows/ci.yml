@@ -152,6 +152,7 @@ jobs:
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v6
 
@@ -168,6 +169,9 @@ jobs:
 
       - name: Run smoke probes
         id: smoke
+        env:
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: pytest scripts/smoke/ -v --tb=short
 
       - name: Telegram alert on failure
@@ -222,6 +226,8 @@ jobs:
         env:
           CI: "true"
           DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
           DATANIKA_E2E_SEED_CMD: >-
             ssh root@${{ secrets.HETZNER_HOST }}
             'E2E_SEED_ALLOW_ANY_HOST=1 docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'

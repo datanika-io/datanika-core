@@ -93,7 +93,7 @@ def test_agent_guide_md_public(core_client: httpx.Client) -> None:
 
 
 def test_agent_tiers_shape(core_client: httpx.Client) -> None:
-    """Tier SoT — pinned to the current 5-tier / 7-capability layout.
+    """Tier SoT — pinned to the current 5-tier / 8-capability layout.
 
     If Product adds or removes a tier, this test goes red first and
     forces a conscious update. That's the contract — `agent-tiers` is
@@ -108,8 +108,8 @@ def test_agent_tiers_shape(core_client: httpx.Client) -> None:
         f"tier_count changed from 5 to {payload.get('tier_count')} — "
         "update the smoke test AND landing's build-time snapshot in the same PR"
     )
-    assert payload.get("capability_count") == 7, (
-        f"capability_count changed from 7 to {payload.get('capability_count')} — "
+    assert payload.get("capability_count") == 8, (
+        f"capability_count changed from 8 to {payload.get('capability_count')} — "
         "update the smoke test AND landing's build-time snapshot in the same PR"
     )
     assert isinstance(payload.get("tiers"), list), "tiers should be a list"

@@ -14,6 +14,17 @@ class UploadStatus(enum.StrEnum):
     ERROR = "error"
 
 
+class UploadMode(enum.StrEnum):
+    """V2 P1 scaffolding — Source → IR → {dlt ETL, dbt ELT} dispatch.
+
+    ETL: existing dlt path (default, back-compat).
+    ELT: stream source → parquet → raw, lands in P3 (SPEC_ELT_IR_ARCHITECTURE.md §9).
+    """
+
+    ETL = "etl"
+    ELT = "elt"
+
+
 class Upload(Base, TenantMixin, TimestampMixin):
     __tablename__ = "uploads"
 
@@ -31,6 +42,12 @@ class Upload(Base, TenantMixin, TimestampMixin):
         Enum(UploadStatus, native_enum=False, length=20),
         nullable=False,
         default=UploadStatus.DRAFT,
+    )
+    mode: Mapped[UploadMode] = mapped_column(
+        Enum(UploadMode, native_enum=False, length=20),
+        nullable=False,
+        default=UploadMode.ETL,
+        server_default=UploadMode.ETL.value,
     )
 
     source_connection = relationship(

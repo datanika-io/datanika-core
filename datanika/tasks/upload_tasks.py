@@ -11,7 +11,7 @@ from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run
-from datanika.models.upload import Upload, UploadStatus
+from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
@@ -125,6 +125,11 @@ def run_upload(
         upload = session.execute(
             select(Upload).where(Upload.id == run.target_id, Upload.org_id == org_id)
         ).scalar_one()
+
+        if upload.mode == UploadMode.ELT:
+            raise NotImplementedError(
+                "ELT upload path lands in V2 P3 — SPEC_ELT_IR_ARCHITECTURE.md §5.3"
+            )
 
         src_conn = session.get(Connection, upload.source_connection_id)
         dst_conn = session.get(Connection, upload.destination_connection_id)

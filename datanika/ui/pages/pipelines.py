@@ -2,9 +2,12 @@
 
 import reflex as rx
 
+from datanika.config import settings
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.pipeline_mode_selector import pipeline_mode_selector
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
+from datanika.ui.components.volume_quota_modal import volume_quota_modal
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
 
@@ -242,6 +245,14 @@ def pipeline_form() -> rx.Component:
                 value=PipelineState.form_custom_selector,
                 on_change=PipelineState.set_form_custom_selector,
                 width="100%",
+            ),
+            # V2 pricing pivot — dual-mode selector + volume quota modal,
+            # gated by settings.datanika_dual_mode_ux_enabled.
+            (pipeline_mode_selector() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),
+            (
+                volume_quota_modal(PipelineState)
+                if settings.datanika_dual_mode_ux_enabled
+                else rx.fragment()
             ),
             # Error / quota upgrade
             error_or_quota_callout(PipelineState),

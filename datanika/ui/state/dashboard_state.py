@@ -36,6 +36,11 @@ class DashboardState(BaseState):
     runs_limit: int = 0
     plan_name: str = ""
 
+    # Volume (bytes) usage — V2 pricing pivot dual-dim bar, gated by
+    # settings.datanika_dual_mode_ux_enabled at the component level.
+    bytes_used: int = 0
+    bytes_limit: int = 0
+
     @rx.var
     def runs_percent(self) -> int:
         if self.runs_limit <= 0:
@@ -54,6 +59,35 @@ class DashboardState(BaseState):
     @rx.var
     def has_usage_data(self) -> bool:
         return self.runs_limit > 0
+
+    @rx.var
+    def bytes_percent(self) -> int:
+        if self.bytes_limit <= 0:
+            return 0
+        return min(int(self.bytes_used / self.bytes_limit * 100), 100)
+
+    @rx.var
+    def bytes_color(self) -> str:
+        pct = self.bytes_percent
+        if pct >= 80:
+            return "red"
+        if pct >= 60:
+            return "yellow"
+        return "green"
+
+    @rx.var
+    def has_volume_data(self) -> bool:
+        return self.bytes_limit > 0
+
+    @rx.var
+    def bytes_used_display(self) -> str:
+        gb = self.bytes_used / (1024**3)
+        return f"{gb:.1f} GB"
+
+    @rx.var
+    def bytes_limit_display(self) -> str:
+        gb = self.bytes_limit / (1024**3)
+        return f"{gb:.0f} GB"
 
     async def load_dashboard(self):
         org_id = await self._get_org_id()
@@ -115,11 +149,15 @@ class DashboardState(BaseState):
             "runs_used": 0,
             "runs_limit": 0,
             "plan_name": "",
+            "bytes_used": 0,
+            "bytes_limit": 0,
         }
         emit("usage.get_summary", context=usage_ctx)
         self.runs_used = usage_ctx["runs_used"]
         self.runs_limit = usage_ctx["runs_limit"]
         self.plan_name = usage_ctx["plan_name"]
+        self.bytes_used = usage_ctx["bytes_used"]
+        self.bytes_limit = usage_ctx["bytes_limit"]
 
         self.error_message = ""
 

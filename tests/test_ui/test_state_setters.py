@@ -437,6 +437,39 @@ class TestSettingsStateSetters:
             assert callable(method)
 
 
+class TestPipelineStateDualModeFields:
+    """V2 pricing pivot — dual-mode form fields on PipelineState."""
+
+    def test_dual_mode_fields_exist(self):
+        from datanika.ui.state.pipeline_state import PipelineState
+
+        fields = PipelineState.get_fields()
+        assert "form_mode" in fields, "PipelineState missing form_mode"
+        assert "form_volume_estimate_gb" in fields, "PipelineState missing form_volume_estimate_gb"
+        assert "form_mode_advanced_disclosure" in fields, (
+            "PipelineState missing form_mode_advanced_disclosure"
+        )
+
+    def test_dual_mode_setters_exist(self):
+        from datanika.ui.state.pipeline_state import PipelineState
+
+        expected = [
+            "set_form_mode",
+            "set_form_volume_estimate_gb",
+            "toggle_form_mode_advanced_disclosure",
+        ]
+        for name in expected:
+            method = getattr(PipelineState, name, None)
+            assert method is not None, f"PipelineState missing {name}"
+            assert callable(method)
+
+    def test_form_mode_default_is_auto(self):
+        from datanika.ui.state.pipeline_state import PipelineState
+
+        fields = PipelineState.get_fields()
+        assert fields["form_mode"].default == "auto"
+
+
 class TestRunStateSetters:
     def test_filter_setters_exist(self):
         from datanika.ui.state.run_state import RunState

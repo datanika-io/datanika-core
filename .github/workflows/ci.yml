@@ -176,10 +176,11 @@ jobs:
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -208,7 +209,7 @@ jobs:
           DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
           DATANIKA_E2E_SEED_CMD: >-
             ssh root@${{ secrets.HETZNER_HOST }}
-            'docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'
+            'E2E_SEED_ALLOW_ANY_HOST=1 docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
 
       - name: Upload Playwright report

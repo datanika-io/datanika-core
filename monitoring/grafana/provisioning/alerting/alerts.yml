@@ -213,7 +213,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Container {{ $labels.name }} memory > 1.5GB"
+          summary: "Container {{ $labels.name }} memory over 1.5GB"
           description: "Container {{ $labels.name }} is using more than 1.5GB of memory."
 
   - orgId: 1
@@ -580,7 +580,7 @@ groups:
           team: revenue
         annotations:
           summary: "No Paddle webhooks processed in 35+ days"
-          description: "Latest subscriptions.updated_at is older than 840 hours (35 days) while active/trialing/past_due subscriptions exist. A full monthly billing cycle should have produced at least one subscription.updated or transaction.completed event. Check the webhook handler logs (`docker logs datanika-app | grep webhook`), Paddle dashboard → Notifications → Webhooks for delivery errors, and `PADDLE_WEBHOOK_SECRET` in .env.docker. Note: threshold is coarse because `subscriptions.renews_at` is not currently populated — once it is, switch this rule to a missed-renewal query with a 12h grace."
+          description: "Latest subscriptions.updated_at is older than 840 hours (35 days) while active/trialing/past_due subscriptions exist. A full monthly billing cycle should have produced at least one subscription.updated or transaction.completed event. Check the webhook handler logs on datanika-app for webhook errors, Paddle dashboard → Notifications → Webhooks for delivery errors, and the PADDLE_WEBHOOK_SECRET value in .env.docker. Note: threshold is coarse because subscriptions.renews_at is not currently populated — once it is, switch this rule to a missed-renewal query with a 12h grace."
 
       # --- Stuck past_due subscription ---
       # A subscription in past_due for > 72h should have transitioned to either
@@ -641,8 +641,8 @@ groups:
           severity: critical
           team: revenue
         annotations:
-          summary: "Subscription stuck in past_due > 72h"
-          description: "One or more subscriptions have been in past_due for longer than 72 hours. Paddle's dunning cycle should resolve within 72h — either a follow-up webhook was dropped or the handler failed on it. Inspect: `SELECT id, paddle_subscription_id, updated_at FROM subscriptions WHERE status = 'past_due' AND updated_at < NOW() - INTERVAL '72 hours';`. Cross-check the Paddle dashboard for the corresponding subscription state."
+          summary: "Subscription stuck in past_due for over 72h"
+          description: "One or more subscriptions have been in past_due for longer than 72 hours. Paddle's dunning cycle should resolve within 72h — either a follow-up webhook was dropped or the handler failed on it. Inspect: SELECT id, paddle_subscription_id, updated_at FROM subscriptions WHERE status = 'past_due' AND updated_at older than 72 hours. Cross-check the Paddle dashboard for the corresponding subscription state. Full query in monitoring/grafana/provisioning/alerting/alerts.yml."
 
       # --- MRR drop week-over-week ---
       # Business-anomaly detection. Compares today's MRR (sum of monthly-equiv
@@ -733,4 +733,4 @@ groups:
           team: revenue
         annotations:
           summary: "MRR dropped more than 10% week-over-week"
-          description: "Current MRR is more than 10% below the week-ago baseline. Check the Revenue Metrics dashboard (Datanika Cloud → Revenue Metrics) for which plan tier moved. Likely causes: batch of cancellations landed, high-ARPU customer downgraded, or the MRR query is reading a stale snapshot. Compare the current_mrr vs last_week_mrr CTEs in `monitoring/grafana/provisioning/alerting/alerts.yml`."
+          description: "Current MRR is more than 10% below the week-ago baseline. Check the Revenue Metrics dashboard (Datanika Cloud → Revenue Metrics) for which plan tier moved. Likely causes: batch of cancellations landed, high-ARPU customer downgraded, or the MRR query is reading a stale snapshot. Compare the current_mrr vs last_week_mrr CTEs in the alerts.yml file."

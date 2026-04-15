@@ -22,6 +22,12 @@ class BaseState(rx.State):
 
     error_message: str = ""
     is_quota_error: bool = False
+    # V2 pricing pivot — QuotaExceededError metric discriminator. Populated
+    # from ``getattr(exc, 'metric', '')`` so the attribute is optional on
+    # cloud's QuotaExceededError; blank until Engineering adds the attr.
+    # Possible values: "bytes_processed", "runs", "connections", "schedules",
+    # "seats", "sso".
+    quota_metric: str = ""
 
     async def _get_org_id(self) -> int:
         from datanika.ui.state.auth_state import AuthState
@@ -70,9 +76,10 @@ class BaseState(rx.State):
             pass  # Audit logging should never break the main operation
 
     def _set_error(self, exc: Exception, fallback: str = "An error occurred") -> None:
-        """Set error_message and is_quota_error from an exception."""
+        """Set error_message, is_quota_error, and quota_metric from an exception."""
         _log.exception("Caught exception in state handler")
         self.is_quota_error = type(exc).__name__ == "QuotaExceededError"
+        self.quota_metric = getattr(exc, "metric", "") if self.is_quota_error else ""
         if isinstance(exc, ValueError):
             self.error_message = str(exc)
         else:

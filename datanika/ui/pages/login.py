@@ -32,14 +32,22 @@ def login_page() -> rx.Component:
             ),
             rx.form(
                 rx.vstack(
-                    rx.text(_t["auth.email"], size="2", weight="medium"),
+                    rx.el.label(
+                        rx.text(_t["auth.email"], size="2", weight="medium"),
+                        html_for="login-email",
+                    ),
                     rx.input(
+                        id="login-email",
                         placeholder=_t["auth.ph_email"],
                         name="email",
                         width="100%",
                     ),
-                    rx.text(_t["auth.password"], size="2", weight="medium"),
+                    rx.el.label(
+                        rx.text(_t["auth.password"], size="2", weight="medium"),
+                        html_for="login-password",
+                    ),
                     rx.input(
+                        id="login-password",
                         placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",

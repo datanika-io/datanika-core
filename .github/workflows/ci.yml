@@ -52,8 +52,23 @@ jobs:
       - name: Run tests
         run: pytest tests/ --tb=short -q
 
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Helm lint
+        run: helm lint deploy/helm/datanika
+
+      - name: Helm template (dry-run render)
+        run: helm template test-release deploy/helm/datanika > /dev/null
+
   deploy:
-    needs: [lint, test]
+    needs: [lint, test, helm-lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
@@ -97,7 +112,7 @@ jobs:
             docker image prune -f
 
   deploy-staging:
-    needs: [lint, test]
+    needs: [lint, test, helm-lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: production

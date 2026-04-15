@@ -1,0 +1,25 @@
+apiVersion: v2
+name: datanika
+description: |
+  Datanika — multi-tenant data pipeline management platform (dlt + dbt + Celery + Reflex).
+  This is a minimal stub chart that maps the same services as the production
+  docker-compose setup: app, celery, postgres, redis. Intended for enterprise
+  procurement ("yes, deployable on Kubernetes") and small self-hosted installs.
+  Not a full production story — see README.md for the feature matrix.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://datanika.io
+sources:
+  - https://github.com/datanika-io/datanika-core
+maintainers:
+  - name: Datanika Infra
+    url: https://github.com/datanika-io/datanika-core
+keywords:
+  - data-pipeline
+  - dlt
+  - dbt
+  - etl
+  - multi-tenant
+annotations:
+  category: Analytics

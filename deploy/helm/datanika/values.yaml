@@ -1,0 +1,156 @@
+## Datanika Helm chart — default values.
+##
+## This is a minimal stub. See README.md for the feature matrix vs.
+## production docker-compose deployment on Hetzner.
+
+image:
+  repository: ghcr.io/datanika-io/datanika
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+## Ingress — optional HTTP entry. Maps / → app frontend (Reflex :3000) and
+## /api/ → app backend (:8000). Mirrors the production Nginx reverse proxy.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: datanika.local
+  tls: []
+  ##  - hosts:
+  ##      - datanika.local
+  ##    secretName: datanika-tls
+
+## Datanika application env. In production this comes from .env.docker on the
+## host; in Kubernetes we put the same keys into a Secret and mount via envFrom.
+## Users MUST override the password/secret fields before install.
+env:
+  POSTGRES_USER: datanika
+  POSTGRES_DB: datanika
+  DATANIKA_EDITION: "oss"
+  ## Optional extras — anything else the app reads from .env.docker. Keys listed
+  ## here become literal Secret entries. Values left empty will be emitted as
+  ## empty strings; users should populate them before running in a real env.
+  extra: {}
+
+## Secrets — rendered into the env Secret. Passwords must be overridden.
+secrets:
+  POSTGRES_PASSWORD: "CHANGE-ME"
+  REDIS_PASSWORD: "CHANGE-ME"
+  SECRET_KEY: "CHANGE-ME"
+
+## Application (Reflex frontend :3000 + backend :8000).
+app:
+  replicaCount: 1
+  command:
+    - sh
+    - -c
+    - "uv run alembic upgrade head && uv run reflex run --env prod --backend-host 0.0.0.0"
+  service:
+    type: ClusterIP
+    frontendPort: 3000
+    backendPort: 8000
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  probes:
+    readiness:
+      httpGet:
+        path: /healthz
+        port: 8000
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 5
+    liveness:
+      httpGet:
+        path: /healthz
+        port: 8000
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 3
+  dbtProjectsSize: 5Gi
+
+## Celery worker.
+celery:
+  replicaCount: 1
+  command:
+    - uv
+    - run
+    - celery
+    - -A
+    - datanika.tasks.celery_app:celery_app
+    - worker
+    - -l
+    - info
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+## PostgreSQL (stub — for real clusters, set enabled=false and provide
+## externalDatabase.host). Uses a StatefulSet + PVC for data durability.
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  port: 5432
+  persistence:
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+## External Postgres override — ignored unless postgres.enabled=false.
+externalDatabase:
+  host: ""
+  port: 5432
+  user: ""
+  database: ""
+
+## Redis (Celery broker + cache). Runs with an emptyDir volume — on pod
+## restart the broker queue is lost, which is fine for Datanika's task model
+## (Celery tasks are idempotent and re-enqueued by the app on failure).
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+  port: 6379
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+## External Redis override — ignored unless redis.enabled=false.
+externalRedis:
+  host: ""
+  port: 6379
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext: {}
+securityContext: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

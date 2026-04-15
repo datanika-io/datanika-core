@@ -1,0 +1,18 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "datanika.fullname" . }}-redis
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ .Values.redis.port | default 6379 }}
+      targetPort: redis
+  selector:
+    {{- include "datanika.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

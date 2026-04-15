@@ -22,10 +22,29 @@ those directly.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import reflex as rx
+from prometheus_client import REGISTRY as _DEFAULT_PROMETHEUS_REGISTRY
+
+if TYPE_CHECKING:
+    from prometheus_client.registry import CollectorRegistry
 
 _head_components: list[rx.Component] = []
 _page_scripts: dict[str, list[str]] = {}
+
+
+def get_prometheus_registry() -> CollectorRegistry:
+    """Return the Prometheus collector registry that core exposes at /metrics.
+
+    Plugins (notably ``datanika_cloud``) register billing-semantic counters
+    with per-``org_id`` labels against this registry so they're scraped via
+    core's existing ``/metrics`` route without core importing any cloud
+    code. Core itself only creates cardinality-safe instruments — see
+    ``plans/infra/SPEC_GB_THROUGHPUT_METRICS.md`` §3.1 for the open-core
+    split rationale.
+    """
+    return _DEFAULT_PROMETHEUS_REGISTRY
 
 
 def register_head_component(component: rx.Component) -> None:

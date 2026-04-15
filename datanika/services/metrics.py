@@ -57,6 +57,27 @@ celery_queue_length = Gauge(
     ["queue"],
 )
 
+# --- Volume metering (V2 P1, per plans/infra/SPEC_GB_THROUGHPUT_METRICS.md §3.2) ---
+# Operational histogram. Billing-neutral — deliberately NO `org_id` label
+# (per-tenant semantics live in cloud-owned counters to keep core open-source).
+# Fed from `run.*_completed` hook handlers once Engineering's V2 P1 lands.
+# Until then this series stays empty; the 7-bucket layout is cardinality-safe
+# (2 modes x 3 run_kinds x 7 buckets = 42 series).
+bytes_processed_by_run = Histogram(
+    "datanika_bytes_processed_by_run",
+    "Bytes processed by a single run",
+    ["mode", "run_kind"],
+    buckets=(
+        1_000_000,  # 1 MB
+        10_000_000,  # 10 MB
+        100_000_000,  # 100 MB
+        1_000_000_000,  # 1 GB
+        10_000_000_000,  # 10 GB
+        100_000_000_000,  # 100 GB
+        1_000_000_000_000,  # 1 TB
+    ),
+)
+
 
 # --- ASGI Middleware ---
 

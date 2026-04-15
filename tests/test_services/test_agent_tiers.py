@@ -81,20 +81,14 @@ class TestCapabilityCount:
         manual_total = sum(len(t.capabilities) for t in TIERS)
         assert capability_count() == manual_total
 
-    def test_current_capability_count_is_six(self):
-        # 5 tiers, but the current capability decomposition is 6:
-        # Discover, Introspect, Build, Validate, Execute, Control,
-        # plus the Tier 5 docs capability — wait, that's 7. Recount.
+    def test_current_capability_count_is_eight(self):
         # Tier 1: Discover + Introspect = 2
-        # Tier 2: Build = 1
+        # Tier 2: Build + Bulk Import = 2
         # Tier 3: Validate = 1
         # Tier 4: Execute + Control = 2
         # Tier 5: Discover Docs = 1
-        # Total = 7
-        # If you change this, the LLMS_TXT capability list changes too,
-        # and any landing-site copy that quotes a number will need to
-        # be updated. Better: have the landing site fetch the JSON.
-        assert capability_count() == 7
+        # Total = 8
+        assert capability_count() == 8
 
 
 class TestKnownCapabilityNames:

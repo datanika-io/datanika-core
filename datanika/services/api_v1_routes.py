@@ -1143,6 +1143,270 @@ async def delete_notification_channel(request, api_key, session):
 
 
 # ---------------------------------------------------------------------------
+# Bulk import — POST /api/v1/import (#131)
+# ---------------------------------------------------------------------------
+
+
+def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) -> list[dict]:
+    """Validate the entire import payload and return a list of error dicts.
+
+    ``existing_conn_names`` maps connection name → id for connections
+    already present in the org.
+    """
+    errors: list[dict] = []
+
+    # --- connections ---
+    conn_names_in_payload: set[str] = set()
+    for i, c in enumerate(data.get("connections", [])):
+        name = c.get("name")
+        if not name or not str(name).strip():
+            errors.append(
+                {"code": "MISSING_FIELD", "message": f"connections[{i}]: name is required"}
+            )
+            continue
+        ct = c.get("connection_type")
+        if not ct:
+            errors.append(
+                {
+                    "code": "MISSING_FIELD",
+                    "message": f"connections[{i}]: connection_type is required",
+                }
+            )
+        else:
+            try:
+                ConnectionType(ct)
+            except ValueError:
+                errors.append(
+                    {
+                        "code": "INVALID_CONNECTION_TYPE",
+                        "message": f"connections[{i}]: invalid connection_type '{ct}'",
+                    }
+                )
+        if not isinstance(c.get("config"), dict):
+            errors.append(
+                {
+                    "code": "MISSING_FIELD",
+                    "message": f"connections[{i}]: config (object) is required",
+                }
+            )
+        if name in conn_names_in_payload:
+            errors.append(
+                {"code": "DUPLICATE_NAME", "message": f"connections[{i}]: duplicate name '{name}'"}
+            )
+        else:
+            conn_names_in_payload.add(name)
+
+    # Build a combined name set for cross-reference checks
+    all_conn_names = set(existing_conn_names.keys()) | conn_names_in_payload
+
+    # --- uploads ---
+    upload_names: set[str] = set()
+    for i, u in enumerate(data.get("uploads", [])):
+        name = u.get("name")
+        if not name or not str(name).strip():
+            errors.append({"code": "MISSING_FIELD", "message": f"uploads[{i}]: name is required"})
+        elif name in upload_names:
+            errors.append(
+                {"code": "DUPLICATE_NAME", "message": f"uploads[{i}]: duplicate name '{name}'"}
+            )
+        else:
+            upload_names.add(name)
+        for ref_field in ("source_connection_name", "destination_connection_name"):
+            ref = u.get(ref_field)
+            if not ref:
+                errors.append(
+                    {"code": "MISSING_FIELD", "message": f"uploads[{i}]: {ref_field} is required"}
+                )
+            elif ref not in all_conn_names:
+                errors.append(
+                    {
+                        "code": "UNKNOWN_CONNECTION_REF",
+                        "message": f"uploads[{i}]: {ref_field} '{ref}' not found",
+                    }
+                )
+
+    # --- pipelines ---
+    pipeline_names: set[str] = set()
+    for i, p in enumerate(data.get("pipelines", [])):
+        name = p.get("name")
+        if not name or not str(name).strip():
+            errors.append({"code": "MISSING_FIELD", "message": f"pipelines[{i}]: name is required"})
+        elif name in pipeline_names:
+            errors.append(
+                {"code": "DUPLICATE_NAME", "message": f"pipelines[{i}]: duplicate name '{name}'"}
+            )
+        else:
+            pipeline_names.add(name)
+        ref = p.get("destination_connection_name")
+        if not ref:
+            errors.append(
+                {
+                    "code": "MISSING_FIELD",
+                    "message": f"pipelines[{i}]: destination_connection_name is required",
+                }
+            )
+        elif ref not in all_conn_names:
+            errors.append(
+                {
+                    "code": "UNKNOWN_CONNECTION_REF",
+                    "message": f"pipelines[{i}]: destination_connection_name '{ref}' not found",
+                }
+            )
+        cmd = p.get("command")
+        if cmd:
+            try:
+                DbtCommand(cmd)
+            except ValueError:
+                errors.append(
+                    {
+                        "code": "INVALID_ENUM_VALUE",
+                        "message": f"pipelines[{i}]: invalid command '{cmd}'",
+                    }
+                )
+
+    # --- transformations ---
+    transform_names: set[str] = set()
+    for i, t in enumerate(data.get("transformations", [])):
+        name = t.get("name")
+        if not name or not str(name).strip():
+            errors.append(
+                {"code": "MISSING_FIELD", "message": f"transformations[{i}]: name is required"}
+            )
+        elif name in transform_names:
+            errors.append(
+                {
+                    "code": "DUPLICATE_NAME",
+                    "message": f"transformations[{i}]: duplicate name '{name}'",
+                }
+            )
+        else:
+            transform_names.add(name)
+        if not t.get("sql_body"):
+            errors.append(
+                {"code": "MISSING_FIELD", "message": f"transformations[{i}]: sql_body is required"}
+            )
+        mat = t.get("materialization")
+        if mat:
+            try:
+                Materialization(mat)
+            except ValueError:
+                errors.append(
+                    {
+                        "code": "INVALID_ENUM_VALUE",
+                        "message": f"transformations[{i}]: invalid materialization '{mat}'",
+                    }
+                )
+
+    return errors
+
+
+@api_endpoint(required_scope=None)
+async def bulk_import(request, api_key, session):
+    """POST /api/v1/import — create connections, uploads, pipelines,
+    and transformations from a single JSON payload.
+
+    Validates the entire payload first; if any errors are found, nothing
+    is created (atomic). Uses the same JSON v2 format as AI_IMPORT_GUIDE.md.
+    """
+    data = await _body(request)
+
+    # --- version check ---
+    version = data.get("version")
+    if version != 2:
+        return _error(400, "version 2 is required")
+
+    # --- build existing connection name→id map ---
+    existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
+    existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}
+
+    # --- validate everything before creating anything ---
+    errors = _validate_import_payload(data, existing_conn_names)
+    if errors:
+        return JSONResponse({"errors": errors}, status_code=400)
+
+    created: dict[str, list[int]] = {
+        "connections": [],
+        "uploads": [],
+        "pipelines": [],
+        "transformations": [],
+    }
+
+    # --- Phase 1: create connections ---
+    # Maps connection name → id (payload + existing)
+    conn_name_to_id: dict[str, int] = dict(existing_conn_names)
+    for c in data.get("connections", []):
+        conn = _get_conn_svc().create_connection(
+            session,
+            api_key.org_id,
+            name=c["name"],
+            connection_type=ConnectionType(c["connection_type"]),
+            config=c["config"],
+        )
+        session.flush()
+        conn_name_to_id[c["name"]] = conn.id
+        created["connections"].append(conn.id)
+
+    # --- Phase 2: create uploads ---
+    for u in data.get("uploads", []):
+        upload = _get_upload_svc().create_upload(
+            session,
+            api_key.org_id,
+            name=u["name"],
+            description=u.get("description"),
+            source_connection_id=conn_name_to_id[u["source_connection_name"]],
+            destination_connection_id=conn_name_to_id[u["destination_connection_name"]],
+            dlt_config=u.get("dlt_config", {}),
+        )
+        session.flush()
+        created["uploads"].append(upload.id)
+
+    # --- Phase 3: create pipelines ---
+    for p in data.get("pipelines", []):
+        command = DbtCommand.RUN
+        if p.get("command"):
+            command = DbtCommand(p["command"])
+        pipeline = _pipeline_svc.create_pipeline(
+            session,
+            api_key.org_id,
+            name=p["name"],
+            description=p.get("description"),
+            destination_connection_id=conn_name_to_id[p["destination_connection_name"]],
+            command=command,
+            full_refresh=p.get("full_refresh", False),
+            models=p.get("models"),
+            custom_selector=p.get("custom_selector"),
+        )
+        session.flush()
+        created["pipelines"].append(pipeline.id)
+
+    # --- Phase 4: create transformations ---
+    for t in data.get("transformations", []):
+        mat = Materialization.VIEW
+        if t.get("materialization"):
+            mat = Materialization(t["materialization"])
+        dest_conn_id = None
+        if t.get("destination_connection_name"):
+            dest_conn_id = conn_name_to_id.get(t["destination_connection_name"])
+        transformation = _transform_svc.create_transformation(
+            session,
+            api_key.org_id,
+            name=t["name"],
+            sql_body=t["sql_body"],
+            materialization=mat,
+            description=t.get("description"),
+            schema_name=t.get("schema_name", "staging"),
+            tests_config=t.get("tests_config"),
+            destination_connection_id=dest_conn_id,
+            tags=t.get("tags"),
+            incremental_config=t.get("incremental_config"),
+        )
+        session.flush()
+        created["transformations"].append(transformation.id)
+
+    return JSONResponse({"created": created}, status_code=201)
+
+
+# ---------------------------------------------------------------------------
 # Route table
 # ---------------------------------------------------------------------------
 
@@ -1225,6 +1489,8 @@ api_v1_routes = [
     Route("/api/v1/notifications/{id:int}/read", mark_notification_read, methods=["PATCH"]),
     Route("/api/v1/notifications/read-all", mark_all_notifications_read, methods=["POST"]),
     Route("/api/v1/notifications/{id:int}", dismiss_notification, methods=["DELETE"]),
+    # Bulk import
+    Route("/api/v1/import", bulk_import, methods=["POST"]),
     # Notification channels
     Route("/api/v1/notifications/channels", list_notification_channels, methods=["GET"]),
     Route("/api/v1/notifications/channels/{id:int}", get_notification_channel, methods=["GET"]),

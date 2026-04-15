@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "datanika.fullname" . }}-app
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  type: {{ .Values.app.service.type }}
+  ports:
+    - name: http-frontend
+      port: {{ .Values.app.service.frontendPort }}
+      targetPort: http-frontend
+    - name: http-backend
+      port: {{ .Values.app.service.backendPort }}
+      targetPort: http-backend
+  selector:
+    {{- include "datanika.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: app

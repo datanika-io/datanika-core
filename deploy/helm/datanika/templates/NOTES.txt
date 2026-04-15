@@ -1,0 +1,32 @@
+Datanika {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}".
+
+1. Check pod status:
+
+   kubectl --namespace {{ .Release.Namespace }} get pods \
+     -l "app.kubernetes.io/instance={{ .Release.Name }}"
+
+2. Access the UI:
+{{- if .Values.ingress.enabled }}
+
+   https://{{ .Values.ingress.host }}
+{{- else }}
+
+   kubectl --namespace {{ .Release.Namespace }} port-forward \
+     svc/{{ include "datanika.fullname" . }}-app \
+     {{ .Values.app.service.frontendPort }}:{{ .Values.app.service.frontendPort }}
+
+   Then open http://localhost:{{ .Values.app.service.frontendPort }}
+{{- end }}
+
+3. IMPORTANT: the default passwords in values.yaml are "CHANGE-ME" placeholders.
+   Rotate them before using this install for anything real:
+
+   helm upgrade {{ .Release.Name }} <chart> \
+     --reuse-values \
+     --set secrets.POSTGRES_PASSWORD=$(openssl rand -base64 24) \
+     --set secrets.REDIS_PASSWORD=$(openssl rand -base64 24) \
+     --set secrets.SECRET_KEY=$(openssl rand -base64 32)
+
+4. Read deploy/helm/datanika/README.md for production caveats:
+   RWX storage requirement, migration ordering, and externalDatabase /
+   externalRedis overrides for managed Postgres / Redis.

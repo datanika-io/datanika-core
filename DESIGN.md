@@ -86,7 +86,7 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Package Manager** | uv |
 | **Linting** | Ruff |
 | **i18n** | 9 languages (en, ru, el, de, fr, es, zh, ar, sr) with runtime switching |
-| **Testing** | pytest + pytest-asyncio, SQLite in-memory, 1,700+ tests across unit / security / E2E |
+| **Testing** | pytest + pytest-asyncio, SQLite in-memory, 1,800+ tests across unit / security / E2E |
 | **Monitoring** | Prometheus (metrics collection), Grafana (dashboards), Node Exporter (host metrics), cAdvisor (container metrics) |
 
 ## Database Design
@@ -364,6 +364,16 @@ Tier 3/4 endpoints return a new typed `error_code` field alongside the human mes
 
 `transformation_compile.py` runs `dbt compile` via `dbtRunner().invoke()`, wraps the resulting SQL in `SELECT * FROM (...) LIMIT N`, and re-validates via `is_select_only()` before executing against the warehouse. Defense in depth: a compromised or buggy dbt compile output cannot reach DDL/DML. The read-only guard uses regex word boundaries (not a full SQL parser) for lightness while still rejecting DDL, DML, multi-statement, and CTE-with-mutation payloads.
 
+### API stability tiers
+
+Every operation in the OpenAPI spec carries an `x-stability` extension (`stable` / `beta` / `experimental`) injected at build time by `_annotate_stability()` in `datanika/services/openapi.py`. Agents can branch on the tier to decide whether to rely on a field. Stability semantics, deprecation windows, and the removal policy are frozen in [`docs/api_versioning.md`](docs/api_versioning.md) — tier promotions require a doc update and a PR-level review.
+
+### MCP server (`datanika-mcp/`)
+
+`datanika-mcp/` is a first-class [Model Context Protocol](https://modelcontextprotocol.io/) server that wraps the REST API behind 25 tools (16 read-only + 9 write) covering connections, uploads, transformations, pipelines, runs, templates, and catalog browsing. It is a thin HTTP client — there is no parallel business logic. The server ships as its own uv package installable via `uvx --from "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp"` so agents (Claude Desktop, Claude Code) can speak to any Datanika instance without shelling out to the UI.
+
+Write-facing tools (create / update / delete / run) are gated behind `--allow-write`; the default posture is read-only so "connect Claude Desktop to production" does not accidentally mutate pipelines. All 25 tools are decorated with `@mcp.tool()` in `datanika-mcp/src/datanika_mcp/server.py`; the HTTP shim lives in `client.py`. Tests in `tests/test_mcp/test_mcp_server.py` assert the tool surface matches the API and that `--allow-write` correctly filters mutating tools.
+
 ## Notification Center
 
 Datanika has two notification surfaces that share the same `notifications` table:
@@ -442,6 +452,8 @@ All services are defined in `docker-compose.yml` (requires `source .env.docker` 
 | **Soft delete** | Records preserved for audit, never hard-removed |
 | **Input validation** | Identifier regex, path traversal prevention in dbt file writes |
 
+Vulnerability disclosure policy, supported versions, and the security contact live in [`SECURITY.md`](SECURITY.md) at the repo root.
+
 ## Testing Strategy
 
 - **Framework**: pytest + pytest-asyncio with `asyncio_mode = "auto"`
@@ -449,7 +461,7 @@ All services are defined in `docker-compose.yml` (requires `source .env.docker` 
 - **Layout**: Test files mirror source — `datanika/services/foo.py` → `tests/test_services/test_foo.py`
 - **TDD**: Failing test first, then implementation, then refactor
 - **Bug fixes**: Every fix requires a regression test
-- **Test count**: 1,700+ across unit / service / UI / migration / security suites (see `pytest tests/ --collect-only -q` for the live number)
+- **Test count**: 1,800+ across unit / service / UI / migration / security suites (see `pytest tests/ --collect-only -q` for the live number)
 - **Test directories**: `test_models/`, `test_services/`, `test_tasks/`, `test_ui/`, `test_i18n/`, `test_migrations/`, `test_security/`, plus top-level `test_hooks.py`, `test_hooks_integration.py`, `test_plugin_registry.py`, `test_app_plugin_init.py`
 - **Security tests**: coverage for injection, path traversal, auth attacks, input validation, tenant isolation
 - **E2E tests**: `datanika-examples/tests/` running against real Docker databases (Postgres, MySQL, MSSQL, MongoDB seed scripts + Compose)

@@ -67,3 +67,47 @@ class TestVolumeQuotaDetection:
         plan, is_quota = "Pro", True
         is_hard_block = is_quota and plan == "Free"
         assert is_hard_block is False
+
+
+class TestBaseStateSetErrorQuotaMetric:
+    # Cloud#31 declares QuotaExceededError.metric: str | None = None. Of the 9
+    # raise sites, 8 pass no metric kwarg so exc.metric is None. getattr with a
+    # default only falls back when the attribute is missing — here the attribute
+    # exists and is None, so we need an `or ""` coercion to keep quota_metric a str.
+    def _make_state(self):
+        from datanika.ui.state.base_state import BaseState
+
+        class _Carrier:
+            error_message = ""
+            is_quota_error = False
+            quota_metric = ""
+
+        _Carrier._set_error = BaseState._set_error
+        return _Carrier()
+
+    def test_none_metric_coerced_to_empty_string(self):
+        class QuotaExceededError(ValueError):
+            def __init__(self, message):
+                super().__init__(message)
+                self.metric = None
+
+        state = self._make_state()
+        state._set_error(QuotaExceededError("over limit"))
+        assert state.quota_metric == ""
+        assert isinstance(state.quota_metric, str)
+
+    def test_bytes_metric_captured(self):
+        class QuotaExceededError(ValueError):
+            def __init__(self, message, metric):
+                super().__init__(message)
+                self.metric = metric
+
+        state = self._make_state()
+        state._set_error(QuotaExceededError("bytes over", "bytes_processed"))
+        assert state.quota_metric == "bytes_processed"
+
+    def test_non_quota_error_resets_stale_metric(self):
+        state = self._make_state()
+        state.quota_metric = "bytes_processed"
+        state._set_error(ValueError("something else"))
+        assert state.quota_metric == ""

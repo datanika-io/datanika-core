@@ -79,7 +79,7 @@ class BaseState(rx.State):
         """Set error_message, is_quota_error, and quota_metric from an exception."""
         _log.exception("Caught exception in state handler")
         self.is_quota_error = type(exc).__name__ == "QuotaExceededError"
-        self.quota_metric = getattr(exc, "metric", "") if self.is_quota_error else ""
+        self.quota_metric = (getattr(exc, "metric", None) or "") if self.is_quota_error else ""
         if isinstance(exc, ValueError):
             self.error_message = str(exc)
         else:

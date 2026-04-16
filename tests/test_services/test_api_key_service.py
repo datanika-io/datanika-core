@@ -111,6 +111,46 @@ class TestAuthenticateApiKey:
         assert result is not None
 
 
+class TestLastUsedAtDebounce:
+    """Debounce: skip the UPDATE if last_used_at was written within 60s."""
+
+    def test_first_auth_writes_last_used_at(self, svc, db_session, org, user):
+        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        assert key.last_used_at is None
+        svc.authenticate_api_key(db_session, raw_key)
+        db_session.refresh(key)
+        assert key.last_used_at is not None
+
+    def test_second_auth_within_60s_skips_write(self, svc, db_session, org, user):
+        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        svc.authenticate_api_key(db_session, raw_key)
+        db_session.refresh(key)
+        first_ts = key.last_used_at
+
+        # Second call within 60s — should NOT update last_used_at
+        svc.authenticate_api_key(db_session, raw_key)
+        db_session.refresh(key)
+        assert key.last_used_at == first_ts
+
+    def test_auth_after_debounce_window_writes(self, svc, db_session, org, user):
+        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        svc.authenticate_api_key(db_session, raw_key)
+        db_session.refresh(key)
+
+        # Simulate time passing: set last_used_at to 61s ago (naive for SQLite compat)
+        old_ts = datetime.now(UTC) - timedelta(seconds=61)
+        key.last_used_at = old_ts.replace(tzinfo=None)
+        db_session.flush()
+
+        svc.authenticate_api_key(db_session, raw_key)
+        db_session.refresh(key)
+        # last_used_at should have been refreshed (newer than old_ts)
+        refreshed = key.last_used_at
+        if refreshed.tzinfo is None:
+            refreshed = refreshed.replace(tzinfo=UTC)
+        assert refreshed > old_ts
+
+
 class TestListApiKeys:
     def test_empty(self, svc, db_session, org):
         assert svc.list_api_keys(db_session, org.id) == []

@@ -50,13 +50,6 @@ def db_fields() -> rx.Component:
             required=True,
             width="100%",
         ),
-        rx.text(_t["connections.schema_optional"], size="2", weight="bold"),
-        rx.input(
-            placeholder=_t["connections.ph_schema"],
-            value=ConnectionState.form_schema,
-            on_change=ConnectionState.set_form_schema,
-            width="100%",
-        ),
         spacing="2",
         width="100%",
     )
@@ -321,18 +314,29 @@ def google_sheets_fields() -> rx.Component:
 
 
 def clickhouse_fields() -> rx.Component:
-    """Fields for clickhouse — extends db_fields with cluster name."""
+    """Fields for clickhouse — extends db_fields with secure + cluster replication."""
     return rx.vstack(
         db_fields(),
-        rx.text(_t["connections.cluster"], size="2", weight="bold"),
-        rx.input(
-            placeholder=_t["connections.ph_cluster"],
-            value=ConnectionState.form_cluster,
-            on_change=ConnectionState.set_form_cluster,
-            width="100%",
+        rx.flex(
+            rx.checkbox(
+                _t["connections.secure"],
+                checked=ConnectionState.form_secure,
+                on_change=ConnectionState.set_form_secure,
+            ),
+            spacing="2",
+            align="center",
+        ),
+        rx.flex(
+            rx.checkbox(
+                _t["connections.cluster_replication"],
+                checked=ConnectionState.form_cluster_replication,
+                on_change=ConnectionState.set_form_cluster_replication,
+            ),
+            spacing="2",
+            align="center",
         ),
         rx.cond(
-            ConnectionState.form_cluster != "",
+            ConnectionState.form_cluster_replication,
             rx.callout(
                 _t["connections.cluster_hint"],
                 icon="info",

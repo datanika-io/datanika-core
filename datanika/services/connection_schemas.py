@@ -92,7 +92,8 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "database": _str("Database name"),
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
-            "secure": _bool("Use HTTPS"),
+            "secure": _bool("Use HTTPS (enable for ClickHouse Cloud and TLS instances)"),
+            "cluster_replication": _bool("Enable cluster replication (ReplicatedMergeTree)"),
         },
         required=["host", "database", "user", "password"],
     ),
@@ -265,13 +266,13 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     ),
     "mongodb": _schema(
         {
-            "connection_string": _str(
-                "MongoDB connection string (with credentials)",
-                sensitive=True,
-            ),
+            "host": _str("MongoDB host"),
+            "port": _int("MongoDB port", default=27017),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
             "database": _str("Database name"),
         },
-        required=["connection_string", "database"],
+        required=["host", "database"],
     ),
     # ---- REST API ----
     "rest_api": _schema(
@@ -292,13 +293,15 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     # ---- Files ----
     "s3": _schema(
         {
-            "bucket": _str("S3 bucket name"),
-            "aws_access_key_id": _str("AWS access key ID", sensitive=True),
-            "aws_secret_access_key": _str("AWS secret access key", sensitive=True),
-            "region": _str("AWS region (e.g. us-east-1)"),
-            "prefix": _str("Optional key prefix"),
+            "bucket_url": _str("S3 bucket URL, e.g. s3://my-bucket/path/prefix/"),
+            "aws_access_key_id": _str("AWS access key ID (optional with IAM role)", sensitive=True),
+            "aws_secret_access_key": _str(
+                "AWS secret access key (optional with IAM role)", sensitive=True
+            ),
+            "region_name": _str("AWS region, e.g. us-east-1 (optional, auto-detected)"),
+            "endpoint_url": _str("S3-compatible endpoint URL (MinIO, Backblaze B2, Cloudflare R2)"),
         },
-        required=["bucket", "aws_access_key_id", "aws_secret_access_key", "region"],
+        required=["bucket_url"],
     ),
     "csv": _schema(
         {"path": _str("Path to CSV file or directory")},
@@ -318,8 +321,6 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "bootstrap_servers": _str("Comma-separated Kafka brokers"),
             "topics": _str("Comma-separated topic names"),
             "group_id": _str("Consumer group ID"),
-            "sasl_username": _str("SASL username (optional)"),
-            "sasl_password": _str("SASL password (optional)", sensitive=True),
         },
         required=["bootstrap_servers", "topics", "group_id"],
     ),

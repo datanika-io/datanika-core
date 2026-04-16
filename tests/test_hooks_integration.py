@@ -249,7 +249,7 @@ class TestUploadHookEmission:
                 encryption=encryption,
             )
 
-        spy.assert_called_once_with(org_id=org.id, table_count=3)
+        spy.assert_called_once_with(org_id=org.id, table_count=3, bytes_processed=None)
 
     def test_emits_fallback_count_on_catalog_failure(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload
@@ -279,7 +279,7 @@ class TestUploadHookEmission:
                 encryption=encryption,
             )
 
-        spy.assert_called_once_with(org_id=org.id, table_count=1)
+        spy.assert_called_once_with(org_id=org.id, table_count=1, bytes_processed=None)
 
 
 # ---------------------------------------------------------------------------

@@ -19,8 +19,12 @@ import type { FullConfig } from "@playwright/test";
  * it directly here.
  *
  * Payload contract (pinned in tests/test_scripts/test_e2e_seed.py):
- *   org_id, org_slug, user_id, user_email, user_password,
- *   connection_id, connection_name, connection_type, seeded_at
+ *   Core 9: org_id, org_slug, user_id, user_email, user_password,
+ *           connection_id, connection_name, connection_type, seeded_at
+ *   Extended 16 (core#172): viewer_user_{id,email,password},
+ *           org_b_{id,slug,user_id,user_email,user_password,
+ *           connection_id,upload_id,pipeline_id,transformation_id,schedule_id},
+ *           org_a_api_key_{id,plaintext}, org_b_api_key_{id,plaintext}
  *
  * See datanika-cloud/docs/billing_contract.md for the quota implications of
  * the fixture user and datanika/scripts/e2e_seed.py for the source of truth.
@@ -52,6 +56,25 @@ export type SeedFixture = {
   connection_name: string;
   connection_type: string;
   seeded_at: string;
+  // Extended fields (core#172) — defaulted to 0/"" in the seed when
+  // the opt-in flags are off, so they're always present in the JSON.
+  viewer_user_id: number;
+  viewer_user_email: string;
+  viewer_user_password: string;
+  org_b_id: number;
+  org_b_slug: string;
+  org_b_user_id: number;
+  org_b_user_email: string;
+  org_b_user_password: string;
+  org_b_connection_id: number;
+  org_b_upload_id: number;
+  org_b_pipeline_id: number;
+  org_b_transformation_id: number;
+  org_b_schedule_id: number;
+  org_a_api_key_id: number;
+  org_a_api_key_plaintext: string;
+  org_b_api_key_id: number;
+  org_b_api_key_plaintext: string;
 };
 
 async function globalSetup(_config: FullConfig): Promise<void> {
@@ -139,6 +162,25 @@ async function globalSetup(_config: FullConfig): Promise<void> {
   process.env.DATANIKA_E2E_CONNECTION_NAME = payload.connection_name;
   process.env.DATANIKA_E2E_CONNECTION_TYPE = payload.connection_type;
   process.env.DATANIKA_E2E_SEEDED_AT = payload.seeded_at;
+
+  // Extended fields (core#172 seed extension) — viewer, org B, API keys.
+  // These are 0/"" when the opt-in flags are off; specs that need them
+  // use mustEnv() and fail fast with a clear message.
+  process.env.DATANIKA_E2E_VIEWER_USER_ID = String(payload.viewer_user_id);
+  process.env.DATANIKA_E2E_VIEWER_USER_EMAIL = payload.viewer_user_email;
+  process.env.DATANIKA_E2E_VIEWER_USER_PASSWORD = payload.viewer_user_password;
+  process.env.DATANIKA_E2E_ORG_B_ID = String(payload.org_b_id);
+  process.env.DATANIKA_E2E_ORG_B_SLUG = payload.org_b_slug;
+  process.env.DATANIKA_E2E_ORG_B_USER_ID = String(payload.org_b_user_id);
+  process.env.DATANIKA_E2E_ORG_B_USER_EMAIL = payload.org_b_user_email;
+  process.env.DATANIKA_E2E_ORG_B_USER_PASSWORD = payload.org_b_user_password;
+  process.env.DATANIKA_E2E_ORG_B_CONNECTION_ID = String(payload.org_b_connection_id);
+  process.env.DATANIKA_E2E_ORG_B_UPLOAD_ID = String(payload.org_b_upload_id);
+  process.env.DATANIKA_E2E_ORG_B_PIPELINE_ID = String(payload.org_b_pipeline_id);
+  process.env.DATANIKA_E2E_ORG_B_TRANSFORMATION_ID = String(payload.org_b_transformation_id);
+  process.env.DATANIKA_E2E_ORG_B_SCHEDULE_ID = String(payload.org_b_schedule_id);
+  process.env.DATANIKA_E2E_API_KEY_ORG_A = payload.org_a_api_key_plaintext;
+  process.env.DATANIKA_E2E_API_KEY_ORG_B = payload.org_b_api_key_plaintext;
 
   // Also dump to a file so ad-hoc scripts (curl probes, manual tests) can
   // read it without setting env. .gitignore'd.

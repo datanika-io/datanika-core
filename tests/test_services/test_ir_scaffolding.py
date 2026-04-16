@@ -36,36 +36,44 @@ class TestIRPackageLayout:
         assert IR_VERSION == 1
 
 
-class TestIRStubsRaiseNotImplemented:
-    """P1 stubs must raise so a mis-wired ELT path fails loudly, not silently."""
+class TestIRModulesCallable:
+    """P3 — stubs replaced with real implementations. Verify callability."""
 
-    def test_build_ir_raises(self):
+    def test_build_ir_is_callable(self):
         from datanika.services.ir.builder import build_ir
 
-        with pytest.raises(NotImplementedError, match="P3"):
-            build_ir(source=None)
+        assert callable(build_ir)
 
-    def test_validate_ir_raises(self):
+    def test_validate_ir_is_callable(self):
         from datanika.services.ir.validator import validate_ir
 
-        with pytest.raises(NotImplementedError, match="P3"):
-            validate_ir(ir=None)
+        assert callable(validate_ir)
 
-    def test_introspect_columns_raises(self):
+    def test_introspect_columns_is_callable(self):
         from datanika.services.ir.introspect import introspect_columns
 
-        with pytest.raises(NotImplementedError, match="P3"):
-            introspect_columns(source=None)
+        assert callable(introspect_columns)
+
+    def test_build_ir_rejects_unsupported_source(self):
+        """Non-SQL sources raise IRBuildError, not NotImplementedError."""
+        from datanika.services.ir.builder import IRBuildError, build_ir
+
+        with pytest.raises(IRBuildError, match="P4"):
+            build_ir(
+                source_type="stripe",
+                source_config={},
+                destination_connection_id=1,
+                table="charges",
+            )
 
 
-class TestEltRunnerStub:
+class TestEltRunnerImportable:
     def test_elt_runner_importable(self):
         from datanika.services import elt_runner
 
         assert hasattr(elt_runner, "stream_to_raw")
 
-    def test_stream_to_raw_raises(self):
-        from datanika.services.elt_runner import stream_to_raw
+    def test_stream_stats_importable(self):
+        from datanika.services.elt_runner import StreamStats
 
-        with pytest.raises(NotImplementedError, match="P3"):
-            stream_to_raw(ir=None, run_id=1)
+        assert StreamStats is not None

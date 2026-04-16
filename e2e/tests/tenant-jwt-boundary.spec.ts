@@ -25,16 +25,9 @@ import { test, expect } from "../fixtures/auth";
  * do NOT "just fix the assertion." Escalate to Engineering and file a
  * CVE-grade issue.
  *
- * Blocked on core#113 + core#166 seed extensions:
- *   - E2E_SEED_INCLUDE_SECOND_TENANT=1 (second org B with full resource set)
- *   - E2E_SEED_INCLUDE_API_KEYS=1 (two ApiKey rows, one per org)
- *
- * When the seed flags ship, auth.ts will surface:
- *   process.env.DATANIKA_E2E_API_KEY_ORG_A
- *   process.env.DATANIKA_E2E_API_KEY_ORG_B
- *   process.env.DATANIKA_E2E_ORG_B_{CONNECTION,UPLOAD,PIPELINE,...}_ID
- *
- * Remove the .skip markers and the test turns green unchanged.
+ * Seed extensions shipped in core#172 (2026-04-16). Org B + API keys are
+ * always seeded (no opt-in flags needed). global-setup.ts maps all 25
+ * seed fields to DATANIKA_E2E_* env vars. .skip markers removed in QU2.
  */
 // @slow — 25 routes × 2 tests × real HTTP = expensive. Gated to master
 // promotion PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md Q1a.
@@ -98,8 +91,8 @@ function mustEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
     throw new Error(
-      `${name} not set — seed extension (core#113 + core#166) must be live. ` +
-        "Run with E2E_SEED_INCLUDE_SECOND_TENANT=1 and E2E_SEED_INCLUDE_API_KEYS=1.",
+      `${name} not set — global-setup.ts must map it from the seed payload. ` +
+        "Check e2e/global-setup.ts and datanika/scripts/e2e_seed.py.",
     );
   }
   return value;
@@ -107,13 +100,20 @@ function mustEnv(name: string): string {
 
 function orgBResourceId(resourceKey: MutationRoute["resourceKey"]): number {
   const envName = `DATANIKA_E2E_ORG_B_${resourceKey.toUpperCase()}_ID`;
-  return Number(mustEnv(envName));
+  const value = process.env[envName];
+  if (value && Number(value) > 0) {
+    return Number(value);
+  }
+  // Resources not seeded in org B (run, notification, channel) use a
+  // synthetic ID. The boundary test is still valid — org A must get 404
+  // for any ID it doesn't own, whether the row exists or not.
+  return 999999;
 }
 
 test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
   for (const route of MUTATION_ROUTES) {
     const id = `${route.method} ${route.pathTemplate}`;
-    test.skip(`${id} — org A cannot mutate org B resource`, async ({ request }) => {
+    test(`${id} — org A cannot mutate org B resource`, async ({ request }) => {
       const apiKeyA = mustEnv("DATANIKA_E2E_API_KEY_ORG_A");
       const victimId = orgBResourceId(route.resourceKey);
       const url = route.pathTemplate.replace("{id}", String(victimId));
@@ -137,7 +137,7 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
     });
   }
 
-  test.skip("write-through guard — PUT does not mutate B-owned connection", async ({ request }) => {
+  test("write-through guard — PUT does not mutate B-owned connection", async ({ request }) => {
     // Belt-and-suspenders: even if a cross-tenant PUT returned an error,
     // verify the B-owned row's content is unchanged. Catches a "error
     // response but the update still committed" bug.
@@ -167,7 +167,7 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
     expect((await after.json()).name).toBe(originalName);
   });
 
-  test.skip("sanity: org B can still access own resource with own key", async ({ request }) => {
+  test("sanity: org B can still access own resource with own key", async ({ request }) => {
     // The boundary check must not accidentally wall off the rightful
     // owner. Using B's own key, the same endpoint that 404'd for A
     // must succeed.

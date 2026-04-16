@@ -20,7 +20,7 @@ test.describe("?template= preservation through OAuth signup", () => {
     await page.goto("/signup?template=stripe-to-postgres");
     await page.getByLabel(/email/i).fill(`qa-${Date.now()}@datanika.test`);
     await page.getByLabel(/password/i).fill("QaTemplateOauth-2026");
-    await page.getByRole("button", { name: /sign up/i }).click();
+    await page.getByRole("button", { name: /create account/i }).click();
     await expect(page).toHaveURL(/template=stripe-to-postgres/);
   });
 

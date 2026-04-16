@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
-from datanika.models.pipeline import Pipeline, PipelineMode, PipelineStatus
+from datanika.models.pipeline import Pipeline, PipelineStatus
 from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
@@ -178,10 +178,10 @@ def run_pipeline(
             select(Pipeline).where(Pipeline.id == run.target_id, Pipeline.org_id == org_id)
         ).scalar_one()
 
-        if pipeline.mode == PipelineMode.ELT:
-            raise NotImplementedError(
-                "ELT pipeline path lands in V2 P3 — SPEC_ELT_IR_ARCHITECTURE.md §5.3"
-            )
+        # ELT pipelines run dbt against raw-landed data — same dbt execution,
+        # different source (raw schema vs dlt-loaded schema). No short-circuit
+        # needed; the mode difference is in how the *upload* lands data, not
+        # how the pipeline transforms it. Pipeline tasks always run dbt.
 
         predicted = PipelineService.predict_run_count(pipeline)
         _emit_hook(

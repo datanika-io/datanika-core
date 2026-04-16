@@ -2,6 +2,8 @@
 
 import reflex as rx
 
+from datanika.config import settings
+from datanika.ui.components.elt_nudge_card import elt_nudge_card
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.run_state import RunState
@@ -132,6 +134,14 @@ def logs_panel() -> rx.Component:
 
 def runs_page() -> rx.Component:
     return page_layout(
-        rx.vstack(filters_bar(), runs_table(), logs_panel(), spacing="6", width="100%"),
+        rx.vstack(
+            filters_bar(),
+            runs_table(),
+            # V2 pricing pivot — ELT nudge card, gated by feature flag.
+            (elt_nudge_card() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),
+            logs_panel(),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.runs"],
     )

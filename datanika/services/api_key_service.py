@@ -83,8 +83,16 @@ class ApiKeyService:
         ):
             return None
 
-        # Update last_used_at
-        api_key.last_used_at = datetime.now(UTC)
+        # Debounce last_used_at: skip the UPDATE if written within the last 60s.
+        # Under load (100 concurrent VUs on one key), the synchronous UPDATE
+        # serializes behind a row lock → p95 8s. Debouncing reduces writes
+        # from every request to at most once per key per 60s.
+        now = datetime.now(UTC)
+        if api_key.last_used_at is not None:
+            elapsed = (now - api_key.last_used_at.replace(tzinfo=UTC)).total_seconds()
+            if elapsed < 60:
+                return api_key
+        api_key.last_used_at = now
         session.flush()
         return api_key
 

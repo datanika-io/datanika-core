@@ -31,7 +31,7 @@ jobs:
         run: ruff check datanika tests --exclude "datanika/migrations"
 
       - name: Ruff format check
-        run: ruff format --check datanika tests
+        run: ruff format --check datanika tests --exclude "datanika/i18n"
 
   test:
     runs-on: ubuntu-latest

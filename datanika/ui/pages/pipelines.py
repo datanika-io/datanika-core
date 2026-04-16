@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.config import settings
+from datanika.ui.components.cost_estimator_card import cost_estimator_card
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.pipeline_mode_selector import pipeline_mode_selector
 from datanika.ui.components.quota_callout import error_or_quota_callout
@@ -246,7 +247,7 @@ def pipeline_form() -> rx.Component:
                 on_change=PipelineState.set_form_custom_selector,
                 width="100%",
             ),
-            # V2 pricing pivot — dual-mode selector + volume quota modal,
+            # V2 pricing pivot — dual-mode selector + volume quota modal + cost estimator,
             # gated by settings.datanika_dual_mode_ux_enabled.
             (pipeline_mode_selector() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),
             (
@@ -254,6 +255,7 @@ def pipeline_form() -> rx.Component:
                 if settings.datanika_dual_mode_ux_enabled
                 else rx.fragment()
             ),
+            (cost_estimator_card() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),
             # Error / quota upgrade
             error_or_quota_callout(PipelineState),
             # Buttons

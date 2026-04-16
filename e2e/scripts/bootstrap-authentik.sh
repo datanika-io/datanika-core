@@ -30,7 +30,7 @@ SAML_SP_ENTITY_ID="datanika"
 FIXTURE_FILE="$(dirname "$0")/../.sso-fixture.json"
 
 log() { echo "[bootstrap-authentik] $*"; }
-py() { python -c "$1"; }
+py() { python3 -c "$1"; }
 
 # --- 1. Wait for API ---
 log "Waiting for Authentik API at ${AUTHENTIK_URL}..."

@@ -44,12 +44,20 @@ from sqlalchemy.orm import Session
 from datanika.config import settings
 from datanika.db import get_sync_session
 from datanika.models.api_key import ApiKey
+from datanika.models.audit_log import AuditLog
+from datanika.models.catalog_entry import CatalogEntry
 from datanika.models.connection import Connection, ConnectionType
-from datanika.models.dependency import NodeType
+from datanika.models.dependency import Dependency, NodeType
+from datanika.models.invitation import Invitation
+from datanika.models.notification import Notification
+from datanika.models.notification_channel import NotificationChannel
 from datanika.models.pipeline import DbtCommand, Pipeline
+from datanika.models.run import Run
 from datanika.models.schedule import Schedule
+from datanika.models.sso_config import SSOConfig
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload
+from datanika.models.uploaded_file import UploadedFile
 from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.api_key_service import ApiKeyService
 from datanika.services.auth import AuthService
@@ -176,8 +184,19 @@ def _tear_down_fixture(session: Session) -> None:
     org_ids = [o.id for o in orgs]
 
     if org_ids:
-        # Resources with no FK dependents — delete first so nothing else
-        # references their rows.
+        # All TenantMixin children must be deleted before Organization.
+        # Order: leaf tables first (no dependents), then FK parents last.
+        session.execute(AuditLog.__table__.delete().where(AuditLog.org_id.in_(org_ids)))
+        session.execute(Run.__table__.delete().where(Run.org_id.in_(org_ids)))
+        session.execute(Notification.__table__.delete().where(Notification.org_id.in_(org_ids)))
+        session.execute(
+            NotificationChannel.__table__.delete().where(NotificationChannel.org_id.in_(org_ids))
+        )
+        session.execute(CatalogEntry.__table__.delete().where(CatalogEntry.org_id.in_(org_ids)))
+        session.execute(Dependency.__table__.delete().where(Dependency.org_id.in_(org_ids)))
+        session.execute(UploadedFile.__table__.delete().where(UploadedFile.org_id.in_(org_ids)))
+        session.execute(Invitation.__table__.delete().where(Invitation.org_id.in_(org_ids)))
+        session.execute(SSOConfig.__table__.delete().where(SSOConfig.org_id.in_(org_ids)))
         session.execute(Schedule.__table__.delete().where(Schedule.org_id.in_(org_ids)))
         session.execute(Upload.__table__.delete().where(Upload.org_id.in_(org_ids)))
         session.execute(Pipeline.__table__.delete().where(Pipeline.org_id.in_(org_ids)))

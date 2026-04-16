@@ -23,4 +23,17 @@ echo "pre-push: ruff format --check"
 "$PY" -m ruff format --check datanika tests
 echo "pre-push: pytest"
 "$PY" -m pytest tests/ -x -q --tb=short
+
+# Helm lint — only if chart files were modified in the push range
+if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then
+  CHANGED=$(git diff --name-only @{upstream}..HEAD -- deploy/helm/ 2>/dev/null || true)
+  if [ -n "$CHANGED" ]; then
+    echo "pre-push: helm lint (chart files changed)"
+    helm lint deploy/helm/datanika
+    helm template test-release deploy/helm/datanika > /dev/null
+  else
+    echo "pre-push: helm lint skipped (no chart changes)"
+  fi
+fi
+
 echo "pre-push: all checks passed"

@@ -13,9 +13,9 @@ test.describe("Pipeline template prefill via ?template=", () => {
   test("stripe-to-postgres template prefills connection form", async ({ loggedInPage: page }) => {
     await page.goto("/connections?template=stripe-to-postgres");
 
-    // The connection type select should be prefilled to "stripe"
-    // ConnectionState.form_type is bound to the select element
-    await expect(page.locator("select")).toHaveValue(/stripe/i);
+    // The connection type picker is a custom searchable_select (popover trigger button),
+    // not a native <select>. When form_type is prefilled, the button shows the value.
+    await expect(page.getByRole("button", { name: /stripe/i })).toBeVisible();
   });
 
   test("template_selected Plausible event fires on templates page", async ({

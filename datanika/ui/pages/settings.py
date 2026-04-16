@@ -2,6 +2,8 @@
 
 import reflex as rx
 
+from datanika.config import settings
+from datanika.ui.components.billing_preview_modal import billing_preview_modal
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
@@ -529,6 +531,8 @@ def settings_page() -> rx.Component:
                 error_or_quota_callout(SettingsState),
             ),
             org_profile_card(),
+            # V2 pricing pivot — billing preview, gated by feature flag.
+            (billing_preview_modal() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),
             members_card(),
             notifications_card(),
             api_keys_card(),

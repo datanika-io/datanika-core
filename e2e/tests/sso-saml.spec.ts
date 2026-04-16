@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { backendContextOptions, BACKEND_URL } from "../fixtures/sso";
 
 /**
  * SSO SAML flow tests against a live Authentik container.
@@ -16,7 +17,6 @@ import { test, expect } from "@playwright/test";
  */
 
 const SSO_GATE = process.env.DATANIKA_E2E_SSO_AUTHENTIK !== "1";
-const BACKEND_URL = process.env.DATANIKA_E2E_BACKEND_URL ?? "http://localhost:8000";
 
 const SSO_USER_EMAIL = "sso-user@datanika.test";
 const SSO_USER_PASSWORD = "SsoTestPassword-2026";
@@ -60,7 +60,7 @@ test.describe("SSO SAML: Authentik @slow", () => {
   });
 
   test("SAML SP metadata endpoint returns valid XML", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const response = await api.get(`/api/auth/sso/metadata/${SAML_ORG_SLUG}`);
     expect(response.status()).toBe(200);
 
@@ -75,7 +75,7 @@ test.describe("SSO SAML: Authentik @slow", () => {
   });
 
   test("SAML assertion with wrong audience is rejected", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const response = await api.post("/api/auth/sso/callback", {
       form: {
         SAMLResponse: Buffer.from("<invalid-xml>").toString("base64"),

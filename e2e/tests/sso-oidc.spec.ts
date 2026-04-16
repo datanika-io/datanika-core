@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { backendContextOptions, BACKEND_URL } from "../fixtures/sso";
 
 /**
  * SSO OIDC flow tests against a live Authentik container.
@@ -19,7 +20,6 @@ import { test, expect } from "@playwright/test";
  */
 
 const SSO_GATE = process.env.DATANIKA_E2E_SSO_AUTHENTIK !== "1";
-const BACKEND_URL = process.env.DATANIKA_E2E_BACKEND_URL ?? "http://localhost:8000";
 
 const SSO_USER_EMAIL = "sso-user@datanika.test";
 const SSO_USER_PASSWORD = "SsoTestPassword-2026";
@@ -69,7 +69,7 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     const apiKey = process.env.DATANIKA_E2E_API_KEY_ORG_A;
     test.skip(!apiKey, "Requires API key from seed — run with extended seed");
 
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const membersResp = await api.get("/api/v1/members", {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
@@ -85,7 +85,7 @@ test.describe("SSO OIDC: Authentik @slow", () => {
   });
 
   test("OIDC with invalid org slug returns error", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const response = await api.get("/api/auth/sso/login/nonexistent-org-slug");
     expect(response.status()).not.toBe(200);
     expect(response.status()).toBeLessThan(500);

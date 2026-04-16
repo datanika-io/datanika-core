@@ -33,6 +33,10 @@ COPY datanika-cloud/ /cloud/
 # Reflex needs to initialize on first run (recreates .venv)
 RUN uv run reflex init
 
+# Patch Vite config to proxy /api/* to backend (fixes #200 — SSO/OAuth
+# routes return SPA shell instead of proper HTTP status on :3000)
+RUN uv run python scripts/patch-vite-proxy.py
+
 # Install cloud plugin AFTER reflex init (which recreates the venv)
 RUN uv pip install /cloud
 

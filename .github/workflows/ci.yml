@@ -258,6 +258,20 @@ jobs:
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
 
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[QA] e2e-staging failure on ${GITHUB_SHA:0:7}" \
+            --body "$(printf '**Run:** %s\n**Commit:** \`%s\`\n**Message:** %s\n**Report:** playwright-report artifact on the run page' \
+              '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              '${GITHUB_SHA:0:7}' \
+              '$(echo "${{ github.event.head_commit.message }}" | head -1)')" \
+            --label "e2e-failure"
+
   # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases)
   # against the staging app with a disposable Authentik IdP on Hetzner.
   #
@@ -393,6 +407,20 @@ jobs:
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
+
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[QA] e2e-sso failure on ${GITHUB_SHA:0:7}" \
+            --body "$(printf '**Run:** %s\n**Commit:** \`%s\`\n**Message:** %s\n**Report:** playwright-report-sso artifact on the run page' \
+              '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+              '${GITHUB_SHA:0:7}' \
+              '$(echo "${{ github.event.head_commit.message }}" | head -1)')" \
+            --label "e2e-failure"
 
   # Post-deploy smoke gate. Fails loud if any curated URL 404s, returns an
   # empty body, or serves the wrong content-type/body substring. See

@@ -26,6 +26,32 @@ logger = logging.getLogger(__name__)
 execution_service = ExecutionService()
 
 
+def _extract_bytes_from_load_info(load_info) -> int | None:
+    """Extract total bytes written from dlt LoadInfo per spec §5.5.
+
+    Walks load_info.load_packages[*].completed_jobs[*].job_file_info and
+    sums file_size. This is post-normalization bytes — captures JSON
+    amplification honestly.
+    """
+    import contextlib
+    import os
+
+    if load_info is None:
+        return None
+    total = 0
+    try:
+        for pkg in load_info.load_packages:
+            for job in pkg.jobs.get("completed_jobs", []):
+                file_info = getattr(job, "file_path", None)
+                if file_info:
+                    with contextlib.suppress(OSError):
+                        total += os.path.getsize(file_info)
+    except Exception:
+        logger.debug("Could not extract bytes from LoadInfo", exc_info=True)
+        return None
+    return total if total > 0 else None
+
+
 def _sync_catalog_after_upload(
     session: Session,
     org_id: int,
@@ -126,56 +152,79 @@ def run_upload(
             select(Upload).where(Upload.id == run.target_id, Upload.org_id == org_id)
         ).scalar_one()
 
-        if upload.mode == UploadMode.ELT:
-            raise NotImplementedError(
-                "ELT upload path lands in V2 P3 — SPEC_ELT_IR_ARCHITECTURE.md §5.3"
-            )
-
         src_conn = session.get(Connection, upload.source_connection_id)
         dst_conn = session.get(Connection, upload.destination_connection_id)
 
         src_config = encryption.decrypt(src_conn.config_encrypted)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
-        # Extract uploaded file if present (for csv/json/parquet with file upload)
-        uploaded_file_id = src_config.get("uploaded_file_id") or upload.dlt_config.get(
-            "uploaded_file_id"
-        )
-        extracted_dir = None
-        uploaded_file = None
-        dlt_config = dict(upload.dlt_config)
+        bytes_processed = None  # filled by either ETL or ELT path
 
-        if uploaded_file_id:
-            from datanika.config import settings as app_settings
-            from datanika.models.uploaded_file import UploadedFile
-            from datanika.services.file_upload_service import FileUploadService
+        if upload.mode == UploadMode.ELT:
+            # V2 P3 — ELT path: stream source → Arrow → raw schema
+            from datanika.services.elt_runner import stream_to_raw
+            from datanika.services.ir.schema import IR
 
-            file_svc = FileUploadService(app_settings.file_uploads_dir)
-            uploaded_file = session.get(UploadedFile, uploaded_file_id)
-            if uploaded_file:
-                extracted_dir = file_svc.extract_for_dlt(uploaded_file)
-                dlt_config["bucket_url"] = extracted_dir
-
-        try:
-            from datanika.config import settings as app_cfg
-
-            runner = DltRunnerService(pipelines_dir=app_cfg.dlt_pipelines_dir)
-            dataset_name = to_dataset_name(upload.name)
-            result = runner.execute(
-                pipeline_id=run_id,
-                source_type=src_conn.connection_type.value,
-                source_config=src_config,
-                destination_type=dst_conn.connection_type.value,
-                destination_config=dst_config,
-                dlt_config=dlt_config,
-                dataset_name=dataset_name,
+            ir = IR.from_dict(upload.dlt_config.get("ir") or upload.dlt_config)
+            stats = stream_to_raw(
+                ir=ir,
                 run_id=run_id,
+                source_config=src_config,
+                destination_config=dst_config,
+                source_type=src_conn.connection_type.value,
+                destination_type=dst_conn.connection_type.value,
             )
-            rows = result["rows_loaded"]
-            logs = str(result["load_info"])
-        finally:
-            if extracted_dir and uploaded_file:
-                file_svc.cleanup_extracted(uploaded_file)
+            rows = stats.rows
+            bytes_processed = stats.bytes_out
+            logs = (
+                f"ELT stream complete: {stats.rows} rows, "
+                f"{stats.bytes_out} bytes out, {stats.batches} batches, "
+                f"{stats.duration_ms}ms"
+            )
+            dataset_name = ir.target.raw_schema
+        else:
+            # ETL path (existing behaviour)
+            # Extract uploaded file if present (for csv/json/parquet)
+            uploaded_file_id = src_config.get("uploaded_file_id") or upload.dlt_config.get(
+                "uploaded_file_id"
+            )
+            extracted_dir = None
+            uploaded_file = None
+            dlt_config = dict(upload.dlt_config)
+
+            if uploaded_file_id:
+                from datanika.config import settings as app_settings
+                from datanika.models.uploaded_file import UploadedFile
+                from datanika.services.file_upload_service import FileUploadService
+
+                file_svc = FileUploadService(app_settings.file_uploads_dir)
+                uploaded_file = session.get(UploadedFile, uploaded_file_id)
+                if uploaded_file:
+                    extracted_dir = file_svc.extract_for_dlt(uploaded_file)
+                    dlt_config["bucket_url"] = extracted_dir
+
+            try:
+                from datanika.config import settings as app_cfg
+
+                runner = DltRunnerService(pipelines_dir=app_cfg.dlt_pipelines_dir)
+                dataset_name = to_dataset_name(upload.name)
+                result = runner.execute(
+                    pipeline_id=run_id,
+                    source_type=src_conn.connection_type.value,
+                    source_config=src_config,
+                    destination_type=dst_conn.connection_type.value,
+                    destination_config=dst_config,
+                    dlt_config=dlt_config,
+                    dataset_name=dataset_name,
+                    run_id=run_id,
+                )
+                rows = result["rows_loaded"]
+                logs = str(result["load_info"])
+                # ETL bytes_processed from LoadInfo file sizes (spec §5.5)
+                bytes_processed = _extract_bytes_from_load_info(result.get("load_info"))
+            finally:
+                if extracted_dir and uploaded_file:
+                    file_svc.cleanup_extracted(uploaded_file)
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
@@ -194,7 +243,12 @@ def run_upload(
 
         from datanika.hooks import emit
 
-        emit("run.upload_completed", org_id=org_id, table_count=table_count)
+        emit(
+            "run.upload_completed",
+            org_id=org_id,
+            table_count=table_count,
+            bytes_processed=bytes_processed,
+        )
 
         upload.status = UploadStatus.ACTIVE
         session.flush()

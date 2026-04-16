@@ -7,6 +7,24 @@ set -e
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
+# Auto-rebase onto origin/dev (feature branches only)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$BRANCH" != "dev" && "$BRANCH" != "master" && "$BRANCH" != "main" ]]; then
+  git fetch origin dev --quiet 2>/dev/null || true
+  if ! git merge-base --is-ancestor origin/dev HEAD 2>/dev/null; then
+    echo "pre-push: branch is behind origin/dev — rebasing..."
+    if git rebase origin/dev --quiet; then
+      echo "pre-push: rebased onto origin/dev. Push again (--force-with-lease if already pushed)."
+      exit 1
+    else
+      git rebase --abort
+      echo "pre-push: rebase has conflicts — resolve manually:"
+      echo "  git fetch origin dev && git rebase origin/dev"
+      exit 1
+    fi
+  fi
+fi
+
 # Find venv
 if [ -x ".venv/Scripts/python.exe" ]; then
   PY=".venv/Scripts/python.exe"

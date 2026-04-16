@@ -54,16 +54,16 @@ class TestIRModulesCallable:
 
         assert callable(introspect_columns)
 
-    def test_build_ir_rejects_unsupported_source(self):
-        """Non-SQL sources raise IRBuildError, not NotImplementedError."""
+    def test_build_ir_rejects_file_sources(self):
+        """File sources raise IRBuildError (not yet supported)."""
         from datanika.services.ir.builder import IRBuildError, build_ir
 
-        with pytest.raises(IRBuildError, match="P4"):
+        with pytest.raises(IRBuildError, match="not supported"):
             build_ir(
-                source_type="stripe",
+                source_type="csv",
                 source_config={},
                 destination_connection_id=1,
-                table="charges",
+                table="data",
             )
 
 

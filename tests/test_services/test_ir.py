@@ -213,6 +213,121 @@ class TestIRValidator:
 
 
 # ---------------------------------------------------------------------------
+# §5.2 / §9 P4 — SaaS source IR builder
+# ---------------------------------------------------------------------------
+
+
+class TestSaaSIRBuilder:
+    """V2 P4 — build_ir() for SaaS sources via dlt schema discovery."""
+
+    def test_build_ir_saas_with_mock_source(self):
+        """SaaS sources build IR from dlt resource.compute_table_schema()."""
+        from unittest.mock import MagicMock, patch
+
+        from datanika.services.ir.builder import build_ir
+        from datanika.services.ir.schema import IR
+
+        # Mock a dlt source with one resource that has column hints
+        mock_resource = MagicMock()
+        mock_resource.table_name = "customers"
+        mock_resource.compute_table_schema.return_value = {
+            "name": "customers",
+            "columns": {
+                "id": {"name": "id", "data_type": "text", "nullable": False},
+                "email": {"name": "email", "data_type": "text", "nullable": True},
+                "created": {"name": "created", "data_type": "bigint", "nullable": True},
+            },
+        }
+
+        mock_source = MagicMock()
+        mock_source.resources = {"customers": mock_resource}
+
+        with patch(
+            "datanika.services.ir.builder._build_dlt_source",
+            return_value=mock_source,
+        ):
+            ir = build_ir(
+                source_type="stripe",
+                source_config={"api_key": "sk_test_fake"},
+                destination_connection_id=2,
+                table="customers",
+            )
+
+        assert isinstance(ir, IR)
+        assert ir.source.kind == "saas_rest"
+        assert len(ir.columns) == 3
+        assert ir.columns[0].source_ref == "id"
+        assert ir.columns[0].type == "text"
+        assert ir.target.table == "customers"
+
+    def test_build_ir_saas_resource_not_found(self):
+        """Raises IRBuildError if the requested resource doesn't exist in the source."""
+        from unittest.mock import MagicMock, patch
+
+        from datanika.services.ir.builder import IRBuildError, build_ir
+
+        mock_source = MagicMock()
+        mock_source.resources = {}
+
+        with (
+            patch(
+                "datanika.services.ir.builder._build_dlt_source",
+                return_value=mock_source,
+            ),
+            pytest.raises(IRBuildError, match="not found"),
+        ):
+            build_ir(
+                source_type="stripe",
+                source_config={"api_key": "sk_test_fake"},
+                destination_connection_id=2,
+                table="nonexistent_resource",
+            )
+
+    def test_build_ir_saas_no_columns_in_schema(self):
+        """Raises IRBuildError if the resource schema has no columns."""
+        from unittest.mock import MagicMock, patch
+
+        from datanika.services.ir.builder import IRBuildError, build_ir
+
+        mock_resource = MagicMock()
+        mock_resource.table_name = "empty"
+        mock_resource.compute_table_schema.return_value = {
+            "name": "empty",
+            "columns": {},
+        }
+
+        mock_source = MagicMock()
+        mock_source.resources = {"empty": mock_resource}
+
+        with (
+            patch(
+                "datanika.services.ir.builder._build_dlt_source",
+                return_value=mock_source,
+            ),
+            pytest.raises(IRBuildError, match="No columns"),
+        ):
+            build_ir(
+                source_type="stripe",
+                source_config={"api_key": "sk_test_fake"},
+                destination_connection_id=2,
+                table="empty",
+            )
+
+    def test_file_sources_still_raise(self):
+        """File sources (csv, json, parquet, s3) are not yet supported."""
+        from datanika.services.ir.builder import IRBuildError, build_ir
+
+        for file_type in ("csv", "json", "parquet", "s3"):
+            with pytest.raises(IRBuildError, match="not supported"):
+                build_ir(
+                    source_type=file_type,
+                    source_config={},
+                    destination_connection_id=1,
+                    table="t",
+                )
+
+
+# ---------------------------------------------------------------------------
 # §5.5 — StreamStats
 # ---------------------------------------------------------------------------
 

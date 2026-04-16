@@ -50,13 +50,6 @@ def db_fields() -> rx.Component:
             required=True,
             width="100%",
         ),
-        rx.text(_t["connections.schema_optional"], size="2", weight="bold"),
-        rx.input(
-            placeholder=_t["connections.ph_schema"],
-            value=ConnectionState.form_schema,
-            on_change=ConnectionState.set_form_schema,
-            width="100%",
-        ),
         spacing="2",
         width="100%",
     )

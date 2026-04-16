@@ -154,6 +154,7 @@ services:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../datanika-cloud/monitoring/revenue-dashboard.json:/var/lib/grafana/dashboards/cloud/revenue.json:ro
+      - ../datanika-cloud/monitoring/volume-dashboard.json:/var/lib/grafana/dashboards/cloud/volume.json:ro
       - ./monitoring/db-performance-dashboard.json:/var/lib/grafana/dashboards/infra/db-performance.json:ro
       - ./monitoring/grafana-dashboard.json:/var/lib/grafana/dashboards/infra/server-overview.json:ro
     depends_on:

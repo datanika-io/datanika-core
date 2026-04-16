@@ -4,3 +4,4 @@ test-results/
 .pw-cache/
 .walkthrough-out/
 .e2e-fixture.json
+.sso-fixture.json

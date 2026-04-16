@@ -1,0 +1,85 @@
+# Authentik IdP for SSO E2E tests (QA Q3).
+#
+# Spins up a disposable Authentik instance on localhost:9000 with a
+# pre-configured admin user. The bootstrap script (scripts/bootstrap-authentik.sh)
+# creates OIDC + SAML applications via the Authentik API after first boot.
+#
+# Usage:
+#   docker compose -f e2e/docker-compose.test.yml up -d
+#   bash e2e/scripts/bootstrap-authentik.sh   # creates IdP apps
+#   DATANIKA_E2E_SSO_AUTHENTIK=1 npx playwright test sso-
+#   docker compose -f e2e/docker-compose.test.yml down -v
+#
+# The compose file is self-contained — no dependency on the main
+# docker-compose.yml. Ports deliberately avoid conflict with the main
+# stack (9000 vs 3000/8000).
+
+services:
+  authentik-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: authentik
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik-test-pw
+    volumes:
+      - authentik-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authentik"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authentik-redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2024.12
+    command: server
+    environment:
+      AUTHENTIK_SECRET_KEY: e2e-test-secret-key-not-for-production
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pw
+      # Bootstrap admin credentials — used by bootstrap-authentik.sh
+      AUTHENTIK_BOOTSTRAP_EMAIL: admin@datanika.test
+      AUTHENTIK_BOOTSTRAP_PASSWORD: e2e-admin-password
+      AUTHENTIK_BOOTSTRAP_TOKEN: e2e-bootstrap-token
+    ports:
+      - "9000:9000"
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "ak", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2024.12
+    command: worker
+    environment:
+      AUTHENTIK_SECRET_KEY: e2e-test-secret-key-not-for-production
+      AUTHENTIK_REDIS__HOST: authentik-redis
+      AUTHENTIK_POSTGRESQL__HOST: authentik-db
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-test-pw
+    depends_on:
+      authentik-db:
+        condition: service_healthy
+      authentik-redis:
+        condition: service_healthy
+
+volumes:
+  authentik-pg:

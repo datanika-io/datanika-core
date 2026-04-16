@@ -1,8 +1,8 @@
-"""V2 P1 IR scaffolding — Source → IR → {dlt ETL, dbt ELT}.
+"""V2 IR package — Source → IR → {dlt ETL, dbt ELT} dispatch.
 
-Stub package. `build_ir`, `validate_ir`, and `introspect_columns` raise
-`NotImplementedError` until the ELT builders land in P3 per
-SPEC_ELT_IR_ARCHITECTURE.md §9.
+The IR (Intermediate Representation) is a declarative schema-mapping document
+between every source and the destination. Both ETL and ELT modes derive their
+schemas from the same IR. See SPEC_ELT_IR_ARCHITECTURE.md.
 """
 
 IR_VERSION: int = 1

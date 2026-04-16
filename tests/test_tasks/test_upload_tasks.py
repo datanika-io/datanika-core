@@ -162,15 +162,31 @@ class TestRunUploadTask:
         db_session.refresh(upload)
         assert upload.status == UploadStatus.ACTIVE
 
-    def test_elt_mode_raises_before_dlt_called(self, db_session, setup_upload):
-        """V2 P1 scaffolding — mode=elt fails fast with NotImplementedError."""
+    def test_elt_mode_skips_dlt_runner(self, db_session, setup_upload):
+        """V2 P3 — mode=elt takes the ELT stream path, not the dlt runner."""
+        from unittest.mock import patch
+
         from datanika.models.upload import UploadMode
+        from datanika.services.elt_runner import StreamStats
 
         org, upload, run, encryption = setup_upload
         upload.mode = UploadMode.ELT
+        upload.dlt_config = {
+            "ir_version": 1,
+            "source": {"kind": "sql_table", "connection_id": 1, "table": "t"},
+            "columns": [
+                {"source_ref": "id", "target_name": "id", "type": "bigint", "nullable": False}
+            ],
+            "primary_key": ["id"],
+            "target": {"connection_id": 2, "raw_schema": "raw", "table": "t"},
+        }
         db_session.flush()
 
-        with _mock_dlt_runner() as mock_runner_cls:
+        mock_stats = StreamStats(rows=10, bytes_in=500, bytes_out=200, batches=1, duration_ms=50)
+        with (
+            _mock_dlt_runner() as mock_runner_cls,
+            patch("datanika.services.elt_runner.stream_to_raw", return_value=mock_stats),
+        ):
             run_upload(
                 run_id=run.id,
                 org_id=org.id,
@@ -180,8 +196,7 @@ class TestRunUploadTask:
             mock_runner_cls.return_value.execute.assert_not_called()
 
         db_session.refresh(run)
-        assert run.status == RunStatus.FAILED
-        assert "P3" in (run.error_message or "")
+        assert run.status == RunStatus.SUCCESS
 
     def test_upload_status_error_on_failure(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload

@@ -618,8 +618,8 @@ class TestRunPipelinePredictedRuns:
 
         assert captured["predicted_runs"] is None
 
-    def test_elt_mode_raises_before_dbt_called(self, db_session, encryption, setup_pipeline):
-        """V2 P1 scaffolding — mode=elt fails fast with NotImplementedError."""
+    def test_elt_mode_runs_dbt_normally(self, db_session, encryption, setup_pipeline):
+        """V2 P3 — ELT pipelines run dbt against raw-landed data, same as ETL."""
         from datanika.models.pipeline import PipelineMode
 
         org, conn, pipeline, transformations, run = setup_pipeline
@@ -627,14 +627,19 @@ class TestRunPipelinePredictedRuns:
         db_session.flush()
 
         with _mock_dbt_project() as mock_dbt_cls:
+            mock_dbt_cls.return_value.run_command.return_value = {
+                "success": True,
+                "rows_affected": 5,
+                "logs": "dbt ran OK",
+                "raw_result": [],
+            }
             run_pipeline(
                 run_id=run.id,
                 org_id=org.id,
                 session=db_session,
                 encryption=encryption,
             )
-            mock_dbt_cls.return_value.run_command.assert_not_called()
+            mock_dbt_cls.return_value.run_command.assert_called_once()
 
         db_session.refresh(run)
-        assert run.status == RunStatus.FAILED
-        assert "P3" in (run.error_message or "")
+        assert run.status == RunStatus.SUCCESS

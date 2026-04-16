@@ -60,8 +60,34 @@ docker exec -i e2e-authentik-server-1 ak changepassword akadmin <<< $'e2e-admin-
 AUTH_HEADER="Authorization: Bearer ${TOKEN_KEY}"
 api() {
   local method="$1" path="$2"; shift 2
-  curl -sf -X "${method}" "${API}${path}" -H "${AUTH_HEADER}" -H "Content-Type: application/json" "$@"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X "${method}" "${API}${path}" -H "${AUTH_HEADER}" -H "Content-Type: application/json" "$@")
+  local http_code
+  http_code=$(echo "$response" | tail -1)
+  local body
+  body=$(echo "$response" | sed '$d')
+  if [ "$http_code" -ge 400 ] 2>/dev/null || [ -z "$body" ]; then
+    log "ERROR: API ${method} ${path} → HTTP ${http_code}"
+    log "Response: ${body:-<empty>}"
+    return 1
+  fi
+  echo "$body"
 }
+
+# --- Verify token works ---
+log "Verifying API token..."
+if ! api GET '/core/users/?search=akadmin' > /dev/null; then
+  log "ERROR: API token not working. Retrying token insert..."
+  docker exec e2e-authentik-db-1 psql -U authentik -d authentik -c "
+  DELETE FROM authentik_core_token WHERE identifier = 'e2e-api-token';
+  INSERT INTO authentik_core_token (token_uuid, identifier, key, intent, expiring, description, user_id)
+  SELECT gen_random_uuid(), 'e2e-api-token', '${TOKEN_KEY}', 'api', false, 'E2E bootstrap',
+         id FROM authentik_core_user WHERE username = 'akadmin' LIMIT 1;
+  " > /dev/null 2>&1
+  sleep 2
+  api GET '/core/users/?search=akadmin' > /dev/null || { log "FATAL: API token still not working after retry."; exit 1; }
+fi
+log "API token verified."
 
 # --- 4. Fetch reusable PKs ---
 AUTH_FLOW_PK=$(api GET '/flows/instances/?slug=default-provider-authorization-implicit-consent' | py "import json,sys; print(json.load(sys.stdin)['results'][0]['pk'])")

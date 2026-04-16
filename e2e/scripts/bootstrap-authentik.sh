@@ -66,12 +66,14 @@ api() {
   http_code=$(echo "$response" | tail -1)
   local body
   body=$(echo "$response" | sed '$d')
-  if [ "$http_code" -ge 400 ] 2>/dev/null || [ -z "$body" ]; then
+  if [ "$http_code" -ge 400 ] 2>/dev/null; then
     log "ERROR: API ${method} ${path} → HTTP ${http_code}"
     log "Response: ${body:-<empty>}"
     return 1
   fi
-  echo "$body"
+  # 2xx with empty body (e.g. 204 No Content) is valid — just print nothing
+  [ -n "$body" ] && echo "$body"
+  return 0
 }
 
 # --- Verify token works ---

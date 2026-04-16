@@ -235,8 +235,9 @@ class ConnectionState(BaseState):
     form_spreadsheet_url: str = ""
     form_service_account_json: str = ""
 
-    # ClickHouse cluster (empty = single-node merge_tree, non-empty = replicated_merge_tree)
-    form_cluster: str = ""
+    # ClickHouse options
+    form_cluster_replication: bool = False
+    form_secure: bool = False
 
     # Databricks
     form_http_path: str = ""
@@ -449,10 +450,11 @@ class ConnectionState(BaseState):
                 config["database"] = self.form_database
             if self.form_schema:
                 config["schema"] = self.form_schema
-            # ClickHouse cluster → auto-set replicated_merge_tree
-            if t == "clickhouse" and self.form_cluster:
-                config["cluster"] = self.form_cluster
-                config["table_engine_type"] = "replicated_merge_tree"
+            # ClickHouse options
+            if t == "clickhouse":
+                if self.form_cluster_replication:
+                    config["table_engine_type"] = "replicated_merge_tree"
+                config["secure"] = self.form_secure
 
         elif t in ("duckdb", "sqlite"):
             if self.form_path:
@@ -656,7 +658,8 @@ class ConnectionState(BaseState):
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
-        self.form_cluster = ""
+        self.form_cluster_replication = False
+        self.form_secure = False
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -711,7 +714,8 @@ class ConnectionState(BaseState):
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
         self.form_service_account_json = ""
-        self.form_cluster = ""
+        self.form_cluster_replication = False
+        self.form_secure = False
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -737,7 +741,10 @@ class ConnectionState(BaseState):
             self.form_database = config.get("database", "")
             self.form_schema = config.get("schema", "")
             if conn_type == "clickhouse":
-                self.form_cluster = config.get("cluster", "")
+                self.form_cluster_replication = (
+                    config.get("table_engine_type") == "replicated_merge_tree"
+                )
+                self.form_secure = config.get("secure", False)
         elif conn_type in ("duckdb", "sqlite"):
             self.form_path = config.get("path", "")
         elif conn_type == "bigquery":

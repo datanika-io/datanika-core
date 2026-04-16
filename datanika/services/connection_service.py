@@ -180,11 +180,12 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
 
     if connection_type == ConnectionType.CLICKHOUSE:
         port = config.get("port", 8123)
+        secure_qs = "?secure=1" if config.get("secure", False) else ""
         return (
             f"clickhousedb+connect://{quote_plus(config.get('user', ''))}:"
             f"{quote_plus(config.get('password', ''))}@"
             f"{config.get('host', 'localhost')}:{port}/"
-            f"{config.get('database', '')}"
+            f"{config.get('database', '')}{secure_qs}"
         )
 
     raise ValueError(f"Unsupported connection type for URL building: {connection_type}")

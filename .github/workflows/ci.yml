@@ -262,14 +262,18 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
           gh issue create \
             --repo ${{ github.repository }} \
-            --title "[QA] e2e-staging failure on ${GITHUB_SHA:0:7}" \
-            --body "$(printf '**Run:** %s\n**Commit:** \`%s\`\n**Message:** %s\n**Report:** playwright-report artifact on the run page' \
-              '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
-              '${GITHUB_SHA:0:7}' \
-              '$(echo "${{ github.event.head_commit.message }}" | head -1)')" \
+            --title "[QA] e2e-staging failure on $SHORT_SHA" \
+            --body "**Run:** $RUN_URL
+          **Commit:** \`$SHORT_SHA\`
+          **Message:** $FIRST_LINE
+          **Report:** playwright-report artifact on the run page" \
             --label "e2e-failure"
 
   # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases)
@@ -438,14 +442,18 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
           gh issue create \
             --repo ${{ github.repository }} \
-            --title "[QA] e2e-sso failure on ${GITHUB_SHA:0:7}" \
-            --body "$(printf '**Run:** %s\n**Commit:** \`%s\`\n**Message:** %s\n**Report:** playwright-report-sso artifact on the run page' \
-              '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
-              '${GITHUB_SHA:0:7}' \
-              '$(echo "${{ github.event.head_commit.message }}" | head -1)')" \
+            --title "[QA] e2e-sso failure on $SHORT_SHA" \
+            --body "**Run:** $RUN_URL
+          **Commit:** \`$SHORT_SHA\`
+          **Message:** $FIRST_LINE
+          **Report:** playwright-report-sso artifact on the run page" \
             --label "e2e-failure"
 
   # Post-deploy smoke gate. Fails loud if any curated URL 404s, returns an

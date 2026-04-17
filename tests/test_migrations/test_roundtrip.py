@@ -58,17 +58,23 @@ def _docker_available() -> bool:
 
 
 @pytest.fixture(scope="session")
-def roundtrip_db_url() -> str:
+def roundtrip_db_url():
     """Postgres URL for round-trip tests.
 
     Priority:
     1. ``DATABASE_URL_SYNC_TEST`` env var (CI, or manual override)
     2. testcontainers[postgres] auto-provisioned container (local with Docker)
     3. skip the test (local without Docker)
+
+    Must be a generator (yield-based) on every path — pytest treats a
+    function with any `yield` as a generator, and hitting `return` on
+    one path while `yield`-ing on another raises
+    ``ValueError: fixture did not yield a value``.
     """
     env_url = os.environ.get("DATABASE_URL_SYNC_TEST")
     if env_url:
-        return env_url
+        yield env_url
+        return
 
     if not _docker_available():
         pytest.skip(

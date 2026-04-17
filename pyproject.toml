@@ -78,6 +78,9 @@ dev = [
     "ruff>=0.9",
     "httpx>=0.28",
     "mcp>=1.0.0",
+    # Round-trip migration test auto-provisions Postgres via Docker.
+    # Skipped gracefully if Docker is unavailable (see tests/test_migrations/test_roundtrip.py).
+    "testcontainers[postgres]>=4.0",
 ]
 
 [build-system]

@@ -67,6 +67,7 @@ INTERNAL_CONFIG_KEYS = {
     "sheet_names",
     "collection_names",
     "merge_config",
+    "query",
 }
 
 FILTER_OPS = {
@@ -365,11 +366,26 @@ class DltRunnerService:
 
         collection_names = dlt_config.get("collection_names")
 
+        # E11 — server-side filter + incremental pushdown.
+        # `query` is a verbatim Mongo filter dict; `incremental` (same config
+        # shape as sql_table) becomes {cursor_path: {"$gt": initial_value}}
+        # merged into the filter. Mirrors what sql_table does today.
+        query = dlt_config.get("query")
+        incremental_cursor = None
+        incremental_cfg = dlt_config.get("incremental")
+        if incremental_cfg is not None:
+            cursor_path = incremental_cfg.get("cursor_path")
+            initial_value = incremental_cfg.get("initial_value")
+            if cursor_path is not None and initial_value is not None:
+                incremental_cursor = (cursor_path, initial_value)
+
         return mongodb_source(
             connection_uri=uri,
             database=database,
             collection_names=collection_names,
             batch_size=batch_size,
+            query=query,
+            incremental_cursor=incremental_cursor,
         )
 
     def _build_saas_source(self, connection_type: str, config: dict, dlt_config: dict):

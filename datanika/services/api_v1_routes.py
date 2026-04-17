@@ -1300,29 +1300,16 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
     return errors
 
 
-@api_endpoint(required_scope=None)
-async def bulk_import(request, api_key, session):
-    """POST /api/v1/import — create connections, uploads, pipelines,
-    and transformations from a single JSON payload.
+def _execute_validated_import(session, org_id: int, data: dict) -> dict[str, list[int]]:
+    """Phase-1..4 creation shared by JSON and YAML import endpoints.
 
-    Validates the entire payload first; if any errors are found, nothing
-    is created (atomic). Uses the same JSON v2 format as AI_IMPORT_GUIDE.md.
+    Caller must have already validated ``data`` via
+    ``_validate_import_payload`` — this function assumes the payload is
+    shape-correct and proceeds atomically (SQLAlchemy session manages the
+    transaction). Returns a ``{"connections": [ids], ...}`` dict.
     """
-    data = await _body(request)
-
-    # --- version check ---
-    version = data.get("version")
-    if version != 2:
-        return _error(400, "version 2 is required")
-
-    # --- build existing connection name→id map ---
-    existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
+    existing_conns = _get_conn_svc().list_connections(session, org_id)
     existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}
-
-    # --- validate everything before creating anything ---
-    errors = _validate_import_payload(data, existing_conn_names)
-    if errors:
-        return JSONResponse({"errors": errors}, status_code=400)
 
     created: dict[str, list[int]] = {
         "connections": [],
@@ -1332,12 +1319,11 @@ async def bulk_import(request, api_key, session):
     }
 
     # --- Phase 1: create connections ---
-    # Maps connection name → id (payload + existing)
     conn_name_to_id: dict[str, int] = dict(existing_conn_names)
     for c in data.get("connections", []):
         conn = _get_conn_svc().create_connection(
             session,
-            api_key.org_id,
+            org_id,
             name=c["name"],
             connection_type=ConnectionType(c["connection_type"]),
             config=c["config"],
@@ -1350,7 +1336,7 @@ async def bulk_import(request, api_key, session):
     for u in data.get("uploads", []):
         upload = _get_upload_svc().create_upload(
             session,
-            api_key.org_id,
+            org_id,
             name=u["name"],
             description=u.get("description"),
             source_connection_id=conn_name_to_id[u["source_connection_name"]],
@@ -1367,7 +1353,7 @@ async def bulk_import(request, api_key, session):
             command = DbtCommand(p["command"])
         pipeline = _pipeline_svc.create_pipeline(
             session,
-            api_key.org_id,
+            org_id,
             name=p["name"],
             description=p.get("description"),
             destination_connection_id=conn_name_to_id[p["destination_connection_name"]],
@@ -1389,7 +1375,7 @@ async def bulk_import(request, api_key, session):
             dest_conn_id = conn_name_to_id.get(t["destination_connection_name"])
         transformation = _transform_svc.create_transformation(
             session,
-            api_key.org_id,
+            org_id,
             name=t["name"],
             sql_body=t["sql_body"],
             materialization=mat,
@@ -1403,6 +1389,89 @@ async def bulk_import(request, api_key, session):
         session.flush()
         created["transformations"].append(transformation.id)
 
+    return created
+
+
+@api_endpoint(required_scope=None)
+async def bulk_import(request, api_key, session):
+    """POST /api/v1/import — create connections, uploads, pipelines,
+    and transformations from a single JSON payload.
+
+    Validates the entire payload first; if any errors are found, nothing
+    is created (atomic). Uses the same JSON v2 format as AI_IMPORT_GUIDE.md.
+    """
+    data = await _body(request)
+
+    # --- version check ---
+    version = data.get("version")
+    if version != 2:
+        return _error(400, "version 2 is required")
+
+    existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
+    existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}
+
+    errors = _validate_import_payload(data, existing_conn_names)
+    if errors:
+        return JSONResponse({"errors": errors}, status_code=400)
+
+    created = _execute_validated_import(session, api_key.org_id, data)
+    return JSONResponse({"created": created}, status_code=201)
+
+
+@api_endpoint(required_scope=None)
+async def bulk_import_yaml(request, api_key, session):
+    """POST /api/v1/pipelines/yaml — YAML-formatted alternative to /api/v1/import.
+
+    Accepts the same ``version: 2`` schema as the JSON endpoint, just
+    serialized as YAML (more hand-editable, CLI-friendly). Per E8 /
+    SPEC §"ELT Optimizations": power-user entry for declarative
+    pipeline configs.
+
+    YAML parse errors return 400 with ``{"error": "YAML parse error: ..."}``.
+    Schema validation errors return 400 with the same
+    ``{"errors": [...]}`` shape as JSON import.
+
+    Payload example:
+      version: 2
+      connections:
+        - name: source_pg
+          connection_type: postgres
+          config: {host: localhost, port: 5432, user: ..., password: ..., database: ...}
+      uploads:
+        - name: orders_sync
+          source_connection_name: source_pg
+          destination_connection_name: dest_bq
+          dlt_config:
+            mode: single_table
+            table: orders
+            chunk_size: 10000
+            backend: pyarrow
+            filters:
+              - {op: gt, column: created_at, value: "2024-01-01"}
+            incremental:
+              cursor_path: updated_at
+              initial_value: "2024-01-01"
+    """
+    from datanika.services._yaml_import import YamlImportError, parse_yaml_import
+
+    raw = await request.body()
+
+    try:
+        data = parse_yaml_import(raw)
+    except YamlImportError as exc:
+        return _error(400, str(exc))
+
+    if data.get("version") != 2:
+        return _error(400, "version 2 is required")
+
+    existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
+    existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}
+
+    errors = _validate_import_payload(data, existing_conn_names)
+    if errors:
+        return JSONResponse({"errors": errors}, status_code=400)
+
+    created = _execute_validated_import(session, api_key.org_id, data)
     return JSONResponse({"created": created}, status_code=201)
 
 
@@ -1491,6 +1560,8 @@ api_v1_routes = [
     Route("/api/v1/notifications/{id:int}", dismiss_notification, methods=["DELETE"]),
     # Bulk import
     Route("/api/v1/import", bulk_import, methods=["POST"]),
+    # YAML pipeline config (E8) — same schema as JSON import, YAML serialization
+    Route("/api/v1/pipelines/yaml", bulk_import_yaml, methods=["POST"]),
     # Notification channels
     Route("/api/v1/notifications/channels", list_notification_channels, methods=["GET"]),
     Route("/api/v1/notifications/channels/{id:int}", get_notification_channel, methods=["GET"]),

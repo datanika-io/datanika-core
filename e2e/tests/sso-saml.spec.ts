@@ -30,7 +30,9 @@ test.describe("SSO SAML: Authentik @slow", () => {
     const loginUrl = `${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`;
     const response = await page.goto(loginUrl);
 
-    const finalUrl = page.url();
+    // Decode — Authentik may wrap /application/saml/.../sso in a login flow
+    // where the SAMLRequest param ends up URL-encoded inside ?next=
+    const finalUrl = decodeURIComponent(page.url());
     // SP-initiated SAML: should redirect to Authentik with SAMLRequest param
     expect(
       finalUrl.includes("SAMLRequest=") || (response?.status() ?? 0) === 302,
@@ -41,7 +43,8 @@ test.describe("SSO SAML: Authentik @slow", () => {
   test("SAML full flow: login via Authentik → session created", async ({ page }) => {
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`);
 
-    // Authentik login form
+    // Fresh session: Authentik wraps SAML SSO in the login flow first
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
     await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
     await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
@@ -75,7 +78,8 @@ test.describe("SSO SAML: Authentik @slow", () => {
   });
 
   test("SAML assertion with wrong audience is rejected", async ({ playwright }) => {
-    const api = await playwright.request.newContext(backendContextOptions());
+    // maxRedirects: 0 — we want to observe the 302 error redirect, not follow it
+    const api = await playwright.request.newContext(backendContextOptions({ maxRedirects: 0 }));
     const response = await api.post("/api/auth/sso/callback", {
       form: {
         SAMLResponse: Buffer.from("<invalid-xml>").toString("base64"),

@@ -95,7 +95,19 @@ log "API token verified."
 AUTH_FLOW_PK=$(api GET '/flows/instances/?slug=default-provider-authorization-implicit-consent' | py "import json,sys; print(json.load(sys.stdin)['results'][0]['pk'])")
 INVAL_FLOW_PK=$(api GET '/flows/instances/?slug=default-provider-invalidation-flow' | py "import json,sys; print(json.load(sys.stdin)['results'][0]['pk'])")
 SIGNING_KEY_PK=$(api GET '/crypto/certificatekeypairs/' | py "import json,sys; r=json.load(sys.stdin)['results']; print(r[0]['pk'] if r else '')")
+
+# Scope mappings — required for userinfo to return claims. Without these
+# the OIDC provider issues a token but /userinfo returns 403 because
+# Authentik has nothing to map into the response.
+SCOPE_PKS=$(api GET '/propertymappings/provider/scope/' | py "
+import json, sys
+data = json.load(sys.stdin)
+wanted = {'openid', 'email', 'profile'}
+pks = [p['pk'] for p in data['results'] if p.get('scope_name') in wanted]
+print(','.join(pks))
+")
 log "Flows: auth=${AUTH_FLOW_PK} inval=${INVAL_FLOW_PK} key=${SIGNING_KEY_PK}"
+log "Scope mappings (openid+email+profile): ${SCOPE_PKS}"
 
 # --- 5. Create test user ---
 log "Creating test user sso-user@datanika.test..."
@@ -115,9 +127,19 @@ SSO_USER_ID=$(echo "$SSO_USER" | py "import json,sys; print(json.load(sys.stdin)
 log "Test user ID: ${SSO_USER_ID}"
 
 api POST "/core/users/${SSO_USER_ID}/set_password/" -d '{"password": "SsoTestPassword-2026"}' > /dev/null
+# set_password via API sometimes doesn't apply (2024.12 quirk) — belt-and-suspenders
+# via `ak changepassword` inside the server container.
+docker exec -i e2e-authentik-server-1 ak changepassword sso-user <<< $'SsoTestPassword-2026\nSsoTestPassword-2026' > /dev/null 2>&1 || true
 
 # --- 6. Create OIDC provider + application ---
 log "Creating OIDC provider..."
+# Build property_mappings JSON array from comma-separated PKs
+SCOPE_JSON=$(echo "${SCOPE_PKS}" | py "
+import sys
+pks = [p.strip() for p in sys.stdin.read().strip().split(',') if p.strip()]
+import json
+print(json.dumps(pks))
+")
 OIDC_PROVIDER=$(api POST /providers/oauth2/ -d "{
   \"name\": \"datanika-oidc-e2e\",
   \"authorization_flow\": \"${AUTH_FLOW_PK}\",
@@ -127,7 +149,8 @@ OIDC_PROVIDER=$(api POST /providers/oauth2/ -d "{
   \"client_secret\": \"oidc-e2e-secret-not-for-production\",
   \"redirect_uris\": [{\"matching_mode\": \"strict\", \"url\": \"${OIDC_REDIRECT_URI}\"}],
   \"signing_key\": \"${SIGNING_KEY_PK}\",
-  \"sub_mode\": \"user_email\"
+  \"sub_mode\": \"user_email\",
+  \"property_mappings\": ${SCOPE_JSON}
 }" 2>/dev/null || true)
 
 if [ -z "$OIDC_PROVIDER" ]; then

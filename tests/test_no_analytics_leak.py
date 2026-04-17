@@ -34,7 +34,7 @@ class TestNoAnalyticsLeakIntoCore:
         core_root = Path(core_module.__file__).resolve().parent
         offenders: list[tuple[Path, str]] = []
         for py_file in core_root.rglob("*.py"):
-            text = py_file.read_text(encoding="utf-8")
+            text = py_file.read_text(encoding="utf-8", errors="ignore")
             for needle in FORBIDDEN_STRINGS:
                 if needle in text:
                     offenders.append((py_file.relative_to(core_root), needle))

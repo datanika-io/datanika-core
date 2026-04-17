@@ -360,6 +360,32 @@ jobs:
           echo "SSH tunnel to Authentik failed"
           exit 1
 
+      - name: Diagnose DNS + CF Access from CI runner
+        env:
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          echo "=== DNS resolution ==="
+          nslookup staging-app.datanika.io || true
+          echo ""
+          echo "=== curl without CF headers ==="
+          curl -sI --max-time 10 https://staging-app.datanika.io/ 2>&1 | head -15 || true
+          echo ""
+          echo "=== curl with CF Access headers ==="
+          curl -sI --max-time 10 \
+            -H "CF-Access-Client-Id: $DATANIKA_STAGING_CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET" \
+            https://staging-app.datanika.io/ 2>&1 | head -15 || true
+          echo ""
+          echo "=== curl SSO login route with CF headers ==="
+          curl -sI --max-time 10 \
+            -H "CF-Access-Client-Id: $DATANIKA_STAGING_CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET" \
+            https://staging-app.datanika.io/api/auth/sso/login/e2e-fixture 2>&1 | head -15 || true
+          echo ""
+          echo "=== Authentik tunnel check ==="
+          curl -sI --max-time 10 http://localhost:9000/-/health/ready/ 2>&1 | head -5 || true
+
       - name: Run SSO specs
         working-directory: e2e
         env:

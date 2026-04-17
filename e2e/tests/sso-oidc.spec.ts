@@ -46,20 +46,21 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     // 1. Navigate to SSO login via backend — redirects to Authentik
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
 
-    // 2. Authentik login form — fresh session always goes through the login flow
+    // 2. Authentik 2-step login: username → submit → password → submit.
+    // Authentik 2024.12 UI is lit-element based; form inputs live inside
+    // shadow DOM. Use getByRole (pierces shadow DOM) and match on the
+    // accessible name from aria-label/placeholder, not input[name].
     await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
-    await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
-    await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
+    await page.getByRole("textbox", { name: /email|username/i }).fill(SSO_USER_EMAIL);
+    await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+    await page.getByRole("textbox", { name: /password/i }).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
 
-    // 3. Authentik may show a consent screen — auto-approve if present
-    const consentButton = page.getByRole("button", { name: /continue|allow|approve/i });
-    if (await consentButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await consentButton.click();
-    }
-
-    // 4. Callback redirects back to Datanika with tokens
-    await page.waitForURL(/.*\/(connections|dashboard|pipelines|login).*/i, { timeout: 15000 });
+    // 3. Bootstrap uses default-provider-authorization-implicit-consent flow,
+    //    so no consent step. Callback lands on /auth/complete?token=...
+    await page.waitForURL(/\/(auth\/complete|connections|dashboard|pipelines|login)/, {
+      timeout: 15000,
+    });
 
     // 5. Verify session — user should be logged in (or at least past the SSO flow)
     const url = page.url();
@@ -112,12 +113,15 @@ test.describe("SSO OIDC: Authentik @slow", () => {
       ]);
     }
 
-    // Simulate callback with tampered state
-    const callbackResp = await page.goto(
-      `${BACKEND_URL}/api/auth/sso/callback?code=fake&state=tampered`,
-    );
-    // Should reject with redirect to error or 400, never 200
-    const status = callbackResp?.status() ?? 0;
-    expect(status === 302 || status >= 400, `Expected 302 or 400+, got ${status}`).toBe(true);
+    // Simulate callback with tampered state. page.goto follows redirects
+    // through to a 200 page, so check the final URL instead — rejection
+    // redirects to /login?error=..., success would stay on /auth/complete.
+    await page.goto(`${BACKEND_URL}/api/auth/sso/callback?code=fake&state=tampered`);
+    const finalUrl = page.url();
+    expect(
+      finalUrl.includes("error=") || finalUrl.includes("/login"),
+      `Expected redirect to error page, got ${finalUrl}`,
+    ).toBe(true);
+    expect(finalUrl).not.toContain("/auth/complete");
   });
 });

@@ -43,20 +43,21 @@ test.describe("SSO SAML: Authentik @slow", () => {
   test("SAML full flow: login via Authentik → session created", async ({ page }) => {
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`);
 
-    // Fresh session: Authentik wraps SAML SSO in the login flow first
+    // Fresh session: Authentik wraps SAML SSO in the login flow first.
+    // 2-step: username → submit → password → submit (Authentik 2024.12).
+    // Form inputs live inside lit-element shadow DOM — use getByRole which
+    // pierces shadow DOM.
     await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
-    await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
-    await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
+    await page.getByRole("textbox", { name: /email|username/i }).fill(SSO_USER_EMAIL);
+    await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+    await page.getByRole("textbox", { name: /password/i }).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
 
-    // Authentik may show consent — auto-approve
-    const consentButton = page.getByRole("button", { name: /continue|allow|approve/i });
-    if (await consentButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await consentButton.click();
-    }
-
-    // SAMLResponse POST to callback → redirect to app
-    await page.waitForURL(/.*\/(connections|dashboard|pipelines|login).*/i, { timeout: 15000 });
+    // Implicit consent flow: no consent screen.
+    // SAMLResponse POST to callback → /auth/complete?token=... or app route
+    await page.waitForURL(/\/(auth\/complete|connections|dashboard|pipelines|login)/, {
+      timeout: 15000,
+    });
 
     const url = page.url();
     expect(url).not.toContain("/api/auth/sso");

@@ -347,15 +347,21 @@ jobs:
           SSH_HOST: ${{ secrets.HETZNER_HOST }}
         run: |
           # Staging container needs to reach Authentik for OIDC token exchange.
-          # Connect it to the Authentik docker network so it can reach the
-          # authentik-server container by service name.
-          ssh root@$SSH_HOST "docker network connect e2e_default datanika-staging-app 2>/dev/null || true"
+          # Connect authentik-server to datanika-staging_default with an alias
+          # so staging can resolve it by the chosen hostname.
+          ssh root@$SSH_HOST "docker network connect --alias e2e-authentik-server datanika-staging_default e2e-authentik-server-1 2>&1" || \
+            echo "Network connect failed or already connected"
 
-          # Rewrite fixture URLs from localhost:9000 to the service name.
-          # This hostname must work from 3 places:
-          #   - Staging container (via docker network): e2e-authentik-server → Authentik
-          #   - CI runner (via /etc/hosts + SSH tunnel): e2e-authentik-server → 127.0.0.1 → Hetzner:9000
-          #   - Authentik itself (self-request): host header matches, OIDC issuer consistent
+          # Verify staging can reach Authentik by the alias
+          ssh root@$SSH_HOST "docker exec datanika-staging-app curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
+            echo "Staging → Authentik OK" || \
+            { echo "FATAL: staging can't reach e2e-authentik-server:9000"; exit 1; }
+
+          # Rewrite fixture URLs: localhost:9000 → e2e-authentik-server:9000
+          # Same hostname resolves from:
+          #   - Staging container: via docker DNS alias → Authentik container
+          #   - CI runner: via /etc/hosts → 127.0.0.1 → SSH tunnel → Hetzner:9000
+          #   - Authentik self-request: Host header matches, OIDC issuer consistent
           ssh root@$SSH_HOST "sed -i 's|http://localhost:9000|http://e2e-authentik-server:9000|g' /opt/datanika/e2e-sso/.sso-fixture.json"
           ssh root@$SSH_HOST "cat /opt/datanika/e2e-sso/.sso-fixture.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(\"Fixture URL:\", d[\"authentik_url\"])'"
 
@@ -448,8 +454,8 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.HETZNER_HOST }}
         run: |
-          # Disconnect staging from the authentik network before tearing it down
-          ssh root@$SSH_HOST "docker network disconnect e2e_default datanika-staging-app 2>/dev/null || true"
+          # Disconnect authentik from staging network before teardown
+          ssh root@$SSH_HOST "docker network disconnect datanika-staging_default e2e-authentik-server-1 2>/dev/null || true"
           ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && docker compose -p e2e -f docker-compose.test.yml down -v 2>/dev/null; rm -rf /opt/datanika/e2e-sso" || true
 
       - name: Telegram alert on failure

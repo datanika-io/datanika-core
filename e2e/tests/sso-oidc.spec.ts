@@ -32,7 +32,10 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     // Navigate via backend to get the real 302 redirect (Vite proxy blocks it)
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
 
-    const finalUrl = page.url();
+    // Authentik wraps /application/o/authorize in a login flow when no session:
+    //   /if/flow/default-authentication-flow/?next=%2Fapplication%2Fo%2Fauthorize%2F%3F...
+    // Decode the URL so our substring checks match either direct or wrapped form.
+    const finalUrl = decodeURIComponent(page.url());
     expect(finalUrl).toContain("/application/o/authorize/");
     expect(finalUrl).toContain("client_id=datanika-oidc-e2e");
     expect(finalUrl).toContain("response_type=code");
@@ -43,8 +46,8 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     // 1. Navigate to SSO login via backend — redirects to Authentik
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
 
-    // 2. Authentik login form
-    await page.waitForURL(/.*\/application\/o\/authorize\/.*/);
+    // 2. Authentik login form — fresh session always goes through the login flow
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
     await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
     await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
@@ -85,7 +88,9 @@ test.describe("SSO OIDC: Authentik @slow", () => {
   });
 
   test("OIDC with invalid org slug returns error", async ({ playwright }) => {
-    const api = await playwright.request.newContext(backendContextOptions());
+    // maxRedirects: 0 — the backend responds with a 302 error redirect;
+    // following it would land on a 200 error page and fail the assertion.
+    const api = await playwright.request.newContext(backendContextOptions({ maxRedirects: 0 }));
     const response = await api.get("/api/auth/sso/login/nonexistent-org-slug");
     expect(response.status()).not.toBe(200);
     expect(response.status()).toBeLessThan(500);
@@ -95,7 +100,8 @@ test.describe("SSO OIDC: Authentik @slow", () => {
   test("OIDC state tampering is rejected", async ({ page, context }) => {
     // Start a legitimate OIDC flow to get a state cookie via backend
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
-    await page.waitForURL(/.*\/application\/o\/authorize\/.*/);
+    // Authentik wraps /application/o/authorize in a login flow for fresh sessions
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
 
     // Tamper with the sso_state cookie
     const cookies = await context.cookies();

@@ -69,6 +69,16 @@ INTERNAL_CONFIG_KEYS = {
     "merge_config",
 }
 
+# Client-side row-filter lambdas — applied AFTER source yield.
+#
+# Used only for non-SQL sources (REST, Mongo, SaaS, Kafka) where server-side
+# filtering isn't uniformly available. For SQL sources in single_table mode,
+# the same (op, column, value) specs are translated to a SQLAlchemy WHERE via
+# ``_sql_filter_pushdown.make_query_adapter`` — no in-memory filtering.
+#
+# If you add a new op here, add the equivalent SQL translation in
+# ``_sql_filter_pushdown._filter_to_where`` too so SQL users don't lose the
+# pushdown.
 FILTER_OPS = {
     "eq": lambda col, val: lambda row: row.get(col) == val,
     "ne": lambda col, val: lambda row: row.get(col) != val,
@@ -246,12 +256,26 @@ class DltRunnerService:
         # Bypasses JSON normalization — 5.8x speedup on large MySQL loads.
         backend = dlt_config.get("backend")
 
+        # E10 — SQL filter pushdown. Translate FILTER_OPS entries to a
+        # query_adapter_callback so WHERE runs on the source DB, not after
+        # fetch. Full-database mode doesn't support per-table filters here
+        # (a callback binds to a single table); we fall through to the
+        # in-memory add_filter path for that case.
+        from datanika.services._sql_filter_pushdown import make_query_adapter
+
+        filters_cfg = dlt_config.get("filters")
+        query_adapter = None
+        if filters_cfg and mode == "single_table":
+            query_adapter = make_query_adapter(filters_cfg)
+
         if mode == "single_table":
             kwargs = {"credentials": creds, "table": dlt_config["table"], "chunk_size": batch_size}
             if schema is not None:
                 kwargs["schema"] = schema
             if backend is not None:
                 kwargs["backend"] = backend
+            if query_adapter is not None:
+                kwargs["query_adapter_callback"] = query_adapter
             incremental_cfg = dlt_config.get("incremental")
             if incremental_cfg is not None:
                 inc_kwargs = {"cursor_path": incremental_cfg["cursor_path"]}
@@ -847,9 +871,14 @@ class DltRunnerService:
         )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 
-        # Apply row-level filters
+        # Apply row-level filters. SQL sources in single_table mode (E10)
+        # have already pushed filters to the DB via query_adapter_callback
+        # in build_source — don't re-apply them in memory.
         filters_cfg = dlt_config.get("filters")
-        if filters_cfg:
+        pushed_down = source_type in self.SUPPORTED_SOURCE_TYPES and (
+            dlt_config.get("mode", "full_database") == "single_table"
+        )
+        if filters_cfg and not pushed_down:
             for f in filters_cfg:
                 filter_fn = FILTER_OPS[f["op"]](f["column"], f["value"])
                 source.add_filter(filter_fn)

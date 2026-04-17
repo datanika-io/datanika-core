@@ -1,7 +1,13 @@
-"""Postgres raw lander — COPY FROM STDIN with Arrow/parquet batches.
+"""Postgres raw lander — COPY FROM STDIN with Arrow batches.
 
 Per SPEC_ELT_IR_ARCHITECTURE.md §5.3: Postgres landing uses COPY FROM STDIN
-BINARY with parquet→arrow→COPY chunks.
+with CSV format (psycopg copy_expert). Each Arrow batch is converted to
+CSV and streamed to COPY.
+
+E7 file-size guard: batches larger than FILE_MAX_BYTES (100 MB) are split
+by slicing the Arrow table into sub-tables before conversion, preventing
+OOM on large extracts. See Whisk doc §"Critical fix" — single multi-GB
+uploads time out.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ import pyarrow.csv as pcsv
 from sqlalchemy import create_engine, text
 
 from datanika.services.connection_service import _build_sa_url
+from datanika.services.destinations._arrow_utils import stringify_nested_columns
+from datanika.services.elt_runner import FILE_MAX_BYTES
 
 if TYPE_CHECKING:
     from datanika.services.ir.schema import IR
@@ -23,7 +31,11 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresLander:
-    """Lands Arrow data into Postgres via COPY FROM STDIN (CSV format)."""
+    """Lands Arrow data into Postgres via COPY FROM STDIN (CSV format).
+
+    Large Arrow tables are sliced to keep each COPY payload under
+    FILE_MAX_BYTES (100 MB) per E7.
+    """
 
     def land(
         self,
@@ -42,12 +54,16 @@ class PostgresLander:
         batches = 0
 
         try:
-            # Ensure raw schema + table exist
+            # Ensure raw schema + table exist.
             with engine.connect() as conn:
                 conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {ir.target.raw_schema}"))
                 conn.commit()
 
-            # Extract from source — dlt sources yield dicts or Arrow batches
+            qualified = f"{ir.target.raw_schema}.{ir.target.table}"
+            schema_ensured = False
+
+            # Extract from source — dlt sources yield dicts or Arrow batches.
+            # In Arrow mode (E6), SQL sources yield pa.Table per chunk.
             for item in source:
                 if isinstance(item, (pa.Table, pa.RecordBatch)):
                     table = item if isinstance(item, pa.Table) else pa.Table.from_batches([item])
@@ -61,37 +77,40 @@ class PostgresLander:
                 if table.num_rows == 0:
                     continue
 
-                # Track input bytes
                 total_bytes_in += table.nbytes
 
-                # Write to CSV buffer for COPY
-                buf = io.BytesIO()
-                pcsv.write_csv(table, buf)
-                csv_bytes = buf.getvalue()
-                total_bytes_out += len(csv_bytes)
+                # E9: serialize nested (struct/list/map) columns to JSON strings
+                # so pyarrow.csv.write_csv can emit them cleanly and Postgres
+                # can COPY them into TEXT columns. Scalar columns pass through.
+                # Runs before schema inference so the CREATE TABLE sees text.
+                table = stringify_nested_columns(table)
 
-                # Create table if needed and COPY
-                qualified = f"{ir.target.raw_schema}.{ir.target.table}"
-                with engine.connect() as conn:
-                    _ensure_table(conn, qualified, table.schema)
-                    conn.execute(
-                        text(f"COPY {qualified} FROM STDIN WITH (FORMAT csv, HEADER true)"),
-                    )
-                    # Use raw_connection for COPY
+                # Ensure destination table exists (once, on first non-empty batch).
+                if not schema_ensured:
+                    with engine.connect() as conn:
+                        _ensure_table(conn, qualified, table.schema)
+                    schema_ensured = True
+
+                # E7: split large tables into chunks <= FILE_MAX_BYTES.
+                # Estimate target rows per chunk from nbytes ratio. If the
+                # full table is already under the guard, this yields one chunk.
+                for chunk in _split_by_bytes(table, FILE_MAX_BYTES):
+                    csv_bytes = _table_to_csv_bytes(chunk)
+                    total_bytes_out += len(csv_bytes)
+
                     raw_conn = engine.raw_connection()
                     try:
                         cursor = raw_conn.cursor()
-                        buf.seek(0)
                         cursor.copy_expert(
                             f"COPY {qualified} FROM STDIN WITH (FORMAT csv, HEADER true)",
-                            buf,
+                            io.BytesIO(csv_bytes),
                         )
                         raw_conn.commit()
                     finally:
                         raw_conn.close()
 
-                total_rows += table.num_rows
-                batches += 1
+                    total_rows += chunk.num_rows
+                    batches += 1
 
         finally:
             engine.dispose()
@@ -102,6 +121,34 @@ class PostgresLander:
             "bytes_out": total_bytes_out,
             "batches": batches,
         }
+
+
+def _split_by_bytes(table: pa.Table, max_bytes: int) -> list[pa.Table]:
+    """Slice an Arrow table so each piece's nbytes <= max_bytes.
+
+    nbytes is the in-memory Arrow footprint, a conservative upper bound
+    for the resulting CSV size after serialization (CSV can be larger for
+    strings with escapes, but also smaller for nullable integer columns).
+    """
+    if table.num_rows == 0 or table.nbytes <= max_bytes:
+        return [table]
+
+    # Derive rows-per-chunk from the byte ratio.
+    rows_per_chunk = max(1, (table.num_rows * max_bytes) // table.nbytes)
+    chunks: list[pa.Table] = []
+    offset = 0
+    while offset < table.num_rows:
+        length = min(rows_per_chunk, table.num_rows - offset)
+        chunks.append(table.slice(offset, length))
+        offset += length
+    return chunks
+
+
+def _table_to_csv_bytes(table: pa.Table) -> bytes:
+    """Serialize an Arrow table to CSV bytes for COPY FROM STDIN."""
+    buf = io.BytesIO()
+    pcsv.write_csv(table, buf)
+    return buf.getvalue()
 
 
 def _ensure_table(conn, qualified_name: str, arrow_schema: pa.Schema) -> None:

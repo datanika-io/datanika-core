@@ -30,7 +30,7 @@ SAML_SP_ENTITY_ID="datanika"
 FIXTURE_FILE="$(dirname "$0")/../.sso-fixture.json"
 
 log() { echo "[bootstrap-authentik] $*"; }
-py() { python -c "$1"; }
+py() { python3 -c "$1"; }
 
 # --- 1. Wait for API ---
 log "Waiting for Authentik API at ${AUTHENTIK_URL}..."
@@ -60,14 +60,54 @@ docker exec -i e2e-authentik-server-1 ak changepassword akadmin <<< $'e2e-admin-
 AUTH_HEADER="Authorization: Bearer ${TOKEN_KEY}"
 api() {
   local method="$1" path="$2"; shift 2
-  curl -sf -X "${method}" "${API}${path}" -H "${AUTH_HEADER}" -H "Content-Type: application/json" "$@"
+  local response
+  response=$(curl -s -w "\n%{http_code}" -X "${method}" "${API}${path}" -H "${AUTH_HEADER}" -H "Content-Type: application/json" "$@")
+  local http_code
+  http_code=$(echo "$response" | tail -1)
+  local body
+  body=$(echo "$response" | sed '$d')
+  if [ "$http_code" -ge 400 ] 2>/dev/null; then
+    log "ERROR: API ${method} ${path} → HTTP ${http_code}"
+    log "Response: ${body:-<empty>}"
+    return 1
+  fi
+  # 2xx with empty body (e.g. 204 No Content) is valid — just print nothing
+  [ -n "$body" ] && echo "$body"
+  return 0
 }
+
+# --- Verify token works ---
+log "Verifying API token..."
+if ! api GET '/core/users/?search=akadmin' > /dev/null; then
+  log "ERROR: API token not working. Retrying token insert..."
+  docker exec e2e-authentik-db-1 psql -U authentik -d authentik -c "
+  DELETE FROM authentik_core_token WHERE identifier = 'e2e-api-token';
+  INSERT INTO authentik_core_token (token_uuid, identifier, key, intent, expiring, description, user_id)
+  SELECT gen_random_uuid(), 'e2e-api-token', '${TOKEN_KEY}', 'api', false, 'E2E bootstrap',
+         id FROM authentik_core_user WHERE username = 'akadmin' LIMIT 1;
+  " > /dev/null 2>&1
+  sleep 2
+  api GET '/core/users/?search=akadmin' > /dev/null || { log "FATAL: API token still not working after retry."; exit 1; }
+fi
+log "API token verified."
 
 # --- 4. Fetch reusable PKs ---
 AUTH_FLOW_PK=$(api GET '/flows/instances/?slug=default-provider-authorization-implicit-consent' | py "import json,sys; print(json.load(sys.stdin)['results'][0]['pk'])")
 INVAL_FLOW_PK=$(api GET '/flows/instances/?slug=default-provider-invalidation-flow' | py "import json,sys; print(json.load(sys.stdin)['results'][0]['pk'])")
 SIGNING_KEY_PK=$(api GET '/crypto/certificatekeypairs/' | py "import json,sys; r=json.load(sys.stdin)['results']; print(r[0]['pk'] if r else '')")
+
+# Scope mappings — required for userinfo to return claims. Without these
+# the OIDC provider issues a token but /userinfo returns 403 because
+# Authentik has nothing to map into the response.
+SCOPE_PKS=$(api GET '/propertymappings/provider/scope/' | py "
+import json, sys
+data = json.load(sys.stdin)
+wanted = {'openid', 'email', 'profile'}
+pks = [p['pk'] for p in data['results'] if p.get('scope_name') in wanted]
+print(','.join(pks))
+")
 log "Flows: auth=${AUTH_FLOW_PK} inval=${INVAL_FLOW_PK} key=${SIGNING_KEY_PK}"
+log "Scope mappings (openid+email+profile): ${SCOPE_PKS}"
 
 # --- 5. Create test user ---
 log "Creating test user sso-user@datanika.test..."
@@ -87,9 +127,19 @@ SSO_USER_ID=$(echo "$SSO_USER" | py "import json,sys; print(json.load(sys.stdin)
 log "Test user ID: ${SSO_USER_ID}"
 
 api POST "/core/users/${SSO_USER_ID}/set_password/" -d '{"password": "SsoTestPassword-2026"}' > /dev/null
+# set_password via API sometimes doesn't apply (2024.12 quirk) — belt-and-suspenders
+# via `ak changepassword` inside the server container.
+docker exec -i e2e-authentik-server-1 ak changepassword sso-user <<< $'SsoTestPassword-2026\nSsoTestPassword-2026' > /dev/null 2>&1 || true
 
 # --- 6. Create OIDC provider + application ---
 log "Creating OIDC provider..."
+# Build property_mappings JSON array from comma-separated PKs
+SCOPE_JSON=$(echo "${SCOPE_PKS}" | py "
+import sys
+pks = [p.strip() for p in sys.stdin.read().strip().split(',') if p.strip()]
+import json
+print(json.dumps(pks))
+")
 OIDC_PROVIDER=$(api POST /providers/oauth2/ -d "{
   \"name\": \"datanika-oidc-e2e\",
   \"authorization_flow\": \"${AUTH_FLOW_PK}\",
@@ -99,7 +149,8 @@ OIDC_PROVIDER=$(api POST /providers/oauth2/ -d "{
   \"client_secret\": \"oidc-e2e-secret-not-for-production\",
   \"redirect_uris\": [{\"matching_mode\": \"strict\", \"url\": \"${OIDC_REDIRECT_URI}\"}],
   \"signing_key\": \"${SIGNING_KEY_PK}\",
-  \"sub_mode\": \"user_email\"
+  \"sub_mode\": \"user_email\",
+  \"property_mappings\": ${SCOPE_JSON}
 }" 2>/dev/null || true)
 
 if [ -z "$OIDC_PROVIDER" ]; then

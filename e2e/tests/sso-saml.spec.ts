@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { backendContextOptions, BACKEND_URL } from "../fixtures/sso";
 
 /**
  * SSO SAML flow tests against a live Authentik container.
@@ -16,7 +17,6 @@ import { test, expect } from "@playwright/test";
  */
 
 const SSO_GATE = process.env.DATANIKA_E2E_SSO_AUTHENTIK !== "1";
-const BACKEND_URL = process.env.DATANIKA_E2E_BACKEND_URL ?? "http://localhost:8000";
 
 const SSO_USER_EMAIL = "sso-user@datanika.test";
 const SSO_USER_PASSWORD = "SsoTestPassword-2026";
@@ -30,7 +30,9 @@ test.describe("SSO SAML: Authentik @slow", () => {
     const loginUrl = `${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`;
     const response = await page.goto(loginUrl);
 
-    const finalUrl = page.url();
+    // Decode — Authentik may wrap /application/saml/.../sso in a login flow
+    // where the SAMLRequest param ends up URL-encoded inside ?next=
+    const finalUrl = decodeURIComponent(page.url());
     // SP-initiated SAML: should redirect to Authentik with SAMLRequest param
     expect(
       finalUrl.includes("SAMLRequest=") || (response?.status() ?? 0) === 302,
@@ -41,26 +43,28 @@ test.describe("SSO SAML: Authentik @slow", () => {
   test("SAML full flow: login via Authentik → session created", async ({ page }) => {
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`);
 
-    // Authentik login form
-    await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
-    await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
+    // Fresh session: Authentik wraps SAML SSO in the login flow first.
+    // 2-step: username → submit → password → submit (Authentik 2024.12).
+    // Form inputs live inside lit-element shadow DOM — use getByRole which
+    // pierces shadow DOM.
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
+    await page.getByRole("textbox", { name: /email|username/i }).fill(SSO_USER_EMAIL);
+    await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+    await page.getByRole("textbox", { name: /password/i }).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
 
-    // Authentik may show consent — auto-approve
-    const consentButton = page.getByRole("button", { name: /continue|allow|approve/i });
-    if (await consentButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await consentButton.click();
-    }
-
-    // SAMLResponse POST to callback → redirect to app
-    await page.waitForURL(/.*\/(connections|dashboard|pipelines|login).*/i, { timeout: 15000 });
+    // Implicit consent flow: no consent screen.
+    // SAMLResponse POST to callback → /auth/complete?token=... or app route
+    await page.waitForURL(/\/(auth\/complete|connections|dashboard|pipelines|login)/, {
+      timeout: 15000,
+    });
 
     const url = page.url();
     expect(url).not.toContain("/api/auth/sso");
   });
 
   test("SAML SP metadata endpoint returns valid XML", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const response = await api.get(`/api/auth/sso/metadata/${SAML_ORG_SLUG}`);
     expect(response.status()).toBe(200);
 
@@ -75,7 +79,8 @@ test.describe("SSO SAML: Authentik @slow", () => {
   });
 
   test("SAML assertion with wrong audience is rejected", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    // maxRedirects: 0 — we want to observe the 302 error redirect, not follow it
+    const api = await playwright.request.newContext(backendContextOptions({ maxRedirects: 0 }));
     const response = await api.post("/api/auth/sso/callback", {
       form: {
         SAMLResponse: Buffer.from("<invalid-xml>").toString("base64"),

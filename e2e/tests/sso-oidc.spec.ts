@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { backendContextOptions, BACKEND_URL } from "../fixtures/sso";
 
 /**
  * SSO OIDC flow tests against a live Authentik container.
@@ -19,7 +20,6 @@ import { test, expect } from "@playwright/test";
  */
 
 const SSO_GATE = process.env.DATANIKA_E2E_SSO_AUTHENTIK !== "1";
-const BACKEND_URL = process.env.DATANIKA_E2E_BACKEND_URL ?? "http://localhost:8000";
 
 const SSO_USER_EMAIL = "sso-user@datanika.test";
 const SSO_USER_PASSWORD = "SsoTestPassword-2026";
@@ -32,7 +32,10 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     // Navigate via backend to get the real 302 redirect (Vite proxy blocks it)
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
 
-    const finalUrl = page.url();
+    // Authentik wraps /application/o/authorize in a login flow when no session:
+    //   /if/flow/default-authentication-flow/?next=%2Fapplication%2Fo%2Fauthorize%2F%3F...
+    // Decode the URL so our substring checks match either direct or wrapped form.
+    const finalUrl = decodeURIComponent(page.url());
     expect(finalUrl).toContain("/application/o/authorize/");
     expect(finalUrl).toContain("client_id=datanika-oidc-e2e");
     expect(finalUrl).toContain("response_type=code");
@@ -43,20 +46,21 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     // 1. Navigate to SSO login via backend — redirects to Authentik
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
 
-    // 2. Authentik login form
-    await page.waitForURL(/.*\/application\/o\/authorize\/.*/);
-    await page.getByLabel(/username|email/i).fill(SSO_USER_EMAIL);
-    await page.getByLabel(/password/i).fill(SSO_USER_PASSWORD);
+    // 2. Authentik 2-step login: username → submit → password → submit.
+    // Authentik 2024.12 UI is lit-element based; form inputs live inside
+    // shadow DOM. Use getByRole (pierces shadow DOM) and match on the
+    // accessible name from aria-label/placeholder, not input[name].
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
+    await page.getByRole("textbox", { name: /email|username/i }).fill(SSO_USER_EMAIL);
+    await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+    await page.getByRole("textbox", { name: /password/i }).fill(SSO_USER_PASSWORD);
     await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
 
-    // 3. Authentik may show a consent screen — auto-approve if present
-    const consentButton = page.getByRole("button", { name: /continue|allow|approve/i });
-    if (await consentButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await consentButton.click();
-    }
-
-    // 4. Callback redirects back to Datanika with tokens
-    await page.waitForURL(/.*\/(connections|dashboard|pipelines|login).*/i, { timeout: 15000 });
+    // 3. Bootstrap uses default-provider-authorization-implicit-consent flow,
+    //    so no consent step. Callback lands on /auth/complete?token=...
+    await page.waitForURL(/\/(auth\/complete|connections|dashboard|pipelines|login)/, {
+      timeout: 15000,
+    });
 
     // 5. Verify session — user should be logged in (or at least past the SSO flow)
     const url = page.url();
@@ -69,7 +73,7 @@ test.describe("SSO OIDC: Authentik @slow", () => {
     const apiKey = process.env.DATANIKA_E2E_API_KEY_ORG_A;
     test.skip(!apiKey, "Requires API key from seed — run with extended seed");
 
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    const api = await playwright.request.newContext(backendContextOptions());
     const membersResp = await api.get("/api/v1/members", {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
@@ -85,7 +89,9 @@ test.describe("SSO OIDC: Authentik @slow", () => {
   });
 
   test("OIDC with invalid org slug returns error", async ({ playwright }) => {
-    const api = await playwright.request.newContext({ baseURL: BACKEND_URL });
+    // maxRedirects: 0 — the backend responds with a 302 error redirect;
+    // following it would land on a 200 error page and fail the assertion.
+    const api = await playwright.request.newContext(backendContextOptions({ maxRedirects: 0 }));
     const response = await api.get("/api/auth/sso/login/nonexistent-org-slug");
     expect(response.status()).not.toBe(200);
     expect(response.status()).toBeLessThan(500);
@@ -95,7 +101,8 @@ test.describe("SSO OIDC: Authentik @slow", () => {
   test("OIDC state tampering is rejected", async ({ page, context }) => {
     // Start a legitimate OIDC flow to get a state cookie via backend
     await page.goto(`${BACKEND_URL}/api/auth/sso/login/${ORG_SLUG}`);
-    await page.waitForURL(/.*\/application\/o\/authorize\/.*/);
+    // Authentik wraps /application/o/authorize in a login flow for fresh sessions
+    await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
 
     // Tamper with the sso_state cookie
     const cookies = await context.cookies();
@@ -106,12 +113,15 @@ test.describe("SSO OIDC: Authentik @slow", () => {
       ]);
     }
 
-    // Simulate callback with tampered state
-    const callbackResp = await page.goto(
-      `${BACKEND_URL}/api/auth/sso/callback?code=fake&state=tampered`,
-    );
-    // Should reject with redirect to error or 400, never 200
-    const status = callbackResp?.status() ?? 0;
-    expect(status === 302 || status >= 400, `Expected 302 or 400+, got ${status}`).toBe(true);
+    // Simulate callback with tampered state. page.goto follows redirects
+    // through to a 200 page, so check the final URL instead — rejection
+    // redirects to /login?error=..., success would stay on /auth/complete.
+    await page.goto(`${BACKEND_URL}/api/auth/sso/callback?code=fake&state=tampered`);
+    const finalUrl = page.url();
+    expect(
+      finalUrl.includes("error=") || finalUrl.includes("/login"),
+      `Expected redirect to error page, got ${finalUrl}`,
+    ).toBe(true);
+    expect(finalUrl).not.toContain("/auth/complete");
   });
 });

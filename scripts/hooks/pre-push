@@ -7,6 +7,24 @@ set -e
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
+# Auto-rebase onto origin/dev (feature branches only)
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$BRANCH" != "dev" && "$BRANCH" != "master" && "$BRANCH" != "main" ]]; then
+  git fetch origin dev --quiet 2>/dev/null || true
+  if ! git merge-base --is-ancestor origin/dev HEAD 2>/dev/null; then
+    echo "pre-push: branch is behind origin/dev — rebasing..."
+    if git rebase origin/dev --quiet; then
+      echo "pre-push: rebased onto origin/dev. Push again (--force-with-lease if already pushed)."
+      exit 1
+    else
+      git rebase --abort
+      echo "pre-push: rebase has conflicts — resolve manually:"
+      echo "  git fetch origin dev && git rebase origin/dev"
+      exit 1
+    fi
+  fi
+fi
+
 # Find venv
 if [ -x ".venv/Scripts/python.exe" ]; then
   PY=".venv/Scripts/python.exe"
@@ -23,4 +41,17 @@ echo "pre-push: ruff format --check"
 "$PY" -m ruff format --check datanika tests
 echo "pre-push: pytest"
 "$PY" -m pytest tests/ -x -q --tb=short
+
+# Helm lint — only if chart files were modified in the push range
+if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then
+  CHANGED=$(git diff --name-only @{upstream}..HEAD -- deploy/helm/ 2>/dev/null || true)
+  if [ -n "$CHANGED" ]; then
+    echo "pre-push: helm lint (chart files changed)"
+    helm lint deploy/helm/datanika
+    helm template test-release deploy/helm/datanika > /dev/null
+  else
+    echo "pre-push: helm lint skipped (no chart changes)"
+  fi
+fi
+
 echo "pre-push: all checks passed"

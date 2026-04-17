@@ -57,7 +57,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
         with:
           version: v3.17.3
 
@@ -196,6 +196,9 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v6
 
@@ -258,11 +261,250 @@ jobs:
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
 
-  # Post-deploy smoke gate. Fails loud if any curated URL 404s, returns an
-  # empty body, or serves the wrong content-type/body substring. See
-  # plans/growth/SMOKE_URLS.md (Growth-owned SoT) for the curation rationale.
-  # Non-empty body check is the critical guard — core#124 returned
-  # 404 Content-Length: 0, which a status-only check would have missed.
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[QA] e2e-staging failure on $SHORT_SHA" \
+            --body "**Run:** $RUN_URL
+          **Commit:** \`$SHORT_SHA\`
+          **Message:** $FIRST_LINE
+          **Report:** playwright-report artifact on the run page" \
+            --label "e2e-failure"
+
+  # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases)
+  # against the staging app with a disposable Authentik IdP on Hetzner.
+  #
+  # Topology: Authentik on Hetzner :9000 (same host as staging), SSH tunnel
+  # to the CI runner so the Playwright browser can reach the IdP login form.
+  # Bootstrap + seed run on Hetzner via SSH (they need docker exec).
+  e2e-sso:
+    needs: [deploy-staging]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Start Authentik on staging server
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          ssh root@$SSH_HOST "mkdir -p /opt/datanika/e2e-sso/scripts"
+          scp e2e/docker-compose.test.yml root@$SSH_HOST:/opt/datanika/e2e-sso/
+          scp e2e/scripts/bootstrap-authentik.sh root@$SSH_HOST:/opt/datanika/e2e-sso/scripts/
+          scp e2e/scripts/seed-sso-configs.py root@$SSH_HOST:/opt/datanika/e2e-sso/scripts/
+
+          # Start with project name 'e2e' so containers are e2e-authentik-{db,server}-1
+          # (matches the docker exec names in bootstrap-authentik.sh)
+          ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && docker compose -p e2e -f docker-compose.test.yml up -d"
+
+          # Wait for Authentik to be healthy (~90s first boot with migrations)
+          ssh root@$SSH_HOST 'for i in $(seq 1 30); do
+            status=$(docker inspect --format="{{.State.Health.Status}}" e2e-authentik-server-1 2>/dev/null)
+            echo "attempt $i: $status"
+            if [ "$status" = "healthy" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "Authentik failed to become healthy"
+          docker logs e2e-authentik-server-1 --tail 50
+          exit 1'
+
+      - name: Bootstrap Authentik (OIDC + SAML providers)
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && DATANIKA_E2E_BASE_URL=https://staging-app.datanika.io bash scripts/bootstrap-authentik.sh"
+
+      - name: Bridge staging container to Authentik network
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          # Staging container needs to reach Authentik for OIDC token exchange.
+          # Connect authentik-server to datanika-staging_default with an alias
+          # so staging can resolve it by the chosen hostname.
+          ssh root@$SSH_HOST "docker network connect --alias e2e-authentik-server datanika-staging_default e2e-authentik-server-1 2>&1" || \
+            echo "Network connect failed or already connected"
+
+          # Verify staging can reach Authentik by the alias
+          ssh root@$SSH_HOST "docker exec datanika-staging-app curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
+            echo "Staging → Authentik OK" || \
+            { echo "FATAL: staging can't reach e2e-authentik-server:9000"; exit 1; }
+
+          # Rewrite fixture URLs: localhost:9000 → e2e-authentik-server:9000
+          # Same hostname resolves from:
+          #   - Staging container: via docker DNS alias → Authentik container
+          #   - CI runner: via /etc/hosts → 127.0.0.1 → SSH tunnel → Hetzner:9000
+          #   - Authentik self-request: Host header matches, OIDC issuer consistent
+          ssh root@$SSH_HOST "sed -i 's|http://localhost:9000|http://e2e-authentik-server:9000|g' /opt/datanika/e2e-sso/.sso-fixture.json"
+          ssh root@$SSH_HOST "cat /opt/datanika/e2e-sso/.sso-fixture.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(\"Fixture URL:\", d[\"authentik_url\"])'"
+
+      - name: Seed SSO configs in staging DB
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json datanika-staging-app:/app/e2e/.sso-fixture.json"
+          ssh root@$SSH_HOST "docker exec datanika-staging-app uv run python e2e/scripts/seed-sso-configs.py"
+
+      - name: Open SSH tunnel to Authentik + hosts entry
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          # SSH tunnel: CI runner's localhost:9000 → Hetzner:9000 → Authentik
+          ssh -f -N -L 9000:localhost:9000 root@$SSH_HOST
+
+          # /etc/hosts: e2e-authentik-server → 127.0.0.1 (tunnel endpoint)
+          # This matches the hostname in the fixture + SSO config, so Playwright
+          # browser can resolve and reach Authentik via the tunnel.
+          echo "127.0.0.1 e2e-authentik-server" | sudo tee -a /etc/hosts
+
+          # Verify both paths
+          for i in $(seq 1 10); do
+            curl -sf http://localhost:9000/-/health/ready/ > /dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -sf http://e2e-authentik-server:9000/-/health/ready/ > /dev/null || {
+            echo "e2e-authentik-server hostname not reachable via tunnel"
+            exit 1
+          }
+          echo "Tunnel + hostname OK"
+
+      - name: Diagnose DNS + CF Access from CI runner
+        env:
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          echo "=== DNS resolution ==="
+          nslookup staging-app.datanika.io || true
+          echo ""
+          echo "=== curl without CF headers ==="
+          curl -sI --max-time 10 https://staging-app.datanika.io/ 2>&1 | head -15 || true
+          echo ""
+          echo "=== curl with CF Access headers ==="
+          curl -sI --max-time 10 \
+            -H "CF-Access-Client-Id: $DATANIKA_STAGING_CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET" \
+            https://staging-app.datanika.io/ 2>&1 | head -15 || true
+          echo ""
+          echo "=== curl SSO login route with CF headers ==="
+          curl -sI --max-time 10 \
+            -H "CF-Access-Client-Id: $DATANIKA_STAGING_CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET" \
+            https://staging-app.datanika.io/api/auth/sso/login/e2e-fixture 2>&1 | head -15 || true
+          echo ""
+          echo "=== Authentik tunnel check (localhost + service name) ==="
+          curl -sI --max-time 10 http://localhost:9000/-/health/ready/ 2>&1 | head -5 || true
+          curl -sI --max-time 10 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -5 || true
+          echo ""
+          echo "=== Staging → Authentik reachability ==="
+          ssh root@${{ secrets.HETZNER_HOST }} "docker exec datanika-staging-app curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
+
+      - name: Run SSO specs
+        working-directory: e2e
+        env:
+          CI: "true"
+          DATANIKA_E2E_SSO_AUTHENTIK: "1"
+          DATANIKA_E2E_SLOW: "1"
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_USER_EMAIL: "sso-user@datanika.test"
+          DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
+          DATANIKA_E2E_BACKEND_URL: https://staging-app.datanika.io
+          DATANIKA_E2E_ORG_SLUG: e2e-fixture
+          DATANIKA_E2E_SAML_ORG_SLUG: e2e-fixture-saml
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+        run: npx playwright test sso-
+
+      - name: Upload SSO Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sso-playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+
+      - name: Cleanup Authentik
+        if: always()
+        env:
+          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+        run: |
+          # Disconnect authentik from staging network before teardown
+          ssh root@$SSH_HOST "docker network disconnect datanika-staging_default e2e-authentik-server-1 2>/dev/null || true"
+          ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && docker compose -p e2e -f docker-compose.test.yml down -v 2>/dev/null; rm -rf /opt/datanika/e2e-sso" || true
+
+      - name: Telegram alert on failure
+        if: failure()
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 *SSO E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
+            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[QA] e2e-sso failure on $SHORT_SHA" \
+            --body "**Run:** $RUN_URL
+          **Commit:** \`$SHORT_SHA\`
+          **Message:** $FIRST_LINE
+          **Report:** playwright-report-sso artifact on the run page" \
+            --label "e2e-failure"
+
+  # Post-deploy smoke gate — shallow URL check. Fails loud if any curated
+  # URL 404s, returns an empty body, or serves the wrong content-type/body
+  # substring. See plans/growth/SMOKE_URLS.md (Growth-owned SoT) for the
+  # curation rationale. Non-empty body check is the critical guard —
+  # core#124 returned 404 Content-Length: 0, which a status-only check
+  # would have missed.
   smoke:
     needs: deploy
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -271,3 +513,52 @@ jobs:
       - uses: actions/checkout@v6
       - name: Smoke gate — app.datanika.io
         run: bash .github/smoke-check.sh https://app.datanika.io .github/smoke-urls-core.txt
+
+  # Post-deploy pytest smoke — deeper shape assertions against prod.
+  # Complements the URL gate above: catches 200-with-wrong-payload bugs
+  # (tier_count changed, agent-guide.md shrunk, openapi.json shape broke)
+  # that the URL gate can't distinguish from correct responses.
+  # See plans/qa/PLAN_QA.md → P0 Pre-Promotion Smoke (core#107 Phase 1).
+  smoke-prod:
+    needs: [deploy, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Run smoke probes against prod
+        id: smoke
+        env:
+          DATANIKA_SMOKE_CORE_URL: https://app.datanika.io
+          DATANIKA_SMOKE_LANDING_URL: https://datanika.io
+        # No CF Access headers — prod is public. Conftest's _core_headers()
+        # is a no-op when the env vars are unset.
+        run: pytest scripts/smoke/ -v --tb=short
+
+      - name: Telegram alert on failure
+        if: failure()
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xf0\x9f\x94\xa5 *PROD smoke failed* (shape regression)\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s\n\n*Rollback:* see plans/infra/RUNBOOK_DEV_TO_MASTER.md' \
+            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"

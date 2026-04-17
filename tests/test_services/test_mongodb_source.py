@@ -121,19 +121,19 @@ class TestMongodbSource:
         assert batches == []
 
 
-class TestConvertObjectIds:
+class TestNormalizeBsonTypes:
     def test_converts_object_id_values(self):
-        from datanika.services.mongodb_source import _convert_object_ids
+        from datanika.services.mongodb_source import _normalize_bson_types
 
         oid = ObjectId("507f1f77bcf86cd799439011")
-        result = _convert_object_ids({"_id": oid, "name": "test", "count": 42})
+        result = _normalize_bson_types({"_id": oid, "name": "test", "count": 42})
         assert result["_id"] == "507f1f77bcf86cd799439011"
         assert result["name"] == "test"
         assert result["count"] == 42
 
     def test_preserves_non_objectid_types(self):
-        from datanika.services.mongodb_source import _convert_object_ids
+        from datanika.services.mongodb_source import _normalize_bson_types
 
         doc = {"a": 1, "b": "hello", "c": [1, 2], "d": None, "e": True}
-        result = _convert_object_ids(doc)
+        result = _normalize_bson_types(doc)
         assert result == doc

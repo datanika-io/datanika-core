@@ -21,6 +21,7 @@ import pyarrow.csv as pcsv
 from sqlalchemy import create_engine, text
 
 from datanika.services.connection_service import _build_sa_url
+from datanika.services.destinations._arrow_utils import stringify_nested_columns
 from datanika.services.elt_runner import FILE_MAX_BYTES
 
 if TYPE_CHECKING:
@@ -77,6 +78,12 @@ class PostgresLander:
                     continue
 
                 total_bytes_in += table.nbytes
+
+                # E9: serialize nested (struct/list/map) columns to JSON strings
+                # so pyarrow.csv.write_csv can emit them cleanly and Postgres
+                # can COPY them into TEXT columns. Scalar columns pass through.
+                # Runs before schema inference so the CREATE TABLE sees text.
+                table = stringify_nested_columns(table)
 
                 # Ensure destination table exists (once, on first non-empty batch).
                 if not schema_ensured:

@@ -9,7 +9,19 @@ from sqlalchemy import select
 from datanika.models.notification_channel import ChannelType, NotificationChannel
 
 logger = logging.getLogger(__name__)
-VALID_EVENTS = frozenset(["run_failure", "run_success", "quota_warning"])
+VALID_EVENTS = frozenset(
+    [
+        "run_failure",
+        "run_success",
+        "quota_warning",
+        # V2 P5 Option B cycle-boundary charge events (core#249). Users opt
+        # channels into these so Slack/Telegram/webhook/email deliver overage
+        # billing notifications alongside the in-app row.
+        "charge_incoming",
+        "charge_issued",
+        "charge_failed",
+    ]
+)
 _CONFIG_REQUIRED = {
     ChannelType.EMAIL: ["email"],
     ChannelType.SLACK: ["webhook_url"],

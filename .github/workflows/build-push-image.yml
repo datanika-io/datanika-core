@@ -15,11 +15,11 @@ name: Build & push image
 on:
   push:
     branches: [dev, master]
-    paths:
-      - "datanika/**"
-      - "Dockerfile"
-      - ".github/workflows/build-push-image.yml"
   workflow_dispatch:
+  # No paths filter: deploy jobs wait on the build-push check completing
+  # on the exact commit SHA, so every push to dev/master MUST produce
+  # an image (even if only docker-compose.yml or ci.yml changed).
+  # The gha cache keeps unchanged-source rebuilds to ~30-60s.
 
 concurrency:
   group: build-push-${{ github.ref }}

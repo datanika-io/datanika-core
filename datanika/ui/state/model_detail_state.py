@@ -95,6 +95,23 @@ class ColumnItem(BaseModel):
     additional_tests: list[str] = []  # display keys for non-standard dict tests
 
 
+PREVIEW_ROW_LIMIT = 100
+_PREVIEW_CELL_MAX = 200  # truncate long cell values in the UI
+
+
+def _stringify_cell(value) -> str:
+    """Render a SQL row value as a safe, truncated string for display."""
+    if value is None:
+        return ""
+    try:
+        rendered = str(value)
+    except Exception:
+        rendered = repr(value)
+    if len(rendered) > _PREVIEW_CELL_MAX:
+        return rendered[:_PREVIEW_CELL_MAX] + "…"
+    return rendered
+
+
 class ModelDetailState(BaseState):
     entry_id: int = 0
     entry_type: str = ""
@@ -117,6 +134,23 @@ class ModelDetailState(BaseState):
     custom_test_min_value: str = ""
     custom_test_max_value: str = ""
     custom_test_proportion: str = ""
+
+    # Data preview — first 100 rows of the underlying table fetched from
+    # the destination connection on demand. Column types come from the
+    # stored catalog metadata (``columns`` above); rows come from the
+    # live SQL query via ``ConnectionService.preview_table``.
+    preview_loaded: bool = False
+    preview_loading: bool = False
+    preview_error: str = ""
+    preview_columns: list[str] = []
+    preview_rows: list[list[str]] = []
+
+    @property
+    def can_preview(self) -> bool:
+        """Preview requires a destination connection. Entries without a
+        ``connection_id`` (legacy rows or pure dbt models not yet
+        materialized) cannot be previewed."""
+        return self.connection_id > 0 and bool(self.table_name)
 
     async def load_model_detail(self):
         raw_id = self.router.page.params.get("id", "0")
@@ -177,7 +211,60 @@ class ModelDetailState(BaseState):
                 for c in (entry.columns or [])
             ]
             self.columns = _recompute_columns(raw_cols)
+        # Reset preview state on navigation between entries so stale
+        # rows from a previous table don't bleed through.
+        self.preview_loaded = False
+        self.preview_loading = False
+        self.preview_error = ""
+        self.preview_columns = []
+        self.preview_rows = []
         self.error_message = ""
+
+    async def load_preview(self):
+        """Fetch the first ``PREVIEW_ROW_LIMIT`` rows from the underlying
+        destination connection.
+
+        Requires ``connection_id > 0`` (set on load). Swallows DB errors
+        into ``preview_error`` so a broken destination doesn't kill the
+        detail page — users can still edit metadata offline.
+        """
+        if not self.can_preview:
+            self.preview_error = "Preview requires a destination connection on this entry."
+            self.preview_loaded = True
+            return
+
+        org_id = await self._get_org_id()
+        encryption = EncryptionService(settings.credential_encryption_key)
+        conn_svc = ConnectionService(encryption)
+
+        self.preview_loading = True
+        self.preview_error = ""
+        try:
+            with get_sync_session() as session:
+                conn = conn_svc.get_connection(session, org_id, self.connection_id)
+                if conn is None:
+                    self.preview_error = "Destination connection not found or no longer accessible."
+                    return
+                config = conn_svc.get_connection_config(session, org_id, self.connection_id)
+                if config is None:
+                    self.preview_error = "Connection credentials could not be decrypted."
+                    return
+                try:
+                    columns, rows = ConnectionService.preview_table(
+                        config,
+                        conn.connection_type,
+                        self.table_name,
+                        schema=self.schema_name or None,
+                        limit=PREVIEW_ROW_LIMIT,
+                    )
+                except Exception as exc:  # noqa: BLE001 — surface DB errors as UI-safe text
+                    self.preview_error = f"Could not load preview: {exc}"
+                    return
+                self.preview_columns = list(columns)
+                self.preview_rows = [[_stringify_cell(cell) for cell in row] for row in rows]
+        finally:
+            self.preview_loading = False
+            self.preview_loaded = True
 
     def set_form_description(self, value: str):
         self.form_description = value

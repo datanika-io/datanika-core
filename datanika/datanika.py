@@ -277,3 +277,11 @@ from datanika.services.quota_notification_hooks import (  # noqa: E402
 )
 
 register_quota_notification_hooks()
+
+# Charge events (V2 P5 Option B, core#249) — emitted by cloud plugin's
+# cycle-boundary billing task.
+from datanika.services.charge_notification_hooks import (  # noqa: E402
+    register_charge_notification_hooks,
+)
+
+register_charge_notification_hooks()

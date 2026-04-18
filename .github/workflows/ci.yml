@@ -109,17 +109,32 @@ jobs:
         run: helm template test-release deploy/helm/datanika > /dev/null
 
   deploy:
+    # Waits for build-push-image.yml to finish on the same SHA so GHCR has
+    # the :<sha> tag available when the Hetzner deploy tries to pull.
     needs: [lint, test, helm-lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Wait for image push to finish
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: build-push
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
       - name: Deploy to Hetzner
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: GHCR_USER,GHCR_TOKEN,IMAGE_TAG
           script: |
             set -e
 
@@ -134,8 +149,13 @@ jobs:
             # Source env vars for docker-compose interpolation
             set -a && source .env.docker && set +a
 
-            # Build and restart with zero-downtime (one at a time)
-            docker compose build app celery
+            # Pull the pre-built image from GHCR (built on GHA, no CPU/RAM
+            # spike on prod during deploy). Fallback: if pull fails we can
+            # re-run with local build by removing DATANIKA_IMAGE_TAG.
+            SHORT_SHA="${IMAGE_TAG:0:7}"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export DATANIKA_IMAGE_TAG="$SHORT_SHA"
+            docker compose pull app celery
 
             # Restart app first, wait for health, then celery
             docker compose up -d --no-deps app
@@ -158,12 +178,25 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
+      - name: Wait for image push to finish
+        uses: lewagon/wait-on-check-action@v1.3.4
+        with:
+          ref: ${{ github.sha }}
+          check-name: build-push
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 10
+
       - name: Deploy to Hetzner staging
         uses: appleboy/ssh-action@v1
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: root
           key: ${{ secrets.HETZNER_SSH_KEY }}
+          envs: GHCR_USER,GHCR_TOKEN,IMAGE_TAG
           script: |
             set -e
 
@@ -177,7 +210,12 @@ jobs:
 
             cd /opt/datanika-staging
 
-            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml up -d --build app celery
+            # Pull dev-tagged pre-built image from GHCR
+            SHORT_SHA="${IMAGE_TAG:0:7}"
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export DATANIKA_IMAGE_TAG="dev-$SHORT_SHA"
+            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml pull app celery
+            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml up -d app celery
 
             echo "Waiting for staging app to be healthy..."
             timeout 180 bash -c 'until docker inspect --format="{{.State.Health.Status}}" datanika-staging-app 2>/dev/null | grep -q healthy; do sleep 3; done' || {

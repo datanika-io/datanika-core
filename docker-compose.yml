@@ -62,10 +62,13 @@ services:
     restart: unless-stopped
 
   app:
+    # In CI/CD, the image is pulled from GHCR (built by build-push-image.yml).
+    # For local dev, `docker compose build` still works — it builds from source
+    # and tags with the same image name so subsequent `up` finds it.
+    image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: datanika/Dockerfile
-    image: datanika-io/app:latest
     container_name: datanika-app
     ports:
       - "127.0.0.1:3000:3000"
@@ -94,10 +97,11 @@ services:
     restart: unless-stopped
 
   celery:
+    # Uses the same image as `app` — single Dockerfile, different CMD.
+    image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
     build:
       context: ..
       dockerfile: datanika/Dockerfile
-    image: datanika-io/celery:latest
     container_name: datanika-celery
     env_file:
       - .env.docker

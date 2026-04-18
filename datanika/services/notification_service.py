@@ -228,12 +228,16 @@ def _build_charge_incoming_email(payload):
     amount = payload.get("amount_display", "")
     gb = payload.get("gb_display", "0")
     cycle = payload.get("cycle_ends_at", "")
-    plan_name = payload.get("plan_name", "your")
+    # Cloud emits plan_name optionally; when missing/empty we switch to a
+    # plan-agnostic phrase rather than render an empty <strong/> or the
+    # doubled-up "Your your plan" you get from a naive default.
+    plan_name = payload.get("plan_name") or ""
+    plan_phrase = f"Your <strong>{plan_name}</strong> plan" if plan_name else "Your subscription"
     subject = f"Datanika upcoming overage charge - {amount}"
     body = (
         "<!DOCTYPE html><html><body>"
         "<h2>Upcoming overage charge</h2>"
-        f"<p>Your <strong>{plan_name}</strong> plan will be charged approximately "
+        f"<p>{plan_phrase} will be charged approximately "
         f"<strong>{amount}</strong> for <strong>{gb} GB</strong> of overage "
         f"when your billing cycle closes on <strong>{cycle}</strong>.</p>"
         "<p>Review current usage and the projected invoice in "
@@ -248,9 +252,10 @@ def _build_charge_incoming_slack_text(payload):
     amount = payload.get("amount_display", "")
     gb = payload.get("gb_display", "0")
     cycle = payload.get("cycle_ends_at", "")
-    plan_name = payload.get("plan_name", "your")
+    plan_name = payload.get("plan_name") or ""
+    plan_phrase = f"your {plan_name} plan" if plan_name else "your subscription"
     return (
-        f":moneybag: *Datanika upcoming overage charge* - your {plan_name} plan "
+        f":moneybag: *Datanika upcoming overage charge* - {plan_phrase} "
         f"will be charged *{amount}* for *{gb} GB* of overage when the cycle "
         f"closes on *{cycle}*."
     )
@@ -260,9 +265,10 @@ def _build_charge_incoming_telegram_text(payload):
     amount = payload.get("amount_display", "")
     gb = payload.get("gb_display", "0")
     cycle = payload.get("cycle_ends_at", "")
-    plan_name = payload.get("plan_name", "your")
+    plan_name = payload.get("plan_name") or ""
+    plan_phrase = f"your {plan_name} plan" if plan_name else "your subscription"
     return (
-        f"[$] Datanika upcoming overage charge - {plan_name} plan will be "
+        f"[$] Datanika upcoming overage charge - {plan_phrase} will be "
         f"charged {amount} for {gb} GB of overage when the cycle closes on {cycle}."
     )
 

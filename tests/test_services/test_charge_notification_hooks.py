@@ -502,3 +502,85 @@ class TestIdempotencyDedupUnit:
         _on_charge_issued(org_id=42, subscription_id=7, charge_id=99, amount_cents=2500)
 
         assert captured.get("since") is None
+
+
+class TestChargeIncomingTemplates:
+    """Covers the 3 external-channel template builders. Cloud#48 does not
+    currently emit ``plan_name`` — templates must render cleanly with or
+    without it. Regression against the ``"your your plan"`` / empty-strong
+    / leading-space artifacts flagged post-merge of the rebased #257.
+    """
+
+    _payload_with_plan = {
+        "amount_display": "$5.00",
+        "gb_display": "10.0",
+        "cycle_ends_at": "2026-05-01",
+        "plan_name": "Pro",
+    }
+    _payload_without_plan = {
+        "amount_display": "$5.00",
+        "gb_display": "10.0",
+        "cycle_ends_at": "2026-05-01",
+        "plan_name": "",
+    }
+
+    def test_email_with_plan_name(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_email,
+        )
+
+        subject, body = _build_charge_incoming_email(self._payload_with_plan)
+        assert "$5.00" in subject
+        assert "<strong>Pro</strong> plan" in body
+        assert "<strong></strong>" not in body
+        assert "Your your" not in body
+
+    def test_email_without_plan_name_falls_back_to_subscription(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_email,
+        )
+
+        _, body = _build_charge_incoming_email(self._payload_without_plan)
+        assert "<strong></strong>" not in body
+        assert "Your subscription will be charged" in body
+        assert "Your your" not in body
+
+    def test_slack_with_plan_name(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_slack_text,
+        )
+
+        text = _build_charge_incoming_slack_text(self._payload_with_plan)
+        assert "your Pro plan" in text
+        assert "your your" not in text
+        # No double space from the plan-slot.
+        assert "  " not in text
+
+    def test_slack_without_plan_name(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_slack_text,
+        )
+
+        text = _build_charge_incoming_slack_text(self._payload_without_plan)
+        assert "your subscription will be charged" in text
+        assert "  " not in text
+
+    def test_telegram_with_plan_name(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_telegram_text,
+        )
+
+        text = _build_charge_incoming_telegram_text(self._payload_with_plan)
+        assert "your Pro plan" in text
+        assert "  " not in text
+
+    def test_telegram_without_plan_name(self):
+        from datanika.services.notification_service import (
+            _build_charge_incoming_telegram_text,
+        )
+
+        text = _build_charge_incoming_telegram_text(self._payload_without_plan)
+        assert "your subscription will be charged" in text
+        # No leading space before "will be charged".
+        assert "  " not in text
+        assert not text.startswith("[$] Datanika upcoming overage charge -  ")

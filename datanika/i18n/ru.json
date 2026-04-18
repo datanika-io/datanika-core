@@ -496,5 +496,10 @@
   "billing.overage_cost": "Плата за превышение по тарифу.",
   "billing.projected_total": "Прогнозируемый итог",
   "billing.no_overage": "Без превышения.",
-  "billing.close": "Закрыть"
+  "billing.close": "Закрыть",
+  "billing.cycle.closes_on": "Период закрывается",
+  "billing.cycle.closes_in_days": "Период закрывается через",
+  "billing.cycle.closes_today": "Период закрывается сегодня",
+  "billing.projected_overage.heading": "Прогнозируемое превышение",
+  "billing.projected_overage.see_notification": "Сумма списания отправляется в уведомлениях за 24 часа до закрытия периода."
 }

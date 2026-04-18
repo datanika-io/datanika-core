@@ -31,11 +31,12 @@ class TestNotificationItem:
 
 
 class TestTypeIcons:
-    def test_all_four_types_have_icons(self):
+    def test_all_five_types_have_icons(self):
         assert "run_failed" in NOTIFICATION_TYPE_ICONS
         assert "run_succeeded" in NOTIFICATION_TYPE_ICONS
         assert "quota_warning" in NOTIFICATION_TYPE_ICONS
         assert "quota_exceeded" in NOTIFICATION_TYPE_ICONS
+        assert "charge_incoming" in NOTIFICATION_TYPE_ICONS
 
     def test_icons_are_strings(self):
         for icon in NOTIFICATION_TYPE_ICONS.values():

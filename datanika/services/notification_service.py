@@ -143,6 +143,8 @@ class NotificationService:
         to = channel.config["email"]
         if event_type == "quota_warning":
             subject, body = _build_quota_warning_email(payload)
+        elif event_type == "charge_incoming":
+            subject, body = _build_charge_incoming_email(payload)
         else:
             run_id = payload.get("run_id", "?")
             status = payload.get("status", event_type)
@@ -155,6 +157,8 @@ class NotificationService:
         webhook_url = channel.config["webhook_url"]
         if event_type == "quota_warning":
             text = _build_quota_warning_slack_text(payload)
+        elif event_type == "charge_incoming":
+            text = _build_charge_incoming_slack_text(payload)
         else:
             run_id = payload.get("run_id", "?")
             status = payload.get("status", event_type)
@@ -170,6 +174,8 @@ class NotificationService:
         chat_id = channel.config["chat_id"]
         if event_type == "quota_warning":
             text = _build_quota_warning_telegram_text(payload)
+        elif event_type == "charge_incoming":
+            text = _build_charge_incoming_telegram_text(payload)
         else:
             run_id = payload.get("run_id", "?")
             status = payload.get("status", event_type)
@@ -215,6 +221,49 @@ def _build_quota_warning_slack_text(payload):
     return (
         f":warning: *Datanika quota warning* - your {plan_name} plan has used "
         f"*{used:,} of {limit:,} {metric_label}* ({pct}%)."
+    )
+
+
+def _build_charge_incoming_email(payload):
+    amount = payload.get("amount_display", "")
+    gb = payload.get("gb_display", "0")
+    cycle = payload.get("cycle_ends_at", "")
+    plan_name = payload.get("plan_name", "your")
+    subject = f"Datanika upcoming overage charge - {amount}"
+    body = (
+        "<!DOCTYPE html><html><body>"
+        "<h2>Upcoming overage charge</h2>"
+        f"<p>Your <strong>{plan_name}</strong> plan will be charged approximately "
+        f"<strong>{amount}</strong> for <strong>{gb} GB</strong> of overage "
+        f"when your billing cycle closes on <strong>{cycle}</strong>.</p>"
+        "<p>Review current usage and the projected invoice in "
+        '<a href="/settings">Settings &rarr; Billing</a>.</p>'
+        "<p>Sent by Datanika.</p>"
+        "</body></html>"
+    )
+    return subject, body
+
+
+def _build_charge_incoming_slack_text(payload):
+    amount = payload.get("amount_display", "")
+    gb = payload.get("gb_display", "0")
+    cycle = payload.get("cycle_ends_at", "")
+    plan_name = payload.get("plan_name", "your")
+    return (
+        f":moneybag: *Datanika upcoming overage charge* - your {plan_name} plan "
+        f"will be charged *{amount}* for *{gb} GB* of overage when the cycle "
+        f"closes on *{cycle}*."
+    )
+
+
+def _build_charge_incoming_telegram_text(payload):
+    amount = payload.get("amount_display", "")
+    gb = payload.get("gb_display", "0")
+    cycle = payload.get("cycle_ends_at", "")
+    plan_name = payload.get("plan_name", "your")
+    return (
+        f"[$] Datanika upcoming overage charge - {plan_name} plan will be "
+        f"charged {amount} for {gb} GB of overage when the cycle closes on {cycle}."
     )
 
 

@@ -42,12 +42,14 @@ test.describe("Pipeline template prefill via ?template=", () => {
     // The event may have fired during the click-to-navigate transition.
     // On open-source builds (no cloud plugin), the event script is empty
     // so this assertion is conditional.
+    //
+    // Soft assertion for now — see landing#212. As of 2026-04-18 Plausible
+    // CE records 0 custom events across 30d (despite the tracking script
+    // loading on every page), so even on staging/prod this event is silently
+    // dropped. Tighten to a hard assert once Plausible config is fixed.
     const hasPrefill = events.some((e) => e.includes("template_selected"));
-    // In staging (cloud edition), this should be true.
-    // In open-source CI, the plugin isn't loaded so no event fires.
-    // Mark as soft assertion — the real gate is the prefill working.
     if (!hasPrefill) {
-      console.log("template_selected event not captured (expected in open-source builds)");
+      console.log("template_selected event not captured (see landing#212)");
     }
   });
 });

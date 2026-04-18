@@ -29,6 +29,7 @@ PUBLIC_TABLES: set[str] = {
     "plans",
     "subscriptions",
     "usage_ledger",
+    "charges",
 }
 
 # Tables managed by Alembic but not belonging to either category

@@ -496,5 +496,10 @@
   "billing.overage_cost": "Des frais de dépassement s'appliquent.",
   "billing.projected_total": "Total projeté",
   "billing.no_overage": "Pas de dépassement.",
-  "billing.close": "Fermer"
+  "billing.close": "Fermer",
+  "billing.cycle.closes_on": "Le cycle se termine le",
+  "billing.cycle.closes_in_days": "Le cycle se termine dans",
+  "billing.cycle.closes_today": "Le cycle se termine aujourd'hui",
+  "billing.projected_overage.heading": "Dépassement projeté",
+  "billing.projected_overage.see_notification": "Le montant projeté est envoyé par notification 24 heures avant la clôture du cycle."
 }

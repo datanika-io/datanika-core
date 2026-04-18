@@ -496,5 +496,10 @@
   "billing.overage_cost": "超出费用按套餐费率计算。",
   "billing.projected_total": "预计总额",
   "billing.no_overage": "无超出。",
-  "billing.close": "关闭"
+  "billing.close": "关闭",
+  "billing.cycle.closes_on": "周期结束日期:",
+  "billing.cycle.closes_in_days": "周期还剩",
+  "billing.cycle.closes_today": "周期今日结束",
+  "billing.projected_overage.heading": "预计超额",
+  "billing.projected_overage.see_notification": "预估金额会在周期结束前 24 小时通过通知发送。"
 }

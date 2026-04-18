@@ -137,6 +137,44 @@ class TestChargeIncoming:
         fake_session.commit.assert_called_once()
         fake_session.rollback.assert_not_called()
 
+    def test_dispatch_payload_includes_display_fields(self, fake_session_context, fake_svc):
+        """Payload must carry the pre-formatted strings that email / Slack /
+        Telegram templates interpolate (see `_build_charge_incoming_*` in
+        ``notification_service.py``). Regression for the #254 / #257 contract
+        reconciliation — if these keys drift, templates render empty.
+        """
+        from datetime import UTC, datetime
+
+        _on_charge_incoming(
+            org_id=42,
+            subscription_id=7,
+            amount_cents=1500,
+            currency="USD",
+            metric="bytes_processed",
+            overage_quantity=3 * 1024**3,
+            period_end=datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC),
+            plan_name="Pro",
+        )
+        payload = fake_svc.external[0]["payload"]
+        assert payload["amount_display"] == "$15.00"
+        assert payload["gb_display"] == "3.0"
+        assert payload["cycle_ends_at"] == "2026-05-01"
+        assert payload["plan_name"] == "Pro"
+
+    def test_dispatch_payload_tolerates_missing_optional_fields(
+        self, fake_session_context, fake_svc
+    ):
+        """Cloud emit may omit ``overage_quantity`` / ``period_end`` /
+        ``plan_name`` for early deployments. Templates fall back to
+        ``.get(..., "")`` defaults; the hook must still populate the
+        keys (empty strings / zeros) so the interpolation path works.
+        """
+        _on_charge_incoming(org_id=42, subscription_id=7, amount_cents=1500)
+        payload = fake_svc.external[0]["payload"]
+        assert payload["gb_display"] == "0"
+        assert payload["cycle_ends_at"] == ""
+        assert payload["plan_name"] == ""
+
 
 class TestChargeIssued:
     def test_creates_notification_with_charge_id(self, fake_session_context, fake_svc):

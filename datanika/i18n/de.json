@@ -496,5 +496,10 @@
   "billing.overage_cost": "Überschreitungsgebühren gelten.",
   "billing.projected_total": "Voraussichtliche Gesamtsumme",
   "billing.no_overage": "Keine Überschreitung.",
-  "billing.close": "Schließen"
+  "billing.close": "Schließen",
+  "billing.cycle.closes_on": "Zeitraum endet am",
+  "billing.cycle.closes_in_days": "Zeitraum endet in",
+  "billing.cycle.closes_today": "Zeitraum endet heute",
+  "billing.projected_overage.heading": "Voraussichtliche Überschreitung",
+  "billing.projected_overage.see_notification": "Die prognostizierte Summe erhalten Sie per Benachrichtigung 24 Stunden vor Ende des Zeitraums."
 }

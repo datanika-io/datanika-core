@@ -496,5 +496,10 @@
   "billing.overage_cost": "تُطبق رسوم الزيادة.",
   "billing.projected_total": "الإجمالي المتوقع",
   "billing.no_overage": "لا يوجد تجاوز.",
-  "billing.close": "إغلاق"
+  "billing.close": "إغلاق",
+  "billing.cycle.closes_on": "تُغلق الدورة في",
+  "billing.cycle.closes_in_days": "تُغلق الدورة خلال",
+  "billing.cycle.closes_today": "تُغلق الدورة اليوم",
+  "billing.projected_overage.heading": "التجاوز المتوقع",
+  "billing.projected_overage.see_notification": "يُرسل المبلغ المتوقع عبر الإشعارات قبل 24 ساعة من إغلاق الدورة."
 }

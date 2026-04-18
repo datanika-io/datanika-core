@@ -41,6 +41,11 @@ class DashboardState(BaseState):
     bytes_used: int = 0
     bytes_limit: int = 0
 
+    # Billing cycle close date (ISO YYYY-MM-DD). Populated via
+    # usage.get_summary hook; empty string when cloud plugin is not
+    # active or subscription has no renews_at yet.
+    cycle_ends_at: str = ""
+
     @rx.var
     def runs_percent(self) -> int:
         if self.runs_limit <= 0:
@@ -88,6 +93,32 @@ class DashboardState(BaseState):
     def bytes_limit_display(self) -> str:
         gb = self.bytes_limit / (1024**3)
         return f"{gb:.0f} GB"
+
+    @rx.var
+    def has_cycle_end(self) -> bool:
+        """True when cloud plugin populated a cycle close date."""
+        return bool(self.cycle_ends_at)
+
+    @rx.var
+    def cycle_days_remaining(self) -> int:
+        """Days until billing cycle closes; -1 when date is unknown.
+
+        Computed at render time so the countdown reflects the current
+        wall-clock without requiring a scheduled refresh. Negative
+        when the stored cycle end is already in the past (cloud
+        plugin will have rolled to the next cycle on next
+        ``usage.get_summary`` fetch).
+        """
+        if not self.cycle_ends_at:
+            return -1
+        from datetime import date
+
+        try:
+            end = date.fromisoformat(self.cycle_ends_at)
+        except ValueError:
+            return -1
+        today = date.today()
+        return (end - today).days
 
     async def load_dashboard(self):
         org_id = await self._get_org_id()
@@ -151,6 +182,7 @@ class DashboardState(BaseState):
             "plan_name": "",
             "bytes_used": 0,
             "bytes_limit": 0,
+            "cycle_ends_at": "",
         }
         emit("usage.get_summary", context=usage_ctx)
         self.runs_used = usage_ctx["runs_used"]
@@ -158,6 +190,7 @@ class DashboardState(BaseState):
         self.plan_name = usage_ctx["plan_name"]
         self.bytes_used = usage_ctx["bytes_used"]
         self.bytes_limit = usage_ctx["bytes_limit"]
+        self.cycle_ends_at = usage_ctx.get("cycle_ends_at", "")
 
         self.error_message = ""
 

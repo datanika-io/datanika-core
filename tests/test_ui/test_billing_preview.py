@@ -20,6 +20,15 @@ class TestBillingPreviewI18nKeys:
         "billing.projected_total",
         "billing.no_overage",
         "billing.close",
+        # V2 P5 Option B additions
+        "billing.cycle.closes_on",
+        "billing.cycle.closes_in_days",
+        "billing.cycle.closes_today",
+        "billing.projected_overage.heading",
+        "billing.projected_overage.see_notification",
+        # charge_incoming notification
+        "notifications.charge_incoming.title",
+        "notifications.charge_incoming.body",
     ]
     LOCALES = ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"]
 
@@ -41,8 +50,11 @@ class TestBillingPreviewComponent:
     def test_import(self):
         from datanika.ui.components.billing_preview_modal import BILLING_KEYS
 
-        assert len(BILLING_KEYS) == 10
+        # 10 original + 5 V2 P5 Option B additions (cycle close + projected overage)
+        assert len(BILLING_KEYS) == 15
         assert "billing.preview_title" in BILLING_KEYS
+        assert "billing.cycle.closes_on" in BILLING_KEYS
+        assert "billing.projected_overage.heading" in BILLING_KEYS
 
     def test_factory_returns_component(self):
         from datanika.ui.components.billing_preview_modal import billing_preview_modal

@@ -49,7 +49,11 @@ def _type_icon(ntype: rx.Var[str]) -> rx.Component:
             rx.cond(
                 ntype == "quota_warning",
                 rx.icon("triangle-alert", size=16, color="var(--amber-9)"),
-                rx.icon("octagon-alert", size=16, color="var(--red-9)"),
+                rx.cond(
+                    ntype == "charge_incoming",
+                    rx.icon("banknote", size=16, color="var(--amber-11)"),
+                    rx.icon("octagon-alert", size=16, color="var(--red-9)"),
+                ),
             ),
         ),
     )
@@ -76,7 +80,11 @@ def _notification_row(n) -> rx.Component:
                     href=rx.cond(
                         n.resource_type == "run",
                         "/runs",
-                        "/",
+                        rx.cond(
+                            (n.resource_type == "subscription") | (n.resource_type == "charge"),
+                            "/settings",
+                            "/",
+                        ),
                     ),
                 ),
                 rx.icon_button(

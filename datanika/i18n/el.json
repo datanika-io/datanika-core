@@ -496,5 +496,10 @@
   "billing.overage_cost": "Χρεώσεις υπέρβασης ισχύουν.",
   "billing.projected_total": "Προβλεπόμενο σύνολο",
   "billing.no_overage": "Χωρίς υπέρβαση.",
-  "billing.close": "Κλείσιμο"
+  "billing.close": "Κλείσιμο",
+  "billing.cycle.closes_on": "Ο κύκλος κλείνει στις",
+  "billing.cycle.closes_in_days": "Ο κύκλος κλείνει σε",
+  "billing.cycle.closes_today": "Ο κύκλος κλείνει σήμερα",
+  "billing.projected_overage.heading": "Προβλεπόμενη υπέρβαση",
+  "billing.projected_overage.see_notification": "Το προβλεπόμενο ποσό αποστέλλεται μέσω ειδοποίησης 24 ώρες πριν το κλείσιμο του κύκλου."
 }

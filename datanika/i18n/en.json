@@ -496,5 +496,10 @@
   "billing.overage_cost": "Overage charges apply at your plan rate.",
   "billing.projected_total": "Projected total",
   "billing.no_overage": "No overage — within your plan allowance.",
-  "billing.close": "Close"
+  "billing.close": "Close",
+  "billing.cycle.closes_on": "Cycle closes on",
+  "billing.cycle.closes_in_days": "Cycle closes in",
+  "billing.cycle.closes_today": "Cycle closes today",
+  "billing.projected_overage.heading": "Projected overage",
+  "billing.projected_overage.see_notification": "Check the notification bell for the projected charge amount sent 24 hours before the cycle closes."
 }

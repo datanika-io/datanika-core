@@ -44,6 +44,22 @@ def _format_money(amount_cents: int, currency: str = "USD") -> str:
     return f"{symbol}{amount_cents / 100:.2f}"
 
 
+def _format_cycle_end(period_end: datetime | str | None) -> str:
+    """Render cycle end as ISO date (YYYY-MM-DD). Empty string on missing input."""
+    if period_end is None:
+        return ""
+    if isinstance(period_end, datetime):
+        return period_end.date().isoformat()
+    return str(period_end).split("T")[0]
+
+
+def _format_gb(byte_count: int | None) -> str:
+    """Render a byte count as GB with one decimal (``"12.3"``)."""
+    if not byte_count or byte_count < 0:
+        return "0"
+    return f"{byte_count / (1024**3):,.1f}"
+
+
 def _dispatch(session: Session, org_id: int, event: str, payload: dict) -> None:
     """Send to configured Slack/Telegram/webhook/email channels."""
     from datanika.services.notification_service import NotificationService
@@ -118,6 +134,9 @@ def _on_charge_incoming(
     amount_cents: int,
     currency: str = "USD",
     metric: str = "bytes_processed",
+    overage_quantity: int | None = None,
+    period_end: datetime | str | None = None,
+    plan_name: str = "",
     **_kw,
 ) -> None:
     # Belt-and-suspenders dedup — the cloud's ``UsageLedger.charge_incoming_sent``
@@ -141,9 +160,12 @@ def _on_charge_incoming(
         )
         return
 
-    title = f"Upcoming overage charge: {_format_money(amount_cents, currency)}"
+    amount_display = _format_money(amount_cents, currency)
+    gb_display = _format_gb(overage_quantity)
+    cycle_ends_at = _format_cycle_end(period_end)
+    title = f"Upcoming overage charge: {amount_display}"
     message = (
-        f"Your usage this cycle will add {_format_money(amount_cents, currency)} "
+        f"Your usage this cycle will add {amount_display} "
         f"to your next invoice. Charge fires at cycle close."
     )
     _svc.create(
@@ -163,6 +185,14 @@ def _on_charge_incoming(
             "amount_cents": amount_cents,
             "currency": currency,
             "metric": metric,
+            # Display-formatted fields for notification templates
+            # (email/Slack/Telegram). ``plan_name`` falls through to
+            # the template's default of "your" when cloud doesn't
+            # emit it.
+            "amount_display": amount_display,
+            "gb_display": gb_display,
+            "cycle_ends_at": cycle_ends_at,
+            "plan_name": plan_name,
         },
     )
 

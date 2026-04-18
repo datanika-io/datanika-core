@@ -496,5 +496,10 @@
   "billing.overage_cost": "Se aplican cargos por excedente.",
   "billing.projected_total": "Total proyectado",
   "billing.no_overage": "Sin excedente.",
-  "billing.close": "Cerrar"
+  "billing.close": "Cerrar",
+  "billing.cycle.closes_on": "El ciclo cierra el",
+  "billing.cycle.closes_in_days": "El ciclo cierra en",
+  "billing.cycle.closes_today": "El ciclo cierra hoy",
+  "billing.projected_overage.heading": "Excedente proyectado",
+  "billing.projected_overage.see_notification": "El importe proyectado se envía por notificación 24 horas antes del cierre del ciclo."
 }

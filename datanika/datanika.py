@@ -269,3 +269,11 @@ from datanika.services.in_app_notification_hooks import (  # noqa: E402
 )
 
 register_in_app_notification_hooks()
+
+# Wire quota warning hooks — in-app notification + external channel dispatch
+# on quota.warning_threshold_reached (emitted by cloud plugin's BillingService).
+from datanika.services.quota_notification_hooks import (  # noqa: E402
+    register_quota_notification_hooks,
+)
+
+register_quota_notification_hooks()

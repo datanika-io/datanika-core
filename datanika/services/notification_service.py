@@ -9,7 +9,7 @@ from sqlalchemy import select
 from datanika.models.notification_channel import ChannelType, NotificationChannel
 
 logger = logging.getLogger(__name__)
-VALID_EVENTS = frozenset(["run_failure", "run_success"])
+VALID_EVENTS = frozenset(["run_failure", "run_success", "quota_warning"])
 _CONFIG_REQUIRED = {
     ChannelType.EMAIL: ["email"],
     ChannelType.SLACK: ["webhook_url"],
@@ -129,34 +129,43 @@ class NotificationService:
             )
             return
         to = channel.config["email"]
-        run_id = payload.get("run_id", "?")
-        status = payload.get("status", event_type)
-        error = payload.get("error_message") or payload.get("error", "")
-        subject = f"Datanika run {status} (run #{run_id})"
-        body = _build_email_html(event_type, run_id, status, error)
+        if event_type == "quota_warning":
+            subject, body = _build_quota_warning_email(payload)
+        else:
+            run_id = payload.get("run_id", "?")
+            status = payload.get("status", event_type)
+            error = payload.get("error_message") or payload.get("error", "")
+            subject = f"Datanika run {status} (run #{run_id})"
+            body = _build_email_html(event_type, run_id, status, error)
         email_service.send(to, subject, body)
 
     def _dispatch_slack(self, channel, event_type, payload):
         webhook_url = channel.config["webhook_url"]
-        run_id = payload.get("run_id", "?")
-        status = payload.get("status", event_type)
-        error = payload.get("error_message") or payload.get("error", "")
-        icon = ":x:" if event_type == "run_failure" else ":white_check_mark:"
-        text = f"{icon} *Datanika run {status}* (run #{run_id})"
-        if error:
-            text += "\n> " + error
+        if event_type == "quota_warning":
+            text = _build_quota_warning_slack_text(payload)
+        else:
+            run_id = payload.get("run_id", "?")
+            status = payload.get("status", event_type)
+            error = payload.get("error_message") or payload.get("error", "")
+            icon = ":x:" if event_type == "run_failure" else ":white_check_mark:"
+            text = f"{icon} *Datanika run {status}* (run #{run_id})"
+            if error:
+                text += "\n> " + error
         httpx.post(webhook_url, json={"text": text}, timeout=10)
 
     def _dispatch_telegram(self, channel, event_type, payload):
         token = channel.config["token"]
         chat_id = channel.config["chat_id"]
-        run_id = payload.get("run_id", "?")
-        status = payload.get("status", event_type)
-        error = payload.get("error_message") or payload.get("error", "")
-        icon = "X" if event_type == "run_failure" else "OK"
-        text = f"[{icon}] Datanika run {status} (run #{run_id})"
-        if error:
-            text += "\n" + error
+        if event_type == "quota_warning":
+            text = _build_quota_warning_telegram_text(payload)
+        else:
+            run_id = payload.get("run_id", "?")
+            status = payload.get("status", event_type)
+            error = payload.get("error_message") or payload.get("error", "")
+            icon = "X" if event_type == "run_failure" else "OK"
+            text = f"[{icon}] Datanika run {status} (run #{run_id})"
+            if error:
+                text += "\n" + error
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         httpx.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
 
@@ -164,6 +173,49 @@ class NotificationService:
         url = channel.config["url"]
         body = {"event": event_type, **payload}
         httpx.post(url, json=body, timeout=10)
+
+
+def _build_quota_warning_email(payload):
+    metric_label = payload.get("metric_label", payload.get("metric", "usage"))
+    used = payload.get("used", 0)
+    limit = payload.get("limit", 0)
+    plan_name = payload.get("plan_name", "your")
+    pct = payload.get("pct", 0)
+    subject = f"Datanika quota warning - 80% of {metric_label} used"
+    body = (
+        "<!DOCTYPE html><html><body>"
+        "<h2>Quota warning</h2>"
+        f"<p>Your {plan_name} plan has used <strong>{used:,} of {limit:,} {metric_label}</strong> "
+        f"({pct}%) for the current billing period.</p>"
+        "<p>Head to your billing dashboard to review usage or upgrade.</p>"
+        "<p>Sent by Datanika.</p>"
+        "</body></html>"
+    )
+    return subject, body
+
+
+def _build_quota_warning_slack_text(payload):
+    metric_label = payload.get("metric_label", payload.get("metric", "usage"))
+    used = payload.get("used", 0)
+    limit = payload.get("limit", 0)
+    plan_name = payload.get("plan_name", "your")
+    pct = payload.get("pct", 0)
+    return (
+        f":warning: *Datanika quota warning* - your {plan_name} plan has used "
+        f"*{used:,} of {limit:,} {metric_label}* ({pct}%)."
+    )
+
+
+def _build_quota_warning_telegram_text(payload):
+    metric_label = payload.get("metric_label", payload.get("metric", "usage"))
+    used = payload.get("used", 0)
+    limit = payload.get("limit", 0)
+    plan_name = payload.get("plan_name", "your")
+    pct = payload.get("pct", 0)
+    return (
+        f"[!] Datanika quota warning - {plan_name} plan has used "
+        f"{used:,} of {limit:,} {metric_label} ({pct}%)."
+    )
 
 
 def _build_email_html(event_type, run_id, status, error):

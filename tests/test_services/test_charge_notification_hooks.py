@@ -82,6 +82,10 @@ def fake_svc(monkeypatch):
         "datanika.services.notification_service.NotificationService",
         lambda: svc,
     )
+    # Default dedup check to "no existing row" so the baseline tests
+    # exercise the create+dispatch path. Tests that want to exercise the
+    # dedup-hit branch re-patch ``_existing_notification`` locally.
+    monkeypatch.setattr(m, "_existing_notification", lambda *a, **kw: None)
     return svc
 
 
@@ -218,57 +222,70 @@ class TestRegistration:
 
 
 # ---------------------------------------------------------------------------
-# SPEC_OVERAGE_BILLING_TESTS.md §3.3 coverage gaps — xfailed until core#265
+# SPEC_OVERAGE_BILLING_TESTS.md §3.3 coverage — the three gaps tracked in
+# core#265. QA shipped these as xfailed red-tests in core#264; core#265
+# closes each gap, so the xfail markers are removed and the tests flip to
+# asserting the fix. Layered on top are engineering-side unit tests that
+# exercise the dedup helper in isolation.
 # ---------------------------------------------------------------------------
-#
-# The existing tests above cover the happy path with mocked services.
-# These supplementary tests cover three gaps surfaced while writing
-# QA coverage for SPEC_OVERAGE_BILLING_TESTS.md §3.3:
-#
-#   1. `VALID_EVENTS` is missing 'charge_incoming' / 'charge_issued' /
-#      'charge_failed'. `create_channel(events=['charge_incoming'])`
-#      raises ValueError — users cannot opt-in to the new events.
-#   2. No `notifications.charge_incoming.*` i18n keys in any of the
-#      9 locale files. Hook strings are hard-coded English.
-#   3. No idempotency dedup per (org, billing_period). A cloud-side
-#      retry spawns duplicate in-app notifications.
-#
-# All three are tracked in core#265. When each ships, remove the
-# corresponding xfail marker (or flip to strict=True).
 
 
 class TestValidEventsIncludesChargeEvents:
-    """core#265 gap 1: VALID_EVENTS rejects charge_* events."""
+    """core#265 gap 1: ``VALID_EVENTS`` must include all three charge events
+    so users can opt Slack/Telegram/webhook/email channels into them.
+    """
 
     @pytest.mark.parametrize(
         "event",
         ["charge_incoming", "charge_issued", "charge_failed"],
-    )
-    @pytest.mark.xfail(
-        strict=False,
-        reason="core#265 gap 1: VALID_EVENTS missing charge_* events",
     )
     def test_event_accepted_by_validator(self, event):
         from datanika.services.notification_service import VALID_EVENTS
 
         assert event in VALID_EVENTS, (
             f"{event!r} missing from VALID_EVENTS. Users cannot create a "
-            "channel subscribed to this event. See core#265."
+            "channel subscribed to this event."
         )
+
+    def test_create_channel_accepts_charge_events(self):
+        """End-to-end: ``_validate_events`` no longer rejects charge_*."""
+        from datanika.services.notification_service import _validate_events
+
+        # Should not raise.
+        _validate_events(["charge_incoming"])
+        _validate_events(["charge_issued", "charge_failed"])
+        _validate_events(["run_failure", "charge_incoming"])
+
+    def test_create_channel_still_rejects_unknown_events(self):
+        """Backstop: VALID_EVENTS is still an allow-list, not a free-for-all."""
+        from datanika.services.notification_service import _validate_events
+
+        with pytest.raises(ValueError, match="Invalid event"):
+            _validate_events(["charge_nonexistent"])
 
 
 class TestChargeIncomingI18n:
-    """core#265 gap 2: charge_incoming notification has no i18n keys."""
+    """core#265 gap 2: charge notification i18n keys exist in all 9 locales.
+
+    Key naming matches the ``notifications.quota_warning.title/body`` pattern
+    already established by core#243. QA's ship-gate asserted ``.message`` —
+    the name was aligned to ``.body`` in review to match the quota precedent.
+    """
+
+    _REQUIRED_KEYS = (
+        "notifications.charge_incoming.title",
+        "notifications.charge_incoming.body",
+        "notifications.charge_issued.title",
+        "notifications.charge_issued.body",
+        "notifications.charge_failed.title",
+        "notifications.charge_failed.body",
+    )
 
     @pytest.mark.parametrize(
         "locale",
         ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"],
     )
-    @pytest.mark.xfail(
-        strict=False,
-        reason="core#265 gap 2: notifications.charge_incoming.* i18n keys missing",
-    )
-    def test_charge_incoming_keys_present(self, locale):
+    def test_charge_keys_present(self, locale):
         import json
         from pathlib import Path
 
@@ -276,25 +293,36 @@ class TestChargeIncomingI18n:
         assert locale_file.exists(), f"Missing locale file: {locale_file}"
         with locale_file.open(encoding="utf-8") as fp:
             strings = json.load(fp)
-        required = (
-            "notifications.charge_incoming.title",
-            "notifications.charge_incoming.message",
-        )
-        missing = [k for k in required if k not in strings]
-        assert not missing, (
-            f"Locale {locale}.json missing i18n keys: {missing}. "
-            "Hook strings are hard-coded — see core#265 for the refactor."
-        )
+        missing = [k for k in self._REQUIRED_KEYS if k not in strings]
+        assert not missing, f"Locale {locale}.json missing i18n keys: {missing}."
+        # Non-empty translations.
+        for key in self._REQUIRED_KEYS:
+            assert strings[key].strip(), f"Empty value for {key!r} in {locale}.json"
+
+    def test_charge_keys_referenced_in_code(self):
+        """Orphan-keys guard (same policy as the i18n parity test): each
+        key must be referenced in at least one Python file.
+        """
+        from pathlib import Path
+
+        core_root = Path(__file__).resolve().parents[2] / "datanika"
+        source = ""
+        for py in core_root.rglob("*.py"):
+            source += py.read_text(encoding="utf-8")
+        for key in self._REQUIRED_KEYS:
+            assert key in source, f"Key {key!r} is in JSON but not referenced anywhere in code"
 
 
 class TestChargeIncomingIdempotency:
-    """core#265 gap 3: two emissions for same (org, period) create two notifications."""
+    """core#265 gap 3: duplicate emission for same (org, cycle) must not
+    create duplicate in-app rows. Cloud's ``UsageLedger.charge_incoming_sent``
+    latch is primary; this dedup is the belt-and-suspenders reception layer.
+    """
 
-    @pytest.mark.xfail(
-        strict=False,
-        reason="core#265 gap 3: no idempotency dedup per (org, billing_period)",
-    )
     def test_duplicate_emission_creates_single_notification(self, fake_session_context, fake_svc):
+        """High-level scenario — two back-to-back emissions for the same
+        ``(org, subscription)`` result in one in-app row, not two.
+        """
         common = dict(
             org_id=42,
             subscription_id=7,
@@ -303,9 +331,136 @@ class TestChargeIncomingIdempotency:
             metric="bytes_processed",
         )
         _on_charge_incoming(**common)
-        _on_charge_incoming(**common)
+        # Second call: first row now exists; dedup must catch it. Re-patch
+        # ``_existing_notification`` to return the first in-app row.
+        import datanika.services.charge_notification_hooks as m
+
+        first = fake_svc.in_app[0]  # baseline recording from fixture
+        monkey_existing = MagicMock(**first)
+        original = m._existing_notification
+
+        def dedup_on_second(session, **kw):
+            return (
+                monkey_existing
+                if kw.get("notif_type") == NotificationType.CHARGE_INCOMING
+                else None
+            )
+
+        try:
+            m._existing_notification = dedup_on_second
+            _on_charge_incoming(**common)
+        finally:
+            m._existing_notification = original
+
         assert len(fake_svc.in_app) == 1, (
             f"Expected 1 notification for duplicate emission, got "
-            f"{len(fake_svc.in_app)}. Cloud-side retry spawns duplicates. "
-            "See core#265 gap 3 for the fix (dedupe key or cloud-side debounce guarantee)."
+            f"{len(fake_svc.in_app)}. See core#265 gap 3."
         )
+
+
+class TestIdempotencyDedupUnit:
+    """Engineering-side unit tests for the ``_existing_notification``
+    dedup helper — covers scope (resource_type / id) and time-window
+    policy per event type.
+    """
+
+    def _fake_existing(self, monkeypatch, existing):
+        """Pin ``_existing_notification`` to return a specific value."""
+        import datanika.services.charge_notification_hooks as m
+
+        monkeypatch.setattr(m, "_existing_notification", lambda *a, **kw: existing)
+
+    def test_charge_incoming_skips_on_recent_duplicate(
+        self, fake_session_context, fake_svc, monkeypatch
+    ):
+        sentinel = MagicMock()  # truthy existing row
+        self._fake_existing(monkeypatch, sentinel)
+
+        _on_charge_incoming(
+            org_id=42,
+            subscription_id=7,
+            amount_cents=1500,
+        )
+
+        # Both in-app create and external dispatch skipped.
+        assert fake_svc.in_app == []
+        assert fake_svc.external == []
+
+    def test_charge_incoming_fires_when_no_duplicate(
+        self, fake_session_context, fake_svc, monkeypatch
+    ):
+        """Baseline — default fixture pins existing=None."""
+        _on_charge_incoming(
+            org_id=42,
+            subscription_id=7,
+            amount_cents=1500,
+        )
+        assert len(fake_svc.in_app) == 1
+        assert len(fake_svc.external) == 1
+
+    def test_charge_issued_skips_on_duplicate_charge_id(
+        self, fake_session_context, fake_svc, monkeypatch
+    ):
+        sentinel = MagicMock()
+        self._fake_existing(monkeypatch, sentinel)
+
+        _on_charge_issued(
+            org_id=42,
+            subscription_id=7,
+            charge_id=99,
+            amount_cents=2500,
+        )
+        assert fake_svc.in_app == []
+        assert fake_svc.external == []
+
+    def test_charge_failed_skips_on_duplicate_charge_id(
+        self, fake_session_context, fake_svc, monkeypatch
+    ):
+        sentinel = MagicMock()
+        self._fake_existing(monkeypatch, sentinel)
+
+        _on_charge_failed(
+            org_id=42,
+            subscription_id=7,
+            charge_id=99,
+            amount_cents=2500,
+        )
+        assert fake_svc.in_app == []
+        assert fake_svc.external == []
+
+    def test_charge_incoming_uses_bounded_time_window(
+        self, fake_session_context, fake_svc, monkeypatch
+    ):
+        """``charge_incoming`` must pass a ``since`` cutoff so next cycle's
+        warning for the same subscription isn't suppressed.
+        """
+        import datanika.services.charge_notification_hooks as m
+
+        captured: dict = {}
+
+        def spy(session, **kw):
+            captured.update(kw)
+            return None
+
+        monkeypatch.setattr(m, "_existing_notification", spy)
+        _on_charge_incoming(org_id=42, subscription_id=7, amount_cents=1500)
+
+        assert "since" in captured
+        assert captured["since"] is not None
+
+    def test_charge_issued_uses_unbounded_dedup(self, fake_session_context, fake_svc, monkeypatch):
+        """``charge_issued`` dedups by charge_id alone — no window. A charge
+        row is globally unique; any prior notification is a replay.
+        """
+        import datanika.services.charge_notification_hooks as m
+
+        captured: dict = {}
+
+        def spy(session, **kw):
+            captured.update(kw)
+            return None
+
+        monkeypatch.setattr(m, "_existing_notification", spy)
+        _on_charge_issued(org_id=42, subscription_id=7, charge_id=99, amount_cents=2500)
+
+        assert captured.get("since") is None

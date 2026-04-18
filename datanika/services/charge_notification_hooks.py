@@ -17,17 +17,26 @@ plugin loaded, these events never emit and the module is inert.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika import hooks
-from datanika.models.notification import NotificationType
+from datanika.models.notification import Notification, NotificationType
 from datanika.services.in_app_notification_service import InAppNotificationService
 from datanika.ui.state.base_state import get_sync_session
 
 logger = logging.getLogger(__name__)
 
 _svc = InAppNotificationService()
+
+# How far back to look when checking for duplicates on ``charge_incoming``.
+# Longer than the longest plausible billing cycle (31d) so any prior
+# notification within the current cycle is caught. ``charge_issued`` and
+# ``charge_failed`` are deduped by the unique ``charge_id`` instead, no
+# window needed — one notification per charge row, ever.
+_INCOMING_DEDUP_WINDOW = timedelta(days=35)
 
 
 def _format_money(amount_cents: int, currency: str = "USD") -> str:
@@ -40,6 +49,38 @@ def _dispatch(session: Session, org_id: int, event: str, payload: dict) -> None:
     from datanika.services.notification_service import NotificationService
 
     NotificationService().notify(session, org_id, event, payload)
+
+
+def _existing_notification(
+    session: Session,
+    *,
+    org_id: int,
+    notif_type: NotificationType,
+    resource_type: str,
+    resource_id: int,
+    since: datetime | None = None,
+) -> Notification | None:
+    """Return the most recent matching Notification, if any.
+
+    ``since`` bounds the lookup window. For ``charge_issued`` / ``charge_failed``
+    pass ``None`` — the resource_id (Paddle charge id) uniquely identifies
+    the charge row, so a match at any time means we've already notified.
+
+    For ``charge_incoming``, pass a recent cutoff so we catch retries within
+    the same cycle without blocking next cycle's warning for the same
+    subscription.
+    """
+    stmt = select(Notification).where(
+        Notification.org_id == org_id,
+        Notification.type == notif_type,
+        Notification.resource_type == resource_type,
+        Notification.resource_id == resource_id,
+        Notification.deleted_at.is_(None),
+    )
+    if since is not None:
+        stmt = stmt.where(Notification.created_at >= since)
+    stmt = stmt.order_by(Notification.created_at.desc()).limit(1)
+    return session.execute(stmt).scalar_one_or_none()
 
 
 def _with_session(fn):
@@ -79,6 +120,27 @@ def _on_charge_incoming(
     metric: str = "bytes_processed",
     **_kw,
 ) -> None:
+    # Belt-and-suspenders dedup — the cloud's ``UsageLedger.charge_incoming_sent``
+    # latch is the primary guard, but a Celery retry after a transient DB error
+    # inside this hook (commit fails, row rolls back, latch stays False) would
+    # re-fire emit on the next scheduler tick. A recent-window query catches it.
+    # See ``datanika-cloud/docs/billing_contract.md § Notification dedup``.
+    cutoff = datetime.now(UTC) - _INCOMING_DEDUP_WINDOW
+    if _existing_notification(
+        session,
+        org_id=org_id,
+        notif_type=NotificationType.CHARGE_INCOMING,
+        resource_type="subscription",
+        resource_id=subscription_id,
+        since=cutoff,
+    ):
+        logger.info(
+            "charge_incoming dedup hit for org=%d subscription_id=%d — skipping",
+            org_id,
+            subscription_id,
+        )
+        return
+
     title = f"Upcoming overage charge: {_format_money(amount_cents, currency)}"
     message = (
         f"Your usage this cycle will add {_format_money(amount_cents, currency)} "
@@ -117,6 +179,23 @@ def _on_charge_issued(
     metric: str = "bytes_processed",
     **_kw,
 ) -> None:
+    # ``charge_id`` uniquely identifies the charge row on the cloud side
+    # (unique ``idempotency_key``), so any existing notification for this
+    # charge_id is a duplicate — no time window needed.
+    if _existing_notification(
+        session,
+        org_id=org_id,
+        notif_type=NotificationType.CHARGE_ISSUED,
+        resource_type="charge",
+        resource_id=charge_id,
+    ):
+        logger.info(
+            "charge_issued dedup hit for org=%d charge_id=%d — skipping",
+            org_id,
+            charge_id,
+        )
+        return
+
     title = f"Overage charge: {_format_money(amount_cents, currency)}"
     message = (
         f"A one-off charge of {_format_money(amount_cents, currency)} "
@@ -158,6 +237,23 @@ def _on_charge_failed(
     last_error: str = "",
     **_kw,
 ) -> None:
+    # Dedup by charge_id — same as charge_issued. A given charge row can
+    # only terminate in FAILED once, so any existing row with the same
+    # charge_id is a replay.
+    if _existing_notification(
+        session,
+        org_id=org_id,
+        notif_type=NotificationType.CHARGE_FAILED,
+        resource_type="charge",
+        resource_id=charge_id,
+    ):
+        logger.info(
+            "charge_failed dedup hit for org=%d charge_id=%d — skipping",
+            org_id,
+            charge_id,
+        )
+        return
+
     title = "Overage charge failed — action needed"
     message = (
         f"We couldn't collect {_format_money(amount_cents, currency)} for this cycle "

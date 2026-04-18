@@ -23,6 +23,17 @@ _KEYS_FOR_SCANNER = (
     _t["notifications.quota_warning.metric.schedules"],
     _t["notifications.quota_warning.metric.seats"],
     _t["notifications.quota_exceeded.title"],
+    # V2 P5 Option B — cycle-boundary charge notifications (core#249).
+    # Used as fallback copy when the stored title/message is empty; the
+    # hook stores English by default (cloud emit, no locale context),
+    # but ``NotificationCenterState`` can swap to the localized body via
+    # the type registry when rendering the bell / notifications page.
+    _t["notifications.charge_incoming.title"],
+    _t["notifications.charge_incoming.body"],
+    _t["notifications.charge_issued.title"],
+    _t["notifications.charge_issued.body"],
+    _t["notifications.charge_failed.title"],
+    _t["notifications.charge_failed.body"],
     _t["notifications.dismiss"],
     _t["notifications.view_run"],
 )

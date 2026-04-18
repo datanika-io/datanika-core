@@ -92,6 +92,28 @@ async def _body(request: Request) -> dict:
         return {}
 
 
+def _body_sync(request: Request) -> dict:
+    """Sync equivalent of ``_body`` for sync (``def``) handlers under E12.
+
+    Relies on ``api_middleware`` pre-consuming the body before dispatch
+    (``await request.body()`` on POST/PUT/PATCH), so the bytes are already
+    cached on ``request._body``. Reading the cached attribute is a pure
+    attribute access — no loop needed.
+    """
+    raw = getattr(request, "_body", b"") or b""
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _raw_body_sync(request: Request) -> bytes:
+    """Sync raw-body reader for handlers that parse non-JSON payloads (YAML)."""
+    return getattr(request, "_body", b"") or b""
+
+
 # ---------------------------------------------------------------------------
 # Serializers
 # ---------------------------------------------------------------------------
@@ -224,7 +246,7 @@ def list_connections(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:read")
-async def get_connection(request, api_key, session):
+def get_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
     conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
     if conn is None:
@@ -233,8 +255,8 @@ async def get_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:write")
-async def create_connection(request, api_key, session):
-    data = await _body(request)
+def create_connection(request, api_key, session):
+    data = _body_sync(request)
     name = data.get("name")
     ct = data.get("connection_type")
     config = data.get("config")
@@ -254,9 +276,9 @@ async def create_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:write")
-async def update_connection(request, api_key, session):
+def update_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     if "name" in data:
         kwargs["name"] = data["name"]
@@ -277,7 +299,7 @@ async def update_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:write")
-async def delete_connection(request, api_key, session):
+def delete_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
     if not _get_conn_svc().delete_connection(session, api_key.org_id, conn_id):
         return _error(404, "Connection not found")
@@ -285,7 +307,7 @@ async def delete_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:write")
-async def test_connection(request, api_key, session):
+def test_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
     config = _get_conn_svc().get_connection_config(session, api_key.org_id, conn_id)
     if config is None:
@@ -305,13 +327,13 @@ def _load_conn_and_config(session, api_key, conn_id):
 
 
 @api_endpoint(required_scope="connections:read")
-async def introspect_connection(request, api_key, session):
+def introspect_connection(request, api_key, session):
     """List schemas/tables (and optionally columns) of a source connection."""
     conn_id = int(request.path_params["id"])
     conn, config, err = _load_conn_and_config(session, api_key, conn_id)
     if err is not None:
         return err
-    data = await _body(request)
+    data = _body_sync(request)
     schema = data.get("schema")
     try:
         tables = ConnectionService.list_tables(config, conn.connection_type, schema=schema)
@@ -324,13 +346,13 @@ async def introspect_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:read")
-async def list_connection_columns(request, api_key, session):
+def list_connection_columns(request, api_key, session):
     """List columns of a single table."""
     conn_id = int(request.path_params["id"])
     conn, config, err = _load_conn_and_config(session, api_key, conn_id)
     if err is not None:
         return err
-    data = await _body(request)
+    data = _body_sync(request)
     table = data.get("table")
     if not table:
         return _error(400, "table is required")
@@ -348,13 +370,13 @@ async def list_connection_columns(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:read")
-async def preview_connection(request, api_key, session):
+def preview_connection(request, api_key, session):
     """Return the first N rows of a table."""
     conn_id = int(request.path_params["id"])
     conn, config, err = _load_conn_and_config(session, api_key, conn_id)
     if err is not None:
         return err
-    data = await _body(request)
+    data = _body_sync(request)
     table = data.get("table")
     if not table:
         return _error(400, "table is required")
@@ -373,13 +395,13 @@ async def preview_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="connections:read")
-async def query_connection(request, api_key, session):
+def query_connection(request, api_key, session):
     """Execute a read-only SQL query against a SQL source connection."""
     conn_id = int(request.path_params["id"])
     conn, config, err = _load_conn_and_config(session, api_key, conn_id)
     if err is not None:
         return err
-    data = await _body(request)
+    data = _body_sync(request)
     query = data.get("query")
     if not query:
         return _error(400, "query is required")
@@ -401,13 +423,13 @@ async def query_connection(request, api_key, session):
 
 
 @api_endpoint(required_scope="uploads:read")
-async def list_uploads(request, api_key, session):
+def list_uploads(request, api_key, session):
     items = _get_upload_svc().list_uploads(session, api_key.org_id)
     return JSONResponse({"items": [_ser_upload(u) for u in items]})
 
 
 @api_endpoint(required_scope="uploads:read")
-async def get_upload(request, api_key, session):
+def get_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
     upload = _get_upload_svc().get_upload(session, api_key.org_id, upload_id)
     if upload is None:
@@ -416,8 +438,8 @@ async def get_upload(request, api_key, session):
 
 
 @api_endpoint(required_scope="uploads:write")
-async def create_upload(request, api_key, session):
-    data = await _body(request)
+def create_upload(request, api_key, session):
+    data = _body_sync(request)
     required = ("name", "source_connection_id", "destination_connection_id")
     if not all(data.get(k) for k in required):
         return _error(400, f"{', '.join(required)} are required")
@@ -437,9 +459,9 @@ async def create_upload(request, api_key, session):
 
 
 @api_endpoint(required_scope="uploads:write")
-async def update_upload(request, api_key, session):
+def update_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     for key in ("name", "description", "dlt_config"):
         if key in data:
@@ -454,7 +476,7 @@ async def update_upload(request, api_key, session):
 
 
 @api_endpoint(required_scope="uploads:write")
-async def delete_upload(request, api_key, session):
+def delete_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
     if not _get_upload_svc().delete_upload(session, api_key.org_id, upload_id):
         return _error(404, "Upload not found")
@@ -510,13 +532,13 @@ async def trigger_upload(request, api_key, session):
 
 
 @api_endpoint(required_scope="pipelines:read")
-async def list_pipelines(request, api_key, session):
+def list_pipelines(request, api_key, session):
     items = _pipeline_svc.list_pipelines(session, api_key.org_id)
     return JSONResponse({"items": [_ser_pipeline(p) for p in items]})
 
 
 @api_endpoint(required_scope="pipelines:read")
-async def get_pipeline(request, api_key, session):
+def get_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
     pipeline = _pipeline_svc.get_pipeline(session, api_key.org_id, pipeline_id)
     if pipeline is None:
@@ -525,8 +547,8 @@ async def get_pipeline(request, api_key, session):
 
 
 @api_endpoint(required_scope="pipelines:write")
-async def create_pipeline(request, api_key, session):
-    data = await _body(request)
+def create_pipeline(request, api_key, session):
+    data = _body_sync(request)
     if not data.get("name") or not data.get("destination_connection_id"):
         return _error(400, "name and destination_connection_id are required")
     command = DbtCommand.RUN
@@ -553,9 +575,9 @@ async def create_pipeline(request, api_key, session):
 
 
 @api_endpoint(required_scope="pipelines:write")
-async def update_pipeline(request, api_key, session):
+def update_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     for key in ("name", "description", "full_refresh", "models", "custom_selector"):
         if key in data:
@@ -577,7 +599,7 @@ async def update_pipeline(request, api_key, session):
 
 
 @api_endpoint(required_scope="pipelines:write")
-async def delete_pipeline(request, api_key, session):
+def delete_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
     if not _pipeline_svc.delete_pipeline(session, api_key.org_id, pipeline_id):
         return _error(404, "Pipeline not found")
@@ -604,13 +626,13 @@ async def trigger_pipeline(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:read")
-async def list_transformations(request, api_key, session):
+def list_transformations(request, api_key, session):
     items = _transform_svc.list_transformations(session, api_key.org_id)
     return JSONResponse({"items": [_ser_transformation(t) for t in items]})
 
 
 @api_endpoint(required_scope="transformations:read")
-async def get_transformation(request, api_key, session):
+def get_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
     t = _transform_svc.get_transformation(session, api_key.org_id, tid)
     if t is None:
@@ -619,8 +641,8 @@ async def get_transformation(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:write")
-async def create_transformation(request, api_key, session):
-    data = await _body(request)
+def create_transformation(request, api_key, session):
+    data = _body_sync(request)
     if not data.get("name") or not data.get("sql_body"):
         return _error(400, "name and sql_body are required")
     mat = Materialization.VIEW
@@ -653,9 +675,9 @@ async def create_transformation(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:write")
-async def update_transformation(request, api_key, session):
+def update_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     for key in (
         "name",
@@ -687,7 +709,7 @@ async def update_transformation(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:write")
-async def delete_transformation(request, api_key, session):
+def delete_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
     if not _transform_svc.delete_transformation(session, api_key.org_id, tid):
         return _error(404, "Transformation not found")
@@ -749,7 +771,7 @@ def compile_transformation_endpoint(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:read")
-async def preview_transformation_endpoint(request, api_key, session):
+def preview_transformation_endpoint(request, api_key, session):
     """POST /api/v1/transformations/{id}/preview — compile + execute.
 
     Body: ``{"limit"?: int}`` (default 100, max 1000).
@@ -766,7 +788,7 @@ async def preview_transformation_endpoint(request, api_key, session):
     )
 
     tid = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     limit = data.get("limit", DEFAULT_PREVIEW_LIMIT)
     if not isinstance(limit, int):
         try:
@@ -804,13 +826,13 @@ async def preview_transformation_endpoint(request, api_key, session):
 
 
 @api_endpoint(required_scope="schedules:read")
-async def list_schedules(request, api_key, session):
+def list_schedules(request, api_key, session):
     items = _get_schedule_svc().list_schedules(session, api_key.org_id)
     return JSONResponse({"items": [_ser_schedule(s) for s in items]})
 
 
 @api_endpoint(required_scope="schedules:read")
-async def get_schedule(request, api_key, session):
+def get_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
     s = _get_schedule_svc().get_schedule(session, api_key.org_id, sid)
     if s is None:
@@ -819,8 +841,8 @@ async def get_schedule(request, api_key, session):
 
 
 @api_endpoint(required_scope="schedules:write")
-async def create_schedule(request, api_key, session):
-    data = await _body(request)
+def create_schedule(request, api_key, session):
+    data = _body_sync(request)
     if not data.get("target_type") or not data.get("target_id") or not data.get("cron_expression"):
         return _error(400, "target_type, target_id, and cron_expression are required")
     try:
@@ -843,9 +865,9 @@ async def create_schedule(request, api_key, session):
 
 
 @api_endpoint(required_scope="schedules:write")
-async def update_schedule(request, api_key, session):
+def update_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     for key in ("cron_expression", "timezone", "is_active"):
         if key in data:
@@ -860,7 +882,7 @@ async def update_schedule(request, api_key, session):
 
 
 @api_endpoint(required_scope="schedules:write")
-async def delete_schedule(request, api_key, session):
+def delete_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
     if not _get_schedule_svc().delete_schedule(session, api_key.org_id, sid):
         return _error(404, "Schedule not found")
@@ -899,7 +921,7 @@ def list_runs(request, api_key, session):
 
 
 @api_endpoint(required_scope="runs:read")
-async def get_run(request, api_key, session):
+def get_run(request, api_key, session):
     run_id = int(request.path_params["id"])
     run = _exec_svc.get_run(session, api_key.org_id, run_id)
     if run is None:
@@ -908,7 +930,7 @@ async def get_run(request, api_key, session):
 
 
 @api_endpoint(required_scope="runs:read")
-async def get_run_logs(request, api_key, session):
+def get_run_logs(request, api_key, session):
     run_id = int(request.path_params["id"])
     run = _exec_svc.get_run(session, api_key.org_id, run_id)
     if run is None:
@@ -917,7 +939,7 @@ async def get_run_logs(request, api_key, session):
 
 
 @api_endpoint(required_scope="runs:write")
-async def cancel_run(request, api_key, session):
+def cancel_run(request, api_key, session):
     """POST /api/v1/runs/{id}/cancel — cancel a pending or running run."""
     run_id = int(request.path_params["id"])
     run = _exec_svc.get_run(session, api_key.org_id, run_id)
@@ -941,7 +963,7 @@ async def cancel_run(request, api_key, session):
 
 
 @api_endpoint(required_scope="catalog:read")
-async def list_catalog_entries(request, api_key, session):
+def list_catalog_entries(request, api_key, session):
     """List catalog entries for the org. Optional filters: entry_type,
     schema, connection_id."""
     entry_type_str = request.query_params.get("entry_type")
@@ -970,7 +992,7 @@ async def list_catalog_entries(request, api_key, session):
 
 
 @api_endpoint(required_scope="catalog:read")
-async def get_catalog_entry(request, api_key, session):
+def get_catalog_entry(request, api_key, session):
     entry_id = int(request.path_params["id"])
     entry = CatalogService.get_entry(session, api_key.org_id, entry_id)
     if entry is None:
@@ -1042,7 +1064,7 @@ def get_unread_count(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def mark_notification_read(request, api_key, session):
+def mark_notification_read(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
@@ -1053,7 +1075,7 @@ async def mark_notification_read(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def mark_all_notifications_read(request, api_key, session):
+def mark_all_notifications_read(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     count = InAppNotificationService.mark_all_read(
@@ -1065,7 +1087,7 @@ async def mark_all_notifications_read(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def dismiss_notification(request, api_key, session):
+def dismiss_notification(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
@@ -1080,13 +1102,13 @@ async def dismiss_notification(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:read")
-async def list_notification_channels(request, api_key, session):
+def list_notification_channels(request, api_key, session):
     items = _notif_svc.list_channels(session, api_key.org_id)
     return JSONResponse({"items": [_ser_channel(ch) for ch in items]})
 
 
 @api_endpoint(required_scope="notifications:read")
-async def get_notification_channel(request, api_key, session):
+def get_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
     ch = _notif_svc._get_channel(session, cid, api_key.org_id)
     if ch is None:
@@ -1095,8 +1117,8 @@ async def get_notification_channel(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def create_notification_channel(request, api_key, session):
-    data = await _body(request)
+def create_notification_channel(request, api_key, session):
+    data = _body_sync(request)
     if not data.get("name") or not data.get("channel_type"):
         return _error(400, "name and channel_type are required")
     try:
@@ -1118,9 +1140,9 @@ async def create_notification_channel(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def update_notification_channel(request, api_key, session):
+def update_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
-    data = await _body(request)
+    data = _body_sync(request)
     kwargs = {}
     for key in ("name", "config", "events", "is_active"):
         if key in data:
@@ -1135,7 +1157,7 @@ async def update_notification_channel(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:write")
-async def delete_notification_channel(request, api_key, session):
+def delete_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
     if not _notif_svc.delete_channel(session, cid, api_key.org_id):
         return _error(404, "Notification channel not found")
@@ -1393,14 +1415,14 @@ def _execute_validated_import(session, org_id: int, data: dict) -> dict[str, lis
 
 
 @api_endpoint(required_scope=None)
-async def bulk_import(request, api_key, session):
+def bulk_import(request, api_key, session):
     """POST /api/v1/import — create connections, uploads, pipelines,
     and transformations from a single JSON payload.
 
     Validates the entire payload first; if any errors are found, nothing
     is created (atomic). Uses the same JSON v2 format as AI_IMPORT_GUIDE.md.
     """
-    data = await _body(request)
+    data = _body_sync(request)
 
     # --- version check ---
     version = data.get("version")
@@ -1419,7 +1441,7 @@ async def bulk_import(request, api_key, session):
 
 
 @api_endpoint(required_scope=None)
-async def bulk_import_yaml(request, api_key, session):
+def bulk_import_yaml(request, api_key, session):
     """POST /api/v1/pipelines/yaml — YAML-formatted alternative to /api/v1/import.
 
     Accepts the same ``version: 2`` schema as the JSON endpoint, just
@@ -1454,7 +1476,7 @@ async def bulk_import_yaml(request, api_key, session):
     """
     from datanika.services._yaml_import import YamlImportError, parse_yaml_import
 
-    raw = await request.body()
+    raw = _raw_body_sync(request)
 
     try:
         data = parse_yaml_import(raw)

@@ -1,0 +1,86 @@
+name: Build & push image
+
+# Builds the combined core+cloud Docker image on GHA and pushes to
+# ghcr.io/datanika-io/datanika-core. Downstream deploys pull this image
+# instead of building on the Hetzner host (saves ~2 GB RAM + ~30s CPU
+# spike on every deploy, which landed on live users under Granian).
+#
+# Phase 1: builds + pushes only. Deploy jobs still build on Hetzner.
+# Phase 2 (separate PR): flip deploy jobs to `docker compose pull`.
+#
+# Tagging:
+#   push to dev    → :dev and :dev-<short-sha>
+#   push to master → :latest and :<short-sha>
+
+on:
+  push:
+    branches: [dev, master]
+  workflow_dispatch:
+  # No paths filter: deploy jobs wait on the build-push check completing
+  # on the exact commit SHA, so every push to dev/master MUST produce
+  # an image (even if only docker-compose.yml or ci.yml changed).
+  # The gha cache keeps unchanged-source rebuilds to ~30-60s.
+
+concurrency:
+  group: build-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout core (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: core
+
+      - name: Checkout cloud (private)
+        uses: actions/checkout@v6
+        with:
+          repository: datanika-io/datanika-cloud
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          ref: ${{ github.ref_name }}
+          path: cloud
+
+      # Dockerfile assumes monorepo layout with datanika/ + datanika-cloud/
+      # at the root. Reshape checkout paths to match.
+      - name: Reshape build context
+        run: |
+          mkdir -p build-context
+          mv core build-context/datanika
+          mv cloud build-context/datanika-cloud
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: tags
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          if [ "${GITHUB_REF_NAME}" = "master" ]; then
+            TAGS="ghcr.io/datanika-io/datanika-core:latest,ghcr.io/datanika-io/datanika-core:${SHORT_SHA}"
+          else
+            TAGS="ghcr.io/datanika-io/datanika-core:dev,ghcr.io/datanika-io/datanika-core:dev-${SHORT_SHA}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Computed tags: ${TAGS}"
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: build-context
+          file: build-context/datanika/Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64

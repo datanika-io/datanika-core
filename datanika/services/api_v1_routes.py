@@ -218,7 +218,7 @@ def _ser_catalog_entry(e):
 
 
 @api_endpoint(required_scope="connections:read")
-async def list_connections(request, api_key, session):
+def list_connections(request, api_key, session):
     items = _get_conn_svc().list_connections(session, api_key.org_id)
     return JSONResponse({"items": [_ser_connection(c) for c in items]})
 
@@ -709,7 +709,7 @@ async def trigger_transformation(request, api_key, session):
 
 
 @api_endpoint(required_scope="transformations:read")
-async def compile_transformation_endpoint(request, api_key, session):
+def compile_transformation_endpoint(request, api_key, session):
     """POST /api/v1/transformations/{id}/compile — dbt compile only.
 
     Agent uses this to validate Jinja + ref/source resolution before
@@ -873,7 +873,7 @@ async def delete_schedule(request, api_key, session):
 
 
 @api_endpoint(required_scope="runs:read")
-async def list_runs(request, api_key, session):
+def list_runs(request, api_key, session):
     target_type = request.query_params.get("target_type")
     target_id = request.query_params.get("target_id")
     status = request.query_params.get("status")
@@ -997,7 +997,7 @@ def _ser_notification(n):
 
 
 @api_endpoint(required_scope="notifications:read")
-async def list_in_app_notifications(request, api_key, session):
+def list_in_app_notifications(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     unread_only = request.query_params.get("unread_only", "").lower() in ("true", "1")
@@ -1030,7 +1030,7 @@ async def list_in_app_notifications(request, api_key, session):
 
 
 @api_endpoint(required_scope="notifications:read")
-async def get_unread_count(request, api_key, session):
+def get_unread_count(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     count = InAppNotificationService.unread_count(

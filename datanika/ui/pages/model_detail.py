@@ -379,6 +379,98 @@ def editable_columns_section() -> rx.Component:
     )
 
 
+def _preview_header_cell(name: rx.Var[str]) -> rx.Component:
+    return rx.table.column_header_cell(rx.code(name, size="1"))
+
+
+def _preview_cell(value: rx.Var[str]) -> rx.Component:
+    return rx.table.cell(
+        rx.text(value, size="1", style={"white_space": "nowrap"}),
+        style={"max_width": "320px", "overflow": "hidden", "text_overflow": "ellipsis"},
+    )
+
+
+def _preview_row(row: rx.Var[list]) -> rx.Component:
+    return rx.table.row(rx.foreach(row, _preview_cell))
+
+
+def preview_section() -> rx.Component:
+    """Data preview — first N rows of the underlying destination table.
+
+    Kept below the schema/tests sections so the catalog's primary
+    editable surface stays above the fold. The button is hidden when
+    ``can_preview`` is false (no destination connection).
+    """
+    return rx.vstack(
+        rx.hstack(
+            rx.text(_t["model_detail.preview.heading"], size="3", weight="bold"),
+            rx.spacer(),
+            rx.cond(
+                ModelDetailState.preview_loaded & (ModelDetailState.preview_error == ""),
+                rx.text(
+                    _t["model_detail.preview.row_count_prefix"]
+                    + " "
+                    + ModelDetailState.preview_rows.length().to(str),
+                    size="1",
+                    color="var(--slate-10)",
+                ),
+                rx.fragment(),
+            ),
+            align="center",
+            width="100%",
+        ),
+        rx.cond(
+            ~ModelDetailState.preview_loaded,
+            rx.button(
+                rx.cond(
+                    ModelDetailState.preview_loading,
+                    rx.spinner(size="1"),
+                    rx.icon("eye", size=14),
+                ),
+                " ",
+                _t["model_detail.preview.load_button"],
+                on_click=ModelDetailState.load_preview,
+                disabled=ModelDetailState.preview_loading,
+                size="2",
+                variant="outline",
+            ),
+            rx.cond(
+                ModelDetailState.preview_error != "",
+                rx.callout(
+                    ModelDetailState.preview_error,
+                    icon="triangle-alert",
+                    color_scheme="red",
+                    size="1",
+                ),
+                rx.cond(
+                    ModelDetailState.preview_rows.length() == 0,
+                    rx.text(_t["model_detail.preview.empty"], size="1", color="var(--slate-10)"),
+                    rx.box(
+                        rx.table.root(
+                            rx.table.header(
+                                rx.table.row(
+                                    rx.foreach(
+                                        ModelDetailState.preview_columns,
+                                        _preview_header_cell,
+                                    ),
+                                ),
+                            ),
+                            rx.table.body(
+                                rx.foreach(ModelDetailState.preview_rows, _preview_row),
+                            ),
+                            variant="surface",
+                            size="1",
+                        ),
+                        style={"overflow_x": "auto", "max_width": "100%"},
+                    ),
+                ),
+            ),
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def actions_section() -> rx.Component:
     return rx.hstack(
         rx.button(
@@ -413,6 +505,8 @@ def model_detail_page() -> rx.Component:
             tags_section(),
             config_section(),
             editable_columns_section(),
+            rx.separator(),
+            preview_section(),
             rx.separator(),
             actions_section(),
             spacing="5",

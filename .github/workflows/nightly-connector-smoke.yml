@@ -1,0 +1,87 @@
+name: Nightly Connector Smoke
+
+# Lightweight live-API probe against every paid connector sandbox with
+# provisioned credentials. See tests/test_connector_smoke/ for the checks
+# and PLAN_QA.md §P1 Connector Smoke Matrix for the rationale.
+#
+# Fails loud (Telegram) when a vendor API change, credential rotation,
+# or account expiry would silently break Datanika's connector code.
+
+on:
+  schedule:
+    # 03:00 UTC daily — off-peak in EU, US, and APAC. Vendor APIs are
+    # least likely to be under maintenance windows at this time.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: nightly-connector-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          uv pip install -e ".[dev]" --system
+          # Connector-specific libs not in core deps
+          uv pip install --system "google-cloud-bigquery>=3.0" "kafka-python>=2.0"
+
+      - name: Materialize connector credentials
+        env:
+          # Aggregate base64'd env file — set in GitHub secrets from
+          # secrets/qa-connectors.env on the dev host. Rotate bundle
+          # whenever any individual cred rotates.
+          QA_CONNECTOR_CREDENTIALS: ${{ secrets.QA_CONNECTOR_CREDENTIALS }}
+          QA_BIGQUERY_SA_JSON: ${{ secrets.QA_BIGQUERY_SA_JSON }}
+        run: |
+          if [ -z "$QA_CONNECTOR_CREDENTIALS" ]; then
+            echo "::error::QA_CONNECTOR_CREDENTIALS secret is not set — nothing to test"
+            exit 1
+          fi
+          mkdir -p secrets
+          # Decode env file and export every KEY=VALUE pair into $GITHUB_ENV
+          printf '%s' "$QA_CONNECTOR_CREDENTIALS" | base64 -d > /tmp/creds.env
+          while IFS= read -r line; do
+            # Skip comments + blanks
+            case "$line" in ''|\#*) continue ;; esac
+            echo "$line" >> "$GITHUB_ENV"
+          done < /tmp/creds.env
+          rm /tmp/creds.env
+
+          # BigQuery service-account JSON is a separate secret (multi-line
+          # JSON doesn't fit cleanly in the aggregate env file).
+          if [ -n "$QA_BIGQUERY_SA_JSON" ]; then
+            printf '%s' "$QA_BIGQUERY_SA_JSON" > secrets/qa-bigquery-sa.json
+            chmod 600 secrets/qa-bigquery-sa.json
+          fi
+
+      - name: Run connector smoke tests
+        id: smoke
+        env:
+          DATANIKA_CONNECTOR_SMOKE: "1"
+        run: pytest tests/test_connector_smoke/ -v --tb=short
+
+      - name: Telegram alert on failure
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          TEXT=$(printf '\xf0\x9f\x94\xa5 *Nightly connector smoke failed*\n\nOne or more paid-connector sandboxes failed auth + metadata probe.\n\n*Triage*: open the run link, look for the first FAILED test. Likely causes (in order of frequency):\n- Credential rotated / expired (Stripe, HubSpot PATs rotate silently)\n- Sandbox/trial expired (Databricks 14-day trial)\n- Vendor API shape changed (rare but catches it early)\n\n*Run*: %s\n\nSee PLAN_HUMAN_LOCKERS.md §"QA test credentials" for how to reprovision.' "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"

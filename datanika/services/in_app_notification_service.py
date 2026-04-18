@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from datanika.models.notification import Notification, NotificationType
+from datanika.services import notification_unread_cache
 
 
 class InAppNotificationService:
@@ -38,6 +39,11 @@ class InAppNotificationService:
         )
         session.add(notif)
         session.flush()
+        # A new unread row invalidates every user's count in the org: if
+        # user_id is set, only that user is affected; if None, the row
+        # is org-wide and every user's count goes up. We conservatively
+        # drop all — orgs are small, SCAN+DEL is cheap.
+        notification_unread_cache.invalidate_org(org_id)
         return notif
 
     @staticmethod
@@ -67,6 +73,9 @@ class InAppNotificationService:
 
     @staticmethod
     def unread_count(session: Session, org_id: int, user_id: int) -> int:
+        cached = notification_unread_cache.get(org_id, user_id)
+        if cached is not None:
+            return cached
         stmt = (
             select(func.count())
             .select_from(Notification)
@@ -77,7 +86,9 @@ class InAppNotificationService:
                 (Notification.user_id == user_id) | (Notification.user_id.is_(None)),
             )
         )
-        return session.execute(stmt).scalar_one()
+        count = session.execute(stmt).scalar_one()
+        notification_unread_cache.set(org_id, user_id, count)
+        return count
 
     @staticmethod
     def mark_read(session: Session, notification_id: int, org_id: int) -> Notification | None:
@@ -89,8 +100,13 @@ class InAppNotificationService:
         notif = session.execute(stmt).scalar_one_or_none()
         if notif is None:
             return None
+        was_unread = notif.read_at is None
         notif.read_at = datetime.now(UTC)
         session.flush()
+        if was_unread:
+            # The row may be user-specific or org-wide; either way, the
+            # unread count for at least one user dropped. Invalidate org.
+            notification_unread_cache.invalidate_org(org_id)
         return notif
 
     @staticmethod
@@ -106,6 +122,14 @@ class InAppNotificationService:
         for n in notifications:
             n.read_at = now
         session.flush()
+        # The mark_all set may include org-wide rows (user_id=None) whose
+        # read_at transition affects every user's count, not just this
+        # user's. Conservative: invalidate the whole org.
+        has_org_wide = any(n.user_id is None for n in notifications)
+        if has_org_wide:
+            notification_unread_cache.invalidate_org(org_id)
+        else:
+            notification_unread_cache.invalidate_user(org_id, user_id)
         return len(notifications)
 
     @staticmethod
@@ -118,8 +142,11 @@ class InAppNotificationService:
         notif = session.execute(stmt).scalar_one_or_none()
         if notif is None:
             return False
+        was_unread = notif.read_at is None
         notif.deleted_at = datetime.now(UTC)
         session.flush()
+        if was_unread:
+            notification_unread_cache.invalidate_org(org_id)
         return True
 
     @staticmethod

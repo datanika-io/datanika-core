@@ -13,6 +13,10 @@ class NotificationType(enum.StrEnum):
     RUN_SUCCEEDED = "run_succeeded"
     QUOTA_WARNING = "quota_warning"
     QUOTA_EXCEEDED = "quota_exceeded"
+    # V2 P5 Option B — cycle-boundary overage billing (core#249)
+    CHARGE_INCOMING = "charge_incoming"
+    CHARGE_ISSUED = "charge_issued"
+    CHARGE_FAILED = "charge_failed"
 
 
 class Notification(Base, TenantMixin, TimestampMixin):

@@ -427,6 +427,12 @@
   "notifications.quota_warning.metric.schedules": "الجداول",
   "notifications.quota_warning.metric.seats": "المقاعد",
   "notifications.quota_exceeded.title": "تجاوز الحصة",
+  "notifications.charge_incoming.title": "رسوم تجاوز قادمة",
+  "notifications.charge_incoming.body": "استخدامك في هذه الدورة سيضيف رسوم تجاوز إلى فاتورتك التالية. يتم تحصيل الرسوم عند إغلاق الدورة.",
+  "notifications.charge_issued.title": "تم إصدار رسوم التجاوز",
+  "notifications.charge_issued.body": "تمت إضافة رسوم تجاوز إلى اشتراكك عن استخدام هذه الدورة.",
+  "notifications.charge_failed.title": "فشلت رسوم التجاوز — مطلوب إجراء",
+  "notifications.charge_failed.body": "لم نتمكن من تحصيل رسوم التجاوز لهذه الدورة. يرجى التحقق من طريقة الدفع أو الاتصال بالدعم.",
   "notifications.dismiss": "تجاهل",
   "notifications.view_run": "عرض التشغيل",
   "templates.heading": "قوالب خطوط الأنابيب",
@@ -490,5 +496,10 @@
   "billing.overage_cost": "تُطبق رسوم الزيادة.",
   "billing.projected_total": "الإجمالي المتوقع",
   "billing.no_overage": "لا يوجد تجاوز.",
-  "billing.close": "إغلاق"
+  "billing.close": "إغلاق",
+  "billing.cycle.closes_on": "تُغلق الدورة في",
+  "billing.cycle.closes_in_days": "تُغلق الدورة خلال",
+  "billing.cycle.closes_today": "تُغلق الدورة اليوم",
+  "billing.projected_overage.heading": "التجاوز المتوقع",
+  "billing.projected_overage.see_notification": "يُرسل المبلغ المتوقع عبر الإشعارات قبل 24 ساعة من إغلاق الدورة."
 }

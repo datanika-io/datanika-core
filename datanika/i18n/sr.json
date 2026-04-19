@@ -427,6 +427,12 @@
   "notifications.quota_warning.metric.schedules": "распореди",
   "notifications.quota_warning.metric.seats": "места",
   "notifications.quota_exceeded.title": "Квота прекорачена",
+  "notifications.charge_incoming.title": "Надолазећа накнада за прекорачење",
+  "notifications.charge_incoming.body": "Ваша потрошња у овом периоду додаће накнаду за прекорачење на следећи рачун. Наплата се врши на крају периода.",
+  "notifications.charge_issued.title": "Накнада за прекорачење издата",
+  "notifications.charge_issued.body": "На вашу претплату је додата накнада за прекорачење за потрошњу у овом периоду.",
+  "notifications.charge_failed.title": "Накнада за прекорачење није успела — потребна акција",
+  "notifications.charge_failed.body": "Нисмо успели да наплатимо накнаду за прекорачење за овај период. Проверите начин плаћања или контактирајте подршку.",
   "notifications.dismiss": "Одбаци",
   "notifications.view_run": "Прикажи покретање",
   "templates.heading": "Шаблони цевовода",
@@ -490,5 +496,10 @@
   "billing.overage_cost": "Накнаде за прекорачење се примењују.",
   "billing.projected_total": "Пројектовани укупан износ",
   "billing.no_overage": "Без прекорачења.",
-  "billing.close": "Затвори"
+  "billing.close": "Затвори",
+  "billing.cycle.closes_on": "Циклус се затвара",
+  "billing.cycle.closes_in_days": "Циклус се затвара за",
+  "billing.cycle.closes_today": "Циклус се затвара данас",
+  "billing.projected_overage.heading": "Пројектовано прекорачење",
+  "billing.projected_overage.see_notification": "Пројектовани износ се шаље обавештењем 24 сата пре затварања циклуса."
 }

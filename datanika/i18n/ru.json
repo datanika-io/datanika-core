@@ -427,6 +427,12 @@
   "notifications.quota_warning.metric.schedules": "расписания",
   "notifications.quota_warning.metric.seats": "места",
   "notifications.quota_exceeded.title": "Квота превышена",
+  "notifications.charge_incoming.title": "Предстоящая плата за превышение",
+  "notifications.charge_incoming.body": "Использование этого расчётного периода добавит плату за превышение в следующий счёт. Списание произойдёт в конце периода.",
+  "notifications.charge_issued.title": "Плата за превышение выставлена",
+  "notifications.charge_issued.body": "К вашей подписке добавлена плата за превышение за использование в этом расчётном периоде.",
+  "notifications.charge_failed.title": "Плата за превышение не прошла — требуется действие",
+  "notifications.charge_failed.body": "Нам не удалось списать плату за превышение за этот расчётный период. Проверьте способ оплаты или свяжитесь с поддержкой.",
   "notifications.dismiss": "Скрыть",
   "notifications.view_run": "Перейти к запуску",
   "templates.heading": "Шаблоны пайплайнов",
@@ -490,5 +496,10 @@
   "billing.overage_cost": "Плата за превышение по тарифу.",
   "billing.projected_total": "Прогнозируемый итог",
   "billing.no_overage": "Без превышения.",
-  "billing.close": "Закрыть"
+  "billing.close": "Закрыть",
+  "billing.cycle.closes_on": "Период закрывается",
+  "billing.cycle.closes_in_days": "Период закрывается через",
+  "billing.cycle.closes_today": "Период закрывается сегодня",
+  "billing.projected_overage.heading": "Прогнозируемое превышение",
+  "billing.projected_overage.see_notification": "Сумма списания отправляется в уведомлениях за 24 часа до закрытия периода."
 }

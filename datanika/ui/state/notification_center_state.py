@@ -10,6 +10,9 @@ NOTIFICATION_TYPE_ICONS: dict[str, str] = {
     "run_succeeded": "circle-check",
     "quota_warning": "triangle-alert",
     "quota_exceeded": "octagon-alert",
+    "charge_incoming": "banknote",
+    "charge_issued": "receipt",
+    "charge_failed": "octagon-alert",
 }
 
 

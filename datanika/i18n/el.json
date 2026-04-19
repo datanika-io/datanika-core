@@ -427,6 +427,12 @@
   "notifications.quota_warning.metric.schedules": "προγραμματισμοί",
   "notifications.quota_warning.metric.seats": "θέσεις",
   "notifications.quota_exceeded.title": "Υπέρβαση ορίου",
+  "notifications.charge_incoming.title": "Επερχόμενη χρέωση υπέρβασης",
+  "notifications.charge_incoming.body": "Η χρήση σας σε αυτή την περίοδο θα προσθέσει χρέωση υπέρβασης στον επόμενο λογαριασμό. Η χρέωση εκτελείται στο κλείσιμο της περιόδου.",
+  "notifications.charge_issued.title": "Χρέωση υπέρβασης εκδόθηκε",
+  "notifications.charge_issued.body": "Μια χρέωση υπέρβασης προστέθηκε στη συνδρομή σας για τη χρήση αυτής της περιόδου.",
+  "notifications.charge_failed.title": "Η χρέωση υπέρβασης απέτυχε — απαιτείται ενέργεια",
+  "notifications.charge_failed.body": "Δεν μπορέσαμε να εισπράξουμε τη χρέωση υπέρβασης για αυτή την περίοδο. Ελέγξτε τη μέθοδο πληρωμής σας ή επικοινωνήστε με την υποστήριξη.",
   "notifications.dismiss": "Απόρριψη",
   "notifications.view_run": "Προβολή εκτέλεσης",
   "templates.heading": "Πρότυπα Pipeline",
@@ -490,5 +496,10 @@
   "billing.overage_cost": "Χρεώσεις υπέρβασης ισχύουν.",
   "billing.projected_total": "Προβλεπόμενο σύνολο",
   "billing.no_overage": "Χωρίς υπέρβαση.",
-  "billing.close": "Κλείσιμο"
+  "billing.close": "Κλείσιμο",
+  "billing.cycle.closes_on": "Ο κύκλος κλείνει στις",
+  "billing.cycle.closes_in_days": "Ο κύκλος κλείνει σε",
+  "billing.cycle.closes_today": "Ο κύκλος κλείνει σήμερα",
+  "billing.projected_overage.heading": "Προβλεπόμενη υπέρβαση",
+  "billing.projected_overage.see_notification": "Το προβλεπόμενο ποσό αποστέλλεται μέσω ειδοποίησης 24 ώρες πριν το κλείσιμο του κύκλου."
 }

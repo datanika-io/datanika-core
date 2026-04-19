@@ -427,6 +427,12 @@
   "notifications.quota_warning.metric.schedules": "programaciones",
   "notifications.quota_warning.metric.seats": "puestos",
   "notifications.quota_exceeded.title": "Cuota excedida",
+  "notifications.charge_incoming.title": "Cargo por exceso próximo",
+  "notifications.charge_incoming.body": "Su uso en este período añadirá un cargo por exceso a su próxima factura. El cargo se aplicará al cierre del ciclo.",
+  "notifications.charge_issued.title": "Cargo por exceso emitido",
+  "notifications.charge_issued.body": "Se ha añadido un cargo por exceso a su suscripción por el uso de este ciclo.",
+  "notifications.charge_failed.title": "Fallo en el cargo por exceso — se requiere acción",
+  "notifications.charge_failed.body": "No pudimos cobrar el cargo por exceso de este ciclo. Por favor, revise su método de pago o contacte con soporte.",
   "notifications.dismiss": "Descartar",
   "notifications.view_run": "Ver ejecución",
   "templates.heading": "Plantillas de pipeline",
@@ -490,5 +496,10 @@
   "billing.overage_cost": "Se aplican cargos por excedente.",
   "billing.projected_total": "Total proyectado",
   "billing.no_overage": "Sin excedente.",
-  "billing.close": "Cerrar"
+  "billing.close": "Cerrar",
+  "billing.cycle.closes_on": "El ciclo cierra el",
+  "billing.cycle.closes_in_days": "El ciclo cierra en",
+  "billing.cycle.closes_today": "El ciclo cierra hoy",
+  "billing.projected_overage.heading": "Excedente proyectado",
+  "billing.projected_overage.see_notification": "El importe proyectado se envía por notificación 24 horas antes del cierre del ciclo."
 }

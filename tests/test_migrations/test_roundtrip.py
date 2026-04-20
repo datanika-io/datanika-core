@@ -204,10 +204,15 @@ def _diff(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[st
 #   - plans.bytes_included: 100 GB (current Pro tier spec — core#249)
 #   - usage_ledger.quantity: 3 GB (single day of Pro-scale ingestion)
 #   - charges.overage_quantity: 50 GB (one month of mild Pro overage)
+#   - uploaded_files.file_size: 5 GB (realistic Enterprise single upload)
+#   - runs.rows_loaded: 3 * 10**9 rows (Enterprise backfill — currently
+#     int32, tracked by core#283; probe is xfailed until the widening migration ships)
 _GB = 1024**3
 _PROBE_PLAN_BYTES = 100 * _GB  # 107_374_182_400
 _PROBE_USAGE_BYTES = 3 * _GB  # 3_221_225_472
 _PROBE_OVERAGE_BYTES = 50 * _GB  # 53_687_091_200
+_PROBE_FILE_SIZE_BYTES = 5 * _GB  # 5_368_709_120
+_PROBE_ROWS_LOADED = 3_000_000_000  # Busts int32.max (2_147_483_647)
 
 
 def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
@@ -310,6 +315,25 @@ def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
                 },
             ).scalar_one()
 
+            # uploaded_files.file_size — 5 GB. Bigint since u0q7r8s9t1n2;
+            # this probe locks that guarantee in place for Enterprise uploads.
+            file_id = conn.execute(
+                text(
+                    "INSERT INTO uploaded_files "
+                    "(original_name, content_type, file_size, file_hash, "
+                    "archive_path, org_id) "
+                    "VALUES (:n, :t, :sz, :h, :p, :o) RETURNING id"
+                ),
+                {
+                    "n": "qa_probe_5gb.csv",
+                    "t": "text/csv",
+                    "sz": _PROBE_FILE_SIZE_BYTES,
+                    "h": "0" * 64,
+                    "p": "/tmp/qa-probe",
+                    "o": org_id,
+                },
+            ).scalar_one()
+
             # Assert round-trip — if the column is int32, the INSERT would
             # have already raised NumericValueOutOfRange. Assertions below
             # guard against less-obvious regressions (e.g., a migration that
@@ -335,12 +359,78 @@ def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
                 ).scalar()
                 == _PROBE_OVERAGE_BYTES
             )
+            assert (
+                conn.execute(
+                    text("SELECT file_size FROM uploaded_files WHERE id = :i"),
+                    {"i": file_id},
+                ).scalar()
+                == _PROBE_FILE_SIZE_BYTES
+            )
 
             # Delete in FK-order so the DB is clean for any following test.
+            conn.execute(text("DELETE FROM uploaded_files"))
             conn.execute(text("DELETE FROM charges"))
             conn.execute(text("DELETE FROM usage_ledger"))
             conn.execute(text("DELETE FROM subscriptions"))
             conn.execute(text("DELETE FROM plans"))
+            conn.execute(text("DELETE FROM organizations"))
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "runs.rows_loaded is currently Integer (int32). Enterprise backfills "
+        "routinely exceed 2.14B rows; this probe inserts 3B and overflows. "
+        "Tracked by core#283 — flip to strict=True after the bigint migration "
+        "lands."
+    ),
+)
+def test_runs_rows_loaded_bigint_roundtrip(roundtrip_db_url: str) -> None:
+    """3-billion-row probe for `runs.rows_loaded` — xfails until core#283 ships.
+
+    Enterprise customers run one-shot backfills of clickstream / event /
+    log data that routinely exceed 2^31 rows. dlt extracts the row count
+    and we persist it into `runs.rows_loaded`; the column is currently
+    int32 and any ingestion over 2.14B rows raises `NumericValueOutOfRange`.
+
+    Once Engineering ships the `runs.rows_loaded` → bigint migration
+    (core#283), this test starts passing. Flip the marker to
+    `strict=True` so XPASS forces its removal and locks in the guarantee.
+    """
+    _reset_db(roundtrip_db_url)
+    r = _run_alembic(["upgrade", "head"], roundtrip_db_url)
+    assert r.returncode == 0, (
+        f"alembic upgrade head failed:\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )
+
+    engine = create_engine(roundtrip_db_url)
+    try:
+        with engine.begin() as conn:
+            org_id = conn.execute(
+                text("INSERT INTO organizations (name, slug) VALUES (:n, :s) RETURNING id"),
+                {"n": "QA rows_loaded probe", "s": "qa-rows-loaded-probe"},
+            ).scalar_one()
+
+            run_id = conn.execute(
+                text(
+                    "INSERT INTO runs "
+                    "(target_type, target_id, status, rows_loaded, org_id) "
+                    "VALUES ('pipeline', 1, 'success', :r, :o) RETURNING id"
+                ),
+                {"r": _PROBE_ROWS_LOADED, "o": org_id},
+            ).scalar_one()
+
+            assert (
+                conn.execute(
+                    text("SELECT rows_loaded FROM runs WHERE id = :i"),
+                    {"i": run_id},
+                ).scalar()
+                == _PROBE_ROWS_LOADED
+            )
+
+            conn.execute(text("DELETE FROM runs"))
             conn.execute(text("DELETE FROM organizations"))
     finally:
         engine.dispose()

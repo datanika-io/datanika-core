@@ -378,26 +378,19 @@ def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
         engine.dispose()
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "runs.rows_loaded is currently Integer (int32). Enterprise backfills "
-        "routinely exceed 2.14B rows; this probe inserts 3B and overflows. "
-        "Tracked by core#283 — flip to strict=True after the bigint migration "
-        "lands."
-    ),
-)
 def test_runs_rows_loaded_bigint_roundtrip(roundtrip_db_url: str) -> None:
-    """3-billion-row probe for `runs.rows_loaded` — xfails until core#283 ships.
+    """3-billion-row probe for `runs.rows_loaded` (core#283 — shipped).
 
     Enterprise customers run one-shot backfills of clickstream / event /
     log data that routinely exceed 2^31 rows. dlt extracts the row count
-    and we persist it into `runs.rows_loaded`; the column is currently
-    int32 and any ingestion over 2.14B rows raises `NumericValueOutOfRange`.
+    and we persist it into `runs.rows_loaded`; before core#283 the
+    column was int32 and any ingestion over 2.14B rows raised
+    `NumericValueOutOfRange`.
 
-    Once Engineering ships the `runs.rows_loaded` → bigint migration
-    (core#283), this test starts passing. Flip the marker to
-    `strict=True` so XPASS forces its removal and locks in the guarantee.
+    Migration `d0e5f6g7h8i9` widens to bigint. This test was authored
+    xfailed in core#282 as a red-test pointing at the gap; the xfail
+    marker is removed now that the widening ships — a passing probe
+    that regressions back to int32 would trip.
     """
     _reset_db(roundtrip_db_url)
     r = _run_alembic(["upgrade", "head"], roundtrip_db_url)

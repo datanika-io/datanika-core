@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, Integer, Text
+from sqlalchemy import BigInteger, DateTime, Enum, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from datanika.models.base import Base, TenantMixin, TimestampMixin
@@ -32,5 +32,9 @@ class Run(Base, TenantMixin, TimestampMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     logs: Mapped[str | None] = mapped_column(Text, nullable=True)
-    rows_loaded: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # BigInteger: Enterprise clickstream/event/log backfills routinely
+    # exceed 2^31 rows in a single pipeline run. int32 would overflow on
+    # insert with ``NumericValueOutOfRange``. See core#283 — same class
+    # as the usage_ledger.quantity widening in core#272.
+    rows_loaded: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

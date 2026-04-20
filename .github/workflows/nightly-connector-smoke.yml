@@ -21,6 +21,10 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    # QA_CONNECTOR_CREDENTIALS + QA_BIGQUERY_SA_JSON secrets are scoped
+    # to the `production` environment. Without this line the job runs
+    # without those secrets and the credential-gate fails loud.
+    environment: production
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

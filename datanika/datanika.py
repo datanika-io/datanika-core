@@ -258,30 +258,12 @@ for _route in metrics_routes:
     app._api.routes.append(_route)
 app._api.add_middleware(PrometheusMiddleware)
 
-# Wire notification hooks (dispatch on run completion)
-from datanika.services.notification_service import NotificationService, register_hooks  # noqa: E402
+# Register every core-side hook subscriber (runs + quota + V2 P5 charge
+# events + external-channel dispatch). Delegated to
+# ``services._register_hooks`` so the Celery worker can call the same
+# function from ``datanika/tasks/celery_app.py`` — without that, hooks
+# emitted from Celery tasks (e.g. ``charge_cycle_overages``) would fire
+# into an empty handler dict in the worker process. See #287.
+from datanika.services._register_hooks import register_all_core_hooks  # noqa: E402
 
-register_hooks(NotificationService())
-
-# Wire in-app notification hooks (create Notification records on run completion)
-from datanika.services.in_app_notification_hooks import (  # noqa: E402
-    register_in_app_notification_hooks,
-)
-
-register_in_app_notification_hooks()
-
-# Wire quota warning hooks — in-app notification + external channel dispatch
-# on quota.warning_threshold_reached (emitted by cloud plugin's BillingService).
-from datanika.services.quota_notification_hooks import (  # noqa: E402
-    register_quota_notification_hooks,
-)
-
-register_quota_notification_hooks()
-
-# Charge events (V2 P5 Option B, core#249) — emitted by cloud plugin's
-# cycle-boundary billing task.
-from datanika.services.charge_notification_hooks import (  # noqa: E402
-    register_charge_notification_hooks,
-)
-
-register_charge_notification_hooks()
+register_all_core_hooks()

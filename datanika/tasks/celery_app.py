@@ -2,8 +2,15 @@ from celery import Celery
 
 from datanika.config import settings
 from datanika.logging_config import setup_logging
+from datanika.services._register_hooks import register_all_core_hooks
 
 setup_logging(debug=settings.debug)
+
+# Register every core-side hook subscriber in this process. Without this,
+# cloud tasks running in the Celery worker (e.g. ``charge_cycle_overages``
+# emitting ``charge_*`` events) would fire into an empty handler dict and
+# the user-facing Notification rows would silently never land. See #287.
+register_all_core_hooks()
 
 celery_app = Celery(
     "datanika",

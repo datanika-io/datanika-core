@@ -28,7 +28,10 @@ class Notification(Base, TenantMixin, TimestampMixin):
         Enum(
             NotificationType,
             native_enum=False,
-            length=30,
+            # length=50 matches migration c9d4e5f6g7h8 (core#279). Kept
+            # generous so a new 20-char enum name doesn't force another
+            # column migration.
+            length=50,
             values_callable=lambda e: [i.value for i in e],
         ),
         nullable=False,

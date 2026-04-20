@@ -61,6 +61,10 @@ jobs:
           while IFS= read -r line; do
             # Skip comments + blanks
             case "$line" in ''|\#*) continue ;; esac
+            # Strip surrounding double-quotes from value — $GITHUB_ENV
+            # parser treats quotes as literal chars (unlike bash/python-dotenv).
+            # Without this, httpx rejects URLs like ""https://..."" (core#270).
+            line=$(echo "$line" | sed -E 's/^([A-Z_]+)="(.*)"$/\1=\2/')
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/creds.env
           rm /tmp/creds.env

@@ -197,3 +197,150 @@ def _diff(a: dict[str, list[str]], b: dict[str, list[str]]) -> dict[str, list[st
         if missing:
             out[table] = missing
     return out
+
+
+# Probe values chosen to fit int64 and bust int32 (max 2_147_483_647 ≈ 2 GB).
+# Each value is a realistic real-world size for the column's semantic:
+#   - plans.bytes_included: 100 GB (current Pro tier spec — core#249)
+#   - usage_ledger.quantity: 3 GB (single day of Pro-scale ingestion)
+#   - charges.overage_quantity: 50 GB (one month of mild Pro overage)
+_GB = 1024**3
+_PROBE_PLAN_BYTES = 100 * _GB  # 107_374_182_400
+_PROBE_USAGE_BYTES = 3 * _GB  # 3_221_225_472
+_PROBE_OVERAGE_BYTES = 50 * _GB  # 53_687_091_200
+
+
+def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
+    """Insert real-world byte sizes into bigint columns; catch int32 regressions.
+
+    Would-have-caught: **core#272**. The existing schema-equivalence test
+    only compares column names — type-width regressions are invisible
+    because SQLite maps both Integer and BigInteger to a dynamic-width
+    INTEGER. Postgres enforces fixed widths, so inserting a value above
+    `int32.max` (≈ 2 GB) surfaces any silent regression immediately.
+
+    Columns probed:
+      - `plans.bytes_included` at 100 GB — the Pro tier's included
+        allotment; every Pro plan row stores this value.
+      - `usage_ledger.quantity` at 3 GB — a single day of Pro-scale
+        ingestion. This was the column core#272 fixed; this test locks
+        that fix in.
+      - `charges.overage_quantity` at 50 GB — a month of mild Pro
+        overage. V2 P5 Option B writes this column on every cycle close.
+
+    If any of these columns ever silently reverts to int32, this test
+    fails with `NumericValueOutOfRange: integer out of range` and the
+    PR is blocked.
+    """
+    _reset_db(roundtrip_db_url)
+    r = _run_alembic(["upgrade", "head"], roundtrip_db_url)
+    assert r.returncode == 0, (
+        f"alembic upgrade head failed:\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+    )
+
+    engine = create_engine(roundtrip_db_url)
+    try:
+        with engine.begin() as conn:
+            org_id = conn.execute(
+                text("INSERT INTO organizations (name, slug) VALUES (:n, :s) RETURNING id"),
+                {"n": "QA bigint probe", "s": "qa-bigint-probe"},
+            ).scalar_one()
+
+            plan_id = conn.execute(
+                text(
+                    "INSERT INTO plans (name, slug, paddle_price_id, "
+                    "paddle_product_id, price_cents, interval, bytes_included) "
+                    "VALUES (:n, :s, :ppi, :ppp, :pc, :i, :bi) RETURNING id"
+                ),
+                {
+                    "n": "QA Probe Plan",
+                    "s": "qa-probe",
+                    "ppi": "pri_qa_probe_001",
+                    "ppp": "pro_qa_probe_001",
+                    "pc": 0,
+                    "i": "month",
+                    "bi": _PROBE_PLAN_BYTES,
+                },
+            ).scalar_one()
+
+            sub_id = conn.execute(
+                text(
+                    "INSERT INTO subscriptions (org_id, plan_id, "
+                    "paddle_customer_id, paddle_subscription_id) "
+                    "VALUES (:o, :p, :c, :s) RETURNING id"
+                ),
+                {
+                    "o": org_id,
+                    "p": plan_id,
+                    "c": "ctm_qa_probe",
+                    "s": "sub_qa_probe_001",
+                },
+            ).scalar_one()
+
+            ul_id = conn.execute(
+                text(
+                    "INSERT INTO usage_ledger "
+                    "(org_id, period_start, period_end, metric, quantity) "
+                    "VALUES (:o, :ps, :pe, 'bytes_processed', :q) RETURNING id"
+                ),
+                {
+                    "o": org_id,
+                    "ps": "2026-04-01 00:00:00+00",
+                    "pe": "2026-05-01 00:00:00+00",
+                    "q": _PROBE_USAGE_BYTES,
+                },
+            ).scalar_one()
+
+            charge_id = conn.execute(
+                text(
+                    "INSERT INTO charges "
+                    "(org_id, idempotency_key, subscription_id, period_start, "
+                    "period_end, metric, overage_quantity, amount_cents) "
+                    "VALUES (:o, :k, :s, :ps, :pe, 'bytes_processed', :oq, :ac) "
+                    "RETURNING id"
+                ),
+                {
+                    "o": org_id,
+                    "k": "sub_qa_probe_001:2026-04-01:bytes_processed",
+                    "s": sub_id,
+                    "ps": "2026-04-01 00:00:00+00",
+                    "pe": "2026-05-01 00:00:00+00",
+                    "oq": _PROBE_OVERAGE_BYTES,
+                    "ac": 50000,
+                },
+            ).scalar_one()
+
+            # Assert round-trip — if the column is int32, the INSERT would
+            # have already raised NumericValueOutOfRange. Assertions below
+            # guard against less-obvious regressions (e.g., a migration that
+            # silently truncates, or future ORM drift).
+            assert (
+                conn.execute(
+                    text("SELECT bytes_included FROM plans WHERE id = :i"),
+                    {"i": plan_id},
+                ).scalar()
+                == _PROBE_PLAN_BYTES
+            )
+            assert (
+                conn.execute(
+                    text("SELECT quantity FROM usage_ledger WHERE id = :i"),
+                    {"i": ul_id},
+                ).scalar()
+                == _PROBE_USAGE_BYTES
+            )
+            assert (
+                conn.execute(
+                    text("SELECT overage_quantity FROM charges WHERE id = :i"),
+                    {"i": charge_id},
+                ).scalar()
+                == _PROBE_OVERAGE_BYTES
+            )
+
+            # Delete in FK-order so the DB is clean for any following test.
+            conn.execute(text("DELETE FROM charges"))
+            conn.execute(text("DELETE FROM usage_ledger"))
+            conn.execute(text("DELETE FROM subscriptions"))
+            conn.execute(text("DELETE FROM plans"))
+            conn.execute(text("DELETE FROM organizations"))
+    finally:
+        engine.dispose()

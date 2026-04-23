@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from datanika.config import settings
 
@@ -46,7 +46,16 @@ sync_engine = create_engine(
     **_pool_kwargs,
 )
 
+# Mirror the async factory: loaded ORM attributes stay valid after commit
+# so handlers can commit mid-body (releasing the read txn before response
+# serialization) without triggering lazy re-queries on attribute access.
+sync_session_factory = sessionmaker(
+    sync_engine,
+    class_=Session,
+    expire_on_commit=False,
+)
+
 
 def get_sync_session() -> Session:
     """Return a sync Session bound to the shared sync engine."""
-    return Session(sync_engine)
+    return sync_session_factory()

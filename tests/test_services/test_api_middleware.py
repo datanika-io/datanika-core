@@ -191,8 +191,10 @@ class TestApiEndpointSyncHandler:
             assert resp.status_code == 429
 
     def test_sync_handler_commits_session(self, fake_api_key, rate_limit_ok):
-        """Successful sync handler triggers session.commit() (write-path
-        correctness guarantee unchanged from the async path)."""
+        """Successful sync handler triggers session.commit() twice:
+        once after auth (release the auth-read txn before rate-limit/Redis
+        work) and once after the handler (write-path correctness).
+        """
         mock_sess = MagicMock()
         with (
             patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
@@ -209,10 +211,14 @@ class TestApiEndpointSyncHandler:
             client = TestClient(app)
             resp = client.get("/sync", headers={"Authorization": "Bearer etf_validkey"})
             assert resp.status_code == 200
-            mock_sess.commit.assert_called_once()
+            assert mock_sess.commit.call_count == 2
 
     def test_sync_handler_rolls_back_on_exception(self, fake_api_key, rate_limit_ok):
-        """A raised exception rolls back and returns 500."""
+        """A raised exception rolls back the handler txn and returns 500.
+
+        The post-auth commit still fires (auth-read txn released before the
+        handler ran); only the handler's txn is rolled back.
+        """
         mock_sess = MagicMock()
 
         @api_endpoint()
@@ -235,7 +241,7 @@ class TestApiEndpointSyncHandler:
             resp = client.get("/boom", headers={"Authorization": "Bearer etf_validkey"})
             assert resp.status_code == 500
             mock_sess.rollback.assert_called_once()
-            mock_sess.commit.assert_not_called()
+            assert mock_sess.commit.call_count == 1
 
     def test_async_handler_path_unchanged(self, fake_api_key, rate_limit_ok):
         """Regression: async-def handlers still take the original path."""
@@ -313,3 +319,162 @@ class TestApiEndpointSyncHandler:
             assert len(set(handler_calls)) == 2
             # Overlap: total < 2 × 0.2 + margin. Serialized would be ~0.4s.
             assert elapsed < 0.35, f"handlers serialized (elapsed={elapsed:.2f}s)"
+
+
+# ---------------------------------------------------------------------------
+# Release auth-read txn before rate-limit / handler work (#292)
+# ---------------------------------------------------------------------------
+
+
+class TestAuthReadTxnRelease:
+    """The middleware must release the auth-read transaction before the
+    Redis-only rate-limit + idempotency work and before the handler runs.
+
+    Root cause of k6 Run 10's ``idle in transaction`` peak (up to 26 conns
+    at 100 VU sustain): ``authenticate_api_key`` opens a read txn on the
+    middleware's session; that txn is then held idle across the Redis rate
+    limit check and idempotency lookup, and across whatever gap exists
+    between the handler's first and last queries. Committing after auth
+    confines the auth-read txn to a ~1 ms window instead of the full
+    request duration.
+    """
+
+    def test_sync_commits_after_auth_before_rate_limit(self, fake_api_key, rate_limit_ok):
+        """Sync path: commit fires before ``check_rate_limit`` is called.
+
+        Ordering matters because ``check_rate_limit`` runs after the auth
+        step and we want the auth-read txn released before any further
+        work — including the Redis probe.
+        """
+        mock_sess = MagicMock()
+        call_order: list[str] = []
+
+        def record_commit():
+            call_order.append("commit")
+
+        mock_sess.commit.side_effect = record_commit
+
+        with (
+            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+            patch("datanika.services.api_middleware._get_session") as mock_sess_ctor,
+        ):
+            mock_svc.authenticate_api_key.return_value = fake_api_key
+            mock_rl.get_limit_for_org.return_value = 60
+
+            def record_rl(*a, **kw):
+                call_order.append("check_rate_limit")
+                return rate_limit_ok
+
+            mock_rl.check_rate_limit.side_effect = record_rl
+            mock_sess_ctor.return_value.__enter__ = MagicMock(return_value=mock_sess)
+            mock_sess_ctor.return_value.__exit__ = MagicMock(return_value=False)
+
+            app = Starlette(routes=[Route("/sync", sync_sample_handler)])
+            client = TestClient(app)
+            resp = client.get("/sync", headers={"Authorization": "Bearer etf_validkey"})
+            assert resp.status_code == 200
+            # commit comes before the rate-limit Redis probe, and again after
+            # the handler. At minimum, the first 'commit' precedes
+            # 'check_rate_limit'.
+            assert call_order[0] == "commit"
+            assert "check_rate_limit" in call_order
+            first_commit_idx = call_order.index("commit")
+            first_rl_idx = call_order.index("check_rate_limit")
+            assert first_commit_idx < first_rl_idx
+
+    def test_sync_rate_limited_path_still_commits_auth_txn(self, fake_api_key, rate_limit_exceeded):
+        """Sync path, 429 rejection: the auth-read txn is still committed.
+
+        Pre-#292, a rate-limited request carried the auth-read txn all the
+        way to context-exit rollback. Now the middleware commits it
+        explicitly after auth, independent of rate-limit outcome.
+        """
+        mock_sess = MagicMock()
+        with (
+            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+            patch("datanika.services.api_middleware._get_session") as mock_sess_ctor,
+        ):
+            mock_svc.authenticate_api_key.return_value = fake_api_key
+            mock_rl.get_limit_for_org.return_value = 60
+            mock_rl.check_rate_limit.return_value = rate_limit_exceeded
+            mock_sess_ctor.return_value.__enter__ = MagicMock(return_value=mock_sess)
+            mock_sess_ctor.return_value.__exit__ = MagicMock(return_value=False)
+
+            app = Starlette(routes=[Route("/sync", sync_sample_handler)])
+            client = TestClient(app)
+            resp = client.get("/sync", headers={"Authorization": "Bearer etf_validkey"})
+            assert resp.status_code == 429
+            # Exactly one commit — the auth-read release. No handler ran,
+            # so no second commit.
+            assert mock_sess.commit.call_count == 1
+
+    def test_async_commits_after_auth_before_rate_limit(self, fake_api_key, rate_limit_ok):
+        """Async path: same contract as sync — commit before rate-limit work."""
+        mock_sess = MagicMock()
+        call_order: list[str] = []
+        mock_sess.commit.side_effect = lambda: call_order.append("commit")
+
+        with (
+            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+            patch("datanika.services.api_middleware._get_session") as mock_sess_ctor,
+        ):
+            mock_svc.authenticate_api_key.return_value = fake_api_key
+            mock_rl.get_limit_for_org.return_value = 60
+
+            def record_rl(*a, **kw):
+                call_order.append("check_rate_limit")
+                return rate_limit_ok
+
+            mock_rl.check_rate_limit.side_effect = record_rl
+            mock_sess_ctor.return_value.__enter__ = MagicMock(return_value=mock_sess)
+            mock_sess_ctor.return_value.__exit__ = MagicMock(return_value=False)
+
+            app = Starlette(routes=[Route("/async", sample_handler)])
+            client = TestClient(app)
+            resp = client.get("/async", headers={"Authorization": "Bearer etf_validkey"})
+            assert resp.status_code == 200
+            assert call_order[0] == "commit"
+            assert call_order.index("commit") < call_order.index("check_rate_limit")
+
+    def test_async_rate_limited_path_still_commits_auth_txn(
+        self, fake_api_key, rate_limit_exceeded
+    ):
+        """Async path, 429 rejection: auth-read txn is committed."""
+        mock_sess = MagicMock()
+        with (
+            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+            patch("datanika.services.api_middleware._get_session") as mock_sess_ctor,
+        ):
+            mock_svc.authenticate_api_key.return_value = fake_api_key
+            mock_rl.get_limit_for_org.return_value = 60
+            mock_rl.check_rate_limit.return_value = rate_limit_exceeded
+            mock_sess_ctor.return_value.__enter__ = MagicMock(return_value=mock_sess)
+            mock_sess_ctor.return_value.__exit__ = MagicMock(return_value=False)
+
+            app = Starlette(routes=[Route("/async", sample_handler)])
+            client = TestClient(app)
+            resp = client.get("/async", headers={"Authorization": "Bearer etf_validkey"})
+            assert resp.status_code == 429
+            assert mock_sess.commit.call_count == 1
+
+
+class TestSyncSessionExpireOnCommit:
+    """``get_sync_session`` returns sessions with ``expire_on_commit=False``
+    — matches the async factory (``db.py:33``). Post-commit ORM attribute
+    access stays valid without a lazy re-query, which unblocks future
+    per-handler mid-request commits in the hot-path list endpoints without
+    a response-serialization refactor.
+    """
+
+    def test_sync_session_has_expire_on_commit_false(self):
+        from datanika.db import get_sync_session
+
+        session = get_sync_session()
+        try:
+            assert session.expire_on_commit is False
+        finally:
+            session.close()

@@ -111,6 +111,11 @@ async def _run_async_handler(
         api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
         if api_key is None:
             return _error(401, "Invalid or expired API key")
+        # Release the auth-read txn before Redis rate-limit/idempotency
+        # work and before the handler runs (#292). Keeps `idle in
+        # transaction` out of pg_stat_activity across the Redis/Python
+        # gap; handler re-opens a fresh txn on its first query.
+        session.commit()
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
         result = _rate_limit_svc.check_rate_limit(
@@ -173,6 +178,9 @@ def _run_sync_handler(
         api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
         if api_key is None:
             return _error(401, "Invalid or expired API key")
+        # Release the auth-read txn before Redis rate-limit/idempotency
+        # work and before the handler runs (#292).
+        session.commit()
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
         result = _rate_limit_svc.check_rate_limit(

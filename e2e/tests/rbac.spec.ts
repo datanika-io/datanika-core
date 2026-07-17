@@ -1,30 +1,76 @@
 import { test, expect } from "../fixtures/auth";
 
 /**
- * RBAC enforcement at the UI layer.
+ * API-key SCOPE enforcement.
  *
- * Viewer role must not see or reach destructive actions. The service layer
- * already enforces this via _check_role() (AST-tested in pytest). This E2E
- * test confirms the UI state layer respects the same rules — a viewer that
- * gets to a delete button by accident is a regression.
+ * The `/api/v1` surface authorizes by API-key scope
+ * (`@api_endpoint(required_scope="connections:write")` etc.), NOT by the
+ * caller's membership role: an unscoped key has full access, and a scoped key
+ * is limited to its scopes (see datanika/services/api_key_service.py +
+ * api_middleware.py). Membership-role RBAC — "a VIEWER cannot destroy
+ * resources" — is enforced separately in the Reflex UI state layer
+ * (`require_role` in datanika/ui/state/*_state.py), and viewers cannot mint API
+ * keys (key creation is admin-gated). A UI E2E test for the viewer-role case is
+ * tracked as a follow-up to #297.
+ *
+ * This spec proves the API's scope boundary: a read-only-scoped key can read
+ * but is rejected on every write endpoint. If a `*:read`-only key ever succeeds
+ * on a `*:write` route, scope enforcement is broken — a privilege bug, not an
+ * assertion to "just fix".
  */
-test.describe("RBAC: viewer cannot destroy resources", () => {
-  test.skip("viewer sees pipelines but no delete button", async ({ page }) => {
-    // Seed via API: create owner + pipeline + invite viewer + accept
-    // Then log in as viewer
-    await page.goto("/login");
-    await page.getByLabel(/email/i).fill("qa-viewer@datanika.test");
-    await page.getByLabel(/password/i).fill("QaViewerPw-2026");
-    await page.getByRole("button", { name: /log in|sign in/i }).click();
+// @slow — real HTTP against a seeded read-only key; gated to master promotion
+// PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P1 and #297.
 
-    await page.goto("/pipelines");
-    await expect(page.getByRole("heading", { name: /pipelines/i })).toBeVisible();
-    await expect(page.getByRole("button", { name: /delete/i })).toHaveCount(0);
-  });
+function mustEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `${name} not set — global-setup.ts must map it from the seed payload ` +
+        "(needs E2E_SEED_INCLUDE_API_KEYS=1). See datanika/scripts/e2e_seed.py.",
+    );
+  }
+  return value;
+}
 
-  test.skip("viewer calling DELETE /api/v1/pipelines/{id} gets 403", async ({ request }) => {
-    // Once an api_client fixture exists, assert the HTTP boundary rejects
-    // const res = await request.delete("/api/v1/pipelines/1", { headers: { Authorization: `Bearer ${viewerApiKey}` } });
-    // expect(res.status()).toBe(403);
+test.describe("API key scope enforcement: read-only key is denied writes @slow", () => {
+  test("read-only key can GET but cannot DELETE/PUT/POST-write a connection", async ({
+    request,
+  }) => {
+    const readOnlyKey = mustEnv("DATANIKA_E2E_API_KEY_READONLY");
+    const connId = Number(mustEnv("DATANIKA_E2E_CONNECTION_ID")); // org A's own connection
+    const auth = { Authorization: `Bearer ${readOnlyKey}` };
+
+    // Allowed — the key holds `connections:read`.
+    const read = await request.get(`/api/v1/connections/${connId}`, { headers: auth });
+    expect(read.status(), "read-only key should be allowed to GET its own connection").toBe(200);
+
+    const list = await request.get(`/api/v1/connections`, { headers: auth });
+    expect(list.status(), "read-only key should be allowed to list connections").toBe(200);
+
+    // Denied — every write endpoint requires `connections:write`, which the key
+    // lacks. authenticate_api_key returns None on missing scope → the endpoint
+    // replies 401 (403 tolerated). Never 2xx.
+    const writes = [
+      { method: "DELETE" as const, url: `/api/v1/connections/${connId}` },
+      {
+        method: "PUT" as const,
+        url: `/api/v1/connections/${connId}`,
+        data: { name: "scope-escalation-attempt" },
+      },
+      { method: "POST" as const, url: `/api/v1/connections/${connId}/test` },
+    ];
+    for (const w of writes) {
+      const res = await request.fetch(w.url, { method: w.method, headers: auth, data: w.data });
+      const status = res.status();
+      expect(
+        [200, 201, 202, 204].includes(status),
+        `${w.method} ${w.url} succeeded with a read-only key (status=${status}) — scope enforcement bypassed`,
+      ).toBe(false);
+      expect([401, 403]).toContain(status);
+    }
+
+    // The connection must still exist — the denied DELETE must not have committed.
+    const after = await request.get(`/api/v1/connections/${connId}`, { headers: auth });
+    expect(after.status(), "connection should survive the denied writes").toBe(200);
   });
 });

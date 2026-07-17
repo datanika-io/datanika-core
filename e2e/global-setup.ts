@@ -75,6 +75,8 @@ export type SeedFixture = {
   org_a_api_key_plaintext: string;
   org_b_api_key_id: number;
   org_b_api_key_plaintext: string;
+  org_a_readonly_api_key_id: number;
+  org_a_readonly_api_key_plaintext: string;
 };
 
 async function globalSetup(_config: FullConfig): Promise<void> {
@@ -181,6 +183,7 @@ async function globalSetup(_config: FullConfig): Promise<void> {
   process.env.DATANIKA_E2E_ORG_B_SCHEDULE_ID = String(payload.org_b_schedule_id);
   process.env.DATANIKA_E2E_API_KEY_ORG_A = payload.org_a_api_key_plaintext;
   process.env.DATANIKA_E2E_API_KEY_ORG_B = payload.org_b_api_key_plaintext;
+  process.env.DATANIKA_E2E_API_KEY_READONLY = payload.org_a_readonly_api_key_plaintext;
 
   // Also dump to a file so ad-hoc scripts (curl probes, manual tests) can
   // read it without setting env. .gitignore'd.

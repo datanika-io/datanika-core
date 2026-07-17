@@ -269,6 +269,9 @@ def test_seed_result_shape():
         "org_a_api_key_plaintext",
         "org_b_api_key_id",
         "org_b_api_key_plaintext",
+        # Read-only-scoped org A key (for API scope-enforcement tests, #297)
+        "org_a_readonly_api_key_id",
+        "org_a_readonly_api_key_plaintext",
     }
 
 
@@ -364,16 +367,18 @@ def test_seed_does_not_create_api_keys_by_default(db_session):
     assert result.org_a_api_key_plaintext == ""
     assert result.org_b_api_key_id == 0
     assert result.org_b_api_key_plaintext == ""
+    assert result.org_a_readonly_api_key_id == 0
+    assert result.org_a_readonly_api_key_plaintext == ""
 
 
 def test_seed_creates_api_keys_when_flag_set(db_session, monkeypatch):
-    """With E2E_SEED_INCLUDE_API_KEYS=1, 2 ApiKey rows are created — one per org."""
+    """With E2E_SEED_INCLUDE_API_KEYS=1: 3 keys (A owner, B owner, A read-only)."""
     monkeypatch.setenv("E2E_SEED_INCLUDE_API_KEYS", "1")
 
     result = seed(session=db_session)
 
     api_keys = list(db_session.execute(select(ApiKey)).scalars())
-    assert len(api_keys) == 2
+    assert len(api_keys) == 3
 
     # Plaintext keys are returned in the result — they're hashed in the DB,
     # so Playwright must capture them here or they're lost forever.
@@ -399,6 +404,18 @@ def test_seed_creates_api_keys_when_flag_set(db_session, monkeypatch):
         select(ApiKey).where(ApiKey.id == result.org_b_api_key_id)
     ).scalar_one()
     assert key_b.org_id == org_b.id
+
+    # Read-only-scoped key in org A: same org as the owner key, but restricted
+    # to `*:read` scopes so API scope-enforcement tests can prove writes are
+    # rejected (#297).
+    assert result.org_a_readonly_api_key_id > 0
+    assert result.org_a_readonly_api_key_plaintext.startswith("etf_")
+    key_ro = db_session.execute(
+        select(ApiKey).where(ApiKey.id == result.org_a_readonly_api_key_id)
+    ).scalar_one()
+    assert key_ro.org_id == org_a.id
+    assert key_ro.scopes == e2e_seed.FIXTURE_READONLY_SCOPES
+    assert all(s.endswith(":read") for s in key_ro.scopes)
 
 
 def test_seed_is_idempotent_with_extended_fixture(db_session, monkeypatch):
@@ -426,9 +443,9 @@ def test_seed_is_idempotent_with_extended_fixture(db_session, monkeypatch):
     )
     assert len(org_b_owners) == 1
 
-    # Exactly 2 api keys (one per org).
+    # Exactly 3 api keys (org A owner, org B owner, org A read-only).
     api_keys = list(db_session.execute(select(ApiKey)).scalars())
-    assert len(api_keys) == 2
+    assert len(api_keys) == 3
 
 
 def test_seed_tears_down_drifted_org_b(db_session):

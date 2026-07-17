@@ -93,6 +93,8 @@
   "connections.ph_user": "",
   "connections.ph_password": "Пароль",
   "connections.ph_database": "mydb",
+  "connections.oracle_service_hint": "Поле «База данных» — это имя службы Oracle (например, XEPDB1, RAC или Autonomous). Включайте «Подключение по SID» только для устаревших одиночных экземпляров Oracle.",
+  "connections.oracle_use_sid": "Подключение по SID (устаревший одиночный экземпляр)",
   "connections.ph_schema": "public",
   "connections.ph_db_path": "/data/my.db",
   "connections.ph_gcp_project": "my-gcp-project",

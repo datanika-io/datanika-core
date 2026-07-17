@@ -240,6 +240,9 @@ class ConnectionState(BaseState):
     form_cluster_replication: bool = False
     form_secure: bool = False
 
+    # Oracle — connect by SID instead of service name (legacy single-instance)
+    form_oracle_use_sid: bool = False
+
     # Databricks
     form_http_path: str = ""
     form_token: str = ""
@@ -456,6 +459,8 @@ class ConnectionState(BaseState):
                 if self.form_cluster_replication:
                     config["table_engine_type"] = "replicated_merge_tree"
                 config["secure"] = self.form_secure
+            if t == "oracle" and self.form_oracle_use_sid:
+                config["use_sid"] = True
 
         elif t in ("duckdb", "sqlite"):
             if self.form_path:
@@ -671,6 +676,7 @@ class ConnectionState(BaseState):
         self.form_service_account_json = ""
         self.form_cluster_replication = False
         self.form_secure = False
+        self.form_oracle_use_sid = False
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -727,6 +733,7 @@ class ConnectionState(BaseState):
         self.form_service_account_json = ""
         self.form_cluster_replication = False
         self.form_secure = False
+        self.form_oracle_use_sid = False
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -756,6 +763,8 @@ class ConnectionState(BaseState):
                     config.get("table_engine_type") == "replicated_merge_tree"
                 )
                 self.form_secure = config.get("secure", False)
+            if conn_type == "oracle":
+                self.form_oracle_use_sid = config.get("use_sid", False)
         elif conn_type in ("duckdb", "sqlite"):
             self.form_path = config.get("path", "")
         elif conn_type == "bigquery":

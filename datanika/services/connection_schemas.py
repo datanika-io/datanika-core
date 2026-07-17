@@ -83,9 +83,15 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         {
             "host": _str("Oracle hostname"),
             "port": _int("Port number", default=1521),
-            "database": _str("Service name (or SID)"),
+            "database": _str(
+                "Service name (e.g. a PDB like XEPDB1, RAC, or Autonomous service); "
+                "or the SID when 'use_sid' is enabled"
+            ),
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
+            "use_sid": _bool(
+                "Connect by SID instead of service name (legacy single-instance Oracle)"
+            ),
         },
         required=["host", "database", "user", "password"],
     ),

@@ -93,6 +93,8 @@
   "connections.ph_user": "",
   "connections.ph_password": "Mot de passe",
   "connections.ph_database": "mydb",
+  "connections.oracle_service_hint": "Le champ Base de données est votre nom de service Oracle (par ex. XEPDB1, RAC ou Autonomous). Activez « Se connecter par SID » uniquement pour Oracle mono-instance hérité.",
+  "connections.oracle_use_sid": "Se connecter par SID (mono-instance hérité)",
   "connections.ph_schema": "public",
   "connections.ph_db_path": "/data/my.db",
   "connections.ph_gcp_project": "my-gcp-project",

@@ -790,6 +790,30 @@ def mongodb_fields() -> rx.Component:
     )
 
 
+def oracle_fields() -> rx.Component:
+    """Fields for Oracle — db fields + service-name guidance + a legacy-SID toggle.
+
+    The shared ``database`` field holds the Oracle **service name** by default
+    (PDB/RAC/Autonomous); the hint says so. Check the toggle for classic
+    single-instance Oracle addressed by SID.
+    """
+    return rx.vstack(
+        db_fields(),
+        rx.callout(_t["connections.oracle_service_hint"], icon="info", size="1"),
+        rx.flex(
+            rx.checkbox(
+                _t["connections.oracle_use_sid"],
+                checked=ConnectionState.form_oracle_use_sid,
+                on_change=ConnectionState.set_form_oracle_use_sid,
+            ),
+            spacing="2",
+            align="center",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def type_fields() -> rx.Component:
     """Render the appropriate config fields based on selected connection type."""
     return rx.fragment(
@@ -798,11 +822,11 @@ def type_fields() -> rx.Component:
             | (ConnectionState.form_type == "mysql")
             | (ConnectionState.form_type == "mssql")
             | (ConnectionState.form_type == "redshift")
-            | (ConnectionState.form_type == "synapse")
-            | (ConnectionState.form_type == "oracle"),
+            | (ConnectionState.form_type == "synapse"),
             db_fields(),
         ),
         rx.cond(ConnectionState.form_type == "clickhouse", clickhouse_fields()),
+        rx.cond(ConnectionState.form_type == "oracle", oracle_fields()),
         rx.cond(ConnectionState.form_type == "duckdb", duckdb_fields()),
         rx.cond(ConnectionState.form_type == "databricks", databricks_fields()),
         rx.cond(ConnectionState.form_type == "sqlite", sqlite_fields()),

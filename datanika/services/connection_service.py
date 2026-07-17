@@ -197,13 +197,18 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
 
     if connection_type == ConnectionType.ORACLE:
         port = config.get("port", 1521)
-        # Oracle "easy connect": the URL path is the service name (thin mode).
-        return (
-            f"oracle+oracledb://{quote_plus(config.get('user', ''))}:"
+        userinfo = (
+            f"{quote_plus(config.get('user', ''))}:"
             f"{quote_plus(config.get('password', ''))}@"
             f"{config.get('host', 'localhost')}:{port}/"
-            f"{config.get('database', '')}"
         )
+        if config.get("use_sid"):
+            # Legacy SID connect (classic single-instance): the URL path is the SID.
+            return f"oracle+oracledb://{userinfo}{config.get('database', '')}"
+        # Default: service-name connect (PDB / RAC / Autonomous). SQLAlchemy's
+        # oracledb dialect reads the service name from the ?service_name= query;
+        # a value in the URL path is treated as a SID (#329).
+        return f"oracle+oracledb://{userinfo}?service_name={quote_plus(config.get('database', ''))}"
 
     raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
 

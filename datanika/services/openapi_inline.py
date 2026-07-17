@@ -20,19 +20,14 @@ appear in the spec automatically.
 from __future__ import annotations
 
 import copy
-import re
 from typing import Any
 
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.services.meta_schemas import DLT_CONFIG_SCHEMA
+from datanika.services.openapi_schema import to_pascal as _to_pascal
 
 CONNECTION_TYPE_VALUES: list[str] = [ct.value for ct in ConnectionType]
-
-
-def _to_pascal(slug: str) -> str:
-    """Convert ``google_sheets`` → ``GoogleSheets``, ``rest_api`` → ``RestApi``."""
-    return "".join(part.capitalize() for part in re.split(r"[_\-]", slug) if part)
 
 
 def _example_for(slug: str, schema: dict) -> dict:

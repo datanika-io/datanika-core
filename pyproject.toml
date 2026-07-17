@@ -43,6 +43,7 @@ dependencies = [
     "duckdb>=1.0",
     "snowflake-sqlalchemy>=1.7",
     "sqlalchemy-bigquery>=1.11",
+    "oracledb>=2.0",
 
     # Web framework
     "reflex>=0.7",

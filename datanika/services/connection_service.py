@@ -19,6 +19,7 @@ SOURCE_TYPES = {
     "postgres",
     "mysql",
     "mssql",
+    "oracle",
     "sqlite",
     "rest_api",
     "s3",
@@ -42,6 +43,9 @@ SOURCE_TYPES = {
     "zendesk",
     "airtable",
     "notion",
+    "pipedrive",
+    "freshdesk",
+    "asana",
     "kafka",
 }
 
@@ -95,6 +99,9 @@ _NON_DB_TYPES = {
     ConnectionType.ZENDESK,
     ConnectionType.AIRTABLE,
     ConnectionType.NOTION,
+    ConnectionType.PIPEDRIVE,
+    ConnectionType.FRESHDESK,
+    ConnectionType.ASANA,
     ConnectionType.KAFKA,
 }
 
@@ -186,6 +193,16 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
             f"{quote_plus(config.get('password', ''))}@"
             f"{config.get('host', 'localhost')}:{port}/"
             f"{config.get('database', '')}{secure_qs}"
+        )
+
+    if connection_type == ConnectionType.ORACLE:
+        port = config.get("port", 1521)
+        # Oracle "easy connect": the URL path is the service name (thin mode).
+        return (
+            f"oracle+oracledb://{quote_plus(config.get('user', ''))}:"
+            f"{quote_plus(config.get('password', ''))}@"
+            f"{config.get('host', 'localhost')}:{port}/"
+            f"{config.get('database', '')}"
         )
 
     raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
@@ -362,6 +379,9 @@ class ConnectionService:
         connect_args: dict = {}
         if connection_type == ConnectionType.MSSQL:
             connect_args = {"login_timeout": 5}
+        elif connection_type == ConnectionType.ORACLE:
+            # oracledb's DBAPI does not accept ``connect_timeout``.
+            connect_args = {"tcp_connect_timeout": 5}
         elif connection_type != ConnectionType.SQLITE:
             connect_args = {"connect_timeout": 5}
 

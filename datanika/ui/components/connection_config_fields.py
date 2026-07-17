@@ -663,6 +663,31 @@ def zendesk_fields() -> rx.Component:
     )
 
 
+def freshdesk_fields() -> rx.Component:
+    """Fields for freshdesk source (domain + API key)."""
+    return rx.vstack(
+        rx.text(_t["connections.freshdesk_domain"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_freshdesk_domain"],
+            value=ConnectionState.form_domain,
+            on_change=ConnectionState.set_form_domain,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_api_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def airtable_fields() -> rx.Component:
     """Fields for airtable source."""
     return rx.vstack(
@@ -773,7 +798,8 @@ def type_fields() -> rx.Component:
             | (ConnectionState.form_type == "mysql")
             | (ConnectionState.form_type == "mssql")
             | (ConnectionState.form_type == "redshift")
-            | (ConnectionState.form_type == "synapse"),
+            | (ConnectionState.form_type == "synapse")
+            | (ConnectionState.form_type == "oracle"),
             db_fields(),
         ),
         rx.cond(ConnectionState.form_type == "clickhouse", clickhouse_fields()),
@@ -795,7 +821,10 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "stripe", stripe_fields()),
         rx.cond(ConnectionState.form_type == "github", github_fields()),
         rx.cond(
-            (ConnectionState.form_type == "hubspot") | (ConnectionState.form_type == "slack"),
+            (ConnectionState.form_type == "hubspot")
+            | (ConnectionState.form_type == "slack")
+            | (ConnectionState.form_type == "pipedrive")
+            | (ConnectionState.form_type == "asana"),
             saas_api_key_fields(),
         ),
         rx.cond(ConnectionState.form_type == "salesforce", salesforce_fields()),
@@ -805,6 +834,7 @@ def type_fields() -> rx.Component:
         rx.cond(ConnectionState.form_type == "google_ads", google_ads_fields()),
         rx.cond(ConnectionState.form_type == "facebook_ads", facebook_ads_fields()),
         rx.cond(ConnectionState.form_type == "zendesk", zendesk_fields()),
+        rx.cond(ConnectionState.form_type == "freshdesk", freshdesk_fields()),
         rx.cond(ConnectionState.form_type == "airtable", airtable_fields()),
         rx.cond(
             ConnectionState.form_type == "notion",

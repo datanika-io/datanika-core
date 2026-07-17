@@ -366,6 +366,8 @@
   "connections.zendesk_subdomain": "子域名",
   "connections.ph_zendesk_subdomain": "yourcompany (without .zendesk.com)",
   "connections.ph_zendesk_token": "Zendesk API 令牌",
+  "connections.freshdesk_domain": "Freshdesk 域名",
+  "connections.ph_freshdesk_domain": "yourcompany（不含 .freshdesk.com）",
   "connections.base_id": "基础 ID",
   "connections.ph_base_id": "appXXXXXXXXXX",
   "connections.ph_airtable_key": "pat...",

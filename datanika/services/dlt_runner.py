@@ -39,6 +39,9 @@ SUPPORTED_SAAS_TYPES = {
     "zendesk",
     "airtable",
     "notion",
+    "pipedrive",
+    "freshdesk",
+    "asana",
 }
 
 # Kafka is a streaming source with its own builder
@@ -126,6 +129,7 @@ SOURCE_DRIVERNAME_MAP = {
     "redshift": "redshift+redshift_connector",
     "clickhouse": "clickhousedb+connect",
     "duckdb": "duckdb",
+    "oracle": "oracle+oracledb",
 }
 
 # Types where user→username renaming is needed
@@ -137,6 +141,7 @@ _RENAME_USER_TYPES = {
     "redshift",
     "snowflake",
     "clickhouse",
+    "oracle",
 }
 
 # ClickHouse table engine types supported by dlt
@@ -153,8 +158,10 @@ class DltRunnerService:
         "sqlite",
         "clickhouse",
         "duckdb",
+        "oracle",
     }
-    SUPPORTED_DESTINATION_TYPES = SUPPORTED_SOURCE_TYPES | {
+    # Oracle is source-only — dlt ships no Oracle destination.
+    SUPPORTED_DESTINATION_TYPES = (SUPPORTED_SOURCE_TYPES - {"oracle"}) | {
         "bigquery",
         "snowflake",
         "redshift",
@@ -777,6 +784,65 @@ class DltRunnerService:
                     ],
                     headers={"Notion-Version": "2022-06-28"},
                 )
+
+        # Pipedrive / Freshdesk / Asana have no pinned verified-source module, so
+        # they go straight to the generic REST fallback (the same path every other
+        # SaaS connector lands on when its verified source isn't installed).
+        if connection_type == "pipedrive":
+            api_key = config.get("api_key") or config.get("api_token", "")
+            if not api_key:
+                raise DltRunnerError("Pipedrive source requires 'api_key'")
+            return self._rest_api_fallback(
+                "https://api.pipedrive.com/v1/",
+                {"type": "api_key", "api_key": api_key, "name": "api_token", "location": "query"},
+                dlt_config.get("resources")
+                or [
+                    {"name": "deals", "endpoint": {"path": "deals"}},
+                    {"name": "persons", "endpoint": {"path": "persons"}},
+                    {"name": "organizations", "endpoint": {"path": "organizations"}},
+                    {"name": "activities", "endpoint": {"path": "activities"}},
+                    {"name": "pipelines", "endpoint": {"path": "pipelines"}},
+                    {"name": "stages", "endpoint": {"path": "stages"}},
+                    {"name": "users", "endpoint": {"path": "users"}},
+                ],
+            )
+
+        if connection_type == "freshdesk":
+            api_key = config.get("api_key", "")
+            domain = config.get("domain", "")
+            if not api_key:
+                raise DltRunnerError("Freshdesk source requires 'api_key'")
+            if not domain:
+                raise DltRunnerError("Freshdesk source requires 'domain'")
+            return self._rest_api_fallback(
+                f"https://{domain}.freshdesk.com/api/v2/",
+                {"type": "http_basic", "username": api_key, "password": "X"},
+                dlt_config.get("resources")
+                or [
+                    {"name": "tickets", "endpoint": {"path": "tickets"}},
+                    {"name": "contacts", "endpoint": {"path": "contacts"}},
+                    {"name": "agents", "endpoint": {"path": "agents"}},
+                    {"name": "companies", "endpoint": {"path": "companies"}},
+                    {"name": "groups", "endpoint": {"path": "groups"}},
+                ],
+            )
+
+        if connection_type == "asana":
+            access_token = config.get("api_key") or config.get("access_token", "")
+            if not access_token:
+                raise DltRunnerError("Asana source requires 'api_key'")
+            return self._rest_api_fallback(
+                "https://app.asana.com/api/1.0/",
+                {"type": "bearer", "token": access_token},
+                dlt_config.get("resources")
+                or [
+                    {"name": "workspaces", "endpoint": {"path": "workspaces"}},
+                    {"name": "projects", "endpoint": {"path": "projects"}},
+                    {"name": "tasks", "endpoint": {"path": "tasks"}},
+                    {"name": "users", "endpoint": {"path": "users"}},
+                    {"name": "tags", "endpoint": {"path": "tags"}},
+                ],
+            )
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
 

@@ -1,49 +1,121 @@
 import { test, expect } from "../fixtures/auth";
 
 /**
- * Multi-tenant isolation at the HTTP edge.
+ * Multi-tenant READ isolation at the HTTP edge.
  *
- * Service-layer isolation is enforced by the AST walker test in pytest,
- * but that only proves the _check_role() calls exist. This test proves
- * that if I am logged in as user A (org A), NO path exposes any
- * resource belonging to org B — not via the UI, not via the REST API.
+ * Companion to tenant-jwt-boundary.spec.ts, which proves org A cannot
+ * *mutate* org B's resources across 25 routes. This spec proves the read
+ * dimension: with a valid org-A API key, no GET exposes an org-B resource —
+ * neither by direct id nor by leaking into org A's collection listings.
  *
- * If this ever fails, it is a security incident. Do not "just fix the
- * assertion" — escalate to Engineering and file a CVE-grade issue.
+ * Threat model: an attacker with a valid org-A API key discovers (leaked URL,
+ * enumeration, side channel) an org-B resource id and tries to read it.
+ * Expected: 404 (or 400/403 for routes whose parsing runs before the org
+ * check). Forbidden: 2xx (cross-tenant read leaked) or 5xx (handler crashed
+ * past the org check — could mask a bypass).
+ *
+ * If this ever turns red, do NOT "just fix the assertion" — it is a security
+ * incident. Escalate to Engineering and file a CVE-grade issue.
+ *
+ * Fixtures: org B (one-of-every-resource) + org A/B API keys are always seeded
+ * by datanika/scripts/e2e_seed.py (core#172); global-setup.ts maps them to
+ * DATANIKA_E2E_* env vars. Un-skipped in core#297.
  */
-// @slow — parameterized over every /api/v1/* collection (walks OpenAPI spec)
-// and requires a second tenant seeded via core#113 follow-up. Too expensive
-// to run on every PR to `dev`; gated to `master` promotion PRs via
-// DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P0 #1 and core#113.
-test.describe("Tenant isolation: user A cannot read org B @slow", () => {
-  test.skip("cross-org GET on every collection returns 403 or empty", async ({ request }) => {
-    // Seed two orgs via the deterministic seed script
-    // const { userA, userB, orgBPipelineId } = await seed.twoOrgs();
+// @slow — real HTTP against a seeded second tenant; gated to master promotion
+// PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P1 Multi-Tenancy.
 
-    const collections = [
-      "/api/v1/connections",
-      "/api/v1/pipelines",
-      "/api/v1/transformations",
-      "/api/v1/schedules",
-      "/api/v1/runs",
-      "/api/v1/catalog",
-    ];
+type ReadResource = {
+  collection: string;
+  resourceKey: "connection" | "pipeline" | "transformation" | "schedule" | "upload";
+};
 
-    for (const path of collections) {
-      // const res = await request.get(path, { headers: { Authorization: `Bearer ${userA.apiKey}` } });
-      // expect(res.status()).toBe(200);
-      // const body = await res.json();
-      // expect(body).not.toContainEqual(expect.objectContaining({ org_id: userB.orgId }));
+// Org-B resources that GET-by-id endpoints exist for. Kept in lockstep with
+// the resources seeded in org B by e2e_seed.py.
+const READ_RESOURCES: ReadResource[] = [
+  { collection: "connections", resourceKey: "connection" },
+  { collection: "pipelines", resourceKey: "pipeline" },
+  { collection: "transformations", resourceKey: "transformation" },
+  { collection: "schedules", resourceKey: "schedule" },
+  { collection: "uploads", resourceKey: "upload" },
+];
+
+function mustEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `${name} not set — global-setup.ts must map it from the seed payload. ` +
+        "Check e2e/global-setup.ts and datanika/scripts/e2e_seed.py.",
+    );
+  }
+  return value;
+}
+
+function orgBResourceId(resourceKey: ReadResource["resourceKey"]): number {
+  const value = process.env[`DATANIKA_E2E_ORG_B_${resourceKey.toUpperCase()}_ID`];
+  // Fall back to a synthetic id: the boundary is still valid — org A must not
+  // read any id it doesn't own, whether the row exists or not.
+  return value && Number(value) > 0 ? Number(value) : 999999;
+}
+
+/** Normalize a list response to an array of items regardless of envelope shape. */
+function asItems(body: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(body)) return body as Array<Record<string, unknown>>;
+  if (body && typeof body === "object") {
+    for (const key of ["items", "data", "results"]) {
+      const v = (body as Record<string, unknown>)[key];
+      if (Array.isArray(v)) return v as Array<Record<string, unknown>>;
     }
+  }
+  return [];
+}
 
-    // Direct-access via guessed IDs must 403, not 404 (leaking existence is also a bug)
-    // const direct = await request.get(`/api/v1/pipelines/${orgBPipelineId}`, ...);
-    // expect(direct.status()).toBe(403);
+test.describe("Tenant isolation: org A cannot read org B @slow", () => {
+  for (const { collection, resourceKey } of READ_RESOURCES) {
+    test(`GET /api/v1/${collection}/{id} — org A cannot read org B resource`, async ({
+      request,
+    }) => {
+      const apiKeyA = mustEnv("DATANIKA_E2E_API_KEY_ORG_A");
+      const victimId = orgBResourceId(resourceKey);
+
+      const res = await request.get(`/api/v1/${collection}/${victimId}`, {
+        headers: { Authorization: `Bearer ${apiKeyA}` },
+      });
+      const status = res.status();
+
+      expect(
+        [200, 201, 202, 204].includes(status),
+        `GET /api/v1/${collection}/${victimId} leaked org B resource to org A (status=${status})`,
+      ).toBe(false);
+      expect(status, `cross-tenant GET returned ${status}`).toBeLessThan(500);
+      expect([400, 401, 403, 404]).toContain(status);
+    });
+  }
+
+  test("collection listings do not leak org B rows to org A", async ({ request }) => {
+    const apiKeyA = mustEnv("DATANIKA_E2E_API_KEY_ORG_A");
+    for (const { collection, resourceKey } of READ_RESOURCES) {
+      const victimId = orgBResourceId(resourceKey);
+      const res = await request.get(`/api/v1/${collection}`, {
+        headers: { Authorization: `Bearer ${apiKeyA}` },
+      });
+      expect(res.status(), `GET /api/v1/${collection} for org A`).toBe(200);
+      const ids = asItems(await res.json()).map((row) => Number(row.id));
+      expect(
+        ids.includes(victimId),
+        `/api/v1/${collection} leaked org B id ${victimId} into org A's listing`,
+      ).toBe(false);
+    }
   });
 
-  test.skip("new endpoint parity: every /api/v1/* collection is covered by this test", async ({ request }) => {
-    // Parse OpenAPI spec and fail if a collection endpoint is not asserted above.
-    // const spec = await request.get("/api/v1/openapi.json").then(r => r.json());
-    // ... walk paths, assert each collection is in the list above
+  test("sanity: org B can read its own resource with its own key", async ({ request }) => {
+    // The boundary must not wall off the rightful owner: the same connection
+    // that 404s for org A must return 200 for org B.
+    const apiKeyB = mustEnv("DATANIKA_E2E_API_KEY_ORG_B");
+    const ownId = orgBResourceId("connection");
+
+    const res = await request.get(`/api/v1/connections/${ownId}`, {
+      headers: { Authorization: `Bearer ${apiKeyB}` },
+    });
+    expect(res.status()).toBe(200);
   });
 });

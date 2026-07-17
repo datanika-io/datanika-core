@@ -23,6 +23,7 @@ PICKER_TYPES: list[str] = [
     "postgres",
     "mysql",
     "mssql",
+    "oracle",
     "sqlite",
     "redshift",
     "synapse",
@@ -49,6 +50,9 @@ PICKER_TYPES: list[str] = [
     "zendesk",
     "airtable",
     "notion",
+    "pipedrive",
+    "freshdesk",
+    "asana",
     # Dev tools
     "github",
     "jira",

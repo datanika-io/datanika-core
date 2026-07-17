@@ -79,6 +79,16 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         },
         required=["host", "database", "user", "password"],
     ),
+    "oracle": _schema(
+        {
+            "host": _str("Oracle hostname"),
+            "port": _int("Port number", default=1521),
+            "database": _str("Service name (or SID)"),
+            "user": _str("Username"),
+            "password": _str("Password", sensitive=True),
+        },
+        required=["host", "database", "user", "password"],
+    ),
     "sqlite": _schema(
         {
             "path": _str("Path to SQLite file (or :memory:)"),
@@ -225,6 +235,21 @@ CONFIG_SCHEMAS: dict[str, dict] = {
     ),
     "notion": _schema(
         {"api_key": _str("Notion integration token", sensitive=True)},
+        required=["api_key"],
+    ),
+    "pipedrive": _schema(
+        {"api_key": _str("Pipedrive API token", sensitive=True)},
+        required=["api_key"],
+    ),
+    "freshdesk": _schema(
+        {
+            "domain": _str("Freshdesk domain (the <domain> in <domain>.freshdesk.com)"),
+            "api_key": _str("Freshdesk API key", sensitive=True),
+        },
+        required=["domain", "api_key"],
+    ),
+    "asana": _schema(
+        {"api_key": _str("Asana personal access token", sensitive=True)},
         required=["api_key"],
     ),
     "google_analytics": _schema(

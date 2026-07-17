@@ -27,6 +27,7 @@ class ConnectionType(enum.StrEnum):
     DUCKDB = "duckdb"
     DATABRICKS = "databricks"
     SYNAPSE = "synapse"
+    ORACLE = "oracle"
     STRIPE = "stripe"
     GITHUB = "github"
     HUBSPOT = "hubspot"
@@ -40,6 +41,9 @@ class ConnectionType(enum.StrEnum):
     ZENDESK = "zendesk"
     AIRTABLE = "airtable"
     NOTION = "notion"
+    PIPEDRIVE = "pipedrive"
+    FRESHDESK = "freshdesk"
+    ASANA = "asana"
     KAFKA = "kafka"
 
 

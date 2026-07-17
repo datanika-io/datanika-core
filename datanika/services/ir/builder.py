@@ -30,6 +30,7 @@ SQL_TYPES = frozenset(
         "databricks",
         "synapse",
         "redshift",
+        "oracle",
     }
 )
 
@@ -53,6 +54,9 @@ SAAS_TYPES = frozenset(
         "kafka",
         "rest_api",
         "google_sheets",
+        "pipedrive",
+        "freshdesk",
+        "asana",
     }
 )
 

@@ -252,7 +252,7 @@ class TestBuildSource:
 
     def test_unsupported_type_raises(self, svc):
         with pytest.raises(DltRunnerError, match="Unsupported source type"):
-            svc.build_source("oracle", {}, {})
+            svc.build_source("teradata", {}, {})
 
     def test_bigquery_not_valid_as_source(self, svc):
         with pytest.raises(DltRunnerError, match="Unsupported source type"):

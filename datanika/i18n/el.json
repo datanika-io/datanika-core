@@ -366,6 +366,8 @@
   "connections.zendesk_subdomain": "Υποτομέας",
   "connections.ph_zendesk_subdomain": "yourcompany (without .zendesk.com)",
   "connections.ph_zendesk_token": "Κλειδί API Zendesk",
+  "connections.freshdesk_domain": "Τομέας Freshdesk",
+  "connections.ph_freshdesk_domain": "yourcompany (χωρίς .freshdesk.com)",
   "connections.base_id": "ID βάσης",
   "connections.ph_base_id": "appXXXXXXXXXX",
   "connections.ph_airtable_key": "pat...",

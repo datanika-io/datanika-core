@@ -366,6 +366,8 @@
   "connections.zendesk_subdomain": "Subdominio",
   "connections.ph_zendesk_subdomain": "yourcompany (without .zendesk.com)",
   "connections.ph_zendesk_token": "Token API de Zendesk",
+  "connections.freshdesk_domain": "Dominio de Freshdesk",
+  "connections.ph_freshdesk_domain": "yourcompany (sin .freshdesk.com)",
   "connections.base_id": "ID de la base",
   "connections.ph_base_id": "appXXXXXXXXXX",
   "connections.ph_airtable_key": "pat...",

@@ -71,10 +71,11 @@ _DEFAULT_PORTS: dict[str, str] = {
     "mongodb": "27017",
     "clickhouse": "8123",
     "synapse": "1433",
+    "oracle": "1521",
 }
 
 # Connection types that use the SQL database form group (host/port/user/pass/db/schema)
-_DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse", "synapse"}
+_DB_TYPES = {"postgres", "mysql", "mssql", "redshift", "clickhouse", "synapse", "oracle"}
 
 # Mapping of pipeline-template ``source_config_defaults`` keys to the
 # matching ConnectionState ``form_*`` attribute. Module-level (not a class
@@ -624,6 +625,16 @@ class ConnectionState(BaseState):
             if self.form_group_id:
                 config["group_id"] = self.form_group_id
 
+        elif t in ("pipedrive", "asana"):
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+
+        elif t == "freshdesk":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_domain:
+                config["domain"] = self.form_domain
+
         return config
 
     def _reset_form_fields(self):
@@ -832,6 +843,11 @@ class ConnectionState(BaseState):
             topics = config.get("topics", [])
             self.form_topics = ", ".join(topics) if isinstance(topics, list) else topics
             self.form_group_id = config.get("group_id", "")
+        elif conn_type in ("pipedrive", "asana"):
+            self.form_api_key = config.get("api_key", "")
+        elif conn_type == "freshdesk":
+            self.form_api_key = config.get("api_key", "")
+            self.form_domain = config.get("domain", "")
 
     async def load_connections(self):
         org_id = await self._get_org_id()

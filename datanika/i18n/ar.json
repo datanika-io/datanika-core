@@ -366,6 +366,8 @@
   "connections.zendesk_subdomain": "النطاق الفرعي",
   "connections.ph_zendesk_subdomain": "yourcompany (without .zendesk.com)",
   "connections.ph_zendesk_token": "رمز Zendesk API",
+  "connections.freshdesk_domain": "نطاق Freshdesk",
+  "connections.ph_freshdesk_domain": "yourcompany (بدون .freshdesk.com)",
   "connections.base_id": "معرف القاعدة",
   "connections.ph_base_id": "appXXXXXXXXXX",
   "connections.ph_airtable_key": "pat...",

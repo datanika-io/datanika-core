@@ -275,6 +275,45 @@ def create_connection(request, api_key, session):
     return JSONResponse(_ser_connection(conn), status_code=201)
 
 
+@api_endpoint(required_scope="connections:read")
+def parse_openapi(request, api_key, session):
+    """Parse an OpenAPI 3.x spec (paste-mode) into a preview of the derived
+    connector — base_url, auth schemes, and readable resources with columns.
+
+    Stateless: creates no connection, so an agent/UI can preview before
+    committing. See SPEC_OPENAPI_CONNECTOR.md (#325).
+    """
+    from datanika.services.openapi_import import OpenApiImportError, parse_openapi_spec
+
+    data = _body_sync(request)
+    spec = data.get("spec_inline")
+    if not spec or not isinstance(spec, str):
+        return _error(400, "spec_inline (the OpenAPI 3.x document as a string) is required")
+    try:
+        parsed = parse_openapi_spec(spec, base_url_override=data.get("base_url"))
+    except OpenApiImportError as exc:
+        return JSONResponse({"error": str(exc), "code": exc.code}, status_code=400)
+    return JSONResponse(
+        {
+            "base_url": parsed.base_url,
+            "auth_schemes": parsed.auth_schemes,
+            "resources": [
+                {
+                    "name": r["name"],
+                    "path": r["endpoint"]["path"],
+                    "method": r["endpoint"]["method"],
+                    "data_selector": r["endpoint"].get("data_selector"),
+                    "primary_key": r.get("primary_key"),
+                    "columns": r["columns"],
+                    "summary": (r.get("_source") or {}).get("summary"),
+                }
+                for r in parsed.resources
+            ],
+            "warnings": parsed.warnings,
+        }
+    )
+
+
 @api_endpoint(required_scope="connections:write")
 def update_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
@@ -1506,6 +1545,7 @@ api_v1_routes = [
     Route("/api/v1/connections", list_connections, methods=["GET"]),
     Route("/api/v1/connections/{id:int}", get_connection, methods=["GET"]),
     Route("/api/v1/connections", create_connection, methods=["POST"]),
+    Route("/api/v1/connections/openapi/parse", parse_openapi, methods=["POST"]),
     Route("/api/v1/connections/{id:int}", update_connection, methods=["PUT"]),
     Route("/api/v1/connections/{id:int}", delete_connection, methods=["DELETE"]),
     Route("/api/v1/connections/{id:int}/test", test_connection, methods=["POST"]),

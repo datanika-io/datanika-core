@@ -45,6 +45,7 @@ class ConnectionType(enum.StrEnum):
     FRESHDESK = "freshdesk"
     ASANA = "asana"
     KAFKA = "kafka"
+    OPENAPI = "openapi"
 
 
 class ConnectionDirection(enum.StrEnum):

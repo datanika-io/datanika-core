@@ -814,6 +814,38 @@ def oracle_fields() -> rx.Component:
     )
 
 
+def openapi_fields() -> rx.Component:
+    """Fields for the OpenAPI connector — paste a spec; endpoints auto-discovered on save."""
+    return rx.vstack(
+        rx.callout(_t["connections.openapi_hint"], icon="info", size="1"),
+        rx.text(_t["connections.openapi_spec"], " *", size="2", weight="bold"),
+        rx.text_area(
+            placeholder=_t["connections.ph_openapi_spec"],
+            value=ConnectionState.form_openapi_spec,
+            on_change=ConnectionState.set_form_openapi_spec,
+            width="100%",
+            min_height="160px",
+        ),
+        rx.text(_t["connections.base_url"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_base_url"],
+            value=ConnectionState.form_base_url,
+            on_change=ConnectionState.set_form_base_url,
+            width="100%",
+        ),
+        rx.text(_t["connections.api_key"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_api_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+            type="password",
+            width="100%",
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def type_fields() -> rx.Component:
     """Render the appropriate config fields based on selected connection type."""
     return rx.fragment(
@@ -840,6 +872,7 @@ def type_fields() -> rx.Component:
             file_upload_fields(),
         ),
         rx.cond(ConnectionState.form_type == "rest_api", rest_api_fields()),
+        rx.cond(ConnectionState.form_type == "openapi", openapi_fields()),
         rx.cond(ConnectionState.form_type == "google_sheets", google_sheets_fields()),
         rx.cond(ConnectionState.form_type == "mongodb", mongodb_fields()),
         rx.cond(ConnectionState.form_type == "stripe", stripe_fields()),

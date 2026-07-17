@@ -47,6 +47,7 @@ SOURCE_TYPES = {
     "freshdesk",
     "asana",
     "kafka",
+    "openapi",
 }
 
 # Types that can serve as destinations (databases + cloud warehouses)
@@ -103,6 +104,7 @@ _NON_DB_TYPES = {
     ConnectionType.FRESHDESK,
     ConnectionType.ASANA,
     ConnectionType.KAFKA,
+    ConnectionType.OPENAPI,
 }
 
 

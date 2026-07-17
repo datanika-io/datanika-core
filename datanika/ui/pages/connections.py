@@ -41,6 +41,7 @@ PICKER_TYPES: list[str] = [
     "parquet",
     # Generic APIs
     "rest_api",
+    "openapi",
     "google_sheets",
     # SaaS / CRM
     "stripe",

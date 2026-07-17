@@ -21,6 +21,8 @@ AWS_CREDENTIAL_KEYS = {"aws_access_key_id", "aws_secret_access_key", "region_nam
 
 SUPPORTED_REST_TYPES = {"rest_api"}
 
+SUPPORTED_OPENAPI_TYPES = {"openapi"}
+
 SUPPORTED_SHEETS_TYPES = {"google_sheets"}
 
 SUPPORTED_MONGODB_TYPES = {"mongodb"}
@@ -59,6 +61,7 @@ INTERNAL_CONFIG_KEYS = {
     "bucket_url",
     "file_glob",
     "resources",
+    "resource_names",
     "paginator",
     "client",
     "resource_defaults",
@@ -252,6 +255,9 @@ class DltRunnerService:
         if connection_type in SUPPORTED_REST_TYPES:
             return self._build_rest_api_source(config, dlt_config)
 
+        if connection_type in SUPPORTED_OPENAPI_TYPES:
+            return self._build_openapi_source(config, dlt_config)
+
         if connection_type in SUPPORTED_MONGODB_TYPES:
             return self._build_mongodb_source(config, dlt_config, batch_size)
 
@@ -331,6 +337,33 @@ class DltRunnerService:
 
         return filesystem(**kwargs)
 
+    @staticmethod
+    def _rest_api_from_parts(
+        base_url: str,
+        resources: list,
+        *,
+        auth: dict | None = None,
+        headers: dict | None = None,
+        paginator: dict | None = None,
+        resource_defaults: dict | None = None,
+    ):
+        """Assemble a ``rest_api_source`` from client parts + a resource list.
+
+        Shared by the generic ``rest_api`` connector and the ``openapi``
+        connector (whose resources are derived from a spec).
+        """
+        client_config: dict = {"base_url": base_url}
+        if headers:
+            client_config["headers"] = headers
+        if auth:
+            client_config["auth"] = auth
+        if paginator:
+            client_config["paginator"] = paginator
+        rest_config: dict = {"client": client_config, "resources": resources}
+        if resource_defaults:
+            rest_config["resource_defaults"] = resource_defaults
+        return rest_api_source(rest_config)
+
     def _build_rest_api_source(self, config: dict, dlt_config: dict):
         """Build a dlt REST API source from connection config + dlt_config."""
         base_url = config.get("base_url") or dlt_config.get("base_url")
@@ -341,27 +374,50 @@ class DltRunnerService:
         if not resources or not isinstance(resources, list):
             raise DltRunnerError("REST API source requires 'resources' list in dlt_config")
 
-        client_config: dict = {"base_url": base_url}
+        return self._rest_api_from_parts(
+            base_url,
+            resources,
+            headers=config.get("headers") or dlt_config.get("headers"),
+            auth=config.get("auth") or dlt_config.get("auth"),
+            paginator=dlt_config.get("paginator"),
+            resource_defaults=dlt_config.get("resource_defaults"),
+        )
 
-        headers = config.get("headers") or dlt_config.get("headers")
-        if headers:
-            client_config["headers"] = headers
+    def _build_openapi_source(self, config: dict, dlt_config: dict):
+        """Build a rest_api source from a spec-derived ``openapi`` connection.
 
-        auth = config.get("auth") or dlt_config.get("auth")
-        if auth:
-            client_config["auth"] = auth
+        The connection stores the full resource catalog (from
+        ``openapi_import.parse_openapi_spec``); the upload's
+        ``dlt_config.resource_names`` selects a subset. Our private keys
+        (``columns``, ``_source``) are stripped before handing resources to dlt.
+        """
+        base_url = config.get("base_url") or dlt_config.get("base_url")
+        if not base_url:
+            raise DltRunnerError("OpenAPI source requires 'base_url'")
 
-        paginator = dlt_config.get("paginator")
-        if paginator:
-            client_config["paginator"] = paginator
+        catalog = config.get("resources")
+        if not catalog or not isinstance(catalog, list):
+            raise DltRunnerError("OpenAPI source has no resource catalog — re-parse the spec")
 
-        rest_config: dict = {"client": client_config, "resources": resources}
+        selected = dlt_config.get("resource_names")
+        if selected:
+            wanted = set(selected)
+            catalog = [r for r in catalog if r.get("name") in wanted]
+            if not catalog:
+                raise DltRunnerError(
+                    "None of the requested resource_names exist in this connection"
+                )
 
-        resource_defaults = dlt_config.get("resource_defaults")
-        if resource_defaults:
-            rest_config["resource_defaults"] = resource_defaults
-
-        return rest_api_source(rest_config)
+        resources = [
+            {k: v for k, v in r.items() if k not in ("columns", "_source")} for r in catalog
+        ]
+        return self._rest_api_from_parts(
+            base_url,
+            resources,
+            headers=config.get("headers"),
+            auth=config.get("auth"),
+            paginator=config.get("paginator") or dlt_config.get("paginator"),
+        )
 
     def _build_google_sheets_source(self, config: dict, dlt_config: dict):
         """Build a dlt source for Google Sheets using gspread."""

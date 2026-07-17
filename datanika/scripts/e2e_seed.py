@@ -150,13 +150,22 @@ class UnsafeTargetError(RuntimeError):
 def _assert_safe_target() -> None:
     if os.environ.get("E2E_SEED_ALLOW_ANY_HOST") == "1":
         return
-    url = settings.database_url_sync.lower()
-    for marker in PROD_HOST_MARKERS:
-        if marker in url:
-            raise UnsafeTargetError(
-                f"Refusing to seed: DATABASE_URL contains {marker!r}. "
-                "Set E2E_SEED_ALLOW_ANY_HOST=1 to override (CI only)."
-            )
+    # Inspect both the DB URL and the app's public URL. Inside a container the
+    # DB URL is a compose-service host (e.g. ``@postgres:5432/datanika``) that
+    # reveals nothing about the environment, but ``frontend_url`` is the real
+    # deployment identity (``https://app.datanika.io`` in prod). Checking only
+    # the DB URL let a prod seed through on the pointer.gr box (core#296).
+    candidates = {
+        "DATABASE_URL": settings.database_url_sync.lower(),
+        "FRONTEND_URL": settings.frontend_url.lower(),
+    }
+    for source, value in candidates.items():
+        for marker in PROD_HOST_MARKERS:
+            if marker in value:
+                raise UnsafeTargetError(
+                    f"Refusing to seed: {source} contains {marker!r}. "
+                    "Set E2E_SEED_ALLOW_ANY_HOST=1 to override (CI only)."
+                )
 
 
 def _tear_down_fixture(session: Session) -> None:

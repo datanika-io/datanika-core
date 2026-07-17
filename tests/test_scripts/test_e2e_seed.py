@@ -197,6 +197,40 @@ def test_assert_safe_target_allows_localhost():
         _assert_safe_target()  # must not raise
 
 
+def test_assert_safe_target_blocks_prod_frontend_url_with_safe_db():
+    """Guard must catch prod even when DATABASE_URL is a compose-service host.
+
+    Regression for core#296: inside the prod container DATABASE_URL is a
+    compose service host (e.g. ``@postgres:5432/datanika``) that contains no
+    prod marker, so checking it alone lets a prod seed through. ``frontend_url``
+    is the real deployment identity (``https://app.datanika.io`` in prod), so
+    the guard must inspect it too.
+    """
+    with (
+        patch.object(
+            e2e_seed.settings,
+            "database_url_sync",
+            "postgresql://datanika:pw@postgres:5432/datanika",
+        ),
+        patch.object(e2e_seed.settings, "frontend_url", "https://app.datanika.io"),
+        pytest.raises(UnsafeTargetError),
+    ):
+        _assert_safe_target()
+
+
+def test_assert_safe_target_allows_localhost_frontend_url():
+    """A localhost frontend_url must not trip the guard (dev/CI stacks)."""
+    with (
+        patch.object(
+            e2e_seed.settings,
+            "database_url_sync",
+            "postgresql://u:p@localhost:5432/datanika",
+        ),
+        patch.object(e2e_seed.settings, "frontend_url", "http://localhost:3000"),
+    ):
+        _assert_safe_target()  # must not raise
+
+
 def test_seed_result_shape():
     """The JSON contract with Playwright — keys must not silently drift."""
     # Check via the dataclass field names rather than running the script.

@@ -164,10 +164,6 @@ def test_stripe_list_charges_read_scope(require_env):
 # ---------- Kafka / Redpanda ----------
 
 
-@pytest.mark.skip(
-    reason="core#331: installed kafka-python rejects api_version_auto_timeout_ms on "
-    "KafkaAdminClient. Quarantined so the re-enabled nightly stays green — remove when fixed."
-)
 def test_kafka_auth_and_list_topics(require_env):
     """SASL/SCRAM-SHA-256 handshake + admin list_topics on Redpanda Serverless.
 
@@ -199,7 +195,9 @@ def test_kafka_auth_and_list_topics(require_env):
         sasl_plain_username=env["KAFKA_SASL_USERNAME"],
         sasl_plain_password=env["KAFKA_SASL_PASSWORD"],
         request_timeout_ms=20000,
-        api_version_auto_timeout_ms=20000,
+        # No api_version_auto_timeout_ms: kafka-python's KafkaAdminClient rejects it
+        # (it is a consumer/producer kwarg, not an admin one) — passing it raised
+        # KafkaConfigurationError and broke the re-enabled nightly (core#331).
         client_id="qa-nightly-smoke",
     )
     try:

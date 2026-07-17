@@ -93,6 +93,8 @@
   "connections.ph_user": "",
   "connections.ph_password": "Contraseña",
   "connections.ph_database": "mydb",
+  "connections.oracle_service_hint": "El campo Base de datos es el nombre de servicio de Oracle (p. ej. XEPDB1, RAC o Autonomous). Active 'Conectar por SID' solo para Oracle heredado de instancia única.",
+  "connections.oracle_use_sid": "Conectar por SID (instancia única heredada)",
   "connections.ph_schema": "public",
   "connections.ph_db_path": "/data/my.db",
   "connections.ph_gcp_project": "my-gcp-project",

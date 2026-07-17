@@ -34,7 +34,6 @@ from __future__ import annotations
 import time
 
 import httpx
-import pytest
 
 
 def _log(msg: str) -> None:
@@ -54,11 +53,9 @@ def test_oracle_live_driver_and_connector(require_env):
        are healthy, addressed the *correct* way (service name / easy-connect).
        This is the real live-smoke value: catches driver break, XE image drift,
        network/creds issues. If it fails, the infra is broken — fail loud.
-    2. **Our connector's path** (``_build_sa_url`` + ``ConnectionService.test_connection``).
-       Currently **xfails** on core#329: ``_build_sa_url`` puts the service name
-       in the DSN path, which SQLAlchemy's oracledb dialect treats as a SID
-       (ORA-12505), so it can't reach a service-name Oracle (PDB/RAC/Autonomous).
-       When #329 lands, this xfail flips to a pass — delete the xfail block then.
+    2. **Our connector's path** (``_build_sa_url`` + ``ConnectionService.test_connection``)
+       reaching the same service-name Oracle. Fixed in core#329 — ``_build_sa_url``
+       now emits the ``?service_name=`` form (the URL path is SID-only).
     """
     env = require_env(
         "ORACLE_HOST", "ORACLE_PORT", "ORACLE_SERVICE", "ORACLE_USER", "ORACLE_PASSWORD"
@@ -101,11 +98,7 @@ def test_oracle_live_driver_and_connector(require_env):
     url = _build_sa_url(config, ConnectionType.ORACLE)
     assert url.startswith("oracle+oracledb://"), f"unexpected Oracle URL scheme: {url}"
     ok, msg = ConnectionService.test_connection(config, ConnectionType.ORACLE)
-    if not ok:
-        pytest.xfail(f"core#329: Oracle connector uses SID semantics for a service name — {msg}")
-    # Reaching here means core#329 is FIXED: remove this xfail guard (and the
-    # positive-control note) so the smoke asserts the connector positively.
-    assert ok, msg
+    assert ok, msg  # core#329 fixed: connector reaches the service-name Oracle
 
 
 # ---------- Pipedrive (SaaS REST — api_token query auth) ----------

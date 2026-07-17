@@ -68,14 +68,14 @@ class TestOracleConnector:
             },
             ConnectionType.ORACLE,
         )
-        assert url == "oracle+oracledb://scott:tiger@db.example.com:1521/XEPDB1"
+        assert url == "oracle+oracledb://scott:tiger@db.example.com:1521/?service_name=XEPDB1"
 
     def test_build_sa_url_default_port(self):
         url = _build_sa_url(
             {"host": "h", "user": "u", "password": "p", "database": "SVC"},
             ConnectionType.ORACLE,
         )
-        assert "@h:1521/SVC" in url
+        assert "@h:1521/?service_name=SVC" in url
 
     def test_build_sa_url_quotes_special_chars(self):
         url = _build_sa_url(
@@ -83,6 +83,38 @@ class TestOracleConnector:
             ConnectionType.ORACLE,
         )
         assert "p%40ss%2Fword" in url
+
+    def test_build_sa_url_sid_mode(self):
+        # use_sid=True → legacy SID connect (the URL path is the SID).
+        url = _build_sa_url(
+            {"host": "h", "user": "u", "password": "p", "database": "ORCL", "use_sid": True},
+            ConnectionType.ORACLE,
+        )
+        assert url == "oracle+oracledb://u:p@h:1521/ORCL"
+
+    def test_dsn_uses_service_name_not_sid(self):
+        # #329: guard the *resolved* DSN semantics, not just the URL string — the
+        # bug was a correct-looking path URL that SQLAlchemy resolves to a SID.
+        from sqlalchemy import create_engine
+        from sqlalchemy.engine import make_url
+
+        cases = [
+            (
+                {"host": "h", "user": "u", "password": "p", "database": "XEPDB1"},
+                "SERVICE_NAME=XEPDB1",
+                "(SID=",
+            ),
+            (
+                {"host": "h", "user": "u", "password": "p", "database": "ORCL", "use_sid": True},
+                "SID=ORCL",
+                "SERVICE_NAME=",
+            ),
+        ]
+        for cfg, expect, forbid in cases:
+            url = make_url(_build_sa_url(cfg, ConnectionType.ORACLE))
+            dsn = create_engine(url).dialect.create_connect_args(url)[1]["dsn"]
+            assert expect in dsn, dsn
+            assert forbid not in dsn, dsn
 
     def test_is_source_not_destination(self):
         assert "oracle" in SOURCE_TYPES
@@ -97,13 +129,25 @@ class TestOracleConnector:
         assert SOURCE_DRIVERNAME_MAP["oracle"] == "oracle+oracledb"
         assert "oracle" in _RENAME_USER_TYPES
 
-    def test_to_dlt_credentials_renames_user_and_sets_driver(self):
+    def test_to_dlt_credentials_service_name(self):
+        # Default: the dlt extract path must also use service_name, not SID (#329).
         creds = DltRunnerService._to_dlt_credentials(
             "oracle", {"host": "h", "user": "u", "password": "p", "database": "SVC"}
         )
         assert creds["drivername"] == "oracle+oracledb"
         assert creds["username"] == "u"
         assert "user" not in creds
+        assert creds.get("query") == {"service_name": "SVC"}
+        assert "database" not in creds  # moved into the service_name query
+
+    def test_to_dlt_credentials_sid_mode(self):
+        creds = DltRunnerService._to_dlt_credentials(
+            "oracle",
+            {"host": "h", "user": "u", "password": "p", "database": "ORCL", "use_sid": True},
+        )
+        assert creds["database"] == "ORCL"  # SID stays in the URL path
+        assert "service_name" not in (creds.get("query") or {})
+        assert "use_sid" not in creds  # our flag never leaks into dlt credentials
 
     def test_in_ir_sql_types(self):
         assert "oracle" in SQL_TYPES
@@ -115,6 +159,9 @@ class TestOracleConnector:
         assert {"host", "port", "database", "user", "password"} <= set(props)
         assert schema["required"] == ["host", "database", "user", "password"]
         assert props["password"].get("format") == "password"
+        # #329: optional legacy-SID toggle (default = service name)
+        assert props["use_sid"]["type"] == "boolean"
+        assert "use_sid" not in schema["required"]
 
     @patch("datanika.services.connection_service.create_engine")
     def test_connect_args_avoids_connect_timeout(self, mock_ce):

@@ -42,14 +42,14 @@ test.describe("RBAC: viewer role at the UI layer @slow", () => {
     });
   });
 
-  test.fixme(
+  test(
     "viewer does not see destructive/create controls on connections",
     async ({ page }) => {
-      // KNOWN GAP — core#313: /connections renders Create/Edit/Delete/Copy buttons
-      // regardless of role. The actions are blocked server-side (_check_role in
-      // connection_state.py), so there is no data-loss bypass, but a VIEWER should
-      // not SEE destructive controls (least privilege). Un-fixme when Engineering
-      // gates control visibility by role.
+      // core#313 (shipped in #318, live via promotion #322): /connections gates
+      // the create form + Edit/Copy/Delete controls behind AuthState.can_edit /
+      // can_delete, so a VIEWER (can_edit == can_delete == false) never renders
+      // them. Enforcement still lives server-side (_check_role in
+      // connection_state.py); this locks the least-privilege visibility gate.
       await loginAsViewer(page);
       await gotoReady(page, "/connections");
       await expect(

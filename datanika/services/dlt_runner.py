@@ -194,6 +194,16 @@ class DltRunnerService:
             if connection_type == "duckdb" and "path" in creds:
                 creds["database"] = creds.pop("path")
 
+        # Oracle: connect by service name (PDB/RAC/Autonomous) unless use_sid.
+        # dlt builds the SQLAlchemy URL from these components, so — as with
+        # _build_sa_url — a "database" in the URL path resolves to a SID (#329).
+        if connection_type == "oracle":
+            use_sid = bool(creds.pop("use_sid", False))
+            if not use_sid and "database" in creds:
+                query = dict(creds.get("query") or {})
+                query["service_name"] = creds.pop("database")
+                creds["query"] = query
+
         return creds
 
     def build_destination(self, connection_type: str, config: dict):

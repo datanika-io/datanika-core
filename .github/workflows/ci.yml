@@ -108,69 +108,9 @@ jobs:
       - name: Helm template (dry-run render)
         run: helm template test-release deploy/helm/datanika > /dev/null
 
-  deploy:
-    # Waits for build-push-image.yml to finish on the same SHA so GHCR has
-    # the :<sha> tag available when the Hetzner deploy tries to pull.
-    needs: [lint, test, helm-lint]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Wait for image push to finish
-        uses: lewagon/wait-on-check-action@v1.3.4
-        with:
-          ref: ${{ github.sha }}
-          check-name: build-push
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
-
-      - name: Deploy to Hetzner
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_TAG: ${{ github.sha }}
-        with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: root
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN,IMAGE_TAG
-          script: |
-            set -e
-
-            cd /opt/datanika/datanika
-            git pull origin master
-
-            cd /opt/datanika/datanika-cloud
-            git pull origin master
-
-            cd /opt/datanika/datanika
-
-            # Source env vars for docker-compose interpolation
-            set -a && source .env.docker && set +a
-
-            # Pull the pre-built image from GHCR (built on GHA, no CPU/RAM
-            # spike on prod during deploy). Fallback: if pull fails we can
-            # re-run with local build by removing DATANIKA_IMAGE_TAG.
-            SHORT_SHA="${IMAGE_TAG:0:7}"
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            export DATANIKA_IMAGE_TAG="$SHORT_SHA"
-            docker compose pull app celery
-
-            # Restart app first, wait for health, then celery
-            docker compose up -d --no-deps app
-            echo "Waiting for app to be healthy..."
-            timeout 120 bash -c 'until docker inspect --format="{{.State.Health.Status}}" datanika-app 2>/dev/null | grep -q healthy; do sleep 3; done' || {
-              echo "App failed health check — rolling back"
-              docker compose up -d --no-deps app
-              exit 1
-            }
-
-            docker compose up -d --no-deps celery
-            echo "Deploy complete"
-
-            # Cleanup old images
-            docker image prune -f
+  # Prod deploy is handled by .github/workflows/deploy-pointer.yml (build-from-source
+  # to pointer.gr on push:master). The old GHCR-pull-to-Hetzner deploy job was
+  # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.
 
   deploy-staging:
     needs: [lint, test, helm-lint]
@@ -178,54 +118,49 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - name: Wait for image push to finish
-        uses: lewagon/wait-on-check-action@v1.3.4
+      - name: Checkout core (dev)
+        uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
-          check-name: build-push
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 10
+          path: datanika
 
-      - name: Deploy to Hetzner staging
-        uses: appleboy/ssh-action@v1
-        env:
-          GHCR_USER: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_TAG: ${{ github.sha }}
+      - name: Checkout cloud (dev)
+        uses: actions/checkout@v6
         with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: root
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          envs: GHCR_USER,GHCR_TOKEN,IMAGE_TAG
-          script: |
-            set -e
+          repository: datanika-io/datanika-cloud
+          ref: dev
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: datanika-cloud
 
-            cd /opt/datanika-staging/datanika
-            git fetch origin dev
-            git reset --hard origin/dev
+      - name: Build source tarball
+        run: |
+          tar czf /tmp/staging-src.tgz --exclude-vcs --exclude='*/.venv' \
+            --exclude='datanika/.web' --exclude='*/node_modules' --exclude='*/__pycache__' \
+            --exclude='datanika/.env' --exclude='datanika/.env.docker' \
+            datanika datanika-cloud
 
-            cd /opt/datanika-staging/datanika-cloud
-            git fetch origin dev
-            git reset --hard origin/dev
+      - name: Configure SSH to pointer.gr
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.POINTER_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          ssh-keyscan -H "${{ secrets.POINTER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-            cd /opt/datanika-staging
+      - name: Transfer dev source + build :staging image
+        run: |
+          cat /tmp/staging-src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'rm -rf /opt/datanika-staging-src && mkdir -p /opt/datanika-staging-src && cd /opt/datanika-staging-src && tar xzf -'
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika-staging-src && docker build -t ghcr.io/datanika-io/datanika-core:staging -f datanika/Dockerfile .'
 
-            # Pull dev-tagged pre-built image from GHCR
-            SHORT_SHA="${IMAGE_TAG:0:7}"
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
-            export DATANIKA_IMAGE_TAG="dev-$SHORT_SHA"
-            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml pull app celery
-            docker compose -p datanika-staging --env-file .env.docker -f docker-compose.yml up -d app celery
+      - name: Recreate staging stack on :staging
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika-staging && set -a && . ./.env.docker && set +a && docker compose -p datanika-staging up -d postgres redis app celery'
 
-            echo "Waiting for staging app to be healthy..."
-            timeout 180 bash -c 'until docker inspect --format="{{.State.Health.Status}}" datanika-staging-app 2>/dev/null | grep -q healthy; do sleep 3; done' || {
-              echo "Staging app failed health check"
-              docker logs --tail 50 datanika-staging-app
-              exit 1
-            }
-
-            echo "Staging deploy complete"
-            docker image prune -f
+      - name: Wait for staging health
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-staging-app 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 datanika-staging-app; exit 1'
 
   smoke-staging:
     needs: [deploy-staging]
@@ -295,8 +230,8 @@ jobs:
 
       - name: Configure SSH for seed
         env:
-          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
@@ -311,7 +246,7 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
           DATANIKA_E2E_SEED_CMD: >-
-            ssh root@${{ secrets.HETZNER_HOST }}
+            ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
             'E2E_SEED_ALLOW_ANY_HOST=1 docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
 
@@ -378,7 +313,10 @@ jobs:
   # Bootstrap + seed run on Hetzner via SSH (they need docker exec).
   e2e-sso:
     needs: [deploy-staging]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    # Disabled 2026-07-17: the disposable Authentik SSO test-env lived on the dead
+    # Hetzner box and hasn't been rebuilt on pointer.gr. Re-enable (and repoint the
+    # HETZNER_HOST refs below to POINTER_HOST) once an SSO test env is stood up.
+    if: false
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -599,66 +537,6 @@ jobs:
           **Report:** playwright-report-sso artifact on the run page" \
             --label "e2e-failure"
 
-  # Post-deploy smoke gate — shallow URL check. Fails loud if any curated
-  # URL 404s, returns an empty body, or serves the wrong content-type/body
-  # substring. See plans/growth/SMOKE_URLS.md (Growth-owned SoT) for the
-  # curation rationale. Non-empty body check is the critical guard —
-  # core#124 returned 404 Content-Length: 0, which a status-only check
-  # would have missed.
-  smoke:
-    needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Smoke gate — app.datanika.io
-        run: bash .github/smoke-check.sh https://app.datanika.io .github/smoke-urls-core.txt
-
-  # Post-deploy pytest smoke — deeper shape assertions against prod.
-  # Complements the URL gate above: catches 200-with-wrong-payload bugs
-  # (tier_count changed, agent-guide.md shrunk, openapi.json shape broke)
-  # that the URL gate can't distinguish from correct responses.
-  # See plans/qa/PLAN_QA.md → P0 Pre-Promotion Smoke (core#107 Phase 1).
-  smoke-prod:
-    needs: [deploy, smoke]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: astral-sh/setup-uv@v8.0.0
-        with:
-          version: "latest"
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
-
-      - name: Run smoke probes against prod
-        id: smoke
-        env:
-          DATANIKA_SMOKE_CORE_URL: https://app.datanika.io
-          DATANIKA_SMOKE_LANDING_URL: https://datanika.io
-        # No CF Access headers — prod is public. Conftest's _core_headers()
-        # is a no-op when the env vars are unset.
-        run: pytest scripts/smoke/ -v --tb=short
-
-      - name: Telegram alert on failure
-        if: failure()
-        env:
-          COMMIT_SHA: ${{ github.sha }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          SHORT_SHA=${COMMIT_SHA:0:7}
-          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x94\xa5 *PROD smoke failed* (shape regression)\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s\n\n*Rollback:* see plans/infra/RUNBOOK_DEV_TO_MASTER.md' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
-          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=1201995" \
-            --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+  # Prod post-deploy smoke gates (smoke = URL gate, smoke-prod = pytest shape)
+  # moved to .github/workflows/deploy-pointer.yml — they run after the prod deploy
+  # there (needs: deploy), since prod deploy left ci.yml on 2026-07-17.

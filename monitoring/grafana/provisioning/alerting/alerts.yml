@@ -146,6 +146,43 @@ groups:
           summary: "Disk usage above 80%: {{ $value }}%"
           description: "Root filesystem is running low on space."
 
+      # --- Backup Stale ---
+      # Fires when the nightly off-site pg_dump has not succeeded in over 26h
+      # (metric written by scripts/backup-offsite.sh via node-exporter textfile).
+      - uid: backup-stale
+        title: Backup Stale
+        condition: C
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'time() - datanika_backup_last_success_timestamp_seconds > 93600'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Off-site backup is stale (last success over 26h ago)"
+          description: "The nightly pg_dump off-site backup to Aweb has not succeeded in more than 26 hours. Check /var/log/datanika-backup.log on the pointer.gr box."
+
       # --- Container Restart Loop ---
       - uid: container-restart-loop
         title: Container Restart Loop

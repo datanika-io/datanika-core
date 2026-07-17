@@ -97,6 +97,16 @@ FIXTURE_ORG_B_DUCKDB_PATH = str(Path(tempfile.gettempdir()) / "e2e_fixture_b.duc
 
 FIXTURE_API_KEY_NAME_A = "e2e-fixture-api-key-a"
 FIXTURE_API_KEY_NAME_B = "e2e-fixture-api-key-b"
+# Read-only-scoped key in org A for API scope-enforcement tests: it may GET but
+# must be rejected on any `*:write` endpoint. See e2e/tests/rbac.spec.ts (#297).
+FIXTURE_API_KEY_NAME_READONLY = "e2e-fixture-api-key-readonly"
+FIXTURE_READONLY_SCOPES = [
+    "connections:read",
+    "pipelines:read",
+    "transformations:read",
+    "schedules:read",
+    "uploads:read",
+]
 
 PROD_HOST_MARKERS = ("datanika.io", "app.datanika.io", "prod", "production")
 
@@ -141,6 +151,9 @@ class SeedResult:
     org_a_api_key_plaintext: str = ""
     org_b_api_key_id: int = 0
     org_b_api_key_plaintext: str = ""
+    # Read-only-scoped key in org A (for API scope-enforcement tests).
+    org_a_readonly_api_key_id: int = 0
+    org_a_readonly_api_key_plaintext: str = ""
 
 
 class UnsafeTargetError(RuntimeError):
@@ -336,6 +349,8 @@ def _build_fixture(session: Session) -> SeedResult:
     api_key_a_raw = ""
     api_key_b_id = 0
     api_key_b_raw = ""
+    api_key_ro_id = 0
+    api_key_ro_raw = ""
     if os.environ.get("E2E_SEED_INCLUDE_API_KEYS") == "1":
         api_key_svc = ApiKeyService()
         key_a, raw_a = api_key_svc.create_api_key(
@@ -350,10 +365,19 @@ def _build_fixture(session: Session) -> SeedResult:
             user_id=org_b_user.id,
             name=FIXTURE_API_KEY_NAME_B,
         )
+        key_ro, raw_ro = api_key_svc.create_api_key(
+            session,
+            org_id=org.id,
+            user_id=user.id,
+            name=FIXTURE_API_KEY_NAME_READONLY,
+            scopes=FIXTURE_READONLY_SCOPES,
+        )
         api_key_a_id = key_a.id
         api_key_a_raw = raw_a
         api_key_b_id = key_b.id
         api_key_b_raw = raw_b
+        api_key_ro_id = key_ro.id
+        api_key_ro_raw = raw_ro
 
     return SeedResult(
         org_id=org.id,
@@ -381,6 +405,8 @@ def _build_fixture(session: Session) -> SeedResult:
         org_a_api_key_plaintext=api_key_a_raw,
         org_b_api_key_id=api_key_b_id,
         org_b_api_key_plaintext=api_key_b_raw,
+        org_a_readonly_api_key_id=api_key_ro_id,
+        org_a_readonly_api_key_plaintext=api_key_ro_raw,
     )
 
 

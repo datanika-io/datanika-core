@@ -6,6 +6,7 @@ from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.upload_state import UploadState
 
@@ -365,29 +366,41 @@ def uploads_table() -> rx.Component:
                     rx.table.cell(u.destination_connection_name),
                     rx.table.cell(
                         rx.hstack(
-                            rx.button(
-                                _t["common.edit"],
-                                size="1",
-                                variant="outline",
-                                on_click=UploadState.edit_upload(u.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.edit"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=UploadState.edit_upload(u.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.copy"],
-                                size="1",
-                                variant="outline",
-                                on_click=UploadState.copy_upload(u.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.copy"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=UploadState.copy_upload(u.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.run"],
-                                size="1",
-                                color_scheme=_run_button_color(u.last_run_status),
-                                on_click=UploadState.run_upload(u.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.run"],
+                                    size="1",
+                                    color_scheme=_run_button_color(u.last_run_status),
+                                    on_click=UploadState.run_upload(u.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.delete"],
-                                color_scheme="red",
-                                size="1",
-                                on_click=UploadState.delete_upload(u.id),
+                            rx.cond(
+                                AuthState.can_delete,
+                                rx.button(
+                                    _t["common.delete"],
+                                    color_scheme="red",
+                                    size="1",
+                                    on_click=UploadState.delete_upload(u.id),
+                                ),
                             ),
                             spacing="2",
                         ),
@@ -401,6 +414,11 @@ def uploads_table() -> rx.Component:
 
 def uploads_page() -> rx.Component:
     return page_layout(
-        rx.vstack(upload_form(), uploads_table(), spacing="6", width="100%"),
+        rx.vstack(
+            rx.cond(AuthState.can_edit, upload_form()),
+            uploads_table(),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.uploads"],
     )

@@ -10,6 +10,7 @@ from datanika.ui.components.sql_autocomplete import (
     ref_hidden_buttons,
     ref_popover,
 )
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.transformation_state import TransformationState
 
@@ -324,17 +325,23 @@ def transformations_table() -> rx.Component:
                         rx.table.cell(t.tags),
                         rx.table.cell(
                             rx.hstack(
-                                rx.button(
-                                    _t["common.edit"],
-                                    size="1",
-                                    variant="outline",
-                                    on_click=TransformationState.edit_transformation(t.id),
+                                rx.cond(
+                                    AuthState.can_edit,
+                                    rx.button(
+                                        _t["common.edit"],
+                                        size="1",
+                                        variant="outline",
+                                        on_click=TransformationState.edit_transformation(t.id),
+                                    ),
                                 ),
-                                rx.button(
-                                    _t["common.copy"],
-                                    size="1",
-                                    variant="outline",
-                                    on_click=TransformationState.copy_transformation(t.id),
+                                rx.cond(
+                                    AuthState.can_edit,
+                                    rx.button(
+                                        _t["common.copy"],
+                                        size="1",
+                                        variant="outline",
+                                        on_click=TransformationState.copy_transformation(t.id),
+                                    ),
                                 ),
                                 rx.button(
                                     _t["transformations.preview_sql"],
@@ -348,11 +355,14 @@ def transformations_table() -> rx.Component:
                                     variant="outline",
                                     on_click=TransformationState.preview_result(t.id),
                                 ),
-                                rx.button(
-                                    _t["common.delete"],
-                                    color_scheme="red",
-                                    size="1",
-                                    on_click=TransformationState.delete_transformation(t.id),
+                                rx.cond(
+                                    AuthState.can_delete,
+                                    rx.button(
+                                        _t["common.delete"],
+                                        color_scheme="red",
+                                        size="1",
+                                        on_click=TransformationState.delete_transformation(t.id),
+                                    ),
                                 ),
                                 spacing="2",
                             ),
@@ -370,7 +380,7 @@ def transformations_table() -> rx.Component:
 def transformations_page() -> rx.Component:
     return page_layout(
         rx.vstack(
-            transformation_form(),
+            rx.cond(AuthState.can_edit, transformation_form()),
             transformations_table(),
             preview_display(),
             spacing="6",

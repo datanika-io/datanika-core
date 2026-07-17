@@ -7,6 +7,7 @@ from datanika.ui.components.connection_config_fields import type_fields
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -192,23 +193,32 @@ def connections_table() -> rx.Component:
                                 size="1",
                                 on_click=ConnectionState.test_saved_connection(conn.id),
                             ),
-                            rx.button(
-                                _t["common.edit"],
-                                variant="outline",
-                                size="1",
-                                on_click=ConnectionState.edit_connection(conn.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.edit"],
+                                    variant="outline",
+                                    size="1",
+                                    on_click=ConnectionState.edit_connection(conn.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.copy"],
-                                variant="outline",
-                                size="1",
-                                on_click=ConnectionState.copy_connection(conn.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.copy"],
+                                    variant="outline",
+                                    size="1",
+                                    on_click=ConnectionState.copy_connection(conn.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.delete"],
-                                color_scheme="red",
-                                size="1",
-                                on_click=ConnectionState.delete_connection(conn.id),
+                            rx.cond(
+                                AuthState.can_delete,
+                                rx.button(
+                                    _t["common.delete"],
+                                    color_scheme="red",
+                                    size="1",
+                                    on_click=ConnectionState.delete_connection(conn.id),
+                                ),
                             ),
                             spacing="2",
                             align="center",
@@ -224,7 +234,7 @@ def connections_table() -> rx.Component:
 def connections_page() -> rx.Component:
     return page_layout(
         rx.vstack(
-            connection_form(),
+            rx.cond(AuthState.can_edit, connection_form()),
             connections_table(),
             # Plugin-contributed scripts (e.g. cloud-edition Plausible
             # ``template_prefill_applied`` event on ?template=slug

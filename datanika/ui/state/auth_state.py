@@ -11,7 +11,7 @@ from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.user_service import UserService, UserServiceError
-from datanika.ui.state.base_state import get_sync_session
+from datanika.ui.state.base_state import check_role_hierarchy, get_sync_session
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,24 @@ class AuthState(rx.State):
     @rx.var
     def org_id(self) -> int:
         return self.current_org.id if self.current_org.id else 0
+
+    @rx.var
+    def can_edit(self) -> bool:
+        """Whether the current member may create/edit/run resources (editor+).
+
+        Mirrors the ``_check_role("editor")`` gate on the create/edit/run/toggle
+        state handlers so the UI hides controls the member cannot use. Enforcement
+        still lives in the handlers — this only governs visibility (see #313).
+        """
+        return check_role_hierarchy(self.current_role, "editor")
+
+    @rx.var
+    def can_delete(self) -> bool:
+        """Whether the current member may delete resources (admin+).
+
+        Mirrors the ``_check_role("admin")`` gate on the delete handlers.
+        """
+        return check_role_hierarchy(self.current_role, "admin")
 
     def _get_user_service(self) -> UserService:
         auth = AuthService(settings.secret_key)

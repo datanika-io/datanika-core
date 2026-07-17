@@ -34,6 +34,7 @@ scrape_configs:
           - https://datanika.io/sitemap-index.xml
           - https://datanika.io/
           - https://app.datanika.io/healthz
+          - https://plausible.datanika.io/login
     relabel_configs:
       - source_labels: [__address__]
         target_label: __param_target

@@ -104,6 +104,21 @@ _TEMPLATE_FORM_FIELD_MAP: dict[str, str] = {
 }
 
 
+def _fill_openapi_auth(scheme: dict, token: str) -> dict:
+    """Merge a user-supplied token into a detected OpenAPI auth scheme."""
+    t = scheme.get("type")
+    if t == "api_key":
+        return {
+            "type": "api_key",
+            "name": scheme.get("name", ""),
+            "location": scheme.get("location", "header"),
+            "api_key": token,
+        }
+    if t == "http_basic":
+        return {"type": "http_basic", "username": token, "password": ""}
+    return {"type": "bearer", "token": token}
+
+
 def _validate_connection_form(
     name: str,
     conn_type: str,
@@ -227,6 +242,9 @@ class ConnectionState(BaseState):
     form_base_url: str = ""
     form_api_key: str = ""
     form_extra_headers: str = ""
+
+    # OpenAPI connector (spec pasted; endpoints auto-discovered on save)
+    form_openapi_spec: str = ""
 
     # File upload (csv/json/parquet)
     form_uploaded_file_id: int = 0
@@ -640,6 +658,28 @@ class ConnectionState(BaseState):
             if self.form_domain:
                 config["domain"] = self.form_domain
 
+        elif t == "openapi":
+            from datanika.services.openapi_import import (
+                OpenApiImportError,
+                parse_openapi_spec,
+            )
+
+            if not self.form_openapi_spec.strip():
+                raise ValueError("Paste an OpenAPI spec")
+            try:
+                parsed = parse_openapi_spec(
+                    self.form_openapi_spec, base_url_override=self.form_base_url or None
+                )
+            except OpenApiImportError as exc:
+                raise ValueError(str(exc)) from exc
+            if not parsed.base_url:
+                raise ValueError("No base URL found in the spec — set the Base URL field")
+            config["spec_inline"] = self.form_openapi_spec
+            config["base_url"] = parsed.base_url
+            config["resources"] = parsed.resources
+            if self.form_api_key and parsed.auth_schemes:
+                config["auth"] = _fill_openapi_auth(parsed.auth_schemes[0], self.form_api_key)
+
         return config
 
     def _reset_form_fields(self):
@@ -670,6 +710,7 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_openapi_spec = ""
         self.form_uploaded_file_id = 0
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
@@ -727,6 +768,7 @@ class ConnectionState(BaseState):
         self.form_base_url = ""
         self.form_api_key = ""
         self.form_extra_headers = ""
+        self.form_openapi_spec = ""
         self.form_uploaded_file_id = 0
         self.form_uploaded_file_name = ""
         self.form_spreadsheet_url = ""
@@ -857,6 +899,13 @@ class ConnectionState(BaseState):
         elif conn_type == "freshdesk":
             self.form_api_key = config.get("api_key", "")
             self.form_domain = config.get("domain", "")
+        elif conn_type == "openapi":
+            self.form_openapi_spec = config.get("spec_inline", "")
+            self.form_base_url = config.get("base_url", "")
+            _auth = config.get("auth") or {}
+            self.form_api_key = (
+                _auth.get("token") or _auth.get("api_key") or _auth.get("username") or ""
+            )
 
     async def load_connections(self):
         org_id = await self._get_org_id()

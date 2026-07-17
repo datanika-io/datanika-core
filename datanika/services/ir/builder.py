@@ -170,6 +170,74 @@ def _build_ir_saas(
     return ir
 
 
+def _build_ir_openapi(
+    source_config: dict,
+    destination_connection_id: int,
+    destination_raw_schema: str,
+    table: str,
+    incremental_config: dict | None = None,
+    primary_key_columns: list[str] | None = None,
+) -> IR:
+    """Build IR for an ``openapi`` connection from its stored spec-derived catalog.
+
+    No live call — columns come from the response schema captured at parse time
+    (``openapi_import``). Falls back to the live dlt-hints path only if the
+    selected resource has no declared columns.
+    """
+    catalog = source_config.get("resources") or []
+    resource = next((r for r in catalog if r.get("name") == table), None)
+    if resource is None:
+        available = sorted(r.get("name", "") for r in catalog)
+        raise IRBuildError(
+            f"Resource {table!r} not found in openapi source. Available: {available}"
+        )
+
+    raw_columns = resource.get("columns") or []
+    if not raw_columns:
+        return _build_ir_saas(
+            source_type="openapi",
+            source_config=source_config,
+            destination_connection_id=destination_connection_id,
+            destination_raw_schema=destination_raw_schema,
+            table=table,
+            incremental_config=incremental_config,
+            primary_key_columns=primary_key_columns,
+        )
+
+    columns = [
+        IRColumn(
+            source_ref=c["name"],
+            target_name=c["name"],
+            type=c.get("type", "text"),
+            nullable=c.get("nullable", True),
+        )
+        for c in raw_columns
+    ]
+    pk = primary_key_columns or (
+        [resource["primary_key"]] if resource.get("primary_key") else [columns[0].target_name]
+    )
+
+    incremental = None
+    if incremental_config:
+        incremental = IRIncremental(
+            mode=incremental_config.get("mode", "append"),
+            cursor=incremental_config["cursor_path"],
+        )
+
+    return IR(
+        ir_version=IR_VERSION,
+        source=IRSource(kind="saas_rest", connection_id=0, table=table),
+        columns=columns,
+        primary_key=pk,
+        target=IRTarget(
+            connection_id=destination_connection_id,
+            raw_schema=destination_raw_schema,
+            table=table,
+        ),
+        incremental=incremental,
+    )
+
+
 def build_ir(
     source_type: str,
     source_config: dict,
@@ -198,6 +266,16 @@ def build_ir(
         raise IRBuildError(
             "build_ir requires a table/resource name. "
             "For SQL: the table name. For SaaS: the dlt resource name."
+        )
+
+    if source_type == "openapi":
+        return _build_ir_openapi(
+            source_config=source_config,
+            destination_connection_id=destination_connection_id,
+            destination_raw_schema=destination_raw_schema,
+            table=table,
+            incremental_config=incremental_config,
+            primary_key_columns=primary_key_columns,
         )
 
     if source_type in SAAS_TYPES:

@@ -321,6 +321,31 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         },
         required=["base_url"],
     ),
+    "openapi": _schema(
+        {
+            "spec_inline": _str(
+                "The OpenAPI 3.x spec (JSON or YAML) this connector was built from"
+            ),
+            "base_url": _str("API base URL (from the spec's servers; override if needed)"),
+            "auth": {
+                "type": "object",
+                "description": (
+                    "Auth config: {type: bearer|api_key|http_basic, ...}. "
+                    "Fill credentials matching the spec's securitySchemes."
+                ),
+            },
+            "headers": {"type": "object", "description": "Optional static request headers"},
+            "resources": {
+                "type": "array",
+                "items": {"type": "object"},
+                "description": (
+                    "Derived resource catalog (from POST /connections/openapi/parse). "
+                    "Each item is a rest_api resource plus derived columns."
+                ),
+            },
+        },
+        required=["base_url", "resources"],
+    ),
     # ---- Files ----
     "s3": _schema(
         {

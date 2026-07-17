@@ -9,6 +9,7 @@ from datanika.ui.components.pipeline_mode_selector import pipeline_mode_selector
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.volume_quota_modal import volume_quota_modal
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
 
@@ -315,29 +316,41 @@ def pipelines_table() -> rx.Component:
                     ),
                     rx.table.cell(
                         rx.hstack(
-                            rx.button(
-                                _t["common.edit"],
-                                size="1",
-                                variant="outline",
-                                on_click=PipelineState.edit_pipeline(p.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.edit"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=PipelineState.edit_pipeline(p.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.copy"],
-                                size="1",
-                                variant="outline",
-                                on_click=PipelineState.copy_pipeline(p.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.copy"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=PipelineState.copy_pipeline(p.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.run"],
-                                size="1",
-                                color_scheme=_run_button_color(p.last_run_status),
-                                on_click=PipelineState.run_pipeline(p.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.run"],
+                                    size="1",
+                                    color_scheme=_run_button_color(p.last_run_status),
+                                    on_click=PipelineState.run_pipeline(p.id),
+                                ),
                             ),
-                            rx.button(
-                                _t["common.delete"],
-                                color_scheme="red",
-                                size="1",
-                                on_click=PipelineState.delete_pipeline(p.id),
+                            rx.cond(
+                                AuthState.can_delete,
+                                rx.button(
+                                    _t["common.delete"],
+                                    color_scheme="red",
+                                    size="1",
+                                    on_click=PipelineState.delete_pipeline(p.id),
+                                ),
                             ),
                             spacing="2",
                         ),
@@ -390,7 +403,7 @@ def pipelines_page() -> rx.Component:
                 pipelines_empty_state(),
                 rx.fragment(),
             ),
-            pipeline_form(),
+            rx.cond(AuthState.can_edit, pipeline_form()),
             pipelines_table(),
             spacing="6",
             width="100%",

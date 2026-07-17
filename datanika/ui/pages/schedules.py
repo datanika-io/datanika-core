@@ -4,6 +4,7 @@ import reflex as rx
 
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.schedule_state import ScheduleState
 
@@ -192,33 +193,45 @@ def schedules_table() -> rx.Component:
                     ),
                     rx.table.cell(
                         rx.hstack(
-                            rx.button(
-                                _t["common.edit"],
-                                size="1",
-                                variant="outline",
-                                on_click=ScheduleState.edit_schedule(s.id),
-                            ),
-                            rx.button(
-                                _t["common.copy"],
-                                size="1",
-                                variant="outline",
-                                on_click=ScheduleState.copy_schedule(s.id),
-                            ),
-                            rx.button(
-                                rx.cond(
-                                    s.is_active,
-                                    _t["schedules.pause"],
-                                    _t["schedules.resume"],
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.edit"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=ScheduleState.edit_schedule(s.id),
                                 ),
-                                size="1",
-                                variant="outline",
-                                on_click=ScheduleState.toggle_schedule(s.id),
                             ),
-                            rx.button(
-                                _t["common.delete"],
-                                color_scheme="red",
-                                size="1",
-                                on_click=ScheduleState.delete_schedule(s.id),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.copy"],
+                                    size="1",
+                                    variant="outline",
+                                    on_click=ScheduleState.copy_schedule(s.id),
+                                ),
+                            ),
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    rx.cond(
+                                        s.is_active,
+                                        _t["schedules.pause"],
+                                        _t["schedules.resume"],
+                                    ),
+                                    size="1",
+                                    variant="outline",
+                                    on_click=ScheduleState.toggle_schedule(s.id),
+                                ),
+                            ),
+                            rx.cond(
+                                AuthState.can_delete,
+                                rx.button(
+                                    _t["common.delete"],
+                                    color_scheme="red",
+                                    size="1",
+                                    on_click=ScheduleState.delete_schedule(s.id),
+                                ),
                             ),
                             spacing="2",
                         ),
@@ -232,6 +245,11 @@ def schedules_table() -> rx.Component:
 
 def schedules_page() -> rx.Component:
     return page_layout(
-        rx.vstack(schedule_form(), schedules_table(), spacing="6", width="100%"),
+        rx.vstack(
+            rx.cond(AuthState.can_edit, schedule_form()),
+            schedules_table(),
+            spacing="6",
+            width="100%",
+        ),
         title=_t["nav.schedules"],
     )

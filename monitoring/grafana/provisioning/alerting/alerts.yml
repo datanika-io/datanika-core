@@ -438,6 +438,44 @@ groups:
           summary: "datanika.io landing site is down"
           description: "Blackbox probe to https://datanika.io/ has failed for 5 minutes."
 
+      # --- Plausible analytics reachability (added 2026-07-17, landing#225) ---
+      # Uses raw probe_success + threshold lt 1 (fires when probe_success=0). The
+      # older probe alerts above use `== 0` + `gt 0` which doesn't fire on the
+      # down-case — flagged as a monitoring follow-up.
+      - uid: plausible-down
+        title: Plausible Down
+        condition: C
+        noDataState: OK
+        execErrState: OK
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'probe_success{instance="https://plausible.datanika.io/login"}'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plausible analytics is down"
+          description: "Blackbox probe to https://plausible.datanika.io/login has failed for 5 minutes. Landing analytics may be silently dropping."
+
       # --- App external health ---
       - uid: app-external-down
         title: App External Health Down

@@ -22,8 +22,8 @@ name: Deploy to pointer.gr (prod)
 
 on:
   workflow_dispatch: {}
-  # push:
-  #   branches: [master]   # <-- uncomment AFTER the first validated dispatch
+  push:
+    branches: [master]
 
 concurrency:
   group: deploy-pointer

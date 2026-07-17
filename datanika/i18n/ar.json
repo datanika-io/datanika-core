@@ -93,6 +93,8 @@
   "connections.ph_user": "",
   "connections.ph_password": "كلمة المرور",
   "connections.ph_database": "mydb",
+  "connections.oracle_service_hint": "حقل قاعدة البيانات هو اسم خدمة Oracle (مثل XEPDB1 أو RAC أو Autonomous). فعّل «الاتصال عبر SID» فقط لـ Oracle القديم أحادي المثيل.",
+  "connections.oracle_use_sid": "الاتصال عبر SID (مثيل واحد قديم)",
   "connections.ph_schema": "public",
   "connections.ph_db_path": "/data/my.db",
   "connections.ph_gcp_project": "my-gcp-project",

@@ -76,6 +76,26 @@ jobs:
             chmod 600 secrets/qa-bigquery-sa.json
           fi
 
+      - name: Materialize Wave-1 connector credentials
+        env:
+          # Second aggregate base64'd env file — the SaaS Wave-1 trio
+          # (Pipedrive / Freshdesk / Asana). Kept separate from
+          # QA_CONNECTOR_CREDENTIALS so the two cred sets can rotate
+          # independently. Built from secrets/{pipedrive,freshdesk,asana}.env.
+          QA_WAVE1_CREDENTIALS: ${{ secrets.QA_WAVE1_CREDENTIALS }}
+        run: |
+          if [ -z "$QA_WAVE1_CREDENTIALS" ]; then
+            echo "::error::QA_WAVE1_CREDENTIALS secret is not set — Wave-1 SaaS probes cannot run"
+            exit 1
+          fi
+          printf '%s' "$QA_WAVE1_CREDENTIALS" | base64 -d > /tmp/wave1.env
+          while IFS= read -r line; do
+            case "$line" in ''|\#*) continue ;; esac
+            line=$(echo "$line" | sed -E 's/^([A-Z_]+)="(.*)"$/\1=\2/')
+            echo "$line" >> "$GITHUB_ENV"
+          done < /tmp/wave1.env
+          rm /tmp/wave1.env
+
       - name: Run connector smoke tests
         id: smoke
         env:
@@ -89,6 +109,78 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           TEXT=$(printf '\xf0\x9f\x94\xa5 *Nightly connector smoke failed*\n\nOne or more paid-connector sandboxes failed auth + metadata probe.\n\n*Triage*: open the run link, look for the first FAILED test. Likely causes (in order of frequency):\n- Credential rotated / expired (Stripe, HubSpot PATs rotate silently)\n- Sandbox/trial expired (Databricks 14-day trial)\n- Vendor API shape changed (rare but catches it early)\n\n*Run*: %s\n\nSee PLAN_HUMAN_LOCKERS.md §"QA test credentials" for how to reprovision.' "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
+  # Oracle runs in its own job with an ephemeral XE service container, isolated
+  # from the SaaS probes above so an Oracle image/boot hiccup can't mask a real
+  # SaaS-credential expiry (the point of the nightly). Oracle has no offline
+  # live-DB unit test, so this is the only place the real oracledb thin driver
+  # is exercised end-to-end (core#312, connectors Wave-1).
+  oracle-smoke:
+    runs-on: ubuntu-latest
+    # Only for the Telegram token; the Oracle creds below are for an ephemeral
+    # throwaway container, not secrets (mirrors the postgres test:test pattern
+    # in ci.yml's migration-roundtrip job).
+    environment: production
+    timeout-minutes: 20
+    services:
+      oracle:
+        image: gvenzl/oracle-xe:21-slim
+        ports:
+          - 1521:1521
+        env:
+          ORACLE_PASSWORD: DatanikaSmoke1
+          APP_USER: datanika_smoke
+          APP_USER_PASSWORD: DatanikaSmoke1
+        # gvenzl ships healthcheck.sh on PATH; GH Actions waits for the service
+        # to be healthy before any step runs. Generous retries for cold boot.
+        options: >-
+          --health-cmd "healthcheck.sh"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        # oracledb + sqlalchemy are core deps; ".[dev]" pulls pytest. No
+        # BigQuery/Kafka extras needed for the Oracle probe.
+        run: uv pip install -e ".[dev]" --system
+
+      - name: Oracle XE connection env
+        run: |
+          {
+            echo "ORACLE_HOST=localhost"
+            echo "ORACLE_PORT=1521"
+            echo "ORACLE_SERVICE=XEPDB1"
+            echo "ORACLE_USER=datanika_smoke"
+            echo "ORACLE_PASSWORD=DatanikaSmoke1"
+          } >> "$GITHUB_ENV"
+
+      - name: Run Oracle connector smoke test
+        env:
+          DATANIKA_CONNECTOR_SMOKE: "1"
+        run: pytest tests/test_connector_smoke/test_wave1_connectors_smoke.py -v --tb=short -k oracle
+
+      - name: Telegram alert on failure
+        if: failure()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          TEXT=$(printf '\xf0\x9f\x94\xa5 *Nightly Oracle connector smoke failed*\n\nThe Oracle XE probe failed. Unlike the SaaS probes this is self-contained (ephemeral XE container), so a failure points at OUR code or the image, not a vendor.\n\n*Triage*: open the run link. Likely causes:\n- oracledb thin-driver break / version bump\n- gvenzl/oracle-xe image or service-name (XEPDB1) drift\n- connection_service._build_sa_url Oracle regression\n\n*Run*: %s' "$RUN_URL")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \

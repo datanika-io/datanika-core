@@ -1,0 +1,70 @@
+# GitHub Actions CD for the pointer.gr prod box — build-from-source + SSH transfer.
+# Ready-to-commit artifact (NOT yet on GitHub). Destination once activated:
+#   datanika-core/.github/workflows/deploy-pointer.yml
+#
+# Why a new workflow (not the existing `deploy` job): the old job does
+# `git pull origin master` + `docker compose pull` (GHCR) — BOTH impossible on
+# the new box (no GitHub auth, GHCR image pruned). This builds from source on
+# the runner-transferred tree instead. The box never authenticates to GitHub;
+# GHA -> box SSH is the only trust anchor.
+#
+# Prereqs (set up 2026-07-17 or pending — see PLAN_INFRASTRUCTURE.md I3c):
+#   - GHA secrets on datanika-core: POINTER_HOST (185.25.22.188), POINTER_SSH_KEY
+#     (private half of a deploy key whose public half is in the box authorized_keys),
+#     CLOUD_REPO_TOKEN (already exists — cross-repo cloud checkout).
+#   - Box .env.docker is preserved (gitignored -> never in the checkout/tarball).
+#
+# Trigger is workflow_dispatch ONLY at first: the first run upgrades prod from the
+# restored #269 tree to whatever master HEAD is (currently ~#294) — a real prod
+# upgrade to validate once. Enable the push trigger only after that.
+
+name: Deploy to pointer.gr (prod)
+
+on:
+  workflow_dispatch: {}
+  # push:
+  #   branches: [master]   # <-- uncomment AFTER the first validated dispatch
+
+concurrency:
+  group: deploy-pointer
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout core
+        uses: actions/checkout@v6
+        with:
+          path: datanika
+      - name: Checkout cloud
+        uses: actions/checkout@v6
+        with:
+          repository: datanika-io/datanika-cloud
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: datanika-cloud
+      - name: Build source tarball
+        run: |
+          tar czf /tmp/src.tgz --exclude-vcs --exclude='*/.venv' --exclude='datanika/.web' \
+            --exclude='*/node_modules' --exclude='*/__pycache__' \
+            --exclude='datanika/.env' --exclude='datanika/.env.docker' \
+            datanika datanika-cloud
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.POINTER_SSH_KEY }}" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          ssh-keyscan -H "${{ secrets.POINTER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Transfer source (box .env.docker preserved)
+        run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
+      - name: Build image + recreate app/celery
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery && docker compose up -d postgres redis app celery'
+      - name: Wait for health
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-app 2>/dev/null); [ "$h" = healthy ] && { echo healthy; exit 0; }; sleep 5; done; echo "NOT healthy"; docker logs --tail 40 datanika-app; exit 1'
+      - name: Smoke through Cloudflare
+        run: curl -fsS -o /dev/null -w "app.datanika.io/login -> %{http_code}\n" https://app.datanika.io/login

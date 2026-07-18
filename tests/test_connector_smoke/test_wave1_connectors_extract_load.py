@@ -42,7 +42,6 @@ from __future__ import annotations
 import contextlib
 
 import duckdb
-import pytest
 
 from datanika.services.dlt_runner import DltRunnerService
 
@@ -160,26 +159,18 @@ def test_asana_extract_load_assert(require_env, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Oracle (SQL, source-only) — connect works (#329/#341); extract xfails on #347
+# Oracle (SQL, source-only) — connect (#329/#341) + extract (#347/#350) fixed
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason="core#347: Oracle *connect* is fixed (#329/#341), but the dlt single_table "
-    "extract still fails table reflection (NoSuchTableError: QA_E2E_WAVE1) — a separate "
-    "Oracle table-resolution/casing bug downstream of connect. Flips to XPASS when #347 "
-    "lands — delete this marker then.",
-    strict=False,
-    raises=Exception,
-)
 def test_oracle_extract_load_assert(require_env, tmp_path):
     """Seed a tiny table in Oracle XE (correct service-name form = positive control),
     then extract it through the Datanika connector → DuckDB → assert the rows land.
 
     The seed proves the driver/container/creds are healthy; the ``execute()`` call
-    exercises the connector's extract path. Connect is fixed (#329/#341), but the dlt
-    ``single_table`` reflection currently raises ``NoSuchTableError`` (core#347) —
-    caught by the xfail above.
+    exercises the connector's extract path — connect fixed by #329 (#334 + #341),
+    Oracle table-identifier normalization for dlt reflection fixed by #347 (#350).
+    Asserts positively.
     """
     env = require_env(
         "ORACLE_HOST", "ORACLE_PORT", "ORACLE_SERVICE", "ORACLE_USER", "ORACLE_PASSWORD"

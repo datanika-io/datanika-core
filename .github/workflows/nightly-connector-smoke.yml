@@ -169,10 +169,17 @@ jobs:
             echo "ORACLE_PASSWORD=DatanikaSmoke1"
           } >> "$GITHUB_ENV"
 
-      - name: Run Oracle connector smoke test
+      - name: Run Oracle connector smoke + E2E tests
         env:
           DATANIKA_CONNECTOR_SMOKE: "1"
-        run: pytest tests/test_connector_smoke/test_wave1_connectors_smoke.py -v --tb=short -k oracle
+        # Both Wave-1 files' oracle-named tests: the auth/metadata smoke and the
+        # extract→load→assert E2E (core#311). `-k oracle` deselects the SaaS tests,
+        # which need creds this isolated container-only job doesn't have.
+        run: >-
+          pytest
+          tests/test_connector_smoke/test_wave1_connectors_smoke.py
+          tests/test_connector_smoke/test_wave1_connectors_extract_load.py
+          -v --tb=short -k oracle
 
       - name: Telegram alert on failure
         if: failure()

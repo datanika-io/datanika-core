@@ -397,9 +397,11 @@ class ConnectionService:
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
 
+        # Oracle rejects a bare ``SELECT 1`` (ORA-00923) — it needs FROM DUAL.
+        probe = "SELECT 1 FROM DUAL" if connection_type == ConnectionType.ORACLE else "SELECT 1"
         try:
             with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
+                conn.execute(text(probe))
             return True, "Connected successfully"
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
@@ -532,7 +534,11 @@ class ConnectionService:
             qualified = preparer.quote(table)
             if schema:
                 qualified = f"{preparer.quote_schema(schema)}.{qualified}"
-            query = f"SELECT * FROM {qualified} LIMIT {limit}"
+            if connection_type == ConnectionType.ORACLE:
+                # Oracle has no LIMIT clause — use the 12c+ row-limiting form.
+                query = f"SELECT * FROM {qualified} FETCH FIRST {limit} ROWS ONLY"
+            else:
+                query = f"SELECT * FROM {qualified} LIMIT {limit}"
             with engine.connect() as conn:
                 result = conn.execute(text(query))
                 columns = list(result.keys())

@@ -175,6 +175,37 @@ class TestOracleConnector:
         assert connect_args == {"tcp_connect_timeout": 5}
         assert ok is True
 
+    @patch("datanika.services.connection_service.create_engine")
+    def test_probe_query_uses_dual_on_oracle(self, mock_ce):
+        # #329: Oracle rejects a bare `SELECT 1` (ORA-00923); the connectivity
+        # probe must use FROM DUAL. Mocks can't connect, but they lock the SQL
+        # text — the gap that let the SID/SELECT-1 bugs pass unit tests but fail
+        # the live Oracle smoke.
+        ConnectionService.test_connection(
+            {"host": "h", "user": "u", "password": "p", "database": "SVC"},
+            ConnectionType.ORACLE,
+        )
+        conn = mock_ce.return_value.connect.return_value.__enter__.return_value
+        assert str(conn.execute.call_args[0][0]) == "SELECT 1 FROM DUAL"
+
+    @patch("datanika.services.connection_service.create_engine")
+    def test_preview_uses_fetch_first_on_oracle(self, mock_ce):
+        # #329: Oracle has no LIMIT clause (ORA-00933) — use FETCH FIRST.
+        engine = mock_ce.return_value
+        engine.dialect.identifier_preparer.quote = lambda x: f'"{x}"'
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.return_value.keys.return_value = ["id"]
+        conn.execute.return_value.fetchall.return_value = []
+        ConnectionService.preview_table(
+            {"host": "h", "user": "u", "password": "p", "database": "SVC"},
+            ConnectionType.ORACLE,
+            "T329",
+            limit=5,
+        )
+        sql = str(conn.execute.call_args[0][0])
+        assert "FETCH FIRST 5 ROWS ONLY" in sql
+        assert "LIMIT" not in sql
+
 
 # --------------------------------------------------------------------------- #
 # SaaS REST connectors

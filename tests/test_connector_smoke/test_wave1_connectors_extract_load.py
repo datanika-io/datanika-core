@@ -42,7 +42,6 @@ from __future__ import annotations
 import contextlib
 
 import duckdb
-import pytest
 
 from datanika.services.dlt_runner import DltRunnerService
 
@@ -160,25 +159,17 @@ def test_asana_extract_load_assert(require_env, tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Oracle (SQL, source-only) — xfails on core#329 until the DSN fix lands
+# Oracle (SQL, source-only) — core#329 fixed (#334 service-name DSN + #341 dialect)
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.xfail(
-    reason="core#329: the Oracle connector emits the service name as a SID in the DSN "
-    "(connection_service._build_sa_url / dlt_runner._to_dlt_credentials), so extract via "
-    "execute() raises ORA-12505 against a service-name listener (the XE PDB). Flips to "
-    "XPASS when #329 lands — delete this marker then.",
-    strict=False,
-    raises=Exception,
-)
 def test_oracle_extract_load_assert(require_env, tmp_path):
     """Seed a tiny table in Oracle XE (correct service-name form = positive control),
     then extract it through the Datanika connector → DuckDB → assert the rows land.
 
     The seed proves the driver/container/creds are healthy; the ``execute()`` call
-    exercises the connector's own DSN path, which currently mishandles service names
-    (core#329) and raises ORA-12505 — caught by the xfail above.
+    exercises the connector's own DSN path (service-name → ``?service_name=`` +
+    Oracle dialect SQL), fixed by core#329 (#334 + #341). Asserts positively.
     """
     env = require_env(
         "ORACLE_HOST", "ORACLE_PORT", "ORACLE_SERVICE", "ORACLE_USER", "ORACLE_PASSWORD"

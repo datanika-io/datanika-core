@@ -206,6 +206,28 @@ class TestOracleConnector:
         assert "FETCH FIRST 5 ROWS ONLY" in sql
         assert "LIMIT" not in sql
 
+    @patch("datanika.services.dlt_runner.sql_table")
+    def test_build_source_normalizes_oracle_table(self, mock_sql_table):
+        # #347: the Oracle table name must be normalized (lower-cased) before dlt
+        # reflects it — else SQLAlchemy treats an UPPERCASE name as a
+        # case-sensitive quoted identifier and reflection misses the table
+        # (NoSuchTableError). Verified live against Oracle XE.
+        DltRunnerService().build_source(
+            "oracle",
+            {"host": "h", "user": "u", "password": "p", "database": "SVC"},
+            {"mode": "single_table", "table": "QA_E2E_WAVE1"},
+        )
+        assert mock_sql_table.call_args.kwargs["table"] == "qa_e2e_wave1"
+
+    @patch("datanika.services.dlt_runner.sql_database")
+    def test_build_source_normalizes_oracle_table_names(self, mock_sql_db):
+        DltRunnerService().build_source(
+            "oracle",
+            {"host": "h", "user": "u", "password": "p", "database": "SVC"},
+            {"mode": "full_database", "table_names": ["QA_E2E_WAVE1", "OTHER_TBL"]},
+        )
+        assert mock_sql_db.call_args.kwargs["table_names"] == ["qa_e2e_wave1", "other_tbl"]
+
 
 # --------------------------------------------------------------------------- #
 # SaaS REST connectors

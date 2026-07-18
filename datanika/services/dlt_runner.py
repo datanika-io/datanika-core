@@ -151,6 +151,24 @@ _RENAME_USER_TYPES = {
 CLICKHOUSE_ENGINE_TYPES = {"merge_tree", "replicated_merge_tree", "shared_merge_tree"}
 
 
+def _normalize_oracle_identifier(name: str | None) -> str | None:
+    """Normalize an Oracle table/schema identifier for dlt/SQLAlchemy reflection.
+
+    Oracle stores unquoted identifiers UPPERCASE, but SQLAlchemy reflection
+    expects the *normalized* (lowercase) form and denormalizes it back to
+    uppercase for the data-dictionary lookup. Passing an UPPERCASE name makes
+    SQLAlchemy treat it as a case-sensitive quoted identifier, so ``sql_table`` /
+    ``sql_database`` reflection misses the table (NoSuchTableError, #347).
+    ``normalize_name`` lower-cases a plain uppercase name and leaves genuinely
+    quoted / mixed-case names alone.
+    """
+    if not name:
+        return name
+    from sqlalchemy.dialects.oracle.base import OracleDialect
+
+    return OracleDialect().normalize_name(name) or name
+
+
 class DltRunnerService:
     """Builds dlt pipeline objects from connection configs and pipeline settings."""
 
@@ -272,6 +290,8 @@ class DltRunnerService:
 
         mode = dlt_config.get("mode", "full_database")
         schema = dlt_config.get("source_schema")
+        if connection_type == "oracle":
+            schema = _normalize_oracle_identifier(schema)
 
         creds = self._to_dlt_credentials(connection_type, config)
 
@@ -293,7 +313,10 @@ class DltRunnerService:
             query_adapter = make_query_adapter(filters_cfg)
 
         if mode == "single_table":
-            kwargs = {"credentials": creds, "table": dlt_config["table"], "chunk_size": batch_size}
+            table = dlt_config["table"]
+            if connection_type == "oracle":
+                table = _normalize_oracle_identifier(table)
+            kwargs = {"credentials": creds, "table": table, "chunk_size": batch_size}
             if schema is not None:
                 kwargs["schema"] = schema
             if backend is not None:
@@ -317,6 +340,8 @@ class DltRunnerService:
                 kwargs["backend"] = backend
             table_names = dlt_config.get("table_names")
             if table_names is not None:
+                if connection_type == "oracle":
+                    table_names = [_normalize_oracle_identifier(t) for t in table_names]
                 kwargs["table_names"] = table_names
             return sql_database(**kwargs)
 

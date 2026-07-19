@@ -13,6 +13,11 @@ dependencies = [
 [project.scripts]
 datanika-mcp = "datanika_mcp.server:main"
 
+[project.urls]
+Homepage = "https://datanika.io"
+Repository = "https://github.com/datanika-io/datanika-core"
+Documentation = "https://github.com/datanika-io/datanika-core/tree/master/datanika-mcp#readme"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -56,6 +56,16 @@ https://app.datanika.io/api/v1/agent-guide.md
 ## Agent Tiers (JSON)
 https://app.datanika.io/api/v1/meta/agent-tiers
 
+## MCP Server
+For MCP clients (Claude Desktop, Cursor), Datanika ships a first-class MCP \
+server — `datanika-mcp` — so you can browse connections, preview data, compile \
+and validate transformations, and run pipelines as native tools instead of raw \
+REST. Read-only by default; pass `--allow-write` to enable mutations.
+Install (no clone needed):
+uvx --from "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp" datanika-mcp
+Full tool list + Claude Desktop config:
+https://github.com/datanika-io/datanika-core/blob/master/datanika-mcp/README.md
+
 ## Base URL
 https://app.datanika.io/api/v1/
 
@@ -92,6 +102,23 @@ def _render_agent_guide() -> str:
 > [OpenAPI spec](https://app.datanika.io/api/v1/openapi.json) for
 > full request/response schemas. For machine-readable tier structure,
 > fetch [/api/v1/meta/agent-tiers](https://app.datanika.io/api/v1/meta/agent-tiers).
+
+## MCP Server (alternative to raw REST)
+
+If you're an MCP client (Claude Desktop, Cursor), use Datanika's first-class
+`datanika-mcp` server instead of calling REST directly — it exposes the same
+capabilities (browse connections, preview data, compile/validate
+transformations, run pipelines) as native tools. Read-only by default;
+`--allow-write` enables mutations.
+
+```
+uvx --from "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp" datanika-mcp
+```
+
+Full tool list + Claude Desktop / Cursor config:
+[datanika-mcp/README.md](https://github.com/datanika-io/datanika-core/blob/master/datanika-mcp/README.md)
+
+The REST golden path below still applies to plain HTTP clients.
 
 ## Quick-Start Loop
 

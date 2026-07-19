@@ -82,6 +82,13 @@ class TestLlmsTxt:
         resp = client.get("/llms.txt")
         assert "/api/v1/meta/agent-tiers" in resp.text
 
+    def test_advertises_mcp_server(self, client):
+        # #353: an agent reading the discovery doc must be able to find the MCP path.
+        resp = client.get("/llms.txt")
+        assert "MCP" in resp.text
+        assert "datanika-mcp" in resp.text
+        assert "uvx" in resp.text  # the install command
+
     def test_no_auth_required(self, client):
         resp = client.get("/llms.txt")
         assert resp.status_code == 200
@@ -131,6 +138,12 @@ class TestAgentGuide:
     def test_contains_wait_true_pattern(self, client):
         resp = client.get("/api/v1/agent-guide.md")
         assert "?wait=true" in resp.text
+
+    def test_advertises_mcp_server(self, client):
+        # #353: MCP clients should be told to use datanika-mcp instead of raw REST.
+        resp = client.get("/api/v1/agent-guide.md")
+        assert "datanika-mcp" in resp.text
+        assert "MCP" in resp.text
 
     def test_no_auth_required(self, client):
         resp = client.get("/api/v1/agent-guide.md")

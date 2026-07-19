@@ -1,0 +1,72 @@
+name: Release datanika-mcp to PyPI
+
+# Tag-triggered release for the `datanika-mcp` package (a subdirectory of this repo).
+#
+# Cut a release (from master):
+#   1. Bump `version` in datanika-mcp/pyproject.toml
+#   2. git tag mcp-v0.1.0 && git push origin mcp-v0.1.0   (tag version MUST match pyproject)
+#
+# Publishing uses PyPI **Trusted Publishing** (OIDC) — NO API token stored anywhere.
+# One-time PyPI setup is required before the first release — see
+# plans/PLAN_HUMAN_LOCKERS.md "pypi-trusted-publisher-datanika-mcp":
+#   PyPI → add a (pending) trusted publisher for project `datanika-mcp`:
+#     Owner=datanika-io  Repository=datanika-core
+#     Workflow filename=release-mcp.yml  Environment=pypi
+# The workflow filename + environment below MUST match that config exactly.
+
+on:
+  push:
+    tags:
+      - "mcp-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify tag matches pyproject version
+        working-directory: datanika-mcp
+        run: |
+          tag_version="${GITHUB_REF_NAME#mcp-v}"
+          pkg_version="$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/^version = "(.*)"$/\1/')"
+          echo "tag=$tag_version pyproject=$pkg_version"
+          if [ "$tag_version" != "$pkg_version" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} ($tag_version) does not match datanika-mcp/pyproject.toml version ($pkg_version). Bump pyproject or fix the tag."
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+
+      - name: Build sdist + wheel
+        working-directory: datanika-mcp
+        run: uv build --out-dir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: datanika-mcp/dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Minimal-permission publish job (no build/test code runs here with the OIDC
+    # token) — the PyPA-recommended split. `environment: pypi` must match the
+    # environment named in the PyPI trusted-publisher config.
+    environment: pypi
+    permissions:
+      id-token: write # REQUIRED for PyPI Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # No password/token: OIDC trusted publishing. Defaults to publishing dist/.

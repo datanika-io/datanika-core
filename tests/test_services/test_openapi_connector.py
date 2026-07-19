@@ -53,6 +53,16 @@ def svc():
     return DltRunnerService()
 
 
+@pytest.fixture(autouse=True)
+def _stub_egress_guard():
+    """No-op the SSRF egress guard (core#338) so ``_build_openapi_source`` →
+    ``_rest_api_from_parts`` doesn't resolve the (fake) base_url host via real
+    DNS. The guard itself is covered by ``tests/test_security/test_egress_guard.py``.
+    """
+    with patch("datanika.services.dlt_runner.validate_egress_host"):
+        yield
+
+
 class TestWiring:
     def test_enum(self):
         assert ConnectionType.OPENAPI == "openapi"

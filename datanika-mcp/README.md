@@ -123,6 +123,22 @@ Point `--url` at your instance:
 datanika-mcp --url http://localhost:3000 --api-key etf_your_key
 ```
 
+## Releasing (maintainers)
+
+`datanika-mcp` publishes to PyPI via GitHub Actions **Trusted Publishing** (OIDC — no stored API token). To cut a release (from `master`):
+
+1. Bump `version` in [`pyproject.toml`](pyproject.toml).
+2. Tag and push — the tag version must match `pyproject.toml`:
+
+   ```bash
+   git tag mcp-v0.1.0
+   git push origin mcp-v0.1.0
+   ```
+
+3. The [`Release datanika-mcp to PyPI`](../.github/workflows/release-mcp.yml) workflow builds the sdist + wheel and publishes. Verify: `uvx datanika-mcp --help` resolves from PyPI.
+
+> First-release setup: a one-time PyPI trusted-publisher must be configured (project `datanika-mcp`, repo `datanika-io/datanika-core`, workflow `release-mcp.yml`, environment `pypi`) before the first tag will publish. See the infra human-locker.
+
 ## License
 
 AGPL-3.0 — same as the core Datanika platform.

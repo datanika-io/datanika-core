@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.json",
+  "name": "io.github.datanika-io/datanika-mcp",
+  "description": "MCP server for Datanika: browse connections, preview data, run dbt transforms, and manage pipelines.",
+  "repository": {
+    "url": "https://github.com/datanika-io/datanika-core",
+    "source": "github",
+    "subfolder": "datanika-mcp"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "datanika-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "DATANIKA_URL",
+          "description": "Datanika instance URL (defaults to https://app.datanika.io; set this for a self-hosted instance)",
+          "isRequired": false
+        },
+        {
+          "name": "DATANIKA_API_KEY",
+          "description": "Datanika API key",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "DATANIKA_ALLOW_WRITE",
+          "description": "Set to true to enable write/trigger tools (read-only by default)",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

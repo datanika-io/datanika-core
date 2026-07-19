@@ -1,0 +1,32 @@
+# Smithery connects the datanika-io/datanika-core GitHub repo and reads this file.
+# https://smithery.ai/docs
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - apiKey
+    properties:
+      url:
+        type: string
+        default: "https://app.datanika.io"
+        description: "Datanika instance URL (leave as default for the hosted app; override for self-hosted)"
+      apiKey:
+        type: string
+        description: "Datanika API key"
+      allowWrite:
+        type: boolean
+        default: false
+        description: "Enable write/trigger tools (read-only by default)"
+  commandFunction: |
+    (config) => ({
+      command: "uvx",
+      args: [
+        "--from",
+        "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp",
+        "datanika-mcp",
+        "--url", config.url || "https://app.datanika.io",
+        "--api-key", config.apiKey,
+        ...(config.allowWrite ? ["--allow-write"] : [])
+      ]
+    })

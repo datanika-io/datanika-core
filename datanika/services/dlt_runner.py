@@ -9,6 +9,8 @@ from dlt.sources.filesystem import filesystem
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
+from datanika.services.egress_guard import validate_egress_host
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_BATCH_SIZE = 10_000
@@ -377,6 +379,7 @@ class DltRunnerService:
         Shared by the generic ``rest_api`` connector and the ``openapi``
         connector (whose resources are derived from a spec).
         """
+        validate_egress_host(base_url)  # SSRF pre-flight guard (core#338)
         client_config: dict = {"base_url": base_url}
         if headers:
             client_config["headers"] = headers
@@ -967,6 +970,7 @@ class DltRunnerService:
         headers: dict | None = None,
     ):
         """Generic REST API source used when a verified source module is not installed."""
+        validate_egress_host(base_url)  # SSRF pre-flight guard (core#338)
         client: dict = {"base_url": base_url}
         if auth:
             client["auth"] = auth

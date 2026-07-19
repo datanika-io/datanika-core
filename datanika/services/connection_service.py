@@ -9,6 +9,7 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.services.egress_guard import validate_egress_host
 from datanika.services.encryption import EncryptionService
 from datanika.services.naming import validate_name
 
@@ -232,6 +233,13 @@ class ConnectionService:
 
         emit("connection.before_create", session=session, org_id=org_id)
         validate_connection_name(name)
+        # SSRF pre-flight gate (core#338): reject connectors whose user-supplied
+        # base_url resolves to a non-public host at create time. Only fires when
+        # a base_url is present, so DB connectors and hardcoded-host SaaS
+        # (stripe/github/…) are unaffected.
+        base_url = (config or {}).get("base_url")
+        if base_url:
+            validate_egress_host(base_url)
         direction = infer_direction(connection_type)
         # Normalise "" → None so analytics queries can filter on a single
         # NULL check. ConnectionState.selected_template_slug defaults to ""

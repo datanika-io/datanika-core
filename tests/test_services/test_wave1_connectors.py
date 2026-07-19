@@ -38,6 +38,16 @@ def svc():
     return DltRunnerService()
 
 
+@pytest.fixture(autouse=True)
+def _stub_egress_guard():
+    """No-op the SSRF egress guard (core#338) so the SaaS ``_rest_api_fallback``
+    paths (pipedrive / freshdesk / asana) don't resolve their base_url host via
+    real DNS. The guard itself is covered by ``tests/test_security/test_egress_guard.py``.
+    """
+    with patch("datanika.services.dlt_runner.validate_egress_host"):
+        yield
+
+
 # --------------------------------------------------------------------------- #
 # Enum
 # --------------------------------------------------------------------------- #

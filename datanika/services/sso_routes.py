@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import logging
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
@@ -19,6 +19,48 @@ from datanika.services.user_service import UserService
 logger = logging.getLogger(__name__)
 
 _SSO_STATE_COOKIE = "sso_state"
+
+# SAML AuthnRequest ids are stored single-use (InResponseTo binding + replay
+# defence): written at login keyed by the state token, consumed
+# (get-and-delete) at the callback. A replayed or forged Response finds no id
+# and is rejected.
+_SAML_REQUEST_TTL = 600  # seconds
+
+
+class SamlValidationError(Exception):
+    """A SAML Response failed validation. The callback maps this to a 401."""
+
+
+def _redis():
+    import redis
+
+    return redis.from_url(settings.redis_url, decode_responses=True)
+
+
+def _saml_request_key(state: str) -> str:
+    return f"sso:saml:req:{state}"
+
+
+def _store_saml_request_id(state: str, request_id: str) -> None:
+    try:
+        _redis().setex(_saml_request_key(state), _SAML_REQUEST_TTL, request_id)
+    except Exception:
+        logger.exception("Failed to store SAML request id (SAML login will fail closed)")
+
+
+def _consume_saml_request_id(state: str) -> str | None:
+    """Return the stored AuthnRequest id for ``state`` and delete it (single use)."""
+    try:
+        r = _redis()
+        key = _saml_request_key(state)
+        pipe = r.pipeline()
+        pipe.get(key)
+        pipe.delete(key)
+        value, _ = pipe.execute()
+        return value
+    except Exception:
+        logger.exception("Failed to consume SAML request id")
+        return None
 
 
 def _get_session():
@@ -141,6 +183,9 @@ async def _saml_login(request: Request, sso, org_slug: str) -> RedirectResponse:
         saml_request = base64.b64encode(deflated).decode()
 
         state = secrets.token_urlsafe(32)
+        # Bind this AuthnRequest id to the state so the callback can enforce
+        # InResponseTo + single-use (replay defence).
+        _store_saml_request_id(state, request_id)
         params = urlencode(
             {
                 "SAMLRequest": saml_request,
@@ -185,7 +230,7 @@ async def sso_callback(request: Request) -> RedirectResponse:
             if sso.protocol.value == "oidc":
                 email, full_name = await _oidc_exchange(request, sso, svc)
             elif sso.protocol.value == "saml":
-                email, full_name = await _saml_parse(request, sso)
+                email, full_name = await _saml_parse(request, sso, stored_state)
             else:
                 return RedirectResponse(
                     url=_frontend("/login?error=Unsupported+protocol"), status_code=302
@@ -219,6 +264,11 @@ async def sso_callback(request: Request) -> RedirectResponse:
                 )
             ).scalar_one_or_none()
             # Gross imports above — let me fix inline
+        except SamlValidationError:
+            # A forged / unsigned / tampered / expired / replayed assertion is
+            # an attack, not a user error — reject with 401, issue no session.
+            logger.warning("SAML validation rejected the callback for org %s", org_slug)
+            return Response("Unauthorized: SAML assertion failed validation.", status_code=401)
         except Exception:
             logger.exception("SSO callback failed for %s", org_slug)
             return RedirectResponse(
@@ -341,38 +391,100 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
     return "", ""
 
 
-async def _saml_parse(request: Request, sso) -> tuple[str, str]:
-    """Parse SAML Response and extract user email."""
-    import base64
-    from xml.etree.ElementTree import fromstring
+async def _saml_parse(request: Request, sso, state: str) -> tuple[str, str]:
+    """Validate a SAML Response and extract the user's email.
+
+    SECURITY (auth boundary): the assertion is trusted ONLY after full SAML
+    validation against the org's configured IdP certificate — XML-DSig
+    signature (WantAssertionsSigned), Audience, Destination, Conditions
+    (NotBefore / NotOnOrAfter), and InResponseTo. Any failure raises
+    ``SamlValidationError``, which the callback turns into a 401. Parsing and
+    signature verification are done by python3-saml (xmlsec): there is no
+    hand-rolled XML, so no XXE and no signature-wrapping. Replay is prevented
+    by consuming the single-use AuthnRequest id bound at login.
+    """
+    from onelogin.saml2.auth import OneLogin_Saml2_Auth
+    from onelogin.saml2.utils import OneLogin_Saml2_Utils
 
     form = await request.form()
     saml_response = form.get("SAMLResponse", "")
     if not saml_response:
-        raise ValueError("Missing SAMLResponse")
+        raise SamlValidationError("Missing SAMLResponse")
 
-    xml_bytes = base64.b64decode(saml_response)
-    root = fromstring(xml_bytes)
+    if not (sso.saml_idp_cert or "").strip():
+        # No trust anchor configured -> nothing to verify against -> refuse.
+        raise SamlValidationError("SAML IdP certificate not configured")
 
-    # Extract NameID (email)
-    ns = {
-        "saml": "urn:oasis:names:tc:SAML:2.0:assertion",
-        "samlp": "urn:oasis:names:tc:SAML:2.0:protocol",
+    # Consume the single-use AuthnRequest id (InResponseTo + replay defence).
+    # A replayed or unsolicited Response finds no id here and is rejected.
+    request_id = _consume_saml_request_id(state)
+    if not request_id:
+        raise SamlValidationError("Unknown or already-used SAML request (possible replay)")
+
+    acs_url = f"{settings.oauth_redirect_base_url}/api/auth/sso/callback"
+    parsed = urlparse(acs_url)
+    req_data = {
+        "https": "on" if parsed.scheme == "https" else "off",
+        "http_host": parsed.netloc,  # includes the port when the ACS URL has one
+        "script_name": parsed.path,
+        "get_data": {},
+        "post_data": {"SAMLResponse": saml_response},
     }
-    name_id = root.find(".//saml:NameID", ns)
-    email = name_id.text if name_id is not None else ""
+    saml_settings = {
+        "strict": True,
+        "sp": {
+            "entityId": sso.saml_sp_entity_id or settings.sso_sp_entity_id,
+            "assertionConsumerService": {
+                "url": acs_url,
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            },
+            "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+        },
+        "idp": {
+            "entityId": sso.saml_idp_entity_id or "",
+            "singleSignOnService": {
+                "url": sso.saml_idp_sso_url or acs_url,
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+            },
+            "x509cert": OneLogin_Saml2_Utils.format_cert(sso.saml_idp_cert),
+        },
+        "security": {
+            "wantAssertionsSigned": True,
+            "wantMessagesSigned": False,
+            "wantNameId": True,
+            "wantAttributeStatement": False,
+            "requestedAuthnContext": False,
+            "rejectUnsolicitedResponsesWithInResponseTo": True,
+        },
+    }
 
-    # Extract attributes for name
+    try:
+        auth = OneLogin_Saml2_Auth(req_data, old_settings=saml_settings)
+        auth.process_response(request_id=request_id)
+    except Exception as exc:
+        logger.warning("SAML response could not be processed: %s", type(exc).__name__)
+        raise SamlValidationError("SAML response could not be processed") from exc
+
+    if not auth.is_authenticated():
+        reason = auth.get_last_error_reason() or "; ".join(auth.get_errors())
+        logger.warning("SAML validation failed: %s", reason)
+        raise SamlValidationError(f"SAML validation failed: {reason}")
+
+    email = (auth.get_nameid() or "").strip()
+    if not email:
+        raise SamlValidationError("SAML assertion did not contain a NameID")
+
     full_name = ""
-    for attr in root.findall(".//saml:Attribute", ns):
-        attr_name = attr.get("Name", "")
-        val_elem = attr.find("saml:AttributeValue", ns)
-        if (
-            val_elem is not None
-            and val_elem.text
-            and ("displayName" in attr_name or "name" in attr_name.lower())
-        ):
-            full_name = val_elem.text
+    attributes = auth.get_attributes()
+    for key in (
+        "displayName",
+        "http://schemas.microsoft.com/identity/claims/displayname",
+        "name",
+        "cn",
+    ):
+        values = attributes.get(key)
+        if values:
+            full_name = values[0]
             break
 
     return email, full_name

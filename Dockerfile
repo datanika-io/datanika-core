@@ -36,6 +36,11 @@ RUN uv run reflex init
 # Install cloud plugin AFTER reflex init (which recreates the venv)
 RUN uv pip install /cloud
 
+# Install the datanika-mcp tool-surface package so the app can mount the remote
+# MCP endpoint (/mcp). Copied in via `COPY datanika/ .` above → /app/datanika-mcp.
+# Optional at runtime (the mount is guarded), but present in prod. Remote-MCP P1.
+RUN uv pip install ./datanika-mcp
+
 EXPOSE 3000 8000
 
 CMD ["uv", "run", "reflex", "run", "--env", "prod"]

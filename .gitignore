@@ -223,3 +223,6 @@ reflex.db*
 .secrets
 # Monorepo-wide secrets directory (defense in depth — actual secrets live at D:/Projects/Datanika/secrets/)
 secrets/
+
+# Per-agent scratch executor scripts (e.g. infra_exec.sh, qa_exec.sh, engineer_exec.sh) — never commit
+*_exec.sh

@@ -36,6 +36,15 @@ on:
 jobs:
   overage-e2e:
     runs-on: ubuntu-latest
+    # Infra wiring: the sandbox + CF-Access secrets live on the `production`
+    # environment (not repo-level), so the job must select it or every
+    # `${{ secrets.* }}` resolves empty → the spec's skip-gates trip and the
+    # soak silently no-ops. `issues: write` lets the failure step file the
+    # dedup issue.
+    environment: production
+    permissions:
+      contents: read
+      issues: write
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

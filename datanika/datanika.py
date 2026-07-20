@@ -1,3 +1,5 @@
+import logging
+
 import reflex as rx
 
 from datanika.config import settings as _settings
@@ -257,6 +259,23 @@ from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # no
 for _route in metrics_routes:
     app._api.routes.append(_route)
 app._api.add_middleware(PrometheusMiddleware)
+
+# Mount remote MCP endpoint (/mcp) — Streamable HTTP, bearer=API-key, read-only
+# (Remote-MCP P1, #370). The datanika-mcp tool-surface package is installed in
+# the Docker image (``uv pip install ./datanika-mcp``) but is optional in
+# dev/CI, where it's exercised via its own tests — so skip cleanly if it isn't
+# importable rather than failing app startup.
+try:
+    from datanika.services.mcp_routes import mcp_lifespan, mcp_routes  # noqa: E402
+
+    for _route in mcp_routes:
+        app._api.routes.append(_route)
+    app.register_lifespan_task(mcp_lifespan)
+    logging.getLogger(__name__).info("Mounted remote MCP endpoint at /mcp (read-only)")
+except ImportError as _mcp_exc:
+    logging.getLogger(__name__).warning(
+        "datanika-mcp not installed; /mcp endpoint not mounted (%s)", _mcp_exc
+    )
 
 # Register every core-side hook subscriber (runs + quota + V2 P5 charge
 # events + external-channel dispatch). Delegated to

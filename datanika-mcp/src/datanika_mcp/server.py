@@ -15,11 +15,14 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
+from collections.abc import AsyncIterator, Callable
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 from datanika_mcp.client import DatanikaClient
 from datanika_mcp.session import DatanikaSession, current_session
@@ -403,6 +406,83 @@ def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
     """
     _session().require_write("trigger_transformation")
     return json.dumps(_session().client.trigger_transformation(transformation_id, wait), indent=2)
+
+
+# ===================================================================
+# Remote transport — Streamable HTTP (SPEC_REMOTE_MCP.md P1 step 2)
+# ===================================================================
+#
+# One tool surface, two transports. stdio runs ``mcp.run(transport="stdio")``
+# in ``main()`` below; the remote transport serves the same 25 ``@mcp.tool()``s
+# over Streamable HTTP. Per-request auth (bearer -> DatanikaSession) is layered
+# on by the hosting app (``datanika/services/mcp_routes.py``), which binds the
+# session into the contextvar the tools resolve via ``_session()`` — the tool
+# bodies are unchanged and unaware of the transport.
+#
+# Stateless-JSON (SPEC §11.1): no per-session affinity to coordinate across
+# workers for a read-only P1; the caller is authenticated per request.
+
+
+class _StreamableHTTPApp:
+    """ASGI adapter over a ``StreamableHTTPSessionManager``.
+
+    Starlette treats a *callable object* (not a plain function) as a raw ASGI
+    app, so a request reaches the MCP transport without the request/response
+    wrapper.
+    """
+
+    def __init__(self, manager: StreamableHTTPSessionManager) -> None:
+        self._manager = manager
+
+    async def __call__(self, scope, receive, send) -> None:
+        await self._manager.handle_request(scope, receive, send)
+
+
+def make_remote_transport() -> tuple[
+    _StreamableHTTPApp, Callable[[], contextlib.AbstractAsyncContextManager[None]]
+]:
+    """Build a Streamable-HTTP transport bound to the shared tool surface.
+
+    Returns ``(asgi_app, lifespan)``:
+
+    - ``asgi_app`` — the raw ASGI endpoint to mount at ``/mcp`` (wrap with auth
+      first). Stateless-JSON: a POST carries the JSON-RPC request + response.
+    - ``lifespan`` — an ``@asynccontextmanager`` factory that must be active for
+      the endpoint to serve (it owns the session manager's task group). Register
+      via ``rx.App.register_lifespan_task``.
+
+    A **fresh** manager per call (not a process global): ``run()`` may only be
+    entered once per ``StreamableHTTPSessionManager`` instance, so each hosting
+    app — and each test — gets its own.
+    """
+    manager = StreamableHTTPSessionManager(
+        app=mcp._mcp_server,  # the low-level Server the FastMCP instance wraps
+        stateless=True,
+        json_response=True,
+    )
+
+    @contextlib.asynccontextmanager
+    async def mcp_session_manager_lifespan() -> AsyncIterator[None]:
+        async with manager.run():
+            yield
+
+    return _StreamableHTTPApp(manager), mcp_session_manager_lifespan
+
+
+def create_streamable_http_app():
+    """A standalone Starlette app serving the tool surface at ``/mcp``.
+
+    No auth wrapper — for transport smoke tests and self-host experiments. The
+    authenticated production mount lives in ``datanika/services/mcp_routes.py``.
+    """
+    from starlette.applications import Starlette
+    from starlette.routing import Route
+
+    asgi_app, lifespan = make_remote_transport()
+    return Starlette(
+        routes=[Route("/mcp", endpoint=asgi_app)],
+        lifespan=lambda _app: lifespan(),
+    )
 
 
 # ===================================================================

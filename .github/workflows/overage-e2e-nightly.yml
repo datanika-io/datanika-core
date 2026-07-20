@@ -1,0 +1,96 @@
+name: Overage E2E Nightly (Gate-4 soak)
+
+# V2 P5 overage-charge Gate-4 soak. Runs the @slow `overage-charge-cycle.spec.ts`
+# against staging every night. QA needs 3 consecutive green nights before the
+# overage-charge cutover (core#267 Gate 4). A red night resets the streak and
+# files a `e2e-failure` issue + Telegram alert.
+#
+# Wiring (Infra owns the schedule + secrets; QA owns the spec):
+#   - Client gates the spec checks: DATANIKA_E2E_OVERAGE_CHARGE=1 + PADDLE_SANDBOX_* (else it skips).
+#   - Overage suite is tagged @slow, so DATANIKA_E2E_SLOW=1 is required to include it.
+#   - DATANIKA_E2E_SKIP_SEED=1: the spec self-seeds via /api/admin/e2e/seed-overage-tenant,
+#     so the general e2e_seed (globalSetup) is skipped — no SSH seed / fixture pollution.
+#   - Server-side prereqs already live on staging: DATANIKA_E2E_ADMIN_ENABLE=1,
+#     PADDLE_SANDBOX_SUBSCRIPTION_ID (live active sub), PADDLE_OVERAGE_PRODUCT_ID.
+#   - staging-app.datanika.io is behind Cloudflare Access — the CI service token
+#     is forwarded as CF-Access-* headers by e2e/playwright.config.ts.
+
+on:
+  schedule:
+    - cron: "30 2 * * *" # 02:30 UTC nightly
+  workflow_dispatch:
+
+concurrency:
+  group: overage-e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  overage-e2e:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
+
+      - name: Run overage-charge soak against staging
+        working-directory: e2e
+        env:
+          CI: "true"
+          DATANIKA_E2E_SLOW: "1"
+          DATANIKA_E2E_OVERAGE_CHARGE: "1"
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
+          PADDLE_SANDBOX_VENDOR_ID: ${{ secrets.PADDLE_SANDBOX_VENDOR_ID }}
+          PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+        run: npx playwright test overage-charge-cycle.spec.ts
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: overage-e2e-report
+          path: e2e/playwright-report/
+          retention-days: 14
+
+      - name: Telegram alert on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 *Gate-4 overage-E2E soak FAILED*\n\nThe 3-green-nights streak resets.\n*Run:* %s' "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
+      - name: File issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create \
+            --repo ${{ github.repository }} \
+            --title "[QA] Gate-4 overage-E2E soak failure ($(date -u +%Y-%m-%d))" \
+            --body "The nightly V2 P5 overage-charge soak failed — this resets QA's 3-green-nights streak (Gate 4 of the overage-charge cutover, core#267).
+
+          **Run:** $RUN_URL
+          **Report:** \`overage-e2e-report\` artifact on the run page." \
+            --label "e2e-failure"

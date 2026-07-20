@@ -20,7 +20,6 @@ dependencies = [
     # dbt-databricks requires sqlalchemy<2.0, incompatible with our stack
     # dbt-synapse requires sqlalchemy<2.0, incompatible with our stack
     # Both platforms work as dlt destinations — dbt transforms deferred until adapter compat
-
     # SaaS source dependencies (optional — needed only for dlt verified sources,
     # REST API fallback works without these)
     # "stripe>=5.0",
@@ -30,11 +29,9 @@ dependencies = [
     # "google-analytics-data>=0.18",
     # "google-ads>=24.0",
     # "confluent-kafka>=2.3",
-
     # Google Sheets
     "gspread>=6.0",
     "google-auth>=2.0",
-
     # SQL drivers
     "pymysql>=1.1",
     "pymssql>=2.2",
@@ -44,31 +41,26 @@ dependencies = [
     "snowflake-sqlalchemy>=1.7",
     "sqlalchemy-bigquery>=1.11",
     "oracledb>=2.0",
-
     # Web framework
     "reflex>=0.7",
-
     # Database
     "sqlalchemy[asyncio]>=2.0",
     "asyncpg>=0.30",
     "alembic>=1.14",
-
     # Auth
     "passlib[bcrypt]>=1.7",
     "python-jose[cryptography]>=3.3",
-
     # Task queue & scheduling
     "celery[redis]>=5.4",
     "redis>=5.0",
     "apscheduler>=3.10",
-
     # Config & utilities
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
     "cryptography>=44.0",
-
     # Monitoring
     "prometheus-client>=0.21",
+    "python3-saml>=1.16,<2",
 ]
 
 [project.optional-dependencies]

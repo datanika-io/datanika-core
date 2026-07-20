@@ -1,0 +1,125 @@
+name: Overage-charge E2E (staging soak)
+
+# V2 P5 overage-charge Gate 4 (core#267). Runs the self-seeding
+# e2e/tests/overage-charge-cycle.spec.ts against staging-app.datanika.io: the
+# spec seeds its own tenant via the /api/admin/e2e/* admin endpoints (cloud#72),
+# fast-forwards the billing clock, fires the notice + charge tasks, and asserts
+# the Paddle sandbox charge + the in-app "$5.00" notice. QA runs this ~3 nights
+# green as the last gate before the overage-charge cutover — do NOT flip
+# DATANIKA_OVERAGE_CHARGE_ENABLE on in prod until it is.
+#
+# ── Infra owns: secrets + the schedule ──────────────────────────────────────
+# Repo secrets to populate before this can actually run:
+#   PADDLE_SANDBOX_VENDOR_ID, PADDLE_SANDBOX_API_KEY  — client-side skip gates.
+#       The spec only checks they are PRESENT (the real Paddle call is
+#       server-side via the admin run-task endpoint); any non-empty sandbox
+#       values work.
+#   DATANIKA_STAGING_CF_ACCESS_CLIENT_ID / _SECRET    — already set (shared with
+#       the e2e-staging job); front-door auth for CF-Access-gated staging.
+# Staging APP env (set on the datanika-staging-app container via deploy, NOT CI):
+#   DATANIKA_E2E_ADMIN_ENABLE=1     — else /api/admin/e2e/* returns 404.
+#   PADDLE_SANDBOX_SUBSCRIPTION_ID  — a real sandbox sub (else the charge lands
+#       FAILED not ISSUED and Step 8 fails).
+#   PADDLE_OVERAGE_PRODUCT_ID       — else charge_subscription raises ValueError.
+# The kill-switch is force-enabled per-call by the run-task admin endpoint, so
+# DATANIKA_OVERAGE_CHARGE_ENABLE can stay OFF on staging.
+#
+# SAFE TO MERGE BEFORE WIRING: until the two PADDLE_SANDBOX_* secrets are set,
+# the spec's GATE skips every test (green no-op), so this never reports a false
+# red. A "green" run where all 3 tests SKIPPED is NOT a passing soak night.
+
+on:
+  schedule:
+    - cron: "30 3 * * *" # nightly 03:30 UTC — Infra: adjust or disable as needed
+  workflow_dispatch:
+
+jobs:
+  overage-e2e:
+    runs-on: ubuntu-latest
+    # Infra wiring: the sandbox + CF-Access secrets live on the `production`
+    # environment (not repo-level), so the job must select it or every
+    # `${{ secrets.* }}` resolves empty → the spec's skip-gates trip and the
+    # soak silently no-ops. `issues: write` lets the failure step file the
+    # dedup issue.
+    environment: production
+    permissions:
+      contents: read
+      issues: write
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browser
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
+
+      - name: Run overage-charge E2E against staging
+        working-directory: e2e
+        env:
+          CI: "true"
+          DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+          # Client-side skip gates — the spec runs only when both are present.
+          DATANIKA_E2E_OVERAGE_CHARGE: "1"
+          PADDLE_SANDBOX_VENDOR_ID: ${{ secrets.PADDLE_SANDBOX_VENDOR_ID }}
+          PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
+          # The overage spec is tagged @slow — include it (config grepInverts @slow otherwise).
+          DATANIKA_E2E_SLOW: "1"
+          # The spec self-seeds via /api/admin/e2e/*, so skip the standard fixture
+          # seed (which would otherwise SSH into the staging container). The dummy
+          # email only satisfies global-setup's skip guard; the spec never reads it.
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_USER_EMAIL: overage-e2e-skip@datanika.test
+        run: npx playwright test overage-charge-cycle.spec.ts
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: overage-e2e-report
+          path: e2e/playwright-report/
+          retention-days: 14
+
+      - name: Open QA issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh label create overage-e2e-failure \
+            --repo ${{ github.repository }} \
+            --color BFD4F2 --description "Overage-charge E2E soak failure" --force || true
+          # Dedup: comment on an open overage-e2e-failure issue if one exists,
+          # else open one — so a multi-night red streak doesn't spam.
+          existing=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --label overage-e2e-failure \
+            --state open \
+            --limit 1 \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo ${{ github.repository }} \
+              --body "Another overage-charge E2E soak failure: $RUN_URL"
+          else
+            body=$(printf '%s\n' \
+              "The overage-charge Gate-4 E2E (overage-charge-cycle.spec.ts) failed on staging." \
+              "" \
+              "**Run:** $RUN_URL" \
+              "**Report:** the overage-e2e-report artifact on the run page." \
+              "" \
+              "If all 3 tests SKIPPED (not failed), the PADDLE_SANDBOX_* secrets or the staging admin-endpoint env are not wired yet — see the workflow header. If tests RAN and failed, check the Playwright report + staging app logs (charge_cycle_overages / the /api/admin/e2e/* handlers).")
+            gh issue create \
+              --repo ${{ github.repository }} \
+              --title "[QA] Overage-charge E2E soak failed $(date -u +%Y-%m-%d)" \
+              --label overage-e2e-failure \
+              --body "$body"
+          fi

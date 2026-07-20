@@ -11,11 +11,30 @@ from datanika.services.dlt_runner import (
     DltRunnerService,
     _extract_rows_loaded,
 )
+from datanika.services.egress_guard import EgressValidationError
+from datanika.services.egress_guard import validate_egress_host as _real_validate_egress_host
 
 
 @pytest.fixture
 def svc():
     return DltRunnerService()
+
+
+@pytest.fixture(autouse=True)
+def _stub_egress_guard():
+    """Stub the SSRF egress guard (core#338) for source-construction tests.
+
+    Since #338, ``_rest_api_from_parts`` and ``_rest_api_fallback`` call
+    ``validate_egress_host`` as their first statement, which resolves the
+    base_url host via real DNS. The generic REST/OpenAPI/SaaS tests below hand
+    those functions fake or live hostnames, so we no-op the guard here to keep
+    them deterministic and offline. The guard's real behaviour is covered by
+    ``tests/test_security/test_egress_guard.py`` and by ``TestEgressGuardWiring``
+    (which restores the real function). Yields the mock so wiring tests can
+    assert it was invoked.
+    """
+    with patch("datanika.services.dlt_runner.validate_egress_host") as mock_guard:
+        yield mock_guard
 
 
 def _make_mock_pipeline(row_counts: dict | None = None):
@@ -1478,3 +1497,53 @@ class TestKafkaSource:
     def test_requires_topics(self, svc):
         with pytest.raises(DltRunnerError, match="topics"):
             svc._build_kafka_source({"bootstrap_servers": "localhost:9092"}, {})
+
+
+def _gai_private(ip: str = "10.0.0.5"):
+    """A ``socket.getaddrinfo`` return that resolves to a single private IP."""
+    return [(2, 1, 6, "", (ip, 0))]
+
+
+class TestEgressGuardWiring:
+    """core#338 — validate_egress_host is wired into the rest_api build paths.
+
+    ``_stub_egress_guard`` (autouse) no-ops the guard for every other test in
+    this module; these tests either assert against that stub mock or restore the
+    real guard (with mocked DNS) to prove a private base_url is rejected.
+    """
+
+    @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
+    def test_rest_api_from_parts_invokes_guard(self, _mock_rest, svc, _stub_egress_guard):
+        svc._rest_api_from_parts("https://api.public.example", [{"name": "x"}])
+        _stub_egress_guard.assert_called_once_with("https://api.public.example")
+
+    @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
+    def test_rest_api_fallback_invokes_guard(self, _mock_rest, svc, _stub_egress_guard):
+        svc._rest_api_fallback("https://api.public.example/", None, [{"name": "x"}])
+        _stub_egress_guard.assert_called_once_with("https://api.public.example/")
+
+    @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
+    def test_rest_api_from_parts_rejects_private_base_url(self, _mock_rest, svc):
+        with (
+            patch(
+                "datanika.services.dlt_runner.validate_egress_host",
+                _real_validate_egress_host,
+            ),
+            patch("socket.getaddrinfo", return_value=_gai_private()),
+            pytest.raises(EgressValidationError),
+        ):
+            svc._rest_api_from_parts("http://internal.svc", [{"name": "x"}])
+
+    @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
+    def test_rest_api_fallback_rejects_metadata_base_url(self, _mock_rest, svc):
+        with (
+            patch(
+                "datanika.services.dlt_runner.validate_egress_host",
+                _real_validate_egress_host,
+            ),
+            patch("socket.getaddrinfo", return_value=_gai_private("169.254.169.254")),
+            pytest.raises(EgressValidationError),
+        ):
+            svc._rest_api_fallback(
+                "http://169.254.169.254/latest/meta-data/", None, [{"name": "x"}]
+            )

@@ -10,36 +10,47 @@ import { test, expect } from "@playwright/test";
  *   1. Seed tenant on V2 Pro plan (100 GB included, overage price set).
  *   2. Seed usage_ledger totalling 105 GB within the current billing period.
  *   3. Fast-forward clock to T-23h before cycle end.
- *   4. Trigger the `emit_charge_incoming_warnings` Celery task.
+ *   4. Trigger the `emit_charge_incoming_notices` Celery task.
  *   5. Assert: in-app Notification(type=CHARGE_INCOMING) visible in the
  *      notifications drawer; projected amount = 500 cents.
  *   6. Fast-forward to cycle end (T+1min).
- *   7. Trigger `settle_overage_charges`.
+ *   7. Trigger `charge_cycle_overages`.
  *   8. Assert: Paddle sandbox records a subscription-charge; Charge row
- *      status=succeeded; paddle_charge_id populated.
- *   9. Re-run the task — idempotent. Paddle is not called again; Charge
- *      row unchanged.
+ *      status=issued; paddle_transaction_id populated (txn_…).
+ *   9. Re-run the task — idempotent. Paddle is not called again; no second
+ *      Charge row is issued (unique idempotency_key barrier).
  *
- * Prerequisites (all three must be true or the suite skips):
+ * Client-side prerequisites (all three must be true or the suite skips):
  *   - DATANIKA_E2E_OVERAGE_CHARGE=1 — explicit opt-in; unsafe by default
  *   - PADDLE_SANDBOX_VENDOR_ID + PADDLE_SANDBOX_API_KEY — sandbox creds
  *   - Test-only admin endpoints live (see list below)
  *
- * Test-only admin endpoints required (Engineering V2 P5):
+ * Server-side prerequisites (staging app env — not skip gates, but the
+ * charge task no-ops / errors without them):
+ *   - DATANIKA_OVERAGE_CHARGE_ENABLE=1 — else `charge_cycle_overages` returns
+ *     {..., "disabled": true} and issues nothing (kill-switch, cloud#68)
+ *   - PADDLE_OVERAGE_PRODUCT_ID set — else PaddleClient.charge_subscription
+ *     raises ValueError (core#273)
+ *
+ * Test-only admin endpoints required (Engineering V2 P5 — see core#361):
  *   POST /api/admin/e2e/seed-overage-tenant
  *     body: { planSlug, includedGB, overagePriceCents, usageGB }
  *     returns: { orgId, subscriptionId, billingPeriodStart, billingPeriodEnd, authToken }
  *   POST /api/admin/e2e/advance-clock
  *     body: { toIso: string }  // fast-forward system time for scheduler-relative logic
  *   POST /api/admin/e2e/run-task
- *     body: { taskName: 'emit_charge_incoming_warnings' | 'settle_overage_charges' }
- *     returns: { status, logs }
+ *     body: { taskName: 'emit_charge_incoming_notices' | 'charge_cycle_overages' }
+ *     returns: { taskName, result }  // result = task's native return (int for
+ *              notices; { issued, skipped_idempotent, failed } for the charge loop)
+ *   GET  /api/admin/e2e/charges?subscriptionId=<id>
+ *     returns: Array<{ id, status, amountCents, paddleTransactionId }>
  *
- * All three are gated behind DATANIKA_ENV !== 'production' guards. See
- * core#249 for Engineering's admin-endpoint ship task.
+ * All are gated behind DATANIKA_ENV !== 'production' guards. Endpoints
+ * tracked in core#361; this spec reconciled to the shipped cloud interface
+ * in core#362.
  *
  * This spec is red-tests-first: the @slow tag + env gate keep it out of
- * PR CI; when Engineering ships the endpoints + charge loop, flip the
+ * PR CI; when Engineering ships the endpoints (core#361), flip the
  * FAST_FORWARD_NOT_READY constant to false and the assertions start
  * pulling real data.
  */
@@ -51,9 +62,19 @@ const GATE =
 
 const BASE_URL = process.env.DATANIKA_E2E_BASE_URL ?? "https://staging-app.datanika.io";
 
-// Flip to false when Engineering ships the test-only admin endpoints +
-// charge loop. At that point every test below should turn green.
+// Flip to false when Engineering ships the test-only admin endpoints
+// (core#361). At that point every test below should turn green.
 const FAST_FORWARD_NOT_READY = true;
+
+// Native return of the `charge_cycle_overages` Celery task (cloud dev:
+// datanika_cloud/billing/tasks.py). `disabled` appears only when the
+// DATANIKA_OVERAGE_CHARGE_ENABLE kill-switch is off.
+type ChargeSummary = {
+  issued: number;
+  skipped_idempotent: number;
+  failed: number;
+  disabled?: boolean;
+};
 
 test.describe("V2 P5 overage charge cycle @slow", () => {
   test.skip(
@@ -63,7 +84,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
 
   test.skip(
     () => FAST_FORWARD_NOT_READY,
-    "Engineering V2 P5 admin endpoints not shipped yet — see core#249",
+    "Engineering V2 P5 admin endpoints not shipped yet — see core#361",
   );
 
   test("cycle: seed → T-23h notify → T+0 charge → retry no-op", async ({
@@ -99,9 +120,9 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     });
     expect(adv1.ok()).toBeTruthy();
 
-    // Step 4 — fire the warning task
+    // Step 4 — fire the notice task
     const warn = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
-      data: { taskName: "emit_charge_incoming_warnings" },
+      data: { taskName: "emit_charge_incoming_notices" },
     });
     expect(warn.ok()).toBeTruthy();
 
@@ -128,14 +149,18 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     });
     expect(adv2.ok()).toBeTruthy();
 
-    // Step 7 — settle the charge
+    // Step 7 — run the charge loop
     const settle1 = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
-      data: { taskName: "settle_overage_charges" },
+      data: { taskName: "charge_cycle_overages" },
     });
     expect(settle1.ok()).toBeTruthy();
-    const settle1Body = (await settle1.json()) as { chargeId: number; paddleChargeId: string };
-
-    expect(settle1Body.paddleChargeId).toMatch(/^cha_/); // Paddle charge IDs prefixed with cha_
+    const settle1Body = (await settle1.json()) as {
+      taskName: string;
+      result: ChargeSummary;
+    };
+    // Exactly one charge issued this cycle; kill-switch must be on (no `disabled`).
+    expect(settle1Body.result.disabled).toBeFalsy();
+    expect(settle1Body.result.issued).toBe(1);
 
     // Step 8 — verify Charge row via admin list endpoint
     const listRes = await request.get(
@@ -147,25 +172,28 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
       id: number;
       status: string;
       amountCents: number;
-      paddleChargeId: string | null;
+      paddleTransactionId: string | null;
     }>;
     expect(charges).toHaveLength(1);
-    expect(charges[0].status).toBe("succeeded");
+    // Post-issue status is ISSUED (Paddle accepted). It flips to PAID only on
+    // the transaction.completed webhook, which is out of scope for this cycle.
+    expect(charges[0].status).toBe("issued");
     expect(charges[0].amountCents).toBe(500);
-    expect(charges[0].paddleChargeId).toBe(settle1Body.paddleChargeId);
+    expect(charges[0].paddleTransactionId).toMatch(/^txn_/); // Paddle transaction id
 
-    // Step 9 — idempotency: re-run the settle task
+    // Step 9 — idempotency: re-run the charge loop
     const settle2 = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
-      data: { taskName: "settle_overage_charges" },
+      data: { taskName: "charge_cycle_overages" },
     });
     expect(settle2.ok()).toBeTruthy();
     const settle2Body = (await settle2.json()) as {
-      status: string;
-      skippedReason?: string;
+      taskName: string;
+      result: ChargeSummary;
     };
-    // Engineering may report "noop" via either (a) 200 + skippedReason
-    // or (b) an idempotency-specific status. Accept either.
-    expect(settle2Body.status === "noop" || settle2Body.skippedReason).toBeTruthy();
+    // The unique idempotency_key barrier means no second charge is issued.
+    // (Whether the row is de-selected or hits the guard is Eng's call — the
+    // invariant that matters is issued === 0, asserted robustly here.)
+    expect(settle2Body.result.issued).toBe(0);
 
     // Charge row count unchanged.
     const listRes2 = await request.get(
@@ -177,26 +205,29 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
   });
 
   test("Paddle 4xx response marks Charge failed with reason", async ({ request }) => {
-    // Scenario: seed a tenant whose Paddle sandbox subscription has been
-    // manually set to "card-declines-always". Settle the overage. Assert
-    // Charge.status=failed, Charge.failure_reason matches the Paddle body.
+    // Scenario: Paddle sandbox returns a 4xx on the POST /subscriptions/{id}/charge
+    // request (pre-acceptance rejection). After CHARGE_MAX_RETRIES the Charge goes
+    // to status=failed with `last_error` set to the Paddle body.
     //
-    // Gated on Engineering ship gate 3 (failed-payment policy) per
-    // SPEC_OVERAGE_BILLING_TESTS.md §4.4 + §10.5. When the policy lands,
-    // seed the decline-always subscription in the sandbox and uncomment
-    // this scenario.
-    test.skip(true, "Engineering ship gate 3 — failed-payment policy not yet specified");
+    // NB: this is the pre-acceptance path. A *post-acceptance* collection decline
+    // is different — the charge stays ISSUED while Paddle runs dunning (see
+    // docs/billing-failed-payment-policy.md §Grace period). Don't conflate them.
+    //
+    // The grace-period policy is now specified (cloud#48), but exercising this
+    // needs a sandbox subscription/product that forces a 4xx + a decline-simulation
+    // harness. Kept skipped until that harness lands.
+    test.skip(true, "Needs sandbox 4xx-forcing harness — see core#361 / SPEC §4.4");
   });
 
   test("no charge when usage under included", async ({ request }) => {
-    // Scenario: seed 80 GB usage on a 100 GB plan. Run settle at cycle
-    // close. Assert: no Paddle call, no Charge row.
+    // Scenario: seed 80 GB usage on a 100 GB plan. Run charge_cycle_overages at
+    // cycle close. Assert: no Paddle call, no Charge row (result.issued === 0).
     //
     // This is the "sanity" gate — catches a regression where the charge
     // loop fires on any usage, overage or not.
     test.skip(
       FAST_FORWARD_NOT_READY,
-      "Engineering V2 P5 not shipped — see core#249",
+      "Engineering V2 P5 not shipped — see core#361",
     );
   });
 });

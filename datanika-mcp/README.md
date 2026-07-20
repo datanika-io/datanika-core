@@ -7,7 +7,7 @@ MCP server for [Datanika](https://datanika.io) — browse connections, preview d
 ## Install
 
 ```bash
-# From PyPI (when published)
+# From PyPI (recommended)
 uvx datanika-mcp --help
 
 # From git

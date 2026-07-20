@@ -1,11 +1,14 @@
 """TDD tests for connection management service."""
 
+from unittest.mock import patch
+
 import pytest
 from cryptography.fernet import Fernet
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService, infer_direction
+from datanika.services.egress_guard import EgressValidationError
 from datanika.services.encryption import EncryptionService
 
 
@@ -85,6 +88,53 @@ class TestCreateConnection:
         assert conn.connection_type == ConnectionType.REST_API
         # REST_API is source-only, so direction should be SOURCE
         assert conn.direction == ConnectionDirection.SOURCE
+
+    # --- SSRF create-time egress gate (core#338) -------------------------------
+    def test_rejects_rest_api_base_url_resolving_to_private(self, svc, db_session, org):
+        """A rest_api base_url that resolves to a private IP is refused at create."""
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("10.0.0.5", 0))]),
+            pytest.raises(EgressValidationError),
+        ):
+            svc.create_connection(
+                db_session,
+                org.id,
+                "Internal API",
+                ConnectionType.REST_API,
+                {"base_url": "http://internal.corp.example"},
+            )
+
+    def test_rejects_base_url_resolving_to_metadata_ip(self, svc, db_session, org):
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("169.254.169.254", 0))]),
+            pytest.raises(EgressValidationError),
+        ):
+            svc.create_connection(
+                db_session,
+                org.id,
+                "Metadata Grab",
+                ConnectionType.REST_API,
+                {"base_url": "http://169.254.169.254/latest/meta-data/"},
+            )
+
+    def test_allows_rest_api_public_base_url(self, svc, db_session, org):
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))]):
+            conn = svc.create_connection(
+                db_session,
+                org.id,
+                "Public API",
+                ConnectionType.REST_API,
+                {"base_url": "https://api.public.example"},
+            )
+        assert conn.connection_type == ConnectionType.REST_API
+
+    def test_guard_skipped_when_no_base_url(self, svc, db_session, org):
+        """DB connectors (no base_url) never hit the egress guard."""
+        with patch("datanika.services.connection_service.validate_egress_host") as mock_guard:
+            svc.create_connection(
+                db_session, org.id, "My DB", ConnectionType.POSTGRES, {"host": "localhost"}
+            )
+        mock_guard.assert_not_called()
 
 
 class TestGetConnection:

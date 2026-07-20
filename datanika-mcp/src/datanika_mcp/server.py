@@ -22,10 +22,17 @@ import sys
 from mcp.server.fastmcp import FastMCP
 
 from datanika_mcp.client import DatanikaClient
+from datanika_mcp.session import DatanikaSession, current_session
 
 # ---------------------------------------------------------------------------
-# Globals populated at startup
+# Session resolution — contextvar-first, module-global fallback
 # ---------------------------------------------------------------------------
+#
+# ``main()`` populates the module globals for the single-tenant stdio server.
+# A remote transport (SPEC_REMOTE_MCP.md P1) instead binds a per-request
+# ``DatanikaSession`` via ``session.use_session``; ``_session()`` prefers that
+# binding and falls back to the globals, so both transports share one tool
+# surface and the existing tests (which set the globals directly) stay green.
 
 _client: DatanikaClient | None = None
 _allow_write: bool = False
@@ -40,18 +47,34 @@ mcp = FastMCP(
 )
 
 
-def _get_client() -> DatanikaClient:
+def _session() -> DatanikaSession:
+    """Resolve the active session for the current tool call.
+
+    Prefers a per-request session bound by the transport (remote); falls back
+    to the process globals set by ``main()`` (stdio / tests). Raises if no
+    client is available on the fallback path — i.e. ``main()`` never ran.
+    """
+    session = current_session()
+    if session is not None:
+        return session
     if _client is None:
         raise RuntimeError("DatanikaClient not initialized — call main() first")
-    return _client
+    return DatanikaSession(client=_client, allow_write=_allow_write)
 
 
 def _require_write(action: str) -> None:
-    if not _allow_write:
-        raise RuntimeError(
-            f"Write access required for '{action}'. "
-            "Restart the server with --allow-write to enable mutations."
-        )
+    """Module-level write guard, kept for backward compatibility.
+
+    Tool bodies call ``_session().require_write`` directly; this shim exists
+    so code (and tests) referencing ``server._require_write`` keep working. It
+    resolves the write-grant from the bound session if present, else the
+    module globals — deliberately without a live client, so a write can be
+    rejected before the client is constructed.
+    """
+    session = current_session()
+    if session is None:
+        session = DatanikaSession(client=_client, allow_write=_allow_write)
+    session.require_write(action)
 
 
 # ===================================================================
@@ -65,25 +88,25 @@ def _require_write(action: str) -> None:
 @mcp.tool()
 def get_agent_tiers() -> str:
     """Get the 5-tier agent capability stack — describes what the API can do."""
-    return json.dumps(_get_client().get_agent_tiers(), indent=2)
+    return json.dumps(_session().client.get_agent_tiers(), indent=2)
 
 
 @mcp.tool()
 def get_connection_types() -> str:
     """List all supported connection types with their config schemas."""
-    return json.dumps(_get_client().get_connection_types(), indent=2)
+    return json.dumps(_session().client.get_connection_types(), indent=2)
 
 
 @mcp.tool()
 def list_connections() -> str:
     """List all connections in the organization."""
-    return json.dumps(_get_client().list_connections(), indent=2)
+    return json.dumps(_session().client.list_connections(), indent=2)
 
 
 @mcp.tool()
 def get_connection(connection_id: int) -> str:
     """Get details of a specific connection by ID."""
-    return json.dumps(_get_client().get_connection(connection_id), indent=2)
+    return json.dumps(_session().client.get_connection(connection_id), indent=2)
 
 
 @mcp.tool()
@@ -94,7 +117,7 @@ def introspect_connection(connection_id: int, schema: str | None = None) -> str:
         connection_id: The connection to introspect.
         schema: Optional schema name to filter tables.
     """
-    return json.dumps(_get_client().introspect_connection(connection_id, schema), indent=2)
+    return json.dumps(_session().client.introspect_connection(connection_id, schema), indent=2)
 
 
 @mcp.tool()
@@ -110,7 +133,7 @@ def preview_connection(
         limit: Max rows to return (default 100).
     """
     return json.dumps(
-        _get_client().preview_connection(connection_id, table, schema, limit),
+        _session().client.preview_connection(connection_id, table, schema, limit),
         indent=2,
     )
 
@@ -123,7 +146,7 @@ def query_connection(connection_id: int, query: str) -> str:
         connection_id: The connection to query.
         query: A single SELECT statement (no mutations allowed).
     """
-    return json.dumps(_get_client().query_connection(connection_id, query), indent=2)
+    return json.dumps(_session().client.query_connection(connection_id, query), indent=2)
 
 
 # --- Tier 3: Validate ---
@@ -136,7 +159,7 @@ def compile_transformation(transformation_id: int) -> str:
     Args:
         transformation_id: The transformation to compile.
     """
-    return json.dumps(_get_client().compile_transformation(transformation_id), indent=2)
+    return json.dumps(_session().client.compile_transformation(transformation_id), indent=2)
 
 
 @mcp.tool()
@@ -147,7 +170,7 @@ def preview_transformation(transformation_id: int, limit: int = 100) -> str:
         transformation_id: The transformation to preview.
         limit: Max rows to return (default 100, max 1000).
     """
-    return json.dumps(_get_client().preview_transformation(transformation_id, limit), indent=2)
+    return json.dumps(_session().client.preview_transformation(transformation_id, limit), indent=2)
 
 
 # --- Tier 4: Control (read half) ---
@@ -156,19 +179,19 @@ def preview_transformation(transformation_id: int, limit: int = 100) -> str:
 @mcp.tool()
 def list_uploads() -> str:
     """List all uploads (extract + load jobs) in the organization."""
-    return json.dumps(_get_client().list_uploads(), indent=2)
+    return json.dumps(_session().client.list_uploads(), indent=2)
 
 
 @mcp.tool()
 def list_pipelines() -> str:
     """List all pipelines (dbt transform orchestration) in the organization."""
-    return json.dumps(_get_client().list_pipelines(), indent=2)
+    return json.dumps(_session().client.list_pipelines(), indent=2)
 
 
 @mcp.tool()
 def list_transformations() -> str:
     """List all dbt transformations in the organization."""
-    return json.dumps(_get_client().list_transformations(), indent=2)
+    return json.dumps(_session().client.list_transformations(), indent=2)
 
 
 @mcp.tool()
@@ -180,7 +203,7 @@ def list_runs(target_type: str | None = None, status: str | None = None, limit: 
         status: Filter by status — 'pending', 'running', 'success', 'failed', 'cancelled'.
         limit: Max results (default 50, max 200).
     """
-    return json.dumps(_get_client().list_runs(target_type, status, limit), indent=2)
+    return json.dumps(_session().client.list_runs(target_type, status, limit), indent=2)
 
 
 @mcp.tool()
@@ -190,7 +213,7 @@ def get_run(run_id: int) -> str:
     Args:
         run_id: The run ID to look up.
     """
-    return json.dumps(_get_client().get_run(run_id), indent=2)
+    return json.dumps(_session().client.get_run(run_id), indent=2)
 
 
 @mcp.tool()
@@ -200,13 +223,13 @@ def get_run_logs(run_id: int) -> str:
     Args:
         run_id: The run ID whose logs to fetch.
     """
-    return json.dumps(_get_client().get_run_logs(run_id), indent=2)
+    return json.dumps(_session().client.get_run_logs(run_id), indent=2)
 
 
 @mcp.tool()
 def list_catalog() -> str:
     """List all catalog entries (source tables and dbt models)."""
-    return json.dumps(_get_client().list_catalog(), indent=2)
+    return json.dumps(_session().client.list_catalog(), indent=2)
 
 
 @mcp.tool()
@@ -216,7 +239,7 @@ def get_catalog_entry(entry_id: int) -> str:
     Args:
         entry_id: The catalog entry ID.
     """
-    return json.dumps(_get_client().get_catalog_entry(entry_id), indent=2)
+    return json.dumps(_session().client.get_catalog_entry(entry_id), indent=2)
 
 
 # ===================================================================
@@ -238,8 +261,8 @@ def create_connection(name: str, connection_type: str, config: dict) -> str:
         connection_type: One of the supported types (e.g. 'postgres', 'mysql', 'stripe').
         config: Connection-specific configuration (host, port, credentials, etc.).
     """
-    _require_write("create_connection")
-    return json.dumps(_get_client().create_connection(name, connection_type, config), indent=2)
+    _session().require_write("create_connection")
+    return json.dumps(_session().client.create_connection(name, connection_type, config), indent=2)
 
 
 @mcp.tool()
@@ -261,9 +284,9 @@ def create_upload(
         dlt_config: Optional dlt extraction config (load_mode, table_name, etc.).
         description: Optional description.
     """
-    _require_write("create_upload")
+    _session().require_write("create_upload")
     return json.dumps(
-        _get_client().create_upload(
+        _session().client.create_upload(
             name, source_connection_id, destination_connection_id, dlt_config, description
         ),
         indent=2,
@@ -287,9 +310,9 @@ def create_pipeline(
         command: dbt command — 'run', 'build', 'test', 'seed', 'snapshot', 'compile'.
         description: Optional description.
     """
-    _require_write("create_pipeline")
+    _session().require_write("create_pipeline")
     return json.dumps(
-        _get_client().create_pipeline(name, destination_connection_id, command, description),
+        _session().client.create_pipeline(name, destination_connection_id, command, description),
         indent=2,
     )
 
@@ -313,9 +336,9 @@ def create_transformation(
         description: Optional description.
         schema_name: Target schema (default 'staging').
     """
-    _require_write("create_transformation")
+    _session().require_write("create_transformation")
     return json.dumps(
-        _get_client().create_transformation(
+        _session().client.create_transformation(
             name, sql_body, materialization, description, schema_name
         ),
         indent=2,
@@ -333,8 +356,8 @@ def bulk_import(payload: dict) -> str:
         payload: JSON v2 import payload with version, connections, uploads,
                  pipelines, transformations sections. See AI_IMPORT_GUIDE.md.
     """
-    _require_write("bulk_import")
-    return json.dumps(_get_client().bulk_import(payload), indent=2)
+    _session().require_write("bulk_import")
+    return json.dumps(_session().client.bulk_import(payload), indent=2)
 
 
 # --- Tier 4: Execute ---
@@ -350,8 +373,8 @@ def trigger_upload(upload_id: int, wait: bool = False) -> str:
         upload_id: The upload to run.
         wait: If true, block until the run completes (up to 120s).
     """
-    _require_write("trigger_upload")
-    return json.dumps(_get_client().trigger_upload(upload_id, wait), indent=2)
+    _session().require_write("trigger_upload")
+    return json.dumps(_session().client.trigger_upload(upload_id, wait), indent=2)
 
 
 @mcp.tool()
@@ -364,8 +387,8 @@ def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
         pipeline_id: The pipeline to run.
         wait: If true, block until the run completes (up to 120s).
     """
-    _require_write("trigger_pipeline")
-    return json.dumps(_get_client().trigger_pipeline(pipeline_id, wait), indent=2)
+    _session().require_write("trigger_pipeline")
+    return json.dumps(_session().client.trigger_pipeline(pipeline_id, wait), indent=2)
 
 
 @mcp.tool()
@@ -378,8 +401,8 @@ def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
         transformation_id: The transformation to run.
         wait: If true, block until the run completes (up to 120s).
     """
-    _require_write("trigger_transformation")
-    return json.dumps(_get_client().trigger_transformation(transformation_id, wait), indent=2)
+    _session().require_write("trigger_transformation")
+    return json.dumps(_session().client.trigger_transformation(transformation_id, wait), indent=2)
 
 
 # ===================================================================

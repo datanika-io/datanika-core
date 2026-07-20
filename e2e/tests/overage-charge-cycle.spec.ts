@@ -62,9 +62,10 @@ const GATE =
 
 const BASE_URL = process.env.DATANIKA_E2E_BASE_URL ?? "https://staging-app.datanika.io";
 
-// Flip to false when Engineering ships the test-only admin endpoints
-// (core#361). At that point every test below should turn green.
-const FAST_FORWARD_NOT_READY = true;
+// Armed: the test-only admin endpoints shipped (cloud#72). The tests still run
+// only where the GATE env is set (DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox
+// creds) — i.e. the staging overage run, never PR CI. See core#374 / core#267.
+const FAST_FORWARD_NOT_READY = false;
 
 // Native return of the `charge_cycle_overages` Celery task (cloud dev:
 // datanika_cloud/billing/tasks.py). `disabled` appears only when the
@@ -89,7 +90,6 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
 
   test("cycle: seed → T-23h notify → T+0 charge → retry no-op", async ({
     request,
-    page,
   }) => {
     // Step 1 — seed overage tenant
     const seedRes = await request.post(`${BASE_URL}/api/admin/e2e/seed-overage-tenant`, {
@@ -126,19 +126,27 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     });
     expect(warn.ok()).toBeTruthy();
 
-    // Step 5 — assert in-app notification visible
-    await page.context().addCookies([
-      {
-        name: "session_token",
-        value: seed.authToken,
-        url: BASE_URL,
-      },
-    ]);
-    await page.goto(`${BASE_URL}/notifications`);
-    const card = page.getByRole("article", { name: /overage charge/i }).first();
-    await expect(card).toBeVisible();
-    await expect(card).toContainText(/\$5\.00/); // 5 GB * $1.00
-    await expect(card).toContainText(/Pro/);
+    // Step 5 — assert the CHARGE_INCOMING in-app notification landed.
+    // seed.authToken is a full-access API key (cloud#72 seeds it via
+    // ApiKeyService with scopes=None), NOT a session JWT — so read the notice
+    // through the REST API with a Bearer header rather than hydrating the
+    // /notifications UI with a session cookie. GET /api/v1/notifications is
+    // @api_endpoint(required_scope="notifications:read"); a null-scope key
+    // satisfies any scope, and the list is scoped to the key's org + user =
+    // the seeded overage tenant.
+    const notifRes = await request.get(`${BASE_URL}/api/v1/notifications`, {
+      headers: authHeaders,
+    });
+    expect(notifRes.ok()).toBeTruthy();
+    const notifBody = (await notifRes.json()) as {
+      items: Array<{ type: string; title: string; message: string }>;
+      unread_count: number;
+    };
+    const incoming = notifBody.items.find((n) => n.type === "charge_incoming");
+    expect(incoming, "expected a charge_incoming notification").toBeTruthy();
+    // Projected overage = 5 GB × $1.00 = $5.00
+    // (title: "Upcoming overage charge: $5.00").
+    expect(`${incoming!.title} ${incoming!.message}`).toContain("$5.00");
 
     // Step 6 — fast-forward to cycle end
     const cycleEnd = new Date(
@@ -220,14 +228,45 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
   });
 
   test("no charge when usage under included", async ({ request }) => {
-    // Scenario: seed 80 GB usage on a 100 GB plan. Run charge_cycle_overages at
-    // cycle close. Assert: no Paddle call, no Charge row (result.issued === 0).
-    //
-    // This is the "sanity" gate — catches a regression where the charge
-    // loop fires on any usage, overage or not.
-    test.skip(
-      FAST_FORWARD_NOT_READY,
-      "Engineering V2 P5 not shipped — see core#361",
+    // Sanity gate: 80 GB on a 100 GB plan is UNDER the allotment, so cycle
+    // close must issue nothing — catches a regression where the charge loop
+    // fires on any usage, overage or not. (The describe-level GATE skip keeps
+    // this out of PR CI; it runs only in the staging overage run.)
+    const seedRes = await request.post(`${BASE_URL}/api/admin/e2e/seed-overage-tenant`, {
+      data: { planSlug: "pro", includedGB: 100, overagePriceCents: 100, usageGB: 80 },
+    });
+    expect(seedRes.ok()).toBeTruthy();
+    const seed = (await seedRes.json()) as {
+      subscriptionId: number;
+      billingPeriodEnd: string;
+      authToken: string;
+    };
+
+    // Fast-forward past cycle end and run the charge loop.
+    const cycleEnd = new Date(
+      new Date(seed.billingPeriodEnd).getTime() + 60 * 1000,
+    ).toISOString();
+    const adv = await request.post(`${BASE_URL}/api/admin/e2e/advance-clock`, {
+      data: { toIso: cycleEnd },
+    });
+    expect(adv.ok()).toBeTruthy();
+
+    const settle = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
+      data: { taskName: "charge_cycle_overages" },
+    });
+    expect(settle.ok()).toBeTruthy();
+    const body = (await settle.json()) as { result: ChargeSummary };
+    // Under the allotment ⇒ nothing issued; kill-switch on (no `disabled`).
+    expect(body.result.disabled).toBeFalsy();
+    expect(body.result.issued).toBe(0);
+
+    // And no Charge row exists for this subscription.
+    const listRes = await request.get(
+      `${BASE_URL}/api/admin/e2e/charges?subscriptionId=${seed.subscriptionId}`,
+      { headers: { Authorization: `Bearer ${seed.authToken}` } },
     );
+    expect(listRes.ok()).toBeTruthy();
+    const charges = (await listRes.json()) as Array<unknown>;
+    expect(charges).toHaveLength(0);
   });
 });

@@ -56,6 +56,10 @@ jobs:
           printf '%s\n' "${{ secrets.POINTER_SSH_KEY }}" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.POINTER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # Keepalive: the build step's ~5-8 min silent lxml/xmlsec source-compile
+          # otherwise drops the SSH session (client_loop: send disconnect: Broken pipe).
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
       - name: Build image + recreate app/celery

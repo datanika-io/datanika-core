@@ -154,3 +154,38 @@ class TestCodeJsonSync:
         assert len(code_keys) >= 50, (
             f"Expected >=50 translation keys in UI code, found {len(code_keys)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Regression: doubled asterisk on required-field labels (core#368).
+# Connection-config fields that append a literal " *" in code must NOT also
+# carry a trailing " *" in their i18n value — otherwise the label renders
+# "Label * *" (e.g. "Instance URL * *", "Store Name * *", "Jira Domain * *").
+# ---------------------------------------------------------------------------
+
+_CCF = (
+    Path(__file__).resolve().parent.parent.parent
+    / "datanika"
+    / "ui"
+    / "components"
+    / "connection_config_fields.py"
+)
+_STAR_APPEND_RE = re.compile(r'_t\["([^"]+)"\],\s*" \*"')
+
+
+class TestNoDoubledAsterisk:
+    """Guard against the doubled-asterisk render bug (core#368)."""
+
+    def test_star_appended_fields_have_no_baked_asterisk(self):
+        code = _CCF.read_text(encoding="utf-8")
+        appended_keys = set(_STAR_APPEND_RE.findall(code))
+        assert appended_keys, (
+            "expected to find fields that append ' *' in connection_config_fields.py"
+        )
+        for locale in SUPPORTED_LOCALES:
+            t = get_translations(locale)
+            offenders = {k: t[k] for k in appended_keys if k in t and t[k].rstrip().endswith("*")}
+            assert not offenders, (
+                f"{locale}: fields append ' *' in code AND already end in '*' in i18n "
+                f"(renders a doubled asterisk): {offenders}"
+            )

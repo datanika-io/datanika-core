@@ -196,7 +196,9 @@ class TestAccessTokenResolution:
         )
 
         resolved = svc.resolve_access_token(db_session, issued["access_token"])
-        assert resolved == svc.decrypt_api_key(grant)
+        # Since core#442 this carries the grant's authority alongside the key.
+        assert resolved.api_key == svc.decrypt_api_key(grant)
+        assert resolved.allow_write is False  # read-only consent
 
     def test_unknown_token_resolves_to_none(self, db_session, svc):
         assert svc.resolve_access_token(db_session, "dtk_at_nonsense") is None

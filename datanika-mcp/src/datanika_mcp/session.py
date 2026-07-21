@@ -68,10 +68,10 @@ class DatanikaSession:
         prefix = f"Write access required for '{action}'."
         if self.transport == "remote":
             raise RuntimeError(
-                f"{prefix} This hosted Datanika endpoint is read-only — write "
-                "tools are not enabled on it, and no client-side setting or "
-                "retry will change that. For write access, run the local "
-                "datanika-mcp server with --allow-write."
+                f"{prefix} This connection was authorized read-only, and no "
+                "client-side setting or retry will change that. Write access "
+                "is granted by the user when they approve the connection — "
+                "ask them to re-authorize Datanika and approve write access."
             )
         raise RuntimeError(f"{prefix} Restart the server with --allow-write to enable mutations.")
 

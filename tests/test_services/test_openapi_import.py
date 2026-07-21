@@ -291,9 +291,14 @@ class TestAuth:
 
 
 class TestCapsAndErrors:
-    def test_rejects_swagger_2(self):
+    def test_accepts_swagger_2(self):
+        """P1 rejected 2.0; P2 converts it (core#411). See test_openapi_p2_slices."""
+        parsed = parse_openapi_spec({"swagger": "2.0", "paths": {}})
+        assert parsed.resources == []
+
+    def test_rejects_swagger_1(self):
         with pytest.raises(OpenApiImportError) as e:
-            parse_openapi_spec({"swagger": "2.0", "paths": {}})
+            parse_openapi_spec({"swagger": "1.2", "paths": {}})
         assert e.value.code == "unsupported_version"
 
     def test_rejects_oversize(self):

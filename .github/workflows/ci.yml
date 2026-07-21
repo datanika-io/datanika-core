@@ -144,6 +144,13 @@ jobs:
           printf '%s\n' "${{ secrets.POINTER_SSH_KEY }}" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.POINTER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # The image build compiles lxml/xmlsec from source and emits nothing for
+          # ~5-8 min; without a keepalive the SSH session is torn down mid-build and the
+          # step dies with `client_loop: send disconnect: Broken pipe` (exit 255).
+          # Same fix already applied to deploy-pointer.yml — this job had the identical
+          # pattern and was missed when that one was fixed.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Transfer dev source + build :staging image
         run: |
@@ -160,7 +167,7 @@ jobs:
       - name: Wait for staging health
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-staging-app 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 datanika-staging-app; exit 1'
+            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
   smoke-staging:
     needs: [deploy-staging]
@@ -237,6 +244,11 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          # Keepalive: long, output-silent remote steps otherwise drop the session with
+          # `client_loop: send disconnect: Broken pipe` (exit 255). Applied to every SSH
+          # setup in this file, not just the one that happened to fail.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Run E2E tests against staging
         working-directory: e2e
@@ -247,7 +259,7 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
           DATANIKA_E2E_SEED_CMD: >-
             ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
-            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 datanika-staging-app uv run python -m datanika.scripts.e2e_seed'
+            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
 
       - name: Upload Playwright report
@@ -346,6 +358,11 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          # Keepalive: long, output-silent remote steps otherwise drop the session with
+          # `client_loop: send disconnect: Broken pipe` (exit 255). Applied to every SSH
+          # setup in this file, not just the one that happened to fail.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Start Authentik on staging server
         env:
@@ -388,7 +405,7 @@ jobs:
             echo "Network connect failed or already connected"
 
           # Verify staging can reach Authentik by the alias
-          ssh root@$SSH_HOST "docker exec datanika-staging-app curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
+          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
             echo "Staging → Authentik OK" || \
             { echo "FATAL: staging can't reach e2e-authentik-server:9000"; exit 1; }
 
@@ -404,8 +421,8 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.HETZNER_HOST }}
         run: |
-          ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json datanika-staging-app:/app/e2e/.sso-fixture.json"
-          ssh root@$SSH_HOST "docker exec datanika-staging-app uv run python e2e/scripts/seed-sso-configs.py"
+          ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json \$(/opt/datanika-staging/active-app.sh):/app/e2e/.sso-fixture.json"
+          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) uv run python e2e/scripts/seed-sso-configs.py"
 
       - name: Open SSH tunnel to Authentik + hosts entry
         env:
@@ -458,7 +475,7 @@ jobs:
           curl -sI --max-time 10 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -5 || true
           echo ""
           echo "=== Staging → Authentik reachability ==="
-          ssh root@${{ secrets.HETZNER_HOST }} "docker exec datanika-staging-app curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
+          ssh root@${{ secrets.HETZNER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
 
       - name: Run SSO specs
         working-directory: e2e

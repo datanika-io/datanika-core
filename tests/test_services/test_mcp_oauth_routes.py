@@ -336,9 +336,16 @@ class TestResourceServerAcceptsIssuedTokens:
     async def test_oauth_token_resolves_to_the_granted_api_key(self, monkeypatch):
         """A `dtk_at_` bearer is exchanged for the minted key before forwarding."""
         import datanika.services.mcp_routes as mcp_routes
+        from datanika.services.mcp_oauth import ResolvedGrant
 
+        # Since core#442 the resolver returns the credential *and* the
+        # authority the human granted, not a bare key.
         monkeypatch.setattr(
-            mcp_routes, "_resolve_oauth_token_sync", lambda token: "etf_resolved_key"
+            mcp_routes,
+            "_resolve_oauth_token_sync",
+            lambda token: ResolvedGrant(
+                api_key="etf_resolved_key", allow_write=False, scope="connections:read"
+            ),
         )
         seen = {}
 

@@ -44,8 +44,8 @@ mcp = FastMCP(
     "Datanika",
     instructions=(
         "Browse data connections, preview tables, compile and validate "
-        "dbt transformations, monitor pipeline runs, and (with --allow-write) "
-        "create resources and trigger runs in Datanika."
+        "dbt transformations, and monitor pipeline runs in Datanika. Sessions "
+        "granted write access can also create resources and trigger runs."
     ),
 )
 
@@ -269,7 +269,9 @@ async def get_catalog_entry(entry_id: int) -> str:
 async def create_connection(name: str, connection_type: str, config: dict) -> str:
     """Create a new data connection.
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         name: Human-readable name for the connection.
@@ -292,7 +294,9 @@ async def create_upload(
 ) -> str:
     """Create a new upload (extract + load job).
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         name: Upload name.
@@ -319,7 +323,9 @@ async def create_pipeline(
 ) -> str:
     """Create a new pipeline (dbt transform orchestration).
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         name: Pipeline name.
@@ -346,7 +352,9 @@ async def create_transformation(
 ) -> str:
     """Create a new dbt SQL transformation.
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         name: Model name (letters, digits, underscores, hyphens; must start with letter or _).
@@ -368,7 +376,9 @@ async def create_transformation(
 async def bulk_import(payload: dict) -> str:
     """Bulk-import connections, uploads, pipelines, and transformations in one call.
 
-    Requires --allow-write. Uses the JSON v2 import format.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it. Uses the JSON v2 import format.
     Validates everything first — if any errors, nothing is created.
 
     Args:
@@ -386,7 +396,9 @@ async def bulk_import(payload: dict) -> str:
 async def trigger_upload(upload_id: int, wait: bool = False) -> str:
     """Trigger an upload run.
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         upload_id: The upload to run.
@@ -400,7 +412,9 @@ async def trigger_upload(upload_id: int, wait: bool = False) -> str:
 async def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
     """Trigger a pipeline run (dbt build/run/test).
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         pipeline_id: The pipeline to run.
@@ -414,7 +428,9 @@ async def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
 async def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
     """Trigger a transformation run.
 
-    Requires --allow-write.
+    Write tool: available only when this session was granted write access —
+    the local server's --allow-write flag, or an OAuth consent in which the
+    user approved write. Read-only sessions refuse it.
 
     Args:
         transformation_id: The transformation to run.

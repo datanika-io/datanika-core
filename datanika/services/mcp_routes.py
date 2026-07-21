@@ -93,20 +93,26 @@ async def _send_401(send) -> None:
     await send({"type": "http.response.body", "body": body})
 
 
-def _resolve_oauth_token_sync(token: str) -> str | None:
-    """Exchange an issued access token for the API key it was minted with."""
+def _resolve_oauth_token_sync(token: str):
+    """Exchange an issued access token for its credential + granted authority."""
     from datanika.db import get_sync_session
 
     with get_sync_session() as session:
         return McpOAuthService().resolve_access_token(session, token)
 
 
-async def _resolve_credential(token: str) -> str | None:
-    """Map a presented bearer to the API key the tool path forwards.
+async def _resolve_credential(token: str) -> tuple[str | None, bool]:
+    """Map a presented bearer to ``(api_key, allow_write)``.
 
     Two credentials are accepted: an OAuth access token issued by our own AS
     (P2), and a raw Datanika API key pasted by the user (P1, unchanged — it
     still works, and self-hosters rely on it).
+
+    **Write authority comes from the grant, never from the transport**
+    (core#442): an OAuth session is writable only if a human consented to it,
+    and a pasted key stays read-only here because nothing recorded a human
+    decision — the key's own scopes still bound what the REST API will do, but
+    this layer will not open the write tools on an inference.
 
     The token lookup is a **blocking** DB call, so it runs in a worker thread:
     this handler is on the same event loop that has to serve the tool's own
@@ -114,8 +120,11 @@ async def _resolve_credential(token: str) -> str | None:
     out in core#388.
     """
     if token.startswith(_OAUTH_TOKEN_PREFIX):
-        return await anyio.to_thread.run_sync(_resolve_oauth_token_sync, token)
-    return token
+        resolved = await anyio.to_thread.run_sync(_resolve_oauth_token_sync, token)
+        if resolved is None:
+            return None, False
+        return resolved.api_key, resolved.allow_write
+    return token, False
 
 
 class BearerSessionApp:
@@ -148,7 +157,7 @@ class BearerSessionApp:
             await _send_401(send)
             return
 
-        credential = await _resolve_credential(token)
+        credential, allow_write = await _resolve_credential(token)
         if not credential:
             # An OAuth token that is expired, revoked, or simply not ours. The
             # same 401 sends the client back through discovery, which is how it
@@ -157,10 +166,11 @@ class BearerSessionApp:
             return
 
         client = DatanikaClient(self._base_url, credential)
-        # transport="remote" only shapes the write-refusal wording: the hosted
-        # caller runs no server, so the stdio "--allow-write" advice would send
-        # them (or their agent) after a switch that does not exist (core#409).
-        session = DatanikaSession(client=client, allow_write=False, transport="remote")
+        # allow_write reflects what a human consented to at the OAuth consent
+        # screen (core#442) — never the transport, and never an inference from
+        # the key's own scopes. transport="remote" shapes the refusal wording
+        # when write was not granted (core#409).
+        session = DatanikaSession(client=client, allow_write=allow_write, transport="remote")
         try:
             with use_session(session):
                 await self._app(scope, receive, send)

@@ -17,6 +17,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MCP_DIR = _REPO_ROOT / "datanika-mcp"
 _EXPECTED_ENV_VARS = {"DATANIKA_URL", "DATANIKA_API_KEY", "DATANIKA_ALLOW_WRITE"}
 
+# The official registry's namespace for this server. `io.datanika/*` is
+# DNS-authenticated (apex TXT on datanika.io); the earlier
+# `io.github.datanika-io/*` route was abandoned because the registry needs a
+# `read:org` token the mcp-publisher OAuth app can't get for our org.
+_REGISTRY_NAME = "io.datanika/datanika-mcp"
+
 
 def _pyproject() -> dict:
     with (_MCP_DIR / "pyproject.toml").open("rb") as fh:
@@ -36,7 +42,7 @@ def _package_env_var_names() -> set[str]:
 class TestServerJson:
     def test_is_valid_json_with_expected_shape(self):
         data = _server_json()
-        assert data["name"] == "io.github.datanika-io/datanika-mcp"
+        assert data["name"] == _REGISTRY_NAME
         assert data["repository"]["subfolder"] == "datanika-mcp"
         assert len(data["packages"]) == 1
 
@@ -65,6 +71,35 @@ class TestServerJson:
         assert by_name["DATANIKA_API_KEY"]["isSecret"] is True
         # URL has a working default in server.py; it must not be marked required.
         assert by_name["DATANIKA_URL"].get("isRequired", False) is False
+
+
+class TestPypiOwnershipMarker:
+    """The official registry proves package ownership via the PyPI README.
+
+    ``mcp-publisher publish`` greps the **published** PyPI README for
+    ``mcp-name: <server name>``; without it the publish 400s (which is exactly
+    what blocked the 0.1.0 listing). Two things therefore have to hold, and
+    neither is obvious from reading either file alone.
+    """
+
+    def test_readme_carries_the_mcp_name_marker(self):
+        readme = (_MCP_DIR / "README.md").read_text(encoding="utf-8")
+        assert f"mcp-name: {_REGISTRY_NAME}" in readme, (
+            "datanika-mcp/README.md must carry the `mcp-name:` marker — the "
+            "registry reads it from the published PyPI README to prove we own "
+            "the package."
+        )
+
+    def test_marker_matches_server_json_name(self):
+        """A rename in one file without the other silently breaks publishing."""
+        readme = (_MCP_DIR / "README.md").read_text(encoding="utf-8")
+        declared = re.search(r"^mcp-name:\s*(\S+)", readme, re.MULTILINE)
+        assert declared, "no `mcp-name:` line found in datanika-mcp/README.md"
+        assert declared.group(1) == _server_json()["name"]
+
+    def test_that_readme_is_the_one_shipped_to_pypi(self):
+        """The marker is worthless if the file never reaches PyPI."""
+        assert _pyproject()["project"]["readme"] == "README.md"
 
 
 class TestSmitheryYaml:

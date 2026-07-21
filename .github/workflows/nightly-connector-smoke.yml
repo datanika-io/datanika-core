@@ -40,8 +40,15 @@ jobs:
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev]" --system
-          # Connector-specific libs not in core deps
-          uv pip install --system "google-cloud-bigquery>=3.0" "kafka-python>=2.0"
+          # Connector-specific libs not in core deps.
+          # kafka-python must be >=2.1 — 2.0.x imports kafka.vendor.six.moves,
+          # which is gone in Python 3.12, so the probe would die at import and
+          # the test's `except ImportError: pytest.skip` would turn a broken
+          # Kafka smoke into a silent green. Pin the floor, don't rely on the skip.
+          uv pip install --system \
+            "google-cloud-bigquery>=3.0" \
+            "google-analytics-data>=0.18" \
+            "kafka-python>=2.1"
 
       - name: Materialize connector credentials
         env:
@@ -100,7 +107,21 @@ jobs:
         id: smoke
         env:
           DATANIKA_CONNECTOR_SMOKE: "1"
-        run: pytest tests/test_connector_smoke/ -v --tb=short
+        # A skipped probe is worse than a failing one: it reports green while
+        # testing nothing. Missing creds and un-importable client libs now FAIL
+        # rather than skip (tests/test_connector_smoke/conftest.py), so a healthy
+        # run has ZERO skips — which makes "any skip at all" a usable alarm.
+        #
+        # This catches the one hole strict mode cannot: if DATANIKA_CONNECTOR_SMOKE
+        # above were dropped or misspelled, the gate would skip all probes at
+        # collection time and pytest would still exit 0 — a perfectly green
+        # nightly that tested nothing.
+        run: |
+          pytest tests/test_connector_smoke/ -v --tb=short -rs | tee /tmp/smoke.log
+          if grep -qE '[0-9]+ skipped' /tmp/smoke.log; then
+            echo "::error::Smoke probes were SKIPPED — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
+            exit 1
+          fi
 
       - name: Telegram alert on failure
         if: failure()

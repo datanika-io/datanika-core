@@ -157,7 +157,10 @@ class BearerSessionApp:
             return
 
         client = DatanikaClient(self._base_url, credential)
-        session = DatanikaSession(client=client, allow_write=False)
+        # transport="remote" only shapes the write-refusal wording: the hosted
+        # caller runs no server, so the stdio "--allow-write" advice would send
+        # them (or their agent) after a switch that does not exist (core#409).
+        session = DatanikaSession(client=client, allow_write=False, transport="remote")
         try:
             with use_session(session):
                 await self._app(scope, receive, send)

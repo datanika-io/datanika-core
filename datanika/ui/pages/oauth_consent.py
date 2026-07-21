@@ -6,9 +6,16 @@ arrived from another product mid-handshake, and sidebar navigation here is an
 invitation to abandon a flow that cannot be resumed from our side.
 
 The design job is making three things unmissable before the Allow button —
-*which* app, *which* org, and that the grant is read-only — plus how to take it
+*which* app, *which* org, and *what it will be able to do* — plus how to take it
 back afterwards. See ``ui/state/mcp_consent_state.py`` for why the app name and
 the return address are both resolved server-side rather than read off the URL.
+
+The access block is **not** fixed copy. It was, and that was a bug: #445 made
+write scopes grantable through this screen while the text still promised
+"read-only … cannot create, modify, delete or trigger anything", so the one
+component whose job is recording informed consent was the one misinforming the
+person giving it (core#450). It now branches on the scope that will actually be
+granted.
 """
 
 import reflex as rx
@@ -83,27 +90,72 @@ def _org_block() -> rx.Component:
     )
 
 
-def _access_block() -> rx.Component:
-    return _fact(
-        _t["mcp_consent.access_label"],
-        rx.vstack(
-            rx.badge(
-                rx.icon("eye", size=12),
-                _t["mcp_consent.read_only"],
-                color_scheme="green",
-                variant="soft",
-            ),
-            rx.text(_t["mcp_consent.can_read"], size="2"),
-            rx.hstack(
-                rx.icon("shield", size=14, color="var(--gray-9)", flex_shrink="0"),
-                rx.text(_t["mcp_consent.cannot_write"], size="2", color="gray"),
-                spacing="2",
-                align="start",
-            ),
+def _read_only_access() -> rx.Component:
+    """The safe grant: read everything, change nothing."""
+    return rx.vstack(
+        rx.badge(
+            rx.icon("eye", size=12),
+            _t["mcp_consent.read_only"],
+            color_scheme="green",
+            variant="soft",
+        ),
+        rx.text(_t["mcp_consent.can_read"], size="2"),
+        rx.hstack(
+            rx.icon("shield", size=14, color="var(--gray-9)", flex_shrink="0"),
+            rx.text(_t["mcp_consent.cannot_write"], size="2", color="gray"),
             spacing="2",
             align="start",
+        ),
+        spacing="2",
+        align="start",
+        width="100%",
+    )
+
+
+def _write_access() -> rx.Component:
+    """The grant that can act.
+
+    Not the read-only block with a word swapped. The green badge and the shield
+    both read as reassurance, and reassurance is the wrong shape for the one
+    decision on this screen that is hard to undo — so the badge goes amber and
+    the shield becomes a caution the user has to read past to reach Allow.
+
+    It still names what can be *read*: write comes with read (a write-only
+    credential is useless), and dropping that line would under-report the
+    grant, which is the mistake #394 already had to fix once.
+    """
+    return rx.vstack(
+        rx.badge(
+            rx.icon("pencil", size=12),
+            _t["mcp_consent.read_write"],
+            color_scheme="amber",
+            variant="soft",
+        ),
+        rx.text(_t["mcp_consent.can_read"], size="2"),
+        rx.text(_t["mcp_consent.can_write"], size="2", weight="medium"),
+        rx.callout(
+            _t["mcp_consent.write_caution"],
+            icon="triangle-alert",
+            color_scheme="amber",
+            size="1",
             width="100%",
         ),
+        spacing="2",
+        align="start",
+        width="100%",
+    )
+
+
+def _access_block() -> rx.Component:
+    """Describe the grant that Allow will actually mint.
+
+    Branches on ``grants_write``, which resolves through the same
+    ``mcp_oauth.narrow_scope`` the grant itself uses — not on the raw
+    ``scope`` parameter, which is a request rather than a decision (core#450).
+    """
+    return _fact(
+        _t["mcp_consent.access_label"],
+        rx.cond(McpConsentState.grants_write, _write_access(), _read_only_access()),
     )
 
 

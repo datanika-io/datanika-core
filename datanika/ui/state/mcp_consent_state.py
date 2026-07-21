@@ -130,6 +130,33 @@ class McpConsentState(rx.State):
         """The API key consent mints — what the user looks for to revoke it."""
         return f"MCP: {self.client_name}"
 
+    @rx.var
+    def granted_scopes(self) -> list[str]:
+        """Exactly what Allow will hand over, resolved the way the grant is.
+
+        Deliberately routed through ``mcp_oauth.narrow_scope`` rather than read
+        off ``scope`` or re-derived here. The requested scope is not the granted
+        scope — it is narrowed, unknown values are dropped, and an absent one
+        collapses to read-only — so a screen that displayed the request would
+        describe something other than what it mints. That gap is core#450.
+        """
+        from datanika.services.mcp_oauth import narrow_scope
+
+        return narrow_scope(self.request_params.get("scope", ""))
+
+    @rx.var
+    def grants_write(self) -> bool:
+        """Whether Allow hands over the ability to change things.
+
+        Drives the access block. Read-only is the default in every ambiguous
+        case, because the failure modes are not symmetric: under-promising
+        access costs a confused user, over-promising safety costs them consent
+        they did not knowingly give.
+        """
+        from datanika.services.mcp_oauth import grants_write
+
+        return grants_write(self.request_params.get("scope", ""))
+
     # ------------------------------------------------------------------
     # Load
     # ------------------------------------------------------------------

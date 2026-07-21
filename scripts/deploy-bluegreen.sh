@@ -51,9 +51,14 @@ case "$ENVIRONMENT" in
     GREEN="app_b datanika-staging-app-b 8110 3110"
     ;;
   prod)
-    echo "prod is not wired yet — the vhost still hardcodes its ports (22 of them)." >&2
-    echo "See plans/infra/PLAN_INFRASTRUCTURE.md A3 for the remaining steps." >&2
-    exit 2
+    PROJECT=datanika
+    COMPOSE_DIR=/opt/datanika/datanika
+    INCLUDE=/etc/apache2/conf-enabled/datanika-prod-active.conf
+    VAR_BE=DATANIKA_BE
+    VAR_FE=DATANIKA_FE
+    HOST_HEADER=app.datanika.io
+    BLUE="app  datanika-app    8000 3000"
+    GREEN="app_b datanika-app-b 8010 3010"
     ;;
   *) echo "unknown env: $ENVIRONMENT" >&2; exit 2 ;;
 esac
@@ -147,6 +152,27 @@ for path in /healthz /readyz /; do
   log "  proxy ${path} -> ${CODE}"
   [ "$CODE" = 200 ] || { log "FATAL: ${path} returned ${CODE} after the swap"; exit 1; }
 done
+
+# Prod is reached by real users through Cloudflare, so a local Host-header check proves
+# Apache routing, not what users receive. Also assert the backend-routed endpoints that
+# live outside /api/ and have silently fallen through to the SPA before — a swap is
+# exactly when that would recur unnoticed.
+if [ "$ENVIRONMENT" = prod ]; then
+  for path in /healthz /; do
+    CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${HOST_HEADER}${path}" || echo 000)
+    log "  public ${path} -> ${CODE}"
+    [ "$CODE" = 200 ] || { log "FATAL: public ${path} returned ${CODE}"; exit 1; }
+  done
+  MCP=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X POST "https://${HOST_HEADER}/mcp" \
+        -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"swap","version":"1"}}}' || echo 000)
+  log "  public /mcp unauth -> ${MCP} (expect 401; 200 means it fell through to the SPA)"
+  [ "$MCP" = 401 ] || { log "FATAL: /mcp returned ${MCP}"; exit 1; }
+  OAUTH=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+          "https://${HOST_HEADER}/.well-known/oauth-authorization-server" || echo 000)
+  log "  public OAuth discovery -> ${OAUTH} (expect 200)"
+  [ "$OAUTH" = 200 ] || { log "FATAL: OAuth discovery returned ${OAUTH}"; exit 1; }
+fi
 
 # --- 5. retire the old colour ---------------------------------------------------------
 trap - ERR

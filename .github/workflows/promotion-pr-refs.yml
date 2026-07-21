@@ -1,0 +1,51 @@
+# Promotion PR — auto-populate `Closes #N` references
+#
+# Why this exists
+# ---------------
+# GitHub only fires the `Closes #N` keyword when a PR merges into the DEFAULT branch
+# (`master` here). Our feature PRs merge into `dev`, so their own `Closes #N` never
+# fires. An issue is only closed when the *promotion* PR (dev -> master) carries the
+# reference.
+#
+# WORKFLOW_RULES §8 already requires Infra to enumerate every promoted issue by hand in
+# the promotion PR body, with a "cleanup loop" as the safety net. That is a manual step
+# on the critical path of every promotion, so it leaks: issues stay silently open and
+# someone later burns time rediscovering why.
+#
+# This derives the list mechanically from the commits actually being promoted, so the
+# keyword fires the way §8 already claims it does.
+#
+# It only ADDS references; it never closes anything itself. Merging the promotion PR is
+# what closes the issues, so an unmerged promotion correctly leaves them open
+# (WORKFLOW_RULES §8: issues close only once the code is live on master).
+name: Promotion PR refs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  refs:
+    # Only promotion PRs (dev -> master). A hotfix branch straight to master is not a
+    # promotion and should not have its body rewritten.
+    if: github.head_ref == 'dev'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Collect closing references from the promoted commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 .github/scripts/promotion_refs.py

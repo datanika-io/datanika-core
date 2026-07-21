@@ -99,7 +99,10 @@ def cost_estimator_card() -> rx.Component:
             _mode_split_hint(),
             rx.link(
                 _t["cost.learn_more"],
-                href="/pricing/",
+                # Absolute: /pricing/ lives on the landing site, and a
+                # root-relative href would resolve against the app origin and
+                # open app.datanika.io/pricing/, a route we do not serve (#418).
+                href="https://datanika.io/pricing/",
                 size="1",
                 color="var(--violet-11)",
                 is_external=True,

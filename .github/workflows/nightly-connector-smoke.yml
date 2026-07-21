@@ -107,7 +107,21 @@ jobs:
         id: smoke
         env:
           DATANIKA_CONNECTOR_SMOKE: "1"
-        run: pytest tests/test_connector_smoke/ -v --tb=short
+        # A skipped probe is worse than a failing one: it reports green while
+        # testing nothing. Missing creds and un-importable client libs now FAIL
+        # rather than skip (tests/test_connector_smoke/conftest.py), so a healthy
+        # run has ZERO skips — which makes "any skip at all" a usable alarm.
+        #
+        # This catches the one hole strict mode cannot: if DATANIKA_CONNECTOR_SMOKE
+        # above were dropped or misspelled, the gate would skip all probes at
+        # collection time and pytest would still exit 0 — a perfectly green
+        # nightly that tested nothing.
+        run: |
+          pytest tests/test_connector_smoke/ -v --tb=short -rs | tee /tmp/smoke.log
+          if grep -qE '[0-9]+ skipped' /tmp/smoke.log; then
+            echo "::error::Smoke probes were SKIPPED — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
+            exit 1
+          fi
 
       - name: Telegram alert on failure
         if: failure()

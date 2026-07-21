@@ -36,7 +36,6 @@ from __future__ import annotations
 import time
 
 import httpx
-import pytest
 
 
 def _log(msg: str) -> None:
@@ -167,7 +166,7 @@ def test_stripe_list_charges_read_scope(require_env):
 # ---------- Kafka / Redpanda ----------
 
 
-def test_kafka_auth_and_list_topics(require_env):
+def test_kafka_auth_and_list_topics(require_env, require_import):
     """SASL/SCRAM-SHA-256 handshake + admin list_topics on Redpanda Serverless.
 
     Catches: credentials rotated, cluster paused, network block,
@@ -185,10 +184,11 @@ def test_kafka_auth_and_list_topics(require_env):
         "KAFKA_TOPIC",
     )
 
-    try:
-        from kafka.admin import KafkaAdminClient  # type: ignore[import-untyped]
-    except ImportError:
-        pytest.skip("kafka-python not installed — add to nightly workflow requirements")
+    # NOT try/except ImportError -> pytest.skip. kafka-python 2.0.x cannot
+    # import on Python 3.12 (kafka.vendor.six.moves is gone), so a skip here
+    # would have converted a completely broken Kafka probe into a passing
+    # nightly. require_import fails instead — see conftest for the rationale.
+    KafkaAdminClient = require_import("kafka.admin", "KafkaAdminClient")  # noqa: N806 (a class)
 
     t0 = time.monotonic()
     admin = KafkaAdminClient(

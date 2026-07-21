@@ -3,6 +3,7 @@
 import json
 import re
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
@@ -408,8 +409,13 @@ class ConnectionState(BaseState):
     def set_form_service_account_json(self, value: str):
         self.form_service_account_json = value
 
-    async def handle_file_upload(self, files: list):
-        """Receive uploaded file, call FileUploadService.save_file, store ID."""
+    async def handle_file_upload(self, files: list[rx.UploadFile]):
+        """Receive uploaded file, call FileUploadService.save_file, store ID.
+
+        The annotation is load-bearing: ``POST /_upload`` finds this handler by
+        scanning type hints for a ``list[rx.UploadFile]``, and 500s before
+        calling it if there isn't one (#452).
+        """
         from datanika.services.file_upload_service import FileUploadService
 
         if not files:

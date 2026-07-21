@@ -166,9 +166,18 @@ def run_transformation(
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
-        from datanika.hooks import emit
+        from datanika.hooks import announce
 
-        emit("run.transformation_completed", org_id=org_id)
+        # See upload_tasks: announced, not emitted (core#456).
+        announce(
+            "run.transformation_completed",
+            session=session,
+            org_id=org_id,
+            run_id=run_id,
+            status="success",
+            target_type="transformation",
+            target_id=transformation.id,
+        )
 
         try:
             _sync_catalog_after_transformation(

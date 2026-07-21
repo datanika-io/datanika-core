@@ -241,11 +241,20 @@ def run_upload(
         except Exception:
             logger.exception("Catalog sync failed (non-fatal)")
 
-        from datanika.hooks import emit
+        from datanika.hooks import announce
 
-        emit(
+        # `announce`, not `emit`: the run is already complete, so no subscriber
+        # may veto it or starve the ones behind it (core#456). session/run_id/
+        # status are what the notification handlers need to say *which* run
+        # succeeded — without them the feature is alive but says nothing.
+        announce(
             "run.upload_completed",
+            session=session,
             org_id=org_id,
+            run_id=run_id,
+            status="success",
+            target_type="upload",
+            target_id=upload.id,
             table_count=table_count,
             bytes_processed=bytes_processed,
         )

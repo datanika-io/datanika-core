@@ -29,16 +29,23 @@ from __future__ import annotations
 import json
 import os
 
+import anyio
 from datanika_mcp.client import DatanikaClient
 from datanika_mcp.server import make_remote_transport
 from datanika_mcp.session import DatanikaSession, use_session
 from starlette.datastructures import Headers
 from starlette.routing import Route
 
+from datanika.services.mcp_oauth import McpOAuthService
+
 # The MCP server calls this app's own REST API with the caller's key. The mount
 # runs in the backend process, so this is loopback in prod; overridable for
 # unusual topologies.
 _INTERNAL_API_URL = os.environ.get("DATANIKA_MCP_INTERNAL_URL", "http://127.0.0.1:8000")
+
+# Access tokens the AS issues are prefixed so the resource server can tell them
+# apart from a pasted API key (``etf_``) without a database round-trip.
+_OAUTH_TOKEN_PREFIX = "dtk_at_"
 
 
 def _bearer_token(scope) -> str:
@@ -50,11 +57,28 @@ def _bearer_token(scope) -> str:
 
 
 async def _send_401(send) -> None:
+    """401 + the pointer an MCP client follows to start the OAuth flow.
+
+    ``WWW-Authenticate: ... resource_metadata=...`` is the entry point of the
+    MCP remote-auth spec: an unauthenticated client reads it, fetches the
+    protected-resource metadata, discovers the AS, registers, and runs the
+    one-click flow (core#393). Without the parameter a client has no way to
+    find the AS and can only fall back to a hand-pasted API key.
+    """
+    svc = McpOAuthService()
     body = json.dumps(
         {
             "error": "unauthorized",
-            "detail": "Provide a Datanika API key as an 'Authorization: Bearer <key>' header.",
+            "detail": (
+                "Authenticate with OAuth (see the resource metadata in the "
+                "WWW-Authenticate header) or present a Datanika API key as "
+                "'Authorization: Bearer <key>'."
+            ),
         }
+    ).encode()
+    challenge = (
+        f'Bearer realm="datanika-mcp", '
+        f'resource_metadata="{svc.issuer}/.well-known/oauth-protected-resource"'
     ).encode()
     await send(
         {
@@ -62,11 +86,36 @@ async def _send_401(send) -> None:
             "status": 401,
             "headers": [
                 (b"content-type", b"application/json"),
-                (b"www-authenticate", b'Bearer realm="datanika-mcp"'),
+                (b"www-authenticate", challenge),
             ],
         }
     )
     await send({"type": "http.response.body", "body": body})
+
+
+def _resolve_oauth_token_sync(token: str) -> str | None:
+    """Exchange an issued access token for the API key it was minted with."""
+    from datanika.db import get_sync_session
+
+    with get_sync_session() as session:
+        return McpOAuthService().resolve_access_token(session, token)
+
+
+async def _resolve_credential(token: str) -> str | None:
+    """Map a presented bearer to the API key the tool path forwards.
+
+    Two credentials are accepted: an OAuth access token issued by our own AS
+    (P2), and a raw Datanika API key pasted by the user (P1, unchanged — it
+    still works, and self-hosters rely on it).
+
+    The token lookup is a **blocking** DB call, so it runs in a worker thread:
+    this handler is on the same event loop that has to serve the tool's own
+    loopback request, and holding it is what made every hosted tool call time
+    out in core#388.
+    """
+    if token.startswith(_OAUTH_TOKEN_PREFIX):
+        return await anyio.to_thread.run_sync(_resolve_oauth_token_sync, token)
+    return token
 
 
 class BearerSessionApp:
@@ -74,10 +123,15 @@ class BearerSessionApp:
     read-only :class:`DatanikaSession` for the wrapped MCP transport.
 
     A missing or blank bearer token short-circuits to ``401`` with a
-    ``WWW-Authenticate: Bearer`` header. The key itself is validated lazily by
-    the REST API on the first tool call (the MCP server is a pure forwarder),
-    so ``initialize`` / ``tools/list`` succeed for any presented token — a
-    P2 pre-flight validation is a follow-up.
+    ``WWW-Authenticate: Bearer`` header carrying the resource-metadata pointer
+    that starts the OAuth flow.
+
+    Validation differs by credential type. An **OAuth access token** (P2) is
+    resolved up front — unknown, expired, revoked, or bound to a revoked API
+    key all 401 before the transport is touched. A **raw API key** (P1) is
+    still validated lazily by the REST API on the first tool call, since the
+    MCP server is a pure forwarder; ``initialize`` / ``tools/list`` therefore
+    succeed for any pasted string, which is unchanged behaviour.
     """
 
     def __init__(self, app, *, base_url: str = _INTERNAL_API_URL) -> None:
@@ -94,7 +148,15 @@ class BearerSessionApp:
             await _send_401(send)
             return
 
-        client = DatanikaClient(self._base_url, token)
+        credential = await _resolve_credential(token)
+        if not credential:
+            # An OAuth token that is expired, revoked, or simply not ours. The
+            # same 401 sends the client back through discovery, which is how it
+            # learns to refresh rather than guess.
+            await _send_401(send)
+            return
+
+        client = DatanikaClient(self._base_url, credential)
         session = DatanikaSession(client=client, allow_write=False)
         try:
             with use_session(session):

@@ -514,7 +514,7 @@
   "mcp_consent.org_hint": "El acceso se concede solo a esta organización.",
   "mcp_consent.access_label": "Qué puede hacer la aplicación",
   "mcp_consent.read_only": "Solo lectura",
-  "mcp_consent.can_read": "Leer tus conexiones, pipelines, transformaciones, ejecuciones, catálogo de datos y notificaciones.",
+  "mcp_consent.can_read": "Leer tus conexiones, cargas, pipelines, transformaciones, programaciones, ejecuciones, catálogo de datos y notificaciones.",
   "mcp_consent.cannot_write": "No puede crear, modificar, eliminar ni ejecutar nada.",
   "mcp_consent.revoke_label": "Cómo revocar",
   "mcp_consent.revoke_creates": "Al aprobar se crea una clave de API llamada",

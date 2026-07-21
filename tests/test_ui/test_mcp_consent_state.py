@@ -236,6 +236,46 @@ class TestAllowPreconditions:
         assert parse_qs(urlparse(resumed).query)["client_id"] == ["mcp_test"]
 
 
+class TestConsentCopyMatchesTheGrant:
+    """The one screen that has to be accurate about what it hands over.
+
+    Caught during review of this PR: the copy listed six resource families
+    while the grant carried eight — ``schedules:read`` and ``uploads:read``
+    were being granted without being named. A consent screen that
+    under-reports access is the wrong kind of wrong, and the drift is silent,
+    so it needs a guard rather than care.
+    """
+
+    #: Granted scope -> the word the English copy must contain for it.
+    SCOPE_WORDS = {
+        "catalog:read": "catalog",
+        "connections:read": "connections",
+        "notifications:read": "notifications",
+        "pipelines:read": "pipelines",
+        "runs:read": "runs",
+        "schedules:read": "schedules",
+        "transformations:read": "transformations",
+        "uploads:read": "uploads",
+    }
+
+    def test_the_map_still_covers_the_granted_scope_set(self):
+        from datanika.services.mcp_oauth import read_only_scopes
+
+        assert set(self.SCOPE_WORDS) == set(read_only_scopes()), (
+            "The P2 grant's scope set changed. Update mcp_consent.can_read in all "
+            "9 locales and this map — otherwise the consent screen describes a "
+            "different grant than the one it mints."
+        )
+
+    def test_the_copy_names_every_granted_scope(self):
+        from datanika.i18n import get_translations
+
+        copy = get_translations("en")["mcp_consent.can_read"].lower()
+        unnamed = sorted(scope for scope, word in self.SCOPE_WORDS.items() if word not in copy)
+
+        assert not unnamed, f"granted but not shown to the user: {unnamed}"
+
+
 class TestComputedVars:
     def test_api_key_name_matches_what_consent_mints(self):
         """The user searches Settings -> API Keys for this exact string."""

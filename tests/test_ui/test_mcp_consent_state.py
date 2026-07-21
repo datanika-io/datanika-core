@@ -317,6 +317,176 @@ class TestConsentCopyMatchesTheGrant:
 
         assert not unnamed, f"granted but not shown to the user: {unnamed}"
 
+    #: Write scope -> the word the English ``can_write`` copy must contain.
+    WRITE_SCOPE_WORDS = {
+        "connections:write": "connections",
+        "notifications:write": "notifications",
+        "pipelines:write": "pipelines",
+        "runs:write": "runs",
+        "schedules:write": "schedules",
+        "transformations:write": "transformations",
+        "uploads:write": "uploads",
+    }
+
+    def test_the_write_map_still_covers_the_write_scope_set(self):
+        from datanika.services.mcp_oauth import read_only_scopes, write_scopes
+
+        write_only = set(write_scopes()) - set(read_only_scopes())
+
+        assert set(self.WRITE_SCOPE_WORDS) == write_only, (
+            "The write grant's scope set changed. Update mcp_consent.can_write in "
+            "all 9 locales and this map — otherwise the consent screen describes a "
+            "different grant than the one it mints."
+        )
+
+    def test_the_write_copy_names_every_write_scope(self):
+        from datanika.i18n import get_translations
+
+        copy = get_translations("en")["mcp_consent.can_write"].lower()
+        unnamed = sorted(s for s, word in self.WRITE_SCOPE_WORDS.items() if word not in copy)
+
+        assert not unnamed, f"granted but not shown to the user: {unnamed}"
+
+    def test_the_write_copy_says_plainly_what_the_app_can_do(self):
+        """ "Write" is jargon. The verbs are what a user actually weighs.
+
+        ``trigger`` matters most: it is the one the old read-only copy
+        explicitly promised would never happen, and the one that spends money.
+        """
+        from datanika.i18n import get_translations
+
+        copy = get_translations("en")["mcp_consent.can_write"].lower()
+
+        for verb in ("create", "modify", "delete", "trigger"):
+            assert verb in copy, verb
+
+    def test_no_locale_still_promises_the_old_read_only_guarantee_for_write(self):
+        """The read-only strings must stay attached to the read-only branch.
+
+        A translator updating ``can_write`` by copying ``cannot_write`` would
+        reintroduce #450 in one language only — invisible to an English reader.
+        """
+        from datanika.i18n import get_translations
+
+        for locale in ("en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"):
+            t = get_translations(locale)
+            assert t["mcp_consent.can_write"] != t["mcp_consent.cannot_write"], locale
+            assert t["mcp_consent.read_write"] != t["mcp_consent.read_only"], locale
+
+
+class TestTheScreenDescribesTheGrantItMints:
+    """#450 — write became grantable at consent and the copy stayed fixed.
+
+    ``_access_block`` rendered two constant strings: a green **Read-only**
+    badge and *"It cannot create, modify, delete or trigger anything."* Once
+    #445 made write scopes grantable here, a user approving write was shown a
+    green read-only badge and an affirmative promise the system no longer kept
+    — on the one screen whose entire job is recording informed consent.
+
+    The branches are separate functions so each can be rendered and asserted on
+    its own. Asserting against ``_access_block`` alone would prove nothing:
+    ``rx.cond`` compiles *both* arms into the markup and picks between them on
+    the client, so "the read-only badge is absent" is false there by
+    construction even when the screen is correct.
+
+    Assertions are on **i18n keys**, not English. Translated text compiles to a
+    reference to the translations var (``…?.["mcp_consent.read_only"]``), so the
+    literal string is never in the markup and a substring check against it would
+    pass vacuously in both directions. What the English actually *says* is
+    guarded in ``TestConsentCopyMatchesTheGrant``.
+    """
+
+    def _keys(self, component) -> str:
+        return str(component.render())
+
+    def test_read_only_branch_still_says_read_only(self):
+        from datanika.ui.pages.oauth_consent import _read_only_access
+
+        markup = self._keys(_read_only_access())
+
+        assert "mcp_consent.read_only" in markup
+        assert "mcp_consent.cannot_write" in markup
+
+    def test_the_write_branch_never_shows_a_read_only_badge(self):
+        from datanika.ui.pages.oauth_consent import _write_access
+
+        assert "mcp_consent.read_only" not in self._keys(_write_access())
+
+    def test_the_write_branch_never_promises_it_cannot_write(self):
+        """The specific false statement #450 was filed for."""
+        from datanika.ui.pages.oauth_consent import _write_access
+
+        assert "mcp_consent.cannot_write" not in self._keys(_write_access())
+
+    def test_the_write_branch_states_what_it_can_do_and_cautions(self):
+        from datanika.ui.pages.oauth_consent import _write_access
+
+        markup = self._keys(_write_access())
+
+        for key in ("read_write", "can_write", "write_caution"):
+            assert f"mcp_consent.{key}" in markup, key
+
+    def test_the_write_branch_still_names_what_it_can_read(self):
+        """Write comes with read; dropping that under-reports the grant."""
+        from datanika.ui.pages.oauth_consent import _write_access
+
+        assert "mcp_consent.can_read" in self._keys(_write_access())
+
+    def test_access_block_branches_on_the_granted_scope(self):
+        """Not on anything the caller could pass — the grant decides."""
+        from datanika.ui.pages.oauth_consent import _access_block
+
+        assert "grants_write" in str(_access_block().render())
+
+
+class TestGrantsWriteAgreesWithWhatIsMinted:
+    """The display and the grant must come from one implementation.
+
+    Both call ``mcp_oauth.narrow_scope``. A second copy of the narrowing rule
+    living in the UI is precisely how the screen and the grant drift apart
+    again, which is the bug this fixes.
+    """
+
+    @pytest.mark.parametrize(
+        ("requested", "expected_write"),
+        [
+            ("", False),
+            (None, False),
+            ("connections:read runs:read", False),
+            ("catalog:read", False),
+            ("connections:write", True),
+            ("connections:read connections:write", True),
+            ("runs:write uploads:write", True),
+            ("nonsense:scope", False),
+            ("nonsense:scope pipelines:write", True),
+        ],
+    )
+    def test_matches_the_service_narrowing(self, requested, expected_write):
+        from datanika.services.mcp_oauth import narrow_scope
+
+        params = {} if requested is None else {"scope": requested}
+        state = _fake_state(request_params=params)
+
+        granted = McpConsentState.granted_scopes.fget(state)
+
+        assert granted == narrow_scope(requested or "")
+        assert McpConsentState.grants_write.fget(state) is expected_write
+
+    def test_silence_is_never_consent_to_write(self):
+        """MCP clients routinely omit ``scope``; that must read as read-only."""
+        state = _fake_state(request_params={})
+
+        assert McpConsentState.grants_write.fget(state) is False
+
+    def test_the_service_and_the_page_share_one_implementation(self):
+        """A delegating method, not a copied body."""
+        from datanika.services.mcp_oauth import McpOAuthService, narrow_scope
+
+        service = McpOAuthService()
+
+        for requested in ("", "runs:read", "uploads:write", "junk"):
+            assert service._narrow_scope(requested) == narrow_scope(requested), requested
+
 
 class TestComputedVars:
     def test_api_key_name_matches_what_consent_mints(self):
@@ -490,6 +660,67 @@ class TestAgainstTheRealAuthorizationServer:
             await _events(McpConsentState.allow.fn(state))
 
         assert backend.query(ApiKey).one().name == McpConsentState.api_key_name.fget(state)
+
+    @pytest.mark.parametrize(
+        ("requested", "expect_write"),
+        [
+            ("connections:read runs:read", False),
+            ("", False),
+            ("uploads:write", True),
+            ("connections:write pipelines:write", True),
+        ],
+    )
+    async def test_the_screen_describes_the_scope_the_grant_actually_carries(
+        self, backend, registered, session_jwt, requested, expect_write
+    ):
+        """The whole point of #450, asserted against a real minted grant.
+
+        Not "does ``grants_write`` compute correctly" — that is unit-tested
+        above and would agree with itself. This reads what the screen *showed*
+        and what the authorization server *stored*, and requires them to match.
+        A screen that is internally consistent and wrong about the grant is the
+        exact failure being fixed.
+        """
+        state = _fake_state(
+            _params(client_id=registered["client_id"], scope=requested),
+            access_token=session_jwt,
+        )
+
+        with patch("datanika.services.mcp_oauth_routes.settings.secret_key", _SECRET):
+            await McpConsentState.load_consent.fn(state)
+
+            shown_write = McpConsentState.grants_write.fget(state)
+            shown_scopes = McpConsentState.granted_scopes.fget(state)
+
+            await _events(McpConsentState.allow.fn(state))
+
+        minted = backend.query(OAuthGrant).one().scope.split()
+
+        assert shown_scopes == minted, "the screen described a different grant than it minted"
+        assert shown_write is expect_write
+        assert any(s.endswith(":write") for s in minted) is expect_write
+
+    async def test_an_omitted_scope_mints_and_shows_read_only(
+        self, backend, registered, session_jwt
+    ):
+        """Silence is not consent to write, and the screen must say so.
+
+        MCP clients routinely omit ``scope`` entirely. If that ever started
+        minting write, the read-only branch would be actively lying rather than
+        merely stale — so pin both halves against a real grant.
+        """
+        state = _fake_state(
+            _params(client_id=registered["client_id"], scope=None), access_token=session_jwt
+        )
+
+        with patch("datanika.services.mcp_oauth_routes.settings.secret_key", _SECRET):
+            await McpConsentState.load_consent.fn(state)
+            assert McpConsentState.grants_write.fget(state) is False
+            await _events(McpConsentState.allow.fn(state))
+
+        assert not [
+            s for s in backend.query(OAuthGrant).one().scope.split() if s.endswith(":write")
+        ]
 
     async def test_a_backend_refusal_is_shown_not_redirected(
         self, backend, registered, session_jwt

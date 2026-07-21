@@ -16,15 +16,13 @@ Real dbt compile is exercised via fixture SQL; the warehouse is mocked.
 from __future__ import annotations
 
 import contextlib
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SASession
 from sqlalchemy.pool import StaticPool
-from starlette.applications import Starlette
-from starlette.testclient import TestClient
 
 # Register all model tables so Base.metadata.create_all sees them.
 import datanika.models.invitation  # noqa: F401
@@ -34,9 +32,7 @@ from datanika.models.base import Base
 from datanika.models.connection import Connection, ConnectionType
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.user import Organization
-from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.encryption import EncryptionService
-from datanika.services.rate_limit_service import RateLimitResult
 from datanika.services.transformation_compile import (
     DEFAULT_PREVIEW_LIMIT,
     MAX_PREVIEW_LIMIT,
@@ -47,6 +43,7 @@ from datanika.services.transformation_compile import (
     compile_transformation,
     preview_transformation,
 )
+from tests.test_services.conftest import api_headers, patch_api_auth  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -297,56 +294,24 @@ class TestPreviewTransformationService:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def fake_api_key():
-    key = MagicMock()
-    key.id = 1
-    key.user_id = 1
-    key.name = "Test Key"
-    key.scopes = None
-    return key
-
-
-@pytest.fixture
-def rate_limit_ok():
-    return RateLimitResult(
-        allowed=True,
-        current_count=1,
-        limit=60,
-        remaining=59,
-        retry_after=0,
-        reset_at=9999999999,
-    )
-
-
-@pytest.fixture
-def client():
-    return TestClient(Starlette(routes=api_v1_routes))
-
-
-def _headers():
-    return {"Authorization": "Bearer etf_test"}
+# `fake_api_key`, `rate_limit_ok` and `client` now come from the shared
+# harness in conftest.py (core#416); only the compile-specific settings patch
+# stays here.
+_headers = api_headers
 
 
 @contextlib.contextmanager
 def _patch_api_auth(fake_api_key, rate_limit_ok, db_session, org_id, dbt_dir, fernet_key):
-    """Patch the middleware + compile-service settings so the API endpoint
-    sees the test session and fixture dbt dir."""
-    fake_api_key.org_id = org_id
+    """Shared API auth + the compile service's own settings.
 
-    @contextlib.contextmanager
-    def fake_session():
-        yield db_session
-
+    The auth half is generic and lives in conftest; the dbt dir and Fernet key
+    are specific to compile/preview, so they are layered on here rather than
+    pushed into a harness every other endpoint would have to ignore.
+    """
     with (
-        patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
-        patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
-        patch("datanika.services.api_middleware._get_session", fake_session),
+        patch_api_auth(fake_api_key, rate_limit_ok, db_session, org_id),
         patch("datanika.services.transformation_compile.settings") as mock_settings,
     ):
-        mock_svc.authenticate_api_key.return_value = fake_api_key
-        mock_rl.get_limit_for_org.return_value = 60
-        mock_rl.check_rate_limit.return_value = rate_limit_ok
         mock_settings.credential_encryption_key = fernet_key
         mock_settings.dbt_projects_dir = dbt_dir
         yield

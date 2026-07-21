@@ -17,15 +17,18 @@ PR CI (gated by ``DATANIKA_CONNECTOR_SMOKE=1``; see conftest.py).
 | BigQuery       | ✅ |   |
 | Databricks     | ✅ |   |
 | Stripe         | ✅ |   |
-| Kafka/Redpanda | ✅ |   |
+| Kafka/Redpanda | ✅ | re-provisioned 2026-07-21 (core#342) |
 | HubSpot        | ✅ |   |
-| Shopify        | ⬜ | creds not yet provisioned |
-| GA4            | ⬜ | creds not yet provisioned |
-| Salesforce     | ⬜ | creds not yet provisioned |
-| Snowflake      | ⬜ | signup blocked (see `PLAN_HUMAN_LOCKERS.md`) |
+| Shopify        | ✅ | provisioned 2026-07-21 |
+| GA4            | ✅ | provisioned 2026-07-21 |
+| Salesforce     | ⬜ | signup blocked on bot detection — one human click |
+| Snowflake      | ⬜ | **parked** — trial denied by Snowflake's risk engine |
 
-When the remaining 4 land in `qa-connectors.env`, add a test here and
-the nightly workflow picks it up automatically.
+Salesforce and Snowflake are the last two gaps; both are documented in
+`PLAN_HUMAN_LOCKERS.md`. Snowflake is *parked*, not pending: signup
+returns `SUPPRESSED_GENERIC` from the vendor's risk engine and is
+probably unwinnable from our egress IP, so treat it as an accepted
+coverage gap rather than a to-do.
 """
 
 from __future__ import annotations
@@ -264,4 +267,166 @@ def test_hubspot_contacts_schema_introspectable(require_env):
     assert len(properties) >= 50, (
         f"Only {len(properties)} contact properties returned — HubSpot usually ships "
         "300+ by default. Scope or API-shape change?"
+    )
+
+
+# ---------- Shopify ----------
+#
+# Sandbox is the `datanika-qa-smoke` development store (Partner org
+# `Datanika`), read via the legacy custom app `qa-smoke-readonly`.
+#
+# ⚠️ The store's generated test data seeds products, customers and
+# locations but **zero orders**. Asserting non-empty orders here would
+# fail against a perfectly healthy store, so the orders probe checks
+# reachability (the scope works) and deliberately not the count.
+
+
+def test_shopify_auth_and_shop_metadata(require_env):
+    """Admin API token auth + shop identity check.
+
+    Catches: token revoked/uninstalled, store deleted or reclaimed for
+    inactivity, API version retired (Shopify sunsets versions yearly),
+    and — via the token-shape guard — a write-scoped or production
+    token silently replacing the read-only sandbox one.
+    """
+    env = require_env("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_API_VERSION")
+    assert env["SHOPIFY_ACCESS_TOKEN"].startswith("shpat_"), (
+        "SHOPIFY_ACCESS_TOKEN must be an Admin API access token (shpat_*). "
+        "A storefront (shpss_/shpca_) or OAuth token means the wrong secret "
+        "was copied into qa-connectors.env."
+    )
+
+    t0 = time.monotonic()
+    r = httpx.get(
+        f"https://{env['SHOPIFY_SHOP_DOMAIN']}/admin/api/{env['SHOPIFY_API_VERSION']}/shop.json",
+        headers={"X-Shopify-Access-Token": env["SHOPIFY_ACCESS_TOKEN"]},
+        timeout=15.0,
+    )
+    elapsed = int((time.monotonic() - t0) * 1000)
+    assert r.status_code == 200, f"Shopify shop.json returned {r.status_code}: {r.text[:200]}"
+    shop = r.json()["shop"]
+    _log(
+        f"shopify: domain={shop['myshopify_domain']} plan={shop.get('plan_name')} "
+        f"elapsed={elapsed}ms"
+    )
+    assert shop["myshopify_domain"] == env["SHOPIFY_SHOP_DOMAIN"], (
+        f"Token belongs to {shop['myshopify_domain']!r}, not the configured "
+        f"{env['SHOPIFY_SHOP_DOMAIN']!r} — secrets may have been crossed."
+    )
+
+
+def test_shopify_read_scopes_cover_core_resources(require_env):
+    """Exercise each granted read scope — the introspect() coverage check.
+
+    Catches: an individual scope being dropped when the app is
+    reconfigured. Separate from the auth probe so a partial scope
+    revoke is reported specifically instead of hiding behind shop.json.
+    """
+    env = require_env("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_API_VERSION")
+    base = f"https://{env['SHOPIFY_SHOP_DOMAIN']}/admin/api/{env['SHOPIFY_API_VERSION']}"
+    headers = {"X-Shopify-Access-Token": env["SHOPIFY_ACCESS_TOKEN"]}
+
+    def _get(path: str) -> dict:
+        r = httpx.get(f"{base}/{path}", headers=headers, timeout=15.0)
+        assert r.status_code == 200, (
+            f"Shopify {path} returned {r.status_code}: {r.text[:200]}. A 403 here "
+            f"means the corresponding read_* scope was dropped from qa-smoke-readonly."
+        )
+        return r.json()
+
+    products = _get("products/count.json")["count"]
+    customers = _get("customers/count.json")["count"]
+    locations = len(_get("locations.json")["locations"])
+    # read_orders: assert the scope *works*, not that orders exist. The dev
+    # store's test-data generator creates none, so `== 0` is the healthy state.
+    orders = _get("orders/count.json?status=any")["count"]
+
+    _log(
+        f"shopify: products={products} customers={customers} locations={locations} "
+        f"orders={orders} (orders=0 is expected — test data seeds none)"
+    )
+    assert products >= 1, (
+        f"Expected seeded products, got {products}. The dev store's generated "
+        "test data may have been wiped, or read_products was revoked."
+    )
+    assert locations >= 1, f"Expected at least one location, got {locations}"
+
+
+# ---------- Google Analytics 4 ----------
+#
+# Sandbox is property `QA Smoke Property` (546388994) on account
+# `Datanika QA`, read by the shared `qa-smoke@…gserviceaccount.com`
+# service account (same key as BigQuery).
+#
+# ⚠️ The property has **no data stream**, so every report legitimately
+# returns zero rows. Row counts prove nothing here — the metadata probe
+# below is what actually distinguishes "working" from "broken".
+
+
+def test_ga4_auth_and_run_report(require_env):
+    """Service-account auth + a runReport call against the QA property.
+
+    Catches: key revoked, property deleted, SA's Viewer grant removed,
+    Data API disabled on the GCP project (the failure mode that cost us
+    an hour during provisioning — the Analytics UI shows the grant as
+    fine while the API returns PERMISSION_DENIED).
+    """
+    env = require_env("GA4_PROPERTY_ID", "GA4_CREDENTIALS_FILE")
+
+    from google.analytics.data_v1beta import BetaAnalyticsDataClient  # type: ignore[import-untyped]
+    from google.analytics.data_v1beta.types import DateRange, Metric, RunReportRequest
+    from google.oauth2 import service_account
+
+    t0 = time.monotonic()
+    creds = service_account.Credentials.from_service_account_file(env["GA4_CREDENTIALS_FILE"])
+    client = BetaAnalyticsDataClient(credentials=creds)
+    response = client.run_report(
+        RunReportRequest(
+            property=f"properties/{env['GA4_PROPERTY_ID']}",
+            date_ranges=[DateRange(start_date="7daysAgo", end_date="today")],
+            metrics=[Metric(name="activeUsers")],
+        )
+    )
+    _log(
+        f"ga4: property={env['GA4_PROPERTY_ID']} row_count={response.row_count} "
+        f"elapsed={int((time.monotonic() - t0) * 1000)}ms"
+    )
+    # Neither `row_count > 0` NOR `metric_headers` may be asserted here: with
+    # no data stream GA4 returns zero rows *and* an empty metric_headers list
+    # (verified live 2026-07-21 — an earlier draft of this test asserted
+    # metric_headers and failed against a perfectly healthy property, the same
+    # trap as Shopify's orders=0 above).
+    #
+    # The response metadata block IS always populated — it carries the
+    # property's real configuration — so that's what proves the call worked.
+    assert response.metadata.time_zone, (
+        "runReport returned no metadata.time_zone. The property answered but "
+        "not with a well-formed report — API shape changed?"
+    )
+
+
+def test_ga4_property_metadata_introspectable(require_env):
+    """List the property's dimension/metric definitions.
+
+    This is the assertion with teeth: getMetadata returns GA4's full
+    schema regardless of whether the property has any traffic, so —
+    unlike a row count — a non-empty result genuinely proves auth,
+    property access, and API enablement all work.
+    """
+    env = require_env("GA4_PROPERTY_ID", "GA4_CREDENTIALS_FILE")
+
+    from google.analytics.data_v1beta import BetaAnalyticsDataClient  # type: ignore[import-untyped]
+    from google.oauth2 import service_account
+
+    creds = service_account.Credentials.from_service_account_file(env["GA4_CREDENTIALS_FILE"])
+    client = BetaAnalyticsDataClient(credentials=creds)
+    metadata = client.get_metadata(name=f"properties/{env['GA4_PROPERTY_ID']}/metadata")
+
+    _log(f"ga4: dimensions={len(metadata.dimensions)} metrics={len(metadata.metrics)}")
+    assert len(metadata.dimensions) >= 50, (
+        f"Only {len(metadata.dimensions)} dimensions returned — GA4 ships 100+ by "
+        "default. Property misconfigured or API shape changed?"
+    )
+    assert len(metadata.metrics) >= 50, (
+        f"Only {len(metadata.metrics)} metrics returned — GA4 ships 100+ by default."
     )

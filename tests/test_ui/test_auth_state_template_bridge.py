@@ -12,6 +12,8 @@ and datanika-io/datanika-landing#125.
 
 import inspect
 
+import pytest
+
 import datanika.ui.state.auth_state as auth_state_module
 from datanika.ui.state.auth_state import AuthState
 
@@ -73,6 +75,50 @@ class TestPostAuthRedirectTarget:
     def test_slug_length_limit(self):
         """Overlong slugs are rejected to avoid amplification."""
         state = _make_state({"template": "a" * 200})
+        assert state._post_auth_redirect_target() == "/"
+
+
+class TestNextBridge:
+    """``?next=`` — resume an interrupted flow after the login wall (#394).
+
+    ``/oauth/consent`` is the first caller: the OAuth request lives entirely in
+    that page's query string and an MCP client cannot re-send it, so dropping
+    the user on the dashboard strands the handshake.
+
+    It is also the classic open-redirect vector, and the moment right after
+    authentication is exactly when a user is most likely to type a password
+    into whatever they land on — so the rejected shapes below matter as much
+    as the accepted one.
+    """
+
+    def test_returns_a_same_site_path(self):
+        state = _make_state({"next": "/oauth/consent?client_id=mcp_abc&state=xyz"})
+        assert state._post_auth_redirect_target() == "/oauth/consent?client_id=mcp_abc&state=xyz"
+
+    def test_next_wins_over_template(self):
+        """Both present means the user was pulled out of a specific flow."""
+        state = _make_state({"next": "/oauth/consent?client_id=a", "template": "csv-to-duckdb"})
+        assert state._post_auth_redirect_target() == "/oauth/consent?client_id=a"
+
+    def test_absent_next_falls_through_to_template(self):
+        state = _make_state({"template": "stripe-to-postgres"})
+        assert state._post_auth_redirect_target() == "/connections?template=stripe-to-postgres"
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            "https://evil.test/phish",  # absolute URL
+            "//evil.test/phish",  # protocol-relative
+            "/\\evil.test/phish",  # backslash, normalised to protocol-relative
+            "/\\/evil.test",
+            "javascript:alert(1)",  # not a path at all
+            "  /oauth/consent",  # leading whitespace
+            "/oauth/consent\n/evil",  # header/URL splitting attempt
+            "a" * 3000,
+        ],
+    )
+    def test_off_site_targets_are_rejected(self, hostile):
+        state = _make_state({"next": hostile})
         assert state._post_auth_redirect_target() == "/"
 
 

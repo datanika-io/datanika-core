@@ -110,7 +110,7 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
         op = item.get("get")
         if not isinstance(op, dict):
             continue
-        resource = _resource_from_get(spec, path, op, warnings)
+        resource = _resource_from_get(spec, path, item, op, warnings)
         if resource is not None:
             resources.append(resource)
         if len(resources) > MAX_RESOURCES:
@@ -165,7 +165,9 @@ def _extract_auth(spec: dict, warnings: list[str]) -> list[dict]:
     return out
 
 
-def _resource_from_get(spec: dict, path: str, op: dict, warnings: list[str]) -> dict | None:
+def _resource_from_get(
+    spec: dict, path: str, path_item: dict, op: dict, warnings: list[str]
+) -> dict | None:
     item_schema, data_selector = _response_item_schema(spec, op)
     if item_schema is None:
         warnings.append(f"Skipped GET {path} — no array/collection JSON response schema.")
@@ -174,6 +176,17 @@ def _resource_from_get(spec: dict, path: str, op: dict, warnings: list[str]) -> 
     endpoint: dict = {"path": path.lstrip("/"), "method": "GET"}
     if data_selector:
         endpoint["data_selector"] = data_selector
+
+    response = _success_response(spec, op) or {}
+    envelope = resolve_ref(
+        spec, (((response.get("content") or {}).get("application/json")) or {}).get("schema")
+    )
+    envelope_props = (envelope or {}).get("properties") or {}
+    paginator = _paginator_from_operation(
+        spec, path_item, op, envelope_props, response.get("headers") or {}
+    )
+    if paginator:
+        endpoint["paginator"] = paginator
     resource: dict = {
         "name": _resource_name(path),
         "endpoint": endpoint,
@@ -184,6 +197,122 @@ def _resource_from_get(spec: dict, path: str, op: dict, warnings: list[str]) -> 
     if pk:
         resource["primary_key"] = pk
     return resource
+
+
+# --- Pagination detection (P2, core#411) -----------------------------------
+#
+# P1 emitted nothing and relied on dlt's runtime auto-detection, which fails
+# *silently*: a wrong guess stops after page 1 and looks like a small table
+# rather than an error. These heuristics are the shapes real specs declare,
+# ordered most-authoritative first — a next-link in the body or a Link header
+# is a statement of fact, whereas query-parameter names are inference.
+#
+# Emitted configs match dlt's own paginator constructors (PAGINATOR_MAP);
+# nothing here invents a config shape dlt would reject.
+
+_OFFSET_PARAMS = (("offset", "limit"), ("skip", "top"), ("skip", "take"), ("start", "count"))
+_PAGE_PARAMS = ("page", "page_number", "pagenum")
+_CURSOR_PARAMS = ("cursor", "after", "page_token", "next_token", "starting_after")
+_NEXT_LINK_KEYS = ("next", "next_url", "next_page_url", "nextPageUrl", "next_page")
+_CURSOR_RESPONSE_KEYS = ("next_cursor", "cursor", "next_page_token", "next_token", "end_cursor")
+_TOTAL_KEYS = ("total", "total_count", "totalCount", "count", "total_results")
+
+_DEFAULT_PAGE_SIZE = 100
+
+
+def _query_params(spec: dict, path_item: dict, op: dict) -> dict[str, dict]:
+    """Query parameters for an operation, including path-level inherited ones."""
+    out: dict[str, dict] = {}
+    for raw in list(path_item.get("parameters") or []) + list(op.get("parameters") or []):
+        param = resolve_ref(spec, raw)
+        if isinstance(param, dict) and param.get("in") == "query" and param.get("name"):
+            out[str(param["name"])] = param
+    return out
+
+
+def _page_size(param: dict | None) -> int:
+    """Prefer the API's declared ceiling over a number we made up."""
+    schema = (param or {}).get("schema") or {}
+    for key in ("maximum", "default"):
+        value = schema.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+    return _DEFAULT_PAGE_SIZE
+
+
+def _first_key(props: dict, candidates) -> str | None:
+    lowered = {k.lower(): k for k in props}
+    for candidate in candidates:
+        if candidate.lower() in lowered:
+            return lowered[candidate.lower()]
+    return None
+
+
+def _paginator_from_operation(
+    spec: dict, path_item: dict, op: dict, envelope_props: dict, response_headers: dict
+) -> dict | None:
+    """Derive a dlt paginator config, or ``None`` to leave dlt's guess alone."""
+    # 1. A next-URL in the body: authoritative, no inference needed.
+    next_key = _first_key(envelope_props, _NEXT_LINK_KEYS)
+    if next_key:
+        return {"type": "json_link", "next_url_path": next_key}
+
+    # 2. A declared Link header: RFC 5988, equally authoritative.
+    if _first_key(response_headers, ("link",)):
+        return {"type": "header_link"}
+
+    params = _query_params(spec, path_item, op)
+    total_key = _first_key(envelope_props, _TOTAL_KEYS)
+
+    # 3. Cursor: only when the request carries one *and* the response returns
+    #    one — a lone `cursor` param with nowhere to read the next value from
+    #    would page forever against the same cursor.
+    cursor_param = _first_key(params, _CURSOR_PARAMS)
+    cursor_key = _first_key(envelope_props, _CURSOR_RESPONSE_KEYS)
+    if cursor_param and cursor_key:
+        return {"type": "cursor", "cursor_param": cursor_param, "cursor_path": cursor_key}
+
+    # 4. Offset/limit under any of its common spellings.
+    for offset_name, limit_name in _OFFSET_PARAMS:
+        offset_param = _first_key(params, (offset_name,))
+        limit_param = _first_key(params, (limit_name,))
+        if offset_param and limit_param:
+            return {
+                "type": "offset",
+                "offset_param": offset_param,
+                "limit_param": limit_param,
+                "limit": _page_size(params.get(limit_param)),
+                # dlt defaults total_path to "total"; leaving that in place for
+                # an API with no such field makes it hunt for a key that never
+                # arrives. None falls back to stop-on-empty-page.
+                "total_path": total_key,
+            }
+
+    # 5. Page number.
+    page_param = _first_key(params, _PAGE_PARAMS)
+    if page_param:
+        return {"type": "page_number", "page_param": page_param, "total_path": total_key}
+
+    # Nothing declared — stay silent rather than guess; dlt's runtime
+    # auto-detection is still there and is a better guess than ours.
+    return None
+
+
+def _success_response(spec: dict, op: dict) -> dict | None:
+    """The resolved success response object for a GET, if any."""
+    responses = op.get("responses") or {}
+    resp = None
+    for code in ("200", "201", "2XX", "default"):
+        if code in responses:
+            resp = responses[code]
+            break
+    if resp is None:
+        for code, r in responses.items():
+            if str(code).startswith("2"):
+                resp = r
+                break
+    resp = resolve_ref(spec, resp)
+    return resp if isinstance(resp, dict) else None
 
 
 def _response_item_schema(spec: dict, op: dict) -> tuple[dict | None, str | None]:

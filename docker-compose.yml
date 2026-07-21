@@ -128,6 +128,11 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.retention.time=30d"
+      # Enables POST /-/reload so CD can apply a changed prometheus.yml without a
+      # restart. Without it the endpoint 403s, and since the config is bind-mounted,
+      # `compose up -d` won't recreate the container either — so a deployed config
+      # change silently does nothing. See #426. Only reachable on 127.0.0.1.
+      - "--web.enable-lifecycle"
     restart: unless-stopped
 
   # Blackbox Exporter — probes external HTTP(S) endpoints and exposes metrics.

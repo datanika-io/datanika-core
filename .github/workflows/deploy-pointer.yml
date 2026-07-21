@@ -70,6 +70,50 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-app 2>/dev/null); [ "$h" = healthy ] && { echo healthy; exit 0; }; sleep 5; done; echo "NOT healthy"; docker logs --tail 40 datanika-app; exit 1'
+
+      # Monitoring config (prometheus.yml, grafana provisioning) is BIND-MOUNTED, so the
+      # transfer updates it on disk but nothing re-reads it: the container spec is
+      # unchanged, so `compose up -d` won't recreate, and Grafana only reads provisioning
+      # at startup. Before this step, a deployed alerting change silently did nothing
+      # while CI and CD both reported success (#426).
+      - name: Reload monitoring config
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && \
+             docker compose up -d prometheus grafana blackbox && \
+             for i in $(seq 1 20); do curl -fsS -X POST http://127.0.0.1:9090/-/reload >/dev/null 2>&1 && { echo "prometheus reloaded"; break; }; sleep 3; \
+               [ "$i" = 20 ] && { echo "prometheus /-/reload never succeeded"; exit 1; }; done && \
+             docker restart datanika-grafana >/dev/null && echo "grafana restarted"'
+
+      # Grafana logs provisioning errors and then quietly keeps the PREVIOUS rules, so a
+      # successful deploy is not evidence the rules are in effect. Assert that the number
+      # of rules live in Grafana matches the number defined in the repo.
+      - name: Verify alert rules are in effect
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'VERIFY'
+          set -e
+          for i in $(seq 1 24); do
+            docker exec datanika-grafana sh -c \
+              'curl -sf -u "admin:$GF_SECURITY_ADMIN_PASSWORD" http://127.0.0.1:3000/api/v1/provisioning/alert-rules' \
+              > /tmp/live-rules.json 2>/dev/null && break
+            sleep 5
+          done
+          python3 - <<'PY'
+          import json, re, sys
+          expected = len(re.findall(r"^\s*-\s*uid:\s*\S+",
+              open("/opt/datanika/datanika/monitoring/grafana/provisioning/alerting/alerts.yml",
+                   encoding="utf-8").read(), re.M))
+          try:
+              live = len(json.load(open("/tmp/live-rules.json")))
+          except Exception as e:
+              print("could not read live rules from Grafana:", e); sys.exit(1)
+          print(f"alert rules: defined={expected} live={live}")
+          if live != expected:
+              print("MISMATCH - Grafana did not load the deployed rules (provisioning error?)")
+              sys.exit(1)
+          print("alert rules are in effect")
+          PY
+          VERIFY
       - name: Smoke through Cloudflare
         run: curl -fsS -o /dev/null -w "app.datanika.io/login -> %{http_code}\n" https://app.datanika.io/login
 

@@ -83,48 +83,56 @@ def _require_write(action: str) -> None:
 # ===================================================================
 # Read-only tools — always available
 # ===================================================================
+#
+# **Every tool is `async def`** and awaits the client (core#388). FastMCP runs a
+# sync tool inline on the event loop; the hosted transport is mounted inside the
+# very backend the client calls, so a blocking request would hold the loop that
+# has to answer it — the self-call deadlocks and the tool dies at the client
+# timeout. `tests/test_mcp/test_mcp_async_io.py` fails if a sync tool reappears.
 
 
 # --- Tier 1: Discover & Introspect ---
 
 
 @mcp.tool()
-def get_agent_tiers() -> str:
+async def get_agent_tiers() -> str:
     """Get the 5-tier agent capability stack — describes what the API can do."""
-    return json.dumps(_session().client.get_agent_tiers(), indent=2)
+    return json.dumps(await _session().client.get_agent_tiers(), indent=2)
 
 
 @mcp.tool()
-def get_connection_types() -> str:
+async def get_connection_types() -> str:
     """List all supported connection types with their config schemas."""
-    return json.dumps(_session().client.get_connection_types(), indent=2)
+    return json.dumps(await _session().client.get_connection_types(), indent=2)
 
 
 @mcp.tool()
-def list_connections() -> str:
+async def list_connections() -> str:
     """List all connections in the organization."""
-    return json.dumps(_session().client.list_connections(), indent=2)
+    return json.dumps(await _session().client.list_connections(), indent=2)
 
 
 @mcp.tool()
-def get_connection(connection_id: int) -> str:
+async def get_connection(connection_id: int) -> str:
     """Get details of a specific connection by ID."""
-    return json.dumps(_session().client.get_connection(connection_id), indent=2)
+    return json.dumps(await _session().client.get_connection(connection_id), indent=2)
 
 
 @mcp.tool()
-def introspect_connection(connection_id: int, schema: str | None = None) -> str:
+async def introspect_connection(connection_id: int, schema: str | None = None) -> str:
     """List schemas and tables of a source connection.
 
     Args:
         connection_id: The connection to introspect.
         schema: Optional schema name to filter tables.
     """
-    return json.dumps(_session().client.introspect_connection(connection_id, schema), indent=2)
+    return json.dumps(
+        await _session().client.introspect_connection(connection_id, schema), indent=2
+    )
 
 
 @mcp.tool()
-def preview_connection(
+async def preview_connection(
     connection_id: int, table: str, schema: str | None = None, limit: int = 100
 ) -> str:
     """Preview the first N rows of a table from a source connection.
@@ -136,69 +144,73 @@ def preview_connection(
         limit: Max rows to return (default 100).
     """
     return json.dumps(
-        _session().client.preview_connection(connection_id, table, schema, limit),
+        await _session().client.preview_connection(connection_id, table, schema, limit),
         indent=2,
     )
 
 
 @mcp.tool()
-def query_connection(connection_id: int, query: str) -> str:
+async def query_connection(connection_id: int, query: str) -> str:
     """Execute a read-only SQL query against a source connection.
 
     Args:
         connection_id: The connection to query.
         query: A single SELECT statement (no mutations allowed).
     """
-    return json.dumps(_session().client.query_connection(connection_id, query), indent=2)
+    return json.dumps(await _session().client.query_connection(connection_id, query), indent=2)
 
 
 # --- Tier 3: Validate ---
 
 
 @mcp.tool()
-def compile_transformation(transformation_id: int) -> str:
+async def compile_transformation(transformation_id: int) -> str:
     """Compile a dbt transformation — resolves Jinja, ref(), source(). No execution.
 
     Args:
         transformation_id: The transformation to compile.
     """
-    return json.dumps(_session().client.compile_transformation(transformation_id), indent=2)
+    return json.dumps(await _session().client.compile_transformation(transformation_id), indent=2)
 
 
 @mcp.tool()
-def preview_transformation(transformation_id: int, limit: int = 100) -> str:
+async def preview_transformation(transformation_id: int, limit: int = 100) -> str:
     """Compile and execute a transformation, returning preview rows.
 
     Args:
         transformation_id: The transformation to preview.
         limit: Max rows to return (default 100, max 1000).
     """
-    return json.dumps(_session().client.preview_transformation(transformation_id, limit), indent=2)
+    return json.dumps(
+        await _session().client.preview_transformation(transformation_id, limit), indent=2
+    )
 
 
 # --- Tier 4: Control (read half) ---
 
 
 @mcp.tool()
-def list_uploads() -> str:
+async def list_uploads() -> str:
     """List all uploads (extract + load jobs) in the organization."""
-    return json.dumps(_session().client.list_uploads(), indent=2)
+    return json.dumps(await _session().client.list_uploads(), indent=2)
 
 
 @mcp.tool()
-def list_pipelines() -> str:
+async def list_pipelines() -> str:
     """List all pipelines (dbt transform orchestration) in the organization."""
-    return json.dumps(_session().client.list_pipelines(), indent=2)
+    return json.dumps(await _session().client.list_pipelines(), indent=2)
 
 
 @mcp.tool()
-def list_transformations() -> str:
+async def list_transformations() -> str:
     """List all dbt transformations in the organization."""
-    return json.dumps(_session().client.list_transformations(), indent=2)
+    return json.dumps(await _session().client.list_transformations(), indent=2)
 
 
 @mcp.tool()
-def list_runs(target_type: str | None = None, status: str | None = None, limit: int = 50) -> str:
+async def list_runs(
+    target_type: str | None = None, status: str | None = None, limit: int = 50
+) -> str:
     """List pipeline/upload/transformation runs with optional filters.
 
     Args:
@@ -206,43 +218,43 @@ def list_runs(target_type: str | None = None, status: str | None = None, limit: 
         status: Filter by status — 'pending', 'running', 'success', 'failed', 'cancelled'.
         limit: Max results (default 50, max 200).
     """
-    return json.dumps(_session().client.list_runs(target_type, status, limit), indent=2)
+    return json.dumps(await _session().client.list_runs(target_type, status, limit), indent=2)
 
 
 @mcp.tool()
-def get_run(run_id: int) -> str:
+async def get_run(run_id: int) -> str:
     """Get details of a specific run by ID.
 
     Args:
         run_id: The run ID to look up.
     """
-    return json.dumps(_session().client.get_run(run_id), indent=2)
+    return json.dumps(await _session().client.get_run(run_id), indent=2)
 
 
 @mcp.tool()
-def get_run_logs(run_id: int) -> str:
+async def get_run_logs(run_id: int) -> str:
     """Get the logs of a specific run.
 
     Args:
         run_id: The run ID whose logs to fetch.
     """
-    return json.dumps(_session().client.get_run_logs(run_id), indent=2)
+    return json.dumps(await _session().client.get_run_logs(run_id), indent=2)
 
 
 @mcp.tool()
-def list_catalog() -> str:
+async def list_catalog() -> str:
     """List all catalog entries (source tables and dbt models)."""
-    return json.dumps(_session().client.list_catalog(), indent=2)
+    return json.dumps(await _session().client.list_catalog(), indent=2)
 
 
 @mcp.tool()
-def get_catalog_entry(entry_id: int) -> str:
+async def get_catalog_entry(entry_id: int) -> str:
     """Get details of a specific catalog entry.
 
     Args:
         entry_id: The catalog entry ID.
     """
-    return json.dumps(_session().client.get_catalog_entry(entry_id), indent=2)
+    return json.dumps(await _session().client.get_catalog_entry(entry_id), indent=2)
 
 
 # ===================================================================
@@ -254,7 +266,7 @@ def get_catalog_entry(entry_id: int) -> str:
 
 
 @mcp.tool()
-def create_connection(name: str, connection_type: str, config: dict) -> str:
+async def create_connection(name: str, connection_type: str, config: dict) -> str:
     """Create a new data connection.
 
     Requires --allow-write.
@@ -265,11 +277,13 @@ def create_connection(name: str, connection_type: str, config: dict) -> str:
         config: Connection-specific configuration (host, port, credentials, etc.).
     """
     _session().require_write("create_connection")
-    return json.dumps(_session().client.create_connection(name, connection_type, config), indent=2)
+    return json.dumps(
+        await _session().client.create_connection(name, connection_type, config), indent=2
+    )
 
 
 @mcp.tool()
-def create_upload(
+async def create_upload(
     name: str,
     source_connection_id: int,
     destination_connection_id: int,
@@ -289,7 +303,7 @@ def create_upload(
     """
     _session().require_write("create_upload")
     return json.dumps(
-        _session().client.create_upload(
+        await _session().client.create_upload(
             name, source_connection_id, destination_connection_id, dlt_config, description
         ),
         indent=2,
@@ -297,7 +311,7 @@ def create_upload(
 
 
 @mcp.tool()
-def create_pipeline(
+async def create_pipeline(
     name: str,
     destination_connection_id: int,
     command: str = "run",
@@ -315,13 +329,15 @@ def create_pipeline(
     """
     _session().require_write("create_pipeline")
     return json.dumps(
-        _session().client.create_pipeline(name, destination_connection_id, command, description),
+        await _session().client.create_pipeline(
+            name, destination_connection_id, command, description
+        ),
         indent=2,
     )
 
 
 @mcp.tool()
-def create_transformation(
+async def create_transformation(
     name: str,
     sql_body: str,
     materialization: str = "view",
@@ -341,7 +357,7 @@ def create_transformation(
     """
     _session().require_write("create_transformation")
     return json.dumps(
-        _session().client.create_transformation(
+        await _session().client.create_transformation(
             name, sql_body, materialization, description, schema_name
         ),
         indent=2,
@@ -349,7 +365,7 @@ def create_transformation(
 
 
 @mcp.tool()
-def bulk_import(payload: dict) -> str:
+async def bulk_import(payload: dict) -> str:
     """Bulk-import connections, uploads, pipelines, and transformations in one call.
 
     Requires --allow-write. Uses the JSON v2 import format.
@@ -360,14 +376,14 @@ def bulk_import(payload: dict) -> str:
                  pipelines, transformations sections. See AI_IMPORT_GUIDE.md.
     """
     _session().require_write("bulk_import")
-    return json.dumps(_session().client.bulk_import(payload), indent=2)
+    return json.dumps(await _session().client.bulk_import(payload), indent=2)
 
 
 # --- Tier 4: Execute ---
 
 
 @mcp.tool()
-def trigger_upload(upload_id: int, wait: bool = False) -> str:
+async def trigger_upload(upload_id: int, wait: bool = False) -> str:
     """Trigger an upload run.
 
     Requires --allow-write.
@@ -377,11 +393,11 @@ def trigger_upload(upload_id: int, wait: bool = False) -> str:
         wait: If true, block until the run completes (up to 120s).
     """
     _session().require_write("trigger_upload")
-    return json.dumps(_session().client.trigger_upload(upload_id, wait), indent=2)
+    return json.dumps(await _session().client.trigger_upload(upload_id, wait), indent=2)
 
 
 @mcp.tool()
-def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
+async def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
     """Trigger a pipeline run (dbt build/run/test).
 
     Requires --allow-write.
@@ -391,11 +407,11 @@ def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
         wait: If true, block until the run completes (up to 120s).
     """
     _session().require_write("trigger_pipeline")
-    return json.dumps(_session().client.trigger_pipeline(pipeline_id, wait), indent=2)
+    return json.dumps(await _session().client.trigger_pipeline(pipeline_id, wait), indent=2)
 
 
 @mcp.tool()
-def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
+async def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
     """Trigger a transformation run.
 
     Requires --allow-write.
@@ -405,7 +421,9 @@ def trigger_transformation(transformation_id: int, wait: bool = False) -> str:
         wait: If true, block until the run completes (up to 120s).
     """
     _session().require_write("trigger_transformation")
-    return json.dumps(_session().client.trigger_transformation(transformation_id, wait), indent=2)
+    return json.dumps(
+        await _session().client.trigger_transformation(transformation_id, wait), indent=2
+    )
 
 
 # ===================================================================
@@ -514,7 +532,7 @@ def main() -> None:
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s 0.1.0",
+        version="%(prog)s 0.2.0",
     )
 
     args = parser.parse_args()

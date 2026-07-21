@@ -7,7 +7,7 @@ tool registry and the module-global path.
 """
 
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -40,30 +40,30 @@ def srv():
 
 
 class TestSessionResolution:
-    def test_bound_session_wins_over_globals(self, srv):
+    async def test_bound_session_wins_over_globals(self, srv):
         from datanika_mcp.session import DatanikaSession, use_session
 
-        global_client = MagicMock(name="global")
-        bound_client = MagicMock(name="bound")
+        global_client = AsyncMock(name="global")
+        bound_client = AsyncMock(name="bound")
         bound_client.list_connections.return_value = {"items": ["bound"]}
         srv._client = global_client
         srv._allow_write = False
 
         with use_session(DatanikaSession(client=bound_client, allow_write=True)):
-            result = srv.list_connections()
+            result = await srv.list_connections()
 
-        bound_client.list_connections.assert_called_once()
-        global_client.list_connections.assert_not_called()
+        bound_client.list_connections.assert_awaited_once()
+        global_client.list_connections.assert_not_awaited()
         assert "bound" in result
 
-    def test_globals_used_when_no_session_bound(self, srv):
-        client = MagicMock()
+    async def test_globals_used_when_no_session_bound(self, srv):
+        client = AsyncMock()
         client.list_uploads.return_value = {"items": []}
         srv._client = client
 
-        result = srv.list_uploads()
+        result = await srv.list_uploads()
 
-        client.list_uploads.assert_called_once()
+        client.list_uploads.assert_awaited_once()
         assert '"items"' in result
 
     def test_session_reset_after_context_exit(self, srv):
@@ -74,43 +74,43 @@ class TestSessionResolution:
             assert current_session() is not None
         assert current_session() is None
 
-    def test_uninitialized_fallback_raises(self, srv):
+    async def test_uninitialized_fallback_raises(self, srv):
         srv._client = None
         srv._allow_write = False
         with pytest.raises(RuntimeError, match="not initialized"):
-            srv.list_connections()
+            await srv.list_connections()
 
 
 class TestSessionWriteGuard:
-    def test_read_only_bound_session_blocks_writes(self, srv):
+    async def test_read_only_bound_session_blocks_writes(self, srv):
         from datanika_mcp.session import DatanikaSession, use_session
 
-        client = MagicMock()
+        client = AsyncMock()
         # Globals grant write; the bound read-only session must still win.
-        srv._client = MagicMock()
+        srv._client = AsyncMock()
         srv._allow_write = True
 
         with (
             use_session(DatanikaSession(client=client, allow_write=False)),
             pytest.raises(RuntimeError, match="Write access required"),
         ):
-            srv.create_connection("t", "postgres", {"host": "h"})
+            await srv.create_connection("t", "postgres", {"host": "h"})
 
-        client.create_connection.assert_not_called()
+        client.create_connection.assert_not_awaited()
 
-    def test_read_write_bound_session_allows_writes(self, srv):
+    async def test_read_write_bound_session_allows_writes(self, srv):
         from datanika_mcp.session import DatanikaSession, use_session
 
-        client = MagicMock()
+        client = AsyncMock()
         client.create_connection.return_value = {"id": 7}
         # Globals have no client and forbid writes; the bound session must win.
         srv._client = None
         srv._allow_write = False
 
         with use_session(DatanikaSession(client=client, allow_write=True)):
-            result = srv.create_connection("t", "postgres", {"host": "h"})
+            result = await srv.create_connection("t", "postgres", {"host": "h"})
 
-        client.create_connection.assert_called_once_with("t", "postgres", {"host": "h"})
+        client.create_connection.assert_awaited_once_with("t", "postgres", {"host": "h"})
         assert '"id": 7' in result
 
     def test_require_write_shim_reads_bound_session(self, srv):

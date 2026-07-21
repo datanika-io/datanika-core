@@ -277,6 +277,15 @@ except ImportError as _mcp_exc:
         "datanika-mcp not installed; /mcp endpoint not mounted (%s)", _mcp_exc
     )
 
+# Mount the MCP OAuth 2.1 authorization server (Remote-MCP P2, #393) —
+# discovery, dynamic client registration, authorize/consent, token. Unlike
+# /mcp this has no dependency on the datanika-mcp package, so it mounts
+# unconditionally: the AS is pure protocol over our own models.
+from datanika.services.mcp_oauth_routes import mcp_oauth_routes  # noqa: E402
+
+for _route in mcp_oauth_routes:
+    app._api.routes.append(_route)
+
 # Register every core-side hook subscriber (runs + quota + V2 P5 charge
 # events + external-channel dispatch). Delegated to
 # ``services._register_hooks`` so the Celery worker can call the same

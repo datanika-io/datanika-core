@@ -514,7 +514,7 @@
   "mcp_consent.org_hint": "Der Zugriff wird nur für diese Organisation gewährt.",
   "mcp_consent.access_label": "Was die App tun kann",
   "mcp_consent.read_only": "Nur Lesen",
-  "mcp_consent.can_read": "Ihre Verbindungen, Pipelines, Transformationen, Läufe, den Datenkatalog und Benachrichtigungen lesen.",
+  "mcp_consent.can_read": "Ihre Verbindungen, Uploads, Pipelines, Transformationen, Zeitpläne, Läufe, den Datenkatalog und Benachrichtigungen lesen.",
   "mcp_consent.cannot_write": "Sie kann nichts erstellen, ändern, löschen oder ausführen.",
   "mcp_consent.revoke_label": "Zugriff widerrufen",
   "mcp_consent.revoke_creates": "Beim Zustimmen wird ein API-Schlüssel erstellt mit dem Namen",

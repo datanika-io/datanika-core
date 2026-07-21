@@ -514,7 +514,7 @@
   "mcp_consent.org_hint": "Access is granted to this organization only.",
   "mcp_consent.access_label": "What this app can do",
   "mcp_consent.read_only": "Read-only",
-  "mcp_consent.can_read": "Read your connections, pipelines, transformations, runs, data catalog and notifications.",
+  "mcp_consent.can_read": "Read your connections, uploads, pipelines, transformations, schedules, runs, data catalog and notifications.",
   "mcp_consent.cannot_write": "It cannot create, modify, delete or trigger anything.",
   "mcp_consent.revoke_label": "How to revoke",
   "mcp_consent.revoke_creates": "Approving creates an API key named",

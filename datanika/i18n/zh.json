@@ -514,7 +514,7 @@
   "mcp_consent.org_hint": "仅向该组织授予访问权限。",
   "mcp_consent.access_label": "该应用可以做什么",
   "mcp_consent.read_only": "只读",
-  "mcp_consent.can_read": "读取您的连接、管道、转换、运行记录、数据目录和通知。",
+  "mcp_consent.can_read": "读取您的连接、上传、管道、转换、调度、运行记录、数据目录和通知。",
   "mcp_consent.cannot_write": "它无法创建、修改、删除或触发任何内容。",
   "mcp_consent.revoke_label": "如何撤销",
   "mcp_consent.revoke_creates": "批准后将创建一个 API 密钥，名称为",

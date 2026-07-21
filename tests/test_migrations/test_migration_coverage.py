@@ -137,3 +137,53 @@ class TestMigrationCoverage:
             f"Model columns not found in any migration: {missing}. "
             f"Add a migration with op.add_column() for each missing column."
         )
+
+
+class TestRevisionGraph:
+    """Guard the Alembic revision graph itself.
+
+    ``migration-roundtrip`` already catches a broken graph, but only in CI and
+    only with a live Postgres — a hand-picked revision id that collides with an
+    existing one (core#393) got all the way to a red CI job. These checks are
+    pure text over the versions directory, so they fail in the unit suite in
+    milliseconds instead.
+    """
+
+    def test_revision_ids_are_unique(self):
+        seen: dict[str, list[str]] = {}
+        for path, source in _read_migration_sources():
+            match = re.search(r'^revision: str = "([^"]+)"', source, re.MULTILINE)
+            if match:
+                seen.setdefault(match.group(1), []).append(path.name)
+
+        duplicates = {rev: files for rev, files in seen.items() if len(files) > 1}
+        assert not duplicates, (
+            f"Duplicate Alembic revision ids: {duplicates}. Alembic refuses to "
+            f"resolve 'head' when an id appears twice — pick a fresh id."
+        )
+
+    def test_exactly_one_head(self):
+        revisions: set[str] = set()
+        parents: set[str] = set()
+        for _path, source in _read_migration_sources():
+            rev = re.search(r'^revision: str = "([^"]+)"', source, re.MULTILINE)
+            down = re.search(r'^down_revision: str \| None = "([^"]+)"', source, re.MULTILINE)
+            if rev:
+                revisions.add(rev.group(1))
+            if down:
+                parents.add(down.group(1))
+
+        heads = revisions - parents
+        assert len(heads) == 1, (
+            f"Expected exactly one migration head, found {sorted(heads)}. "
+            f"A new migration must set down_revision to the current head."
+        )
+
+
+def _read_migration_sources() -> list[tuple[Path, str]]:
+    versions_dir = Path(__file__).parent.parent.parent / "datanika" / "migrations" / "versions"
+    return [
+        (path, path.read_text(encoding="utf-8"))
+        for path in sorted(versions_dir.glob("*.py"))
+        if path.name != "__init__.py"
+    ]

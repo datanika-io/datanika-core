@@ -1,5 +1,11 @@
 # Datanika MCP Server
 
+<!-- Official MCP registry ownership marker: mcp-publisher reads this line from the
+     PUBLISHED PyPI README to prove we own the package. It must match `name` in
+     server.json — tests/test_mcp/test_registry_manifests.py enforces both. -->
+
+mcp-name: io.datanika/datanika-mcp
+
 MCP server for [Datanika](https://datanika.io) — browse connections, preview data, compile and validate dbt transformations, monitor runs, and manage pipelines from Claude Desktop.
 
 **Read-only by default.** Pass `--allow-write` to enable creating resources and triggering pipeline runs.

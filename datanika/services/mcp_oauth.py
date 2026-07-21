@@ -1,0 +1,497 @@
+"""OAuth 2.1 Authorization Server for the hosted MCP endpoint (core#393, P2).
+
+Implements the MCP remote-auth flow (SPEC_REMOTE_MCP §5.3/§8/§10) so an MCP
+client can add Datanika with one click instead of a pasted API key:
+
+    POST /mcp (no token)            -> 401 + WWW-Authenticate: resource_metadata=...
+    GET  /.well-known/oauth-protected-resource
+    GET  /.well-known/oauth-authorization-server
+    POST /oauth/register            -> RFC 7591 dynamic client registration
+    GET  /oauth/authorize           -> validate, then hand off to the consent screen
+    POST /api/oauth/consent         -> (app JWT) mint the key + authorization code
+    POST /oauth/token               -> code+PKCE -> access/refresh; rotating refresh
+
+**Why consent redirects to the frontend.** Datanika's browser session is a JWT
+the Reflex frontend holds (social login lands on ``/auth/complete?token=…``),
+so a backend route cannot read it from a cookie. ``/oauth/authorize`` therefore
+validates the OAuth request and redirects to the frontend consent page, which
+carries the user's JWT to ``POST /api/oauth/consent`` in an Authorization
+header. No token is ever put in a query string.
+
+**Scope of the grant.** P2 issues **read-only** grants — the eight ``*:read``
+scopes, which is exactly what the 17 read tools need. Write tools are P3 and
+gated on the #338 egress guard, so a write grant could not unlock anything
+today; offering one would be consent theatre.
+"""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import secrets
+from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode, urlparse
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from datanika.config import settings
+from datanika.models.api_key import ApiKey
+from datanika.models.mcp_oauth import OAuthClient, OAuthGrant, OAuthToken
+from datanika.services.api_key_service import ApiKeyService
+from datanika.services.encryption import EncryptionService
+
+MCP_RESOURCE_PATH = "/mcp"
+
+#: Where the frontend renders the consent screen (Product owns the page itself).
+CONSENT_PATH = "/oauth/consent"
+
+_CODE_TTL = timedelta(minutes=5)
+_ACCESS_TTL = timedelta(hours=1)
+_REFRESH_TTL = timedelta(days=30)
+
+_CODE_PREFIX = "dtk_ac_"
+_ACCESS_PREFIX = "dtk_at_"
+_REFRESH_PREFIX = "dtk_rt_"
+
+#: Every resource family the REST API exposes, read half only. A grant carries
+#: exactly these, so `api_middleware` rejects writes without the MCP layer
+#: implementing any authz of its own (SPEC §5.4).
+_READ_SCOPES = (
+    "catalog:read",
+    "connections:read",
+    "notifications:read",
+    "pipelines:read",
+    "runs:read",
+    "schedules:read",
+    "transformations:read",
+    "uploads:read",
+)
+
+
+def read_only_scopes() -> list[str]:
+    """The scope set a P2 consent grants."""
+    return list(_READ_SCOPES)
+
+
+class McpOAuthError(Exception):
+    """An OAuth error, carrying the RFC 6749 error code as its message.
+
+    The code is what goes on the wire (``invalid_grant``, ``invalid_request``,
+    …); ``description`` is the human half, safe to show a developer.
+    """
+
+    def __init__(self, code: str, description: str = "") -> None:
+        super().__init__(code)
+        self.code = code
+        self.description = description
+
+
+def _sha256(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    """SQLite hands back naive datetimes; compare in UTC regardless."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _is_loopback(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+class McpOAuthService:
+    """Authorization-server logic. Transport-free so it is testable directly."""
+
+    def __init__(
+        self,
+        public_base_url: str | None = None,
+        encryption_key_provider=None,
+        api_key_service: ApiKeyService | None = None,
+    ) -> None:
+        self._base = (public_base_url or settings.oauth_redirect_base_url).rstrip("/")
+        self._encryption_key = encryption_key_provider or (
+            lambda: settings.credential_encryption_key
+        )
+        self._keys = api_key_service or ApiKeyService()
+
+    # ------------------------------------------------------------------
+    # Identity of this AS / RS
+    # ------------------------------------------------------------------
+
+    @property
+    def issuer(self) -> str:
+        return self._base
+
+    @property
+    def resource(self) -> str:
+        """The RFC 8707 resource identifier tokens are bound to."""
+        return f"{self._base}{MCP_RESOURCE_PATH}"
+
+    def protected_resource_metadata(self) -> dict:
+        return {
+            "resource": self.resource,
+            "authorization_servers": [self.issuer],
+            "scopes_supported": read_only_scopes(),
+            "bearer_methods_supported": ["header"],
+        }
+
+    def authorization_server_metadata(self) -> dict:
+        return {
+            "issuer": self.issuer,
+            "authorization_endpoint": f"{self._base}/oauth/authorize",
+            "token_endpoint": f"{self._base}/oauth/token",
+            "registration_endpoint": f"{self._base}/oauth/register",
+            "scopes_supported": read_only_scopes(),
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            # OAuth 2.1: PKCE is mandatory and `plain` is gone.
+            "code_challenge_methods_supported": ["S256"],
+            # Public clients only — there are no secrets to authenticate with.
+            "token_endpoint_auth_methods_supported": ["none"],
+        }
+
+    # ------------------------------------------------------------------
+    # RFC 7591 — dynamic client registration
+    # ------------------------------------------------------------------
+
+    def register_client(self, session: Session, client_name: str, redirect_uris: list[str]) -> dict:
+        if not redirect_uris:
+            raise McpOAuthError("invalid_redirect_uri", "At least one redirect_uri is required.")
+        for uri in redirect_uris:
+            parsed = urlparse(uri)
+            # https everywhere, except the loopback interface native clients
+            # must use (RFC 8252 §7.3).
+            if parsed.scheme == "https":
+                continue
+            if parsed.scheme == "http" and _is_loopback(uri):
+                continue
+            raise McpOAuthError(
+                "invalid_redirect_uri",
+                f"redirect_uri must be https (or http on loopback): {uri}",
+            )
+
+        client = OAuthClient(
+            client_id="mcp_" + secrets.token_urlsafe(24),
+            client_name=(client_name or "MCP client")[:255],
+            redirect_uris=list(redirect_uris),
+        )
+        session.add(client)
+        session.flush()
+
+        return {
+            "client_id": client.client_id,
+            "client_name": client.client_name,
+            "redirect_uris": client.redirect_uris,
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "client_id_issued_at": int(_now().timestamp()),
+        }
+
+    def get_client(self, session: Session, client_id: str) -> OAuthClient | None:
+        return session.execute(
+            select(OAuthClient).where(
+                OAuthClient.client_id == client_id, OAuthClient.deleted_at.is_(None)
+            )
+        ).scalar_one_or_none()
+
+    # ------------------------------------------------------------------
+    # Authorization request validation (pre-consent)
+    # ------------------------------------------------------------------
+
+    def validate_authorization_request(
+        self,
+        session: Session,
+        *,
+        client_id: str,
+        redirect_uri: str,
+        response_type: str,
+        code_challenge: str,
+        code_challenge_method: str,
+        resource: str | None,
+    ) -> OAuthClient:
+        """Check everything that must hold before a human is shown a consent screen.
+
+        Errors here cannot be redirected back to the client (an unvalidated
+        ``redirect_uri`` is exactly what an attacker would supply), so callers
+        render them directly.
+        """
+        client = self.get_client(session, client_id)
+        if client is None:
+            raise McpOAuthError("invalid_client", "Unknown client_id.")
+        if redirect_uri not in (client.redirect_uris or []):
+            raise McpOAuthError(
+                "invalid_request", "redirect_uri is not registered for this client."
+            )
+        if response_type != "code":
+            raise McpOAuthError(
+                "unsupported_response_type", "Only response_type=code is supported."
+            )
+        self._check_pkce(code_challenge, code_challenge_method)
+        self._check_resource(resource)
+        return client
+
+    def _check_pkce(self, code_challenge: str, code_challenge_method: str) -> None:
+        if code_challenge_method != "S256":
+            raise McpOAuthError(
+                "invalid_request", "code_challenge_method must be S256 (OAuth 2.1)."
+            )
+        if not code_challenge:
+            raise McpOAuthError("invalid_request", "code_challenge is required.")
+
+    def _check_resource(self, resource: str | None) -> None:
+        """RFC 8707 — refuse to mint a token for anyone else's resource.
+
+        This is the confused-deputy guard (SPEC §10): a token we issue is only
+        ever valid for our own ``/mcp``, so it cannot be replayed elsewhere,
+        and we never accept one minted elsewhere.
+        """
+        if resource is None:
+            return  # optional; the token is bound to our resource regardless
+        if resource.rstrip("/") != self.resource:
+            raise McpOAuthError("invalid_target", f"Unknown resource: {resource}")
+
+    # ------------------------------------------------------------------
+    # Consent — mint the org-scoped key and the one-time code
+    # ------------------------------------------------------------------
+
+    def grant_consent(
+        self,
+        session: Session,
+        *,
+        client_id: str,
+        org_id: int,
+        user_id: int,
+        redirect_uri: str,
+        code_challenge: str,
+        code_challenge_method: str,
+        scope: str,
+        resource: str | None,
+    ) -> tuple[OAuthGrant, str]:
+        """Record consent. Returns ``(grant, authorization_code)``.
+
+        The raw code is returned once and never stored — only its hash is, so a
+        database leak cannot be replayed into a token.
+        """
+        client = self.get_client(session, client_id)
+        if client is None:
+            raise McpOAuthError("invalid_client", "Unknown client_id.")
+        if redirect_uri not in (client.redirect_uris or []):
+            raise McpOAuthError(
+                "invalid_request", "redirect_uri is not registered for this client."
+            )
+        self._check_pkce(code_challenge, code_challenge_method)
+        self._check_resource(resource)
+
+        granted = self._narrow_scope(scope)
+
+        api_key, raw_key = self._keys.create_api_key(
+            session,
+            org_id=org_id,
+            user_id=user_id,
+            name=f"MCP: {client.client_name}"[:255],
+            scopes=granted,
+        )
+
+        code = _CODE_PREFIX + secrets.token_urlsafe(32)
+        grant = OAuthGrant(
+            client_id=client.client_id,
+            org_id=org_id,
+            user_id=user_id,
+            api_key_id=api_key.id,
+            encrypted_api_key=self._encrypt(raw_key),
+            code_hash=_sha256(code),
+            code_challenge=code_challenge,
+            redirect_uri=redirect_uri,
+            scope=" ".join(granted),
+            resource=self.resource,
+            code_expires_at=_now() + _CODE_TTL,
+        )
+        session.add(grant)
+        session.flush()
+        return grant, code
+
+    def _narrow_scope(self, requested: str) -> list[str]:
+        """Grant at most read-only, never more than was asked for.
+
+        An unknown or empty request collapses to the full read-only set rather
+        than erroring: MCP clients routinely omit `scope`, and the ceiling is
+        read-only anyway.
+        """
+        asked = [s for s in (requested or "").split() if s]
+        if not asked:
+            return read_only_scopes()
+        narrowed = [s for s in asked if s in _READ_SCOPES]
+        return narrowed or read_only_scopes()
+
+    # ------------------------------------------------------------------
+    # Token endpoint
+    # ------------------------------------------------------------------
+
+    def exchange_code(
+        self, session: Session, *, code: str, code_verifier: str, redirect_uri: str
+    ) -> dict:
+        grant = session.execute(
+            select(OAuthGrant).where(
+                OAuthGrant.code_hash == _sha256(code),
+                OAuthGrant.revoked_at.is_(None),
+                OAuthGrant.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        # A redeemed code has had its hash cleared, so a replay lands here too.
+        if grant is None:
+            raise McpOAuthError("invalid_grant", "Authorization code is invalid or already used.")
+
+        expires = _aware(grant.code_expires_at)
+        if expires is not None and expires < _now():
+            raise McpOAuthError("invalid_grant", "Authorization code has expired.")
+        if redirect_uri != grant.redirect_uri:
+            raise McpOAuthError("invalid_grant", "redirect_uri does not match the grant.")
+        if not self._verify_pkce(code_verifier, grant.code_challenge):
+            raise McpOAuthError("invalid_grant", "PKCE verification failed.")
+
+        # Burn the code before issuing anything — a concurrent replay finds
+        # nothing to redeem.
+        grant.code_hash = None
+        session.flush()
+
+        return self._issue(session, grant)
+
+    def _verify_pkce(self, verifier: str, challenge: str) -> bool:
+        if not verifier:
+            return False
+        digest = hashlib.sha256(verifier.encode()).digest()
+        computed = base64.urlsafe_b64encode(digest).decode().rstrip("=")
+        return secrets.compare_digest(computed, challenge)
+
+    def refresh(self, session: Session, *, refresh_token: str) -> dict:
+        token = session.execute(
+            select(OAuthToken).where(
+                OAuthToken.refresh_token_hash == _sha256(refresh_token),
+                OAuthToken.revoked_at.is_(None),
+                OAuthToken.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if token is None:
+            raise McpOAuthError("invalid_grant", "Refresh token is invalid or already rotated.")
+
+        refresh_expires = _aware(token.refresh_expires_at)
+        if refresh_expires is not None and refresh_expires < _now():
+            raise McpOAuthError("invalid_grant", "Refresh token has expired.")
+
+        grant = session.get(OAuthGrant, token.grant_id)
+        if grant is None or grant.revoked_at is not None:
+            raise McpOAuthError("invalid_grant", "The underlying grant was revoked.")
+
+        # Rotation: the presented pair dies as the new one is born, so a stolen
+        # refresh token is single-use and its reuse is detectable.
+        token.revoked_at = _now()
+        session.flush()
+        return self._issue(session, grant)
+
+    def _issue(self, session: Session, grant: OAuthGrant) -> dict:
+        access = _ACCESS_PREFIX + secrets.token_urlsafe(32)
+        refresh = _REFRESH_PREFIX + secrets.token_urlsafe(32)
+        now = _now()
+
+        session.add(
+            OAuthToken(
+                grant_id=grant.id,
+                org_id=grant.org_id,
+                access_token_hash=_sha256(access),
+                refresh_token_hash=_sha256(refresh),
+                expires_at=now + _ACCESS_TTL,
+                refresh_expires_at=now + _REFRESH_TTL,
+            )
+        )
+        session.flush()
+
+        return {
+            "access_token": access,
+            "refresh_token": refresh,
+            "token_type": "Bearer",
+            "expires_in": int(_ACCESS_TTL.total_seconds()),
+            "scope": grant.scope,
+        }
+
+    # ------------------------------------------------------------------
+    # Resource-server side — bearer -> the credential the tools replay
+    # ------------------------------------------------------------------
+
+    def resolve_access_token(self, session: Session, access_token: str) -> str | None:
+        """Return the org-scoped API key behind a bearer token, or ``None``.
+
+        ``None`` covers every rejection — unknown, expired, revoked grant, and
+        (deliberately) a revoked *API key*: revocation in the existing keys UI
+        has to kill the MCP session too, which is the whole point of minting a
+        real key rather than inventing a parallel credential (SPEC §5.3).
+        """
+        if not access_token or not access_token.startswith(_ACCESS_PREFIX):
+            return None
+
+        token = session.execute(
+            select(OAuthToken).where(
+                OAuthToken.access_token_hash == _sha256(access_token),
+                OAuthToken.revoked_at.is_(None),
+                OAuthToken.deleted_at.is_(None),
+            )
+        ).scalar_one_or_none()
+        if token is None:
+            return None
+
+        expires = _aware(token.expires_at)
+        if expires is not None and expires < _now():
+            return None
+
+        grant = session.get(OAuthGrant, token.grant_id)
+        if grant is None or grant.revoked_at is not None or grant.deleted_at is not None:
+            return None
+
+        api_key = session.get(ApiKey, grant.api_key_id)
+        if api_key is None or api_key.deleted_at is not None:
+            return None
+        key_expiry = _aware(api_key.expires_at)
+        if key_expiry is not None and key_expiry < _now():
+            return None
+
+        return self.decrypt_api_key(grant)
+
+    # ------------------------------------------------------------------
+    # Credential storage
+    # ------------------------------------------------------------------
+
+    def _encrypt(self, raw_key: str) -> str:
+        return EncryptionService(self._encryption_key()).encrypt({"key": raw_key})
+
+    def decrypt_api_key(self, grant: OAuthGrant) -> str:
+        return EncryptionService(self._encryption_key()).decrypt(grant.encrypted_api_key)["key"]
+
+    # ------------------------------------------------------------------
+    # Consent hand-off URL
+    # ------------------------------------------------------------------
+
+    def consent_redirect_url(self, params: dict, frontend_url: str | None = None) -> str:
+        """Where ``/oauth/authorize`` sends the browser to collect consent."""
+        base = (frontend_url or settings.frontend_url).rstrip("/")
+        return f"{base}{CONSENT_PATH}?{urlencode(params)}"
+
+    @staticmethod
+    def client_redirect_url(redirect_uri: str, code: str, state: str | None) -> str:
+        params = {"code": code}
+        if state:
+            params["state"] = state
+        joiner = "&" if "?" in redirect_uri else "?"
+        return f"{redirect_uri}{joiner}{urlencode(params)}"
+
+    @staticmethod
+    def error_json(exc: McpOAuthError) -> bytes:
+        return json.dumps({"error": exc.code, "error_description": exc.description}).encode()

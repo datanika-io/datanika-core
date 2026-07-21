@@ -8,25 +8,38 @@ from inside the worker. Without a guard, a user could point a connector at
 ``192.168.0.0/16`` service and exfiltrate it via the pipeline. ``validate_egress_host``
 resolves the hostname and rejects the request if ANY resolved IP is non-public.
 
-This is a pre-flight check only. It has TWO KNOWN RESIDUAL GAPS, deferred to P3
-(to be closed before any cloud-worker migration, and before enabling the
-OpenAPI-P2 URL-fetch feature):
+``validate_egress_host`` alone is only a **pre-flight** check on ``base_url``.
+Three things happen *after* it passes that it cannot see, so
+:func:`build_guarded_session` re-validates every request the worker actually
+sends (core#403 — the gate for MCP P3 write tools):
 
-  (c) **Redirect hops are NOT re-validated.** dlt's REST client is ``requests``
-      based and follows redirects inside ``.session.send()``; a public host that
-      responds with a 30x redirect to a private IP would bypass this guard.
-      Closing it needs a custom ``requests.Session`` / ``HTTPAdapter`` that
-      re-validates every hop's resolved address.
+  (c) **Redirect hops.** ``requests`` follows 30x inside ``Session.send``, so a
+      public host can bounce the worker to a private address.
 
-  (d) **A resource ``path`` that is itself an absolute ``http(s)://`` URL bypasses
-      ``base_url``** (dlt ``rest_client`` ``client.py:122-124`` joins/overrides the
-      base with an absolute path) and is not validated here — only ``base_url`` is
-      checked.
+  (d) **An absolute resource path overrides ``base_url``.** dlt's
+      ``RESTClient._create_request`` uses ``path_or_url`` verbatim when it parses
+      as http(s), and ``resources`` comes straight from user-supplied
+      ``dlt_config``.
+
+  (+) **Paginator ``next`` URLs**, which dlt reads out of the *response body* —
+      attacker-controlled by definition in this threat model.
+
+All three dispatch through ``requests.Session.send``, which is why the guard
+lives there rather than being enumerated vector by vector.
+
+**Still open — DNS rebinding (TOCTOU).** We resolve a hostname to validate it and
+``requests`` resolves it again to connect; a hostile resolver can answer
+differently each time. Closing that needs IP pinning at the adapter (connect to
+the validated address while preserving SNI/Host). This module is therefore
+defense-in-depth, not a boundary — say so out loud rather than let a future
+reader assume the gap is covered.
 """
 
 import ipaddress
 import socket
 from urllib.parse import urlparse
+
+import requests
 
 _ALLOWED_SCHEMES = {"http", "https"}
 
@@ -79,3 +92,41 @@ def validate_egress_host(url: str) -> None:
             )
 
     return None
+
+
+def build_guarded_session() -> requests.Session:
+    """Return dlt's retrying session, hardened to validate **every** request.
+
+    Wrapping the instance's ``send`` (rather than subclassing ``Session``) is
+    deliberate on two counts:
+
+    * ``Session.send`` is the single choke point every dispatch passes through —
+      the first request, an absolute-path override, each redirect hop, and each
+      paginator ``next``. Guarding it covers vectors nobody has enumerated yet.
+      ``resolve_redirects`` calls ``self.send``, so the instance attribute set
+      here intercepts hops as well as the initial call.
+
+    * The session must stay **dlt's own retrying session**. ``RESTClient`` builds
+      ``Client(raise_for_status=False).session`` only when it is passed nothing,
+      so handing it a bare ``requests.Session`` would quietly drop retry and
+      backoff for every rest_api connector — a reliability regression bought
+      with a security fix.
+
+    One DNS resolution is added per request. That is deliberate: caching the
+    result is exactly what would reopen the rebinding window this guard is
+    already weakest against.
+    """
+    from dlt.sources.helpers.requests.retry import Client
+
+    session = Client(raise_for_status=False).session
+    original_send = session.send
+
+    def guarded_send(request, **kwargs):
+        validate_egress_host(request.url)
+        return original_send(request, **kwargs)
+
+    session.send = guarded_send
+    # Lets callers (and tests) assert a session came from here rather than
+    # trusting that some session was passed along.
+    session._datanika_egress_guarded = True
+    return session

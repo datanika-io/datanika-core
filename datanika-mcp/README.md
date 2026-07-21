@@ -117,10 +117,11 @@ You can also configure via environment variables:
 
 ## Self-hosted
 
-Point `--url` at your instance:
+Point `--url` at your instance. Use the **backend** port (`8000`) — `3000` is the
+Reflex frontend and serves no `/api/v1`:
 
 ```bash
-datanika-mcp --url http://localhost:3000 --api-key etf_your_key
+datanika-mcp --url http://localhost:8000 --api-key etf_your_key
 ```
 
 ## Releasing (maintainers)
@@ -131,8 +132,8 @@ datanika-mcp --url http://localhost:3000 --api-key etf_your_key
 2. Tag and push — the tag version must match `pyproject.toml`:
 
    ```bash
-   git tag mcp-v0.1.0
-   git push origin mcp-v0.1.0
+   git tag mcp-v0.2.0
+   git push origin mcp-v0.2.0
    ```
 
 3. The [`Release datanika-mcp to PyPI`](../.github/workflows/release-mcp.yml) workflow builds the sdist + wheel and publishes. Verify: `uvx datanika-mcp --help` resolves from PyPI.

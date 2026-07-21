@@ -13,7 +13,7 @@ session manager's lifespan entered manually (ASGITransport does not run lifespan
 import json
 import pathlib
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock
 
 import httpx
 
@@ -89,7 +89,7 @@ class TestBearerAuth:
                 captured["base_url"] = base_url
                 captured["token"] = token
 
-            def close(self):
+            async def aclose(self):
                 captured["closed"] = True
 
         monkeypatch.setattr(routes, "DatanikaClient", _FakeClient)
@@ -149,7 +149,8 @@ class TestTransport:
 
 class TestToolRouting:
     async def test_read_tool_call_routes_through_session(self, monkeypatch):
-        fake_client = MagicMock()
+        # AsyncMock: the client is awaited from the tool body (core#388).
+        fake_client = AsyncMock()
         fake_client.list_connections.return_value = {"connections": [{"id": 1, "name": "pg"}]}
         monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: fake_client)
 
@@ -173,7 +174,7 @@ class TestToolRouting:
         assert "pg" in json.dumps(call.json())
 
     async def test_write_tool_blocked_read_only(self, monkeypatch):
-        fake_client = MagicMock()
+        fake_client = AsyncMock()
         monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: fake_client)
 
         asgi, lifespan = make_remote_transport()

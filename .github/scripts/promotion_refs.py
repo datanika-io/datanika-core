@@ -44,12 +44,35 @@ INLINE_CODE = re.compile(r"`[^`]*`")
 QUOTED_LINE = re.compile(r"^\s*>.*$", re.MULTILINE)
 
 
+# A *declaration* starts its line (optionally as a list item). Prose embeds the keyword
+# mid-sentence: "The first run harvested (closes #142) and closes #19 from its own body."
+# Stripping code spans alone was not enough -- the same false positives came back through
+# commit-message prose, which has no backticks to strip. Anchoring to line-start closes
+# the whole class instead of one door at a time.
+DECLARATION = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def strip_non_declarative(text: str) -> str:
     """Remove code blocks, inline code and block quotes before scanning for keywords."""
     text = FENCED.sub(" ", text)
     text = INLINE_CODE.sub(" ", text)
     text = QUOTED_LINE.sub(" ", text)
     return text
+
+
+def find_refs(subject: str, body: str) -> set[int]:
+    """Closing refs from a subject/title (a declaration by convention) and a body.
+
+    The subject is scanned whole -- our convention is `[Dept] Title (closes #N)`. The body
+    is scanned only for line-initial declarations, after code and quotes are stripped, so
+    a paragraph *about* closing keywords is not mistaken for one.
+    """
+    found = {int(n) for n in KEYWORD.findall(subject or "")}
+    found |= {int(n) for n in DECLARATION.findall(strip_non_declarative(body or ""))}
+    return found
 
 
 def run(*args: str) -> str:
@@ -86,8 +109,9 @@ def main() -> int:
     for entry in commits:
         sha, _, message = entry.strip().partition("\x1f")
         shas.append(sha)
-        for num in KEYWORD.findall(message):
-            refs.setdefault(int(num), set()).add(f"commit {sha[:7]}")
+        subject, _, msg_body = message.strip().partition("\n")
+        for num in find_refs(subject, msg_body):
+            refs.setdefault(num, set()).add(f"commit {sha[:7]}")
 
     # Also consult the source PRs: a rebase-merge can leave the keyword only on the PR.
     for sha in shas:
@@ -97,11 +121,8 @@ def main() -> int:
         for pull in pulls:
             if pull.get("base", {}).get("ref") == "master":
                 continue  # a previous promotion PR, not a feature PR
-            # The title is a declaration by convention ("[Dept] ... (closes #N)"); the
-            # body is prose and may merely discuss keywords, so strip it first.
-            text = f"{pull.get('title', '')}\n{strip_non_declarative(pull.get('body') or '')}"
-            for num in KEYWORD.findall(text):
-                refs.setdefault(int(num), set()).add(f"#{pull['number']}")
+            for num in find_refs(pull.get("title", ""), pull.get("body") or ""):
+                refs.setdefault(num, set()).add(f"#{pull['number']}")
 
     if not refs:
         print("  no closing references found; leaving the body unchanged")

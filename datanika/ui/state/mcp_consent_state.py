@@ -250,7 +250,14 @@ class McpConsentState(rx.State):
             return
         # ``is_submitting`` deliberately stays set: the button holds its
         # "Approving…" state until the browser leaves for the client.
-        yield rx.redirect(redirect_to, is_external=True)
+        #
+        # Not ``is_external=True`` (#417). That flag reads like "this URL is
+        # off-site" but Reflex means it literally — ``window.open(path,
+        # "_blank")`` — so the callback opened in a second tab and left this
+        # one on a disabled button forever. The default path already handles
+        # cross-origin: it compares hosts and calls ``window.location.assign``,
+        # which is what an authorization-code redirect is supposed to do.
+        yield rx.redirect(redirect_to)
 
     def deny(self):
         """Send the user back empty-handed, per RFC 6749 §4.1.2.1."""
@@ -261,9 +268,8 @@ class McpConsentState(rx.State):
         if state:
             query["state"] = state
         separator = "&" if "?" in self.verified_redirect_uri else "?"
-        return rx.redirect(
-            f"{self.verified_redirect_uri}{separator}{urlencode(query)}", is_external=True
-        )
+        # Same tab, for the same reason as ``allow`` — see #417.
+        return rx.redirect(f"{self.verified_redirect_uri}{separator}{urlencode(query)}")
 
     @staticmethod
     def _describe(response: httpx.Response) -> str:

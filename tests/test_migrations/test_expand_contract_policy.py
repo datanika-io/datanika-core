@@ -90,10 +90,13 @@ def _destructive_ops(path: pathlib.Path) -> list[str]:
             if "new_column_name" in kwargs:
                 found.append("rename_column")
             nullable = kwargs.get("nullable")
-            if nullable is not None and isinstance(nullable.value, ast.Constant):
-                if nullable.value.value is False:
-                    # Old code may still insert NULLs.
-                    found.append("set_not_null")
+            if (
+                nullable is not None
+                and isinstance(nullable.value, ast.Constant)
+                and nullable.value.value is False
+            ):
+                # Old code may still insert NULLs.
+                found.append("set_not_null")
             if "type_" in kwargs:
                 # Widening is safe and narrowing is not, and the two are not reliably
                 # distinguishable from the AST alone — so ask the author.

@@ -96,6 +96,50 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # --- Blue/green partner for zero-downtime deploys (A3, #425) ---
+  # Identical to `app` but on alternate host ports and a different container name.
+  # Behind a compose PROFILE, so an ordinary `up -d` never starts it: the second
+  # container exists only for the duration of a swap, leaving steady-state memory
+  # unchanged (~1.2 GiB per app instance on an 8 GB box that also runs staging +
+  # monitoring). scripts/deploy-bluegreen.sh brings it up, waits for its healthcheck,
+  # repoints Apache via the Define include, then stops the other colour.
+  #
+  # ⚠️ Both colours run `alembic upgrade head` at startup, so during a swap the OLD
+  # code briefly runs against the NEW schema. Migrations must therefore be
+  # expand/contract — see plans/infra/SPEC_EXPAND_CONTRACT_MIGRATIONS.md (#449).
+  app_b:
+    profiles: ["bluegreen"]
+    image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: datanika/Dockerfile
+    container_name: datanika-app-b
+    ports:
+      - "127.0.0.1:3010:3000"
+      - "127.0.0.1:8010:8000"
+    env_file:
+      - .env.docker
+    environment:
+      GRANIAN_WORKERS: "4"
+      REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - dbt_projects:/app/dbt_projects
+    command: >
+      sh -c "uv run alembic upgrade head &&
+             uv run reflex run --env prod --backend-host 0.0.0.0"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
   celery:
     # Uses the same image as `app` — single Dockerfile, different CMD.
     image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}

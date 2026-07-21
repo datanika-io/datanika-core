@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from datanika.models.api_key import ApiKey
 from datanika.models.connection import Connection, ConnectionType
+from datanika.models.mcp_oauth import OAuthGrant, OAuthToken
 from datanika.models.pipeline import Pipeline
 from datanika.models.schedule import Schedule
 from datanika.models.transformation import Transformation
@@ -494,3 +496,130 @@ def test_fixture_duckdb_path_is_platform_agnostic():
 
     assert FIXTURE_DUCKDB_PATH.startswith(tempfile.gettempdir())
     assert FIXTURE_DUCKDB_PATH.endswith("e2e_fixture.duckdb")
+
+
+class TestTeardownWithOAuthGrants:
+    """Regression: Remote-MCP P2 made api_keys undeletable by the teardown (#415).
+
+    P2 (#395) added ``oauth_grants.api_key_id -> api_keys.id`` and
+    ``oauth_tokens.grant_id -> oauth_grants.id``. ``_tear_down_fixture`` hard-
+    deletes ``api_keys`` for the fixture orgs and was never extended, so a
+    single completed OAuth consent in a fixture org **permanently wedges the
+    e2e seed** — every later ``e2e-staging`` run dies in global setup with a
+    ForeignKeyViolation until someone deletes rows by hand. Not self-healing,
+    and it surfaces as an opaque setup error rather than a test failure.
+
+    Revocation does not save us: it is a soft delete, so the row and its FK
+    references remain.
+
+    **These tests enable ``PRAGMA foreign_keys``.** SQLite ignores foreign keys
+    by default (verified: the pragma reads 0 on this engine), so without it the
+    teardown would "pass" here while still failing on Postgres — the guard
+    would assert nothing, which is worse than no guard at all.
+    """
+
+    @pytest.fixture
+    def fk_enforced(self):
+        """A session on its own engine, with foreign keys actually enforced.
+
+        The shared ``db_session`` fixture cannot be used: it holds an open
+        transaction, and SQLite silently ignores ``PRAGMA foreign_keys`` inside
+        one — the pragma read back as 0. So enforcement is set on *connect*,
+        and asserted, because a guard that quietly runs without foreign keys
+        would pass while the production path stays broken.
+        """
+        from sqlalchemy import create_engine, event
+        from sqlalchemy.orm import Session as SaSession
+
+        from datanika.models.base import Base
+
+        engine = create_engine("sqlite:///:memory:")
+
+        @event.listens_for(engine, "connect")
+        def _enable_fk(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(engine)
+        session = SaSession(bind=engine)
+        assert session.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    def _grant_for_fixture_org(self, session):
+        """Mimic a completed hosted-MCP consent inside the fixture org."""
+        org = session.execute(
+            select(Organization).where(Organization.slug == FIXTURE_ORG_SLUG)
+        ).scalar_one()
+        user = session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+        # Consent mints the key (SPEC_REMOTE_MCP §5.3), so create it here rather
+        # than relying on the seed — this is what a hosted authorization leaves
+        # behind in a fixture org.
+        key = ApiKey(org_id=org.id, user_id=user.id, name="MCP: Claude.ai", key_hash="k" * 64)
+        session.add(key)
+        session.flush()
+        grant = OAuthGrant(
+            client_id="mcp_e2e_client",
+            org_id=org.id,
+            user_id=user.id,
+            api_key_id=key.id,
+            encrypted_api_key="not-a-real-token",
+            code_hash=None,
+            code_challenge="x" * 43,
+            redirect_uri="https://claude.ai/api/mcp/auth_callback",
+            scope="connections:read",
+            resource="https://app.datanika.io/mcp",
+            code_expires_at=datetime.now(UTC),
+        )
+        session.add(grant)
+        session.flush()
+        session.add(
+            OAuthToken(
+                grant_id=grant.id,
+                org_id=org.id,
+                access_token_hash="a" * 64,
+                refresh_token_hash="r" * 64,
+                expires_at=datetime.now(UTC),
+            )
+        )
+        session.flush()
+        return grant
+
+    def test_teardown_succeeds_after_a_consent(self, fk_enforced):
+        session = fk_enforced
+        seed(session=session)
+        self._grant_for_fixture_org(session)
+
+        # Re-seeding tears the fixture down first — this is the exact path that
+        # blew up in e2e-staging global setup.
+        seed(session=session)
+
+        assert session.execute(select(OAuthToken)).scalars().first() is None
+        assert session.execute(select(OAuthGrant)).scalars().first() is None
+
+    def test_teardown_clears_grants_owned_via_the_user_branch(self, fk_enforced):
+        """api_keys are deleted twice — by org *and* by user. Both need the chain."""
+        session = fk_enforced
+        seed(session=session)
+        grant = self._grant_for_fixture_org(session)
+        # Point the grant at a key reached only through the user-id delete.
+        user = session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+        # A real org that is *not* a fixture org: the org-branch delete skips it,
+        # so the key is only reachable through the user-id delete. (It has to
+        # exist — with foreign keys on, an invented org_id fails on insert.)
+        other_org = Organization(name="Not A Fixture", slug="not-a-fixture-org")
+        session.add(other_org)
+        session.flush()
+        orphan = ApiKey(org_id=other_org.id, user_id=user.id, name="user-scoped", key_hash="h" * 64)
+        session.add(orphan)
+        session.flush()
+        grant.api_key_id = orphan.id
+        session.flush()
+
+        seed(session=session)
+
+        assert session.execute(select(OAuthGrant)).scalars().first() is None

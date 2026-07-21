@@ -49,6 +49,7 @@ from datanika.models.catalog_entry import CatalogEntry
 from datanika.models.connection import Connection, ConnectionType
 from datanika.models.dependency import Dependency, NodeType
 from datanika.models.invitation import Invitation
+from datanika.models.mcp_oauth import OAuthGrant, OAuthToken
 from datanika.models.notification import Notification
 from datanika.models.notification_channel import NotificationChannel
 from datanika.models.pipeline import DbtCommand, Pipeline
@@ -181,6 +182,31 @@ def _assert_safe_target() -> None:
                 )
 
 
+def _delete_oauth_chain(session: Session, api_key_ids) -> None:
+    """Remove OAuth grants/tokens hanging off the API keys about to be deleted.
+
+    Remote-MCP P2 (core#395) added ``oauth_grants.api_key_id -> api_keys.id`` and
+    ``oauth_tokens.grant_id -> oauth_grants.id``, which made ``api_keys``
+    undeletable once anyone completes a hosted-MCP consent in a fixture org.
+    The teardown wasn't extended, so a single authorization wedged **every**
+    later ``e2e-staging`` run in global setup with a ForeignKeyViolation, and
+    it did not self-heal (core#415). Revoking doesn't help: revocation is a soft
+    delete, so the row and its references survive.
+
+    ``api_key_ids`` is a select() rather than a list so the caller doesn't have
+    to materialise ids it is about to delete anyway.
+    """
+    grant_ids = list(
+        session.execute(select(OAuthGrant.id).where(OAuthGrant.api_key_id.in_(api_key_ids)))
+        .scalars()
+        .all()
+    )
+    if not grant_ids:
+        return
+    session.execute(OAuthToken.__table__.delete().where(OAuthToken.grant_id.in_(grant_ids)))
+    session.execute(OAuthGrant.__table__.delete().where(OAuthGrant.id.in_(grant_ids)))
+
+
 def _tear_down_fixture(session: Session) -> None:
     """Hard-delete both fixture orgs and everything scoped to them.
 
@@ -223,6 +249,13 @@ def _tear_down_fixture(session: Session) -> None:
         session.execute(Upload.__table__.delete().where(Upload.org_id.in_(org_ids)))
         session.execute(Pipeline.__table__.delete().where(Pipeline.org_id.in_(org_ids)))
         session.execute(Transformation.__table__.delete().where(Transformation.org_id.in_(org_ids)))
+        # Two different FKs reach these tables, so both axes are needed:
+        # by api_key (they block the api_keys delete just below) and by org
+        # (they are TenantMixin rows and would block the organizations delete
+        # at the end of this list).
+        _delete_oauth_chain(session, select(ApiKey.id).where(ApiKey.org_id.in_(org_ids)))
+        session.execute(OAuthToken.__table__.delete().where(OAuthToken.org_id.in_(org_ids)))
+        session.execute(OAuthGrant.__table__.delete().where(OAuthGrant.org_id.in_(org_ids)))
         session.execute(ApiKey.__table__.delete().where(ApiKey.org_id.in_(org_ids)))
         session.execute(Connection.__table__.delete().where(Connection.org_id.in_(org_ids)))
         session.execute(Membership.__table__.delete().where(Membership.org_id.in_(org_ids)))
@@ -231,6 +264,7 @@ def _tear_down_fixture(session: Session) -> None:
     users = list(session.execute(select(User).where(User.email.in_(fixture_user_emails))).scalars())
     user_ids = [u.id for u in users]
     if user_ids:
+        _delete_oauth_chain(session, select(ApiKey.id).where(ApiKey.user_id.in_(user_ids)))
         session.execute(ApiKey.__table__.delete().where(ApiKey.user_id.in_(user_ids)))
         session.execute(Membership.__table__.delete().where(Membership.user_id.in_(user_ids)))
         session.execute(User.__table__.delete().where(User.id.in_(user_ids)))

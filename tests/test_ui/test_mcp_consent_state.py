@@ -84,13 +84,18 @@ def _fake_state(params: dict | None = None, *, access_token: str = "jwt-token", 
     return state
 
 
-def _redirect_target(spec) -> str:
-    """The URL an ``rx.redirect`` EventSpec sends the browser to."""
+def _redirect_arg(spec, arg: str):
+    """One argument of an ``rx.redirect`` EventSpec, by name."""
     assert spec is not None, "expected a redirect, got None"
     for name, value in spec.args:
-        if name._js_expr == "path":
+        if name._js_expr == arg:
             return value._var_value
-    raise AssertionError("EventSpec is not a redirect")
+    raise AssertionError(f"EventSpec has no {arg!r} argument")
+
+
+def _redirect_target(spec) -> str:
+    """The URL an ``rx.redirect`` EventSpec sends the browser to."""
+    return _redirect_arg(spec, "path")
 
 
 async def _events(result) -> list:
@@ -234,6 +239,43 @@ class TestAllowPreconditions:
         assert target.startswith("/login?next=")
         resumed = parse_qs(urlparse(target).query)["next"][0]
         assert parse_qs(urlparse(resumed).query)["client_id"] == ["mcp_test"]
+
+
+class TestLeavesInTheSameTab:
+    """Both outcomes must navigate *this* tab, not open a second one (#417).
+
+    ``rx.redirect(..., is_external=True)`` reads like "this URL is off-site"
+    but Reflex means it literally — ``window.open(path, "_blank")``. The
+    callback opened in a new tab and left the consent screen sitting on a
+    disabled "Approving…" button forever. The flow still completed, which is
+    why it survived: every assertion here checked the destination URL, and the
+    destination was right. Only the tab was wrong.
+
+    Reflex's default path already handles cross-origin — it compares hosts and
+    calls ``window.location.assign`` — so the fix was to stop asking.
+    """
+
+    async def test_allow_does_not_open_a_new_tab(self, backend, registered, session_jwt):
+        state = _fake_state(_params(client_id=registered["client_id"]), access_token=session_jwt)
+
+        with patch("datanika.services.mcp_oauth_routes.settings.secret_key", _SECRET):
+            await McpConsentState.load_consent.fn(state)
+            emitted = await _events(McpConsentState.allow.fn(state))
+
+        assert _redirect_arg(emitted[0], "external") is False
+
+    def test_deny_does_not_open_a_new_tab(self):
+        state = _fake_state(verified_redirect_uri=_REDIRECT, request_params=_params())
+
+        assert _redirect_arg(McpConsentState.deny.fn(state), "external") is False
+
+    async def test_the_login_bounce_stays_in_the_tab_too(self):
+        """A second tab here would leave the request behind in the first."""
+        state = _fake_state(_params(), access_token="")
+
+        spec = await McpConsentState.load_consent.fn(state)
+
+        assert _redirect_arg(spec, "external") is False
 
 
 class TestConsentCopyMatchesTheGrant:

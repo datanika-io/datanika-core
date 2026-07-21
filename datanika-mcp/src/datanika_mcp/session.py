@@ -42,18 +42,38 @@ class DatanikaSession:
     ``allow_write`` — whether mutation tools are permitted for this session
     (the stdio ``--allow-write`` flag; the OAuth write-consent grant on
     remote).
+
+    ``transport`` — ``"stdio"`` or ``"remote"``. Carried only so the write
+    refusal can give advice the reader can act on (core#409): telling a hosted
+    caller to restart a server with a flag describes a machine they do not
+    operate. Defaults to ``"stdio"``, which is what the CLI builds.
     """
 
     client: DatanikaClient | None = None
     allow_write: bool = False
+    transport: str = "stdio"
 
     def require_write(self, action: str) -> None:
-        """Raise ``RuntimeError`` if this session may not perform ``action``."""
-        if not self.allow_write:
+        """Raise ``RuntimeError`` if this session may not perform ``action``.
+
+        The message is a product surface: agents are its primary reader, and
+        they act on it. So the two transports say different things — on stdio
+        the ``--allow-write`` flag is a real fix, while over the hosted
+        endpoint nothing the caller does client-side changes the outcome, and
+        wording that implies otherwise invites a retry loop.
+        """
+        if self.allow_write:
+            return
+
+        prefix = f"Write access required for '{action}'."
+        if self.transport == "remote":
             raise RuntimeError(
-                f"Write access required for '{action}'. "
-                "Restart the server with --allow-write to enable mutations."
+                f"{prefix} This hosted Datanika endpoint is read-only — write "
+                "tools are not enabled on it, and no client-side setting or "
+                "retry will change that. For write access, run the local "
+                "datanika-mcp server with --allow-write."
             )
+        raise RuntimeError(f"{prefix} Restart the server with --allow-write to enable mutations.")
 
 
 # Per-request binding. Unset (``None``) on stdio and in unit tests, where the

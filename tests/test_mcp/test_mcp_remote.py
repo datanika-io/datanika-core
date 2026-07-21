@@ -198,5 +198,34 @@ class TestToolRouting:
 
         assert call.status_code == 200
         # Read-only session -> the write guard fires; the tool never calls the client.
-        assert "Write access required" in json.dumps(call.json())
+        body = json.dumps(call.json())
+        assert "Write access required" in body
         fake_client.create_connection.assert_not_called()
+
+        # ...and the advice must fit the hosted transport (#409). The stdio
+        # wording ("restart the server with --allow-write") is unactionable
+        # here — there is no server the caller runs — and an agent reads it as
+        # a recoverable condition and retries. This is the string an agent
+        # actually receives, which is why it is asserted end-to-end and not
+        # just on the session object.
+        assert "Restart the server" not in body
+        assert "read-only" in body.lower()
+
+    async def test_bearer_session_is_marked_remote(self, monkeypatch):
+        """The wording above can only differ if the transport reaches the session."""
+        from datanika_mcp.session import current_session
+
+        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: AsyncMock())
+        seen = {}
+
+        async def inner(scope, receive, send):
+            seen["transport"] = current_session().transport
+            await _ok_asgi(scope, receive, send)
+
+        app = routes.BearerSessionApp(inner)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://t"
+        ) as c:
+            await c.post("/mcp", headers={"Authorization": "Bearer etf_x"})
+
+        assert seen["transport"] == "remote"

@@ -123,7 +123,15 @@ class TestPipelineHookEmission:
             }
             run_pipeline(run_id=run.id, org_id=org.id, session=db_session, encryption=encryption)
 
-        spy.assert_called_once_with(org_id=org.id, count=5)
+        # core#456: this pinned the emitter's kwargs in isolation from the
+        # handlers that had to receive them — which is how a payload no
+        # registered handler could bind stayed green for months. Assert the
+        # billing-relevant fields plus run identity; whether anyone can
+        # actually accept the payload is tests/test_hooks_contract.py's job.
+        assert spy.call_count == 1
+        kw = spy.call_args.kwargs
+        assert kw["org_id"] == org.id and kw["count"] == 5
+        assert kw["run_id"] and kw["status"] == "success"
 
     def test_only_successful_nodes_counted(self, db_session, encryption, setup_pipeline):
         org, conn, pipeline, run = setup_pipeline
@@ -149,7 +157,15 @@ class TestPipelineHookEmission:
             }
             run_pipeline(run_id=run.id, org_id=org.id, session=db_session, encryption=encryption)
 
-        spy.assert_called_once_with(org_id=org.id, count=2)
+        # core#456: this pinned the emitter's kwargs in isolation from the
+        # handlers that had to receive them — which is how a payload no
+        # registered handler could bind stayed green for months. Assert the
+        # billing-relevant fields plus run identity; whether anyone can
+        # actually accept the payload is tests/test_hooks_contract.py's job.
+        assert spy.call_count == 1
+        kw = spy.call_args.kwargs
+        assert kw["org_id"] == org.id and kw["count"] == 2
+        assert kw["run_id"] and kw["status"] == "success"
 
     def test_no_emission_when_zero_billable(self, db_session, encryption, setup_pipeline):
         org, conn, pipeline, run = setup_pipeline
@@ -249,7 +265,16 @@ class TestUploadHookEmission:
                 encryption=encryption,
             )
 
-        spy.assert_called_once_with(org_id=org.id, table_count=3, bytes_processed=None)
+        # core#456: this pinned the emitter's kwargs in isolation from the
+        # handlers that had to receive them — which is how a payload no
+        # registered handler could bind stayed green for months. Assert the
+        # billing-relevant fields plus run identity; whether anyone can
+        # actually accept the payload is tests/test_hooks_contract.py's job.
+        assert spy.call_count == 1
+        kw = spy.call_args.kwargs
+        assert kw["org_id"] == org.id and kw["table_count"] == 3
+        assert kw["bytes_processed"] is None
+        assert kw["run_id"] and kw["status"] == "success"
 
     def test_emits_fallback_count_on_catalog_failure(self, db_session, setup_upload):
         org, upload, run, encryption = setup_upload
@@ -279,7 +304,16 @@ class TestUploadHookEmission:
                 encryption=encryption,
             )
 
-        spy.assert_called_once_with(org_id=org.id, table_count=1, bytes_processed=None)
+        # core#456: this pinned the emitter's kwargs in isolation from the
+        # handlers that had to receive them — which is how a payload no
+        # registered handler could bind stayed green for months. Assert the
+        # billing-relevant fields plus run identity; whether anyone can
+        # actually accept the payload is tests/test_hooks_contract.py's job.
+        assert spy.call_count == 1
+        kw = spy.call_args.kwargs
+        assert kw["org_id"] == org.id and kw["table_count"] == 1
+        assert kw["bytes_processed"] is None
+        assert kw["run_id"] and kw["status"] == "success"
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +355,15 @@ class TestTransformationHookEmission:
             instance.run_model.return_value = {"rows_affected": 10, "logs": "ok"}
             run_transformation(run_id=run.id, org_id=org.id, session=db_session)
 
-        spy.assert_called_once_with(org_id=org.id)
+        # core#456: this pinned the emitter's kwargs in isolation from the
+        # handlers that had to receive them — which is how a payload no
+        # registered handler could bind stayed green for months. Assert the
+        # billing-relevant fields plus run identity; whether anyone can
+        # actually accept the payload is tests/test_hooks_contract.py's job.
+        assert spy.call_count == 1
+        kw = spy.call_args.kwargs
+        assert kw["org_id"] == org.id
+        assert kw["run_id"] and kw["status"] == "success"
 
 
 # ---------------------------------------------------------------------------

@@ -62,14 +62,59 @@ jobs:
           chmod 600 ~/.ssh/config
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
-      - name: Build image + recreate app/celery
+      - name: Build image + datastores
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery && docker compose up -d postgres redis app celery'
-      - name: Wait for health
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery app_b && docker compose up -d postgres redis'
+
+      # The app is deployed by SWAPPING colours, not by recreating one container.
+      #
+      # The old step ran `up -d app`, which stops the running container and starts the new
+      # one — a measured ~60s window where every request 502s (#425). deploy-bluegreen.sh
+      # instead starts the INACTIVE colour, waits for its healthcheck, repoints Apache with
+      # a graceful reload, verifies through Cloudflare, and only then stops the old colour.
+      # Measured on prod: 549 probed requests across two swaps, zero non-200s.
+      #
+      # It also fixes a subtler bug: with Apache pointed at green, `up -d app` would have
+      # rebuilt BLUE, passed its health gate, reported success, and changed nothing that
+      # serves. The script derives the target colour from Apache's active-ports include,
+      # so it always deploys the one that is not live.
+      #
+      # On any pre-swap failure it rolls back to the live colour and exits non-zero, so a
+      # failed deploy leaves production exactly as it was.
+      #
+      # ⚠️ Both colours run `alembic upgrade head`, so the previously-deployed code briefly
+      # runs against the new schema. Migrations must be expand/contract — #449.
+      - name: Deploy the app via blue/green swap
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-app 2>/dev/null); [ "$h" = healthy ] && { echo healthy; exit 0; }; sleep 5; done; echo "NOT healthy"; docker logs --tail 40 datanika-app; exit 1'
+            'cd /opt/datanika/datanika && bash scripts/deploy-bluegreen.sh --env prod'
+
+      # Celery is NOT blue/green: it serves no HTTP traffic, so a brief restart costs
+      # nothing (tasks stay queued in Redis) and running two workers on one broker would
+      # double-consume. Recreate it after the swap so it picks up the same new image.
+      - name: Recreate celery worker
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery'
+
+      # Assert the colour that is actually SERVING is healthy — not a hardcoded container
+      # name, which is what made the old check meaningless once colours alternate.
+      - name: Verify the serving colour is healthy
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'VERIFY'
+          set -e
+          BE=$(sed -nE 's/^Define DATANIKA_BE ([0-9]+).*/\1/p' /etc/apache2/conf-enabled/datanika-prod-active.conf)
+          case "$BE" in
+            8000) LIVE=datanika-app ;;
+            8010) LIVE=datanika-app-b ;;
+            *) echo "cannot determine serving colour (be=$BE)"; exit 1 ;;
+          esac
+          echo "serving colour: $LIVE (be=$BE)"
+          H=$(docker inspect --format '{{.State.Health.Status}}' "$LIVE" 2>/dev/null || echo missing)
+          [ "$H" = healthy ] || { echo "$LIVE is $H"; docker logs --tail 40 "$LIVE"; exit 1; }
+          echo "$LIVE healthy"
+          VERIFY
 
       # Monitoring config (prometheus.yml, grafana provisioning) is BIND-MOUNTED, so the
       # transfer updates it on disk but nothing re-reads it: the container spec is

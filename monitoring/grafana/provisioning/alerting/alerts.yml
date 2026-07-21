@@ -19,7 +19,12 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'time() - container_last_seen{name=~"datanika-(app|celery|postgres|redis)"} > 60'
+              # Excludes the app pair on purpose — see "App Container Down" below.
+              # Under blue/green exactly ONE of datanika-app / datanika-app-b is running,
+              # so a per-container staleness check pages for the colour we deliberately
+              # retired. Confirmed live during the first prod swap: this rule fired for
+              # `datanika-app` while prod served correctly from `datanika-app-b`.
+              expr: 'time() - container_last_seen{name=~"datanika-(celery|postgres|redis)"} > 60'
               refId: A
           - refId: C
             relativeTimeRange:
@@ -40,6 +45,49 @@ groups:
         annotations:
           summary: "Container {{ $labels.name }} is down"
           description: "Container {{ $labels.name }} has not been seen for over 60 seconds."
+
+      # --- App container (blue/green aware) ---
+      # The app runs as one of a PAIR: datanika-app (blue) or datanika-app-b (green).
+      # Exactly one is up at a time, and a swap deliberately stops the other, so a
+      # per-container check is wrong by construction — it pages for the retired colour.
+      #
+      # `max()` over the pair collapses them: the value is the most recent sighting of
+      # EITHER colour, so this fires only when *neither* is alive, which is the actual
+      # outage. During the first prod swap the old per-container rule fired for
+      # `datanika-app` while prod served perfectly from `datanika-app-b`.
+      - uid: app-container-down
+        title: App Container Down
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'time() - max(container_last_seen{name=~"datanika-app(-b)?"}) > 60'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No app container is running (neither blue nor green)"
+          description: "Neither datanika-app nor datanika-app-b has been seen for over 60 seconds. During a blue/green swap exactly one is expected to be down; this fires only when both are."
 
       # --- High CPU ---
       - uid: high-cpu
@@ -1333,6 +1381,46 @@ groups:
         annotations:
           summary: "node-exporter metrics have disappeared"
           description: "Host metrics are absent. High CPU/Memory and Disk Space Critical cannot fire while this is true."
+      # App Container Down uses `max(container_last_seen{...}) > 60`, which is a FILTERING
+      # expression: if BOTH colours are gone, cadvisor stops exporting the series
+      # entirely, the query returns nothing, and the rule sits silently at NoData -> OK.
+      # Verified: once datanika-app-b exited, its container_last_seen series disappeared
+      # rather than going stale. absent() covers precisely that hole — the same blindness
+      # this whole group exists to fix, which App Container Down would otherwise reproduce.
+      - uid: watchdog-app-pair
+        title: "Watchdog: no app container is being reported at all"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(container_last_seen{name=~"datanika-app(-b)?"})'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Neither app colour is reporting to cadvisor"
+          description: "No container_last_seen series exists for datanika-app or datanika-app-b. Either both are gone, or cadvisor stopped seeing them — App Container Down cannot fire while this is true."
+
       - uid: watchdog-cadvisor
         title: "Watchdog: cadvisor metrics missing"
         condition: C

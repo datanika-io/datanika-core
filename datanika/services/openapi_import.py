@@ -21,6 +21,24 @@ MAX_RESOURCES = 300
 # Response-object properties that commonly wrap a collection (the data-selector).
 _ENVELOPE_KEYS = ("data", "results", "items", "records", "value", "rows")
 
+# How far to descend looking for the row array. Enough for the usual one-level
+# envelope; bounded because the spec is user input.
+_MAX_SELECTOR_DEPTH = 3
+
+# Query params that mean "only rows changed since X", and the row fields that
+# carry the matching timestamp.
+_INCREMENTAL_PARAMS = (
+    "updated_since",
+    "updated_after",
+    "modified_since",
+    "since",
+    "start_date",
+    "start_time",
+    "from",
+    "after",
+)
+_CURSOR_FIELDS = ("updated_at", "modified_at", "last_modified", "updated", "created_at")
+
 
 class OpenApiImportError(ValueError):
     """Typed parse failure.
@@ -79,11 +97,17 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
     """
     spec = _load(raw)
 
+    swagger = str(spec.get("swagger", ""))
+    if swagger.startswith("2."):
+        # Normalise into the 3.x subset this parser reads (core#411) rather
+        # than teaching every function below two dialects.
+        spec = _swagger2_to_openapi3(spec)
+
     version = str(spec.get("openapi", ""))
     if not version.startswith("3."):
         raise OpenApiImportError(
-            "Only OpenAPI 3.0/3.1 is supported (Swagger 2.0 is not supported in P1)"
-            if "swagger" in spec
+            f"Swagger {swagger} is not supported — convert to OpenAPI 3.x (2.0 is supported)"
+            if swagger
             else "Missing or unsupported 'openapi' version (need 3.x)",
             "unsupported_version",
         )
@@ -187,6 +211,9 @@ def _resource_from_get(
     )
     if paginator:
         endpoint["paginator"] = paginator
+    incremental = _incremental_from_operation(spec, path_item, op, item_schema)
+    if incremental:
+        endpoint["incremental"] = incremental
     resource: dict = {
         "name": _resource_name(path),
         "endpoint": endpoint,
@@ -298,6 +325,156 @@ def _paginator_from_operation(
     return None
 
 
+def _incremental_from_operation(
+    spec: dict, path_item: dict, op: dict, item_schema: dict
+) -> dict | None:
+    """Map a "changed since" filter onto dlt's incremental config.
+
+    Missing this is not a visible failure: the extract simply pulls the whole
+    table every run, reports success, and quietly spends the customer's byte
+    quota. Both halves are required — a ``start_param`` with no row field to
+    read the high-water mark from would send an empty filter forever.
+    """
+    declared = op.get("x-incremental")
+    if isinstance(declared, dict) and declared.get("cursor_path") and declared.get("start_param"):
+        # An explicit spec declaration beats our inference.
+        return {
+            "cursor_path": str(declared["cursor_path"]),
+            "start_param": str(declared["start_param"]),
+        }
+
+    params = _query_params(spec, path_item, op)
+    start_param = None
+    for name, param in params.items():
+        schema = param.get("schema") or {}
+        is_datetime = schema.get("format") in ("date-time", "date")
+        if is_datetime and name.lower() in _INCREMENTAL_PARAMS:
+            start_param = name
+            break
+    if not start_param:
+        return None
+
+    props = (item_schema or {}).get("properties") or {}
+    cursor = _first_key(props, _CURSOR_FIELDS)
+    if not cursor:
+        return None
+    return {"cursor_path": cursor, "start_param": start_param}
+
+
+# --- Swagger 2.0 shim (P2, core#411) ---------------------------------------
+#
+# 2.0 specs were rejected outright, which is a large share of the real world.
+# The parser stays 3.x-only; this normalises 2.0 into the subset it reads,
+# rather than teaching every function two dialects.
+
+
+def _swagger2_to_openapi3(spec: dict) -> dict:
+    """Convert the parts of a Swagger 2.0 document this parser consumes."""
+    converted: dict = {
+        "openapi": "3.0.0",
+        "info": spec.get("info") or {},
+        "paths": {},
+        "components": {},
+    }
+
+    scheme = (spec.get("schemes") or ["https"])[0]
+    host = spec.get("host") or ""
+    base_path = spec.get("basePath") or ""
+    if host:
+        converted["servers"] = [{"url": f"{scheme}://{host}{base_path}"}]
+
+    if spec.get("definitions"):
+        converted["components"]["schemas"] = _rewrite_refs(spec["definitions"])
+
+    security = spec.get("securityDefinitions") or {}
+    if security:
+        converted["components"]["securitySchemes"] = {
+            name: _convert_security_scheme(scheme_def)
+            for name, scheme_def in security.items()
+            if isinstance(scheme_def, dict)
+        }
+
+    for path, item in (spec.get("paths") or {}).items():
+        if not isinstance(item, dict):
+            continue
+        converted["paths"][path] = {
+            key: (_convert_operation(value) if key in _HTTP_METHODS else _rewrite_refs(value))
+            for key, value in item.items()
+        }
+    return converted
+
+
+_HTTP_METHODS = ("get", "put", "post", "delete", "patch", "options", "head")
+
+
+def _convert_security_scheme(scheme: dict) -> dict:
+    kind = scheme.get("type")
+    if kind == "basic":
+        return {"type": "http", "scheme": "basic"}
+    return _rewrite_refs(scheme)
+
+
+def _convert_operation(op: dict) -> dict:
+    if not isinstance(op, dict):
+        return op
+    out = {k: _rewrite_refs(v) for k, v in op.items() if k not in ("parameters", "responses")}
+
+    # 2.0 puts `type`/`format` on the parameter itself; 3.0 nests them under
+    # `schema`. Normalising matters beyond tidiness: pagination and incremental
+    # detection both read `param["schema"]`, so without this a converted spec
+    # loses its declared `maximum` and its date-time hints.
+    params = []
+    for raw in op.get("parameters") or []:
+        if not isinstance(raw, dict):
+            continue
+        param = _rewrite_refs(raw)
+        if "schema" not in param and param.get("in") != "body":
+            schema = {
+                k: param.pop(k)
+                for k in ("type", "format", "maximum", "default", "enum")
+                if k in param
+            }
+            if schema:
+                param["schema"] = schema
+        params.append(param)
+    if params:
+        out["parameters"] = params
+
+    # 2.0 hangs the response schema directly off the response; 3.0 puts it
+    # under content[media-type].
+    responses = {}
+    for code, resp in (op.get("responses") or {}).items():
+        if not isinstance(resp, dict):
+            continue
+        converted = {k: _rewrite_refs(v) for k, v in resp.items() if k != "schema"}
+        if "schema" in resp:
+            converted["content"] = {"application/json": {"schema": _rewrite_refs(resp["schema"])}}
+        responses[code] = converted
+    if responses:
+        out["responses"] = responses
+    return out
+
+
+def _rewrite_refs(node):
+    """Rewrite ``#/definitions/X`` → ``#/components/schemas/X`` everywhere.
+
+    Miss this and every ``$ref`` dangles: the spec converts, the parse
+    "succeeds", and every resource comes back with zero columns.
+    """
+    if isinstance(node, dict):
+        return {
+            key: (
+                value.replace("#/definitions/", "#/components/schemas/")
+                if key == "$ref" and isinstance(value, str)
+                else _rewrite_refs(value)
+            )
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_rewrite_refs(item) for item in node]
+    return node
+
+
 def _success_response(spec: dict, op: dict) -> dict | None:
     """The resolved success response object for a GET, if any."""
     responses = op.get("responses") or {}
@@ -335,18 +512,47 @@ def _response_item_schema(spec: dict, op: dict) -> tuple[dict | None, str | None
     schema = resolve_ref(spec, schema)
     if not isinstance(schema, dict):
         return None, None
+    return _find_collection(spec, schema)
+
+
+def _find_collection(
+    spec: dict, schema: dict, prefix: str = "", depth: int = 0
+) -> tuple[dict | None, str | None]:
+    """Locate the row array in a response schema, returning (items, selector).
+
+    Walks nested objects (``{"response": {"items": [...]}}`` → ``response.items``)
+    rather than only the top level: a one-level-deep envelope is a common shape,
+    and missing it yields **zero rows from a healthy API** — no error, just an
+    empty table. Depth is bounded because a spec is user input.
+    """
+    if not isinstance(schema, dict):
+        return None, None
     if schema.get("type") == "array":
-        return resolve_ref(spec, schema.get("items") or {}), None
-    if schema.get("type") == "object" or "properties" in schema:
-        props = schema.get("properties") or {}
-        # prefer a conventional envelope key, else any array-typed property
-        ordered = [k for k in _ENVELOPE_KEYS if k in props] + [
-            k for k in props if k not in _ENVELOPE_KEYS
-        ]
-        for key in ordered:
-            sub = resolve_ref(spec, props[key])
-            if isinstance(sub, dict) and sub.get("type") == "array":
-                return resolve_ref(spec, sub.get("items") or {}), key
+        return resolve_ref(spec, schema.get("items") or {}), (prefix or None)
+    if schema.get("type") != "object" and "properties" not in schema:
+        return None, None
+
+    props = schema.get("properties") or {}
+    # Conventional envelope keys first, then anything else — a `data` array
+    # beats an unrelated `errors` array when both are present.
+    ordered = [k for k in _ENVELOPE_KEYS if k in props] + [
+        k for k in props if k not in _ENVELOPE_KEYS
+    ]
+    for key in ordered:
+        sub = resolve_ref(spec, props[key])
+        if isinstance(sub, dict) and sub.get("type") == "array":
+            path = f"{prefix}.{key}" if prefix else key
+            return resolve_ref(spec, sub.get("items") or {}), path
+
+    if depth >= _MAX_SELECTOR_DEPTH:
+        return None, None
+    for key in ordered:
+        sub = resolve_ref(spec, props[key])
+        if isinstance(sub, dict) and (sub.get("type") == "object" or "properties" in sub):
+            path = f"{prefix}.{key}" if prefix else key
+            items, selector = _find_collection(spec, sub, path, depth + 1)
+            if items is not None:
+                return items, selector
     return None, None
 
 

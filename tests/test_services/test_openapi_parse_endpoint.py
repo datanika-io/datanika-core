@@ -74,7 +74,8 @@ class TestTypedErrorCodesReachTheWire:
             ({}, "invalid_request"),
             ({"spec_inline": _SPEC, "spec_url": "https://x.test/s.json"}, "invalid_request"),
             ({"spec_inline": "not json or yaml: ["}, "invalid_spec"),
-            ({"spec_inline": '{"swagger": "2.0", "paths": {}}'}, "unsupported_version"),
+            # Swagger 2.0 is converted since core#411; 1.x is still refused.
+            ({"spec_inline": '{"swagger": "1.2", "paths": {}}'}, "unsupported_version"),
             ({"spec_url": "http://insecure.test/spec.json"}, "invalid_spec_url"),
             ({"spec_url": "https://127.0.0.1/spec.json"}, "invalid_spec_url"),
         ],

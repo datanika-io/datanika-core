@@ -16,6 +16,12 @@ The per-request ``DatanikaSession`` is bound into the contextvar the tool
 surface resolves via ``server._session()`` — see ``datanika_mcp/session.py``.
 anyio copies the request task's context into the task the session manager
 spawns to execute the tool, so the binding reaches the tool body.
+
+Because that REST call is a **loopback into this same process**, the whole tool
+path must be non-blocking: the loop serving the tool call is also the loop that
+has to answer it. ``DatanikaClient`` is therefore an ``httpx.AsyncClient`` and
+every tool is ``async def`` — a single sync hop deadlocks the endpoint until the
+client's timeout fires (core#388).
 """
 
 from __future__ import annotations
@@ -94,7 +100,7 @@ class BearerSessionApp:
             with use_session(session):
                 await self._app(scope, receive, send)
         finally:
-            client.close()
+            await client.aclose()
 
 
 # Build the transport once (import time) and export the pieces datanika.py wires:

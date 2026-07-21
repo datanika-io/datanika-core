@@ -2,10 +2,13 @@
 
 These tests verify tool registration, the write-guard, and the CLI
 argument parser without requiring a live Datanika instance.
+
+Tools are ``async def`` and await the client (core#388), so the tool-body tests
+are coroutines and the mock clients are ``AsyncMock``s.
 """
 
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -95,21 +98,21 @@ class TestWriteGuard:
         srv._allow_write = True
         srv._require_write("create_connection")  # should not raise
 
-    def test_create_connection_calls_require_write(self):
+    async def test_create_connection_calls_require_write(self):
         import datanika_mcp.server as srv
 
         srv._allow_write = False
-        srv._client = MagicMock()
+        srv._client = AsyncMock()
         with pytest.raises(RuntimeError, match="Write access required"):
-            srv.create_connection("test", "postgres", {"host": "localhost"})
+            await srv.create_connection("test", "postgres", {"host": "localhost"})
 
-    def test_trigger_pipeline_calls_require_write(self):
+    async def test_trigger_pipeline_calls_require_write(self):
         import datanika_mcp.server as srv
 
         srv._allow_write = False
-        srv._client = MagicMock()
+        srv._client = AsyncMock()
         with pytest.raises(RuntimeError, match="Write access required"):
-            srv.trigger_pipeline(1, wait=False)
+            await srv.trigger_pipeline(1, wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -118,40 +121,40 @@ class TestWriteGuard:
 
 
 class TestReadToolsCallClient:
-    def test_list_connections_calls_client(self):
+    async def test_list_connections_calls_client(self):
         import datanika_mcp.server as srv
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.list_connections.return_value = {"items": []}
         srv._client = mock_client
 
-        result = srv.list_connections()
-        mock_client.list_connections.assert_called_once()
+        result = await srv.list_connections()
+        mock_client.list_connections.assert_awaited_once()
         assert '"items"' in result
 
-    def test_get_run_logs_calls_client(self):
+    async def test_get_run_logs_calls_client(self):
         import datanika_mcp.server as srv
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.get_run_logs.return_value = {"run_id": 42, "logs": "ok"}
         srv._client = mock_client
 
-        result = srv.get_run_logs(42)
-        mock_client.get_run_logs.assert_called_once_with(42)
+        result = await srv.get_run_logs(42)
+        mock_client.get_run_logs.assert_awaited_once_with(42)
         assert "42" in result
 
-    def test_compile_transformation_calls_client(self):
+    async def test_compile_transformation_calls_client(self):
         import datanika_mcp.server as srv
 
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.compile_transformation.return_value = {
             "compiled_sql": "SELECT 1",
             "node": "model.t.stg_orders",
         }
         srv._client = mock_client
 
-        result = srv.compile_transformation(5)
-        mock_client.compile_transformation.assert_called_once_with(5)
+        result = await srv.compile_transformation(5)
+        mock_client.compile_transformation.assert_awaited_once_with(5)
         assert "SELECT 1" in result
 
 
@@ -161,43 +164,43 @@ class TestReadToolsCallClient:
 
 
 class TestWriteToolsCallClient:
-    def test_create_connection_calls_client(self):
+    async def test_create_connection_calls_client(self):
         import datanika_mcp.server as srv
 
         srv._allow_write = True
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.create_connection.return_value = {"id": 1, "name": "test"}
         srv._client = mock_client
 
-        result = srv.create_connection("test", "postgres", {"host": "localhost"})
-        mock_client.create_connection.assert_called_once_with(
+        result = await srv.create_connection("test", "postgres", {"host": "localhost"})
+        mock_client.create_connection.assert_awaited_once_with(
             "test", "postgres", {"host": "localhost"}
         )
         assert '"id": 1' in result
 
-    def test_bulk_import_calls_client(self):
+    async def test_bulk_import_calls_client(self):
         import datanika_mcp.server as srv
 
         srv._allow_write = True
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.bulk_import.return_value = {"created": {"connections": [1]}}
         srv._client = mock_client
 
         payload = {"version": 2, "connections": [{"name": "a"}]}
-        result = srv.bulk_import(payload)
-        mock_client.bulk_import.assert_called_once_with(payload)
+        result = await srv.bulk_import(payload)
+        mock_client.bulk_import.assert_awaited_once_with(payload)
         assert "connections" in result
 
-    def test_trigger_upload_with_wait(self):
+    async def test_trigger_upload_with_wait(self):
         import datanika_mcp.server as srv
 
         srv._allow_write = True
-        mock_client = MagicMock()
+        mock_client = AsyncMock()
         mock_client.trigger_upload.return_value = {"run_id": 10, "status": "success"}
         srv._client = mock_client
 
-        result = srv.trigger_upload(3, wait=True)
-        mock_client.trigger_upload.assert_called_once_with(3, True)
+        result = await srv.trigger_upload(3, wait=True)
+        mock_client.trigger_upload.assert_awaited_once_with(3, True)
         assert "success" in result
 
 

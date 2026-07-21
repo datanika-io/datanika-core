@@ -33,6 +33,24 @@ KEYWORD = re.compile(
     re.IGNORECASE,
 )
 
+# Prose that *talks about* closing keywords is not a closing reference. The first live
+# run of this script harvested `(closes #142)` and `Closes #415.` out of its own PR body,
+# where they were regex examples in backticks -- issues that were not being promoted at
+# all. This is not cosmetic: GitHub parses the raw body, so a bogus `Closes #N` on a
+# promotion PR really does close that issue on merge. Strip the constructs people use to
+# quote or illustrate, and keep only declarations.
+FENCED = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
+INLINE_CODE = re.compile(r"`[^`]*`")
+QUOTED_LINE = re.compile(r"^\s*>.*$", re.MULTILINE)
+
+
+def strip_non_declarative(text: str) -> str:
+    """Remove code blocks, inline code and block quotes before scanning for keywords."""
+    text = FENCED.sub(" ", text)
+    text = INLINE_CODE.sub(" ", text)
+    text = QUOTED_LINE.sub(" ", text)
+    return text
+
 
 def run(*args: str) -> str:
     result = subprocess.run(args, capture_output=True, text=True)
@@ -79,7 +97,9 @@ def main() -> int:
         for pull in pulls:
             if pull.get("base", {}).get("ref") == "master":
                 continue  # a previous promotion PR, not a feature PR
-            text = f"{pull.get('title', '')}\n{pull.get('body') or ''}"
+            # The title is a declaration by convention ("[Dept] ... (closes #N)"); the
+            # body is prose and may merely discuss keywords, so strip it first.
+            text = f"{pull.get('title', '')}\n{strip_non_declarative(pull.get('body') or '')}"
             for num in KEYWORD.findall(text):
                 refs.setdefault(int(num), set()).add(f"#{pull['number']}")
 
@@ -100,7 +120,11 @@ def main() -> int:
         title = (issue.get("title") or "").strip()
         via = ", ".join(sorted(refs[num]))
         if state == "closed":
-            lines.append(f"- ~~Closes #{num}~~ — {title} _(already closed)_ · via {via}")
+            # Deliberately NOT the "Closes" keyword. Strikethrough is cosmetic -- GitHub
+            # parses the raw text, so `~~Closes #N~~` still fires. An already-closed
+            # issue needs no keyword, and omitting it means a stale or false-positive
+            # reference cannot act on an issue this promotion does not own.
+            lines.append(f"- #{num} — {title} _(already closed)_ · via {via}")
         else:
             lines.append(f"- Closes #{num} — {title} · via {via}")
 

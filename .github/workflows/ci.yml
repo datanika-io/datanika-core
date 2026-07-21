@@ -160,7 +160,7 @@ jobs:
       - name: Wait for staging health
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" datanika-staging-app 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 datanika-staging-app; exit 1'
+            'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
   smoke-staging:
     needs: [deploy-staging]
@@ -247,7 +247,7 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
           DATANIKA_E2E_SEED_CMD: >-
             ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
-            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 datanika-staging-app uv run python -m datanika.scripts.e2e_seed'
+            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
 
       - name: Upload Playwright report
@@ -388,7 +388,7 @@ jobs:
             echo "Network connect failed or already connected"
 
           # Verify staging can reach Authentik by the alias
-          ssh root@$SSH_HOST "docker exec datanika-staging-app curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
+          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sf --max-time 5 http://e2e-authentik-server:9000/-/health/ready/" && \
             echo "Staging → Authentik OK" || \
             { echo "FATAL: staging can't reach e2e-authentik-server:9000"; exit 1; }
 
@@ -404,8 +404,8 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.HETZNER_HOST }}
         run: |
-          ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json datanika-staging-app:/app/e2e/.sso-fixture.json"
-          ssh root@$SSH_HOST "docker exec datanika-staging-app uv run python e2e/scripts/seed-sso-configs.py"
+          ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json \$(/opt/datanika-staging/active-app.sh):/app/e2e/.sso-fixture.json"
+          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) uv run python e2e/scripts/seed-sso-configs.py"
 
       - name: Open SSH tunnel to Authentik + hosts entry
         env:
@@ -458,7 +458,7 @@ jobs:
           curl -sI --max-time 10 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -5 || true
           echo ""
           echo "=== Staging → Authentik reachability ==="
-          ssh root@${{ secrets.HETZNER_HOST }} "docker exec datanika-staging-app curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
+          ssh root@${{ secrets.HETZNER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
 
       - name: Run SSO specs
         working-directory: e2e

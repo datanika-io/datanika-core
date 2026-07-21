@@ -25,6 +25,35 @@ logger = logging.getLogger(__name__)
 # Rejecting malformed or over-long slugs avoids an open-redirect vector.
 _TEMPLATE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 
+# Longest ?next= we will honour. An OAuth consent URL carries a PKCE challenge
+# and an opaque client state, so it is comfortably the biggest legitimate one.
+_MAX_NEXT_LEN = 2048
+
+
+def _safe_next_path(raw: str) -> str:
+    """Return ``raw`` if it is a same-site absolute path, else ``""``.
+
+    The ``?next=`` bridge exists so an interrupted flow can resume after the
+    login wall — ``/oauth/consent`` (#394) is the first caller, where dropping
+    the user on the dashboard would strand an MCP client mid-handshake.
+
+    It is also the classic open-redirect vector, so the allowed shape is
+    deliberately narrow: an absolute path on this site and nothing else.
+    ``//evil.com`` is protocol-relative, and a browser normalises the
+    backslashes in ``/\\evil.com`` to the same thing — both would send a
+    freshly-authenticated user straight off-site, which is precisely when they
+    are most likely to type a password into whatever they land on.
+    """
+    if not raw or len(raw) > _MAX_NEXT_LEN:
+        return ""
+    if not raw.startswith("/"):
+        return ""
+    if raw.startswith("//") or "\\" in raw:
+        return ""
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in raw):
+        return ""
+    return raw
+
 
 class UserInfo(BaseModel):
     id: int = 0
@@ -97,16 +126,24 @@ class AuthState(rx.State):
     def _post_auth_redirect_target(self) -> str:
         """Return the path to redirect to after a successful login/signup.
 
-        When the URL carries a well-formed ``?template=<slug>`` query
-        parameter (from a public ``datanika.io/templates/<slug>`` landing
-        page CTA), redirect to ``/connections?template=<slug>`` so
+        ``?next=<path>`` wins when present and same-site: it means the user was
+        pulled out of a flow to authenticate and has somewhere specific to go
+        back to. See ``_safe_next_path`` for why the shape is checked.
+
+        Otherwise, a well-formed ``?template=<slug>`` query parameter (from a
+        public ``datanika.io/templates/<slug>`` landing page CTA) redirects to
+        ``/connections?template=<slug>`` so
         ``ConnectionState.load_template_from_query`` prefills the form.
-        Otherwise fall back to the dashboard root.
+        Failing both, the dashboard root.
 
         Slugs are validated against ``_TEMPLATE_SLUG_RE`` to avoid an
         open-redirect vector. Unknown-but-well-formed slugs pass through;
         ConnectionState silently ignores them downstream.
         """
+        nxt = _safe_next_path(self.router.page.params.get("next", ""))
+        if nxt:
+            return nxt
+
         slug = self.router.page.params.get("template", "")
         if not slug or not _TEMPLATE_SLUG_RE.match(slug):
             return "/"
@@ -352,7 +389,21 @@ class AuthState(rx.State):
             if o.name == name:
                 return self.switch_org(o.id)
 
-    def switch_org(self, org_id: int):
+    def switch_org_by_name_in_place(self, name: str):
+        """Switch orgs without navigating away.
+
+        ``switch_org`` sends the user to the dashboard afterwards, which is
+        right for the sidebar switcher and wrong for ``/oauth/consent`` (#394):
+        the OAuth request lives entirely in that page's query string, and an
+        MCP client cannot re-send it, so leaving the page abandons the flow.
+        """
+        for o in self.user_orgs:
+            if o.name == name:
+                self._apply_org_switch(o.id)
+                return
+
+    def _apply_org_switch(self, org_id: int) -> bool:
+        """Move the session to ``org_id``. False (with ``auth_error``) if not a member."""
         self.auth_error = ""
         # Verify the user is a member of the target org
         svc = self._get_user_service()
@@ -360,7 +411,7 @@ class AuthState(rx.State):
             membership = svc.get_membership(session, org_id, self.current_user.id)
             if membership is None:
                 self.auth_error = "You are not a member of that organization"
-                return
+                return False
         auth = AuthService(settings.secret_key)
         self.access_token = auth.create_access_token(self.current_user.id, org_id)
         self.refresh_token = auth.create_refresh_token(self.current_user.id)
@@ -369,7 +420,11 @@ class AuthState(rx.State):
                 self.current_org = o
                 break
         self._load_current_role(self.current_user.id, org_id)
-        return rx.redirect("/")
+        return True
+
+    def switch_org(self, org_id: int):
+        if self._apply_org_switch(org_id):
+            return rx.redirect("/")
 
     def handle_oauth_complete(self):
         """Extract tokens from URL query params after OAuth callback redirect."""

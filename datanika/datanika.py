@@ -14,6 +14,7 @@ from datanika.ui.pages.dashboard import dashboard_page
 from datanika.ui.pages.login import login_page
 from datanika.ui.pages.model_detail import model_detail_page
 from datanika.ui.pages.models import models_page
+from datanika.ui.pages.oauth_consent import oauth_consent_page
 from datanika.ui.pages.pipeline_templates import pipeline_templates_page
 from datanika.ui.pages.pipelines import pipelines_page
 from datanika.ui.pages.runs import runs_page
@@ -30,6 +31,7 @@ from datanika.ui.state.base_state import get_sync_session
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
+from datanika.ui.state.mcp_consent_state import McpConsentState
 from datanika.ui.state.model_detail_state import ModelDetailState
 from datanika.ui.state.model_state import ModelState
 from datanika.ui.state.notification_center_state import NotificationCenterState
@@ -197,6 +199,18 @@ app.add_page(
     route="/auth/complete",
     title="Signing In... | Datanika",
     on_load=[AuthState.handle_oauth_complete],
+)
+
+# MCP OAuth consent screen (Remote-MCP P2, #394). Not behind AuthState.check_auth:
+# the request lives in this page's query string, and check_auth's bare
+# rx.redirect("/login") would drop it. load_consent runs the same gate and
+# bounces to /login?next=<this URL> so the flow resumes instead of stranding
+# the MCP client mid-handshake.
+app.add_page(
+    oauth_consent_page,
+    route="/oauth/consent",
+    title="Authorize Access | Datanika",
+    on_load=[McpConsentState.load_consent],
 )
 
 # Mount OAuth API routes on the Starlette backend

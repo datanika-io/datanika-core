@@ -16,7 +16,7 @@ Datanika combines [dlt](https://dlthub.com) (extract + load) with [dbt-core](htt
 
 ## Features
 
-🔌 **32 Connectors** — PostgreSQL, MySQL, BigQuery, Snowflake, Stripe, HubSpot, Salesforce, Kafka, S3, and more
+🔌 **36 Connectors** — PostgreSQL, MySQL, Oracle, MongoDB, BigQuery, Snowflake, Stripe, HubSpot, Salesforce, Kafka, S3, and more
 🔄 **dbt Transformations** — SQL models, tests, snapshots, packages, and source freshness built in
 📊 **Visual Pipeline Builder** — DAG editor with dependency management
 ⏰ **Scheduling** — Cron-based with APScheduler, persistent across restarts
@@ -24,7 +24,7 @@ Datanika combines [dlt](https://dlthub.com) (extract + load) with [dbt-core](htt
 🔐 **Enterprise Security** — RBAC, SSO (SAML/OIDC), audit logging, encrypted credentials
 🌍 **9 Languages** — English, German, French, Spanish, Russian, Greek, Chinese, Arabic, Serbian
 🔌 **REST API** — Full CRUD with OpenAPI/Swagger docs, rate limiting, and scoped API keys
-🤖 **AI-Agent Ready** — `/llms.txt`, agent-guide.md, 5-tier capability API, compile+preview validation, typed error codes, `?wait=true`, `Idempotency-Key`, run cancellation
+🤖 **AI-Agent Ready** — hosted + local [MCP server](#ai-agent-integration) (25 tools), `/llms.txt`, agent-guide.md, 5-tier capability API, compile+preview validation, typed error codes, `?wait=true`, `Idempotency-Key`, run cancellation
 🚀 **Pipeline Templates** — One-click starter templates (Stripe→Postgres, Postgres→BigQuery, CSV→DuckDB) with prefilled connection configs
 🔔 **Notifications** — Slack, Telegram, email, and webhook alerts on run completion, plus an in-app notification center
 📦 **Self-Hostable** — Single `docker compose up` — no Kubernetes required
@@ -83,7 +83,7 @@ tag tells you immediately whether you're affected.
 
 | | Datanika | Airbyte | Fivetran | dbt Cloud |
 |---|---|---|---|---|
-| Extract + Load | ✅ 32 connectors | ✅ 400+ | ✅ 500+ | ❌ |
+| Extract + Load | ✅ 36 connectors | ✅ 400+ | ✅ 500+ | ❌ |
 | Transformations | ✅ dbt built-in | ❌ | ❌ (add-on) | ✅ |
 | Scheduling | ✅ Cron + DAG | ✅ Basic | ✅ Basic | ✅ |
 | Pipeline DAG | ✅ Visual | ❌ | ❌ | ❌ |
@@ -110,7 +110,7 @@ tag tells you immediately whether you're affected.
 
 ## Roadmap
 
-- [x] 32 connectors (databases, SaaS APIs, files, streaming)
+- [x] 36 connectors (databases, SaaS APIs, files, streaming)
 - [x] dbt transformations, tests, snapshots, packages
 - [x] REST API v1 with OpenAPI/Swagger and typed per-connector inline schemas
 - [x] AI-agent compatibility (`/llms.txt`, agent-guide, 5-tier API, golden-path loop, `?wait=true`, `Idempotency-Key`, run cancel, MCP server)
@@ -118,23 +118,32 @@ tag tells you immediately whether you're affected.
 - [x] In-app notification center with Slack, Telegram, Email, Webhook channels
 - [x] SSO (SAML/OIDC) for Enterprise
 - [x] Usage-based billing (cloud plugin)
-- [x] 1,800+ tests across unit, security, and E2E (SQLite in-memory for speed)
-- [ ] Kubernetes Helm chart
+- [x] 2,300+ tests across unit, security, and E2E (SQLite in-memory for speed)
+- [x] Kubernetes Helm chart — in-tree at [`deploy/helm/datanika/`](deploy/helm/datanika/); installs the same image as the Compose path. Bundled Postgres/Redis are single-replica and not production-grade — point it at managed databases (see the chart README)
 - [ ] Data lineage visualization
 
 ---
 
 ## AI Agent Integration
 
-Datanika ships a first-class [MCP](https://modelcontextprotocol.io/) server so AI agents (Claude Desktop, Claude Code, etc.) can browse connections, preview data, compile transformations, and manage pipelines natively.
+Datanika speaks [MCP](https://modelcontextprotocol.io/), so AI agents (Claude Desktop, Claude Code, Cursor, …) can browse connections, preview data, compile transformations, and monitor runs natively. **25 tools — 17 read-only, 8 write.** There are two ways in.
 
-```bash
-# Install and run (read-only by default)
-uvx --from "git+https://github.com/datanika-io/datanika-core#subdirectory=datanika-mcp" \
-    datanika-mcp --url https://app.datanika.io --api-key YOUR_KEY
+**Hosted — nothing to install.** Paste this wherever your client accepts a remote MCP server and authorize in the browser:
+
+```
+https://app.datanika.io/mcp
 ```
 
-See [`datanika-mcp/README.md`](datanika-mcp/README.md) for Claude Desktop config snippets, the full tool list, and the `--allow-write` flag.
+OAuth 2.1, no API key to handle. **Writes are never available over the hosted endpoint** — there is no flag or scope that enables them.
+
+**Local — stdio.** Published on PyPI as [`datanika-mcp`](https://pypi.org/project/datanika-mcp/) and listed on the [official MCP registry](https://registry.modelcontextprotocol.io) as `io.datanika/datanika-mcp`:
+
+```bash
+# read-only by default; add --allow-write to enable the 8 write tools
+uvx datanika-mcp --url https://app.datanika.io --api-key YOUR_KEY
+```
+
+See [`datanika-mcp/README.md`](datanika-mcp/README.md) for per-client config snippets and the full tool list, or [datanika.io/docs/mcp-server](https://datanika.io/docs/mcp-server) for the hosted walkthrough.
 
 Additional agent resources:
 - [`/llms.txt`](https://app.datanika.io/llms.txt) — discovery document

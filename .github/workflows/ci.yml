@@ -144,6 +144,13 @@ jobs:
           printf '%s\n' "${{ secrets.POINTER_SSH_KEY }}" > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
           ssh-keyscan -H "${{ secrets.POINTER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          # The image build compiles lxml/xmlsec from source and emits nothing for
+          # ~5-8 min; without a keepalive the SSH session is torn down mid-build and the
+          # step dies with `client_loop: send disconnect: Broken pipe` (exit 255).
+          # Same fix already applied to deploy-pointer.yml — this job had the identical
+          # pattern and was missed when that one was fixed.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Transfer dev source + build :staging image
         run: |
@@ -237,6 +244,11 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          # Keepalive: long, output-silent remote steps otherwise drop the session with
+          # `client_loop: send disconnect: Broken pipe` (exit 255). Applied to every SSH
+          # setup in this file, not just the one that happened to fail.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Run E2E tests against staging
         working-directory: e2e
@@ -346,6 +358,11 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          # Keepalive: long, output-silent remote steps otherwise drop the session with
+          # `client_loop: send disconnect: Broken pipe` (exit 255). Applied to every SSH
+          # setup in this file, not just the one that happened to fail.
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
 
       - name: Start Authentik on staging server
         env:

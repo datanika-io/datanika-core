@@ -25,7 +25,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
+        run: |
+          # Install the LOCKED tree, not a fresh resolution: prod builds
+          # from uv.lock via `uv sync --frozen`, and CI green means nothing
+          # about prod if the two resolve differently (core#470).
+          # lxml + xmlsec build from source against ONE system libxml2,
+          # mirroring the Dockerfile: their prebuilt wheels each bundle a
+          # different libxml2 and mismatch at import. Pinning to the locked
+          # pair surfaced this — CI had only worked by resolving a different one.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            pkg-config zlib1g-dev libssl-dev
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
+          uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
+          uv pip install --system -e . --no-deps
 
       - name: Ruff check
         run: ruff check datanika tests --exclude "datanika/migrations"
@@ -47,7 +61,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
+        run: |
+          # Install the LOCKED tree, not a fresh resolution: prod builds
+          # from uv.lock via `uv sync --frozen`, and CI green means nothing
+          # about prod if the two resolve differently (core#470).
+          # lxml + xmlsec build from source against ONE system libxml2,
+          # mirroring the Dockerfile: their prebuilt wheels each bundle a
+          # different libxml2 and mismatch at import. Pinning to the locked
+          # pair surfaced this — CI had only worked by resolving a different one.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            pkg-config zlib1g-dev libssl-dev
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
+          uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
+          uv pip install --system -e . --no-deps
 
       - name: Run tests
         run: pytest tests/ --tb=short -q
@@ -86,7 +114,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
+        run: |
+          # Install the LOCKED tree, not a fresh resolution: prod builds
+          # from uv.lock via `uv sync --frozen`, and CI green means nothing
+          # about prod if the two resolve differently (core#470).
+          # lxml + xmlsec build from source against ONE system libxml2,
+          # mirroring the Dockerfile: their prebuilt wheels each bundle a
+          # different libxml2 and mismatch at import. Pinning to the locked
+          # pair surfaced this — CI had only worked by resolving a different one.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            pkg-config zlib1g-dev libssl-dev
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
+          uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
+          uv pip install --system -e . --no-deps
 
       - name: Run round-trip test
         env:
@@ -186,7 +228,21 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv pip install -e ".[dev]" --system
+        run: |
+          # Install the LOCKED tree, not a fresh resolution: prod builds
+          # from uv.lock via `uv sync --frozen`, and CI green means nothing
+          # about prod if the two resolve differently (core#470).
+          # lxml + xmlsec build from source against ONE system libxml2,
+          # mirroring the Dockerfile: their prebuilt wheels each bundle a
+          # different libxml2 and mismatch at import. Pinning to the locked
+          # pair surfaced this — CI had only worked by resolving a different one.
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            pkg-config zlib1g-dev libssl-dev
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
+          uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
+          uv pip install --system -e . --no-deps
 
       - name: Run smoke probes
         id: smoke

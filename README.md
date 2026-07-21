@@ -134,7 +134,7 @@ Datanika speaks [MCP](https://modelcontextprotocol.io/), so AI agents (Claude De
 https://app.datanika.io/mcp
 ```
 
-OAuth 2.1, no API key to handle. **Writes are never available over the hosted endpoint** — there is no flag or scope that enables them.
+OAuth 2.1, no API key to handle. **Read-only unless you grant write at consent** — a client that asks for nothing gets read-only, and a pasted API key stays read-only here even if its own scopes allow writes.
 
 **Local — stdio.** Published on PyPI as [`datanika-mcp`](https://pypi.org/project/datanika-mcp/) and listed on the [official MCP registry](https://registry.modelcontextprotocol.io) as `io.datanika/datanika-mcp`:
 

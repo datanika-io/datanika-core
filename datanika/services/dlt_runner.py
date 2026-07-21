@@ -9,7 +9,7 @@ from dlt.sources.filesystem import filesystem
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
-from datanika.services.egress_guard import validate_egress_host
+from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 
 logger = logging.getLogger(__name__)
 
@@ -379,8 +379,13 @@ class DltRunnerService:
         Shared by the generic ``rest_api`` connector and the ``openapi``
         connector (whose resources are derived from a spec).
         """
-        validate_egress_host(base_url)  # SSRF pre-flight guard (core#338)
-        client_config: dict = {"base_url": base_url}
+        # Two layers, because the pre-flight can only see base_url (core#338):
+        # it rejects an obviously-internal target before any request is built,
+        # while the guarded session re-checks every URL the worker actually
+        # sends — redirect hops, an absolute resource path that overrides
+        # base_url, and paginator `next` links (core#403).
+        validate_egress_host(base_url)
+        client_config: dict = {"base_url": base_url, "session": build_guarded_session()}
         if headers:
             client_config["headers"] = headers
         if auth:

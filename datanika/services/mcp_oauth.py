@@ -18,10 +18,18 @@ validates the OAuth request and redirects to the frontend consent page, which
 carries the user's JWT to ``POST /api/oauth/consent`` in an Authorization
 header. No token is ever put in a query string.
 
-**Scope of the grant.** P2 issues **read-only** grants — the eight ``*:read``
-scopes, which is exactly what the 17 read tools need. Write tools are P3 and
-gated on the #338 egress guard, so a write grant could not unlock anything
-today; offering one would be consent theatre.
+**Scope of the grant.** Read-only by default — silence is never consent to
+write. Since P3 (core#442) a client may *ask* for write, and the human decides
+at the consent screen; the minted key carries exactly what was granted, so
+``api_middleware`` enforces it and this layer adds no authz of its own (§5.4).
+
+**Why consent-time and not per-call.** SPEC §10 asked for a per-call
+confirmation before a remote agent spends compute or money. That assumed an
+interactive session; the hosted transport is stateless, and a two-phase token
+the agent mints and echoes to itself is friction, not a gate — the agent is the
+thing being gated. The decision that matters is a *human* one, so it belongs at
+consent, made once and knowingly. Spend is bounded by the per-key rate limit
+and byte quota, which §10 named alongside the phasing.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ import base64
 import hashlib
 import json
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode, urlparse
 
@@ -70,9 +79,32 @@ _READ_SCOPES = (
 )
 
 
+#: The write half. P3 (core#442) lets a consent grant these — the human decides
+#: once, knowingly, at the consent screen. There is deliberately **no** finer
+#: "may build but may not trigger" tier: the REST API gives ``create_upload``
+#: and ``trigger_upload`` the same ``uploads:write`` scope, so a split could
+#: only be enforced in the MCP layer while the credential still permitted both.
+#: A control the token doesn't back is theatre. Spend is bounded by the per-key
+#: rate limit and byte quota instead (SPEC §10).
+_WRITE_SCOPES = (
+    "connections:write",
+    "notifications:write",
+    "pipelines:write",
+    "runs:write",
+    "schedules:write",
+    "transformations:write",
+    "uploads:write",
+)
+
+
 def read_only_scopes() -> list[str]:
-    """The scope set a P2 consent grants."""
+    """The scope set a consent grants by default."""
     return list(_READ_SCOPES)
+
+
+def write_scopes() -> list[str]:
+    """Read **plus** write — a write-only grant would be useless."""
+    return list(_READ_SCOPES) + list(_WRITE_SCOPES)
 
 
 class McpOAuthError(Exception):
@@ -108,6 +140,20 @@ def _is_loopback(url: str) -> bool:
     return host in {"127.0.0.1", "::1", "localhost"}
 
 
+@dataclass(frozen=True)
+class ResolvedGrant:
+    """What a bearer token resolves to: a credential *and* its authority.
+
+    ``allow_write`` is a property of the **grant**, not of the transport — the
+    human decided it at the consent screen — so it travels with the key rather
+    than being inferred anywhere downstream (core#442).
+    """
+
+    api_key: str
+    allow_write: bool
+    scope: str
+
+
 class McpOAuthService:
     """Authorization-server logic. Transport-free so it is testable directly."""
 
@@ -140,7 +186,9 @@ class McpOAuthService:
         return {
             "resource": self.resource,
             "authorization_servers": [self.issuer],
-            "scopes_supported": read_only_scopes(),
+            # Advertise write too — a client cannot ask for what the AS never
+            # lists, and the grant is what actually decides (core#442).
+            "scopes_supported": write_scopes(),
             "bearer_methods_supported": ["header"],
         }
 
@@ -150,7 +198,9 @@ class McpOAuthService:
             "authorization_endpoint": f"{self._base}/oauth/authorize",
             "token_endpoint": f"{self._base}/oauth/token",
             "registration_endpoint": f"{self._base}/oauth/register",
-            "scopes_supported": read_only_scopes(),
+            # Advertise write too — a client cannot ask for what the AS never
+            # lists, and the grant is what actually decides (core#442).
+            "scopes_supported": write_scopes(),
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
             # OAuth 2.1: PKCE is mandatory and `plain` is gone.
@@ -321,15 +371,22 @@ class McpOAuthService:
         return grant, code
 
     def _narrow_scope(self, requested: str) -> list[str]:
-        """Grant at most read-only, never more than was asked for.
+        """Grant no more than was asked for, and never write by accident.
 
-        An unknown or empty request collapses to the full read-only set rather
-        than erroring: MCP clients routinely omit `scope`, and the ceiling is
-        read-only anyway.
+        An empty or unrecognised request collapses to **read-only**: MCP
+        clients routinely omit ``scope``, and silence must never be read as
+        consent to write (core#442). Write is granted only when a write scope
+        was explicitly asked for — and then read comes with it, since a
+        write-only credential is useless.
         """
         asked = [s for s in (requested or "").split() if s]
         if not asked:
             return read_only_scopes()
+
+        if any(s in _WRITE_SCOPES for s in asked):
+            granted = [s for s in write_scopes() if s in asked or s in _READ_SCOPES]
+            return granted or write_scopes()
+
         narrowed = [s for s in asked if s in _READ_SCOPES]
         return narrowed or read_only_scopes()
 
@@ -427,8 +484,13 @@ class McpOAuthService:
     # Resource-server side — bearer -> the credential the tools replay
     # ------------------------------------------------------------------
 
-    def resolve_access_token(self, session: Session, access_token: str) -> str | None:
-        """Return the org-scoped API key behind a bearer token, or ``None``.
+    def resolve_access_token(self, session: Session, access_token: str) -> ResolvedGrant | None:
+        """Return the credential **and the authority** behind a bearer token.
+
+        Returns a :class:`ResolvedGrant` rather than a bare key string because
+        the tool surface has to know how far the *human* opened it (core#442):
+        write is a property of the grant, not of the transport, so it has to
+        travel with the credential.
 
         ``None`` covers every rejection — unknown, expired, revoked grant, and
         (deliberately) a revoked *API key*: revocation in the existing keys UI
@@ -463,7 +525,12 @@ class McpOAuthService:
         if key_expiry is not None and key_expiry < _now():
             return None
 
-        return self.decrypt_api_key(grant)
+        granted = (grant.scope or "").split()
+        return ResolvedGrant(
+            api_key=self.decrypt_api_key(grant),
+            allow_write=any(s in _WRITE_SCOPES for s in granted),
+            scope=grant.scope or "",
+        )
 
     # ------------------------------------------------------------------
     # Credential storage

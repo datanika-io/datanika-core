@@ -11,7 +11,7 @@ groups:
         title: Container Down
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -46,7 +46,7 @@ groups:
         title: High CPU Usage
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -81,7 +81,7 @@ groups:
         title: High Memory Usage
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -116,7 +116,7 @@ groups:
         title: Disk Space Critical
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -153,7 +153,7 @@ groups:
         title: Backup Stale
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -188,7 +188,7 @@ groups:
         title: Container Restart Loop
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -223,7 +223,7 @@ groups:
         title: Container High Memory
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -263,7 +263,7 @@ groups:
         title: App Unhealthy
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -298,7 +298,7 @@ groups:
         title: High Celery Task Failure Rate
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -333,7 +333,7 @@ groups:
         title: Celery Queue Backlog
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -373,7 +373,7 @@ groups:
         title: Sitemap Unreachable
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -408,7 +408,7 @@ groups:
         title: Landing Site Down
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -446,7 +446,7 @@ groups:
         title: Plausible Down
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -481,7 +481,7 @@ groups:
         title: App External Health Down
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -504,12 +504,50 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 5m
+        for: 2m
         labels:
           severity: critical
         annotations:
           summary: "app.datanika.io /healthz not reachable externally"
           description: "External blackbox probe to https://app.datanika.io/healthz has failed for 5 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."
+
+      # --- App frontend (what users actually load) ---
+      # The /healthz probe only covers the backend :8000. Users hit /, served by the
+      # frontend, which boots slower — during the 2026-07-21 deploy gap / was failing
+      # while /healthz had already recovered, and nothing measured it.
+      - uid: app-frontend-down
+        title: App Frontend Down
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'probe_success{instance="https://app.datanika.io/"} == 0'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "app.datanika.io / not reachable externally"
+          description: "External blackbox probe to https://app.datanika.io/ (the page users actually load) has failed for 2 minutes. Distinct from /healthz, which only covers the backend."
 
   - orgId: 1
     name: Database Alerts
@@ -521,7 +559,7 @@ groups:
         title: PostgreSQL Slow Query Spike
         condition: C
         noDataState: OK
-        execErrState: OK
+        execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
@@ -1113,3 +1151,251 @@ groups:
       #   annotations:
       #     summary: "System-wide bytes_processed rate exceeds capacity threshold"
       #     description: "Total bytes_processed rate across all orgs is above the capacity planning ceiling. Consider scaling Hetzner worker nodes or throttling new scheduled runs. Cross-check the Volume Metrics dashboard system-wide throughput panel."
+
+  # ---------------------------------------------------------------------------
+  # Monitoring liveness (watchdogs)
+  #
+  # Every rule above is a FILTERING expression, so a healthy system produces no
+  # series — which is byte-identical to a dead exporter, a renamed job, or a
+  # removed probe target. Those rules therefore cannot detect their own blindness,
+  # and `noDataState: OK` on them is correct rather than negligent.
+  #
+  # absent() inverts that: it returns a series precisely WHEN the metric is missing.
+  # These are the rules that fire when monitoring itself stops working.
+  # ---------------------------------------------------------------------------
+  - orgId: 1
+    name: Monitoring Liveness
+    folder: Datanika
+    interval: 1m
+    rules:
+      - uid: watchdog-probe-app-healthz
+        title: "Watchdog: app /healthz probe missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(probe_success{instance="https://app.datanika.io/healthz"})'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Blackbox probe series for app.datanika.io/healthz has disappeared"
+          description: "The probe_success series for https://app.datanika.io/healthz is absent. Blackbox, the scrape job, or the target has gone away — App External Health Down cannot fire while this is true."
+      - uid: watchdog-probe-app-root
+        title: "Watchdog: app / probe missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(probe_success{instance="https://app.datanika.io/"})'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Blackbox probe series for app.datanika.io/ has disappeared"
+          description: "The probe_success series for https://app.datanika.io/ is absent. App Frontend Down cannot fire while this is true."
+      - uid: watchdog-probe-landing
+        title: "Watchdog: landing probe missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(probe_success{instance="https://datanika.io/"})'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Blackbox probe series for datanika.io has disappeared"
+          description: "The probe_success series for https://datanika.io/ is absent. Landing Site Down cannot fire while this is true."
+      - uid: watchdog-app-scrape
+        title: "Watchdog: app scrape target missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(up{job="datanika-app"})'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prometheus is no longer scraping the app"
+          description: "up{job=\"datanika-app\"} is absent — the app scrape target is gone. App Unhealthy cannot fire while this is true."
+      - uid: watchdog-node-exporter
+        title: "Watchdog: node-exporter metrics missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(node_memory_MemTotal_bytes)'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "node-exporter metrics have disappeared"
+          description: "Host metrics are absent. High CPU/Memory and Disk Space Critical cannot fire while this is true."
+      - uid: watchdog-cadvisor
+        title: "Watchdog: cadvisor metrics missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(container_last_seen)'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "cadvisor container metrics have disappeared"
+          description: "Container metrics are absent. Container Down and Container Restart Loop cannot fire while this is true."
+      - uid: watchdog-backup-metric
+        title: "Watchdog: backup timestamp metric missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(datanika_backup_last_success_timestamp_seconds)'
+              refId: A
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Backup freshness metric has disappeared"
+          description: "The backup timestamp metric is absent, so Backup Stale cannot fire — backups could stop silently."

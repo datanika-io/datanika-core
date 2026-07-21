@@ -24,7 +24,7 @@ groups:
               # so a per-container staleness check pages for the colour we deliberately
               # retired. Confirmed live during the first prod swap: this rule fired for
               # `datanika-app` while prod served correctly from `datanika-app-b`.
-              expr: 'time() - container_last_seen{name=~"datanika-(celery|postgres|redis)"} > 60'
+              expr: 'time() - max by (name) (container_last_seen{name=~"datanika-(celery|postgres|redis)"}) > 60'
               refId: A
           - refId: C
             relativeTimeRange:

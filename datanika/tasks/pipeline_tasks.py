@@ -257,9 +257,19 @@ def run_pipeline(
                 and getattr(r.node.resource_type, "value", None) in ("model", "test")
             )
             if billable_nodes > 0:
-                from datanika.hooks import emit
+                from datanika.hooks import announce
 
-                emit("run.models_completed", org_id=org_id, count=billable_nodes)
+                # See upload_tasks: announced, not emitted (core#456).
+                announce(
+                    "run.models_completed",
+                    session=session,
+                    org_id=org_id,
+                    run_id=run_id,
+                    status="success",
+                    target_type="pipeline",
+                    target_id=pipeline.id,
+                    count=billable_nodes,
+                )
 
             pipeline.status = PipelineStatus.ACTIVE
             session.flush()

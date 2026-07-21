@@ -164,12 +164,6 @@ def test_stripe_list_charges_read_scope(require_env):
 # ---------- Kafka / Redpanda ----------
 
 
-@pytest.mark.skip(
-    reason="core#342: the Redpanda Serverless cluster is unreachable (bootstrap timeout) — "
-    "almost certainly paused/decommissioned after the ~2-month idle. #333 fixed the invalid "
-    "kwarg (that fix stays, below); this is a separate infra issue. Re-quarantined so the "
-    "nightly stays green. Remove this skip once the cluster is re-provisioned (see #342)."
-)
 def test_kafka_auth_and_list_topics(require_env):
     """SASL/SCRAM-SHA-256 handshake + admin list_topics on Redpanda Serverless.
 

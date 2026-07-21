@@ -12,8 +12,15 @@ issues no token.** The Redis request-id gate is patched OPEN so the forgery is
 rejected by the SAML *validator* (the fix), not the replay defence — a future
 regression that weakened signature validation would flip this red.
 
-python3-saml/xmlsec is a main dependency, so CI + Docker always run this; the
-``importorskip`` only guards a stale local venv.
+python3-saml/xmlsec is a **main** dependency, so this imports it unconditionally
+rather than via ``pytest.importorskip``. That is deliberate: a security regression
+probe must never be able to stop guarding quietly. ``xmlsec`` is a compiled binding
+that installs cleanly and then fails to import when its system libs are missing
+(``libxmlsec1.so.1: cannot open shared object file``) — under ``importorskip`` that
+would silently skip this probe and leave CI green while the auth-bypass invariant
+went unchecked. Exactly the failure mode that nearly hid a broken Kafka probe in
+core#407. A hard import turns the same situation into a red build, which is the
+only safe direction for this particular test.
 """
 
 import base64
@@ -21,14 +28,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-import pytest
+# Import guard, deliberately mirroring the production import path: sso_routes
+# imports OneLogin_Saml2_Auth *inside* the callback (not at module scope), so
+# importing sso_routes below would NOT surface a broken xmlsec. Importing it
+# here means a runtime-broken dependency fails collection instead of quietly
+# un-guarding the auth-bypass invariant.
+from onelogin.saml2.auth import OneLogin_Saml2_Auth  # noqa: F401
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
-pytest.importorskip("onelogin.saml2")  # xmlsec/python3-saml needed to drive the real validator
-
-from starlette.applications import Starlette  # noqa: E402
-from starlette.testclient import TestClient  # noqa: E402
-
-from datanika.services.sso_routes import _sign_state, sso_routes  # noqa: E402
+from datanika.services.sso_routes import _sign_state, sso_routes
 
 
 def _self_signed_idp_cert() -> str:

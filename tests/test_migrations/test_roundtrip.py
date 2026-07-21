@@ -57,6 +57,30 @@ def _docker_available() -> bool:
         return False
 
 
+def _no_postgres(reason: str) -> None:
+    """Skip locally when Postgres is unavailable — but FAIL in CI.
+
+    The ``migration-roundtrip`` job runs *only* this file, so if these tests
+    skip, the job exits 0 and reports green having verified nothing — while
+    the thing it guards (a downgrade that only matters at 2 AM during a prod
+    rollback) goes unchecked. CI always has both Docker and
+    ``DATABASE_URL_SYNC_TEST``, so reaching here in CI means the workflow
+    broke, and that must be loud.
+
+    Locally, skipping stays correct: devs without Docker shouldn't be blocked.
+    Same reasoning as the connector smoke suite's strict mode (core#407).
+    """
+    if os.environ.get("CI"):
+        pytest.fail(
+            f"{reason}\n\n"
+            "This is a hard failure because CI is expected to provide Postgres "
+            "(DATABASE_URL_SYNC_TEST, or Docker for testcontainers). Skipping here "
+            "would let the migration-roundtrip job pass without testing a single "
+            "migration. Check the job's env block and service container."
+        )
+    pytest.skip(reason)
+
+
 @pytest.fixture(scope="session")
 def roundtrip_db_url():
     """Postgres URL for round-trip tests.
@@ -64,7 +88,7 @@ def roundtrip_db_url():
     Priority:
     1. ``DATABASE_URL_SYNC_TEST`` env var (CI, or manual override)
     2. testcontainers[postgres] auto-provisioned container (local with Docker)
-    3. skip the test (local without Docker)
+    3. skip the test locally — but **fail** in CI (see ``_no_postgres``)
 
     Must be a generator (yield-based) on every path — pytest treats a
     function with any `yield` as a generator, and hitting `return` on
@@ -77,15 +101,15 @@ def roundtrip_db_url():
         return
 
     if not _docker_available():
-        pytest.skip(
+        _no_postgres(
             "Round-trip test requires Postgres. Set DATABASE_URL_SYNC_TEST or run "
-            "with Docker Desktop running. CI always has Docker + the env var set."
+            "with Docker Desktop running."
         )
 
     try:
         from testcontainers.postgres import PostgresContainer
     except ImportError:
-        pytest.skip(
+        _no_postgres(
             "testcontainers not installed. Install with: "
             "`uv pip install 'testcontainers[postgres]'` or run CI instead."
         )

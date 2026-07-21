@@ -11,7 +11,12 @@ import re
 import tomllib
 from pathlib import Path
 
-import pytest
+# Imported unconditionally, not via ``pytest.importorskip``. These tests are the
+# only guard against smithery.yaml drifting from the shipped package, so a skip
+# here means the manifest ships unchecked while CI stays green. PyYAML was an
+# undeclared transitive dependency until this was noticed — it is now an explicit
+# dev dependency so the guard cannot quietly stop running (core#407 sweep).
+import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MCP_DIR = _REPO_ROOT / "datanika-mcp"
@@ -104,7 +109,6 @@ class TestPypiOwnershipMarker:
 
 class TestSmitheryYaml:
     def test_stdio_startcommand_with_api_key_required(self):
-        yaml = pytest.importorskip("yaml")
         data = yaml.safe_load((_MCP_DIR / "smithery.yaml").read_text(encoding="utf-8"))
         start = data["startCommand"]
         assert start["type"] == "stdio"
@@ -113,7 +117,6 @@ class TestSmitheryYaml:
         assert set(schema["properties"]) == {"url", "apiKey", "allowWrite"}
 
     def test_command_invokes_the_package(self):
-        yaml = pytest.importorskip("yaml")
         data = yaml.safe_load((_MCP_DIR / "smithery.yaml").read_text(encoding="utf-8"))
         cmd = data["startCommand"]["commandFunction"]
         assert "datanika-mcp" in cmd

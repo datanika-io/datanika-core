@@ -71,6 +71,10 @@ dev = [
     "ruff>=0.9",
     "httpx>=0.28",
     "mcp>=1.0.0",
+    # Used by tests/test_mcp/test_registry_manifests.py to parse smithery.yaml.
+    # Previously relied on as an undeclared transitive dep, which let those
+    # manifest-drift guards skip themselves if it ever went missing (core#407 sweep).
+    "pyyaml>=6.0",
     # Round-trip migration test auto-provisions Postgres via Docker.
     # Skipped gracefully if Docker is unavailable (see tests/test_migrations/test_roundtrip.py).
     "testcontainers[postgres]>=4.0",

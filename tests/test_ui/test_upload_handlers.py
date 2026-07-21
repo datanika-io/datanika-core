@@ -5,7 +5,7 @@ handler up by scanning its type hints for a parameter annotated as a *generic
 alias* whose first argument is ``UploadFile`` (``reflex/app.py::upload()``)::
 
     for k, v in get_type_hints(func).items():
-        if types.is_generic_alias(v) and types._issubclass(get_args(v)[0], UploadFile):
+        if is_generic_alias(v) and issubclass(get_args(v)[0], UploadFile):
             handler_upload_param = (k, v)
             break
     if not handler_upload_param:
@@ -28,12 +28,11 @@ import ast
 import functools
 import importlib
 from pathlib import Path
-from typing import get_args, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 import pytest
 from reflex.components.core.upload import UploadFile
 from reflex.event import EventHandler
-from reflex.utils import types
 
 import datanika.ui
 
@@ -97,14 +96,30 @@ UPLOAD_SITES = _discover_upload_sites()
 
 
 def _reflex_upload_param(func) -> tuple[str, object] | None:
-    """Reflex's own scan, verbatim, so this tracks the rule and not our copy."""
+    """Reflex's rule, re-expressed with stdlib typing rather than its internals.
+
+    The first version of this called ``reflex.utils.types.is_generic_alias`` and
+    ``types._issubclass`` so it would track the rule verbatim. That is the more
+    faithful test and it does not survive an upgrade: those are private, and CI
+    resolves a Reflex where ``_issubclass`` has become ``safe_issubclass`` — so
+    the guard failed on the *correct* handlers for a reason that had nothing to
+    do with the contract it exists to check.
+
+    ``get_origin`` / ``get_args`` express the same condition ("a generic alias
+    whose first argument is an ``UploadFile`` subclass") out of the standard
+    library, which is stable. ``UploadFile`` is still imported from Reflex —
+    that part is public, and it is the thing being matched.
+    """
     if isinstance(func, EventHandler):
         func = func.fn
     if isinstance(func, functools.partial):
         func = func.func
 
     for name, hint in get_type_hints(func).items():
-        if types.is_generic_alias(hint) and types._issubclass(get_args(hint)[0], UploadFile):
+        args = get_args(hint)
+        if get_origin(hint) is None or not args:
+            continue
+        if isinstance(args[0], type) and issubclass(args[0], UploadFile):
             return name, hint
     return None
 

@@ -1,0 +1,50 @@
+name: Release
+
+# Publishes a GitHub Release when a `v*` tag is pushed.
+# Policy: plans/infra/SPEC_RELEASE_VERSIONING.md (CEO-decided 2026-07-21).
+#
+#   - Scheme is 0.x SemVer; pre-1.0 breaking changes bump the MINOR.
+#   - A release is just a LABEL on a `master` SHA that already deployed green —
+#     it is not a gate, a freeze, or a branch. It must cost ~nothing.
+#   - Notes are auto-generated from merged PR titles; our "[Dept] … (closes #N)"
+#     convention makes that nearly free.
+#
+# ⚠️ Tag patterns are deliberately DISJOINT from release-mcp.yml, which triggers on
+# `mcp-v*` and publishes the datanika-mcp sub-package to PyPI. Glob patterns anchor
+# at the start, so `v*` does NOT match `mcp-v0.1.0` — the two workflows never collide.
+# Never tag the platform with `mcp-v*`.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so generated notes can diff against the previous tag.
+          fetch-depth: 0
+
+      - name: Publish GitHub Release (notes generated from merged PRs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "Publishing release for tag: ${TAG}"
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TAG}" \
+            --generate-notes \
+            --verify-tag
+          echo "Release published: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"

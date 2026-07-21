@@ -56,6 +56,29 @@ uv run reflex run                     # starts on :3000 + :8000
 
 ---
 
+## Releases & versioning
+
+Datanika uses **`0.x` SemVer** with tagged releases (`v0.1.0`, …). While pre-1.0, breaking
+changes bump the **minor**. There is no `1.0` yet — that will mean a committed, stable
+public API contract.
+
+**Self-hosting? Pin a release instead of tracking `master`.** `master` is continuously
+deployed to our hosted app and moves several times a day.
+
+```bash
+git checkout v0.1.0                                    # source
+docker pull ghcr.io/datanika-io/datanika-core:v0.1.0   # image (:latest follows master)
+```
+
+Every version's notes are on the [Releases page](https://github.com/datanika-io/datanika-core/releases).
+Security advisories cite the first patched release (e.g. `Patched: v0.1.0`), so a pinned
+tag tells you immediately whether you're affected.
+
+> The `datanika-mcp` sub-package is versioned and released independently (`mcp-v*` tags,
+> published to PyPI).
+
+---
+
 ## Why Datanika?
 
 | | Datanika | Airbyte | Fivetran | dbt Cloud |

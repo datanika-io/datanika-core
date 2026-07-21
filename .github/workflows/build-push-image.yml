@@ -11,10 +11,17 @@ name: Build & push image
 # Tagging:
 #   push to dev    → :dev and :dev-<short-sha>
 #   push to master → :latest and :<short-sha>
+#   push v* tag    → :v0.x.y and :<short-sha>   (pinnable release image)
+#
+# The v* tag build exists so self-hosters can pin a release instead of tracking
+# :latest — see plans/infra/SPEC_RELEASE_VERSIONING.md. `v*` is disjoint from
+# release-mcp.yml's `mcp-v*` trigger (globs anchor at the start), so tagging the
+# platform never publishes the MCP sub-package.
 
 on:
   push:
     branches: [dev, master]
+    tags: ["v*"]
   workflow_dispatch:
   # No paths filter: deploy jobs wait on the build-push check completing
   # on the exact commit SHA, so every push to dev/master MUST produce
@@ -42,7 +49,10 @@ jobs:
         with:
           repository: datanika-io/datanika-cloud
           token: ${{ secrets.CLOUD_REPO_TOKEN }}
-          ref: ${{ github.ref_name }}
+          # Branch builds track the same-named cloud branch. A v* release tag does
+          # NOT exist in the cloud repo, so release images build against cloud master
+          # (which is what master-built prod images already use).
+          ref: ${{ github.ref_type == 'tag' && 'master' || github.ref_name }}
           path: cloud
 
       # Dockerfile assumes monorepo layout with datanika/ + datanika-cloud/
@@ -66,10 +76,15 @@ jobs:
         id: tags
         run: |
           SHORT_SHA="${GITHUB_SHA:0:7}"
-          if [ "${GITHUB_REF_NAME}" = "master" ]; then
-            TAGS="ghcr.io/datanika-io/datanika-core:latest,ghcr.io/datanika-io/datanika-core:${SHORT_SHA}"
+          REPO="ghcr.io/datanika-io/datanika-core"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # Release tag -> pinnable version image, e.g. :v0.1.0
+            # (:latest already points at this same SHA from the master build)
+            TAGS="${REPO}:${GITHUB_REF_NAME},${REPO}:${SHORT_SHA}"
+          elif [ "${GITHUB_REF_NAME}" = "master" ]; then
+            TAGS="${REPO}:latest,${REPO}:${SHORT_SHA}"
           else
-            TAGS="ghcr.io/datanika-io/datanika-core:dev,ghcr.io/datanika-io/datanika-core:dev-${SHORT_SHA}"
+            TAGS="${REPO}:dev,${REPO}:dev-${SHORT_SHA}"
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Computed tags: ${TAGS}"

@@ -24,7 +24,6 @@ wrong and an empirical check cannot.
 
 import http.server
 import threading
-from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -70,19 +69,26 @@ def redirect_server():
 
 class TestEveryHopReachesTheGuard:
     def test_redirect_target_is_validated_before_it_is_fetched(self, redirect_server, monkeypatch):
-        """The whole point of (c): the *second* hop must be checked too."""
+        """The whole point of (c): the *second* hop must be checked too.
+
+        Since core#405 the authoritative check is the resolve-and-pin in the
+        adapter, so that is what's recorded here — one resolution per hop, and
+        no second lookup anywhere (a second one would be the rebinding window
+        the pinning exists to close).
+        """
         seen: list[str] = []
-        monkeypatch.setattr(
-            "datanika.services.egress_guard.validate_egress_host",
-            lambda url: seen.append(url),
-        )
+
+        def _record(hostname):
+            seen.append(hostname)
+            return "127.0.0.1"
+
+        monkeypatch.setattr("datanika.services.egress_guard.resolve_public_ip", _record)
 
         session = build_guarded_session()
         resp = session.get(f"{redirect_server}/hop")
 
         assert resp.status_code == 200
-        paths = [urlparse(u).path for u in seen]
-        assert paths == ["/hop", "/final"], f"redirect hop escaped the guard: {seen}"
+        assert seen == ["127.0.0.1", "127.0.0.1"], f"redirect hop escaped the guard: {seen}"
 
     def test_a_redirect_to_a_private_address_is_blocked(self, redirect_server):
         """With the real validator, the 127.0.0.1 hop must raise, not fetch."""
@@ -98,7 +104,9 @@ class TestEveryHopReachesTheGuard:
 
     def test_public_request_passes_through(self, monkeypatch, redirect_server):
         """A public host must still work — the guard is a filter, not a wall."""
-        monkeypatch.setattr("datanika.services.egress_guard.validate_egress_host", lambda url: None)
+        monkeypatch.setattr(
+            "datanika.services.egress_guard.resolve_public_ip", lambda hostname: "127.0.0.1"
+        )
         session = build_guarded_session()
         assert session.get(f"{redirect_server}/final").json() == {"ok": True}
 

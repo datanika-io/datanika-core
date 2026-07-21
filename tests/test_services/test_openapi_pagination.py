@@ -190,6 +190,11 @@ class TestPaginationActuallyPagesThroughData:
         # The egress guard blocks loopback by design; it has its own tests.
         monkeypatch.setattr(dlt_runner, "validate_egress_host", lambda url: None)
         monkeypatch.setattr("datanika.services.egress_guard.validate_egress_host", lambda url: None)
+        # core#405: the session pins the address it resolves, so loopback has
+        # to come back from that call too.
+        monkeypatch.setattr(
+            "datanika.services.egress_guard.resolve_public_ip", lambda hostname: "127.0.0.1"
+        )
 
         parsed = parse_openapi_spec(
             _spec(params=[_query("offset"), _query("limit", type="integer", maximum=1)]),
@@ -216,6 +221,11 @@ class TestPaginationActuallyPagesThroughData:
 
         monkeypatch.setattr(dlt_runner, "validate_egress_host", lambda url: None)
         monkeypatch.setattr("datanika.services.egress_guard.validate_egress_host", lambda url: None)
+        # core#405: the session pins the address it resolves, so loopback has
+        # to come back from that call too.
+        monkeypatch.setattr(
+            "datanika.services.egress_guard.resolve_public_ip", lambda hostname: "127.0.0.1"
+        )
 
         parsed = parse_openapi_spec(_spec(), base_url_override=paged_api)
         assert parsed.resources[0]["endpoint"].get("paginator") is None

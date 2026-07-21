@@ -68,7 +68,9 @@ def elt_nudge_card() -> rx.Component:
                 ),
                 rx.link(
                     _t["nudge.learn_more"],
-                    href="/pricing/",
+                    # Absolute for the same reason as cost_estimator_card (#418):
+                    # /pricing/ is a landing-site page, not an app route.
+                    href="https://datanika.io/pricing/",
                     size="1",
                     color="var(--violet-11)",
                     is_external=True,

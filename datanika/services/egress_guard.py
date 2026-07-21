@@ -27,12 +27,13 @@ sends (core#403 — the gate for MCP P3 write tools):
 All three dispatch through ``requests.Session.send``, which is why the guard
 lives there rather than being enumerated vector by vector.
 
-**Still open — DNS rebinding (TOCTOU).** We resolve a hostname to validate it and
-``requests`` resolves it again to connect; a hostile resolver can answer
-differently each time. Closing that needs IP pinning at the adapter (connect to
-the validated address while preserving SNI/Host). This module is therefore
-defense-in-depth, not a boundary — say so out loud rather than let a future
-reader assume the gap is covered.
+**DNS rebinding (TOCTOU) — closed by pinning (core#405).** Validating a
+hostname and then handing that hostname to ``requests`` means resolving twice,
+and a hostile resolver can answer differently the second time. The guarded
+session therefore resolves **once**, validates the answer, and connects to that
+address, while keeping the ``Host`` header and TLS SNI as the hostname so
+certificates still validate and virtual hosts still route — see
+:class:`_PinnedIPAdapter`.
 """
 
 import ipaddress
@@ -57,13 +58,7 @@ def validate_egress_host(url: str) -> None:
     multicast, reserved, or unspecified. Returns ``None`` when every resolved
     IP is public.
     """
-    parsed = urlparse(url)
-    if parsed.scheme not in _ALLOWED_SCHEMES:
-        raise EgressValidationError(f"URL scheme must be http or https, got {parsed.scheme!r}")
-
-    hostname = parsed.hostname
-    if not hostname:
-        raise EgressValidationError(f"URL has no host: {url!r}")
+    hostname = _check_scheme_and_host(url)
 
     try:
         infos = socket.getaddrinfo(hostname, None)
@@ -94,6 +89,112 @@ def validate_egress_host(url: str) -> None:
     return None
 
 
+def _check_scheme_and_host(url: str) -> str:
+    """Cheap structural check — no DNS. Returns the hostname."""
+    parsed = urlparse(url)
+    if parsed.scheme not in _ALLOWED_SCHEMES:
+        raise EgressValidationError(f"URL scheme must be http or https, got {parsed.scheme!r}")
+    if not parsed.hostname:
+        raise EgressValidationError(f"URL has no host: {url!r}")
+    return parsed.hostname
+
+
+def resolve_public_ip(hostname: str) -> str:
+    """Resolve *hostname* once and return an address, or refuse.
+
+    Same rules as :func:`validate_egress_host`, but it hands back the address
+    it approved so the caller can connect to **that** rather than resolving
+    again. Every returned answer is checked — a hostile resolver that mixes one
+    public address with an internal one is refused outright rather than raced.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise EgressValidationError(f"could not resolve host {hostname!r}: {exc}") from exc
+
+    chosen = None
+    for info in infos:
+        ip_str = info[4][0]
+        ip = ipaddress.ip_address(ip_str)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+            ip = ip.ipv4_mapped
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            raise EgressValidationError(
+                f"host {hostname!r} resolves to non-public address {ip_str} — refusing egress"
+            )
+        if chosen is None:
+            chosen = ip_str
+
+    if chosen is None:
+        raise EgressValidationError(f"host {hostname!r} resolved to no addresses")
+    return chosen
+
+
+class _PinnedIPAdapter(requests.adapters.HTTPAdapter):
+    """Connect to the address we validated, not to whatever DNS says next.
+
+    The rebinding gap is that validating a *name* and then connecting to that
+    same *name* is two resolutions with a window in between. This adapter
+    resolves once via :func:`resolve_public_ip` and builds the connection pool
+    against that address.
+
+    Keeping TLS honest is the delicate half, and is why the pool is created
+    with ``server_hostname`` set to the real hostname: urllib3 would otherwise
+    offer the **IP** as SNI and match the certificate against it, so a careless
+    implementation either serves the wrong virtual host or "fixes" itself by
+    disabling hostname verification. Certificate matching still happens against
+    the hostname (``assert_hostname`` is left alone so urllib3 falls back to
+    ``server_hostname``), and the ``Host`` header is preserved so virtual-hosted
+    APIs still route. ``tests/test_security/test_egress_ip_pinning.py`` asserts
+    both against a real TLS server rather than trusting this paragraph.
+    """
+
+    def send(self, request, **kwargs):
+        parsed = urlparse(request.url)
+        if parsed.scheme in _ALLOWED_SCHEMES and parsed.hostname:
+            # Host header must survive the swap or virtual hosts break.
+            request.headers.setdefault("Host", parsed.netloc)
+        return super().send(request, **kwargs)
+
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+        pool = self._pinned_pool(request)
+        if pool is not None:
+            return pool
+        return super().get_connection_with_tls_context(request, verify, proxies, cert)
+
+    def get_connection(self, url, proxies=None):  # pragma: no cover - older requests
+        parsed = urlparse(url)
+        pool = self._pool_for(parsed)
+        if pool is not None:
+            return pool
+        return super().get_connection(url, proxies)
+
+    def _pinned_pool(self, request):
+        return self._pool_for(urlparse(request.url))
+
+    def _pool_for(self, parsed):
+        if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.hostname:
+            return None
+        hostname = parsed.hostname
+        ip = resolve_public_ip(hostname)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        pool_kwargs = {}
+        if parsed.scheme == "https":
+            # SNI + certificate identity stay the hostname; only the socket
+            # goes to the pinned address.
+            pool_kwargs["server_hostname"] = hostname
+        return self.poolmanager.connection_from_host(
+            ip, port=port, scheme=parsed.scheme, pool_kwargs=pool_kwargs
+        )
+
+
 def build_guarded_session() -> requests.Session:
     """Return dlt's retrying session, hardened to validate **every** request.
 
@@ -122,10 +223,23 @@ def build_guarded_session() -> requests.Session:
     original_send = session.send
 
     def guarded_send(request, **kwargs):
-        validate_egress_host(request.url)
+        # Scheme/host only — deliberately no DNS here. The adapter below does
+        # the single authoritative resolve-validate-pin; resolving in both
+        # places would mean two lookups per request with a rebinding window
+        # *between our own two checks*, which is the very thing core#405 closes.
+        _check_scheme_and_host(request.url)
         return original_send(request, **kwargs)
 
     session.send = guarded_send
+
+    # Pin the validated address for every scheme this guard allows (core#405).
+    # Mounted after the send-wrapper so both layers apply: the wrapper decides
+    # whether a URL may be fetched at all, the adapter decides where the socket
+    # actually goes.
+    pinned = _PinnedIPAdapter()
+    session.mount("http://", pinned)
+    session.mount("https://", pinned)
+
     # Lets callers (and tests) assert a session came from here rather than
     # trusting that some session was passed along.
     session._datanika_egress_guarded = True

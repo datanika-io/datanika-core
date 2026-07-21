@@ -76,6 +76,11 @@ def allow_loopback(monkeypatch):
     """
     monkeypatch.setattr("datanika.services.openapi_fetch.validate_egress_host", lambda url: None)
     monkeypatch.setattr("datanika.services.egress_guard.validate_egress_host", lambda url: None)
+    # Since core#405 the guarded session pins the address it resolves, so the
+    # loopback test server has to come back from *that* call too.
+    monkeypatch.setattr(
+        "datanika.services.egress_guard.resolve_public_ip", lambda hostname: "127.0.0.1"
+    )
     # stdlib http.server speaks plaintext; the https rule is asserted separately
     # against the real code path in TestSchemeIsHttpsOnly.
     monkeypatch.setattr("datanika.services.openapi_fetch.REQUIRED_SCHEME", "http")

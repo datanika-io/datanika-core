@@ -552,7 +552,7 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 2m
+        for: 1m
         labels:
           severity: critical
         annotations:
@@ -590,7 +590,7 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 2m
+        for: 1m
         labels:
           severity: critical
         annotations:

@@ -107,6 +107,37 @@ def write_scopes() -> list[str]:
     return list(_READ_SCOPES) + list(_WRITE_SCOPES)
 
 
+def narrow_scope(requested: str) -> list[str]:
+    """The scopes a consent will actually grant for ``requested``.
+
+    Module-level and public because the consent **screen** has to describe this
+    before the user approves it (core#450). Two implementations of this rule —
+    one minting the grant, one describing it — is exactly how the screen came
+    to promise read-only while handing over write.
+
+    An empty or unrecognised request collapses to **read-only**: MCP clients
+    routinely omit ``scope``, and silence must never be read as consent to
+    write (core#442). Write is granted only when a write scope was explicitly
+    asked for — and then read comes with it, since a write-only credential is
+    useless.
+    """
+    asked = [s for s in (requested or "").split() if s]
+    if not asked:
+        return read_only_scopes()
+
+    if any(s in _WRITE_SCOPES for s in asked):
+        granted = [s for s in write_scopes() if s in asked or s in _READ_SCOPES]
+        return granted or write_scopes()
+
+    narrowed = [s for s in asked if s in _READ_SCOPES]
+    return narrowed or read_only_scopes()
+
+
+def grants_write(requested: str) -> bool:
+    """Whether ``requested`` will mint a grant that can change anything."""
+    return any(s in _WRITE_SCOPES for s in narrow_scope(requested))
+
+
 class McpOAuthError(Exception):
     """An OAuth error, carrying the RFC 6749 error code as its message.
 
@@ -373,22 +404,10 @@ class McpOAuthService:
     def _narrow_scope(self, requested: str) -> list[str]:
         """Grant no more than was asked for, and never write by accident.
 
-        An empty or unrecognised request collapses to **read-only**: MCP
-        clients routinely omit ``scope``, and silence must never be read as
-        consent to write (core#442). Write is granted only when a write scope
-        was explicitly asked for — and then read comes with it, since a
-        write-only credential is useless.
+        Delegates to the module-level :func:`narrow_scope` so the consent
+        screen can describe the same grant this mints, from the same code.
         """
-        asked = [s for s in (requested or "").split() if s]
-        if not asked:
-            return read_only_scopes()
-
-        if any(s in _WRITE_SCOPES for s in asked):
-            granted = [s for s in write_scopes() if s in asked or s in _READ_SCOPES]
-            return granted or write_scopes()
-
-        narrowed = [s for s in asked if s in _READ_SCOPES]
-        return narrowed or read_only_scopes()
+        return narrow_scope(requested)
 
     # ------------------------------------------------------------------
     # Token endpoint

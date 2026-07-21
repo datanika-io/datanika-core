@@ -277,19 +277,22 @@ def create_connection(request, api_key, session):
 
 @api_endpoint(required_scope="connections:read")
 def parse_openapi(request, api_key, session):
-    """Parse an OpenAPI 3.x spec (paste-mode) into a preview of the derived
-    connector — base_url, auth schemes, and readable resources with columns.
+    """Parse an OpenAPI 3.x spec into a preview of the derived connector —
+    base_url, auth schemes, and readable resources with columns.
+
+    Takes the document inline (``spec_inline``) or fetches it from
+    ``spec_url`` (P2, core#410) behind the SPEC §7 guards: https only, public
+    host, every redirect hop re-checked, 10s timeout, 5 MB streamed cap.
 
     Stateless: creates no connection, so an agent/UI can preview before
-    committing. See SPEC_OPENAPI_CONNECTOR.md (#325).
+    committing. See SPEC_OPENAPI_CONNECTOR.md (#325, #410).
     """
+    from datanika.services.openapi_fetch import resolve_spec
     from datanika.services.openapi_import import OpenApiImportError, parse_openapi_spec
 
     data = _body_sync(request)
-    spec = data.get("spec_inline")
-    if not spec or not isinstance(spec, str):
-        return _error(400, "spec_inline (the OpenAPI 3.x document as a string) is required")
     try:
+        spec = resolve_spec(data.get("spec_inline"), data.get("spec_url"))
         parsed = parse_openapi_spec(spec, base_url_override=data.get("base_url"))
     except OpenApiImportError as exc:
         return JSONResponse({"error": str(exc), "code": exc.code}, status_code=400)

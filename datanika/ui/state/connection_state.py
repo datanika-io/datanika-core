@@ -27,6 +27,12 @@ SAAS_SOURCE_TYPES = {
     "jira",
     "slack",
     "google_analytics",
+    # google_ads stays *classified* as SaaS even though it is withdrawn
+    # (core#555). This set says "if this type is rendered, render it as SaaS",
+    # and `test_connector_type_contracts` requires it to equal the loader's
+    # dispatch set exactly — an invariant from core#503 that stops the form
+    # offering SQL controls the loader ignores. Withdrawal is enforced by the
+    # *offering* surfaces instead: PICKER_TYPES, CONFIG_SCHEMAS, SOURCE_TYPES.
     "google_ads",
     "facebook_ads",
     "zendesk",
@@ -92,11 +98,13 @@ SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
     "shopify": ["orders", "products", "customers"],
     "jira": ["issues", "projects"],
     "slack": ["channels", "users"],
-    # google_analytics and google_ads still cannot build a source at all
-    # (core#543) and stay out of the contract test. Their lists are what the
-    # verified sources describe, not what any code here can produce.
+    # google_analytics still cannot build a source at all (core#543) and stays
+    # out of the contract test. Its list is what the verified source describes,
+    # not what any code here can produce.
+    #
+    # google_ads is gone entirely (core#555) — withdrawn rather than left
+    # offered-and-broken.
     "google_analytics": ["report"],
-    "google_ads": ["customers", "campaigns", "ad_groups", "ads"],
     # facebook_ads now builds via the Graph API fallback. `leads` is gone on
     # purpose: it is not an ad-account edge (lead records hang off a lead-gen
     # form, not the account), so offering it would tick a box for a resource

@@ -12,8 +12,11 @@ names for an HTTP API.
 These tests are the binding.
 """
 
-from datanika.services.connection_service import SOURCE_TYPES
+from datanika.models.connection import ConnectionType
+from datanika.services.connection_schemas import CONFIG_SCHEMAS
+from datanika.services.connection_service import SOURCE_TYPES, WITHDRAWN_SOURCE_TYPES
 from datanika.services.dlt_runner import SUPPORTED_SAAS_TYPES
+from datanika.ui.pages.connections import PICKER_TYPES
 from datanika.ui.state.connection_state import (
     FILE_SOURCE_TYPES,
     NON_SQL_SOURCE_TYPES,
@@ -85,9 +88,42 @@ def test_the_form_and_the_loader_agree_on_which_types_are_saas():
 
 
 def test_every_ui_saas_type_has_endpoints_to_offer():
-    """A SaaS type with no endpoint list renders an empty checkbox group."""
-    missing = {t for t in SAAS_SOURCE_TYPES if not SAAS_DEFAULT_ENDPOINTS.get(t)}
+    """A SaaS type with no endpoint list renders an empty checkbox group.
+
+    Withdrawn types are exempt: they are never rendered, so there is nothing to
+    offer. They stay *classified* as SaaS on purpose — see
+    `WITHDRAWN_SOURCE_TYPES` — so this invariant has to know the difference
+    between "not offered" and "offered with nothing in it".
+    """
+    offered = SAAS_SOURCE_TYPES - WITHDRAWN_SOURCE_TYPES
+    missing = {t for t in offered if not SAAS_DEFAULT_ENDPOINTS.get(t)}
     assert not missing, f"{sorted(missing)} would render an empty endpoint selector"
+
+
+def test_a_withdrawn_type_is_not_offered_anywhere():
+    """Withdrawal has to hold on every surface, not just the one we remembered.
+
+    core#555's first attempt removed google_ads from the loader's dispatch set
+    as well, which gave connections already stored the generic "Unsupported
+    source type" instead of the developer-token explanation. The split matters:
+    withdrawn means *cannot be created*, not *becomes unexplainable*.
+    """
+    for withdrawn in WITHDRAWN_SOURCE_TYPES:
+        assert withdrawn not in PICKER_TYPES, f"{withdrawn} is still in the connections picker"
+        assert withdrawn not in CONFIG_SCHEMAS, f"{withdrawn} still has a config schema"
+        assert withdrawn not in SOURCE_TYPES, f"{withdrawn} is still a selectable source type"
+
+
+def test_a_withdrawn_type_still_resolves_for_stored_connections():
+    """The other half — it must keep its identity and its dispatch."""
+    for withdrawn in WITHDRAWN_SOURCE_TYPES:
+        assert withdrawn in {c.value for c in ConnectionType}, (
+            f"{withdrawn} lost its ConnectionType member; rows already stored would not load"
+        )
+        assert withdrawn in SUPPORTED_SAAS_TYPES, (
+            f"{withdrawn} lost loader dispatch, so a stored connection fails with a generic "
+            "'Unsupported source type' instead of an error that explains itself"
+        )
 
 
 def test_file_source_types_are_non_sql():

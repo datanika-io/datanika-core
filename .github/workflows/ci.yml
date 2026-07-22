@@ -86,6 +86,9 @@ jobs:
   # is broken — which only matters at 2 AM during a prod rollback.
   # Kept as a separate job so test failures on main suite don't mask it
   # (and vice-versa). DATABASE_URL_SYNC_TEST points at the service container.
+  # Also runs the t1-window guard (core#449): the deployed release's models are
+  # read out of git and checked against the migrated schema, which is why this
+  # job needs origin/master fetched rather than a shallow PR-only checkout.
   migration-roundtrip:
     runs-on: ubuntu-latest
     services:
@@ -130,10 +133,17 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
-      - name: Run round-trip test
+      - name: Fetch the deployed release
+        # The t1 guard compares against what production runs, so master must be
+        # present. actions/checkout gives a shallow PR-only tree by default.
+        run: git fetch --no-tags --depth=1 origin master
+
+      - name: Run round-trip + t1-window tests
         env:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
-        run: pytest tests/test_migrations/test_roundtrip.py -v --tb=long
+        run: |
+          pytest tests/test_migrations/test_roundtrip.py \
+                 tests/test_migrations/test_expand_contract.py -v --tb=long
 
   helm-lint:
     runs-on: ubuntu-latest

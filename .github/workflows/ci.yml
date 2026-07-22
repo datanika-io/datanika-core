@@ -351,9 +351,21 @@ jobs:
           # so a red here is loud without blocking anyone's merge — which is the
           # point: the signal was missing, not the tests.
           DATANIKA_E2E_SLOW: "1"
+          # sso-edge-cases hits the backend directly via fixtures/sso.ts, which
+          # defaults to http://localhost:8000 — on a CI runner that is nothing,
+          # and 5 specs died with `connect ECONNREFUSED ::1:8000` (core#496).
+          # The e2e-sso job has always set this; this job never did.
+          DATANIKA_E2E_BACKEND_URL: https://staging-app.datanika.io
+          # E2E_SEED_INCLUDE_API_KEYS=1 is required by rbac / tenant-isolation /
+          # tenant-jwt-boundary: without it the payload carries no keys and the
+          # fixtures throw at setup (`DATANIKA_E2E_API_KEY_READONLY not set`),
+          # which reads in the log as ~35 tenant-isolation FAILURES rather than
+          # as a missing flag (core#496). global-setup.ts already maps all three
+          # keys and every org-B field; only the flag was missing. Org B itself
+          # is seeded unconditionally — there is no second-tenant gate.
           DATANIKA_E2E_SEED_CMD: >-
             ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
-            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
+            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 -e E2E_SEED_INCLUDE_API_KEYS=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
 
       # A green tick above is not evidence that anything ran — that is exactly

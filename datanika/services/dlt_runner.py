@@ -351,6 +351,38 @@ def describe_empty_file_match(bucket_url: str, file_glob: str) -> str:
     return f"{general} The directory exists but holds nothing matching that pattern."
 
 
+def _select_endpoints(source, endpoints):
+    """Narrow a SaaS source to the endpoints the user ticked (core#532).
+
+    Applied at the one place every SaaS source passes through, rather than in
+    each builder: the sixteen branches construct their resources differently
+    (verified-source module or REST fallback) but all return a `DltSource`, and
+    `with_resources` is dlt's own way to select on one.
+
+    Two sharp edges, both pinned by tests:
+
+    * `with_resources()` with **no arguments selects everything**, so an empty
+      or absent list must short-circuit rather than be forwarded. The form only
+      writes the key when something is ticked, so `[]` means "unset".
+    * dlt raises `ResourcesNotFoundError` for an unknown name. That is the right
+      outcome, but its message does not say where the name came from, and the
+      names come from a hardcoded picker list that has drifted before — so it is
+      re-raised as a `DltRunnerError` naming both sides.
+    """
+    if not endpoints:
+        return source
+
+    available = set(source.resources.keys())
+    unknown = [e for e in endpoints if e not in available]
+    if unknown:
+        raise DltRunnerError(
+            f"Unknown endpoint(s) {sorted(unknown)} for this source. "
+            f"Available: {sorted(available)}."
+        )
+
+    return source.with_resources(*endpoints)
+
+
 def _first_file_or_none(lister):
     """Peek the lister dlt itself will use.
 
@@ -498,7 +530,8 @@ class DltRunnerService:
             return self._build_mongodb_source(config, dlt_config, batch_size)
 
         if connection_type in SUPPORTED_SAAS_TYPES:
-            return self._build_saas_source(connection_type, config, dlt_config)
+            source = self._build_saas_source(connection_type, config, dlt_config)
+            return _select_endpoints(source, dlt_config.get("endpoints"))
 
         if connection_type in SUPPORTED_KAFKA_TYPES:
             return self._build_kafka_source(config, dlt_config)

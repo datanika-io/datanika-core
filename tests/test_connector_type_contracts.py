@@ -72,18 +72,16 @@ def test_runner_saas_types_are_all_non_sql():
     )
 
 
-def test_saas_source_types_are_a_subset_of_the_runners_saas_types():
-    """The form may recognise *fewer* SaaS types than the runner, never more.
+def test_the_form_and_the_loader_agree_on_which_types_are_saas():
+    """Tightened from subset to equality once core#532 landed, as noted here.
 
-    Deliberately a subset rather than equality. Equality would force
-    pipedrive/freshdesk/asana into `SAAS_SOURCE_TYPES`, which renders the
-    "Select endpoints to load" checkboxes — and per core#532 that control is
-    currently inert for every connector except Stripe, because the form writes
-    `dlt_config["endpoints"]` and the builders read `resources`. Adding an
-    inert control is worse than omitting it. Tighten this to equality when
-    core#532 lands.
+    It was a subset while the endpoint picker was inert: forcing
+    pipedrive/freshdesk/asana into `SAAS_SOURCE_TYPES` would have rendered a
+    control that did nothing. The selection is honoured now, so the two sets
+    must match exactly — a type in one and not the other is either a picker
+    with no loader behind it or a loader the picker can't configure.
     """
-    assert SAAS_SOURCE_TYPES <= SUPPORTED_SAAS_TYPES
+    assert SAAS_SOURCE_TYPES == SUPPORTED_SAAS_TYPES
 
 
 def test_every_ui_saas_type_has_endpoints_to_offer():

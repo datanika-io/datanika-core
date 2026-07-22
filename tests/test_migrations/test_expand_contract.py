@@ -48,11 +48,11 @@ import sys
 import pytest
 import sqlalchemy
 
-from tests.test_migrations.test_roundtrip import (  # reuse: one Postgres harness
-    _no_postgres,
-    _run_alembic,
-    roundtrip_db_url,  # noqa: F401 — fixture re-export
-)
+from tests.test_migrations.conftest import _no_postgres, _run_alembic
+
+# `roundtrip_db_url` is deliberately NOT imported. It is a session-scoped
+# fixture in conftest.py and pytest discovers it; importing it here would
+# register a *second* FixtureDef and boot a second Postgres container.
 
 #: What production is running. The `t1` risk is defined against the deployed
 #: release, so this is the ref to compare with — not the merge base.
@@ -162,7 +162,7 @@ def _live_schema(engine) -> dict[str, dict[str, bool]]:
 
 
 @pytest.fixture(scope="module")
-def migrated_schema(roundtrip_db_url):  # noqa: F811 — pytest fixture injection
+def migrated_schema(roundtrip_db_url):
     """Postgres migrated to this branch's head, as `information_schema` sees it."""
     result = _run_alembic(["upgrade", "head"], roundtrip_db_url)
     assert result.returncode == 0, f"alembic upgrade head failed:\n{result.stdout}\n{result.stderr}"

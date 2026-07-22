@@ -278,6 +278,13 @@ _RENAME_USER_TYPES = {
     "snowflake",
     "clickhouse",
     "oracle",
+    # Synapse was missing here (core#577). It is in neither this set nor
+    # SOURCE_DRIVERNAME_MAP, so `user` was never renamed and dlt received a
+    # field it does not declare — with no username at all. Proven by comparing
+    # what `_to_dlt_credentials` produces against `SynapseCredentials`' own
+    # fields, which needs no ODBC driver and no network; the driver is only
+    # required to *connect*, and its absence is why this went unproven in #565.
+    "synapse",
 }
 
 # ClickHouse table engine types supported by dlt

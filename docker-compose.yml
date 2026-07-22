@@ -78,6 +78,9 @@ services:
     environment:
       GRANIAN_WORKERS: "4"
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
+      # Pinned absolute: the default `./uploaded_files` (config.py) resolves against the
+      # working directory, so app and celery could silently diverge. See #471.
+      FILE_UPLOADS_DIR: /app/uploaded_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +88,9 @@ services:
         condition: service_healthy
     volumes:
       - dbt_projects:/app/dbt_projects
+      # Uploads lived inside the image: every rebuild destroyed the archives while their
+      # UploadedFile rows survived, leaving dangling archive_paths (#471).
+      - uploaded_files:/app/uploaded_files
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -122,6 +128,10 @@ services:
     environment:
       GRANIAN_WORKERS: "4"
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
+      # Pinned absolute on purpose. The default is `./uploaded_files` (config.py), which
+      # resolves against the working directory — so app and celery writing from different
+      # CWDs would silently use different directories. See #471.
+      FILE_UPLOADS_DIR: /app/uploaded_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +139,12 @@ services:
         condition: service_healthy
     volumes:
       - dbt_projects:/app/dbt_projects
+      # Uploaded archives lived inside the image, so every rebuild destroyed them while
+      # their UploadedFile rows survived, leaving dangling archive_paths (#471). Must be
+      # mounted rw by BOTH app and celery: the load runs in the worker, so a web-only
+      # path fails at run time rather than upload time — the slower, more confusing
+      # failure. app_b carries it too, or a blue/green swap would lose them.
+      - uploaded_files:/app/uploaded_files
     command: >
       sh -c "uv run alembic upgrade head &&
              uv run reflex run --env prod --backend-host 0.0.0.0"
@@ -149,6 +165,10 @@ services:
     container_name: datanika-celery
     env_file:
       - .env.docker
+    environment:
+      # Must match app/app_b exactly — the LOAD runs here, so if the worker resolves a
+      # different directory the failure surfaces at run time, not at upload time (#471).
+      FILE_UPLOADS_DIR: /app/uploaded_files
     depends_on:
       postgres:
         condition: service_healthy
@@ -156,6 +176,7 @@ services:
         condition: service_healthy
     volumes:
       - dbt_projects:/app/dbt_projects
+      - uploaded_files:/app/uploaded_files
     command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
     restart: unless-stopped
 
@@ -256,6 +277,9 @@ volumes:
   pgdata:
   redisdata:
   dbt_projects:
+  # Shared rw by app, app_b and celery — see #471. The load runs in the worker, so a
+  # web-only path would fail at run time rather than upload time.
+  uploaded_files:
   pg_backups:
   prometheus_data:
   grafana_data:

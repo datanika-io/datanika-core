@@ -1,2 +1,7 @@
 *.sh text eol=lf
 scripts/hooks/* text eol=lf
+
+# Apache vhosts are deployed to a Linux box and byte-compared there by CD.
+# CRLF would make every deploy see a spurious change and reload Apache needlessly.
+deploy/apache/*.conf text eol=lf
+deploy/apache/*.example text eol=lf

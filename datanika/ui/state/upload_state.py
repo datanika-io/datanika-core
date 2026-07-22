@@ -15,6 +15,7 @@ from datanika.services.upload_service import UploadService
 from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import (
+    FILE_SOURCE_TYPES,
     NON_SQL_SOURCE_TYPES,
     SAAS_DEFAULT_ENDPOINTS,
     SAAS_SOURCE_TYPES,
@@ -72,6 +73,14 @@ class UploadState(BaseState):
 
     # File source specific (csv/json/parquet/s3)
     form_file_glob: str = ""
+    form_is_file_source: bool = False
+    # Format knobs the runner reads from dlt_config (core#499). Without a UI
+    # these were reachable only through raw JSON config, which left a semicolon
+    # CSV loading as one fused column and an `s3` connection on the default `*`
+    # glob failing with an error naming a setting the user could not set.
+    form_file_format: str = ""
+    form_delimiter: str = ""
+    form_encoding: str = ""
 
     # Raw JSON fallback
     form_config: str = "{}"
@@ -89,6 +98,7 @@ class UploadState(BaseState):
         self.form_source_id = value
         conn_type = self._extract_conn_type(value)
         self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
+        self.form_is_file_source = conn_type in FILE_SOURCE_TYPES
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
@@ -165,6 +175,15 @@ class UploadState(BaseState):
 
     def set_form_sc_data_type(self, value: str):
         self.form_sc_data_type = value
+
+    def set_form_file_format(self, value: str):
+        self.form_file_format = value
+
+    def set_form_delimiter(self, value: str):
+        self.form_delimiter = value
+
+    def set_form_encoding(self, value: str):
+        self.form_encoding = value
 
     def set_form_config(self, value: str):
         self.form_config = value
@@ -246,6 +265,16 @@ class UploadState(BaseState):
         # File sources: glob pattern
         if self.form_file_glob:
             config["file_glob"] = self.form_file_glob
+
+        # File sources: format knobs (core#499). Each is written only when set —
+        # an empty string would override the runner's inference with nothing,
+        # and "auto" is the UI's word for "infer", not a format.
+        if self.form_file_format and self.form_file_format != "auto":
+            config["file_format"] = self.form_file_format
+        if self.form_delimiter:
+            config["delimiter"] = self.form_delimiter
+        if self.form_encoding:
+            config["encoding"] = self.form_encoding
 
         return config
 
@@ -403,6 +432,10 @@ class UploadState(BaseState):
         self.form_sheet_names = ""
         self.form_collection_names = ""
         self.form_file_glob = ""
+        self.form_is_file_source = False
+        self.form_file_format = ""
+        self.form_delimiter = ""
+        self.form_encoding = ""
         self.error_message = ""
 
     def _populate_form_from_upload(self, upload, conn_options_src, conn_options_dst):
@@ -447,6 +480,7 @@ class UploadState(BaseState):
         # Restore source-type-specific fields
         conn_type = self._extract_conn_type(self.form_source_id)
         self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
+        self.form_is_file_source = conn_type in FILE_SOURCE_TYPES
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
@@ -469,6 +503,9 @@ class UploadState(BaseState):
 
         # File sources
         self.form_file_glob = config.get("file_glob", "")
+        self.form_file_format = config.get("file_format", "")
+        self.form_delimiter = config.get("delimiter", "")
+        self.form_encoding = config.get("encoding", "")
 
     async def edit_upload(self, upload_id: int):
         """Load an upload into the form for editing."""

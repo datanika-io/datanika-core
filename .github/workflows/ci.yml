@@ -253,9 +253,31 @@ jobs:
             'cd /opt/datanika-staging-src && docker build -t ghcr.io/datanika-io/datanika-core:staging -f datanika/Dockerfile .'
 
       - name: Recreate staging stack on :staging
+        # `up -d` can fail with `No such container: <id>` when compose still holds a reference
+        # to a container removed out of band (#536). There was no recovery, so the step died.
+        #
+        # The cost is out of proportion to the fault: deploy-staging failing marks
+        # smoke-staging, e2e-staging and e2e-sso as SKIPPED, so the E2E tier does not report a
+        # failure -- it disappears, and a skipped gate reads like a pass at a glance. One bad
+        # deploy therefore costs a whole night of staging coverage.
+        #
+        # Clear the stale per-service state and retry once. Deliberately NOT --remove-orphans:
+        # app_b is a profile service, so compose can classify it as an orphan while the profile
+        # is inactive and delete the staging green colour along with the stale reference.
         run: |
-          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika-staging && set -a && . ./.env.docker && set +a && docker compose -p datanika-staging up -d postgres redis app celery'
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'STAGING'
+          set -e
+          cd /opt/datanika-staging
+          set -a && . ./.env.docker && set +a
+          if docker compose -p datanika-staging up -d postgres redis app celery; then
+            echo "staging stack up"
+          else
+            echo "compose up failed - clearing stale state for app/celery, retrying once"
+            docker compose -p datanika-staging rm -sf app celery || true
+            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery
+            echo "staging stack up after recovery"
+          fi
+          STAGING
 
       - name: Wait for staging health
         run: |

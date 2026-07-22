@@ -41,6 +41,10 @@ SAAS_PROBE_CONFIG = {
     # Bare id on purpose: the builder normalises it to `act_…`, and users paste
     # it both ways.
     "facebook_ads": {"access_token": "t", "account_id": "123456789"},
+    # Deliberately nonsense credentials: building a GA4 source must not mint a
+    # token or touch the network, so an unusable key still has to construct
+    # (core#543). If this starts failing, the builder has gained eager I/O.
+    "google_analytics": {"property_id": "123", "service_account_json": "{}"},
 }
 
 # These two still raise instead of building (core#543). `facebook_ads` moved out
@@ -58,7 +62,6 @@ SAAS_PROBE_CONFIG = {
 # Config here is *valid* — the point is that the raise happens after the
 # required-field checks, not because of them.
 CANNOT_BUILD = {
-    "google_analytics": {"property_id": "1", "service_account_json": "{}"},
     "google_ads": {"customer_id": "1", "service_account_json": "{}"},
 }
 

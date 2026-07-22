@@ -303,6 +303,14 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
             "database": _str("Database name"),
+            # Exposed, not just defaulted (core#550). Defaulting to `admin`
+            # fixes the standard deployment, but anyone whose user lives inside
+            # the target database needs a way to say so — and a setting with no
+            # surface is the core#499 mistake.
+            "auth_source": _str(
+                "Authentication database (default: admin — where MongoDB users "
+                "are normally created; set to the database name if yours is not)"
+            ),
         },
         required=["host", "database"],
     ),

@@ -206,6 +206,17 @@ jobs:
   # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.
 
   deploy-staging:
+    # Serialise staging deploys (#572). Merges into dev now arrive faster than a staging
+    # deploy takes to finish, so two runs manipulated the same container names at once: one
+    # removed a container while the other recreated it, the removal failed, docker renamed the
+    # loser to <id>_<name>, and every later run hit "container name is already in use".
+    #
+    # cancel-in-progress is FALSE on purpose. Cancelling a deploy mid-flight is what created the
+    # wedged state; queueing is safe because GitHub holds only one pending job, so the newest
+    # queued run wins and nothing is killed while it is manipulating containers.
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
     needs: [lint, test, helm-lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -272,8 +283,13 @@ jobs:
           if docker compose -p datanika-staging up -d postgres redis app celery; then
             echo "staging stack up"
           else
-            echo "compose up failed - clearing stale state for app/celery, retrying once"
-            docker compose -p datanika-staging rm -sf app celery || true
+            echo "compose up failed - clearing the whole project's containers, retrying once"
+            # By PROJECT LABEL, not service name: a container docker renamed to <id>_<name>
+            # after a failed removal is no longer recognised by compose as that service, so
+            # `rm -sf app celery` walks straight past the very container blocking the name.
+            # Named volumes are untouched by `docker rm`, so staging data survives.
+            docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' \
+              | xargs -r docker rm -f || true
             docker compose -p datanika-staging up -d --force-recreate postgres redis app celery
             echo "staging stack up after recovery"
           fi

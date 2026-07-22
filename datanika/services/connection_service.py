@@ -31,13 +31,14 @@ validate_connection_name = partial(validate_name, entity_label="Connection")
 # gave existing rows a worse error, and because withdrawal is not rare: it is
 # the honest answer whenever a connector cannot work with the credentials we
 # collect. `tests/test_connector_type_contracts.py` pins both halves.
-WITHDRAWN_SOURCE_TYPES = {
-    # Every Google Ads API request needs a `developer-token` header, issued per
-    # manager account through an application to Google. The form collected only
-    # `customer_id` + `service_account_json`, so nothing stored could
-    # authenticate and no fallback could help (core#555).
-    "google_ads",
-}
+# Empty on purpose. `google_ads` was withdrawn here and is back (core#555):
+# the developer token is a string the user pastes, exactly like a service
+# account JSON, so the gap was a missing form field rather than an external
+# gate. The set and its machinery stay — withdrawal is still the honest answer
+# whenever a connector cannot work with the credentials we collect, and
+# `tests/test_connector_type_contracts.py` pins both halves of the behaviour
+# whether or not anything is currently withdrawn.
+WITHDRAWN_SOURCE_TYPES: set[str] = set()
 
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
@@ -63,7 +64,7 @@ SOURCE_TYPES = {
     "jira",
     "slack",
     "google_analytics",
-    # google_ads withdrawn (core#555).
+    "google_ads",
     "facebook_ads",
     "zendesk",
     "airtable",

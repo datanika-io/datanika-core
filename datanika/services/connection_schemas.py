@@ -274,17 +274,33 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         },
         required=["property_id", "service_account_json"],
     ),
-    # "google_ads" is deliberately absent (core#555). It was schema'd with
-    # `customer_id` + `service_account_json`, but every Google Ads API request
-    # also needs a `developer-token` header — issued per manager account through
-    # an application to Google, not something a user pastes from a settings
-    # page. Nothing we stored could authenticate, so the connector could only
-    # ever be created and then fail.
-    #
-    # Left out rather than completed because collecting the token is a product
-    # decision with a much longer setup guide attached; see core#555 for the
-    # route back. `ConnectionType.GOOGLE_ADS` remains so rows already stored
-    # keep resolving.
+    # Google Ads needs more fields than any other SaaS source here, and each one
+    # is load-bearing (core#555):
+    #   developer_token — a header on *every* request, from the user's own Ads
+    #     manager account API Center. Not derivable from any other credential,
+    #     which is why the connector previously could not authenticate at all.
+    #   client_id/client_secret/refresh_token — a *user* OAuth credential, not a
+    #     service account. Service-account access to the Ads API requires
+    #     domain-wide delegation on a Workspace domain, so the old
+    #     `service_account_json` field was unusable here even in principle.
+    #   login_customer_id — optional, and only for manager (MCC) access.
+    "google_ads": _schema(
+        {
+            "customer_id": _str("Google Ads customer ID"),
+            "developer_token": _str("Developer token", sensitive=True),
+            "client_id": _str("OAuth client ID"),
+            "client_secret": _str("OAuth client secret", sensitive=True),
+            "refresh_token": _str("OAuth refresh token", sensitive=True),
+            "login_customer_id": _str("Manager (MCC) customer ID — optional"),
+        },
+        required=[
+            "customer_id",
+            "developer_token",
+            "client_id",
+            "client_secret",
+            "refresh_token",
+        ],
+    ),
     "facebook_ads": _schema(
         {
             "access_token": _str("Marketing API access token", sensitive=True),

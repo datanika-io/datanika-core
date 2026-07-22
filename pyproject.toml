@@ -29,6 +29,13 @@ dependencies = [
     # "google-analytics-data>=0.18",
     # "google-ads>=24.0",
     # "confluent-kafka>=2.3",
+    # Kafka. `kafka-python` rather than the commented-out `confluent-kafka`
+    # above: it is pure Python (no C toolchain in the image), and it is already
+    # what the nightly connector smoke installs to reach the Redpanda sandbox,
+    # so it is the client we have actual evidence works against a real broker.
+    # Until now nothing kafka shipped at all and the builder imported a dlt
+    # verified source that has never been installed here (core#551).
+    "kafka-python>=3.0,<4",
     # Google Sheets
     "gspread>=6.0,<7",
     "google-auth>=2.0,<3",

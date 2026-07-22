@@ -292,35 +292,36 @@ class TestMongoDbSourceMovesRows:
 
 @requires_docker
 class TestKafkaSourceMovesRows:
-    """``_build_kafka_source`` — and it cannot move a row at all today (core#551).
+    """``_build_kafka_source`` — produce to a real broker, assert rows land.
 
-    ``_build_kafka_source`` does ``from kafka import kafka_consumer``. That name
-    belongs to the **dlt verified source** created by ``dlt init kafka`` — not to
-    ``kafka-python``, which exports ``KafkaConsumer``. Neither ships: the lock has
-    no kafka package, ``confluent-kafka`` is commented out in ``pyproject.toml``,
-    and nothing is vendored. So the import always raises and the builder always
-    raises ``DltRunnerError("Kafka verified source not installed")``.
+    **The marker came off because this started passing (core#551).** It was
+    ``xfail(strict=True)``: ``_build_kafka_source`` did
+    ``from kafka import kafka_consumer``, the name of the **dlt verified source**
+    created by ``dlt init kafka`` rather than of ``kafka-python`` (which exports
+    ``KafkaConsumer``), and neither shipped — so the builder always raised and
+    every Kafka upload failed. ``strict=True`` was the point: the moment Kafka
+    worked, the XPASS became a failure and forced this rewrite, so the fix could
+    not land silently and the test could not rot into asserting the bug.
 
-    ``strict=True`` is the point. Today this xfails. The moment someone makes Kafka
-    work, it XPASSes, pytest turns that into a **failure**, and the marker has to
-    come off — so the fix cannot land silently and this cannot rot into a test that
-    asserts the bug is correct behaviour.
+    It earned that keep twice over. Fixing the builder was not enough — the run
+    still died in ``execute()`` with
+    ``TypeError: Pipeline.run() got an unexpected keyword argument 'topics'``,
+    because ``topics`` was missing from ``INTERNAL_CONFIG_KEYS`` along with
+    fifteen other builder keys (``endpoints``, ``owner``, ``repo``,
+    ``start_date`` …). Driving the real ``execute()`` is what surfaced that;
+    a builder-level test would have gone green over it.
 
-    Note what the nightly Kafka smoke does and does not prove: it lists topics with
-    ``kafka-python`` installed *by the workflow*, so it proves the sandbox is
-    reachable. It never touches this builder. That is #545's thesis exactly — a
-    green about connectivity read as a green about rows.
+    Note what the nightly Kafka smoke does and does not prove: it lists topics
+    with ``kafka-python`` installed *by the workflow*, so it proves the sandbox
+    is reachable. It never touches this builder. That is #545's thesis exactly —
+    a green about connectivity read as a green about rows.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#551: no kafka library ships, so _build_kafka_source always raises",
-    )
     def test_rows_land_in_the_destination(self, tmp_path):
         from testcontainers.kafka import KafkaContainer
 
         with KafkaContainer() as kafka:
-            from kafka import KafkaProducer  # noqa: F401 — absent today; see docstring
+            from kafka import KafkaProducer
 
             producer = KafkaProducer(
                 bootstrap_servers=kafka.get_bootstrap_server(),

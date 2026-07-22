@@ -70,6 +70,23 @@ class ExecutionService:
         session.flush()
         return run
 
+    def append_logs(self, session: Session, run_id: int, text: str) -> Run | None:
+        """Add a line to a finished run's logs.
+
+        For things that happen *after* the load completes and must not change
+        its status — catalog sync is the case that motivated it (core#494).
+        Swallowing that failure into the worker log alone kept a permanently
+        broken feature invisible for as long as DuckDB had been a destination:
+        the run row said success, Catalog stayed empty, and only SSH could
+        connect the two.
+        """
+        run = session.get(Run, run_id)
+        if run is None:
+            return None
+        run.logs = f"{run.logs}\n{text}" if run.logs else text
+        session.flush()
+        return run
+
     def cancel_run(self, session: Session, run_id: int) -> Run | None:
         run = session.get(Run, run_id)
         if run is None:

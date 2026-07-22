@@ -942,6 +942,7 @@ dependencies = [
     { name = "dbt-sqlserver" },
     { name = "dlt", extra = ["bigquery", "clickhouse", "databricks", "duckdb", "mssql", "postgres", "snowflake", "synapse"] },
     { name = "duckdb" },
+    { name = "duckdb-engine" },
     { name = "google-auth" },
     { name = "gspread" },
     { name = "oracledb" },
@@ -992,6 +993,7 @@ requires-dist = [
     { name = "dbt-sqlserver", specifier = ">=1.7,<1.8" },
     { name = "dlt", extras = ["postgres", "snowflake", "bigquery", "mssql", "clickhouse", "duckdb", "databricks", "synapse"], specifier = ">=1.21,<2" },
     { name = "duckdb", specifier = ">=1.0,<2" },
+    { name = "duckdb-engine", specifier = ">=0.17,<0.18" },
     { name = "google-auth", specifier = ">=2.0,<3" },
     { name = "gspread", specifier = ">=6.0,<7" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28,<0.29" },
@@ -1376,6 +1378,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d4/4c/47e838393aa90d3d78549c8c04cb09452efeb14aaae0ee24dc0bd61c3a41/duckdb-1.5.1-cp314-cp314-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8843bd9594e1387f1e601439e19ad73abdf57356104fd1e53a708255bb95a13d", size = 21387569, upload-time = "2026-03-23T12:12:05.693Z" },
     { url = "https://files.pythonhosted.org/packages/f4/9b/ce65743e0e85f5c984d2f7e8a81bc908d0bac345d6d8b6316436b29430e7/duckdb-1.5.1-cp314-cp314-win_amd64.whl", hash = "sha256:d68c5a01a283cb13b79eafe016fe5869aa11bff8c46e7141c70aa0aac808010f", size = 13603876, upload-time = "2026-03-23T12:12:09.344Z" },
     { url = "https://files.pythonhosted.org/packages/e6/ac/f9e4e731635192571f86f52d86234f537c7f8ca4f6917c56b29051c077ef/duckdb-1.5.1-cp314-cp314-win_arm64.whl", hash = "sha256:a3be2072315982e232bfe49c9d3db0a59ba67b2240a537ef42656cc772a887c7", size = 14370790, upload-time = "2026-03-23T12:12:12.497Z" },
+]
+
+[[package]]
+name = "duckdb-engine"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "duckdb" },
+    { name = "packaging" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/d5/c0d8d0a4ca3ffea92266f33d92a375e2794820ad89f9be97cf0c9a9697d0/duckdb_engine-0.17.0.tar.gz", hash = "sha256:396b23869754e536aa80881a92622b8b488015cf711c5a40032d05d2cf08f3cf", size = 48054, upload-time = "2025-03-29T09:49:17.663Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/a2/e90242f53f7ae41554419b1695b4820b364df87c8350aa420b60b20cab92/duckdb_engine-0.17.0-py3-none-any.whl", hash = "sha256:3aa72085e536b43faab635f487baf77ddc5750069c16a2f8d9c6c3cb6083e979", size = 49676, upload-time = "2025-03-29T09:49:15.564Z" },
 ]
 
 [[package]]

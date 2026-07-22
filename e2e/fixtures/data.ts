@@ -228,42 +228,23 @@ export async function createCsvConnection(
  * extract-load object is an Upload at `/uploads`. The connector guides describe
  * a UI that does not exist here (landing#272); the UI is the source of truth.
  */
-export async function createUpload(
-  page: Page,
-  name: string,
-  sourceOption: string,
-  destOption: string,
-): Promise<string> {
-  const saved = sanitizeName(name);
-  await gotoReady(page, "/uploads");
-
-  const nameField = page.getByPlaceholder("Upload name");
-  await present(page, nameField, 'the upload-name field (placeholder "Upload name")');
-  await nameField.fill(name, { timeout: UI_TIMEOUT });
-
-  // These two default to "" in UploadState, so the placeholder IS what shows.
-  await selectSearchable(page, ["Source connection"], sourceOption);
-  await selectSearchable(page, ["Destination connection"], destOption);
-  await page.getByRole("button", { name: "Create Upload" }).click({ timeout: UI_TIMEOUT });
-
-  await expect(
-    page.getByRole("cell", { name: saved, exact: true }),
-    `Upload "${saved}" did not appear in the uploads table`,
-  ).toBeVisible({ timeout: UI_TIMEOUT });
-  return saved;
-}
+export type ConnectionRef = { name: string; kind: ConnectionKind };
 
 /**
- * The connection picker on /uploads labels options `"{id} — {name} ({type})"`
- * (upload_state.py). Callers know the name and type but not the id, so match on
- * the stable tail and read the full label back off the DOM.
+ * Pick a connection in one of the `/uploads` pickers.
+ *
+ * The options are labelled `"{id} — {name} ({type})"` (upload_state.py) and the
+ * caller knows the name and type but not the id, so match on the stable tail.
+ *
+ * **Assumes the page is already on `/uploads`** — which is why this is not
+ * exported: it is only ever reachable through `createUpload`, which navigates
+ * first. See the note there.
  */
-export async function uploadOptionFor(
+async function selectConnectionOption(
   page: Page,
   placeholder: string,
-  connectionName: string,
-  kind: ConnectionKind,
-): Promise<string> {
+  conn: ConnectionRef,
+): Promise<void> {
   const trigger = searchableTrigger(page, [placeholder]);
   await present(page, trigger, `searchable-select trigger "${placeholder}"`);
   await trigger.click({ timeout: UI_TIMEOUT });
@@ -273,17 +254,53 @@ export async function uploadOptionFor(
     timeout: UI_TIMEOUT,
   });
 
-  const suffix = `${connectionName} (${kind})`;
-  const option = popover.getByText(new RegExp(`\\d+ — ${suffix}$`));
+  const suffix = `${conn.name} (${conn.kind})`;
+  const option = popover.getByText(new RegExp(`\\d+ — ${escapeRegExp(suffix)}$`));
   await expect(
     option,
     `no ${placeholder} option ending "${suffix}" — is the connection the right type?`,
   ).toBeVisible({ timeout: UI_TIMEOUT });
-
-  const label = (await option.textContent())?.trim() ?? "";
-  await page.keyboard.press("Escape");
+  await option.click({ timeout: UI_TIMEOUT });
   await expect(popover).toBeHidden({ timeout: UI_TIMEOUT });
-  return label;
+}
+
+/**
+ * Create an upload (extract+load) wiring a source connection to a destination.
+ *
+ * Note there is no "pipeline builder" and no "Configure pipeline" button — the
+ * extract-load object is an Upload at `/uploads`. The connector guides describe
+ * a UI that does not exist here (landing#272); the UI is the source of truth.
+ *
+ * Takes the connections themselves rather than pre-resolved option labels. The
+ * earlier shape made the caller resolve labels first, which meant the picker
+ * was queried while the browser was still on `/connections` — and the failure
+ * read as "trigger 'Source connection' not found" on a page that legitimately
+ * has no such control (core#515). Navigation and lookup now live together, so
+ * that ordering hazard is not expressible.
+ */
+export async function createUpload(
+  page: Page,
+  name: string,
+  source: ConnectionRef,
+  destination: ConnectionRef,
+): Promise<string> {
+  const saved = sanitizeName(name);
+  await gotoReady(page, "/uploads");
+
+  const nameField = page.getByPlaceholder("Upload name");
+  await present(page, nameField, 'the upload-name field (placeholder "Upload name")');
+  await nameField.fill(name, { timeout: UI_TIMEOUT });
+
+  // Both default to "" in UploadState, so the placeholder IS what shows.
+  await selectConnectionOption(page, "Source connection", source);
+  await selectConnectionOption(page, "Destination connection", destination);
+  await page.getByRole("button", { name: "Create Upload" }).click({ timeout: UI_TIMEOUT });
+
+  await expect(
+    page.getByRole("cell", { name: saved, exact: true }),
+    `Upload "${saved}" did not appear in the uploads table`,
+  ).toBeVisible({ timeout: UI_TIMEOUT });
+  return saved;
 }
 
 export type RunOutcome = { status: string; rows: number };

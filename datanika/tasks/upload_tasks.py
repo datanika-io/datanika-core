@@ -262,24 +262,6 @@ def run_upload(
                 f"{exc.__class__.__name__}: {exc}",
             )
 
-        from datanika.hooks import announce
-
-        # `announce`, not `emit`: the run is already complete, so no subscriber
-        # may veto it or starve the ones behind it (core#456). session/run_id/
-        # status are what the notification handlers need to say *which* run
-        # succeeded — without them the feature is alive but says nothing.
-        announce(
-            "run.upload_completed",
-            session=session,
-            org_id=org_id,
-            run_id=run_id,
-            status="success",
-            target_type="upload",
-            target_id=upload.id,
-            table_count=table_count,
-            bytes_processed=bytes_processed,
-        )
-
         upload.status = UploadStatus.ACTIVE
         session.flush()
         if own_session:
@@ -304,6 +286,42 @@ def run_upload(
                 session.flush()
         if own_session:
             session.commit()
+
+    else:
+        # Metering lives in `else`, not at the end of `try` (core#522).
+        #
+        # It used to fire before `flush`/`commit`, so a commit failure after a
+        # successful load ended the run FAILED having *already been billed* —
+        # and cloud's handlers meter on their own session and commit
+        # independently, so the rollback did not take the ledger row with it.
+        # `else` runs only when the whole `try` completed, which makes the
+        # ordering structural: no future statement added inside `try` can slip
+        # in front of it, and anything that raises there skips it.
+        #
+        # It stays ahead of `finally`, which closes the session the handlers
+        # are handed.
+        #
+        # Trade-off, taken deliberately: if the worker dies between the commit
+        # and here, the run is under-metered rather than over-metered. That is
+        # the right direction to fail — and the comment below was only ever
+        # strictly true at this point.
+        from datanika.hooks import announce
+
+        # `announce`, not `emit`: the run is already complete, so no subscriber
+        # may veto it or starve the ones behind it (core#456). session/run_id/
+        # status are what the notification handlers need to say *which* run
+        # succeeded — without them the feature is alive but says nothing.
+        announce(
+            "run.upload_completed",
+            session=session,
+            org_id=org_id,
+            run_id=run_id,
+            status="success",
+            target_type="upload",
+            target_id=upload.id,
+            table_count=table_count,
+            bytes_processed=bytes_processed,
+        )
 
     finally:
         # Clean up dlt working directory regardless of success/failure

@@ -26,6 +26,16 @@ groups:
               # `datanika-app` while prod served correctly from `datanika-app-b`.
               expr: 'time() - max by (name) (container_last_seen{name=~"datanika-(celery|postgres|redis)"}) > 60'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 300
@@ -33,7 +43,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -69,6 +79,16 @@ groups:
             model:
               expr: 'time() - max(container_last_seen{name=~"datanika-app(-b)?"}) > 60'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 300
@@ -76,7 +96,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -104,6 +124,16 @@ groups:
             model:
               expr: '100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -111,7 +141,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -139,6 +169,16 @@ groups:
             model:
               expr: '(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 > 90'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -146,7 +186,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -174,6 +214,16 @@ groups:
             model:
               expr: '(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 80'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -181,7 +231,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -211,6 +261,16 @@ groups:
             model:
               expr: 'time() - datanika_backup_last_success_timestamp_seconds > 93600'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -218,7 +278,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -246,6 +306,16 @@ groups:
             model:
               expr: 'increase(container_start_time_seconds{name=~"datanika-.*"}[1h]) > 3'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 3600
@@ -253,7 +323,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -281,6 +351,16 @@ groups:
             model:
               expr: 'container_memory_usage_bytes{name=~"datanika-(app|celery)"} > 1.5e+9'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -288,7 +368,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -315,7 +395,7 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 300
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
@@ -326,18 +406,28 @@ groups:
               # only when NEITHER colour is scrapeable, which is the real outage.
               expr: 'max(up{job=~"datanika-app(-b)?"}) == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 300
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
-                    type: gt
-                    params: [0]
+                    type: lt
+                    params: [1]
               refId: C
         for: 2m
         labels:
@@ -361,6 +451,16 @@ groups:
             model:
               expr: 'rate(celery_tasks_total{state="FAILURE"}[15m]) > 0.1'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 900
@@ -368,7 +468,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -396,6 +496,16 @@ groups:
             model:
               expr: 'celery_queue_length > 50'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -403,7 +513,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -430,24 +540,34 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 900
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
               expr: 'probe_success{instance="https://datanika.io/sitemap-index.xml"} == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 900
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
-                    type: gt
-                    params: [0]
+                    type: lt
+                    params: [1]
               refId: C
         for: 15m
         labels:
@@ -465,24 +585,34 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
               expr: 'probe_success{instance="https://datanika.io/"} == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
-                    type: gt
-                    params: [0]
+                    type: lt
+                    params: [1]
               refId: C
         for: 5m
         labels:
@@ -503,7 +633,7 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
@@ -515,14 +645,24 @@ groups:
               # Every other probe rule already used `== 0`; this one was the outlier.
               expr: 'probe_success{instance="https://plausible.datanika.io/login"} == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: lt
@@ -544,31 +684,41 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
               expr: 'probe_success{instance="https://app.datanika.io/healthz"} == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
-                    type: gt
-                    params: [0]
+                    type: lt
+                    params: [1]
               refId: C
-        for: 1m
+        for: 2m
         labels:
           severity: critical
         annotations:
           summary: "app.datanika.io /healthz not reachable externally"
-          description: "External blackbox probe to https://app.datanika.io/healthz has failed for 5 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."
+          description: "External blackbox probe to https://app.datanika.io/healthz has failed continuously for 2 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."
 
       # --- App frontend (what users actually load) ---
       # The /healthz probe only covers the backend :8000. Users hit /, served by the
@@ -582,26 +732,36 @@ groups:
         data:
           - refId: A
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
               expr: 'probe_success{instance="https://app.datanika.io/"} == 0'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
-              from: 600
+              from: 60
               to: 0
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
-                    type: gt
-                    params: [0]
+                    type: lt
+                    params: [1]
               refId: C
-        for: 1m
+        for: 2m
         labels:
           severity: critical
         annotations:
@@ -628,6 +788,16 @@ groups:
             model:
               expr: 'rate(pg_stat_statements_seconds_total{datname="datanika"}[5m]) > 0.5'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 900
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 900
@@ -635,7 +805,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1241,6 +1411,16 @@ groups:
             model:
               expr: 'absent(probe_success{instance="https://app.datanika.io/healthz"})'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1248,7 +1428,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1274,6 +1454,16 @@ groups:
             model:
               expr: 'absent(probe_success{instance="https://app.datanika.io/"})'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1281,7 +1471,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1307,6 +1497,16 @@ groups:
             model:
               expr: 'absent(probe_success{instance="https://datanika.io/"})'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1314,7 +1514,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1342,6 +1542,16 @@ groups:
               # series if BOTH jobs vanish — NoData -> OK -> silence. This covers that.
               expr: 'absent(up{job=~"datanika-app(-b)?"})'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1349,7 +1559,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1375,6 +1585,16 @@ groups:
             model:
               expr: 'absent(node_memory_MemTotal_bytes)'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1382,7 +1602,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1414,6 +1634,16 @@ groups:
             model:
               expr: 'absent(container_last_seen{name=~"datanika-app(-b)?"})'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1421,7 +1651,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1448,6 +1678,16 @@ groups:
             model:
               expr: 'absent(container_last_seen)'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1455,7 +1695,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt
@@ -1481,6 +1721,16 @@ groups:
             model:
               expr: 'absent(datanika_backup_last_success_timestamp_seconds)'
               refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
           - refId: C
             relativeTimeRange:
               from: 600
@@ -1488,7 +1738,7 @@ groups:
             datasourceUid: __expr__
             model:
               type: threshold
-              expression: A
+              expression: B
               conditions:
                 - evaluator:
                     type: gt

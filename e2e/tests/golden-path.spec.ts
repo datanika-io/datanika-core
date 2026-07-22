@@ -8,7 +8,6 @@ import {
   createDuckDbConnection,
   createUpload,
   runUploadAndAwait,
-  uploadOptionFor,
 } from "../fixtures/data";
 
 /**
@@ -96,11 +95,13 @@ test.describe("Golden path: signup → connection → pipeline → run @slow", (
       return createCsvConnection(page, srcName, csvPath);
     });
 
-    const savedUpload = await test.step("4. wire them together as an Upload", async () => {
-      const sourceOption = await uploadOptionFor(page, "Source connection", savedSrc, "csv");
-      const destOption = await uploadOptionFor(page, "Destination connection", savedDest, "duckdb");
-      return createUpload(page, uploadName, sourceOption, destOption);
-    });
+    const savedUpload = await test.step("4. wire them together as an Upload", async () =>
+      createUpload(
+        page,
+        uploadName,
+        { name: savedSrc, kind: "csv" },
+        { name: savedDest, kind: "duckdb" },
+      ));
 
     const outcome = await test.step("5. run it and read the terminal status", async () =>
       runUploadAndAwait(page, savedUpload));

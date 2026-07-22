@@ -332,10 +332,50 @@ jobs:
           DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
           DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+          # Include @slow specs (core#484). Until 2026-07-22 NO job set this, so
+          # `playwright.config.ts`'s grepInvert silently dropped every @slow spec
+          # from every run: this job reported success having executed 5 of 62
+          # tests, both files about `?template=` handling. golden-path,
+          # tenant-jwt-boundary, tenant-isolation, rbac and viewer-role-ui had
+          # never gated a merge.
+          #
+          # Safe to switch on wholesale because the expensive-and-unavailable
+          # specs gate themselves independently, and therefore skip rather than
+          # fail: sso-* need DATANIKA_E2E_SSO_AUTHENTIK (its own job is
+          # `if: false` — the IdP was not rebuilt after the 2026-07-17 outage)
+          # and overage-charge-cycle needs DATANIKA_E2E_OVERAGE_CHARGE plus the
+          # Paddle sandbox secrets, which the nightly soak owns. Neither is set
+          # here, so this flag adds 5 real specs, not 57.
+          #
+          # This job is NOT a required check on `dev` (those are lint + test),
+          # so a red here is loud without blocking anyone's merge — which is the
+          # point: the signal was missing, not the tests.
+          DATANIKA_E2E_SLOW: "1"
           DATANIKA_E2E_SEED_CMD: >-
             ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
             'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
+
+      # A green tick above is not evidence that anything ran — that is exactly
+      # how core#484 hid for months. Print the collected count so the run log
+      # carries the number, and fail if it collapses back toward the fast subset.
+      - name: Assert the @slow specs were actually collected
+        if: always()
+        working-directory: e2e
+        env:
+          DATANIKA_E2E_SLOW: "1"
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_USER_EMAIL: collected-count@datanika.test
+        run: |
+          # stderr is deliberately NOT suppressed: if --list itself breaks, the
+          # count is 0 and the reason needs to be readable, not swallowed.
+          LAST=$(npx playwright test --list | tail -1)
+          echo "playwright --list said: $LAST"
+          COUNT=$(printf '%s' "$LAST" | grep -oE '[0-9]+' | head -1)
+          if [ "${COUNT:-0}" -lt 40 ]; then
+            echo "::error::Only ${COUNT:-0} tests collected (expected 60+). The @slow specs are being filtered out again — see core#484."
+            exit 1
+          fi
 
       - name: Upload Playwright report
         if: always()

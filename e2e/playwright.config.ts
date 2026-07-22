@@ -23,9 +23,15 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   globalSetup: require.resolve("./global-setup"),
-  // @slow tests run only when explicitly included via --grep.
-  // CI workflow for PRs to `master` sets DATANIKA_E2E_SLOW=1 to include them;
-  // PRs to `dev` run the fast subset. See plans/qa/PLAN_QA.md §P0 #1.
+  // @slow tests run only when DATANIKA_E2E_SLOW=1.
+  //
+  // The `e2e-staging` job sets it (core#484). Before 2026-07-22 **no job did**,
+  // and this comment claimed a "PRs to `master`" workflow that did not exist —
+  // so every @slow spec was dropped from every run and the job reported success
+  // having executed 5 of 62 tests. Local runs default to the fast subset.
+  //
+  // If you are tempted to unset it to speed CI up: that is the bug, not the fix.
+  // The job asserts the collected count precisely to stop it regressing.
   grepInvert: process.env.DATANIKA_E2E_SLOW === "1" ? undefined : /@slow/,
   reporter: [
     ["list"],

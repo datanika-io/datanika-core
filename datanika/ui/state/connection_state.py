@@ -34,7 +34,18 @@ SAAS_SOURCE_TYPES = {
 # File-based source types
 FILE_SOURCE_TYPES = {"s3", "csv", "json", "parquet"}
 
-# Source types that need their own config instead of SQL mode
+# Source types that need their own config instead of SQL mode.
+#
+# Membership here is what hides the SQL block (Load Mode / Write Disposition /
+# Source schema / Table names) on the upload form — `uploads.py` renders it
+# under `~UploadState.form_is_non_sql_source`. **Omission is not neutral**: an
+# unclassified type falls through to the SQL branch and is shown four controls
+# its loader never reads. That was core#503 — pipedrive/freshdesk/asana were
+# added to SOURCE_TYPES and to `dlt_runner.SUPPORTED_SAAS_TYPES`, but not here,
+# so an HTTP API asked the user for a source schema and table names.
+#
+# `tests/test_connector_type_contracts.py` fails if a source type is left
+# unclassified. Add new connectors there and here in the same change.
 NON_SQL_SOURCE_TYPES = (
     SAAS_SOURCE_TYPES
     | FILE_SOURCE_TYPES
@@ -43,6 +54,16 @@ NON_SQL_SOURCE_TYPES = (
         "mongodb",
         "rest_api",
         "kafka",
+        # SaaS at run time (dlt_runner dispatches them to the SaaS builder) but
+        # deliberately absent from SAAS_SOURCE_TYPES above: that set drives the
+        # "Select endpoints to load" checkboxes, which are inert for every
+        # connector but Stripe until core#532 wires the selection through.
+        # Listing them here fixes the wrong controls without adding a fake one.
+        "pipedrive",
+        "freshdesk",
+        "asana",
+        # Resources come from the uploaded spec, not from a SQL schema.
+        "openapi",
     }
 )
 

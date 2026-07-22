@@ -38,17 +38,28 @@ SAAS_PROBE_CONFIG = {
     "pipedrive": {"api_key": "t"},
     "freshdesk": {"api_key": "t", "domain": "d"},
     "asana": {"api_key": "t"},
+    # Bare id on purpose: the builder normalises it to `act_…`, and users paste
+    # it both ways.
+    "facebook_ads": {"access_token": "t", "account_id": "123456789"},
 }
 
-# These three raise instead of building: no verified source is installed and they
-# have no REST fallback (core#543). Their picker entries cannot be validated
-# until that is resolved, and their accuracy is moot while the connector cannot
-# run at all. Config here is *valid* — the point is that the raise happens after
-# the required-field checks, not because of them.
+# These two still raise instead of building (core#543). `facebook_ads` moved out
+# when it gained a Graph API fallback — it is now validated like every other
+# connector by the tests below.
+#
+# The remaining two are not "a fallback nobody has written yet"; each is blocked
+# on something a fallback cannot supply:
+#   google_analytics — `runReport` takes a POST body naming dimensions and
+#                      metrics. A report shape is a product decision.
+#   google_ads       — every request needs a `developer-token` header, and the
+#                      connection form collects no such field, so nothing we
+#                      store can authenticate. Needs a schema change first.
+#
+# Config here is *valid* — the point is that the raise happens after the
+# required-field checks, not because of them.
 CANNOT_BUILD = {
     "google_analytics": {"property_id": "1", "service_account_json": "{}"},
     "google_ads": {"customer_id": "1", "service_account_json": "{}"},
-    "facebook_ads": {"access_token": "t", "account_id": "act_1"},
 }
 
 
@@ -86,11 +97,27 @@ class TestOfferedEndpointsExist:
     def test_the_unbuildable_ones_still_fail_loudly(self, svc, conn_type):
         """Documents core#543 rather than hiding it — move these up when it's fixed.
 
-        Asserted with *valid* config so the failure is the missing verified
-        source, not a missing field: these three raise for every user, always.
+        Asserted with *valid* config so the failure is the missing capability,
+        not a missing field: these two raise for every user, always.
         """
-        with pytest.raises(DltRunnerError, match="verified source not installed"):
+        with pytest.raises(DltRunnerError, match="not available on this deployment"):
             svc.build_source(conn_type, CANNOT_BUILD[conn_type], {})
+
+    @pytest.mark.parametrize("conn_type", sorted(CANNOT_BUILD))
+    def test_the_failure_names_something_the_reader_can_act_on(self, svc, conn_type):
+        """The error used to say "run `dlt init …`" — on a server they don't operate.
+
+        Same class as the s3 message in core#499: advice the reader cannot
+        follow. Here it was also the *only* outcome, every time. The replacement
+        has to name the real blocker and not send anyone to a terminal they
+        have no access to.
+        """
+        with pytest.raises(DltRunnerError) as exc:
+            svc.build_source(conn_type, CANNOT_BUILD[conn_type], {})
+
+        message = str(exc.value)
+        assert "dlt init" not in message, f"still tells the user to run dlt init: {message}"
+        assert "core#543" in message, "the message should point at the tracking issue"
 
 
 class TestSelectionNarrowsTheLoad:

@@ -75,6 +75,12 @@ SUPPORTED_SAAS_TYPES = {
 # Kafka is a streaming source with its own builder
 SUPPORTED_KAFKA_TYPES = {"kafka"}
 
+#: Graph API version for the Facebook Ads fallback. Facebook retires versions on
+#: a rolling ~2-year schedule, so this is a config-overridable default
+#: (`dlt_config["api_version"]`) rather than a constant baked into the path — a
+#: retired version should be a setting to change, not a release to cut.
+DEFAULT_FACEBOOK_API_VERSION = "v21.0"
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -786,11 +792,24 @@ class DltRunnerService:
         )
 
     def _build_saas_source(self, connection_type: str, config: dict, dlt_config: dict):
-        """Build a dlt verified source for SaaS connectors.
+        """Build a source for a SaaS connector.
 
-        Uses official dlt verified sources (bundled via ``dlt init`` at Docker
-        build time).  Falls back to a generic REST API source when the verified
-        source module is not installed.
+        **The REST fallback is the real implementation, not the fallback.** This
+        docstring used to say the verified sources were "bundled via ``dlt init``
+        at Docker build time"; nothing bundles them, and the Dockerfile says so
+        deliberately — *"dlt verified sources … use REST API fallback when not
+        installed via `dlt init`. This avoids dependency conflicts in Docker."*
+        So in every deployment, dev and prod alike, each ``from <source> import``
+        below raises ``ImportError`` and the fallback runs (core#543).
+
+        That mattered twice: the picker offered resource names taken from the
+        verified sources while the fallback built different ones (core#532), and
+        the three connectors with **no** fallback were not degraded but dead —
+        their ``except ImportError`` re-raised, so a run could only ever fail.
+
+        The verified-source branches are kept because a self-hoster may run
+        ``dlt init``, and the imports are what make that work with no code
+        change. They are simply not the path anyone here exercises.
         """
         if connection_type == "stripe":
             api_key = config.get("api_key") or config.get("stripe_secret_key", "")
@@ -1051,8 +1070,20 @@ class DltRunnerService:
                     kwargs_ga["credentials"] = credentials_json
                 return google_analytics(**kwargs_ga)
             except ImportError:
+                # Was "run dlt init google_analytics" — an instruction for a
+                # server the user does not operate, and the only outcome this
+                # connector has ever produced (core#543, same class as #499).
+                #
+                # No REST fallback yet, and unlike Facebook it is not a matter
+                # of writing one: the Data API needs an OAuth token minted from
+                # the service-account JSON, and `runReport` takes a POST body
+                # naming dimensions and metrics — a report shape is a product
+                # decision, not a default. Tracked separately.
                 raise DltRunnerError(
-                    "Google Analytics verified source not installed (run dlt init google_analytics)"
+                    "Google Analytics is not available on this deployment yet. It needs a "
+                    "reporting query (dimensions and metrics) that Datanika does not collect, "
+                    "so there is nothing to configure on your side — see core#543. "
+                    "Google Sheets or a REST API connection can cover GA exports meanwhile."
                 ) from None
 
         if connection_type == "google_ads":
@@ -1065,8 +1096,17 @@ class DltRunnerService:
 
                 return google_ads(customer_id=customer_id)
             except ImportError:
+                # Also not writable as a REST fallback, and for a harder reason
+                # than Google Analytics: every Google Ads API request carries a
+                # `developer-token` header, and the connection form collects no
+                # such field — so no transport can authenticate with what we
+                # store. Obtaining one is an application to Google, not a
+                # setting. Needs a schema change first (core#543).
                 raise DltRunnerError(
-                    "Google Ads verified source not installed (run dlt init google_ads)"
+                    "Google Ads is not available on this deployment. The Google Ads API "
+                    "requires a developer token, which Datanika does not currently collect, "
+                    "so this connection cannot authenticate — see core#543. Nothing you can "
+                    "change in the connection settings will fix this."
                 ) from None
 
         if connection_type == "facebook_ads":
@@ -1079,9 +1119,29 @@ class DltRunnerService:
 
                 return facebook_ads_source(account_id=account_id, access_token=access_token)
             except ImportError:
-                raise DltRunnerError(
-                    "Facebook Ads verified source not installed (run dlt init facebook_ads)"
-                ) from None
+                # Falls back to the Graph API like every other SaaS connector
+                # (core#543). Before this, the ImportError re-raised "run
+                # dlt init facebook_ads" — advice for a server the user does
+                # not operate, and the only possible outcome, every time.
+                #
+                # `act_` is part of the ad-account identifier; users paste it
+                # inconsistently, so it is normalised rather than demanded.
+                account = account_id if str(account_id).startswith("act_") else f"act_{account_id}"
+                version = dlt_config.get("api_version") or DEFAULT_FACEBOOK_API_VERSION
+                return self._rest_api_fallback(
+                    f"https://graph.facebook.com/{version}/",
+                    {"type": "bearer", "token": access_token},
+                    dlt_config.get("resources")
+                    or [
+                        {"name": "campaigns", "endpoint": {"path": f"{account}/campaigns"}},
+                        # Resource names are the picker's; paths are Facebook's.
+                        # `ad_sets`/`creatives` read better than `adsets`/
+                        # `adcreatives` and the two are independent here.
+                        {"name": "ad_sets", "endpoint": {"path": f"{account}/adsets"}},
+                        {"name": "ads", "endpoint": {"path": f"{account}/ads"}},
+                        {"name": "creatives", "endpoint": {"path": f"{account}/adcreatives"}},
+                    ],
+                )
 
         if connection_type == "zendesk":
             subdomain = config.get("subdomain", "") or config.get("domain", "")

@@ -374,12 +374,40 @@ def _select_endpoints(source, endpoints):
       outcome, but its message does not say where the name came from, and the
       names come from a hardcoded picker list that has drifted before — so it is
       re-raised as a `DltRunnerError` naming both sides.
+
+    **A selection where *nothing* resolves is not a selection.** Until core#532
+    the picker wrote its names into `dlt_config["endpoints"]` and no builder
+    read them, and it defaulted to *every* endpoint ticked — so every upload
+    saved before that fix carries a full list of names that no longer exist
+    (`Subscription`, `Account`, … against a loader that builds `subscriptions`,
+    `charges`, …). Those values are the residue of a control that did nothing,
+    not a choice anyone made, and there is no migration for them: they live in
+    the `uploads.dlt_config` JSON blob.
+
+    Raising on them would turn "loads more than you asked for" into "fails
+    every run", for uploads whose owner never touched the picker. So a
+    selection that resolves to nothing at all is treated as unset — the
+    pre-fix behaviour, loudly logged. A *partial* match is different: somebody
+    did choose, and a name that has since disappeared is worth stopping for.
     """
     if not endpoints:
         return source
 
     available = set(source.resources.keys())
+    known = [e for e in endpoints if e in available]
     unknown = [e for e in endpoints if e not in available]
+
+    if unknown and not known:
+        logger.warning(
+            "Ignoring a stale endpoint selection %s — none of them exist on this source "
+            "(it builds %s). This upload predates core#532, when the picker wrote names "
+            "the loader never read. Loading everything, as it did before; re-select the "
+            "endpoints on the upload to narrow it.",
+            sorted(unknown),
+            sorted(available),
+        )
+        return source
+
     if unknown:
         raise DltRunnerError(
             f"Unknown endpoint(s) {sorted(unknown)} for this source. "

@@ -237,6 +237,87 @@ requires_docker = pytest.mark.skipif(
 
 
 @requires_docker
+class TestSqlDatabaseSourceMovesRows:
+    """The SQL path — the last builder core#545 listed as unproven.
+
+    Its only prior evidence was **one manual prod run** (landing#280, 19 rows
+    verified in the destination). Everything automated was mocked: ``sql_database``
+    is patched 24 times in ``test_dlt_runner.py``, more than ``filesystem``'s 7.
+
+    #545 argues this is the **lowest-risk** builder, and that argument is sound:
+    ``sql_database()`` yields rows by construction, so there is no
+    missing-transformer shape for #492's mechanism to recur in. Worth being precise
+    about what that means though — it says the *specific* defect cannot recur, not
+    that the path works. Credentials assembly, drivername mapping and the
+    user→username rename are all real transformations with no live coverage, and
+    #550 is exactly what an unexercised credentials path looks like one connector
+    over.
+
+    Both modes are covered because they call different dlt functions:
+      full_database → sql_database()
+      single_table  → sql_table()
+    """
+
+    @staticmethod
+    def _seed(postgres) -> dict:
+        """Create the fixture table and return the connection config the app stores."""
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(postgres.get_connection_url())
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text("CREATE TABLE widgets (id int, name text, price int)"))
+            conn.execute(
+                sqlalchemy.text(
+                    "INSERT INTO widgets VALUES (1,'alpha',100),(2,'beta',200),(3,'gamma',300)"
+                )
+            )
+        engine.dispose()
+        # The shape ConnectionState saves: note `user`, which _to_dlt_credentials
+        # renames to `username`. That rename is only exercised for real here.
+        return {
+            "host": postgres.get_container_host_ip(),
+            "port": int(postgres.get_exposed_port(5432)),
+            "user": postgres.username,
+            "password": postgres.password,
+            "database": postgres.dbname,
+        }
+
+    def test_full_database_mode_moves_rows(self, tmp_path):
+        from testcontainers.postgres import PostgresContainer
+
+        with PostgresContainer("postgres:16-alpine") as postgres:
+            config = self._seed(postgres)
+            db_path = _extract_load(
+                tmp_path,
+                "postgres",
+                config,
+                {"mode": "full_database", "table_names": ["widgets"]},
+            )
+            rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "sql_database() did not deliver row contents into DuckDB."
+        )
+
+    def test_single_table_mode_moves_rows(self, tmp_path):
+        from testcontainers.postgres import PostgresContainer
+
+        with PostgresContainer("postgres:16-alpine") as postgres:
+            config = self._seed(postgres)
+            db_path = _extract_load(
+                tmp_path,
+                "postgres",
+                config,
+                {"mode": "single_table", "table": "widgets"},
+            )
+            rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "sql_table() did not deliver row contents into DuckDB."
+        )
+
+
+@requires_docker
 class TestMongoDbSourceMovesRows:
     """``_build_mongodb_source`` — and it cannot authenticate today (core#550).
 
@@ -292,35 +373,36 @@ class TestMongoDbSourceMovesRows:
 
 @requires_docker
 class TestKafkaSourceMovesRows:
-    """``_build_kafka_source`` — and it cannot move a row at all today (core#551).
+    """``_build_kafka_source`` — produce to a real broker, assert rows land.
 
-    ``_build_kafka_source`` does ``from kafka import kafka_consumer``. That name
-    belongs to the **dlt verified source** created by ``dlt init kafka`` — not to
-    ``kafka-python``, which exports ``KafkaConsumer``. Neither ships: the lock has
-    no kafka package, ``confluent-kafka`` is commented out in ``pyproject.toml``,
-    and nothing is vendored. So the import always raises and the builder always
-    raises ``DltRunnerError("Kafka verified source not installed")``.
+    **The marker came off because this started passing (core#551).** It was
+    ``xfail(strict=True)``: ``_build_kafka_source`` did
+    ``from kafka import kafka_consumer``, the name of the **dlt verified source**
+    created by ``dlt init kafka`` rather than of ``kafka-python`` (which exports
+    ``KafkaConsumer``), and neither shipped — so the builder always raised and
+    every Kafka upload failed. ``strict=True`` was the point: the moment Kafka
+    worked, the XPASS became a failure and forced this rewrite, so the fix could
+    not land silently and the test could not rot into asserting the bug.
 
-    ``strict=True`` is the point. Today this xfails. The moment someone makes Kafka
-    work, it XPASSes, pytest turns that into a **failure**, and the marker has to
-    come off — so the fix cannot land silently and this cannot rot into a test that
-    asserts the bug is correct behaviour.
+    It earned that keep twice over. Fixing the builder was not enough — the run
+    still died in ``execute()`` with
+    ``TypeError: Pipeline.run() got an unexpected keyword argument 'topics'``,
+    because ``topics`` was missing from ``INTERNAL_CONFIG_KEYS`` along with
+    fifteen other builder keys (``endpoints``, ``owner``, ``repo``,
+    ``start_date`` …). Driving the real ``execute()`` is what surfaced that;
+    a builder-level test would have gone green over it.
 
-    Note what the nightly Kafka smoke does and does not prove: it lists topics with
-    ``kafka-python`` installed *by the workflow*, so it proves the sandbox is
-    reachable. It never touches this builder. That is #545's thesis exactly — a
-    green about connectivity read as a green about rows.
+    Note what the nightly Kafka smoke does and does not prove: it lists topics
+    with ``kafka-python`` installed *by the workflow*, so it proves the sandbox
+    is reachable. It never touches this builder. That is #545's thesis exactly —
+    a green about connectivity read as a green about rows.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#551: no kafka library ships, so _build_kafka_source always raises",
-    )
     def test_rows_land_in_the_destination(self, tmp_path):
         from testcontainers.kafka import KafkaContainer
 
         with KafkaContainer() as kafka:
-            from kafka import KafkaProducer  # noqa: F401 — absent today; see docstring
+            from kafka import KafkaProducer
 
             producer = KafkaProducer(
                 bootstrap_servers=kafka.get_bootstrap_server(),

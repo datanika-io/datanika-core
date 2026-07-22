@@ -81,6 +81,13 @@ SUPPORTED_KAFKA_TYPES = {"kafka"}
 #: retired version should be a setting to change, not a release to cut.
 DEFAULT_FACEBOOK_API_VERSION = "v21.0"
 
+#: How long a Kafka consumer waits for a message before deciding the topic is
+#: drained and the run is done. A batch pipeline needs a stop condition that an
+#: infinite consumer does not supply; overridable per upload via
+#: ``dlt_config["idle_timeout_ms"]``, since "quiet" means something different on
+#: a busy topic than on an hourly one.
+DEFAULT_KAFKA_IDLE_TIMEOUT_MS = 10_000
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -110,6 +117,35 @@ INTERNAL_CONFIG_KEYS = {
     "collection_names",
     "merge_config",
     "query",
+    # --- builder-specific keys -------------------------------------------
+    # Anything a builder reads out of `dlt_config` MUST be listed here.
+    # `execute()` forwards every *unlisted* key to `pipeline.run()`, which
+    # raises `TypeError: Pipeline.run() got an unexpected keyword argument`.
+    # So a key that a builder consumes but this set omits fails the run —
+    # after the source is built, so every `build_source` test still passes.
+    #
+    # Sixteen were missing (core#551). `endpoints` meant the endpoint picker
+    # (core#532) would have raised on any upload that used it; `api_version`
+    # meant the Facebook version override (core#543) could not be set;
+    # `owner`/`repo` meant GitHub could not be configured at all.
+    # `tests/test_services/test_dlt_config_keys.py` now derives this from the
+    # source so the two cannot drift again.
+    "endpoints",
+    "api_version",
+    "topics",
+    "idle_timeout_ms",
+    "start_from",
+    "enable_auto_commit",
+    "owner",
+    "repo",
+    "github_source_type",
+    "start_date",
+    "property_id",
+    "customer_id",
+    "account_id",
+    "base_id",
+    "database",
+    "auth",
 }
 
 # Client-side row-filter lambdas — applied AFTER source yield.
@@ -357,6 +393,66 @@ def describe_empty_file_match(bucket_url: str, file_glob: str) -> str:
     return f"{general} The directory exists but holds nothing matching that pattern."
 
 
+def _kafka_topics(raw) -> list[str]:
+    """Normalise the topics field to a list.
+
+    The connection form stores topics as a **comma-separated string**
+    (``CONFIG_SCHEMAS["kafka"]``), but the builder used to do
+    ``topics if isinstance(topics, list) else [topics]`` — so ``"orders,events"``
+    became a single topic literally named ``orders,events``, which subscribes to
+    nothing and yields no rows. A second, quieter bug sitting behind core#551's
+    louder one.
+    """
+    if isinstance(raw, str):
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    return [str(t).strip() for t in raw if str(t).strip()]
+
+
+def _kafka_record(message) -> dict:
+    """One Kafka message as a row, with the provenance needed to deduplicate.
+
+    The value is decoded as JSON when it parses and kept as text when it does
+    not — a topic carrying plain strings or protobuf should still land rather
+    than fail the run, and burying the raw payload is how you end up unable to
+    say what arrived.
+    """
+    raw = message.value
+    if isinstance(raw, bytes | bytearray):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = None
+    else:
+        text = raw if isinstance(raw, str) else None
+
+    value: dict
+    if text is None:
+        value = {"_kafka_value_raw": bytes(raw).hex()}
+    else:
+        try:
+            parsed = dlt_json.loads(text)
+        except Exception:
+            value = {"_kafka_value": text}
+        else:
+            value = parsed if isinstance(parsed, dict) else {"_kafka_value": parsed}
+
+    key = message.key
+    if isinstance(key, bytes | bytearray):
+        try:
+            key = key.decode("utf-8")
+        except UnicodeDecodeError:
+            key = bytes(key).hex()
+
+    return {
+        **value,
+        "_kafka_topic": message.topic,
+        "_kafka_partition": message.partition,
+        "_kafka_offset": message.offset,
+        "_kafka_timestamp": message.timestamp,
+        "_kafka_key": key,
+    }
+
+
 def _select_endpoints(source, endpoints):
     """Narrow a SaaS source to the endpoints the user ticked (core#532).
 
@@ -374,12 +470,40 @@ def _select_endpoints(source, endpoints):
       outcome, but its message does not say where the name came from, and the
       names come from a hardcoded picker list that has drifted before — so it is
       re-raised as a `DltRunnerError` naming both sides.
+
+    **A selection where *nothing* resolves is not a selection.** Until core#532
+    the picker wrote its names into `dlt_config["endpoints"]` and no builder
+    read them, and it defaulted to *every* endpoint ticked — so every upload
+    saved before that fix carries a full list of names that no longer exist
+    (`Subscription`, `Account`, … against a loader that builds `subscriptions`,
+    `charges`, …). Those values are the residue of a control that did nothing,
+    not a choice anyone made, and there is no migration for them: they live in
+    the `uploads.dlt_config` JSON blob.
+
+    Raising on them would turn "loads more than you asked for" into "fails
+    every run", for uploads whose owner never touched the picker. So a
+    selection that resolves to nothing at all is treated as unset — the
+    pre-fix behaviour, loudly logged. A *partial* match is different: somebody
+    did choose, and a name that has since disappeared is worth stopping for.
     """
     if not endpoints:
         return source
 
     available = set(source.resources.keys())
+    known = [e for e in endpoints if e in available]
     unknown = [e for e in endpoints if e not in available]
+
+    if unknown and not known:
+        logger.warning(
+            "Ignoring a stale endpoint selection %s — none of them exist on this source "
+            "(it builds %s). This upload predates core#532, when the picker wrote names "
+            "the loader never read. Loading everything, as it did before; re-select the "
+            "endpoints on the upload to narrow it.",
+            sorted(unknown),
+            sorted(available),
+        )
+        return source
+
     if unknown:
         raise DltRunnerError(
             f"Unknown endpoint(s) {sorted(unknown)} for this source. "
@@ -1273,26 +1397,95 @@ class DltRunnerService:
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
 
     def _build_kafka_source(self, config: dict, dlt_config: dict):
-        """Build a Kafka consumer source."""
+        """Build a Kafka source that actually consumes (core#551).
+
+        This used to do ``from kafka import kafka_consumer`` — the name of the
+        **dlt verified source** created by ``dlt init kafka``, not of
+        ``kafka-python`` (which exports ``KafkaConsumer``). Neither shipped, so
+        the import always raised and every Kafka upload failed at run time,
+        telling the user to run ``dlt init`` on a server they do not operate.
+        ``kafka-python`` is now a dependency and this consumes directly.
+
+        Two decisions worth stating, because neither has an obviously right
+        answer:
+
+        **Bounding.** A consumer iterates forever; a batch pipeline must stop.
+        ``consumer_timeout_ms`` ends iteration after a quiet interval, so a run
+        drains what is there and finishes. Configurable, because "quiet" means
+        something different on a busy topic than on an hourly one.
+
+        **Offsets.** The connection *requires* a ``group_id``, which is a
+        promise that successive runs resume rather than re-read, so offsets are
+        committed (``enable_auto_commit``). The honest cost: a crash between
+        commit and load loses that window. Every message therefore carries its
+        ``_kafka_partition``/``_kafka_offset``, declared as the resource primary
+        key — with a ``merge`` write disposition that makes re-reads idempotent,
+        so an operator who wants at-least-once can have it by turning
+        auto-commit off and letting the key deduplicate.
+        """
         bootstrap_servers = config.get("bootstrap_servers", "")
-        topics = dlt_config.get("topics") or config.get("topics", [])
+        topics = _kafka_topics(dlt_config.get("topics") or config.get("topics", []))
         group_id = config.get("group_id", "datanika-consumer")
         if not bootstrap_servers:
             raise DltRunnerError("Kafka source requires 'bootstrap_servers'")
         if not topics:
             raise DltRunnerError("Kafka source requires 'topics'")
-        try:
-            from kafka import kafka_consumer
 
-            return kafka_consumer(
-                topics=topics if isinstance(topics, list) else [topics],
-                bootstrap_servers=bootstrap_servers,
-                group_id=group_id,
-            )
-        except ImportError:
+        try:
+            from kafka import KafkaConsumer
+        except ImportError:  # pragma: no cover - kafka-python is a dependency
             raise DltRunnerError(
-                "Kafka verified source not installed (run dlt init kafka)"
+                "Kafka support is missing from this build — kafka-python is not installed. "
+                "This is a packaging fault, not a configuration one."
             ) from None
+
+        servers = [s.strip() for s in str(bootstrap_servers).split(",") if s.strip()]
+        idle_timeout_ms = int(dlt_config.get("idle_timeout_ms", DEFAULT_KAFKA_IDLE_TIMEOUT_MS))
+        auto_offset_reset = dlt_config.get("start_from", "earliest")
+        auto_commit = bool(dlt_config.get("enable_auto_commit", True))
+
+        def _topic_resource(topic: str):
+            @dlt.resource(
+                name=topic,
+                primary_key=("_kafka_partition", "_kafka_offset"),
+                # Typed explicitly so the destination schema does not depend on
+                # what happened to arrive: dlt only materialises a column it saw
+                # data for, so a batch where no message carried a key would
+                # silently produce a table without `_kafka_key`, and the next
+                # batch would add it. Provenance columns should be present
+                # whether or not this particular window used them.
+                columns={
+                    "_kafka_topic": {"data_type": "text"},
+                    "_kafka_partition": {"data_type": "bigint"},
+                    "_kafka_offset": {"data_type": "bigint"},
+                    "_kafka_timestamp": {"data_type": "bigint"},
+                    "_kafka_key": {"data_type": "text"},
+                },
+            )
+            def _consume():
+                consumer = KafkaConsumer(
+                    topic,
+                    bootstrap_servers=servers,
+                    group_id=group_id,
+                    auto_offset_reset=auto_offset_reset,
+                    enable_auto_commit=auto_commit,
+                    consumer_timeout_ms=idle_timeout_ms,
+                )
+                try:
+                    for message in consumer:
+                        yield _kafka_record(message)
+                finally:
+                    consumer.close()
+
+            return _consume
+
+        @dlt.source(name="kafka")
+        def _kafka_source():
+            # One resource per topic, so each lands in its own table rather
+            # than being fused into one by message shape.
+            return [_topic_resource(topic)() for topic in topics]
+
+        return _kafka_source()
 
     @staticmethod
     def _rest_api_fallback(

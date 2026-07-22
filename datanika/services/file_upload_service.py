@@ -82,8 +82,26 @@ class FileUploadService:
         extract_path = os.path.join(self._extracted_dir(), uploaded_file.file_hash)
         os.makedirs(extract_path, exist_ok=True)
 
-        with tarfile.open(uploaded_file.archive_path, "r:gz") as tar:
-            tar.extractall(extract_path, filter="data")
+        try:
+            with tarfile.open(uploaded_file.archive_path, "r:gz") as tar:
+                tar.extractall(extract_path, filter="data")
+        except FileNotFoundError as exc:
+            # This runs in the Celery worker; the archive was written by the web
+            # tier. If the two do not share this directory the run dies here,
+            # before any data moves, and the bare OSError names a path while
+            # saying nothing about the cause — which is how core#529 cost three
+            # CI rounds. Deployment is the overwhelmingly likely explanation, so
+            # say so; the alternative (a genuinely deleted archive) is still
+            # identifiable from the path.
+            raise FileNotFoundError(
+                f"Uploaded file archive not found: {uploaded_file.archive_path}\n"
+                "The web tier stored this file and this worker cannot see it, which "
+                "normally means the two do not share the uploads directory. Mount one "
+                "volume read-write on both the app and the Celery worker, and set "
+                f"FILE_UPLOADS_DIR (currently {self._uploads_dir}) to the same absolute "
+                "path in both — the default is relative to the working directory, so "
+                "sharing the volume alone is not enough."
+            ) from exc
 
         return extract_path
 

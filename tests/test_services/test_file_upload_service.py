@@ -107,6 +107,37 @@ class TestExtractForDlt:
         with open(os.path.join(extracted_dir, "data.csv"), "rb") as f:
             assert f.read() == sample_csv
 
+    def test_missing_archive_names_the_cause_not_just_the_path(self, svc, db_session, sample_csv):
+        """A worker that cannot see the archive must say why (core#529).
+
+        This is the single most expensive error message in the product. When
+        the web tier and the Celery worker do not share the uploads directory,
+        the run dies here in under 100ms with 0 rows, and the bare
+        ``[Errno 2] No such file or directory: './uploaded_files/archives/…'``
+        names a path while saying nothing about the cause. It cost three CI
+        rounds and two departments to work out that the two tiers had separate
+        filesystems — and it is the first thing a Helm self-hoster hits on the
+        advertised CSV → DuckDB onboarding path.
+
+        So the assertion is on the diagnosis, not on the exception type.
+        """
+        from datanika.models.user import Organization
+
+        org = Organization(name="Acme", slug="acme-missing-archive")
+        db_session.add(org)
+        db_session.flush()
+
+        record = svc.save_file(db_session, org.id, "data.csv", sample_csv)
+        os.remove(record.archive_path)
+
+        with pytest.raises(FileNotFoundError) as exc:
+            svc.extract_for_dlt(record)
+
+        message = str(exc.value)
+        assert record.archive_path in message, "the path is still needed for support"
+        assert "share" in message.lower(), "must say the tiers need a shared directory"
+        assert "FILE_UPLOADS_DIR" in message, "must name the setting the operator changes"
+
 
 class TestCleanupExtracted:
     def test_removes_dir(self, svc, db_session, sample_csv):

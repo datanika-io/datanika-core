@@ -174,16 +174,27 @@ def migrated_schema(roundtrip_db_url):  # noqa: F811 — pytest fixture injectio
         engine.dispose()
 
 
+def _require_deployed_ref() -> None:
+    """Skip locally without the ref; fail loudly in CI, which must have it.
+
+    A shallow ``actions/checkout`` has no ``origin/master``, so every check in
+    this file would compare an empty dict and pass. Locally that is a missing
+    fetch and shouldn't block anyone; in CI it means the workflow lost its
+    fetch step and the guard is silently inert.
+    """
+    if not _deployed_model_files():
+        _no_postgres(
+            f"Cannot read models at {_DEPLOYED_REF!r} — run `git fetch origin master` "
+            "(CI does this explicitly; actions/checkout is shallow). Without it "
+            "this file compares nothing."
+        )
+
+
 class TestDeployedCodeSurvivesTheNewSchema:
     def test_the_deployed_ref_is_readable(self):
         """Guard the guard: no ref, no comparison, and silence would look green."""
-        files = _deployed_model_files()
-        if not files:
-            _no_postgres(
-                f"Cannot read models at {_DEPLOYED_REF!r} — `git fetch origin master` "
-                "first. Without it this file compares nothing."
-            )
-        assert files, f"no model files at {_DEPLOYED_REF}"
+        _require_deployed_ref()
+        assert _deployed_model_files(), f"no model files at {_DEPLOYED_REF}"
 
     def test_the_deployed_models_actually_parsed(self):
         """The hole this whole file exists to avoid, one level up.

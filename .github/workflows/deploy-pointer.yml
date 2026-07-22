@@ -89,38 +89,40 @@ jobs:
         # Production routing used to exist only on the box and in an untracked plans/ folder.
         # When the previous host was terminated (2026-07-14) the server, data and backups went
         # together; the vhost survived only because someone happened to have a local copy.
-        # It is version-controlled now, and deployed the same way everything else is.
         #
-        # Never touches webdav.conf -- that vhost belongs to a co-tenant on this shared box.
+        # No scp: "Transfer source" has already put the whole repo at /opt/datanika/datanika,
+        # so the vhosts are on the box before this runs. That removes the runner-side path as a
+        # failure mode (the first version used deploy/apache/... while the checkout lands in
+        # datanika/, so scp found nothing) and guarantees the vhost matches the tree the image
+        # is built from.
+        #
+        # Never touches webdav.conf -- that vhost belongs to a co-tenant on this shared box --
+        # and never restarts Apache, only graceful.
         run: |
-          for f in app.datanika.io staging-app.datanika.io; do
-            case "$f" in
-              app.datanika.io)         dest=zapp-datanika-io.conf ;;
-              staging-app.datanika.io) dest=zstaging-app-datanika-io.conf ;;
-            esac
-            scp -i ~/.ssh/deploy -o StrictHostKeyChecking=no \
-              "deploy/apache/$f.conf" "root@${{ secrets.POINTER_HOST }}:/tmp/$dest.new"
-          done
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'VHOST'
           set -e
+          SRC=/opt/datanika/datanika/deploy/apache
           changed=0
-          for dest in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
-            live=/etc/apache2/sites-enabled/$dest
-            if ! cmp -s "/tmp/$dest.new" "$live"; then
-              cp -a "$live" "/tmp/$dest.bak"
-              cp "/tmp/$dest.new" "$live"
+          sync_one() {
+            src="$SRC/$1"; live="/etc/apache2/sites-enabled/$2"
+            [ -f "$src" ] || { echo "missing in repo: $src"; exit 1; }
+            if ! cmp -s "$src" "$live"; then
+              cp -a "$live" "/tmp/$2.bak"
+              cp "$src" "$live"
               changed=1
-              echo "vhost changed: $dest"
+              echo "vhost changed: $2"
             fi
-          done
+          }
+          sync_one app.datanika.io.conf         zapp-datanika-io.conf
+          sync_one staging-app.datanika.io.conf zstaging-app-datanika-io.conf
           if [ "$changed" = "0" ]; then echo "vhosts already current"; exit 0; fi
           if apachectl configtest 2>&1 | tee /tmp/ct.log | grep -qi 'Syntax OK'; then
             apachectl graceful
-            echo "vhosts applied and Apache gracefully reloaded"
+            echo "vhosts applied, Apache gracefully reloaded"
           else
-            echo "CONFIGTEST FAILED — restoring previous vhosts:"; cat /tmp/ct.log
-            for dest in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
-              [ -f "/tmp/$dest.bak" ] && cp "/tmp/$dest.bak" "/etc/apache2/sites-enabled/$dest"
+            echo "CONFIGTEST FAILED - restoring previous vhosts:"; cat /tmp/ct.log
+            for d in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
+              [ -f "/tmp/$d.bak" ] && cp "/tmp/$d.bak" "/etc/apache2/sites-enabled/$d"
             done
             apachectl configtest
             exit 1

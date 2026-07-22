@@ -73,7 +73,7 @@ def check_upstream_dependencies(
             )
         ).first()
 
-        if success_run is None:
+        if success_run is None or success_run.finished_at is None:
             unsatisfied.append(f"{dep.upstream_type.value}:{dep.upstream_id}")
 
     return DependencyCheckResult(

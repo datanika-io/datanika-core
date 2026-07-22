@@ -187,6 +187,40 @@ def upload_form() -> rx.Component:
                     width="100%",
                 ),
             ),
+            # File sources: format knobs the runner reads from dlt_config.
+            # Before core#499 these were reachable only through raw JSON config,
+            # so a semicolon CSV loaded as one fused column and an s3 connection
+            # on the default `*` glob failed with an error naming a setting the
+            # user had no way to set.
+            rx.cond(
+                UploadState.form_is_file_source,
+                rx.vstack(
+                    rx.text(_t["uploads.file_format"], size="2", weight="bold"),
+                    rx.select(
+                        ["auto", "csv", "json", "parquet"],
+                        value=UploadState.form_file_format,
+                        on_change=UploadState.set_form_file_format,
+                        placeholder=_t["uploads.ph_file_format"],
+                        width="100%",
+                    ),
+                    rx.text(_t["uploads.delimiter"], size="2", weight="bold"),
+                    rx.input(
+                        placeholder=_t["uploads.ph_delimiter"],
+                        value=UploadState.form_delimiter,
+                        on_change=UploadState.set_form_delimiter,
+                        width="100%",
+                    ),
+                    rx.text(_t["uploads.encoding"], size="2", weight="bold"),
+                    rx.input(
+                        placeholder=_t["uploads.ph_encoding"],
+                        value=UploadState.form_encoding,
+                        on_change=UploadState.set_form_encoding,
+                        width="100%",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
             # SQL-specific fields (hidden for non-SQL sources)
             rx.cond(
                 ~UploadState.form_is_non_sql_source,

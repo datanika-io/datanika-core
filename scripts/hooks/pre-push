@@ -25,6 +25,37 @@ if [[ "$BRANCH" != "dev" && "$BRANCH" != "master" && "$BRANCH" != "main" ]]; the
   fi
 fi
 
+# --- branch/commit consistency -------------------------------------------------------
+# Catches commits that landed on the wrong branch. Branches are `<issue>-<slug>`
+# (WORKFLOW_RULES §2), so if this branch names an issue, the commits being pushed should
+# close THAT issue — not a different one.
+#
+# Real case, 2026-07-22: a script ran `git commit --amend` without checking out its own
+# branch first, so it rewrote the message of whatever was HEAD. Branch
+# `486-inode-stale-config` ended up carrying "closes #477". The PR had the right content,
+# the wrong title, and would have closed the wrong issue and left misleading history.
+#
+# Warn-only by design: closing several issues at once is legitimate, and a branch may
+# predate its issue. The value is making the mismatch impossible to miss, not blocking.
+BRANCH_ISSUE=$(printf '%s' "$BRANCH" | sed -nE 's/^([0-9]+)-.*/\1/p')
+if [ -n "$BRANCH_ISSUE" ]; then
+  RANGE=$(git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 && echo '@{upstream}..HEAD' || echo 'origin/dev..HEAD')
+  CLOSES=$(git log --format=%B "$RANGE" 2>/dev/null \
+           | grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' \
+           | grep -oE '[0-9]+' | sort -u | tr '\n' ' ')
+  if [ -n "$CLOSES" ] && ! printf '%s' "$CLOSES" | grep -qw "$BRANCH_ISSUE"; then
+    echo ""
+    echo "  pre-push WARNING: branch/commit mismatch"
+    echo "      branch '$BRANCH' refers to issue #$BRANCH_ISSUE"
+    echo "      commits close: $(printf '%s' "$CLOSES" | sed 's/\([0-9][0-9]*\)/#\1/g')"
+    echo ""
+    echo "      Usually means a commit landed on the wrong branch — e.g. 'git commit --amend'"
+    echo "      run without checking out its own branch first, which rewrites whatever is HEAD."
+    echo "      Check with: git log --oneline $RANGE"
+    echo ""
+  fi
+fi
+
 # Find venv
 if [ -x ".venv/Scripts/python.exe" ]; then
   PY=".venv/Scripts/python.exe"

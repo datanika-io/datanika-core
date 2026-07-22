@@ -18,7 +18,21 @@ import { gotoReady } from "./auth";
  *     did complete — only the recorded status was wrong.
  *
  * So: click what a user clicks, and assert the status a user sees.
+ *
+ * ── Every interaction is explicitly bounded (core#501) ───────────────────────
+ * `playwright.config.ts` sets a test timeout and an *expect* timeout but no
+ * `actionTimeout`, so Playwright actions default to **unbounded** — they are
+ * capped only by the enclosing test. The first run of this spec proved what
+ * that costs: a locator never resolved, `.fill()` sat on it for the full
+ * 6-minute test budget, and the report said nothing except "timed out". A
+ * six-minute silence is not a test result.
+ *
+ * Hence `UI_TIMEOUT` on every action. A wrong selector now fails in ~15s and
+ * names itself, which is the difference between a diagnosis and another run.
  */
+
+/** Bound for a single UI interaction. Long enough for Reflex's WS round trip. */
+const UI_TIMEOUT = 15_000;
 
 /** A connection type as the picker lists it (see connections.py PICKER_TYPES). */
 export type ConnectionKind = "duckdb" | "csv";
@@ -35,6 +49,17 @@ export function sanitizeName(value: string): string {
 }
 
 /**
+ * Assert a locator is present before acting on it, with a message naming what
+ * was expected. Without this, a bad selector surfaces as a bare timeout on
+ * whatever action came next.
+ */
+async function present(page: Page, locator: ReturnType<Page["locator"]>, what: string) {
+  await expect(locator.first(), `could not find ${what} on ${page.url()}`).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
+}
+
+/**
  * Pick a value from a `searchable_select` (components/searchable_select.py).
  *
  * It is a Radix popover, not a `<select>`: the trigger is a button whose
@@ -48,19 +73,27 @@ export async function selectSearchable(
   placeholder: string,
   optionText: string,
 ): Promise<void> {
-  await page.getByRole("button", { name: placeholder, exact: true }).click();
+  const trigger = page.getByRole("button", { name: placeholder, exact: true });
+  await present(page, trigger, `searchable-select trigger "${placeholder}"`);
+  await trigger.click({ timeout: UI_TIMEOUT });
 
   // Radix portals popover content into a positioned wrapper at the body root.
   const popover = page.locator("[data-radix-popper-content-wrapper]").last();
-  await expect(popover).toBeVisible();
+  await expect(popover, `popover for "${placeholder}" did not open`).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
 
   // The filter input is pure frontend JS (rx.script), so typing narrows the
   // list without a round trip. Filtering first keeps the click unambiguous
   // when one option's text is a prefix of another's.
-  await popover.getByPlaceholder("Search...").fill(optionText);
+  await popover.getByPlaceholder("Search...").fill(optionText, { timeout: UI_TIMEOUT });
 
-  await popover.getByText(optionText, { exact: true }).click();
-  await expect(popover).toBeHidden();
+  const option = popover.getByText(optionText, { exact: true });
+  await expect(option, `option "${optionText}" not offered by "${placeholder}"`).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
+  await option.click({ timeout: UI_TIMEOUT });
+  await expect(popover).toBeHidden({ timeout: UI_TIMEOUT });
 }
 
 /**
@@ -79,15 +112,22 @@ export async function createDuckDbConnection(
   const saved = sanitizeName(name);
   await gotoReady(page, "/connections");
 
-  await page.getByPlaceholder("Connection name").fill(name);
+  const nameField = page.getByPlaceholder("Connection name");
+  await present(page, nameField, 'the connection-name field (placeholder "Connection name")');
+  await nameField.fill(name, { timeout: UI_TIMEOUT });
+
   await selectSearchable(page, "Connection type", "duckdb");
-  await page.getByPlaceholder("/data/warehouse.duckdb").fill(dbPath);
-  await page.getByRole("button", { name: "Create Connection" }).click();
+
+  const pathField = page.getByPlaceholder("/data/warehouse.duckdb");
+  await present(page, pathField, "the DuckDB path field — did the type picker actually apply?");
+  await pathField.fill(dbPath, { timeout: UI_TIMEOUT });
+
+  await page.getByRole("button", { name: "Create Connection" }).click({ timeout: UI_TIMEOUT });
 
   await expect(
     page.getByRole("cell", { name: saved, exact: true }),
     `DuckDB connection "${saved}" did not appear in the connections table`,
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: UI_TIMEOUT });
   return saved;
 }
 
@@ -108,10 +148,18 @@ export async function createCsvConnection(
   const saved = sanitizeName(name);
   await gotoReady(page, "/connections");
 
-  await page.getByPlaceholder("Connection name").fill(name);
+  const nameField = page.getByPlaceholder("Connection name");
+  await present(page, nameField, 'the connection-name field (placeholder "Connection name")');
+  await nameField.fill(name, { timeout: UI_TIMEOUT });
+
   await selectSearchable(page, "Connection type", "csv");
 
-  await page.locator('input[type="file"]').setInputFiles(csvPath);
+  const fileInput = page.locator('input[type="file"]');
+  await expect(
+    fileInput.first(),
+    "no <input type=file> — rx.upload did not render for the csv type",
+  ).toBeAttached({ timeout: UI_TIMEOUT });
+  await fileInput.setInputFiles(csvPath, { timeout: UI_TIMEOUT });
 
   // connections.file_uploaded — proves the upload handler returned 2xx. A bare
   // "connection saved" assertion passes even when the drop zone 500s, because
@@ -119,13 +167,13 @@ export async function createCsvConnection(
   await expect(
     page.getByText("File uploaded"),
     "CSV upload did not confirm — the connections upload handler may be failing (see #452)",
-  ).toBeVisible({ timeout: 20_000 });
+  ).toBeVisible({ timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Create Connection" }).click();
+  await page.getByRole("button", { name: "Create Connection" }).click({ timeout: UI_TIMEOUT });
   await expect(
     page.getByRole("cell", { name: saved, exact: true }),
     `CSV connection "${saved}" did not appear in the connections table`,
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: UI_TIMEOUT });
   return saved;
 }
 
@@ -145,15 +193,18 @@ export async function createUpload(
   const saved = sanitizeName(name);
   await gotoReady(page, "/uploads");
 
-  await page.getByPlaceholder("Upload name").fill(name);
+  const nameField = page.getByPlaceholder("Upload name");
+  await present(page, nameField, 'the upload-name field (placeholder "Upload name")');
+  await nameField.fill(name, { timeout: UI_TIMEOUT });
+
   await selectSearchable(page, "Source connection", sourceOption);
   await selectSearchable(page, "Destination connection", destOption);
-  await page.getByRole("button", { name: "Create Upload" }).click();
+  await page.getByRole("button", { name: "Create Upload" }).click({ timeout: UI_TIMEOUT });
 
   await expect(
     page.getByRole("cell", { name: saved, exact: true }),
     `Upload "${saved}" did not appear in the uploads table`,
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeVisible({ timeout: UI_TIMEOUT });
   return saved;
 }
 
@@ -168,20 +219,25 @@ export async function uploadOptionFor(
   connectionName: string,
   kind: ConnectionKind,
 ): Promise<string> {
-  await page.getByRole("button", { name: placeholder, exact: true }).click();
+  const trigger = page.getByRole("button", { name: placeholder, exact: true });
+  await present(page, trigger, `searchable-select trigger "${placeholder}"`);
+  await trigger.click({ timeout: UI_TIMEOUT });
+
   const popover = page.locator("[data-radix-popper-content-wrapper]").last();
-  await expect(popover).toBeVisible();
+  await expect(popover, `popover for "${placeholder}" did not open`).toBeVisible({
+    timeout: UI_TIMEOUT,
+  });
 
   const suffix = `${connectionName} (${kind})`;
   const option = popover.getByText(new RegExp(`\\d+ — ${suffix}$`));
   await expect(
     option,
     `no ${placeholder} option ending "${suffix}" — is the connection the right type?`,
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: UI_TIMEOUT });
 
   const label = (await option.textContent())?.trim() ?? "";
   await page.keyboard.press("Escape");
-  await expect(popover).toBeHidden();
+  await expect(popover).toBeHidden({ timeout: UI_TIMEOUT });
   return label;
 }
 
@@ -198,12 +254,12 @@ export type RunOutcome = { status: string; rows: number };
 export async function runUploadAndAwait(
   page: Page,
   uploadName: string,
-  timeoutMs = 180_000,
+  timeoutMs = 150_000,
 ): Promise<RunOutcome> {
   await gotoReady(page, "/uploads");
   const row = page.getByRole("row").filter({ hasText: uploadName });
-  await expect(row, `upload "${uploadName}" is not listed`).toBeVisible();
-  await row.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(row, `upload "${uploadName}" is not listed`).toBeVisible({ timeout: UI_TIMEOUT });
+  await row.getByRole("button", { name: "Run", exact: true }).click({ timeout: UI_TIMEOUT });
 
   const deadline = Date.now() + timeoutMs;
   let last: RunOutcome = { status: "(no run row appeared)", rows: 0 };
@@ -212,7 +268,7 @@ export async function runUploadAndAwait(
     await gotoReady(page, "/runs");
     const runRow = page.getByRole("row").filter({ hasText: uploadName }).first();
 
-    if (await runRow.isVisible().catch(() => false)) {
+    if (await runRow.isVisible({ timeout: 5_000 }).catch(() => false)) {
       const cells = runRow.getByRole("cell");
       // runs.py column order: ID | Target | Status | Started | Finished | Rows | Error | Logs
       const status = ((await cells.nth(2).textContent()) ?? "").trim();

@@ -302,49 +302,69 @@ class TestBuildSource:
 # ---------------------------------------------------------------------------
 # build_source — file types (Step 25)
 # ---------------------------------------------------------------------------
+def _fake_lister():
+    """A real (empty) dlt resource standing in for `filesystem()`.
+
+    These tests assert *the kwargs we hand dlt*, which is still worth pinning —
+    but the mock can no longer return a bare string, because `build_source` now
+    pipes the lister into a format reader (core#492). A string isn't pipeable,
+    and `result == "csv_src"` was never evidence of anything anyway: it asserted
+    the mock's own return value. Contents are covered for real, against real
+    files and a real DuckDB, in `test_dlt_file_sources.py`.
+    """
+    import dlt
+
+    # Must yield at least one item: `_build_file_source` now peeks the lister
+    # and refuses to build a source that matches nothing (core#493), so an
+    # empty stand-in would fail every test here for the wrong reason.
+    return dlt.resource(lambda: iter([{"file_name": "customers.csv"}]), name="filesystem")
+
+
 class TestBuildFileSource:
     @patch("datanika.services.dlt_runner.filesystem")
     def test_csv_source_uses_filesystem(self, mock_fs, svc):
-        mock_fs.return_value = "csv_src"
-        result = svc.build_source("csv", {}, {"bucket_url": "/data"})
+        mock_fs.return_value = _fake_lister()
+        svc.build_source("csv", {}, {"bucket_url": "/data"})
         mock_fs.assert_called_once()
-        assert result == "csv_src"
         kwargs = mock_fs.call_args[1]
         assert kwargs["bucket_url"] == "/data"
         assert kwargs["file_glob"] == "*.csv"
 
     @patch("datanika.services.dlt_runner.filesystem")
     def test_json_source_default_glob(self, mock_fs, svc):
-        mock_fs.return_value = "json_src"
+        mock_fs.return_value = _fake_lister()
         svc.build_source("json", {}, {"bucket_url": "/data"})
         kwargs = mock_fs.call_args[1]
         assert kwargs["file_glob"] == "*.json"
 
     @patch("datanika.services.dlt_runner.filesystem")
     def test_parquet_source_default_glob(self, mock_fs, svc):
-        mock_fs.return_value = "pq_src"
+        mock_fs.return_value = _fake_lister()
         svc.build_source("parquet", {}, {"bucket_url": "/data"})
         kwargs = mock_fs.call_args[1]
         assert kwargs["file_glob"] == "*.parquet"
 
     @patch("datanika.services.dlt_runner.filesystem")
     def test_s3_source_passes_credentials(self, mock_fs, svc):
-        mock_fs.return_value = "s3_src"
+        mock_fs.return_value = _fake_lister()
         config = {
             "aws_access_key_id": "AKID",
             "aws_secret_access_key": "secret",
             "region_name": "us-east-1",
             "bucket_url": "s3://my-bucket",
         }
-        svc.build_source("s3", config, {})
+        # A format is required now: `s3` + the default `*` glob names no format,
+        # and guessing one is how core#492 happened. See
+        # TestUnreadableFormatsRefuseInsteadOfGuessing.
+        svc.build_source("s3", config, {"file_glob": "*.csv"})
         kwargs = mock_fs.call_args[1]
         assert kwargs["bucket_url"] == "s3://my-bucket"
-        assert kwargs["file_glob"] == "*"
+        assert kwargs["file_glob"] == "*.csv"
         assert kwargs["credentials"]["aws_access_key_id"] == "AKID"
 
     @patch("datanika.services.dlt_runner.filesystem")
     def test_custom_file_glob_overrides_default(self, mock_fs, svc):
-        mock_fs.return_value = "src"
+        mock_fs.return_value = _fake_lister()
         svc.build_source("csv", {}, {"bucket_url": "/data", "file_glob": "reports_*.csv"})
         kwargs = mock_fs.call_args[1]
         assert kwargs["file_glob"] == "reports_*.csv"
@@ -361,7 +381,7 @@ class TestBuildFileSource:
     @patch("datanika.services.dlt_runner.filesystem")
     def test_bucket_url_from_config(self, mock_fs, svc):
         """bucket_url can come from connection config instead of dlt_config."""
-        mock_fs.return_value = "src"
+        mock_fs.return_value = _fake_lister()
         svc.build_source("csv", {"bucket_url": "/from/config"}, {})
         kwargs = mock_fs.call_args[1]
         assert kwargs["bucket_url"] == "/from/config"
@@ -375,7 +395,9 @@ class TestBuildFileSource:
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_fs.return_value = MagicMock()
+        # A MagicMock iterates empty, which now reads as "matched no files"
+        # and refuses to build the source (core#493).
+        mock_fs.return_value = _fake_lister()
 
         result = svc.execute(
             pipeline_id=1,

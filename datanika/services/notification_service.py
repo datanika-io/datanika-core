@@ -313,3 +313,10 @@ def register_hooks(service):
     hooks.on("run.upload_completed", _on_run_completed)
     hooks.on("run.models_completed", _on_run_completed)
     hooks.on("run.transformation_completed", _on_run_completed)
+    # Failures arrive on their own event, not on `run.*_completed` with
+    # status="failed" (core#465). datanika-cloud's four metering handlers
+    # subscribe to those three and call `record_usage` unconditionally —
+    # none of them check `status` — so reusing them would bill the user for
+    # a run that failed. The separation is structural rather than a status
+    # check we would be trusting another repo's handlers to keep.
+    hooks.on("run.failed", _on_run_completed)

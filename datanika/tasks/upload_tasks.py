@@ -3,6 +3,7 @@
 import logging
 import traceback
 from collections import defaultdict
+from pathlib import PurePosixPath
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -202,6 +203,15 @@ def run_upload(
                 if uploaded_file:
                     extracted_dir = file_svc.extract_for_dlt(uploaded_file)
                     dlt_config["bucket_url"] = extracted_dir
+                    # Name the table after the file the user uploaded. This is
+                    # the only layer that knows the original name — the runner
+                    # sees a hash-named extract dir and a `*.csv` glob, so
+                    # without this the advertised onboarding run lands in a
+                    # table called `csv` (core#492).
+                    if not dlt_config.get("table_name"):
+                        stem = PurePosixPath(uploaded_file.original_name).stem
+                        if stem:
+                            dlt_config["table_name"] = stem
 
             try:
                 from datanika.config import settings as app_cfg
@@ -238,8 +248,19 @@ def run_upload(
                 dst_config,
                 dataset_name,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Catalog sync failed (non-fatal)")
+            # Non-fatal to the run, but not invisible: the load succeeded and
+            # the data is there, while Models/Catalog will not show it. Saying
+            # so on the run is the difference between a user filing a bug and
+            # a user concluding the product does not work (core#494).
+            execution_service.append_logs(
+                session,
+                run_id,
+                "WARNING: the data loaded successfully, but the catalog sync failed, "
+                "so these tables will not appear under Models/Catalog: "
+                f"{exc.__class__.__name__}: {exc}",
+            )
 
         from datanika.hooks import announce
 

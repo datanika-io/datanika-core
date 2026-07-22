@@ -1,4 +1,14 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { test, expect, signUp } from "../fixtures/auth";
+import {
+  createCsvConnection,
+  createDuckDbConnection,
+  createUpload,
+  runUploadAndAwait,
+} from "../fixtures/data";
 
 /**
  * Golden path: a new user signs up, creates a connection, uploads a CSV,
@@ -8,29 +18,143 @@ import { test, expect, signUp } from "../fixtures/auth";
  * the critical revenue-producing flow works end to end. If this is red,
  * no other E2E result matters.
  *
- * Unblocked by core#109 (e2e-seed lands in dev). Still tagged @slow because
- * the full stack exercise remains expensive on the GHA runner.
+ * ── Why steps 2–5 are code now (core#482) ────────────────────────────────────
+ * They used to be a comment. The deferral said the backend create/run path was
+ * "covered by the nightly connector-smoke matrix and re-verified via API in the
+ * 2026-07-17 restore check" — both API-level. On 2026-07-22 two P0s reached
+ * production straight through the gap between that coverage and a browser:
+ *
+ *   #452  the connections upload handler returned HTTP 500 (Reflex could not
+ *         find the upload param behind a bare `list` annotation)
+ *   #456  every successful run was recorded FAILED — `emit()` raised on the
+ *         completion hooks and the surrounding `except` called `fail_run(...)`
+ *
+ * Both were found by a person clicking through prod, while `e2e-staging`
+ * reported success on every push. Hence the shape of this spec: drive the UI a
+ * user drives, and assert the terminal run status a user sees.
+ *
+ * #456 is why `expect(status).toBe("success")` is the assertion and "a run row
+ * appeared" is not: the run *did* complete — only its recorded status was
+ * wrong. A test that waited for a run to exist would have passed throughout.
+ *
+ * ── Cost ─────────────────────────────────────────────────────────────────────
+ * Tagged @slow: signup + two connections + an upload + a real Celery run.
+ * @slow specs are excluded unless DATANIKA_E2E_SLOW=1 — which for a long time
+ * no CI job set, so nothing here ran at all (core#484). If you are reading this
+ * because the job is slow, the fix is a smaller fixture — not dropping the tag,
+ * and not un-setting the flag.
  */
-// @slow — full stack exercise (signup + run + destination query). Expensive on
-// the GHA runner (docker-compose + Celery + dbt), so gated to PRs targeting
-// master via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P0 #1.
+
+const CSV_ROWS = 3;
+const CSV_CONTENT = ["id,name,amount", "1,alpha,100", "2,beta,200", "3,gamma,300", ""].join("\n");
+
+/**
+ * A path both the web container and the Celery worker can reach.
+ * `/app/uploaded_files` is a named volume mounted rw by app, app_b and celery
+ * (docker-compose.yml, #471); anything web-only fails at run time rather than
+ * at save time — the slower, more confusing failure.
+ */
+const SHARED_DIR = process.env.DATANIKA_E2E_SHARED_DIR ?? "/app/uploaded_files";
+
+// Artifacts unconditionally while quarantined (core#520). The global config uses
+// `retain-on-failure`, and a `test.fail()` test that fails is classified
+// `expected` rather than `failed` — so the diagnostics every round has depended
+// on could be dropped exactly when the verdict stops being reported. A
+// quarantined test that stops producing evidence is just a disabled one.
+//
+// Must be file top-level, NOT inside the describe: `use({ trace })` forces a new
+// worker, and Playwright refuses it in a describe group — which fails collection
+// of the WHOLE suite, not just this spec. Caught by running `--list`; it would
+// have taken all 62 tests down, far worse than the thing being quarantined.
+test.use({ trace: "on", screenshot: "on", video: "retain-on-failure" });
+
 test.describe("Golden path: signup → connection → pipeline → run @slow", () => {
-  test("new user signs up and reaches the app", async ({ page }) => {
-    // 1. Signup. signUp() fills the form (incl. the required Full Name) and
-    //    handles the Reflex hydration race — it retries if the click falls back
-    //    to a native GET submit before on_submit is wired (core#295).
-    await signUp(page);
-    await expect(page).toHaveURL(/\/(dashboard|connections|onboarding)?$/);
-    await expect(page.getByRole("link", { name: "Connections" }).first()).toBeVisible({
-      timeout: 10_000,
+  // Signup, two connections, an upload and a Celery round trip. The default
+  // 60s covers none of that. Deliberately NOT larger: every interaction is
+  // individually bounded in fixtures/data.ts, so this cap should never be what
+  // fails — if it is, something is hanging that no per-action timeout covers.
+  test.setTimeout(300_000);
+
+  test("new user signs up, wires CSV → DuckDB, runs it, and sees rows land", async ({ page }) => {
+    // ── QUARANTINED FROM THE PROMOTION GATE — core#520 ───────────────────────
+    // This spec has NEVER passed. It was written 2026-07-22 (#482/#485) and each
+    // round moves the failure one step later; step 5 has still never executed.
+    // It was therefore not protecting production — it was work in progress that
+    // happened to live in the gating job, holding back #500 (a P0), #505, #510,
+    // #516, #518, Growth's announcement and landing#281.
+    //
+    // The distinction that makes this safe, and the line not to cross:
+    //   • quarantining a test that USED TO PASS hides a regression — never.
+    //   • quarantining a test that has NEVER PASSED removes a non-gate from the
+    //     gate. Same call as the Kafka smoke quarantine (#399), which was
+    //     un-quarantined once it could pass.
+    //
+    // `test.fail()` rather than `test.skip()` is the whole point: the test still
+    // RUNS, still exercises staging, still uploads artifacts — only its verdict
+    // is quarantined. And Playwright reports an *unexpectedly passing*
+    // `test.fail()` as a failure, so the first green turns the job red and
+    // forces this marker out. Re-arming is enforced by the tool, not by someone
+    // remembering. When that happens: delete this line and close core#520.
+    test.fail(
+      true,
+      "core#520: golden-path has never passed; quarantined from the promotion " +
+        "gate. It still runs. Playwright fails the job if it starts passing — " +
+        "when it does, remove this and close core#520.",
+    );
+
+    const stamp = `${Date.now()}`;
+    // set_form_name strips everything outside [a-zA-Z0-9 ], so keep names in
+    // that alphabet — otherwise the saved name is not the one typed.
+    const destName = `qa golden dest ${stamp}`;
+    const srcName = `qa golden src ${stamp}`;
+    const uploadName = `qa golden upload ${stamp}`;
+
+    // Each phase is a named step so a failure reports WHICH phase broke. The
+    // first CI run of this spec died as an unqualified 6-minute timeout and the
+    // report could not say where — a result that costs a full run to learn
+    // nothing (core#501).
+    await test.step("1. sign up and reach the app", async () => {
+      // signUp() fills the form (incl. the required Full Name) and handles the
+      // Reflex hydration race — it retries if the click falls back to a native
+      // GET submit before on_submit is wired (core#295).
+      await signUp(page);
+      await expect(page).toHaveURL(/\/(dashboard|connections|onboarding)?$/);
+      await expect(page.getByRole("link", { name: "Connections" }).first()).toBeVisible({
+        timeout: 10_000,
+      });
     });
 
-    // 2-5. Add a DuckDB connection → upload a CSV → run the pipeline → assert
-    // rows landed. Deferred from this spec: the connection-builder + upload UI
-    // selectors need verification against the live app, and the upload/run steps
-    // need a fixture CSV + an apiClient (fixtures/data.ts) that aren't in the
-    // harness yet. The backend create/run path is covered by the nightly
-    // connector-smoke matrix and was re-verified via API in the 2026-07-17
-    // restore check (run: pending → running → success). Tracked as follow-up.
+    const savedDest = await test.step("2. create the DuckDB destination", async () =>
+      createDuckDbConnection(page, destName, `${SHARED_DIR}/qa_golden_${stamp}.duckdb`));
+
+    const savedSrc = await test.step("3. create the CSV source via the drop zone", async () => {
+      const csvPath = join(mkdtempSync(join(tmpdir(), "qa-golden-")), "orders.csv");
+      writeFileSync(csvPath, CSV_CONTENT, "utf8");
+      return createCsvConnection(page, srcName, csvPath);
+    });
+
+    const savedUpload = await test.step("4. wire them together as an Upload", async () =>
+      createUpload(
+        page,
+        uploadName,
+        { name: savedSrc, kind: "csv" },
+        { name: savedDest, kind: "duckdb" },
+      ));
+
+    const outcome = await test.step("5. run it and read the terminal status", async () =>
+      runUploadAndAwait(page, savedUpload));
+
+    expect(
+      outcome.status,
+      "the run did not end in `success` — a completed-but-FAILED run is #456's " +
+        "signature: check whether emit() raised on the completion hooks after " +
+        "the run had already finished",
+    ).toBe("success");
+
+    expect(
+      outcome.rows,
+      `expected the ${CSV_ROWS} CSV rows to land in DuckDB, got ${outcome.rows}. ` +
+        "A `success` run that moved zero rows is a load that silently did nothing.",
+    ).toBeGreaterThanOrEqual(CSV_ROWS);
   });
 });

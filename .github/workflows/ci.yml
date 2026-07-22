@@ -7,8 +7,22 @@ on:
     branches: [master, dev]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA for pushes, per-ref for PRs.
+  #
+  # A push to dev used to cancel the previous push's run, because the group was the ref. That
+  # was harmless when Infra was the only writer to dev. Since 2026-07-22 all five departments
+  # merge into dev themselves and merges arrive faster than CI finishes -- three commits landed
+  # inside 90 seconds on the first morning, and three of the last six dev runs were cancelled.
+  #
+  # The promotion pre-flight needs a green run for dev's EXACT head; a green run from three
+  # commits ago says nothing about what you are about to ship. When the head's run is cancelled
+  # that condition can never be satisfied. A cancelled run is not a failure -- it is the absence
+  # of evidence, and the fix is to stop discarding it.
+  #
+  # PRs keep cancellation: superseding a PR run is exactly what you want, and no promotion
+  # decision rests on it.
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   lint:
@@ -19,6 +33,12 @@ jobs:
       - uses: astral-sh/setup-uv@v8.0.0
         with:
           version: "latest"
+          # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
+          # of ~3 min per job. Cache uv keyed on the lockfile so those builds happen once
+          # per lock change instead of once per job per run (#477). The faithfulness is
+          # the point -- reclaiming the time by reverting it would restore #470 silently.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
         with:
@@ -55,6 +75,12 @@ jobs:
       - uses: astral-sh/setup-uv@v8.0.0
         with:
           version: "latest"
+          # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
+          # of ~3 min per job. Cache uv keyed on the lockfile so those builds happen once
+          # per lock change instead of once per job per run (#477). The faithfulness is
+          # the point -- reclaiming the time by reverting it would restore #470 silently.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
         with:
@@ -77,6 +103,15 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
+      - name: Fetch the deployed release
+        # This job runs the whole suite, which includes the t1-window guard
+        # (core#449). That guard compares against what production runs, and
+        # actions/checkout gives a shallow PR-only tree with no origin/master —
+        # so without this the guard fails rather than silently comparing
+        # nothing. Deliberately not --ignore'd here: `pytest tests/` must mean
+        # the same thing in CI as it does locally (core#470).
+        run: git fetch --no-tags --depth=1 origin master
+
       - name: Run tests
         run: pytest tests/ --tb=short -q
 
@@ -86,6 +121,9 @@ jobs:
   # is broken — which only matters at 2 AM during a prod rollback.
   # Kept as a separate job so test failures on main suite don't mask it
   # (and vice-versa). DATABASE_URL_SYNC_TEST points at the service container.
+  # Also runs the t1-window guard (core#449): the deployed release's models are
+  # read out of git and checked against the migrated schema, which is why this
+  # job needs origin/master fetched rather than a shallow PR-only checkout.
   migration-roundtrip:
     runs-on: ubuntu-latest
     services:
@@ -108,6 +146,12 @@ jobs:
       - uses: astral-sh/setup-uv@v8.0.0
         with:
           version: "latest"
+          # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
+          # of ~3 min per job. Cache uv keyed on the lockfile so those builds happen once
+          # per lock change instead of once per job per run (#477). The faithfulness is
+          # the point -- reclaiming the time by reverting it would restore #470 silently.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
         with:
@@ -130,10 +174,17 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
-      - name: Run round-trip test
+      - name: Fetch the deployed release
+        # The t1 guard compares against what production runs, so master must be
+        # present. actions/checkout gives a shallow PR-only tree by default.
+        run: git fetch --no-tags --depth=1 origin master
+
+      - name: Run round-trip + t1-window tests
         env:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
-        run: pytest tests/test_migrations/test_roundtrip.py -v --tb=long
+        run: |
+          pytest tests/test_migrations/test_roundtrip.py \
+                 tests/test_migrations/test_expand_contract.py -v --tb=long
 
   helm-lint:
     runs-on: ubuntu-latest
@@ -222,6 +273,12 @@ jobs:
       - uses: astral-sh/setup-uv@v8.0.0
         with:
           version: "latest"
+          # #475 made CI build lxml/xmlsec from source so it tests what ships, at a cost
+          # of ~3 min per job. Cache uv keyed on the lockfile so those builds happen once
+          # per lock change instead of once per job per run (#477). The faithfulness is
+          # the point -- reclaiming the time by reverting it would restore #470 silently.
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - uses: actions/setup-python@v6
         with:
@@ -313,10 +370,62 @@ jobs:
           DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
           DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+          # Include @slow specs (core#484). Until 2026-07-22 NO job set this, so
+          # `playwright.config.ts`'s grepInvert silently dropped every @slow spec
+          # from every run: this job reported success having executed 5 of 62
+          # tests, both files about `?template=` handling. golden-path,
+          # tenant-jwt-boundary, tenant-isolation, rbac and viewer-role-ui had
+          # never gated a merge.
+          #
+          # Safe to switch on wholesale because the expensive-and-unavailable
+          # specs gate themselves independently, and therefore skip rather than
+          # fail: sso-* need DATANIKA_E2E_SSO_AUTHENTIK (its own job is
+          # `if: false` — the IdP was not rebuilt after the 2026-07-17 outage)
+          # and overage-charge-cycle needs DATANIKA_E2E_OVERAGE_CHARGE plus the
+          # Paddle sandbox secrets, which the nightly soak owns. Neither is set
+          # here, so this flag adds 5 real specs, not 57.
+          #
+          # This job is NOT a required check on `dev` (those are lint + test),
+          # so a red here is loud without blocking anyone's merge — which is the
+          # point: the signal was missing, not the tests.
+          DATANIKA_E2E_SLOW: "1"
+          # sso-edge-cases hits the backend directly via fixtures/sso.ts, which
+          # defaults to http://localhost:8000 — on a CI runner that is nothing,
+          # and 5 specs died with `connect ECONNREFUSED ::1:8000` (core#496).
+          # The e2e-sso job has always set this; this job never did.
+          DATANIKA_E2E_BACKEND_URL: https://staging-app.datanika.io
+          # E2E_SEED_INCLUDE_API_KEYS=1 is required by rbac / tenant-isolation /
+          # tenant-jwt-boundary: without it the payload carries no keys and the
+          # fixtures throw at setup (`DATANIKA_E2E_API_KEY_READONLY not set`),
+          # which reads in the log as ~35 tenant-isolation FAILURES rather than
+          # as a missing flag (core#496). global-setup.ts already maps all three
+          # keys and every org-B field; only the flag was missing. Org B itself
+          # is seeded unconditionally — there is no second-tenant gate.
           DATANIKA_E2E_SEED_CMD: >-
             ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
-            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
+            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 -e E2E_SEED_INCLUDE_API_KEYS=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
         run: npx playwright test
+
+      # A green tick above is not evidence that anything ran — that is exactly
+      # how core#484 hid for months. Print the collected count so the run log
+      # carries the number, and fail if it collapses back toward the fast subset.
+      - name: Assert the @slow specs were actually collected
+        if: always()
+        working-directory: e2e
+        env:
+          DATANIKA_E2E_SLOW: "1"
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_USER_EMAIL: collected-count@datanika.test
+        run: |
+          # stderr is deliberately NOT suppressed: if --list itself breaks, the
+          # count is 0 and the reason needs to be readable, not swallowed.
+          LAST=$(npx playwright test --list | tail -1)
+          echo "playwright --list said: $LAST"
+          COUNT=$(printf '%s' "$LAST" | grep -oE '[0-9]+' | head -1)
+          if [ "${COUNT:-0}" -lt 40 ]; then
+            echo "::error::Only ${COUNT:-0} tests collected (expected 60+). The @slow specs are being filtered out again — see core#484."
+            exit 1
+          fi
 
       - name: Upload Playwright report
         if: always()
@@ -329,8 +438,13 @@ jobs:
       # Raw test-results fallback. The HTML report can fail to render when
       # the trace JSON is truncated (process killed mid-write, OOM, etc.) —
       # the raw traces + screenshots + videos survive that class of failure.
-      - name: Upload raw test-results (failure only)
-        if: failure()
+      # `always()`, not `failure()`: the concurrency group cancels this job
+      # whenever another push lands on dev mid-run, and a CANCELLED job is not a
+      # FAILED one — so the traces and screenshots from the run that just failed
+      # were never uploaded. That happened on golden-path's first execution and
+      # cost the entire diagnosis (core#501).
+      - name: Upload raw test-results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results

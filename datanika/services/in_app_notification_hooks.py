@@ -54,3 +54,6 @@ def register_in_app_notification_hooks() -> None:
     hooks.on("run.upload_completed", _on_run_completed)
     hooks.on("run.models_completed", _on_run_completed)
     hooks.on("run.transformation_completed", _on_run_completed)
+    # See notification_service.register_hooks: failures get their own event so
+    # cloud's unconditional metering handlers never see them (core#465).
+    hooks.on("run.failed", _on_run_completed)

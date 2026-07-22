@@ -1,5 +1,6 @@
 """Connection management service — CRUD with encrypted credentials."""
 
+import logging
 import re
 from datetime import UTC, datetime
 from functools import partial
@@ -12,6 +13,8 @@ from datanika.models.connection import Connection, ConnectionDirection, Connecti
 from datanika.services.egress_guard import validate_egress_host
 from datanika.services.encryption import EncryptionService
 from datanika.services.naming import validate_name
+
+logger = logging.getLogger(__name__)
 
 validate_connection_name = partial(validate_name, entity_label="Connection")
 
@@ -78,6 +81,16 @@ def infer_direction(connection_type: str | ConnectionType) -> ConnectionDirectio
         return ConnectionDirection.DESTINATION
     return ConnectionDirection.SOURCE
 
+
+# File-backed sources. Still non-SQL, but they *are* testable: the location can
+# be listed. Kept as a subset of _NON_DB_TYPES so query/list_tables behaviour is
+# unchanged — only `test_connection` treats them specially (core#493).
+_FILE_TYPES = {
+    ConnectionType.S3,
+    ConnectionType.CSV,
+    ConnectionType.JSON,
+    ConnectionType.PARQUET,
+}
 
 # Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
 _NON_DB_TYPES = {
@@ -375,6 +388,54 @@ class ConnectionService:
             return False, "Connection failed — check your credentials and network settings"
 
     @staticmethod
+    def _test_file_source(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
+        """Actually test a file source, instead of declaring the test N/A.
+
+        These types previously fell into `_NON_DB_TYPES` and returned
+        `(True, "Test not applicable for this type")` unconditionally — so a
+        wrong path tested **exactly like a right one**, and the first signal
+        anything was wrong was a green run with zero rows (core#493). Our own
+        CSV guide warned *"a wrong path looks exactly like a right one here"*;
+        that was a description of a gap, not a fact of life.
+
+        Uses the same lister the loader uses, so a connection that tests green
+        and a run that finds files agree by construction.
+        """
+        from dlt.sources.filesystem import filesystem
+
+        from datanika.services.dlt_runner import (
+            AWS_CREDENTIAL_KEYS,
+            DEFAULT_FILE_GLOBS,
+            describe_empty_file_match,
+        )
+
+        location = config.get("bucket_url") or config.get("path") or ""
+        if not location:
+            return False, "Set the bucket URL or path first — there is nothing to test yet"
+
+        # The pipeline's own `file_glob` lives in per-upload config, not on the
+        # connection, so the type's default is the best available stand-in.
+        # Narrower globs can still match nothing; the run-time check covers that.
+        file_glob = DEFAULT_FILE_GLOBS.get(connection_type.value, "*")
+
+        kwargs = {"bucket_url": location, "file_glob": file_glob}
+        if connection_type == ConnectionType.S3:
+            credentials = {k: v for k, v in config.items() if k in AWS_CREDENTIAL_KEYS}
+            if credentials:
+                kwargs["credentials"] = credentials
+
+        try:
+            first = next(iter(filesystem(**kwargs)), None)
+        except Exception as exc:
+            logger.warning("File-source connection test failed for %s: %s", location, exc)
+            return False, f"Could not read {location} — check the path, permissions and credentials"
+
+        if first is None:
+            return False, describe_empty_file_match(location, file_glob)
+
+        return True, f"Connected — found files matching {file_glob}"
+
+    @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
         """Test real database connectivity via SELECT 1. Returns (success, message)."""
         if not config:
@@ -382,6 +443,9 @@ class ConnectionService:
 
         if connection_type == ConnectionType.MONGODB:
             return ConnectionService._test_mongodb(config)
+
+        if connection_type in _FILE_TYPES:
+            return ConnectionService._test_file_source(config, connection_type)
 
         if connection_type in _NON_DB_TYPES:
             return True, "Test not applicable for this type"

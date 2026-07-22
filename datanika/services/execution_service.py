@@ -68,6 +68,51 @@ class ExecutionService:
         run.error_message = error_message
         run.logs = logs
         session.flush()
+
+        # A failed run has never produced a notification — Slack, email or
+        # in-app. Both handlers already branch on `status == "failed"`, but
+        # nothing ever sent that status, so the branch was unreachable
+        # (core#465).
+        #
+        # Announced from here rather than from each task's failure path
+        # because this is the one place every failure passes through: five
+        # call sites today, two of which are not `except` blocks at all (a dbt
+        # command failing, and upstream dependencies never being satisfied).
+        # Adding calls to those paths is what the issue warned against; this
+        # leaves them untouched and cannot be forgotten by a sixth caller.
+        #
+        # `announce`, not `emit`: no subscriber may veto a failure that has
+        # already happened, and a broken notifier must not mask the real error
+        # (core#456).
+        from datanika.hooks import announce
+
+        announce(
+            "run.failed",
+            session=session,
+            org_id=run.org_id,
+            run_id=run.id,
+            status=RunStatus.FAILED.value,
+            error_message=error_message,
+            target_type=getattr(run.target_type, "value", run.target_type),
+            target_id=run.target_id,
+        )
+        return run
+
+    def append_logs(self, session: Session, run_id: int, text: str) -> Run | None:
+        """Add a line to a finished run's logs.
+
+        For things that happen *after* the load completes and must not change
+        its status — catalog sync is the case that motivated it (core#494).
+        Swallowing that failure into the worker log alone kept a permanently
+        broken feature invisible for as long as DuckDB had been a destination:
+        the run row said success, Catalog stayed empty, and only SSH could
+        connect the two.
+        """
+        run = session.get(Run, run_id)
+        if run is None:
+            return None
+        run.logs = f"{run.logs}\n{text}" if run.logs else text
+        session.flush()
         return run
 
     def cancel_run(self, session: Session, run_id: int) -> Run | None:

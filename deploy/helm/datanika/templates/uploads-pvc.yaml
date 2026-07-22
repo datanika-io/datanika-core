@@ -1,0 +1,26 @@
+{{/*
+Uploaded-file archives. Shared, not per-pod, and that is load-bearing (core#529).
+
+The web tier writes `<hash>.tar.gz` here when a user uploads a file; the Celery
+worker opens that same path when the run executes. They are separate Deployments,
+so without a shared claim the worker raises FileNotFoundError before any data
+moves — the run ends `failed` in under 100ms with 0 rows, on the CSV → DuckDB
+path that is the advertised first-run experience.
+
+ReadWriteMany for the same reason as the dbt claim: two Deployments mount it, and
+app.replicaCount > 1 adds more. A cluster whose default StorageClass cannot do
+RWX must supply one that can, or point FILE_UPLOADS_DIR at shared storage.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "datanika.fullname" . }}-uploaded-files
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: uploads
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.app.uploadedFilesSize }}

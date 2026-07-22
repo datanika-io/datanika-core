@@ -14,11 +14,12 @@ docker-compose deployment on Hetzner, minus the bundled monitoring stack.
 | Component | Kind | Notes |
 |-----------|------|-------|
 | `app` | Deployment (1 replica) | Reflex frontend (`:3000`) + backend (`:8000`). Runs `alembic upgrade head` on startup. |
-| `celery` | Deployment (1 replica) | Background worker. Shares the `dbt_projects` PVC with `app`. |
+| `celery` | Deployment (1 replica) | Background worker. Shares the `dbt_projects` **and `uploaded_files`** PVCs with `app`. |
 | `postgres` | StatefulSet (1 replica) | Postgres 16-alpine with `pg_stat_statements`. Disable via `postgres.enabled=false` to bring your own. |
 | `redis` | Deployment (1 replica) | Redis 7-alpine. Broker + cache. Disable via `redis.enabled=false` to bring your own. |
 | `ingress` | Ingress (optional) | `/` → app frontend, `/api` → app backend. Mirrors the production Nginx reverse proxy. |
 | `dbt-projects` PVC | PVC (RWX) | Shared between `app` and `celery` pods. **Requires a ReadWriteMany storage class.** |
+| `uploaded-files` PVC | PVC (RWX) | Uploaded-file archives. `app` writes them, `celery` reads them back when the run executes — so this is **not optional**: without it a CSV upload succeeds and its run fails immediately with 0 rows (core#529). Also RWX. |
 | Secret | `Opaque` | `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, and all `POSTGRES_*`/`REDIS_*` values, rendered from `.Values.env` + `.Values.secrets`. |
 
 Monitoring (Prometheus, Grafana, node-exporter, cAdvisor) is **not** in scope
@@ -74,11 +75,14 @@ See `values.yaml` for the full list. Common overrides:
 | `ingress.enabled` | `false` | Turn on once you have a TLS-terminating ingress class |
 | `app.replicaCount` | `1` | Keep at `1` until the migration job is extracted (see caveats) |
 | `app.dbtProjectsSize` | `5Gi` | Size of the shared dbt projects PVC |
+| `app.uploadedFilesSize` | `5Gi` | Size of the shared uploaded-files PVC |
+| `env.FILE_UPLOADS_DIR` | `/app/uploaded_files` | Must match the mount path and be identical for both tiers — the app default is relative to the working directory, so a shared volume alone is not enough |
 
 ## Known caveats
 
 - **RWX storage required.** The `app` and `celery` Deployments both mount
-  the `dbt_projects` PVC, so the chart requests `ReadWriteMany`. On managed
+  the `dbt_projects` and `uploaded_files` PVCs, so the chart requests
+  `ReadWriteMany` for both. On managed
   Kubernetes that usually means NFS, EFS, Azure Files, or Filestore. On
   bare-metal clusters, Longhorn and Rook/CephFS both work. If your cluster
   only has `ReadWriteOnce`, you can pin both Deployments to the same node
@@ -103,7 +107,7 @@ See `values.yaml` for the full list. Common overrides:
 | Feature | Hetzner docker-compose | This chart |
 |---------|------------------------|------------|
 | App + Celery + Postgres + Redis | yes | yes |
-| Persistent volumes | Docker volumes | PVCs (PVC for Postgres, PVC for `dbt_projects`) |
+| Persistent volumes | Docker volumes | PVCs (Postgres, `dbt_projects`, `uploaded_files`) |
 | Nginx reverse proxy + TLS | host-level Nginx | ingress resource (optional) |
 | Grafana + Prometheus + cAdvisor | yes | no (run separately) |
 | Auto-deploy on push to master | yes | no (managed by user) |

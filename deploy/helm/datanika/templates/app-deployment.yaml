@@ -49,12 +49,19 @@ spec:
           volumeMounts:
             - name: dbt-projects
               mountPath: /app/dbt_projects
+            # Must match the celery deployment exactly. This tier writes the
+            # upload archive; the worker reads it back (core#529).
+            - name: uploaded-files
+              mountPath: /app/uploaded_files
           resources:
             {{- toYaml .Values.app.resources | nindent 12 }}
       volumes:
         - name: dbt-projects
           persistentVolumeClaim:
             claimName: {{ include "datanika.fullname" . }}-dbt-projects
+        - name: uploaded-files
+          persistentVolumeClaim:
+            claimName: {{ include "datanika.fullname" . }}-uploaded-files
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

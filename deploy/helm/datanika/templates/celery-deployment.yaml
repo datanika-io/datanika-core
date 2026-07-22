@@ -40,12 +40,20 @@ spec:
           volumeMounts:
             - name: dbt-projects
               mountPath: /app/dbt_projects
+            # Must match the app deployment exactly — the LOAD runs here, so a
+            # worker resolving a different directory fails at run time, not at
+            # upload time (core#529, and #471's comment on docker-compose.yml).
+            - name: uploaded-files
+              mountPath: /app/uploaded_files
           resources:
             {{- toYaml .Values.celery.resources | nindent 12 }}
       volumes:
         - name: dbt-projects
           persistentVolumeClaim:
             claimName: {{ include "datanika.fullname" . }}-dbt-projects
+        - name: uploaded-files
+          persistentVolumeClaim:
+            claimName: {{ include "datanika.fullname" . }}-uploaded-files
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

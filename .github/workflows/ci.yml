@@ -424,8 +424,13 @@ jobs:
       # Raw test-results fallback. The HTML report can fail to render when
       # the trace JSON is truncated (process killed mid-write, OOM, etc.) —
       # the raw traces + screenshots + videos survive that class of failure.
-      - name: Upload raw test-results (failure only)
-        if: failure()
+      # `always()`, not `failure()`: the concurrency group cancels this job
+      # whenever another push lands on dev mid-run, and a CANCELLED job is not a
+      # FAILED one — so the traces and screenshots from the run that just failed
+      # were never uploaded. That happened on golden-path's first execution and
+      # cost the entire diagnosis (core#501).
+      - name: Upload raw test-results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results

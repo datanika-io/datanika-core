@@ -59,8 +59,10 @@ const SHARED_DIR = process.env.DATANIKA_E2E_SHARED_DIR ?? "/app/uploaded_files";
 
 test.describe("Golden path: signup → connection → pipeline → run @slow", () => {
   // Signup, two connections, an upload and a Celery round trip. The default
-  // 60s budget covers none of that; runUploadAndAwait alone allows 180s.
-  test.setTimeout(360_000);
+  // 60s covers none of that. Deliberately NOT larger: every interaction is
+  // individually bounded in fixtures/data.ts, so this cap should never be what
+  // fails — if it is, something is hanging that no per-action timeout covers.
+  test.setTimeout(300_000);
 
   test("new user signs up, wires CSV → DuckDB, runs it, and sees rows land", async ({ page }) => {
     const stamp = `${Date.now()}`;
@@ -70,34 +72,38 @@ test.describe("Golden path: signup → connection → pipeline → run @slow", (
     const srcName = `qa golden src ${stamp}`;
     const uploadName = `qa golden upload ${stamp}`;
 
-    // 1. Signup. signUp() fills the form (incl. the required Full Name) and
-    //    handles the Reflex hydration race — it retries if the click falls back
-    //    to a native GET submit before on_submit is wired (core#295).
-    await signUp(page);
-    await expect(page).toHaveURL(/\/(dashboard|connections|onboarding)?$/);
-    await expect(page.getByRole("link", { name: "Connections" }).first()).toBeVisible({
-      timeout: 10_000,
+    // Each phase is a named step so a failure reports WHICH phase broke. The
+    // first CI run of this spec died as an unqualified 6-minute timeout and the
+    // report could not say where — a result that costs a full run to learn
+    // nothing (core#501).
+    await test.step("1. sign up and reach the app", async () => {
+      // signUp() fills the form (incl. the required Full Name) and handles the
+      // Reflex hydration race — it retries if the click falls back to a native
+      // GET submit before on_submit is wired (core#295).
+      await signUp(page);
+      await expect(page).toHaveURL(/\/(dashboard|connections|onboarding)?$/);
+      await expect(page.getByRole("link", { name: "Connections" }).first()).toBeVisible({
+        timeout: 10_000,
+      });
     });
 
-    // 2. Destination: a DuckDB file on the shared volume.
-    const savedDest = await createDuckDbConnection(
-      page,
-      destName,
-      `${SHARED_DIR}/qa_golden_${stamp}.duckdb`,
-    );
+    const savedDest = await test.step("2. create the DuckDB destination", async () =>
+      createDuckDbConnection(page, destName, `${SHARED_DIR}/qa_golden_${stamp}.duckdb`));
 
-    // 3. Source: a CSV uploaded through the drop zone — #452's path.
-    const csvPath = join(mkdtempSync(join(tmpdir(), "qa-golden-")), "orders.csv");
-    writeFileSync(csvPath, CSV_CONTENT, "utf8");
-    const savedSrc = await createCsvConnection(page, srcName, csvPath);
+    const savedSrc = await test.step("3. create the CSV source via the drop zone", async () => {
+      const csvPath = join(mkdtempSync(join(tmpdir(), "qa-golden-")), "orders.csv");
+      writeFileSync(csvPath, CSV_CONTENT, "utf8");
+      return createCsvConnection(page, srcName, csvPath);
+    });
 
-    // 4. Wire them together as an Upload (there is no "pipeline builder" UI).
-    const sourceOption = await uploadOptionFor(page, "Source connection", savedSrc, "csv");
-    const destOption = await uploadOptionFor(page, "Destination connection", savedDest, "duckdb");
-    const savedUpload = await createUpload(page, uploadName, sourceOption, destOption);
+    const savedUpload = await test.step("4. wire them together as an Upload", async () => {
+      const sourceOption = await uploadOptionFor(page, "Source connection", savedSrc, "csv");
+      const destOption = await uploadOptionFor(page, "Destination connection", savedDest, "duckdb");
+      return createUpload(page, uploadName, sourceOption, destOption);
+    });
 
-    // 5. Run it, and assert the status a user would see.
-    const outcome = await runUploadAndAwait(page, savedUpload);
+    const outcome = await test.step("5. run it and read the terminal status", async () =>
+      runUploadAndAwait(page, savedUpload));
 
     expect(
       outcome.status,

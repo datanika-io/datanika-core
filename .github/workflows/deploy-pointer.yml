@@ -121,11 +121,23 @@ jobs:
       # unchanged, so `compose up -d` won't recreate, and Grafana only reads provisioning
       # at startup. Before this step, a deployed alerting change silently did nothing
       # while CI and CD both reported success (#426).
+      #
+      # --force-recreate is NOT belt-and-braces, it is load-bearing. Six mounts here are
+      # single FILES (prometheus.yml, blackbox.yml, four Grafana dashboards), and a
+      # single-file bind mount pins the INODE. `tar xzf` replaces the file rather than
+      # editing it, so the container keeps reading the old inode forever — and
+      # `POST /-/reload` then re-reads that stale file and reports success.
+      #
+      # Observed 2026-07-22: host prometheus.yml inode=1317518 (1898 bytes, with the
+      # app_b scrape job) while the container held inode=1317530 (1222 bytes, 15h old,
+      # without it). `prometheus_config_last_reload_successful` was 1 the whole time.
+      # Grafana's provisioning escaped only because it is a DIRECTORY mount.
+      # Recreating rebinds the current inode.
       - name: Reload monitoring config
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && \
-             docker compose up -d prometheus grafana blackbox && \
+             docker compose up -d --force-recreate prometheus grafana blackbox && \
              for i in $(seq 1 20); do curl -fsS -X POST http://127.0.0.1:9090/-/reload >/dev/null 2>&1 && { echo "prometheus reloaded"; break; }; sleep 3; \
                [ "$i" = 20 ] && { echo "prometheus /-/reload never succeeded"; exit 1; }; done && \
              docker restart datanika-grafana >/dev/null && echo "grafana restarted"'
@@ -143,20 +155,57 @@ jobs:
               > /tmp/live-rules.json 2>/dev/null && break
             sleep 5
           done
+          curl -sf http://127.0.0.1:9090/api/v1/status/config -o /tmp/live-promcfg.json || true
           python3 - <<'PY'
-          import json, re, sys
-          expected = len(re.findall(r"^\s*-\s*uid:\s*\S+",
-              open("/opt/datanika/datanika/monitoring/grafana/provisioning/alerting/alerts.yml",
-                   encoding="utf-8").read(), re.M))
+          import json, re, sys, yaml
+
+          REPO = "/opt/datanika/datanika/monitoring"
+          failed = False
+
+          # --- alert rules: COUNT is not enough -------------------------------------
+          # A count check passes for any change that edits expressions without adding or
+          # removing rules — which is exactly what #480 did, so this step went green
+          # while Grafana still held the old expressions. Compare the expressions too.
+          src = open(f"{REPO}/grafana/provisioning/alerting/alerts.yml", encoding="utf-8").read()
+          defined = {}
+          for g in yaml.safe_load(src)["groups"]:
+              for r in g["rules"]:
+                  defined[r["title"]] = (r["data"][0]["model"].get("expr") or "").strip()
           try:
-              live = len(json.load(open("/tmp/live-rules.json")))
+              live_rules = json.load(open("/tmp/live-rules.json"))
           except Exception as e:
               print("could not read live rules from Grafana:", e); sys.exit(1)
-          print(f"alert rules: defined={expected} live={live}")
-          if live != expected:
-              print("MISMATCH - Grafana did not load the deployed rules (provisioning error?)")
-              sys.exit(1)
-          print("alert rules are in effect")
+          live = {r["title"]: (r["data"][0]["model"].get("expr") or "").strip() for r in live_rules}
+
+          print(f"alert rules: defined={len(defined)} live={len(live)}")
+          if len(defined) != len(live):
+              print("MISMATCH - rule count differs"); failed = True
+          drift = [t for t, e in defined.items() if live.get(t, "<missing>") != e]
+          if drift:
+              failed = True
+              print(f"MISMATCH - {len(drift)} rule(s) whose LIVE expression differs from the repo:")
+              for t in drift[:8]:
+                  print(f"  {t}\n    repo: {e_ := defined[t]}\n    live: {live.get(t, '<missing>')}")
+          else:
+              print("all rule expressions match the repo")
+
+          # --- prometheus scrape config --------------------------------------------
+          # Single-FILE bind mounts pin the inode, so a tar deploy can leave the container
+          # reading a file that no longer exists while /-/reload reports success. Compare
+          # the LOADED config against the repo rather than trusting the reload (#479).
+          want = {j["job_name"] for j in yaml.safe_load(open(f"{REPO}/prometheus.yml", encoding="utf-8"))["scrape_configs"]}
+          try:
+              got = {j["job_name"] for j in yaml.safe_load(json.load(open("/tmp/live-promcfg.json"))["data"]["yaml"])["scrape_configs"]}
+          except Exception as e:
+              print("could not read live prometheus config:", e); sys.exit(1)
+          if want != got:
+              failed = True
+              print(f"MISMATCH - prometheus scrape jobs differ.\n  repo-only: {sorted(want - got)}\n  live-only: {sorted(got - want)}")
+              print("  (classic cause: single-file bind mount pinned to a replaced inode — recreate the container)")
+          else:
+              print(f"prometheus scrape jobs match the repo ({len(got)} jobs)")
+
+          sys.exit(1 if failed else 0)
           PY
           VERIFY
       - name: Smoke through Cloudflare

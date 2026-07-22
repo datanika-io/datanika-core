@@ -59,22 +59,56 @@ async function present(page: Page, locator: ReturnType<Page["locator"]>, what: s
   });
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Locate a `searchable_select` trigger by the label it is *currently* showing.
+ *
+ * The trigger renders `rx.cond(value != "", value, placeholder)` — the selected
+ * value when there is one, the placeholder only when there is not. So there is
+ * no single stable string to match on, and which one applies depends on the
+ * state's default:
+ *
+ *   - `ConnectionState.form_type` defaults to **`"postgres"`**, so the connection
+ *     type picker never shows "Connection type" at all.
+ *   - `UploadState.form_source_id` / `form_dest_id` default to `""`, so those two
+ *     do show their placeholders.
+ *
+ * Passing the full set of labels the trigger may be showing is modelling that
+ * contract, not guessing at it. The first CI run of this spec failed precisely
+ * here: it looked for "Connection type" on a control that was displaying
+ * "postgres" (core#501).
+ */
+function searchableTrigger(page: Page, labels: string[]) {
+  const pattern = new RegExp(`^(${labels.map(escapeRegExp).join("|")})$`);
+  return page.getByRole("button", { name: pattern });
+}
+
 /**
  * Pick a value from a `searchable_select` (components/searchable_select.py).
  *
- * It is a Radix popover, not a `<select>`: the trigger is a button whose
- * accessible name is the placeholder until something is chosen, and the options
- * are `rx.box`es inside the popover content. We scope option lookup to the
- * popover — the same text ("duckdb") also appears in the connections table, so
- * an unscoped `getByText` matches the row behind the overlay and clicks nothing.
+ * It is a Radix popover, not a `<select>`: the options are `rx.box`es inside the
+ * popover content. We scope option lookup to the popover — the same text
+ * ("duckdb") also appears in the connections table, so an unscoped `getByText`
+ * matches the row behind the overlay and clicks nothing.
+ *
+ * `labels` is every string the trigger might currently display — see
+ * `searchableTrigger`.
  */
 export async function selectSearchable(
   page: Page,
-  placeholder: string,
+  labels: string[],
   optionText: string,
 ): Promise<void> {
-  const trigger = page.getByRole("button", { name: placeholder, exact: true });
-  await present(page, trigger, `searchable-select trigger "${placeholder}"`);
+  const placeholder = labels[0];
+  const trigger = searchableTrigger(page, labels);
+  await present(
+    page,
+    trigger,
+    `searchable-select trigger (showing one of: ${labels.join(" | ")})`,
+  );
   await trigger.click({ timeout: UI_TIMEOUT });
 
   // Radix portals popover content into a positioned wrapper at the body root.
@@ -94,6 +128,14 @@ export async function selectSearchable(
   });
   await option.click({ timeout: UI_TIMEOUT });
   await expect(popover).toBeHidden({ timeout: UI_TIMEOUT });
+
+  // The trigger now displays the selected value. Assert it, so "the click
+  // landed on the overlay instead of the option" fails here rather than three
+  // steps later as a confusing absence of the type-specific fields.
+  await expect(
+    searchableTrigger(page, [optionText]),
+    `selected "${optionText}" but the trigger does not show it — did the click miss?`,
+  ).toBeVisible({ timeout: UI_TIMEOUT });
 }
 
 /**
@@ -116,7 +158,9 @@ export async function createDuckDbConnection(
   await present(page, nameField, 'the connection-name field (placeholder "Connection name")');
   await nameField.fill(name, { timeout: UI_TIMEOUT });
 
-  await selectSearchable(page, "Connection type", "duckdb");
+  // "postgres" is ConnectionState.form_type's default, so that — not the
+  // placeholder — is what the trigger actually reads on a fresh form.
+  await selectSearchable(page, ["Connection type", "postgres"], "duckdb");
 
   const pathField = page.getByPlaceholder("/data/warehouse.duckdb");
   await present(page, pathField, "the DuckDB path field — did the type picker actually apply?");
@@ -152,7 +196,7 @@ export async function createCsvConnection(
   await present(page, nameField, 'the connection-name field (placeholder "Connection name")');
   await nameField.fill(name, { timeout: UI_TIMEOUT });
 
-  await selectSearchable(page, "Connection type", "csv");
+  await selectSearchable(page, ["Connection type", "postgres"], "csv");
 
   const fileInput = page.locator('input[type="file"]');
   await expect(
@@ -197,8 +241,9 @@ export async function createUpload(
   await present(page, nameField, 'the upload-name field (placeholder "Upload name")');
   await nameField.fill(name, { timeout: UI_TIMEOUT });
 
-  await selectSearchable(page, "Source connection", sourceOption);
-  await selectSearchable(page, "Destination connection", destOption);
+  // These two default to "" in UploadState, so the placeholder IS what shows.
+  await selectSearchable(page, ["Source connection"], sourceOption);
+  await selectSearchable(page, ["Destination connection"], destOption);
   await page.getByRole("button", { name: "Create Upload" }).click({ timeout: UI_TIMEOUT });
 
   await expect(
@@ -219,7 +264,7 @@ export async function uploadOptionFor(
   connectionName: string,
   kind: ConnectionKind,
 ): Promise<string> {
-  const trigger = page.getByRole("button", { name: placeholder, exact: true });
+  const trigger = searchableTrigger(page, [placeholder]);
   await present(page, trigger, `searchable-select trigger "${placeholder}"`);
   await trigger.click({ timeout: UI_TIMEOUT });
 

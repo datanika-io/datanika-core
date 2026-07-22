@@ -94,6 +94,27 @@ DEFAULT_FACEBOOK_API_VERSION = "v21.0"
 #: a busy topic than on an hourly one.
 DEFAULT_KAFKA_IDLE_TIMEOUT_MS = 10_000
 
+#: The report a Google Analytics connection loads when nobody says otherwise.
+#:
+#: GA4's Data API has no "just give me the table" endpoint — `runReport` takes a
+#: POST body naming dimensions and metrics, and a different body is a different
+#: table. That is why this connector shipped unusable (core#543): there was no
+#: obvious default, so nothing was chosen and it raised instead.
+#:
+#: Daily traffic is the report almost everyone starts from, and it is the one a
+#: dashboard can be built on without knowing anything about the property.
+#: Overridable per upload via `dlt_config["dimensions"]` / `["metrics"]`.
+DEFAULT_GA4_DIMENSIONS = ["date"]
+DEFAULT_GA4_METRICS = ["sessions", "totalUsers", "screenPageViews"]
+DEFAULT_GA4_START_DATE = "28daysAgo"
+DEFAULT_GA4_END_DATE = "today"
+
+#: GA4 caps `runReport` at 100k rows per request; page below that so a wide
+#: date range still completes rather than silently truncating.
+GA4_PAGE_SIZE = 10_000
+
+GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -152,6 +173,10 @@ INTERNAL_CONFIG_KEYS = {
     "base_id",
     "database",
     "auth",
+    # Google Analytics report shape (core#543).
+    "dimensions",
+    "metrics",
+    "end_date",
 }
 
 # Client-side row-filter lambdas — applied AFTER source yield.
@@ -397,6 +422,92 @@ def describe_empty_file_match(bucket_url: str, file_glob: str) -> str:
         return f"{general} That path does not exist."
 
     return f"{general} The directory exists but holds nothing matching that pattern."
+
+
+def _ga4_access_token(service_account_json) -> str:
+    """Mint a read-only Data API token from the service-account JSON.
+
+    GA4 takes an OAuth bearer token, not an API key, so there is no way to hand
+    dlt a static credential — the token has to be minted per run. `google-auth`
+    is already a dependency (Google Sheets uses it), so this adds no new
+    surface.
+
+    Called from inside the resource, never at build time: `build_source` must
+    stay offline so a source can be constructed and inspected without valid
+    credentials or a network.
+    """
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    info = service_account_json
+    if isinstance(info, str):
+        try:
+            info = dlt_json.loads(info)
+        except Exception as exc:
+            raise DltRunnerError(
+                "Google Analytics service account JSON is not valid JSON — paste the whole "
+                "key file, including the surrounding braces."
+            ) from exc
+
+    try:
+        credentials = service_account.Credentials.from_service_account_info(
+            info, scopes=[GA4_SCOPE]
+        )
+    except Exception as exc:
+        raise DltRunnerError(
+            f"Google Analytics service account JSON is missing required fields ({exc}). "
+            "Use the key file downloaded from the Google Cloud console."
+        ) from exc
+
+    credentials.refresh(Request())
+    return credentials.token
+
+
+def _ga4_rows(payload: dict) -> list[dict]:
+    """Flatten one `runReport` response into named columns.
+
+    GA4 answers with parallel arrays — `dimensionHeaders`/`metricHeaders` name
+    the columns, and each row carries `dimensionValues`/`metricValues` in the
+    same order. Loading that shape as-is gives a table of nested lists that no
+    one can query, so the headers are zipped back onto the values here.
+
+    Metrics arrive as **strings** whatever their type. They are coerced using
+    the type GA4 declares, because a `sessions` column of text cannot be summed
+    — which would make the load technically successful and analytically
+    useless, the failure this whole issue has been about.
+    """
+    dimension_names = [h.get("name") for h in payload.get("dimensionHeaders", [])]
+    metric_headers = payload.get("metricHeaders", [])
+    metric_names = [h.get("name") for h in metric_headers]
+    metric_types = [h.get("type", "") for h in metric_headers]
+
+    rows = []
+    for row in payload.get("rows", []):
+        record: dict = {}
+        for name, cell in zip(dimension_names, row.get("dimensionValues", []), strict=False):
+            record[name] = cell.get("value")
+        for name, kind, cell in zip(
+            metric_names, metric_types, row.get("metricValues", []), strict=False
+        ):
+            record[name] = _ga4_metric_value(cell.get("value"), kind)
+        rows.append(record)
+    return rows
+
+
+def _ga4_metric_value(raw, kind: str):
+    """Coerce a GA4 metric string using the type GA4 declares for it."""
+    if raw is None or raw == "":
+        return None
+    try:
+        if kind == "TYPE_INTEGER":
+            return int(raw)
+        if kind in ("TYPE_FLOAT", "TYPE_SECONDS", "TYPE_CURRENCY", "TYPE_MINUTES", "TYPE_HOURS"):
+            return float(raw)
+    except (TypeError, ValueError):
+        # An unparseable number is worth keeping as text rather than dropping:
+        # losing the value silently is worse than a column that needs a cast.
+        return raw
+    return raw
 
 
 def _kafka_topics(raw) -> list[str]:
@@ -1200,21 +1311,22 @@ class DltRunnerService:
                     kwargs_ga["credentials"] = credentials_json
                 return google_analytics(**kwargs_ga)
             except ImportError:
-                # Was "run dlt init google_analytics" — an instruction for a
-                # server the user does not operate, and the only outcome this
-                # connector has ever produced (core#543, same class as #499).
+                # The Data API directly, since no verified source is installed
+                # anywhere (core#543). This used to re-raise "run dlt init
+                # google_analytics" — an instruction for a server the user does
+                # not operate, and the only outcome this connector ever had.
                 #
-                # No REST fallback yet, and unlike Facebook it is not a matter
-                # of writing one: the Data API needs an OAuth token minted from
-                # the service-account JSON, and `runReport` takes a POST body
-                # naming dimensions and metrics — a report shape is a product
-                # decision, not a default. Tracked separately.
-                raise DltRunnerError(
-                    "Google Analytics is not available on this deployment yet. It needs a "
-                    "reporting query (dimensions and metrics) that Datanika does not collect, "
-                    "so there is nothing to configure on your side — see core#543. "
-                    "Google Sheets or a REST API connection can cover GA exports meanwhile."
-                ) from None
+                # What blocked it was not a missing library but a missing
+                # decision: `runReport` takes a POST body naming dimensions and
+                # metrics, and a different body is a different table, so there
+                # was no obvious default and nothing was chosen. Daily traffic
+                # is the report almost everyone starts from; the rest is
+                # overridable per upload.
+                if not credentials_json:
+                    raise DltRunnerError(
+                        "Google Analytics source requires 'service_account_json'"
+                    ) from None
+                return self._build_ga4_source(property_id, credentials_json, dlt_config)
 
         if connection_type == "google_ads":
             credentials_json = config.get("service_account_json", "")
@@ -1401,6 +1513,72 @@ class DltRunnerService:
             )
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
+
+    def _build_ga4_source(self, property_id, service_account_json, dlt_config: dict):
+        """Google Analytics 4 via the Data API's `runReport` (core#543).
+
+        Written by hand rather than through `_rest_api_fallback` for two
+        reasons the generic path cannot cover:
+
+        * **The credential is a minted token, not a static key.** GA4 wants an
+          OAuth bearer refreshed from the service-account JSON, so there is
+          nothing to hand a declarative config up front.
+        * **The response is parallel arrays.** `dimensionHeaders` /
+          `metricHeaders` name the columns and each row carries values in the
+          same order, so a `data_selector` alone would load nested lists nobody
+          can query. `_ga4_rows` zips them back together.
+
+        Paged with `limit`/`offset` because GA4 truncates at its page size and
+        says so only in `rowCount` — a silent short read otherwise, which is the
+        family of bug this whole issue belongs to.
+        """
+        dimensions = list(dlt_config.get("dimensions") or DEFAULT_GA4_DIMENSIONS)
+        metrics = list(dlt_config.get("metrics") or DEFAULT_GA4_METRICS)
+        start_date = dlt_config.get("start_date") or DEFAULT_GA4_START_DATE
+        end_date = dlt_config.get("end_date") or DEFAULT_GA4_END_DATE
+        url = f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport"
+
+        @dlt.resource(name="report", primary_key=tuple(dimensions))
+        def _report():
+            # Minted here, not in the builder: `build_source` must stay offline
+            # so a source can be constructed and inspected without credentials.
+            token = _ga4_access_token(service_account_json)
+            session = build_guarded_session()  # SSRF guard, as everywhere else
+            offset = 0
+            while True:
+                response = session.post(
+                    url,
+                    json={
+                        "dateRanges": [{"startDate": start_date, "endDate": end_date}],
+                        "dimensions": [{"name": d} for d in dimensions],
+                        "metrics": [{"name": m} for m in metrics],
+                        "limit": GA4_PAGE_SIZE,
+                        "offset": offset,
+                    },
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=60,
+                )
+                if response.status_code >= 400:
+                    # GA4 explains itself well; surfacing its message beats
+                    # "request failed" when the cause is usually a property the
+                    # service account was never granted access to.
+                    raise DltRunnerError(
+                        f"Google Analytics rejected the report request "
+                        f"({response.status_code}): {response.text[:400]}"
+                    )
+                payload = response.json()
+                rows = _ga4_rows(payload)
+                if rows:
+                    yield rows
+                offset += len(rows)
+                if len(rows) < GA4_PAGE_SIZE or offset >= int(payload.get("rowCount", 0)):
+                    break
+
+        @dlt.source(name="google_analytics")
+        def _ga4_source():
+            return [_report()]
+
+        return _ga4_source()
 
     def _build_kafka_source(self, config: dict, dlt_config: dict):
         """Build a Kafka source that actually consumes (core#551).

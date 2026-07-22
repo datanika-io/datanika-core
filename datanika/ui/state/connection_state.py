@@ -92,12 +92,16 @@ SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
     "shopify": ["orders", "products", "customers"],
     "jira": ["issues", "projects"],
     "slack": ["channels", "users"],
-    # The three below cannot build a source at all (core#543): no verified
-    # source, no REST fallback. Their lists are left as the verified sources
-    # describe them and are excluded from the contract test until that is fixed.
+    # google_analytics and google_ads still cannot build a source at all
+    # (core#543) and stay out of the contract test. Their lists are what the
+    # verified sources describe, not what any code here can produce.
     "google_analytics": ["report"],
     "google_ads": ["customers", "campaigns", "ad_groups", "ads"],
-    "facebook_ads": ["campaigns", "ad_sets", "ads", "leads", "creatives"],
+    # facebook_ads now builds via the Graph API fallback. `leads` is gone on
+    # purpose: it is not an ad-account edge (lead records hang off a lead-gen
+    # form, not the account), so offering it would tick a box for a resource
+    # the loader cannot fetch — the core#532 mistake in miniature.
+    "facebook_ads": ["ad_sets", "ads", "campaigns", "creatives"],
     "zendesk": ["organizations", "tickets", "users"],
     "airtable": ["tables"],
     "notion": ["databases", "pages"],

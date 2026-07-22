@@ -115,6 +115,14 @@ GA4_PAGE_SIZE = 10_000
 
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 
+#: Where MongoDB looks for the user when none is specified.
+#:
+#: The database in a Mongo URI path doubles as the auth database, so omitting
+#: `authSource` means "the user lives inside the database you are reading" —
+#: which is not where anyone puts it. `MONGO_INITDB_ROOT_USERNAME`, Atlas and
+#: every managed provider create users in `admin` (core#550).
+DEFAULT_MONGO_AUTH_SOURCE = "admin"
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -989,8 +997,27 @@ class DltRunnerService:
         )
 
     def _build_mongodb_source(self, config: dict, dlt_config: dict, batch_size: int):
-        """Build a dlt source for MongoDB using pymongo."""
-        from urllib.parse import quote_plus
+        """Build a dlt source for MongoDB using pymongo.
+
+        **The database in a MongoDB URI path is also the authentication
+        database.** This used to build `mongodb://u:p@host:port/<target-db>`
+        with no `authSource`, so the driver looked for the user *inside the
+        database being read* — and MongoDB users are conventionally created in
+        `admin`, which is what `MONGO_INITDB_ROOT_USERNAME` does in the official
+        image and what Atlas and every managed provider do. So the connector
+        could not authenticate against any standard deployment (core#550).
+
+        It went unnoticed because an unauthenticated mongod is unaffected, and
+        that is what a local dev instance looks like.
+
+        `auth_source` defaults to `admin` rather than to the target database:
+        that is the configuration almost everyone has, and leaving the old
+        behaviour as the default would mean the connector stays broken unless
+        the user knows to set a field nobody told them about. Anyone who really
+        does keep the user inside the target database sets `auth_source` to that
+        database name and is back to the previous behaviour — explicitly.
+        """
+        from urllib.parse import quote_plus, urlencode
 
         from datanika.services.mongodb_source import mongodb_source
 
@@ -1004,7 +1031,14 @@ class DltRunnerService:
         password = config.get("password", "")
 
         if user:
-            uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
+            # Only authenticated connections carry authSource — an unauthenticated
+            # mongod rejects nothing, and sending one would be noise.
+            auth_source = config.get("auth_source") or DEFAULT_MONGO_AUTH_SOURCE
+            query = urlencode({"authSource": auth_source})
+            uri = (
+                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
+                f"@{host}:{port}/{database}?{query}"
+            )
         else:
             uri = f"mongodb://{host}:{port}/{database}"
 

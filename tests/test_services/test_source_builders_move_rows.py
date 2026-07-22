@@ -376,31 +376,29 @@ class TestSqlDatabaseSourceMovesRows:
 
 @requires_docker
 class TestMongoDbSourceMovesRows:
-    """``_build_mongodb_source`` — and it cannot authenticate today (core#550).
+    """``_build_mongodb_source`` — authenticate against a real mongod, assert rows.
 
-    A real mongod, seeded through pymongo, extracted by our own ``mongodb_source``
-    (not a dlt verified source) into DuckDB. It fails at authentication, and the
-    cause is the builder rather than this harness — measured on one container with
-    one set of credentials, varying only the auth database:
+    **The marker came off because this started passing (core#550).** A real
+    mongod, seeded through pymongo, extracted by our own ``mongodb_source`` (not
+    a dlt verified source) into DuckDB. It used to fail at authentication, and
+    the cause was the builder rather than this harness — measured on one
+    container with one set of credentials, varying only the auth database:
 
         mongodb://u:p@host:port/probedb                   -> Authentication failed
         mongodb://u:p@host:port/probedb?authSource=admin  -> OK
         mongodb://u:p@host:port/admin                     -> OK
 
-    The builder emits the first shape. MongoDB users conventionally live in
-    ``admin`` (``MONGO_INITDB_ROOT_USERNAME``, Atlas, every managed provider), and
-    the database in the URI path doubles as the auth database — so authenticated
-    deployments are rejected. Unauthenticated mongod is unaffected, which is what a
-    local dev instance looks like and presumably why this went unnoticed.
+    The builder emitted the first shape. MongoDB users conventionally live in
+    ``admin`` (``MONGO_INITDB_ROOT_USERNAME``, Atlas, every managed provider),
+    and the database in a Mongo URI path doubles as the **auth** database — so
+    every authenticated deployment was rejected. Unauthenticated mongod is
+    unaffected, which is what a local dev instance looks like and why this went
+    unnoticed.
 
-    ``strict=True``: when the fix lands this XPASSes, pytest turns that into a
-    failure, and the marker must come off. The fix cannot land silently.
+    ``strict=True`` did its job: the fix XPASSed, pytest turned that into a
+    failure, and the marker had to come off. It could not land silently.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#550: the MongoDB URI sets no authSource, so users in admin are rejected",
-    )
     def test_rows_land_in_the_destination(self, tmp_path):
         from testcontainers.mongodb import MongoDbContainer
 

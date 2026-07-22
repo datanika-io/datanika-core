@@ -14,7 +14,10 @@ from datanika.services.connection_service import (
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
-# SaaS source types that use endpoint/resource selection (not SQL mode)
+# SaaS source types that use endpoint/resource selection (not SQL mode).
+#
+# Must equal `dlt_runner.SUPPORTED_SAAS_TYPES` — the loader's view of which
+# connectors are SaaS. `tests/test_connector_type_contracts.py` asserts it.
 SAAS_SOURCE_TYPES = {
     "stripe",
     "github",
@@ -29,6 +32,9 @@ SAAS_SOURCE_TYPES = {
     "zendesk",
     "airtable",
     "notion",
+    "pipedrive",
+    "freshdesk",
+    "asana",
 }
 
 # File-based source types
@@ -54,34 +60,58 @@ NON_SQL_SOURCE_TYPES = (
         "mongodb",
         "rest_api",
         "kafka",
-        # SaaS at run time (dlt_runner dispatches them to the SaaS builder) but
-        # deliberately absent from SAAS_SOURCE_TYPES above: that set drives the
-        # "Select endpoints to load" checkboxes, which are inert for every
-        # connector but Stripe until core#532 wires the selection through.
-        # Listing them here fixes the wrong controls without adding a fake one.
-        "pipedrive",
-        "freshdesk",
-        "asana",
         # Resources come from the uploaded spec, not from a SQL schema.
         "openapi",
     }
+    # pipedrive/freshdesk/asana used to be listed explicitly here, because
+    # core#503 fixed their SQL-control leak while deliberately keeping them out
+    # of SAAS_SOURCE_TYPES — that set renders the endpoint picker, and the
+    # picker did nothing (core#532). Now that the selection is honoured they
+    # belong in SAAS_SOURCE_TYPES, which this union already covers.
 )
 
-# Default available endpoints per SaaS connector
+# Default available endpoints per SaaS connector — the checkbox list, and the
+# names the selection is resolved against.
+#
+# These MUST be the resource names the loader actually builds. They were not:
+# the original list described the dlt *verified sources*, while what runs is the
+# REST fallback (no verified-source package is installed — core#543), so Stripe
+# offered `Product`/`Price` where the fallback defines `products`/`prices`, and
+# HubSpot offered six resources where three exist. While the selection was
+# ignored (core#532) that was merely misleading; once honoured it would fail the
+# run. Corrected below against the built sources.
+#
+# `tests/test_services/test_saas_endpoint_selection.py` builds each source and
+# asserts both directions — nothing offered that isn't built, nothing built that
+# isn't offered. Update that test's expectations by running it, not by hand.
 SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
-    "stripe": ["Subscription", "Account", "Coupon", "Customer", "Invoice", "Product", "Price"],
+    "stripe": ["charges", "customers", "invoices", "prices", "products", "subscriptions"],
     "github": ["issues", "pulls", "commits", "stargazers"],
-    "hubspot": ["contacts", "companies", "deals", "products", "tickets", "quotes"],
-    "salesforce": ["Account", "Contact", "Opportunity", "Lead", "Campaign", "Case"],
+    "hubspot": ["companies", "contacts", "deals"],
+    "salesforce": ["accounts", "contacts", "opportunities"],
     "shopify": ["orders", "products", "customers"],
-    "jira": ["issues", "users", "workflows", "projects"],
-    "slack": ["channels", "messages", "users", "threads"],
+    "jira": ["issues", "projects"],
+    "slack": ["channels", "users"],
+    # The three below cannot build a source at all (core#543): no verified
+    # source, no REST fallback. Their lists are left as the verified sources
+    # describe them and are excluded from the contract test until that is fixed.
     "google_analytics": ["report"],
     "google_ads": ["customers", "campaigns", "ad_groups", "ads"],
     "facebook_ads": ["campaigns", "ad_sets", "ads", "leads", "creatives"],
-    "zendesk": ["tickets", "users", "organizations", "groups", "brands"],
+    "zendesk": ["organizations", "tickets", "users"],
     "airtable": ["tables"],
     "notion": ["databases", "pages"],
+    "pipedrive": [
+        "activities",
+        "deals",
+        "organizations",
+        "persons",
+        "pipelines",
+        "stages",
+        "users",
+    ],
+    "freshdesk": ["agents", "companies", "contacts", "groups", "tickets"],
+    "asana": ["projects", "tags", "tasks", "users", "workspaces"],
 }
 
 # Default ports for database connection types

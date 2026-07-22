@@ -155,6 +155,9 @@ def run_pipeline(
     internally.  Tests pass them directly.
     """
     own_session = session is None
+    #: Billable model/test count, set on the success path and announced only
+    #: after the commit lands (core#522). None means "nothing to meter".
+    models_completed = None
     if own_session:
         from datanika.db import get_sync_session
 
@@ -256,20 +259,10 @@ def run_pipeline(
                 and getattr(getattr(r, "node", None), "resource_type", None) is not None
                 and getattr(r.node.resource_type, "value", None) in ("model", "test")
             )
+            # Recorded here, announced after the commit (core#522) — see the
+            # `else` clause below.
             if billable_nodes > 0:
-                from datanika.hooks import announce
-
-                # See upload_tasks: announced, not emitted (core#456).
-                announce(
-                    "run.models_completed",
-                    session=session,
-                    org_id=org_id,
-                    run_id=run_id,
-                    status="success",
-                    target_type="pipeline",
-                    target_id=pipeline.id,
-                    count=billable_nodes,
-                )
+                models_completed = billable_nodes
 
             pipeline.status = PipelineStatus.ACTIVE
             session.flush()
@@ -305,6 +298,32 @@ def run_pipeline(
                 session.flush()
         if own_session:
             session.commit()
+
+    else:
+        # After the commit, not before it (core#522). A commit failure used to
+        # end the run FAILED having already metered its models, and cloud
+        # commits the ledger row on its own session, so the rollback did not
+        # take it back. `else` runs only when the whole `try` succeeded, which
+        # makes the ordering structural rather than a matter of statement
+        # order inside a long block — and still ahead of `finally`, which
+        # closes the session handlers are handed.
+        #
+        # `models_completed` stays None when dbt failed or nothing billable
+        # ran, so neither case announces.
+        if models_completed is not None:
+            from datanika.hooks import announce
+
+            # See upload_tasks: announced, not emitted (core#456).
+            announce(
+                "run.models_completed",
+                session=session,
+                org_id=org_id,
+                run_id=run_id,
+                status="success",
+                target_type="pipeline",
+                target_id=pipeline.id,
+                count=models_completed,
+            )
 
     finally:
         if own_session:

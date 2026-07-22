@@ -175,11 +175,23 @@ jobs:
           bad = []
           for g in d.get('data', {}).get('groups', []):
               for r in g.get('rules', []):
+                  # lastError is per-evaluation and authoritative.
+                  #
+                  # Do NOT fall back to alert-instance annotations. Grafana persists alert
+                  # instances across a restart, so an instance sitting in Normal (NoData)
+                  # still carries the Error annotation from BEFORE a fix was deployed.
+                  # Reading that as current state fails a perfectly good deploy -- exactly
+                  # what happened on 2026-07-22, when lastError was empty, health was ok,
+                  # and the rules were evaluating on schedule.
                   err = (r.get('lastError') or '').strip()
-                  for a in (r.get('alerts') or []):
-                      err = err or (a.get('annotations', {}) or {}).get('Error', '')
                   if err:
                       bad.append(r.get('name', '?') + ': ' + err[:110])
+                  elif r.get('health') not in ('ok', 'nodata', '', None):
+                      bad.append(r.get('name', '?') + ': health=' + str(r.get('health')))
+                  elif not (r.get('lastEvaluation') or '').strip():
+                      # A rule that never ran carries no lastError either, so silence on
+                      # its own is not evidence of health.
+                      bad.append(r.get('name', '?') + ': never evaluated')
           if bad:
               print('ALERT RULES CANNOT EVALUATE:')
               for b in bad: print('  -', b)

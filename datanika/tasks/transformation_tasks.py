@@ -166,19 +166,6 @@ def run_transformation(
 
         execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
 
-        from datanika.hooks import announce
-
-        # See upload_tasks: announced, not emitted (core#456).
-        announce(
-            "run.transformation_completed",
-            session=session,
-            org_id=org_id,
-            run_id=run_id,
-            status="success",
-            target_type="transformation",
-            target_id=transformation.id,
-        )
-
         try:
             _sync_catalog_after_transformation(
                 session, org_id, transformation, dbt_svc, dst_conn, dst_config
@@ -200,6 +187,25 @@ def run_transformation(
         )
         if own_session:
             session.commit()
+
+    else:
+        # After the commit, not before it (core#522) — a commit failure used to
+        # end the run FAILED having already been metered, and cloud commits the
+        # ledger row on its own session so the rollback did not undo it. `else`
+        # makes the ordering structural and still runs before `finally` closes
+        # the session the handlers receive.
+        from datanika.hooks import announce
+
+        # See upload_tasks: announced, not emitted (core#456).
+        announce(
+            "run.transformation_completed",
+            session=session,
+            org_id=org_id,
+            run_id=run_id,
+            status="success",
+            target_type="transformation",
+            target_id=transformation.id,
+        )
 
     finally:
         if own_session:

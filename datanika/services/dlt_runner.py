@@ -3,9 +3,11 @@
 import logging
 import os
 import shutil
+from pathlib import PurePosixPath
 
 import dlt
-from dlt.sources.filesystem import filesystem
+from dlt.common import json as dlt_json
+from dlt.sources.filesystem import filesystem, read_csv, read_parquet
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
@@ -18,6 +20,28 @@ DEFAULT_BATCH_SIZE = 10_000
 SUPPORTED_FILE_TYPES = {"s3", "csv", "json", "parquet"}
 
 DEFAULT_FILE_GLOBS = {"csv": "*.csv", "json": "*.json", "parquet": "*.parquet", "s3": "*"}
+
+# dlt's `filesystem()` is a *lister*: it yields one FileItem per matched file
+# (name, size, mtime, mime type). Reading contents requires piping it through a
+# transformer. Without one the destination gets a table of filenames and the run
+# reports success — core#492, found on prod on the advertised onboarding path.
+FILE_FORMAT_BY_TYPE = {"csv": "csv", "json": "json", "parquet": "parquet"}
+
+# `s3` (and any glob-driven source) carries no format in its type, so it is
+# inferred from the pattern's extension. Deliberately not defaulted: guessing
+# wrong here reproduces exactly the failure this fixes, just one layer along.
+FILE_FORMAT_BY_EXTENSION = {
+    ".csv": "csv",
+    ".tsv": "csv",
+    ".txt": "csv",
+    ".json": "json",
+    ".jsonl": "json",
+    ".ndjson": "json",
+    ".parquet": "parquet",
+    ".pq": "parquet",
+}
+
+_GLOB_WILDCARDS = "*?["
 
 AWS_CREDENTIAL_KEYS = {"aws_access_key_id", "aws_secret_access_key", "region_name", "endpoint_url"}
 
@@ -62,6 +86,10 @@ INTERNAL_CONFIG_KEYS = {
     "filters",
     "bucket_url",
     "file_glob",
+    "file_format",
+    "table_name",
+    "delimiter",
+    "encoding",
     "resources",
     "resource_names",
     "paginator",
@@ -169,6 +197,141 @@ def _normalize_oracle_identifier(name: str | None) -> str | None:
     from sqlalchemy.dialects.oracle.base import OracleDialect
 
     return OracleDialect().normalize_name(name) or name
+
+
+def _json_chunks(file_obj, chunksize: int):
+    """Yield lists of records from one JSON file, whatever shape it is.
+
+    dlt ships `read_jsonl`, which is **JSON Lines only**, but our default glob
+    for the `json` connection type is `*.json` — the array/object case. Feeding
+    an array to `read_jsonl` does not fail: the whole file parses as one value,
+    so dlt writes a parent row with no business columns plus a `__value` child
+    table. Another green run with the data in the wrong shape (core#492).
+
+    So the shape is detected rather than assumed:
+      - `[...]`        -> the array's elements are the records
+      - one JSON value -> a single record (a dict) or its elements (a list)
+      - otherwise      -> JSON Lines, streamed a line at a time
+    """
+    head = file_obj.read(1024)
+    file_obj.seek(0)
+    first = head.lstrip()[:1]
+
+    if first == b"[":
+        records = dlt_json.loadb(file_obj.read())
+        for start in range(0, len(records), chunksize):
+            yield records[start : start + chunksize]
+        return
+
+    chunk = []
+    for line in file_obj:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            chunk.append(dlt_json.loadb(line))
+        except Exception:
+            # Not line-delimited after all — most likely one pretty-printed
+            # object spanning many lines. Re-read it as a whole.
+            file_obj.seek(0)
+            value = dlt_json.loadb(file_obj.read())
+            yield value if isinstance(value, list) else [value]
+            return
+        if len(chunk) >= chunksize:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+@dlt.transformer(name="json_records")
+def read_json(items, chunksize: int = 1000):
+    """Read JSON files whose shape is not known ahead of time.
+
+    Companion to dlt's `read_csv` / `read_parquet` / `read_jsonl`, covering the
+    gap that `read_jsonl` leaves: arrays and single objects.
+    """
+    for file_obj in items:
+        with file_obj.open() as f:
+            yield from _json_chunks(f, chunksize)
+
+
+def _resolve_file_format(connection_type: str, file_glob: str, dlt_config: dict) -> str:
+    """Decide which reader a file source needs — or refuse to guess.
+
+    Order: an explicit `file_format` wins; then the connection type, which
+    names the format for `csv`/`json`/`parquet`; then the glob's extension,
+    which is all `s3` has to go on.
+
+    A bare `s3` glob (`*`) reaches none of those, and **that raises**. Loading
+    the file listing instead is what core#492 was, and picking a format at
+    random would be the same bug with a different payload.
+    """
+    explicit = dlt_config.get("file_format")
+    if explicit:
+        normalized = str(explicit).lower().lstrip(".")
+        if normalized in {"jsonl", "ndjson"}:
+            return "json"
+        if normalized not in {"csv", "json", "parquet"}:
+            raise DltRunnerError(
+                f"Unsupported file_format {explicit!r}. Supported: csv, json, parquet."
+            )
+        return normalized
+
+    by_type = FILE_FORMAT_BY_TYPE.get(connection_type)
+    if by_type:
+        return by_type
+
+    suffix = PurePosixPath(file_glob).suffix.lower()
+    by_extension = FILE_FORMAT_BY_EXTENSION.get(suffix)
+    if by_extension:
+        return by_extension
+
+    raise DltRunnerError(
+        f"Cannot tell what format {file_glob!r} matches, so there is no way to read it. "
+        "Set 'file_format' (csv, json or parquet) in the pipeline config, or narrow "
+        "the file pattern to one extension (e.g. '*.csv')."
+    )
+
+
+def _build_format_reader(file_format: str, dlt_config: dict):
+    """Build the transformer for a resolved format, with its format options."""
+    if file_format == "csv":
+        # `read_csv` forwards **pandas_kwargs, so the CSV knobs are pandas'.
+        # Only forwarded when set — pandas already infers the header row and
+        # column types, and an unrequested override is a silent wrong answer.
+        pandas_kwargs = {}
+        if dlt_config.get("delimiter"):
+            pandas_kwargs["sep"] = dlt_config["delimiter"]
+        if dlt_config.get("encoding"):
+            pandas_kwargs["encoding"] = dlt_config["encoding"]
+        return read_csv(**pandas_kwargs)
+
+    if file_format == "parquet":
+        return read_parquet()
+
+    return read_json()
+
+
+def _file_table_name(connection_type: str, file_glob: str, dlt_config: dict) -> str:
+    """Name the destination table for a file source.
+
+    Required, not cosmetic: a piped transformer takes the transformer's name,
+    so the unrenamed result lands in a table called **`_read_csv`** — which
+    reads as a dlt internal. Order: an explicit `table_name`; then the glob's
+    stem when it names one file (`customers.csv` -> `customers`); then the
+    connection type, which is at least stable and predictable.
+    """
+    explicit = dlt_config.get("table_name")
+    if explicit:
+        return str(explicit)
+
+    if not any(char in file_glob for char in _GLOB_WILDCARDS):
+        stem = PurePosixPath(file_glob).stem
+        if stem:
+            return stem
+
+    return connection_type
 
 
 class DltRunnerService:
@@ -348,7 +511,12 @@ class DltRunnerService:
             return sql_database(**kwargs)
 
     def _build_file_source(self, connection_type: str, config: dict, dlt_config: dict):
-        """Build a dlt filesystem source for file-based connections."""
+        """Build a dlt filesystem source that loads file **contents**.
+
+        `filesystem()` alone lists files; piping it through a format reader is
+        what produces rows. See `_resolve_file_format` for how the reader is
+        chosen and `_file_table_name` for why the result is always renamed.
+        """
         bucket_url = dlt_config.get("bucket_url") or config.get("bucket_url", "")
         if not bucket_url:
             raise DltRunnerError("File sources require 'bucket_url' in config or dlt_config")
@@ -362,7 +530,11 @@ class DltRunnerService:
             if credentials:
                 kwargs["credentials"] = credentials
 
-        return filesystem(**kwargs)
+        file_format = _resolve_file_format(connection_type, file_glob, dlt_config)
+        reader = _build_format_reader(file_format, dlt_config)
+        table_name = _file_table_name(connection_type, file_glob, dlt_config)
+
+        return (filesystem(**kwargs) | reader).with_name(table_name)
 
     @staticmethod
     def _rest_api_from_parts(

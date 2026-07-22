@@ -237,6 +237,87 @@ requires_docker = pytest.mark.skipif(
 
 
 @requires_docker
+class TestSqlDatabaseSourceMovesRows:
+    """The SQL path — the last builder core#545 listed as unproven.
+
+    Its only prior evidence was **one manual prod run** (landing#280, 19 rows
+    verified in the destination). Everything automated was mocked: ``sql_database``
+    is patched 24 times in ``test_dlt_runner.py``, more than ``filesystem``'s 7.
+
+    #545 argues this is the **lowest-risk** builder, and that argument is sound:
+    ``sql_database()`` yields rows by construction, so there is no
+    missing-transformer shape for #492's mechanism to recur in. Worth being precise
+    about what that means though — it says the *specific* defect cannot recur, not
+    that the path works. Credentials assembly, drivername mapping and the
+    user→username rename are all real transformations with no live coverage, and
+    #550 is exactly what an unexercised credentials path looks like one connector
+    over.
+
+    Both modes are covered because they call different dlt functions:
+      full_database → sql_database()
+      single_table  → sql_table()
+    """
+
+    @staticmethod
+    def _seed(postgres) -> dict:
+        """Create the fixture table and return the connection config the app stores."""
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(postgres.get_connection_url())
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text("CREATE TABLE widgets (id int, name text, price int)"))
+            conn.execute(
+                sqlalchemy.text(
+                    "INSERT INTO widgets VALUES (1,'alpha',100),(2,'beta',200),(3,'gamma',300)"
+                )
+            )
+        engine.dispose()
+        # The shape ConnectionState saves: note `user`, which _to_dlt_credentials
+        # renames to `username`. That rename is only exercised for real here.
+        return {
+            "host": postgres.get_container_host_ip(),
+            "port": int(postgres.get_exposed_port(5432)),
+            "user": postgres.username,
+            "password": postgres.password,
+            "database": postgres.dbname,
+        }
+
+    def test_full_database_mode_moves_rows(self, tmp_path):
+        from testcontainers.postgres import PostgresContainer
+
+        with PostgresContainer("postgres:16-alpine") as postgres:
+            config = self._seed(postgres)
+            db_path = _extract_load(
+                tmp_path,
+                "postgres",
+                config,
+                {"mode": "full_database", "table_names": ["widgets"]},
+            )
+            rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "sql_database() did not deliver row contents into DuckDB."
+        )
+
+    def test_single_table_mode_moves_rows(self, tmp_path):
+        from testcontainers.postgres import PostgresContainer
+
+        with PostgresContainer("postgres:16-alpine") as postgres:
+            config = self._seed(postgres)
+            db_path = _extract_load(
+                tmp_path,
+                "postgres",
+                config,
+                {"mode": "single_table", "table": "widgets"},
+            )
+            rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "sql_table() did not deliver row contents into DuckDB."
+        )
+
+
+@requires_docker
 class TestMongoDbSourceMovesRows:
     """``_build_mongodb_source`` — and it cannot authenticate today (core#550).
 

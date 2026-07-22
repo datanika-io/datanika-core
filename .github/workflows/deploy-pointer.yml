@@ -156,6 +156,37 @@ jobs:
             sleep 5
           done
           curl -sf http://127.0.0.1:9090/api/v1/status/config -o /tmp/live-promcfg.json || true
+          # --- rule health: can Grafana actually EVALUATE what we shipped? ---
+          # Comparing expressions proves the right text reached Grafana. It does NOT
+          # prove the rule works. Every probe rule sat at "invalid format of evaluation
+          # results ... only reduced data can be alerted on" -- a threshold applied to an
+          # unreduced series -- so none of them ever evaluated their condition, and they
+          # paged only via execErrState. Expression comparison stayed green throughout.
+          docker exec datanika-grafana sh -c \
+            'curl -sf -u "admin:$GF_SECURITY_ADMIN_PASSWORD" \
+             http://127.0.0.1:3000/api/prometheus/grafana/api/v1/rules' \
+            > /tmp/live-health.json 2>/dev/null || true
+          python3 - <<'HEALTH'
+          import json, sys
+          try:
+              d = json.load(open('/tmp/live-health.json'))
+          except Exception as e:
+              print('could not read rule health from Grafana:', e); sys.exit(1)
+          bad = []
+          for g in d.get('data', {}).get('groups', []):
+              for r in g.get('rules', []):
+                  err = (r.get('lastError') or '').strip()
+                  for a in (r.get('alerts') or []):
+                      err = err or (a.get('annotations', {}) or {}).get('Error', '')
+                  if err:
+                      bad.append(r.get('name', '?') + ': ' + err[:110])
+          if bad:
+              print('ALERT RULES CANNOT EVALUATE:')
+              for b in bad: print('  -', b)
+              sys.exit(1)
+          print('rule health: all rules evaluate cleanly')
+          HEALTH
+          
           python3 - <<'PY'
           import json, re, sys, yaml
 

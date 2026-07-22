@@ -7,8 +7,22 @@ on:
     branches: [master, dev]
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Per-SHA for pushes, per-ref for PRs.
+  #
+  # A push to dev used to cancel the previous push's run, because the group was the ref. That
+  # was harmless when Infra was the only writer to dev. Since 2026-07-22 all five departments
+  # merge into dev themselves and merges arrive faster than CI finishes -- three commits landed
+  # inside 90 seconds on the first morning, and three of the last six dev runs were cancelled.
+  #
+  # The promotion pre-flight needs a green run for dev's EXACT head; a green run from three
+  # commits ago says nothing about what you are about to ship. When the head's run is cancelled
+  # that condition can never be satisfied. A cancelled run is not a failure -- it is the absence
+  # of evidence, and the fix is to stop discarding it.
+  #
+  # PRs keep cancellation: superseding a PR run is exactly what you want, and no promotion
+  # decision rests on it.
+  group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   lint:

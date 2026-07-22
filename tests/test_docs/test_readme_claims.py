@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from datanika.models.connection import ConnectionType
+from datanika.services.connection_service import WITHDRAWN_SOURCE_TYPES
 
 README = Path(__file__).resolve().parents[2] / "README.md"
 
@@ -24,6 +25,10 @@ README = Path(__file__).resolve().parents[2] / "README.md"
 # marketed connector count. Keep this list short and justified — every entry is
 # a claim that users cannot actually use something we shipped an enum member
 # for. If you add one, say why.
+#
+# This list covers only types held back *before* launch. Types that were offered
+# and then withdrawn are not listed here — they come from
+# ``WITHDRAWN_SOURCE_TYPES`` below, which is the service's own set.
 UNMARKETED_TYPES = {
     # core#310 — OpenAPI source generation is behind a deferred feature and has
     # no connector page, setup guide, or docs entry. Counting it would inflate
@@ -31,7 +36,20 @@ UNMARKETED_TYPES = {
     "openapi",
 }
 
-EXPECTED_CONNECTOR_COUNT = len(ConnectionType) - len(UNMARKETED_TYPES)
+# Withdrawn types are imported, never re-listed. `connection_service` already
+# owns the set that removes a type from `SOURCE_TYPES`, `CONFIG_SCHEMAS` and the
+# picker, so importing it makes the README count fall out of the *same* fact
+# that makes the connector unreachable in the app.
+#
+# The alternative — adding "google_ads" to UNMARKETED_TYPES by hand — would make
+# the two numbers agree by coincidence, and would silently stop agreeing the next
+# time a connector is withdrawn (core#555/#567 is unlikely to be the last: a
+# withdrawal is the honest answer whenever a connector cannot work with the
+# credentials we collect). With the import, the next withdrawal fails this test
+# until the README is updated in the same PR, which is the entire point.
+EXCLUDED_FROM_COUNT = UNMARKETED_TYPES | set(WITHDRAWN_SOURCE_TYPES)
+
+EXPECTED_CONNECTOR_COUNT = len(ConnectionType) - len(EXCLUDED_FROM_COUNT)
 
 
 @pytest.fixture(scope="module")
@@ -39,16 +57,32 @@ def readme() -> str:
     return README.read_text(encoding="utf-8")
 
 
-def test_unmarketed_types_actually_exist() -> None:
-    """A typo in UNMARKETED_TYPES would silently inflate the expected count."""
+def test_excluded_types_actually_exist() -> None:
+    """A typo in either exclusion set would silently inflate the expected count.
+
+    Covers the imported withdrawn set too: a withdrawal that misspells a type
+    would remove nothing from the app while still shrinking this count, so the
+    README would be "corrected" to a number matching neither.
+    """
     members = {t.value for t in ConnectionType}
-    unknown = UNMARKETED_TYPES - members
-    assert not unknown, f"UNMARKETED_TYPES names types that aren't in ConnectionType: {unknown}"
+    unknown = EXCLUDED_FROM_COUNT - members
+    assert not unknown, f"excluded types that aren't in ConnectionType: {sorted(unknown)}"
 
 
-def test_expected_count_is_sane() -> None:
-    """Tripwire against the exclusion list quietly swallowing real connectors."""
-    assert len(ConnectionType) - 1 == EXPECTED_CONNECTOR_COUNT
+def test_exclusions_stay_small_and_deliberate() -> None:
+    """Tripwire against the exclusion sets quietly swallowing real connectors.
+
+    Deliberately not ``len(ConnectionType) - 1``: that hardcoded the one
+    exclusion that existed when this guard was written, so the first withdrawal
+    (core#567) broke it for the wrong reason. The invariant worth pinning is
+    that exclusions stay few and the marketed count stays plausible, not that
+    there is exactly one.
+    """
+    assert len(EXCLUDED_FROM_COUNT) <= 3, (
+        f"too many connectors excluded from the marketed count: "
+        f"{sorted(EXCLUDED_FROM_COUNT)}. Each one is something we shipped an "
+        f"enum member for and do not sell — if this is growing, say why."
+    )
     assert EXPECTED_CONNECTOR_COUNT > 30, "connector count collapsed — check ConnectionType"
 
 

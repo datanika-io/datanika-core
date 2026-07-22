@@ -29,6 +29,11 @@ env:
   POSTGRES_USER: datanika
   POSTGRES_DB: datanika
   DATANIKA_EDITION: "oss"
+  ## Pinned absolute, and it must be identical for the app and the worker.
+  ## config.py defaults this to `./uploaded_files`, which resolves against the
+  ## working directory — so a shared volume alone is not enough if the two tiers
+  ## ever start from different directories (core#529).
+  FILE_UPLOADS_DIR: /app/uploaded_files
   ## Optional extras — anything else the app reads from .env.docker. Keys listed
   ## here become literal Secret entries. Values left empty will be emitted as
   ## empty strings; users should populate them before running in a real env.
@@ -74,6 +79,9 @@ app:
       periodSeconds: 30
       failureThreshold: 3
   dbtProjectsSize: 5Gi
+  ## Uploaded-file archives, shared with the celery worker. Sized for the 20 MB
+  ## per-file cap in FileUploadService plus retention.
+  uploadedFilesSize: 5Gi
 
 ## Celery worker.
 celery:

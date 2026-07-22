@@ -16,7 +16,7 @@ Datanika combines [dlt](https://dlthub.com) (extract + load) with [dbt-core](htt
 
 ## Features
 
-🔌 **36 Connectors** — PostgreSQL, MySQL, Oracle, MongoDB, BigQuery, Snowflake, Stripe, HubSpot, Salesforce, Kafka, S3, and more
+🔌 **35 Connectors** — PostgreSQL, MySQL, Oracle, MongoDB, BigQuery, Snowflake, Stripe, HubSpot, Salesforce, Kafka, S3, and more
 🔄 **dbt Transformations** — SQL models, tests, snapshots, packages, and source freshness built in
 📊 **Visual Pipeline Builder** — DAG editor with dependency management
 ⏰ **Scheduling** — Cron-based with APScheduler, persistent across restarts
@@ -83,7 +83,7 @@ tag tells you immediately whether you're affected.
 
 | | Datanika | Airbyte | Fivetran | dbt Cloud |
 |---|---|---|---|---|
-| Extract + Load | ✅ 36 connectors | ✅ 400+ | ✅ 500+ | ❌ |
+| Extract + Load | ✅ 35 connectors | ✅ 400+ | ✅ 500+ | ❌ |
 | Transformations | ✅ dbt built-in | ❌ | ❌ (add-on) | ✅ |
 | Scheduling | ✅ Cron + DAG | ✅ Basic | ✅ Basic | ✅ |
 | Pipeline DAG | ✅ Visual | ❌ | ❌ | ❌ |
@@ -110,7 +110,7 @@ tag tells you immediately whether you're affected.
 
 ## Roadmap
 
-- [x] 36 connectors (databases, SaaS APIs, files, streaming)
+- [x] 35 connectors (databases, SaaS APIs, files, streaming)
 - [x] dbt transformations, tests, snapshots, packages
 - [x] REST API v1 with OpenAPI/Swagger and typed per-connector inline schemas
 - [x] AI-agent compatibility (`/llms.txt`, agent-guide, 5-tier API, golden-path loop, `?wait=true`, `Idempotency-Key`, run cancel, MCP server)

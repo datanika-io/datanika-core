@@ -103,14 +103,21 @@ jobs:
           set -e
           SRC=/opt/datanika/datanika/deploy/apache
           changed=0
+          # sites-enabled holds SYMLINKS into sites-available. Resolve once and work on the
+          # real file: `cp -a` on the link would back up the LINK, leaving a dangling relative
+          # symlink and no content -- a rollback that silently restores nothing, discovered
+          # only when configtest fails and it is too late.
           sync_one() {
-            src="$SRC/$1"; live="/etc/apache2/sites-enabled/$2"
+            src="$SRC/$1"
+            link="/etc/apache2/sites-enabled/$2"
             [ -f "$src" ] || { echo "missing in repo: $src"; exit 1; }
-            if ! cmp -s "$src" "$live"; then
-              cp -a "$live" "/tmp/$2.bak"
-              cp "$src" "$live"
+            target=$(readlink -f "$link")
+            [ -f "$target" ] || { echo "vhost target missing: $link -> $target"; exit 1; }
+            if ! cmp -s "$src" "$target"; then
+              cp "$target" "/tmp/$2.bak"          # content, not the link
+              cp "$src" "$target"
               changed=1
-              echo "vhost changed: $2"
+              echo "vhost changed: $2 ($target)"
             fi
           }
           sync_one app.datanika.io.conf         zapp-datanika-io.conf
@@ -122,7 +129,8 @@ jobs:
           else
             echo "CONFIGTEST FAILED - restoring previous vhosts:"; cat /tmp/ct.log
             for d in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
-              [ -f "/tmp/$d.bak" ] && cp "/tmp/$d.bak" "/etc/apache2/sites-enabled/$d"
+              t=$(readlink -f "/etc/apache2/sites-enabled/$d")
+              if [ -f "/tmp/$d.bak" ]; then cp "/tmp/$d.bak" "$t"; echo "restored $d"; fi
             done
             apachectl configtest
             exit 1

@@ -4,7 +4,7 @@ groups:
   - orgId: 1
     name: Infrastructure Alerts
     folder: Datanika
-    interval: 1m
+    interval: 30s
     rules:
       # --- Container Health ---
       - uid: container-down
@@ -49,7 +49,7 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 2m
+        for: 30s
         labels:
           severity: critical
         annotations:
@@ -102,7 +102,7 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 2m
+        for: 30s
         labels:
           severity: critical
         annotations:
@@ -384,7 +384,7 @@ groups:
   - orgId: 1
     name: Application Alerts
     folder: Datanika
-    interval: 1m
+    interval: 30s
     rules:
       # --- App Health Endpoint ---
       - uid: app-unhealthy
@@ -429,7 +429,7 @@ groups:
                     type: lt
                     params: [1]
               refId: C
-        for: 2m
+        for: 30s
         labels:
           severity: critical
         annotations:
@@ -529,7 +529,7 @@ groups:
   - orgId: 1
     name: External Probes
     folder: Datanika
-    interval: 5m
+    interval: 30s
     rules:
       # --- Sitemap health (SEO-critical) ---
       - uid: sitemap-down
@@ -713,7 +713,7 @@ groups:
                     type: lt
                     params: [1]
               refId: C
-        for: 2m
+        for: 30s
         labels:
           severity: critical
         annotations:
@@ -761,7 +761,7 @@ groups:
                     type: lt
                     params: [1]
               refId: C
-        for: 2m
+        for: 30s
         labels:
           severity: critical
         annotations:

@@ -5,3 +5,6 @@ scripts/hooks/* text eol=lf
 # CRLF would make every deploy see a spurious change and reload Apache needlessly.
 deploy/apache/*.conf text eol=lf
 deploy/apache/*.example text eol=lf
+
+# Staging compose is byte-compared on a Linux box by CD; CRLF would fake a change.
+deploy/staging/*.yml text eol=lf

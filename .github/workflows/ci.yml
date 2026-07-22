@@ -263,6 +263,37 @@ jobs:
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'cd /opt/datanika-staging-src && docker build -t ghcr.io/datanika-io/datanika-core:staging -f datanika/Dockerfile .'
 
+      - name: Sync staging compose from the repo
+        # Staging's docker-compose.yml used to exist only on the box, so manifest changes in the
+        # repo silently did not apply to staging -- that is how #529 (no uploads volume on
+        # staging) persisted after Engineering fixed every in-repo manifest. It is version
+        # controlled now, at deploy/staging/docker-compose.yml, and the transfer step above has
+        # already placed the tree at /opt/datanika-staging-src.
+        #
+        # Backup -> write -> `docker compose config` validate -> restore + fail on invalid. The
+        # recreate step immediately below picks up the new file (it cd's into
+        # /opt/datanika-staging), so this step deliberately does not restart anything.
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'SYNC'
+          set -e
+          SRC=/opt/datanika-staging-src/datanika/deploy/staging/docker-compose.yml
+          DST=/opt/datanika-staging/docker-compose.yml
+          [ -f "$SRC" ] || { echo "repo copy missing at $SRC"; exit 1; }
+          if cmp -s "$SRC" "$DST"; then echo "staging compose already current"; exit 0; fi
+          cp -a "$DST" "${DST}.bak.$(date +%s)"
+          cp "$SRC" "$DST"
+          cd /opt/datanika-staging
+          set -a && . ./.env.docker && set +a
+          if docker compose -p datanika-staging config >/dev/null 2>/tmp/cfgerr; then
+            echo "staging compose synced from repo and validated"
+          else
+            echo "INVALID compose from repo -- restoring previous:"; cat /tmp/cfgerr
+            cp "$(ls -t ${DST}.bak.* | head -1)" "$DST"
+            docker compose -p datanika-staging config >/dev/null
+            exit 1
+          fi
+          SYNC
+
       - name: Recreate staging stack on :staging
         # `up -d` can fail with `No such container: <id>` when compose still holds a reference
         # to a container removed out of band (#536). There was no recovery, so the step died.

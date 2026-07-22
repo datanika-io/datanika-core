@@ -124,12 +124,18 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         {
             "project": _str("GCP project ID"),
             "dataset": _str("BigQuery dataset name"),
-            "service_account_json": _str(
-                "Service account JSON (paste the full JSON)",
+            # `keyfile_json`, not `service_account_json`: this schema declared
+            # the latter while the connection form has always written the
+            # former, so the schema described a key no stored connection had
+            # (core#565). Corrected to match reality rather than renaming the
+            # form and stranding every BigQuery connection already saved. The
+            # runner accepts both, so neither name breaks.
+            "keyfile_json": _str(
+                "Service account JSON (paste the full key file)",
                 sensitive=True,
             ),
         },
-        required=["project", "dataset", "service_account_json"],
+        required=["project", "dataset", "keyfile_json"],
     ),
     "snowflake": _schema(
         {

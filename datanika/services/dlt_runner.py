@@ -123,6 +123,28 @@ GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
 #: every managed provider create users in `admin` (core#550).
 DEFAULT_MONGO_AUTH_SOURCE = "admin"
 
+#: Cloud-warehouse fields whose stored name is not the name dlt reads (core#565).
+#:
+#: `_to_dlt_credentials` translated only for SQL types, so these passed through
+#: untouched and dlt saw no credential it recognised — BigQuery and Databricks
+#: could not complete a run, and Snowflake was suspected and then confirmed.
+#: Names taken from dlt's own credential classes in the installed version, not
+#: from documentation.
+_WAREHOUSE_CREDENTIAL_RENAMES = {
+    "databricks": {"host": "server_hostname", "token": "access_token"},
+    # `SnowflakeCredentials` has no `account`; the account identifier is its host.
+    "snowflake": {"account": "host"},
+}
+
+#: Keys stored on a warehouse connection that are *not* credentials. dlt rejects
+#: unknown fields, and `schema`/`dataset` describe where to write rather than
+#: how to authenticate.
+_NON_CREDENTIAL_WAREHOUSE_KEYS = {
+    "bigquery": {"dataset"},
+    "databricks": {"schema"},
+    "snowflake": {"schema"},
+}
+
 INTERNAL_CONFIG_KEYS = {
     "mode",
     "table",
@@ -432,6 +454,60 @@ def describe_empty_file_match(bucket_url: str, file_glob: str) -> str:
     return f"{general} The directory exists but holds nothing matching that pattern."
 
 
+def _bigquery_credentials(creds: dict) -> dict:
+    """Explode a service-account JSON into the fields dlt actually reads.
+
+    dlt's `GcpServiceAccountCredentials` reads `project_id`, `private_key`,
+    `client_email` and friends. It does **not** read a blob — passing the JSON
+    under any key at all is silently ignored, which is why BigQuery failed in
+    prod with *"missing project_id, private_key, client_email"* while the
+    connection form was filled in correctly (core#565).
+
+    **Both key names are accepted on purpose.** The connection form writes
+    `keyfile_json`; `CONFIG_SCHEMAS` declares `service_account_json`. Connections
+    already stored carry the former, so reading only the schema's name would fix
+    nothing for anyone who has a BigQuery connection today. The schema is
+    corrected to match reality in the same change; this keeps working either way.
+    """
+    raw = creds.pop("keyfile_json", None) or creds.pop("service_account_json", None)
+
+    if not raw:
+        # Leave it alone: dlt will fail with its own message, and on a machine
+        # with Application Default Credentials it may legitimately succeed
+        # without one.
+        return creds
+
+    if isinstance(raw, str):
+        try:
+            parsed = dlt_json.loads(raw)
+        except Exception as exc:
+            raise DltRunnerError(
+                "BigQuery service account JSON is not valid JSON — paste the whole key "
+                "file, including the surrounding braces."
+            ) from exc
+    else:
+        parsed = raw
+
+    if not isinstance(parsed, dict):
+        raise DltRunnerError("BigQuery service account JSON must be a JSON object.")
+
+    for field in ("project_id", "private_key", "client_email"):
+        if not parsed.get(field):
+            raise DltRunnerError(
+                f"BigQuery service account JSON is missing {field!r}. Use the key file "
+                "downloaded from the Google Cloud console, not a truncated copy."
+            )
+
+    # The stored `project` is the project to bill/query; the key's `project_id`
+    # is where the service account lives. They are usually the same, and when
+    # they differ the explicit field wins.
+    project_override = creds.pop("project", None)
+    merged = {**parsed}
+    if project_override:
+        merged["project_id"] = project_override
+    return merged
+
+
 def _ga4_access_token(service_account_json) -> str:
     """Mint a read-only Data API token from the service-account JSON.
 
@@ -702,9 +778,36 @@ class DltRunnerService:
     def _to_dlt_credentials(connection_type: str, config: dict) -> dict:
         """Convert stored connection config to dlt-compatible credentials.
 
-        Adds drivername for SQL source types, renames user→username.
+        Adds drivername for SQL source types, renames user→username, and maps
+        the cloud-warehouse fields whose names never lined up (core#565).
+
+        **BigQuery and Databricks could not complete a single run.** This
+        translated only for SQL types, so warehouse configs passed through
+        untouched and dlt never saw a credential it recognised:
+
+            stored                          dlt wants
+            keyfile_json                    project_id, private_key, client_email, …
+            host / token                    server_hostname / access_token
+            account                         host
+
+        Verified against dlt's own resolution rather than a table — and worth
+        knowing why that mattered: on a developer machine with gcloud ADC,
+        BigQuery resolves *whatever you pass*, including nothing at all, because
+        Application Default Credentials fill the gap. The failure only appears
+        where there is no ADC, which is prod.
         """
         creds = dict(config)
+
+        for key in _NON_CREDENTIAL_WAREHOUSE_KEYS.get(connection_type, ()):
+            creds.pop(key, None)
+
+        if connection_type in _WAREHOUSE_CREDENTIAL_RENAMES:
+            for stored, wanted in _WAREHOUSE_CREDENTIAL_RENAMES[connection_type].items():
+                if stored in creds:
+                    creds[wanted] = creds.pop(stored)
+
+        if connection_type == "bigquery":
+            creds = _bigquery_credentials(creds)
 
         # Rename user → username for SQL and Snowflake types
         if connection_type in _RENAME_USER_TYPES and "user" in creds:

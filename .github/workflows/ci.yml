@@ -77,6 +77,15 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
+      - name: Fetch the deployed release
+        # This job runs the whole suite, which includes the t1-window guard
+        # (core#449). That guard compares against what production runs, and
+        # actions/checkout gives a shallow PR-only tree with no origin/master —
+        # so without this the guard fails rather than silently comparing
+        # nothing. Deliberately not --ignore'd here: `pytest tests/` must mean
+        # the same thing in CI as it does locally (core#470).
+        run: git fetch --no-tags --depth=1 origin master
+
       - name: Run tests
         run: pytest tests/ --tb=short -q
 

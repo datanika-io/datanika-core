@@ -40,7 +40,18 @@ echo "pre-push: ruff check"
 echo "pre-push: ruff format --check"
 "$PY" -m ruff format --check datanika tests
 echo "pre-push: pytest"
-"$PY" -m pytest tests/ -x -q --tb=short
+# UV_NO_SYNC=1 is NOT optional on Windows. test_head_downgrade_upgrade_roundtrip shells
+# out to `uv run alembic`, which tries to replace native extensions (sqlalchemy's
+# cyextension, cryptography, ...) while this pytest process still holds the files open.
+# Windows refuses, the removal half-completes, and the venv is left gutted — presenting
+# as "my dependencies randomly vanished" and sending people hunting for a cause that
+# isn't there.
+#
+# WORKFLOW_RULES §3 has documented this as mandatory since it cost QA, and then Growth
+# four reinstalls — and the stated lesson was that a fix living only in prose gets
+# rediscovered the expensive way. It was still only in prose: the hook never set it.
+# Setting it here means nobody has to know.
+UV_NO_SYNC=1 "$PY" -m pytest tests/ -x -q --tb=short
 
 # Helm lint — only if chart files were modified in the push range
 if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then

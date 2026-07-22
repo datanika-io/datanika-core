@@ -314,7 +314,10 @@ def _fake_lister():
     """
     import dlt
 
-    return dlt.resource(lambda: iter([]), name="filesystem")
+    # Must yield at least one item: `_build_file_source` now peeks the lister
+    # and refuses to build a source that matches nothing (core#493), so an
+    # empty stand-in would fail every test here for the wrong reason.
+    return dlt.resource(lambda: iter([{"file_name": "customers.csv"}]), name="filesystem")
 
 
 class TestBuildFileSource:
@@ -392,7 +395,9 @@ class TestBuildFileSource:
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_fs.return_value = MagicMock()
+        # A MagicMock iterates empty, which now reads as "matched no files"
+        # and refuses to build the source (core#493).
+        mock_fs.return_value = _fake_lister()
 
         result = svc.execute(
             pipeline_id=1,

@@ -268,16 +268,17 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         },
         required=["property_id", "service_account_json"],
     ),
-    "google_ads": _schema(
-        {
-            "customer_id": _str("Google Ads customer ID"),
-            "service_account_json": _str(
-                "Service account JSON",
-                sensitive=True,
-            ),
-        },
-        required=["customer_id", "service_account_json"],
-    ),
+    # "google_ads" is deliberately absent (core#555). It was schema'd with
+    # `customer_id` + `service_account_json`, but every Google Ads API request
+    # also needs a `developer-token` header — issued per manager account through
+    # an application to Google, not something a user pastes from a settings
+    # page. Nothing we stored could authenticate, so the connector could only
+    # ever be created and then fail.
+    #
+    # Left out rather than completed because collecting the token is a product
+    # decision with a much longer setup guide attached; see core#555 for the
+    # route back. `ConnectionType.GOOGLE_ADS` remains so rows already stored
+    # keep resolving.
     "facebook_ads": _schema(
         {
             "access_token": _str("Marketing API access token", sensitive=True),

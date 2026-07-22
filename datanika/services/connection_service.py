@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 validate_connection_name = partial(validate_name, entity_label="Connection")
 
+# Connector types that exist but are no longer offered.
+#
+# A withdrawn type is absent from `SOURCE_TYPES`, `CONFIG_SCHEMAS` and the
+# connections picker, so it cannot be created — but keeps its `ConnectionType`
+# member, its SaaS *classification*, and its loader dispatch, so a connection
+# someone already stored still resolves and still fails with an error that
+# explains itself rather than "Unsupported source type".
+#
+# This is a named concept rather than "whichever lists we remembered to edit"
+# because the first attempt at core#555 removed it from the dispatch set too and
+# gave existing rows a worse error, and because withdrawal is not rare: it is
+# the honest answer whenever a connector cannot work with the credentials we
+# collect. `tests/test_connector_type_contracts.py` pins both halves.
+WITHDRAWN_SOURCE_TYPES = {
+    # Every Google Ads API request needs a `developer-token` header, issued per
+    # manager account through an application to Google. The form collected only
+    # `customer_id` + `service_account_json`, so nothing stored could
+    # authenticate and no fallback could help (core#555).
+    "google_ads",
+}
+
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
     "postgres",
@@ -42,7 +63,7 @@ SOURCE_TYPES = {
     "jira",
     "slack",
     "google_analytics",
-    "google_ads",
+    # google_ads withdrawn (core#555).
     "facebook_ads",
     "zendesk",
     "airtable",

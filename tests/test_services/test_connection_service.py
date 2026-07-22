@@ -399,15 +399,22 @@ class TestTestConnection:
         assert ok is False
         assert "Driver not installed" in msg
 
-    def test_non_db_type_skipped_s3(self, svc):
-        ok, msg = svc.test_connection({"bucket_url": "s3://my-bucket"}, ConnectionType.S3)
-        assert ok is True
-        assert "not applicable" in msg.lower()
+    def test_file_types_are_no_longer_skipped_s3(self, svc):
+        """Contract change (core#493): file sources are testable, so they get tested.
 
-    def test_non_db_type_skipped_csv(self, svc):
+        These two used to assert `(True, "not applicable")` — which is exactly
+        how a wrong path came to test identically to a right one, and why a
+        typo'd `bucket_url` was first noticed as a green run with zero rows.
+        An unreachable bucket must not report success.
+        """
+        ok, msg = svc.test_connection({"bucket_url": "s3://no-such-bucket"}, ConnectionType.S3)
+        assert ok is False
+        assert "not applicable" not in msg.lower()
+
+    def test_file_types_are_no_longer_skipped_csv(self, svc):
         ok, msg = svc.test_connection({"bucket_url": "/data"}, ConnectionType.CSV)
-        assert ok is True
-        assert "not applicable" in msg.lower()
+        assert ok is False
+        assert "not applicable" not in msg.lower()
 
     def test_non_db_type_skipped_rest_api(self, svc):
         config = {"base_url": "https://api.example.com"}

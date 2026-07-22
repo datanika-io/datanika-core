@@ -313,6 +313,59 @@ def _build_format_reader(file_format: str, dlt_config: dict):
     return read_json()
 
 
+def describe_empty_file_match(bucket_url: str, file_glob: str) -> str:
+    """Explain *why* nothing matched, as specifically as the location allows.
+
+    The production case (core#493) was a `bucket_url` set to a full file path:
+    the glob is applied *under* that value, so `*.csv` under
+    `/docs_samples/customers.csv` matched nothing and the run went green with
+    0 rows. "No files matched" alone would leave the user re-checking a glob
+    that was never the problem, so the file-vs-directory case is called out by
+    name.
+
+    Local paths are diagnosed precisely; remote buckets get the general form,
+    because probing a URL for existence costs a second round trip and the
+    credentials to do it may be exactly what is wrong.
+    """
+    # Paths are quoted by hand rather than with !r: on Windows `repr` doubles
+    # every backslash, so the path we tell the user to try comes back looking
+    # like a typo of itself.
+    general = (
+        f"No files matched '{file_glob}' under '{bucket_url}'. "
+        "The run would have completed with zero rows."
+    )
+
+    if "://" in bucket_url:
+        return f"{general} Check the prefix and the file pattern."
+
+    if os.path.isfile(bucket_url):
+        return (
+            f"{general} '{bucket_url}' is a file, but this field must be the "
+            "directory that contains your files — the pattern is matched inside "
+            f"it. Try '{os.path.dirname(bucket_url)}' instead."
+        )
+
+    if not os.path.exists(bucket_url):
+        return f"{general} That path does not exist."
+
+    return f"{general} The directory exists but holds nothing matching that pattern."
+
+
+def _first_file_or_none(lister):
+    """Peek the lister dlt itself will use.
+
+    Deliberately not a second implementation with `fsspec_filesystem` +
+    `glob_files`: that path rejects our plain credentials dict (only
+    `filesystem()`'s config injection coerces it), and any separate matching
+    logic could drift from the loader's. Peeking the same resource means
+    detection and loading agree by construction.
+
+    Re-iterating afterwards still yields the files, so the peeked lister goes
+    on to the pipeline unchanged.
+    """
+    return next(iter(lister), None)
+
+
 def _file_table_name(connection_type: str, file_glob: str, dlt_config: dict) -> str:
     """Name the destination table for a file source.
 
@@ -534,7 +587,16 @@ class DltRunnerService:
         reader = _build_format_reader(file_format, dlt_config)
         table_name = _file_table_name(connection_type, file_glob, dlt_config)
 
-        return (filesystem(**kwargs) | reader).with_name(table_name)
+        lister = filesystem(**kwargs)
+
+        # Matching nothing is not a successful load of nothing (core#493). A
+        # typo'd path, a moved file, an export that didn't run and an emptied
+        # prefix all produced `success` / `Rows: 0`, which is byte-identical to
+        # a healthy run. Fail here, where the reason is still known.
+        if _first_file_or_none(lister) is None:
+            raise DltRunnerError(describe_empty_file_match(bucket_url, file_glob))
+
+        return (lister | reader).with_name(table_name)
 
     @staticmethod
     def _rest_api_from_parts(

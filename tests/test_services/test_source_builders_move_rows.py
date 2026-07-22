@@ -48,6 +48,7 @@ import http.server
 import json
 import os
 import threading
+import time
 
 import duckdb
 import pytest
@@ -239,6 +240,47 @@ requires_docker = pytest.mark.skipif(
 )
 
 
+def await_setup(what: str, thunk, attempts: int = 12, delay: float = 1.0):
+    """Retry a container **setup** step until it succeeds, then return its result.
+
+    ── Read this before extending it (core#578) ────────────────────────────────
+    This retries *setup only* — starting a container, connecting to it, seeding
+    it. It must **never** wrap an assertion, and it must never wrap the call to
+    `DltRunnerService.execute()`.
+
+    The distinction is the whole point and it is not stylistic:
+
+      * a retry around **container startup** hides nothing. The container being
+        slow is not a fact about our product; a probe that fails on it reports
+        something untrue.
+      * a retry around an **assertion** hides a product bug. It converts "this
+        is broken half the time" into green, which is precisely the class of
+        defect this file exists to catch (#492, #550, #551 were all invisible
+        to 103 mocked tests).
+
+    So: if you find yourself wanting to retry something and cannot say which of
+    those two it is, it is the second one. Leave it failing.
+
+    Why it exists: `MongoDbContainer` returns once mongod logs "ready", but auth
+    initialisation can still be in flight, so the first `insert_many` races it.
+    Engineering hit exactly that — a full-suite run failed inside the probe's own
+    pymongo seeding, before any product code ran, and passed in isolation. That
+    is a readiness race, not a flaky test, and it is worth fixing at the root
+    rather than moving the suite somewhere nobody reads.
+    """
+    last: Exception | None = None
+    for _ in range(attempts):
+        try:
+            return thunk()
+        except Exception as exc:  # noqa: BLE001 — any setup failure is retryable
+            last = exc
+            time.sleep(delay)
+    raise AssertionError(
+        f"container setup never became ready: {what} (after {attempts} attempts, "
+        f"{attempts * delay:.0f}s). Last error: {type(last).__name__}: {last}"
+    ) from last
+
+
 class TestSaasRestFallbackMovesRows:
     """The SaaS REST fallback — shared machinery for ten connectors (core#545).
 
@@ -343,7 +385,9 @@ class TestSqlDatabaseSourceMovesRows:
         from testcontainers.postgres import PostgresContainer
 
         with PostgresContainer("postgres:16-alpine") as postgres:
-            config = self._seed(postgres)
+            # SETUP retry only — see await_setup's docstring. The load below is
+            # never retried.
+            config = await_setup("postgres accepting writes", lambda: self._seed(postgres))
             db_path = _extract_load(
                 tmp_path,
                 "postgres",
@@ -360,7 +404,9 @@ class TestSqlDatabaseSourceMovesRows:
         from testcontainers.postgres import PostgresContainer
 
         with PostgresContainer("postgres:16-alpine") as postgres:
-            config = self._seed(postgres)
+            # SETUP retry only — see await_setup's docstring. The load below is
+            # never retried.
+            config = await_setup("postgres accepting writes", lambda: self._seed(postgres))
             db_path = _extract_load(
                 tmp_path,
                 "postgres",
@@ -403,8 +449,17 @@ class TestMongoDbSourceMovesRows:
         from testcontainers.mongodb import MongoDbContainer
 
         with MongoDbContainer("mongo:7") as mongo:
-            client = mongo.get_connection_client()
-            client["probedb"]["widgets"].insert_many([dict(w) for w in WIDGETS])
+            # SETUP retry only (core#578). This exact line is where Engineering
+            # saw a full-suite run fail and an isolated run pass: the container
+            # logs "ready" before auth initialisation has finished, so the first
+            # insert races it. Retrying the seed hides nothing about the product;
+            # the load and the assertion below are never retried.
+            def _seed():
+                client = mongo.get_connection_client()
+                client["probedb"]["widgets"].delete_many({})
+                client["probedb"]["widgets"].insert_many([dict(w) for w in WIDGETS])
+
+            await_setup("mongod accepting authenticated writes", _seed)
 
             db_path = _extract_load(
                 tmp_path,
@@ -459,9 +514,15 @@ class TestKafkaSourceMovesRows:
         with KafkaContainer() as kafka:
             from kafka import KafkaProducer
 
-            producer = KafkaProducer(
-                bootstrap_servers=kafka.get_bootstrap_server(),
-                value_serializer=lambda v: json.dumps(v).encode(),
+            # SETUP retry only (core#578) — a broker that has logged startup can
+            # still refuse the first producer connection while it elects a
+            # controller. The load and the assertion below are never retried.
+            producer = await_setup(
+                "kafka broker accepting producers",
+                lambda: KafkaProducer(
+                    bootstrap_servers=kafka.get_bootstrap_server(),
+                    value_serializer=lambda v: json.dumps(v).encode(),
+                ),
             )
             for widget in WIDGETS:
                 producer.send("widgets", widget)

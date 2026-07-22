@@ -38,6 +38,13 @@ dependencies = [
     "pymongo>=4.0,<5",
     "clickhouse-connect>=0.11,<0.12",
     "duckdb>=1.0,<2",
+    # The SQLAlchemy dialect for DuckDB. dlt writes through its own driver, so
+    # loads worked without this — but catalog introspection goes through
+    # SQLAlchemy and raised NoSuchModuleError, leaving Models/Catalog
+    # permanently empty for every DuckDB user (core#494). Every other
+    # destination here already pairs a driver with its dialect; duckdb was the
+    # one that did not.
+    "duckdb-engine>=0.17,<0.18",
     "snowflake-sqlalchemy>=1.7,<2",
     "sqlalchemy-bigquery>=1.11,<2",
     "oracledb>=4.0,<5",

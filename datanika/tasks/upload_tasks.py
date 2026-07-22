@@ -248,8 +248,19 @@ def run_upload(
                 dst_config,
                 dataset_name,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("Catalog sync failed (non-fatal)")
+            # Non-fatal to the run, but not invisible: the load succeeded and
+            # the data is there, while Models/Catalog will not show it. Saying
+            # so on the run is the difference between a user filing a bug and
+            # a user concluding the product does not work (core#494).
+            execution_service.append_logs(
+                session,
+                run_id,
+                "WARNING: the data loaded successfully, but the catalog sync failed, "
+                "so these tables will not appear under Models/Catalog: "
+                f"{exc.__class__.__name__}: {exc}",
+            )
 
         from datanika.hooks import announce
 

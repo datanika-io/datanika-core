@@ -1,12 +1,24 @@
 """Catalog service — introspect tables, manage catalog entries."""
 
+import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import create_engine, inspect, select
+from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
 from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
 from datanika.models.dependency import NodeType
+
+logger = logging.getLogger(__name__)
+
+#: Portable column metadata. Every destination we support implements
+#: `information_schema.columns`; not every SQLAlchemy dialect implements
+#: `get_columns` against it (core#494).
+_INFORMATION_SCHEMA_COLUMNS = text(
+    "SELECT column_name, data_type FROM information_schema.columns "
+    "WHERE table_schema = :schema AND table_name = :table "
+    "ORDER BY ordinal_position"
+)
 
 
 class CatalogService:
@@ -31,19 +43,57 @@ class CatalogService:
             for tbl in table_names:
                 if tbl.startswith("_dlt_"):
                     continue
-                try:
-                    cols = insp.get_columns(tbl, schema=schema_name)
-                except Exception:
+                columns = CatalogService._columns_for(engine, insp, tbl, schema_name)
+                if columns is None:
                     continue
-                results.append(
-                    {
-                        "table_name": tbl,
-                        "columns": [{"name": c["name"], "data_type": str(c["type"])} for c in cols],
-                    }
-                )
+                results.append({"table_name": tbl, "columns": columns})
             return results
         finally:
             engine.dispose()
+
+    @staticmethod
+    def _columns_for(engine, insp, table: str, schema: str) -> list[dict] | None:
+        """Column metadata for one table, with a portable fallback.
+
+        `get_columns` used to be wrapped in a bare `except: continue`, so a
+        dialect that could not answer produced an **empty catalog** rather than
+        an error — and the user was told to verify their first run by browsing
+        Catalog. That is exactly what happened on DuckDB (core#494):
+        `duckdb_engine` derives from the PostgreSQL dialect and its
+        `get_columns` queries `pg_collation`, which DuckDB does not provide::
+
+            ProgrammingError: Catalog Error: Table with name pg_collation does not exist!
+
+        Installing the dialect alone did **not** fix it — that only got as far
+        as `get_table_names`. So a failure here now falls back to
+        `information_schema`, which every destination we support implements,
+        and anything still unreadable is logged instead of vanishing.
+        """
+        try:
+            cols = insp.get_columns(table, schema=schema)
+            return [{"name": c["name"], "data_type": str(c["type"])} for c in cols]
+        except Exception as exc:
+            logger.warning(
+                "get_columns failed for %s.%s (%s) — falling back to information_schema",
+                schema,
+                table,
+                exc.__class__.__name__,
+            )
+
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    _INFORMATION_SCHEMA_COLUMNS, {"schema": schema, "table": table}
+                ).fetchall()
+        except Exception:
+            logger.exception("information_schema fallback failed for %s.%s", schema, table)
+            return None
+
+        if not rows:
+            logger.warning("No column metadata found for %s.%s — skipping", schema, table)
+            return None
+
+        return [{"name": name, "data_type": str(data_type)} for name, data_type in rows]
 
     @staticmethod
     def upsert_entry(

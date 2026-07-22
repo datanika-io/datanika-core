@@ -319,7 +319,12 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'up{job="datanika-app"} == 0'
+              # Blue/green: two scrape jobs, exactly ONE of which is expected to be up.
+              # `up{job="datanika-app"} == 0` fired continuously whenever GREEN served,
+              # because the compose name `app` did not resolve — re-notifying hourly
+              # while the site was fine (#479). max() collapses the pair, so this fires
+              # only when NEITHER colour is scrapeable, which is the real outage.
+              expr: 'max(up{job=~"datanika-app(-b)?"}) == 0'
               refId: A
           - refId: C
             relativeTimeRange:
@@ -502,7 +507,13 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'probe_success{instance="https://plausible.datanika.io/login"}'
+              # ⚠️ INVERTED until 2026-07-22: this was missing `== 0`. Every rule's
+              # condition is `A > 0`, so with the raw gauge (1 = healthy) it fired
+              # whenever Plausible was UP — and re-notified every 4h, matching the
+              # warning `repeat_interval`. #479 spotted it as "fires with zero failed
+              # samples", which is exactly what an inverted probe check looks like.
+              # Every other probe rule already used `== 0`; this one was the outlier.
+              expr: 'probe_success{instance="https://plausible.datanika.io/login"} == 0'
               refId: A
           - refId: C
             relativeTimeRange:
@@ -1327,7 +1338,9 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'absent(up{job="datanika-app"})'
+              # Both colours: App Unhealthy uses max() over the pair, which returns no
+              # series if BOTH jobs vanish — NoData -> OK -> silence. This covers that.
+              expr: 'absent(up{job=~"datanika-app(-b)?"})'
               refId: A
           - refId: C
             relativeTimeRange:

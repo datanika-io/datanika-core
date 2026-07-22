@@ -32,9 +32,12 @@ existed**. This is the thin layer that was missing, not a replacement.
 
 - One resource / one collection per builder. These prove *rows arrive*, not that
   pagination, incremental cursors, auth flows or schema contracts are correct.
-- ``google_sheets`` and ``saas`` are absent: both need accounts. ``saas`` is also
-  being actively rewritten (#532, #543) — auditing a moving target re-discovers
-  findings that already have issue numbers.
+- ``google_sheets`` is absent: it needs an account.
+- ``saas`` is covered only at the **shared fallback spine** (see
+  ``TestSaasRestFallbackMovesRows``), not per connector. Each connector's own auth
+  assembly and default resource list still need credentials. ``google_analytics``,
+  ``google_ads`` and ``facebook_ads`` are excluded outright — #543 says they cannot
+  run at all.
 - A pass here says the builder can move a row **today, on this shape of data**. It
   is a floor, not a guarantee.
 """
@@ -234,6 +237,60 @@ requires_docker = pytest.mark.skipif(
     not _docker_available() and not os.environ.get("CI"),
     reason="Docker unavailable locally; in CI this is a hard failure, not a skip",
 )
+
+
+class TestSaasRestFallbackMovesRows:
+    """The SaaS REST fallback — shared machinery for ten connectors (core#545).
+
+    ## Why this one test covers ten connectors
+
+    `stripe`, `github`, `hubspot`, `salesforce`, `shopify`, `jira`, `slack`, `zendesk`,
+    `airtable` and `notion` all reach `_rest_api_fallback()` inside an
+    `except ImportError`. **That branch is the production path**, not an edge case:
+    none of the verified sources ship — checked all ten, every one absent — and the
+    Dockerfile says so deliberately ("fallback when not installed via `dlt init` …
+    avoids dependency conflicts in Docker").
+
+    So what runs in production for those ten is: per-connector base URL + auth +
+    default resource list → `_rest_api_fallback` → `rest_api_source`. This exercises
+    that spine end to end.
+
+    ## Why salesforce is the representative
+
+    It is the only one of the ten whose **host** comes from config
+    (`instance_url`); the rest hardcode it (`api.stripe.com`) or fix the suffix
+    (`{store}.myshopify.com`). So it is the only one that can be pointed at a local
+    server without patching the source — the others would need their URL rewritten,
+    which would test the rewrite rather than the connector.
+
+    ## What this does NOT cover, per connector
+
+    Each connector's own auth assembly and default resource list are still unproven
+    — those differ per connector and mostly need credentials. This proves the shared
+    fallback spine yields rows, not that any specific vendor integration works.
+    `pipedrive` / `freshdesk` / `asana` already have live row evidence from the
+    nightly Wave-1 suite (core#311), so the fallback has been exercised against real
+    vendors too — just not anywhere PR CI can see.
+    """
+
+    def test_the_fallback_spine_delivers_rows(self, tmp_path, json_api, allow_loopback):
+        db_path = _extract_load(
+            tmp_path,
+            "salesforce",
+            {"instance_url": json_api, "access_token": "probe-token"},
+            # Override the default Account/Contact/Opportunity list with the one
+            # resource the local server serves. The override path itself is what
+            # #532 fixed, so exercising it is deliberate.
+            {"resources": [{"name": "widgets", "endpoint": {"path": "widgets"}}]},
+        )
+
+        rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "the SaaS REST fallback did not deliver record contents into DuckDB — "
+            "this is the path ten connectors run in production, since no verified "
+            "source ships."
+        )
 
 
 @requires_docker

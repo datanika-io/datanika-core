@@ -147,11 +147,26 @@ class TestToDltCredentials:
         assert creds["database"] == "db"
         assert creds["schema"] == "public"
 
-    def test_passthrough_for_unknown_types(self, svc):
-        """bigquery/snowflake credentials pass through unchanged."""
-        config = {"project": "proj", "dataset": "ds"}
-        creds = svc._to_dlt_credentials("bigquery", config)
-        assert creds == config
+    def test_non_credential_keys_are_not_sent_as_credentials(self, svc):
+        """This used to assert *"bigquery credentials pass through unchanged"*.
+
+        That was the bug written down as the contract (core#565): passing the
+        stored config straight through is why dlt never saw a credential it
+        recognised and BigQuery could not complete a run. `dataset` describes
+        where to write, not how to authenticate, and dlt rejects fields it does
+        not know.
+        """
+        creds = svc._to_dlt_credentials("bigquery", {"project": "proj", "dataset": "ds"})
+
+        assert "dataset" not in creds
+        assert creds["project"] == "proj"
+
+    def test_snowflake_account_becomes_the_host(self, svc):
+        """`SnowflakeCredentials` has no `account` — the identifier is its host."""
+        creds = svc._to_dlt_credentials("snowflake", {"account": "xy1.us-east-1"})
+
+        assert creds["host"] == "xy1.us-east-1"
+        assert "account" not in creds
 
     def test_snowflake_renames_user_to_username(self, svc):
         creds = svc._to_dlt_credentials(

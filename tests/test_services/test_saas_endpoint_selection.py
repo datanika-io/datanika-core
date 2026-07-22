@@ -45,25 +45,30 @@ SAAS_PROBE_CONFIG = {
     # token or touch the network, so an unusable key still has to construct
     # (core#543). If this starts failing, the builder has gained eager I/O.
     "google_analytics": {"property_id": "123", "service_account_json": "{}"},
+    # Same reasoning as GA4: unusable credentials must still *construct*, since
+    # the OAuth exchange happens inside the resource. If this starts failing,
+    # the builder has gained eager I/O (core#555).
+    "google_ads": {
+        "customer_id": "123-456-7890",
+        "developer_token": "t",
+        "client_id": "c",
+        "client_secret": "s",
+        "refresh_token": "r",
+    },
 }
 
-# These two still raise instead of building (core#543). `facebook_ads` moved out
-# when it gained a Graph API fallback — it is now validated like every other
-# connector by the tests below.
+# Empty, and that is the news: every SaaS connector now builds a source.
 #
-# The remaining two are not "a fallback nobody has written yet"; each is blocked
-# on something a fallback cannot supply:
-#   google_analytics — `runReport` takes a POST body naming dimensions and
-#                      metrics. A report shape is a product decision.
-#   google_ads       — every request needs a `developer-token` header, and the
-#                      connection form collects no such field, so nothing we
-#                      store can authenticate. Needs a schema change first.
+# `facebook_ads` left when it gained a Graph API fallback (core#554),
+# `google_analytics` when the Data API gave it a report shape (core#569), and
+# `google_ads` last — it was the only one whose blocker was a *credential we did
+# not collect* rather than a transport nobody had written, and collecting the
+# developer token turned out to be a form change (core#555).
 #
-# Config here is *valid* — the point is that the raise happens after the
-# required-field checks, not because of them.
-CANNOT_BUILD = {
-    "google_ads": {"customer_id": "1", "service_account_json": "{}"},
-}
+# Kept rather than deleted: a connector that cannot build is a legitimate state,
+# and the two tests below are how it stays honest — a raise here has to name
+# something the reader can act on, not just fail.
+CANNOT_BUILD: dict[str, dict] = {}
 
 
 @pytest.fixture

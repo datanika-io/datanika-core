@@ -62,12 +62,6 @@ SUPPORTED_SAAS_TYPES = {
     "jira",
     "slack",
     "google_analytics",
-    # google_ads is withdrawn from the *picker* and CONFIG_SCHEMAS (core#555) but
-    # stays here on purpose. This set only controls dispatch, so removing it made
-    # a connection someone already stored fail with the generic "Unsupported
-    # source type: google_ads" instead of the developer-token explanation that
-    # tells them why. Withdrawal means "cannot be created", not "existing rows
-    # get a worse error".
     "google_ads",
     "facebook_ads",
     "zendesk",
@@ -114,6 +108,34 @@ DEFAULT_GA4_END_DATE = "today"
 GA4_PAGE_SIZE = 10_000
 
 GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"
+
+#: ⚠️ Google Ads pins the major version **in the URL path**, ships four majors a
+#: year, and sunsets each one roughly twelve months after release. `v25` is
+#: current as of 2026-07. So this is a **dated** value, not a constant: left
+#: alone it stops working on a schedule, and the failure arrives as a 404 from
+#: Google rather than as anything our tests can see. It is overridable per
+#: upload via `dlt_config["api_version"]` so a sunset is a config change on a
+#: live connection rather than a release — and `_google_ads_report_error`
+#: names the version when Google refuses, so the cause is legible.
+GOOGLE_ADS_API_VERSION = "v25"
+
+#: Endpoints as module constants so a test can point them at a local server.
+#: Nothing in production ever changes them; the alternative is a real-socket
+#: test that cannot exist, and #545's lesson is that a connector with no
+#: row-level probe is a connector nobody has shown works.
+GOOGLE_ADS_API_HOST = "https://googleads.googleapis.com"
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+#: Campaign performance by day — the Ads equivalent of GA4's daily-traffic
+#: default: the report almost every account starts from, and one that can be
+#: built without knowing anything about how the account is structured.
+#: Overridable per upload via `dlt_config["query"]` (raw GAQL).
+DEFAULT_GOOGLE_ADS_QUERY = (
+    "SELECT campaign.id, campaign.name, campaign.status, segments.date, "
+    "metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "
+    "FROM campaign "
+    "WHERE segments.date DURING LAST_30_DAYS"
+)
 
 #: Where MongoDB looks for the user when none is specified.
 #:
@@ -552,6 +574,100 @@ def _ga4_access_token(service_account_json) -> str:
 
     credentials.refresh(Request())
     return credentials.token
+
+
+def _google_ads_digits(value: str) -> str:
+    """Customer IDs are shown as `123-456-7890` and sent as `1234567890`.
+
+    Google's own docs spell this out for `login-customer-id`, and it applies to
+    the path segment too. Users copy the hyphenated form off the Ads UI because
+    that is the only form the UI ever shows them, so stripping is the
+    difference between working and a 404 that blames the customer ID.
+    """
+    return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+
+def _google_ads_access_token(config: dict) -> str:
+    """Exchange the stored refresh token for an access token.
+
+    Unlike GA4 this is a **user** credential, not a service account: service
+    accounts reaching the Ads API additionally require domain-wide delegation
+    on a Google Workspace domain, which a self-serve user cannot arrange. So
+    the form collects the installed-app triple (client id + secret + refresh
+    token), which is what Google's own OAuth flow hands out — and why the old
+    `service_account_json` field could never have worked here even with a
+    developer token beside it.
+
+    Called from inside the resource, never at build time: `build_source` must
+    stay offline so a source can be constructed and inspected without valid
+    credentials or a network (same rule as GA4).
+    """
+    session = build_guarded_session()
+    response = session.post(
+        GOOGLE_OAUTH_TOKEN_URL,
+        data={
+            "grant_type": "refresh_token",
+            "client_id": config.get("client_id", ""),
+            "client_secret": config.get("client_secret", ""),
+            "refresh_token": config.get("refresh_token", ""),
+        },
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        raise DltRunnerError(
+            f"Google refused the OAuth refresh ({response.status_code}): "
+            f"{response.text[:300]}. Re-authorise this connection — a refresh token is "
+            "revoked when the Google account's password changes, and expires if unused "
+            "for six months."
+        )
+    token = (response.json() or {}).get("access_token")
+    if not token:
+        raise DltRunnerError(
+            "Google's OAuth response carried no access_token, so the Google Ads request "
+            "cannot be authenticated."
+        )
+    return token
+
+
+def _google_ads_flatten(value: dict, prefix: str = "") -> dict:
+    """One flat column per leaf, joined with `_`."""
+    flat: dict = {}
+    for key, item in value.items():
+        name = f"{prefix}{key}"
+        if isinstance(item, dict):
+            flat.update(_google_ads_flatten(item, f"{name}_"))
+        else:
+            flat[name] = item
+    return flat
+
+
+def _google_ads_rows(payload) -> list[dict]:
+    """Flatten a `searchStream` response into rows dlt can land.
+
+    Two shapes here are easy to get wrong, and both fail *quietly*:
+
+    * **`searchStream` answers with a JSON array of chunks**, not the single
+      object every other endpoint in the API returns. Reading `payload["results"]`
+      raises on a list — or, if written defensively with `.get`, yields nothing
+      and reports a successful run with zero rows. That is the core#493 shape.
+    * **Each `GoogleAdsRow` is nested** — `{"campaign": {"id": …}, "metrics":
+      {"clicks": …}}`. Handed to dlt unflattened it lands as child tables, so
+      the user's first `SELECT clicks` fails against a table that has no such
+      column. GA4 needed the mirror image of this fix (parallel arrays); the
+      shape differs, the lesson does not.
+
+    Columns are derived from the rows themselves rather than from `fieldMask`,
+    so a field Google returns without being asked still lands instead of being
+    silently dropped.
+    """
+    chunks = payload if isinstance(payload, list) else [payload]
+    rows: list[dict] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        for row in chunk.get("results") or []:
+            rows.append(_google_ads_flatten(row))
+    return rows
 
 
 def _ga4_rows(payload: dict) -> list[dict]:
@@ -1473,27 +1589,7 @@ class DltRunnerService:
                 return self._build_ga4_source(property_id, credentials_json, dlt_config)
 
         if connection_type == "google_ads":
-            credentials_json = config.get("service_account_json", "")
-            customer_id = config.get("customer_id", "") or dlt_config.get("customer_id", "")
-            if not customer_id:
-                raise DltRunnerError("Google Ads source requires 'customer_id'")
-            try:
-                from google_ads import google_ads
-
-                return google_ads(customer_id=customer_id)
-            except ImportError:
-                # Also not writable as a REST fallback, and for a harder reason
-                # than Google Analytics: every Google Ads API request carries a
-                # `developer-token` header, and the connection form collects no
-                # such field — so no transport can authenticate with what we
-                # store. Obtaining one is an application to Google, not a
-                # setting. Needs a schema change first (core#543).
-                raise DltRunnerError(
-                    "Google Ads is not available on this deployment. The Google Ads API "
-                    "requires a developer token, which Datanika does not currently collect, "
-                    "so this connection cannot authenticate — see core#543. Nothing you can "
-                    "change in the connection settings will fix this."
-                ) from None
+            return self._build_google_ads_source(config, dlt_config)
 
         if connection_type == "facebook_ads":
             access_token = config.get("access_token") or config.get("api_key", "")
@@ -1723,6 +1819,89 @@ class DltRunnerService:
             return [_report()]
 
         return _ga4_source()
+
+    def _build_google_ads_source(self, config: dict, dlt_config: dict):
+        """Google Ads over the REST interface (core#555).
+
+        **Transport, confirmed before building rather than assumed** — the
+        issue asks for exactly that, and GA4 is the precedent where the obvious
+        path was not the one that worked. The Ads API is gRPC-first but ships a
+        documented REST interface (`googleAds:searchStream`, GAQL in the body).
+        REST wins here for the same reason it did for GA4 (#569) and Facebook
+        Ads (#554): the two alternatives — bundling the dlt verified source, or
+        the official `google-ads` client — both drag in `grpcio`/`protobuf`,
+        and the Dockerfile deliberately installs no verified sources precisely
+        because of that class of dependency conflict. A builder that imports a
+        package the image does not carry is core#551's bug wearing a new hat,
+        not a fallback.
+
+        **What changed since the withdrawal:** nothing about the API. The gap
+        was that the form collected `customer_id` + `service_account_json`,
+        and neither a developer token nor a usable OAuth credential. Both are
+        now collected, so the connector can authenticate.
+
+        No `primary_key` is declared, deliberately: the query is user-overridable
+        via `dlt_config["query"]`, so any key named here would be a guess about
+        columns a custom GAQL query need not select — and a primary key naming
+        an absent column fails the load rather than degrading it.
+        """
+        missing = [
+            field
+            for field in ("developer_token", "client_id", "client_secret", "refresh_token")
+            if not config.get(field)
+        ]
+        customer_id = _google_ads_digits(
+            config.get("customer_id", "") or dlt_config.get("customer_id", "")
+        )
+        if not customer_id:
+            missing.append("customer_id")
+        if missing:
+            raise DltRunnerError(
+                "Google Ads source is missing required credentials: "
+                f"{', '.join(missing)}. Every Google Ads API request needs a developer "
+                "token (from your Google Ads manager account's API Center) plus an OAuth "
+                "client and refresh token."
+            )
+
+        query = str(dlt_config.get("query") or DEFAULT_GOOGLE_ADS_QUERY).strip()
+        version = str(dlt_config.get("api_version") or GOOGLE_ADS_API_VERSION).strip()
+        developer_token = config["developer_token"]
+        login_customer_id = _google_ads_digits(config.get("login_customer_id", ""))
+        url = f"{GOOGLE_ADS_API_HOST}/{version}/customers/{customer_id}/googleAds:searchStream"
+
+        @dlt.resource(name="report")
+        def _report():
+            # Minted inside the resource, never in the builder: `build_source`
+            # stays offline so a source can be constructed without credentials.
+            token = _google_ads_access_token(config)
+            session = build_guarded_session()  # SSRF guard, as everywhere else
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "developer-token": developer_token,
+            }
+            if login_customer_id:
+                # Only when the OAuth credentials belong to a manager (MCC)
+                # account rather than the target account itself.
+                headers["login-customer-id"] = login_customer_id
+
+            response = session.post(url, json={"query": query}, headers=headers, timeout=120)
+            if response.status_code >= 400:
+                # Google explains itself well here and the likely causes are all
+                # user-fixable (unapproved developer token, wrong customer id,
+                # a sunset API version), so its own message beats ours.
+                raise DltRunnerError(
+                    f"Google Ads rejected the report request ({response.status_code}) "
+                    f"for customer {customer_id} on API {version}: {response.text[:400]}"
+                )
+            rows = _google_ads_rows(response.json())
+            if rows:
+                yield rows
+
+        @dlt.source(name="google_ads")
+        def _google_ads_source():
+            return [_report()]
+
+        return _google_ads_source()
 
     def _build_kafka_source(self, config: dict, dlt_config: dict):
         """Build a Kafka source that actually consumes (core#551).

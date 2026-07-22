@@ -584,7 +584,14 @@ def google_analytics_fields() -> rx.Component:
 
 
 def google_ads_fields() -> rx.Component:
-    """Fields for google_ads source."""
+    """Fields for google_ads source (core#555).
+
+    Six fields, which is more than any other SaaS source here, and the count is
+    the point: the connector previously collected `customer_id` plus a service
+    account JSON and could not authenticate with either. Google Ads needs a
+    developer token on every request, and a *user* OAuth credential rather than
+    a service account.
+    """
     return rx.vstack(
         rx.text(_t["connections.customer_id"], " *", size="2", weight="bold"),
         rx.input(
@@ -594,11 +601,46 @@ def google_ads_fields() -> rx.Component:
             required=True,
             width="100%",
         ),
-        rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
-        rx.text_area(
-            placeholder=_t["connections.ph_service_account_json"],
-            value=ConnectionState.form_api_key,
-            on_change=ConnectionState.set_form_api_key,
+        rx.text(_t["connections.developer_token"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_developer_token"],
+            value=ConnectionState.form_developer_token,
+            on_change=ConnectionState.set_form_developer_token,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.oauth_client_id"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_oauth_client_id"],
+            value=ConnectionState.form_client_id,
+            on_change=ConnectionState.set_form_client_id,
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.oauth_client_secret"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_oauth_client_secret"],
+            value=ConnectionState.form_client_secret,
+            on_change=ConnectionState.set_form_client_secret,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.oauth_refresh_token"], " *", size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_oauth_refresh_token"],
+            value=ConnectionState.form_refresh_token,
+            on_change=ConnectionState.set_form_refresh_token,
+            type="password",
+            required=True,
+            width="100%",
+        ),
+        rx.text(_t["connections.login_customer_id"], size="2", weight="bold"),
+        rx.input(
+            placeholder=_t["connections.ph_customer_id"],
+            value=ConnectionState.form_login_customer_id,
+            on_change=ConnectionState.set_form_login_customer_id,
             width="100%",
         ),
         spacing="2",

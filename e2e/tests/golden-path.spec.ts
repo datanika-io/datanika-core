@@ -43,6 +43,22 @@ import {
  * no CI job set, so nothing here ran at all (core#484). If you are reading this
  * because the job is slow, the fix is a smaller fixture — not dropping the tag,
  * and not un-setting the flag.
+ *
+ * ── Tier: @informational (core#521, supersedes the #520 quarantine) ──────────
+ * This spec runs on every push to `dev` and uploads artifacts, but its result
+ * does NOT hold the promotion. It was authored 2026-07-22 and has not yet
+ * passed; a test with no track record was never protecting production, and
+ * letting it gate meant a spec written that morning held back a P0 the same
+ * afternoon (#520).
+ *
+ * The line, and it is load-bearing: a spec that USED TO PASS must stay gating —
+ * demoting one hides a regression. This tier is for specs that have not yet
+ * earned in, never a bolt-hole for ones that broke.
+ *
+ * **Graduation: 3 consecutive greens on `dev` → remove `@informational`.** The
+ * run log prints `INFORMATIONAL_RESULT=` each time, and a green emits a CI
+ * warning, so the evidence is mechanical rather than remembered. Procedure and
+ * owner: `plans/qa/PLAN_QA.md` §E2E tiers.
  */
 
 const CSV_ROWS = 3;
@@ -56,19 +72,25 @@ const CSV_CONTENT = ["id,name,amount", "1,alpha,100", "2,beta,200", "3,gamma,300
  */
 const SHARED_DIR = process.env.DATANIKA_E2E_SHARED_DIR ?? "/app/uploaded_files";
 
-// Artifacts unconditionally while quarantined (core#520). The global config uses
-// `retain-on-failure`, and a `test.fail()` test that fails is classified
-// `expected` rather than `failed` — so the diagnostics every round has depended
-// on could be dropped exactly when the verdict stops being reported. A
-// quarantined test that stops producing evidence is just a disabled one.
+// Artifacts unconditionally while this spec is @informational (core#521).
+//
+// The global config is `retain-on-failure`, which would in fact cover a genuine
+// failure — this is belt and braces, deliberately. An informational spec exists
+// to produce evidence, and its whole value is the trace of the round it is
+// currently losing; every fix so far (#508, #515, #529) came out of one. Losing
+// that to a config nuance would leave a spec that runs and teaches nothing.
+//
+// (It previously read "while quarantined (core#520)" and justified itself by
+// `test.fail()` classifying failures as `expected`. That marker is gone — the
+// tier replaced it — so the reasoning is restated rather than left stale.)
 //
 // Must be file top-level, NOT inside the describe: `use({ trace })` forces a new
 // worker, and Playwright refuses it in a describe group — which fails collection
 // of the WHOLE suite, not just this spec. Caught by running `--list`; it would
-// have taken all 62 tests down, far worse than the thing being quarantined.
+// have taken all 62 tests down.
 test.use({ trace: "on", screenshot: "on", video: "retain-on-failure" });
 
-test.describe("Golden path: signup → connection → pipeline → run @slow", () => {
+test.describe("Golden path: signup → connection → pipeline → run @slow @informational", () => {
   // Signup, two connections, an upload and a Celery round trip. The default
   // 60s covers none of that. Deliberately NOT larger: every interaction is
   // individually bounded in fixtures/data.ts, so this cap should never be what
@@ -76,31 +98,6 @@ test.describe("Golden path: signup → connection → pipeline → run @slow", (
   test.setTimeout(300_000);
 
   test("new user signs up, wires CSV → DuckDB, runs it, and sees rows land", async ({ page }) => {
-    // ── QUARANTINED FROM THE PROMOTION GATE — core#520 ───────────────────────
-    // This spec has NEVER passed. It was written 2026-07-22 (#482/#485) and each
-    // round moves the failure one step later; step 5 has still never executed.
-    // It was therefore not protecting production — it was work in progress that
-    // happened to live in the gating job, holding back #500 (a P0), #505, #510,
-    // #516, #518, Growth's announcement and landing#281.
-    //
-    // The distinction that makes this safe, and the line not to cross:
-    //   • quarantining a test that USED TO PASS hides a regression — never.
-    //   • quarantining a test that has NEVER PASSED removes a non-gate from the
-    //     gate. Same call as the Kafka smoke quarantine (#399), which was
-    //     un-quarantined once it could pass.
-    //
-    // `test.fail()` rather than `test.skip()` is the whole point: the test still
-    // RUNS, still exercises staging, still uploads artifacts — only its verdict
-    // is quarantined. And Playwright reports an *unexpectedly passing*
-    // `test.fail()` as a failure, so the first green turns the job red and
-    // forces this marker out. Re-arming is enforced by the tool, not by someone
-    // remembering. When that happens: delete this line and close core#520.
-    test.fail(
-      true,
-      "core#520: golden-path has never passed; quarantined from the promotion " +
-        "gate. It still runs. Playwright fails the job if it starts passing — " +
-        "when it does, remove this and close core#520.",
-    );
 
     const stamp = `${Date.now()}`;
     // set_form_name strips everything outside [a-zA-Z0-9 ], so keep names in

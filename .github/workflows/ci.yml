@@ -325,6 +325,24 @@ jobs:
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
 
+  # Two tiers (core#521). GATING specs have a track record and their red holds
+  # the promotion. INFORMATIONAL specs are newly written: they run, report and
+  # upload artifacts, but do not hold it. A spec graduates informational →
+  # gating after 3 consecutive greens on `dev`; demotion is deliberate and needs
+  # an issue, or "informational" becomes where tests quietly go to die.
+  #
+  # Why the tier exists: taking this job from 5 of 62 tests to 62 (#484/#496)
+  # also coupled production promotion to the stability of tests written that
+  # morning — golden-path, authored 2026-07-22, held back a P0 the same
+  # afternoon (#520). Without a tier, every future coverage expansion repeats
+  # that, and the cheapest way to unblock a promotion becomes loosening the
+  # assertion. Product already caught exactly that on #485: relaxing step 4 to
+  # `rows >= 1` would have gone green against an OPEN P0, because you get one
+  # row and it is the file listing. A gate that punishes honest new tests
+  # produces dishonest ones.
+  #
+  # Env is job-level so both tiers share one definition — two copies is how
+  # they drift apart, which is the failure mode this whole job has been fixing.
   e2e-staging:
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -333,6 +351,32 @@ jobs:
     permissions:
       contents: read
       issues: write
+    env:
+      CI: "true"
+      DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
+      DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
+      DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+      # Include @slow specs (core#484). Until 2026-07-22 NO job set this, so
+      # `playwright.config.ts`'s grepInvert silently dropped every @slow spec
+      # from every run: this job reported success having executed 5 of 62 tests,
+      # both files about `?template=` handling. golden-path, tenant-jwt-boundary,
+      # tenant-isolation, rbac and viewer-role-ui had never gated a merge.
+      DATANIKA_E2E_SLOW: "1"
+      # sso-edge-cases hits the backend directly via fixtures/sso.ts, which
+      # defaults to http://localhost:8000 — on a CI runner that is nothing, and
+      # 5 specs died with `connect ECONNREFUSED ::1:8000` (core#496). The
+      # e2e-sso job has always set this; this job never did.
+      DATANIKA_E2E_BACKEND_URL: https://staging-app.datanika.io
+      # E2E_SEED_INCLUDE_API_KEYS=1 is required by rbac / tenant-isolation /
+      # tenant-jwt-boundary: without it the payload carries no keys and the
+      # fixtures throw at setup (`DATANIKA_E2E_API_KEY_READONLY not set`), which
+      # reads in the log as ~35 tenant-isolation FAILURES rather than as a
+      # missing flag (core#496). global-setup.ts already maps all three keys and
+      # every org-B field; only the flag was missing. Org B is seeded
+      # unconditionally — there is no second-tenant gate.
+      DATANIKA_E2E_SEED_CMD: >-
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
+        'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 -e E2E_SEED_INCLUDE_API_KEYS=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
     steps:
       - uses: actions/checkout@v6
 
@@ -363,48 +407,39 @@ jobs:
           printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
-      - name: Run E2E tests against staging
+      # ── TIER 1: GATING ──────────────────────────────────────────────────────
+      # Proven specs. Red here holds the promotion, which is the whole point of
+      # the job. Note this job is not a required check on `dev` (those are lint
+      # + test), so a red is loud without blocking a merge — it blocks the
+      # promotion, which is the decision that should be blocked.
+      - name: Run gating E2E specs against staging
         working-directory: e2e
-        env:
-          CI: "true"
-          DATANIKA_E2E_BASE_URL: https://staging-app.datanika.io
-          DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
-          DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
-          # Include @slow specs (core#484). Until 2026-07-22 NO job set this, so
-          # `playwright.config.ts`'s grepInvert silently dropped every @slow spec
-          # from every run: this job reported success having executed 5 of 62
-          # tests, both files about `?template=` handling. golden-path,
-          # tenant-jwt-boundary, tenant-isolation, rbac and viewer-role-ui had
-          # never gated a merge.
-          #
-          # Safe to switch on wholesale because the expensive-and-unavailable
-          # specs gate themselves independently, and therefore skip rather than
-          # fail: sso-* need DATANIKA_E2E_SSO_AUTHENTIK (its own job is
-          # `if: false` — the IdP was not rebuilt after the 2026-07-17 outage)
-          # and overage-charge-cycle needs DATANIKA_E2E_OVERAGE_CHARGE plus the
-          # Paddle sandbox secrets, which the nightly soak owns. Neither is set
-          # here, so this flag adds 5 real specs, not 57.
-          #
-          # This job is NOT a required check on `dev` (those are lint + test),
-          # so a red here is loud without blocking anyone's merge — which is the
-          # point: the signal was missing, not the tests.
-          DATANIKA_E2E_SLOW: "1"
-          # sso-edge-cases hits the backend directly via fixtures/sso.ts, which
-          # defaults to http://localhost:8000 — on a CI runner that is nothing,
-          # and 5 specs died with `connect ECONNREFUSED ::1:8000` (core#496).
-          # The e2e-sso job has always set this; this job never did.
-          DATANIKA_E2E_BACKEND_URL: https://staging-app.datanika.io
-          # E2E_SEED_INCLUDE_API_KEYS=1 is required by rbac / tenant-isolation /
-          # tenant-jwt-boundary: without it the payload carries no keys and the
-          # fixtures throw at setup (`DATANIKA_E2E_API_KEY_READONLY not set`),
-          # which reads in the log as ~35 tenant-isolation FAILURES rather than
-          # as a missing flag (core#496). global-setup.ts already maps all three
-          # keys and every org-B field; only the flag was missing. Org B itself
-          # is seeded unconditionally — there is no second-tenant gate.
-          DATANIKA_E2E_SEED_CMD: >-
-            ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new root@${{ secrets.POINTER_HOST }}
-            'docker exec -e E2E_SEED_ALLOW_ANY_HOST=1 -e E2E_SEED_INCLUDE_API_KEYS=1 $(/opt/datanika-staging/active-app.sh) uv run python -m datanika.scripts.e2e_seed'
-        run: npx playwright test
+        run: npx playwright test --grep-invert "@informational"
+
+      # ── TIER 2: INFORMATIONAL ───────────────────────────────────────────────
+      # New specs earning a track record. `continue-on-error` quarantines the
+      # VERDICT, never the execution: they still run against staging and still
+      # upload artifacts, because a quarantined test that stops producing
+      # evidence is just a disabled one — and you would never learn it had
+      # started passing.
+      - name: Run informational E2E specs (not gating)
+        id: informational
+        working-directory: e2e
+        continue-on-error: true
+        run: npx playwright test --grep "@informational"
+
+      # `continue-on-error` masks the step's conclusion, so the graduation
+      # evidence has to be emitted explicitly rather than read off the tick.
+      - name: Report informational tier result
+        if: always()
+        run: |
+          OUTCOME='${{ steps.informational.outcome }}'
+          echo "INFORMATIONAL_RESULT=$OUTCOME"
+          if [ "$OUTCOME" = "success" ]; then
+            echo "::warning::Informational E2E specs PASSED. That is 1 green toward graduation — see PLAN_QA.md §E2E tiers. Three consecutive greens on dev and they move into the gating tier."
+          else
+            echo "::notice::Informational E2E specs failed (not gating). Graduation counter resets to 0."
+          fi
 
       # A green tick above is not evidence that anything ran — that is exactly
       # how core#484 hid for months. Print the collected count so the run log
@@ -426,6 +461,15 @@ jobs:
             echo "::error::Only ${COUNT:-0} tests collected (expected 60+). The @slow specs are being filtered out again — see core#484."
             exit 1
           fi
+          # A skip is neither tier and counts toward nothing (core#521). Say so
+          # out loud: 16 specs skip today (SSO needs an Authentik that has been
+          # down since the 2026-07-17 outage; overage belongs to the nightly
+          # soak), and "46 passed" reads like full coverage until you notice.
+          GATING=$(npx playwright test --list --grep-invert "@informational" | tail -1)
+          INFO=$(npx playwright test --list --grep "@informational" | tail -1)
+          echo "gating tier:        $GATING"
+          echo "informational tier: $INFO"
+          echo "::notice::Tier split — gating: ${GATING}; informational: ${INFO}. Skipped specs belong to NEITHER tier; a skip is not a green."
 
       - name: Upload Playwright report
         if: always()
@@ -478,14 +522,40 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          gh issue create \
+          # Dedup: comment on the open e2e-failure issue if one exists, else
+          # open one. Without this, a red streak files one issue PER SHA — on
+          # 2026-07-22 that produced SIX issues for TWO causes inside two hours
+          # (#495, #498 harness; #506, #512, #513, #519 golden-path), which
+          # buries the real signal in bookkeeping and makes a two-cause outage
+          # look like six problems. The overage nightly already dedups this way;
+          # only this copy was missed.
+          existing=$(gh issue list \
             --repo ${{ github.repository }} \
-            --title "[QA] e2e-staging failure on $SHORT_SHA" \
-            --body "**Run:** $RUN_URL
-          **Commit:** \`$SHORT_SHA\`
-          **Message:** $FIRST_LINE
-          **Report:** playwright-report artifact on the run page" \
-            --label "e2e-failure"
+            --label e2e-failure \
+            --state open \
+            --limit 1 \
+            --json number --jq '.[0].number // empty')
+          # printf with the strings indented INSIDE the block scalar: a body
+          # line at column 0 terminates the YAML block early and a leading `*`
+          # is then read as an alias — the exact break that stopped the Paddle
+          # nightly compiling for three months (cloud#77).
+          body=$(printf '%s\n' \
+            "**Run:** $RUN_URL" \
+            "**Commit:** \`$SHORT_SHA\`" \
+            "**Message:** $FIRST_LINE" \
+            "**Report:** playwright-report artifact on the run page" \
+            "" \
+            "Only the GATING tier can open this — informational specs do not fail the job (core#521).")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo ${{ github.repository }} \
+              --body "Another e2e-staging failure on \`$SHORT_SHA\`: $RUN_URL"
+          else
+            gh issue create \
+              --repo ${{ github.repository }} \
+              --title "[QA] e2e-staging failure on $SHORT_SHA" \
+              --body "$body" \
+              --label "e2e-failure"
+          fi
 
   # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases)
   # against the staging app with a disposable Authentik IdP on Hetzner.

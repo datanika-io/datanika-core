@@ -148,12 +148,25 @@ class TestTier3InlinedSchemas:
         assert len(cc["oneOf"]) >= 27  # at least 27 source types
 
     def test_every_connection_type_has_a_branch(self):
+        """…except a withdrawn one, which has no config schema to describe.
+
+        A withdrawn type keeps its enum member so stored connections resolve,
+        but is not creatable, so the spec has nothing to say about how to create
+        one (`WITHDRAWN_SOURCE_TYPES`, core#555). Advertising a branch here
+        would tell an API client to POST a config that no longer validates.
+        """
         from datanika.models.connection import ConnectionType
+        from datanika.services.connection_service import WITHDRAWN_SOURCE_TYPES
 
         spec = build_openapi_spec()
         cc = spec["components"]["schemas"]["ConnectionCreate"]
         mapping = cc["discriminator"]["mapping"]
         for ct in ConnectionType:
+            if ct.value in WITHDRAWN_SOURCE_TYPES:
+                assert ct.value not in mapping, (
+                    f"{ct.value} is withdrawn but still has a ConnectionCreate branch"
+                )
+                continue
             assert ct.value in mapping, (
                 f"ConnectionType.{ct.name} ({ct.value}) missing from discriminator mapping"
             )

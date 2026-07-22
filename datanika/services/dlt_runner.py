@@ -62,6 +62,12 @@ SUPPORTED_SAAS_TYPES = {
     "jira",
     "slack",
     "google_analytics",
+    # google_ads is withdrawn from the *picker* and CONFIG_SCHEMAS (core#555) but
+    # stays here on purpose. This set only controls dispatch, so removing it made
+    # a connection someone already stored fail with the generic "Unsupported
+    # source type: google_ads" instead of the developer-token explanation that
+    # tells them why. Withdrawal means "cannot be created", not "existing rows
+    # get a worse error".
     "google_ads",
     "facebook_ads",
     "zendesk",

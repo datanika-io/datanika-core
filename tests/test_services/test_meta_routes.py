@@ -7,6 +7,7 @@ from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
 from datanika.models.connection import ConnectionType
+from datanika.services.connection_service import WITHDRAWN_SOURCE_TYPES
 from datanika.services.meta_routes import meta_routes
 from datanika.services.rate_limit_service import RateLimitResult
 
@@ -84,8 +85,18 @@ class TestConnectionTypes:
             assert resp.status_code == 200
             items = resp.json()["items"]
             slugs = {item["type"] for item in items}
-            # Every ConnectionType enum value must be present
+            # Every ConnectionType enum value must be present — except a
+            # withdrawn one, which keeps its enum member so stored rows resolve
+            # but is deliberately not offered (WITHDRAWN_SOURCE_TYPES, core#555).
+            # This endpoint is what agents read to discover connectors, so
+            # listing one that cannot authenticate would send them down the same
+            # dead end a human would have hit.
             for ct in ConnectionType:
+                if ct.value in WITHDRAWN_SOURCE_TYPES:
+                    assert ct.value not in slugs, (
+                        f"{ct.value} is withdrawn but still advertised by /meta/connection-types"
+                    )
+                    continue
                 assert ct.value in slugs, f"Missing {ct.value}"
         finally:
             for s in reversed(stack):

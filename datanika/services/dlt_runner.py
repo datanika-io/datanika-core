@@ -1815,21 +1815,33 @@ class DltRunnerService:
 
         return _kafka_source()
 
-    @staticmethod
+    @classmethod
     def _rest_api_fallback(
+        cls,
         base_url: str,
         auth: dict | None,
         resources: list,
         headers: dict | None = None,
     ):
-        """Generic REST API source used when a verified source module is not installed."""
-        validate_egress_host(base_url)  # SSRF pre-flight guard (core#338)
-        client: dict = {"base_url": base_url}
-        if auth:
-            client["auth"] = auth
-        if headers:
-            client["headers"] = headers
-        return rest_api_source({"client": client, "resources": resources})
+        """Generic REST API source used when a verified source module is not installed.
+
+        Despite the name this is **the** production path for all ten SaaS
+        connectors — none of the verified dlt source modules are installed in
+        the image (the Dockerfile is deliberate about it, to avoid dependency
+        conflicts), so the ``except ImportError`` branch is what runs.
+
+        It is deliberately a thin alias over :meth:`_rest_api_from_parts` rather
+        than a second client builder. The two used to differ in one line — this
+        one omitted the pinning session — and the divergence was invisible at
+        every call site, so a connector could pick the unguarded path by
+        accident. ``salesforce`` did, and its ``instance_url`` is free-form user
+        input, which made core#405's DNS-rebinding TOCTOU reachable on the very
+        path core#405 was written to close. One builder means the wrong choice
+        is no longer available; ``tests/test_security/
+        test_egress_saas_fallback_pinning.py`` fails any new call site that
+        reaches for ``rest_api_source`` directly.
+        """
+        return cls._rest_api_from_parts(base_url, resources, auth=auth, headers=headers)
 
     def build_pipeline(
         self,

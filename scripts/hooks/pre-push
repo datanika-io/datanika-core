@@ -39,7 +39,10 @@ fi
 # predate its issue. The value is making the mismatch impossible to miss, not blocking.
 BRANCH_ISSUE=$(printf '%s' "$BRANCH" | sed -nE 's/^([0-9]+)-.*/\1/p')
 if [ -n "$BRANCH_ISSUE" ]; then
-  RANGE=$(git rev-parse --abbrev-ref '@{upstream}' >/dev/null 2>&1 && echo '@{upstream}..HEAD' || echo 'origin/dev..HEAD')
+  # origin/dev..HEAD, NOT @{upstream}..HEAD. The latter means "since this branch was last
+  # pushed", so after a rebase it includes every commit the rebase pulled from dev and
+  # attributes dev's closures to this branch. That fired on the first PR the guard met.
+  RANGE='origin/dev..HEAD'
   CLOSES=$(git log --format=%B "$RANGE" 2>/dev/null \
            | grep -oiE '\b(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' \
            | grep -oE '[0-9]+' | sort -u | tr '\n' ' ')

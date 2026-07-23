@@ -27,12 +27,6 @@ SAAS_SOURCE_TYPES = {
     "jira",
     "slack",
     "google_analytics",
-    # google_ads stays *classified* as SaaS even though it is withdrawn
-    # (core#555). This set says "if this type is rendered, render it as SaaS",
-    # and `test_connector_type_contracts` requires it to equal the loader's
-    # dispatch set exactly — an invariant from core#503 that stops the form
-    # offering SQL controls the loader ignores. Withdrawal is enforced by the
-    # *offering* surfaces instead: PICKER_TYPES, CONFIG_SCHEMAS, SOURCE_TYPES.
     "google_ads",
     "facebook_ads",
     "zendesk",
@@ -98,13 +92,12 @@ SAAS_DEFAULT_ENDPOINTS: dict[str, list[str]] = {
     "shopify": ["orders", "products", "customers"],
     "jira": ["issues", "projects"],
     "slack": ["channels", "users"],
-    # google_analytics still cannot build a source at all (core#543) and stays
-    # out of the contract test. Its list is what the verified source describes,
-    # not what any code here can produce.
-    #
-    # google_ads is gone entirely (core#555) — withdrawn rather than left
-    # offered-and-broken.
+    # Both Google connectors expose a single `report` resource, because both are
+    # a *query* rather than a set of collections: GA4 takes dimensions+metrics,
+    # Ads takes GAQL. One endpoint each is the honest offer — inventing several
+    # would tick boxes the loader cannot fetch, which is the core#532 mistake.
     "google_analytics": ["report"],
+    "google_ads": ["report"],
     # facebook_ads now builds via the Graph API fallback. `leads` is gone on
     # purpose: it is not an ad-account edge (lead records hang off a lead-gen
     # form, not the account), so offering it would tick a box for a resource
@@ -206,6 +199,13 @@ def _validate_connection_form(
     if not name.strip():
         return "Connection name is required"
 
+    # core#593: the type picker defaults to "" (placeholder), so an untouched
+    # form has no type. Reject before the raw-JSON early return — save() calls
+    # ConnectionType(form_type) regardless of raw mode, so an empty type there
+    # would surface as a generic "Failed to save" instead of this clear message.
+    if not conn_type.strip():
+        return "Connection type is required"
+
     if use_raw_json:
         return ""
 
@@ -263,7 +263,9 @@ class ConnectionItem(BaseModel):
 class ConnectionState(BaseState):
     connections: list[ConnectionItem] = []
     form_name: str = ""
-    form_type: str = "postgres"
+    # "" so the type picker shows its placeholder and forces a deliberate
+    # choice, rather than silently defaulting to postgres (core#593).
+    form_type: str = ""
     form_config: str = "{}"
     form_use_raw_json: bool = False
 
@@ -276,7 +278,8 @@ class ConnectionState(BaseState):
 
     # SQL database fields (postgres, mysql, mssql, redshift)
     form_host: str = ""
-    form_port: str = "5432"
+    # "" until a type is chosen; set_form_type fills the type's default port.
+    form_port: str = ""
     form_user: str = ""
     form_password: str = ""
     form_database: str = ""
@@ -339,6 +342,11 @@ class ConnectionState(BaseState):
     form_email: str = ""  # Jira, Zendesk
     form_property_id: str = ""  # Google Analytics
     form_customer_id: str = ""  # Google Ads
+    form_developer_token: str = ""  # Google Ads
+    form_client_id: str = ""  # Google Ads OAuth
+    form_client_secret: str = ""  # Google Ads OAuth
+    form_refresh_token: str = ""  # Google Ads OAuth
+    form_login_customer_id: str = ""  # Google Ads manager (MCC) account
     form_account_id: str = ""  # Facebook Ads
     form_base_id: str = ""  # Airtable
     form_bootstrap_servers: str = ""  # Kafka
@@ -680,10 +688,18 @@ class ConnectionState(BaseState):
                 config["property_id"] = self.form_property_id
 
         elif t == "google_ads":
-            if self.form_api_key:
-                config["service_account_json"] = self.form_api_key
             if self.form_customer_id:
                 config["customer_id"] = self.form_customer_id
+            if self.form_developer_token:
+                config["developer_token"] = self.form_developer_token
+            if self.form_client_id:
+                config["client_id"] = self.form_client_id
+            if self.form_client_secret:
+                config["client_secret"] = self.form_client_secret
+            if self.form_refresh_token:
+                config["refresh_token"] = self.form_refresh_token
+            if self.form_login_customer_id:
+                config["login_customer_id"] = self.form_login_customer_id
 
         elif t == "facebook_ads":
             if self.form_api_key:
@@ -755,11 +771,13 @@ class ConnectionState(BaseState):
         """Clear all typed form fields and exit edit mode."""
         self.editing_conn_id = 0
         self.form_name = ""
-        self.form_type = "postgres"
+        # Back to the placeholder, not postgres — the next connection starts
+        # blank and forces a deliberate type choice (core#593).
+        self.form_type = ""
         self.form_config = "{}"
         self.form_use_raw_json = False
         self.form_host = ""
-        self.form_port = _DEFAULT_PORTS.get("postgres", "")
+        self.form_port = ""
         self.form_user = ""
         self.form_password = ""
         self.form_database = ""
@@ -944,8 +962,12 @@ class ConnectionState(BaseState):
             self.form_api_key = config.get("service_account_json", "")
             self.form_property_id = config.get("property_id", "")
         elif conn_type == "google_ads":
-            self.form_api_key = config.get("service_account_json", "")
             self.form_customer_id = config.get("customer_id", "")
+            self.form_developer_token = config.get("developer_token", "")
+            self.form_client_id = config.get("client_id", "")
+            self.form_client_secret = config.get("client_secret", "")
+            self.form_refresh_token = config.get("refresh_token", "")
+            self.form_login_customer_id = config.get("login_customer_id", "")
         elif conn_type == "facebook_ads":
             self.form_api_key = config.get("access_token", "")
             self.form_account_id = config.get("account_id", "")

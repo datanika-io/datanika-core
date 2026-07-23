@@ -45,9 +45,6 @@ SAAS_TYPES = frozenset(
         "jira",
         "slack",
         "google_analytics",
-        # Classification, not an offer — google_ads is withdrawn from the picker
-        # and CONFIG_SCHEMAS (core#555) but still classified so a stored
-        # connection resolves consistently.
         "google_ads",
         "facebook_ads",
         "zendesk",

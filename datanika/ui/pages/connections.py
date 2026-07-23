@@ -60,13 +60,7 @@ PICKER_TYPES: list[str] = [
     "slack",
     # Analytics / ads
     "google_analytics",
-    # google_ads is deliberately absent (core#555). The Google Ads API requires
-    # a `developer-token` header on every request and the connection form
-    # collects no such field, so a connection created here could never
-    # authenticate — no transport or fallback changes that. Offering it only
-    # bought users a credential hunt ending in a failed run. The enum member and
-    # the edit paths stay so connections already stored remain viewable and
-    # deletable.
+    "google_ads",
     "facebook_ads",
     # Messaging
     "kafka",

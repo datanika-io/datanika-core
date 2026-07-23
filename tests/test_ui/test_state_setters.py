@@ -40,6 +40,26 @@ class TestConnectionFormValidation:
         err = self._validate(name="   ", conn_type="postgres", use_raw_json=False)
         assert "name is required" in err.lower()
 
+    # -- Connection type must be chosen (core#593) --
+
+    def test_empty_type_rejected(self):
+        # The picker now defaults to "" (placeholder), so an untouched form has
+        # no type. Reject it with a clear message rather than letting save reach
+        # ConnectionType("") and blow up as a generic "Failed to save".
+        err = self._validate(name="X", conn_type="", use_raw_json=False)
+        assert "type is required" in err.lower()
+
+    def test_empty_type_rejected_even_in_raw_json(self):
+        # Raw JSON skips the *field* checks, but save() still calls
+        # ConnectionType(form_type), so the type is required in raw mode too —
+        # the check must precede the raw-JSON early return.
+        err = self._validate(name="X", conn_type="", use_raw_json=True)
+        assert "type is required" in err.lower()
+
+    def test_whitespace_type_rejected(self):
+        err = self._validate(name="X", conn_type="   ", use_raw_json=False)
+        assert "type is required" in err.lower()
+
     # -- Raw JSON skips type-specific checks --
 
     def test_raw_json_skips_field_checks(self):
@@ -435,6 +455,53 @@ class TestSettingsStateSetters:
             method = getattr(SettingsState, name, None)
             assert method is not None, f"SettingsState missing {name}"
             assert callable(method)
+
+
+class TestConnectionFormReset:
+    """The form must return to a blank slate after a save (core#593).
+
+    QA (core#529) asked whether a user creating a *second* connection seeing
+    the previous type + config path pre-filled is a wart. The happy path
+    already resets via _reset_form_fields; these guards pin that the reset
+    lands the type picker on its placeholder ("") rather than a stale/real
+    type, so the next connection starts blank and forces a deliberate choice.
+    """
+
+    def _reset(self):
+        import types
+
+        from datanika.ui.state.connection_state import ConnectionState
+
+        class FakeState:
+            pass
+
+        obj = FakeState()
+        # Pre-dirty every field the reset is supposed to clear.
+        obj.form_type = "duckdb"
+        obj.form_path = "/tmp/prev.duckdb"
+        obj.form_port = "5432"
+        obj.form_host = "leftover-host"
+        obj.editing_conn_id = 7
+        obj._reset_form_fields = types.MethodType(ConnectionState._reset_form_fields, obj)
+        obj._reset_form_fields()
+        return obj
+
+    def test_reset_clears_type_to_placeholder(self):
+        obj = self._reset()
+        # "" makes searchable_select render the connections.ph_type placeholder,
+        # not a silent real default like "postgres".
+        assert obj.form_type == ""
+
+    def test_reset_clears_port(self):
+        obj = self._reset()
+        assert obj.form_port == ""
+
+    def test_reset_clears_previous_config_path(self):
+        # The exact thing QA saw retained across a second create.
+        obj = self._reset()
+        assert obj.form_path == ""
+        assert obj.form_host == ""
+        assert obj.editing_conn_id == 0
 
 
 class TestPipelineStateDualModeFields:

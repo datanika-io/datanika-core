@@ -199,6 +199,13 @@ def _validate_connection_form(
     if not name.strip():
         return "Connection name is required"
 
+    # core#593: the type picker defaults to "" (placeholder), so an untouched
+    # form has no type. Reject before the raw-JSON early return — save() calls
+    # ConnectionType(form_type) regardless of raw mode, so an empty type there
+    # would surface as a generic "Failed to save" instead of this clear message.
+    if not conn_type.strip():
+        return "Connection type is required"
+
     if use_raw_json:
         return ""
 
@@ -256,7 +263,9 @@ class ConnectionItem(BaseModel):
 class ConnectionState(BaseState):
     connections: list[ConnectionItem] = []
     form_name: str = ""
-    form_type: str = "postgres"
+    # "" so the type picker shows its placeholder and forces a deliberate
+    # choice, rather than silently defaulting to postgres (core#593).
+    form_type: str = ""
     form_config: str = "{}"
     form_use_raw_json: bool = False
 
@@ -269,7 +278,8 @@ class ConnectionState(BaseState):
 
     # SQL database fields (postgres, mysql, mssql, redshift)
     form_host: str = ""
-    form_port: str = "5432"
+    # "" until a type is chosen; set_form_type fills the type's default port.
+    form_port: str = ""
     form_user: str = ""
     form_password: str = ""
     form_database: str = ""
@@ -761,11 +771,13 @@ class ConnectionState(BaseState):
         """Clear all typed form fields and exit edit mode."""
         self.editing_conn_id = 0
         self.form_name = ""
-        self.form_type = "postgres"
+        # Back to the placeholder, not postgres — the next connection starts
+        # blank and forces a deliberate type choice (core#593).
+        self.form_type = ""
         self.form_config = "{}"
         self.form_use_raw_json = False
         self.form_host = ""
-        self.form_port = _DEFAULT_PORTS.get("postgres", "")
+        self.form_port = ""
         self.form_user = ""
         self.form_password = ""
         self.form_database = ""

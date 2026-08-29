@@ -688,7 +688,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'probe_success{instance="https://app.datanika.io/healthz"} == 0'
+              expr: 'count_over_time((probe_success{instance="https://app.datanika.io/healthz"} == 0)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -710,15 +710,15 @@ groups:
               expression: B
               conditions:
                 - evaluator:
-                    type: lt
-                    params: [1]
+                    type: gt
+                    params: [3]
               refId: C
-        for: 30s
+        for: 0s
         labels:
           severity: critical
         annotations:
           summary: "app.datanika.io /healthz not reachable externally"
-          description: "External blackbox probe to https://app.datanika.io/healthz has failed continuously for 2 minutes. Distinct from the internal container healthcheck — this catches Nginx/Cloudflare/DNS problems."
+          description: "External blackbox probe to https://app.datanika.io/healthz failed on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). Distinct from the internal container healthcheck — this catches Cloudflare/Apache/DNS problems. NOTE: the probe runs FROM the app box, so the box's own DNS and egress are on the measured path — check probe_http_duration_seconds{phase=\"resolve\"} before concluding the app is down (core#598)."
 
       # --- App frontend (what users actually load) ---
       # The /healthz probe only covers the backend :8000. Users hit /, served by the
@@ -736,7 +736,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'probe_success{instance="https://app.datanika.io/"} == 0'
+              expr: 'count_over_time((probe_success{instance="https://app.datanika.io/"} == 0)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -758,15 +758,15 @@ groups:
               expression: B
               conditions:
                 - evaluator:
-                    type: lt
-                    params: [1]
+                    type: gt
+                    params: [3]
               refId: C
-        for: 30s
+        for: 0s
         labels:
           severity: critical
         annotations:
           summary: "app.datanika.io / not reachable externally"
-          description: "External blackbox probe to https://app.datanika.io/ (the page users actually load) has failed for 2 minutes. Distinct from /healthz, which only covers the backend."
+          description: "External blackbox probe to https://app.datanika.io/ (the page users actually load) failed on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). Distinct from /healthz, which only covers the backend. NOTE: the probe runs FROM the app box, so the box's own DNS and egress are on the measured path (core#598)."
 
   - orgId: 1
     name: Database Alerts

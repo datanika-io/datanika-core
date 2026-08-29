@@ -144,6 +144,34 @@ def pin_drift(
     return drift
 
 
+# Below this, check C is not measuring anything. The image installs ~100 locked
+# packages, so a handful means the export or the enumeration collapsed.
+_MIN_COMPARED = 20
+
+
+def comparison_collapsed(locked: dict[str, str], installed: dict[str, str]) -> str | None:
+    """Is check C about to pass vacuously? Returns the reason, or None.
+
+    A drift check over an empty intersection prints "no drift" and is a green
+    that would look identical had the thing failed — the exact defect this whole
+    probe exists to close, reproduced one layer up. If the pin export silently
+    produced nothing, or the container enumerated nothing, that is a probe
+    failure and must be reported as one rather than as a clean image.
+    """
+    if not locked:
+        return "the lock pin file parsed to zero pins"
+    if not installed:
+        return "the image enumerated zero installed packages"
+    compared = len(set(locked) & set(installed))
+    if compared < _MIN_COMPARED:
+        return (
+            f"only {compared} package(s) overlap between the lock ({len(locked)}) "
+            f"and the image ({len(installed)}) — below the {_MIN_COMPARED} floor, "
+            f"so a 'no drift' result here would mean nothing"
+        )
+    return None
+
+
 def last_line(text: str) -> str:
     """The final non-empty stdout line.
 
@@ -258,7 +286,16 @@ def main() -> int:
             drift = pin_drift(locked, installed)
             compared = len(set(locked) & set(installed))
             print(f"    lock names {len(locked)}, image has {len(installed)}, compared {compared}")
-            if drift:
+            collapsed = comparison_collapsed(locked, installed)
+            if collapsed:
+                failures.append(
+                    f"C: the drift comparison collapsed and proves nothing — {collapsed}.\n"
+                    "       Reporting this as a failure rather than as a clean image: a "
+                    "drift check over an empty intersection is the same silent green "
+                    "this probe exists to close."
+                )
+                print(f"    FAIL — comparison collapsed: {collapsed}")
+            elif drift:
                 for name, want, got in drift:
                     print(f"    DRIFT {name}: lock {want} -> image {got}")
                 failures.append(

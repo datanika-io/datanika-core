@@ -119,6 +119,54 @@ class TestPinDrift:
         assert [d[0] for d in probe.pin_drift(locked, installed)] == ["aaa", "mmm", "zzz"]
 
 
+class TestTheDriftCheckCannotPassVacuously:
+    """A drift check over an empty intersection is a green that proves nothing.
+
+    That is the defect this whole probe exists to close, and it would be
+    embarrassing to reproduce it one layer up: if the pin export silently
+    produced nothing, `pin_drift` returns `[]` and check C prints "no drift".
+    """
+
+    def test_zero_locked_pins_is_a_collapse(self):
+        assert probe.comparison_collapsed({}, {"anyio": "4.4.0"})
+
+    def test_zero_installed_packages_is_a_collapse(self):
+        assert probe.comparison_collapsed({"anyio": "4.4.0"}, {})
+
+    def test_a_tiny_overlap_is_a_collapse(self):
+        """Both sides populated but barely intersecting — an export/platform mismatch."""
+        locked = {f"pkg{i}": "1.0" for i in range(80)}
+        installed = {"pkg1": "1.0", "unrelated": "2.0"}
+        assert probe.comparison_collapsed(locked, installed)
+
+    def test_a_real_overlap_is_not_a_collapse(self):
+        shared = {f"pkg{i}": "1.0" for i in range(60)}
+        assert probe.comparison_collapsed(shared, dict(shared)) is None
+
+    def test_the_floor_is_where_it_says_it_is(self):
+        at_floor = {f"pkg{i}": "1.0" for i in range(probe._MIN_COMPARED)}
+        assert probe.comparison_collapsed(at_floor, dict(at_floor)) is None
+        below = {f"pkg{i}": "1.0" for i in range(probe._MIN_COMPARED - 1)}
+        assert probe.comparison_collapsed(below, dict(below))
+
+    def test_the_reason_is_returned_not_just_a_bool(self):
+        """The log has to say which way it collapsed, or triage starts blind."""
+        assert "zero pins" in probe.comparison_collapsed({}, {"a": "1"})
+        assert "zero installed" in probe.comparison_collapsed({"a": "1"}, {})
+
+
+class TestLastLine:
+    def test_ignores_output_emitted_before_our_print(self):
+        assert probe.last_line('DeprecationWarning: ...\n{"a": "1"}\n') == '{"a": "1"}'
+
+    def test_handles_trailing_blank_lines(self):
+        assert probe.last_line("ok\n\n\n") == "ok"
+
+    def test_empty_output_is_empty_not_an_exception(self):
+        assert probe.last_line("") == ""
+        assert probe.last_line("\n \n") == ""
+
+
 class TestTheProbeInterrogatesTheVenvAsBuilt:
     def test_it_does_not_reach_for_bare_uv_run(self):
         """⚠️ `uv run python` re-syncs from the lock.

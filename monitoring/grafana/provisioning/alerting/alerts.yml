@@ -24,7 +24,16 @@ groups:
               # so a per-container staleness check pages for the colour we deliberately
               # retired. Confirmed live during the first prod swap: this rule fired for
               # `datanika-app` while prod served correctly from `datanika-app-b`.
-              expr: 'time() - max by (name) (container_last_seen{name=~"datanika-(celery|postgres|redis)"}) > 60'
+              #
+              # core#604: `> 60` is a filtering expression, so `reduce: last` never sees
+              # a recovery and `for:` cannot debounce it — same defect as app-unhealthy,
+              # found by auditing all 30 rules rather than waiting for it to page. A
+              # single cadvisor stall (this box is a shared 4-vCPU host) would have
+              # pushed staleness past 60s for one sample and paged critical. The
+              # duration now lives in the query. Max staleness ever observed in 30d is
+              # 26s against a 60s threshold, so this has never fired — the fix is
+              # pre-emptive, not a response to an incident.
+              expr: 'count_over_time(((time() - max by (name) (container_last_seen{name=~"datanika-(celery|postgres|redis)"})) > 60)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -47,14 +56,14 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [0]
+                    params: [3]
               refId: C
-        for: 30s
+        for: 0s
         labels:
           severity: critical
         annotations:
           summary: "Container {{ $labels.name }} is down"
-          description: "Container {{ $labels.name }} has not been seen for over 60 seconds."
+          description: "Container {{ $labels.name }} was unseen by cadvisor for over 60 seconds on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval) — i.e. sustained, not a single stalled scrape."
 
       # --- App container (blue/green aware) ---
       # The app runs as one of a PAIR: datanika-app (blue) or datanika-app-b (green).
@@ -77,7 +86,10 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'time() - max(container_last_seen{name=~"datanika-app(-b)?"}) > 60'
+              # core#604: duration in the query, not in `for:` — see Container Down above
+              # for the mechanism. Filtering expression + `reduce: last` means `for:`
+              # debounces nothing.
+              expr: 'count_over_time(((time() - max(container_last_seen{name=~"datanika-app(-b)?"})) > 60)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -100,14 +112,14 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [0]
+                    params: [3]
               refId: C
-        for: 30s
+        for: 0s
         labels:
           severity: critical
         annotations:
           summary: "No app container is running (neither blue nor green)"
-          description: "Neither datanika-app nor datanika-app-b has been seen for over 60 seconds. During a blue/green swap exactly one is expected to be down; this fires only when both are."
+          description: "Neither datanika-app nor datanika-app-b was seen by cadvisor for over 60 seconds, on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). During a blue/green swap exactly one is expected to be down; this fires only when both are."
 
       # --- High CPU ---
       - uid: high-cpu
@@ -404,7 +416,17 @@ groups:
               # because the compose name `app` did not resolve — re-notifying hourly
               # while the site was fine (#479). max() collapses the pair, so this fires
               # only when NEITHER colour is scrapeable, which is the real outage.
-              expr: 'max(up{job=~"datanika-app(-b)?"}) == 0'
+              #
+              # core#604: the duration lives in the QUERY, not in `for:`. `== 0` is a
+              # filtering expression, so a healthy scrape is not a member of the series
+              # at all and `reduce: last` never sees a recovery — it returns the last
+              # FAILING sample for as long as that sample sits in the 60s window. One
+              # failed scrape therefore satisfies any `for:` shorter than window +
+              # group_interval. Observed, not theorised: a single failed sample at
+              # 2026-08-29T16:31:05Z took this rule Pending → **Alerting (critical)** at
+              # 16:31:40 and back to Normal at 16:32:10, while datanika-app-b had been
+              # up 5 weeks with restarts=0.
+              expr: 'count_over_time((max(up{job=~"datanika-app(-b)?"}) == 0)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -426,15 +448,15 @@ groups:
               expression: B
               conditions:
                 - evaluator:
-                    type: lt
-                    params: [1]
+                    type: gt
+                    params: [3]
               refId: C
-        for: 30s
+        for: 0s
         labels:
           severity: critical
         annotations:
-          summary: "Datanika app metrics endpoint is down"
-          description: "Prometheus cannot scrape the app metrics endpoint for 2 minutes."
+          summary: "Datanika app metrics endpoint is down (neither blue nor green scrapeable)"
+          description: "Prometheus failed to scrape BOTH datanika-app and datanika-app-b on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). Under blue/green exactly one colour is expected to be unscrapeable, so this fires only when neither is. Internal scrape only — for external reachability see App External Health Down (core#604)."
 
       # --- Celery Task Failures ---
       - uid: celery-task-failures

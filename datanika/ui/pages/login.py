@@ -30,13 +30,24 @@ def _social_login_button(label: str, provider: str) -> rx.Component:
     (In dev the origins differ, so that breakage would not show up locally.)
     ``rx.redirect`` has the same same-origin branch. Hence an explicit
     assignment, which is unambiguous whatever the router does.
+
+    **Sizing (#605).** These two are the only controls in the card that share a
+    row, so they are the only ones that must not use ``width="100%"``. They used
+    to, and the GitHub button rendered *outside* the card: a Radix button
+    computes to ``flex: 0 0 auto``, so ``flex-basis`` resolved to the declared
+    100% (294px each) and ``flex-shrink: 0`` forbade the row from reducing them
+    — 294 + 12 + 294 laid out in a 294px row. ``flex="1 1 0"`` makes the basis 0
+    and lets both grow into equal halves; ``min_width="0"`` overrides a flex
+    item's default ``min-width: auto``, which would otherwise floor each button
+    at its own label width.
     """
     target = f"{_backend}/api/auth/login/{provider}"
     return rx.button(
         label,
         variant="outline",
         size="3",
-        width="100%",
+        flex="1 1 0",
+        min_width="0",
         type="button",
         on_click=rx.call_script(f"window.location.assign({json.dumps(target)})"),
     )

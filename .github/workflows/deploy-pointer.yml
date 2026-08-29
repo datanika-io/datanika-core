@@ -98,44 +98,17 @@ jobs:
         #
         # Never touches webdav.conf -- that vhost belongs to a co-tenant on this shared box --
         # and never restarts Apache, only graceful.
+        #
+        # The body used to be an inline heredoc. It moved to scripts/sync-vhosts.sh for
+        # core#607: its recovery ran only in the `configtest`-failed branch, so a guard
+        # aborting on the SECOND vhost left the FIRST -- production -- replaced and
+        # unrestored, with Apache still serving from memory so nothing looked wrong. Same
+        # class as core#603. A heredoc inside a workflow also cannot be executed by a test,
+        # and "we read it and it looked right" is how #603 survived five weeks; the script
+        # is now covered by tests/test_deploy/test_vhost_sync.py.
         run: |
-          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'bash -s' <<'VHOST'
-          set -e
-          SRC=/opt/datanika/datanika/deploy/apache
-          changed=0
-          # sites-enabled holds SYMLINKS into sites-available. Resolve once and work on the
-          # real file: `cp -a` on the link would back up the LINK, leaving a dangling relative
-          # symlink and no content -- a rollback that silently restores nothing, discovered
-          # only when configtest fails and it is too late.
-          sync_one() {
-            src="$SRC/$1"
-            link="/etc/apache2/sites-enabled/$2"
-            [ -f "$src" ] || { echo "missing in repo: $src"; exit 1; }
-            target=$(readlink -f "$link")
-            [ -f "$target" ] || { echo "vhost target missing: $link -> $target"; exit 1; }
-            if ! cmp -s "$src" "$target"; then
-              cp "$target" "/tmp/$2.bak"          # content, not the link
-              cp "$src" "$target"
-              changed=1
-              echo "vhost changed: $2 ($target)"
-            fi
-          }
-          sync_one app.datanika.io.conf         zapp-datanika-io.conf
-          sync_one staging-app.datanika.io.conf zstaging-app-datanika-io.conf
-          if [ "$changed" = "0" ]; then echo "vhosts already current"; exit 0; fi
-          if apachectl configtest 2>&1 | tee /tmp/ct.log | grep -qi 'Syntax OK'; then
-            apachectl graceful
-            echo "vhosts applied, Apache gracefully reloaded"
-          else
-            echo "CONFIGTEST FAILED - restoring previous vhosts:"; cat /tmp/ct.log
-            for d in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
-              t=$(readlink -f "/etc/apache2/sites-enabled/$d")
-              if [ -f "/tmp/$d.bak" ]; then cp "/tmp/$d.bak" "$t"; echo "restored $d"; fi
-            done
-            apachectl configtest
-            exit 1
-          fi
-          VHOST
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'cd /opt/datanika/datanika && bash scripts/sync-vhosts.sh'
 
       - name: Deploy the app via blue/green swap
         run: |

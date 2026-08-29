@@ -134,3 +134,191 @@ class TestInstalledMatchesLock:
         assert installed[: len(ceiling)] < ceiling, (
             f"{_CRITICAL} {metadata.version(_CRITICAL)} violates {spec}"
         )
+
+
+# ---------------------------------------------------------------------------
+# core#602 — the same lesson one layer out: CI green, shipped image broken.
+#
+# #470 was "local green and CI green are statements about different dependency
+# trees". #602 is "CI green and the *image* are", and this time our own
+# Dockerfile creates the divergence.
+#
+# What actually happened: `mcp` is declared only in core's **dev extra**, and
+# the image is built with `uv sync --frozen --no-dev`, so core installs no `mcp`
+# at all. The sole thing that installs it is a later, separate
+# `uv pip install ./datanika-mcp`, which resolves against PyPI rather than the
+# lock. The sub-package said `mcp>=1.0.0` with no ceiling, so that step took
+# `mcp` 2.x, where `FastMCP` had been renamed -- `datanika_mcp` then failed to
+# import, `/mcp` was never mounted, and the blue/green post-swap assertion
+# failed in production. Five weeks latent, because nothing rebuilt.
+#
+# Three guards, because the failure has three independent halves:
+#
+#   * :class:`TestSubPackagePinsAreNoLooserThanCore` -- the source-level drift.
+#     One dependency declared in two files that are installed in sequence.
+#   * :class:`TestTheImageCannotFloatAwayFromTheLock` -- the mechanism. This is
+#     the one that asserts what was actually true that night: a *correct*
+#     ceiling is not enough, because a later unconstrained install step can
+#     move anything, including packages neither file names.
+#   * The build-time import assertion -- the artifact must check itself, so a
+#     broken image fails the build instead of being shipped and discovered by
+#     a production deploy, which is the most expensive possible place.
+# ---------------------------------------------------------------------------
+
+_SUB_PACKAGES = {"datanika-mcp": _ROOT / "datanika-mcp" / "pyproject.toml"}
+_DOCKERFILE = _ROOT / "Dockerfile"
+
+
+def _ceiling(spec: str) -> tuple[int, ...] | None:
+    match = re.search(r"<\s*([0-9][0-9a-zA-Z.]*)", spec)
+    if not match:
+        return None
+    return tuple(int(p) for p in match.group(1).split(".") if p.isdigit())
+
+
+def _sub_package_dependencies(path: pathlib.Path) -> list[str]:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    return list(data["project"].get("dependencies") or [])
+
+
+def _core_specs_by_name() -> dict[str, str]:
+    """Core's declaration for each dependency, wherever it is declared.
+
+    Runtime and extras both count. A dev-extra pin is what CI resolves, so a
+    sub-package that disagrees with it ships something CI never tested -- which
+    is precisely the #602 shape.
+    """
+    return {_dist_name(spec).lower(): spec for _group, spec in _declared_dependencies()}
+
+
+def _dockerfile_logical_lines() -> list[str]:
+    """Dockerfile lines with backslash continuations joined, comments dropped."""
+    joined: list[str] = []
+    buffer = ""
+    for raw in _DOCKERFILE.read_text(encoding="utf-8").splitlines():
+        line = raw.rstrip()
+        if line.endswith("\\"):
+            buffer += line[:-1] + " "
+            continue
+        buffer += line
+        joined.append(buffer)
+        buffer = ""
+    if buffer:
+        joined.append(buffer)
+    return [ln for ln in joined if ln.strip() and not ln.lstrip().startswith("#")]
+
+
+class TestSubPackagePinsAreNoLooserThanCore:
+    """A dependency declared in two files that install in sequence must agree."""
+
+    def test_every_sub_package_dependency_is_bounded(self):
+        unbounded = [
+            f"{name}: {spec}"
+            for name, path in _SUB_PACKAGES.items()
+            for spec in _sub_package_dependencies(path)
+            if "<" not in spec
+        ]
+        assert not unbounded, (
+            "Sub-package dependencies with no upper bound (core#602). These are "
+            "installed by a separate `uv pip install` step that does NOT consult "
+            "uv.lock, so an unbounded spec floats to whatever PyPI serves on "
+            "build day -- that is how `mcp` 2.x reached production:\n  " + "\n  ".join(unbounded)
+        )
+
+    def test_sub_package_may_not_raise_a_ceiling_core_set(self):
+        core = _core_specs_by_name()
+        looser = []
+        for name, path in _SUB_PACKAGES.items():
+            for spec in _sub_package_dependencies(path):
+                dist = _dist_name(spec).lower()
+                core_spec = core.get(dist)
+                if core_spec is None:
+                    continue
+                core_ceiling = _ceiling(core_spec)
+                if core_ceiling is None:
+                    continue
+                sub_ceiling = _ceiling(spec)
+                if sub_ceiling is None:
+                    looser.append(f"{name} declares {spec!r}; core declares {core_spec!r}")
+                    continue
+                width = min(len(core_ceiling), len(sub_ceiling))
+                if sub_ceiling[:width] > core_ceiling[:width]:
+                    looser.append(f"{name} declares {spec!r}; core declares {core_spec!r}")
+        assert not looser, (
+            "A sub-package declares a looser bound than core for the same "
+            "dependency (core#602). The sub-package is installed LAST, so its "
+            "constraint is the one that decides what ships:\n  " + "\n  ".join(looser)
+        )
+
+
+class TestTheImageCannotFloatAwayFromTheLock:
+    """The pin was correct and the artifact was still wrong. Guard the mechanism.
+
+    `uv sync --frozen` installs exactly what `uv.lock` resolved. Every
+    `uv pip install` after it re-resolves against PyPI and may move *any*
+    already-installed package -- `mcp` pulls anyio, httpx, pydantic, starlette
+    and uvicorn, all of which core locks. A ceiling on one dependency does not
+    address that; constraining the install to the lock does.
+    """
+
+    def test_every_install_after_the_sync_is_constrained_to_the_lock(self):
+        lines = _dockerfile_logical_lines()
+        sync = next((i for i, ln in enumerate(lines) if "uv sync" in ln and "--frozen" in ln), None)
+        assert sync is not None, "Dockerfile no longer installs from the lock at all"
+
+        floating = [
+            ln
+            for ln in lines[sync + 1 :]
+            if "uv pip install" in ln and not re.search(r"(--constraint[= ]|\s-c\s|--no-deps)", ln)
+        ]
+        assert not floating, (
+            "An install step after `uv sync --frozen` can re-resolve and move "
+            "packages the lock pinned (core#602). Pass `--constraint` (built "
+            "from `uv export --frozen`) or `--no-deps`:\n  " + "\n  ".join(floating)
+        )
+
+    def test_the_constraints_are_derived_from_the_lock_not_hand_written(self):
+        text = _DOCKERFILE.read_text(encoding="utf-8")
+        assert "uv export" in text and "--frozen" in text, (
+            "The constraints file must be generated from uv.lock via "
+            "`uv export --frozen`. A hand-maintained list is a third place for "
+            "the same versions to drift (core#602)."
+        )
+
+    def test_the_build_asserts_the_mcp_entrypoint_imports(self):
+        """Nothing asserted on the artifact. That is why this shipped."""
+        lines = _dockerfile_logical_lines()
+        install = next(
+            (i for i, ln in enumerate(lines) if "uv pip install" in ln and "datanika-mcp" in ln),
+            None,
+        )
+        assert install is not None, "Dockerfile no longer installs ./datanika-mcp"
+
+        after = " ".join(lines[install + 1 :])
+        assert "import datanika_mcp.server" in after, (
+            "The build must import `datanika_mcp.server` after installing it "
+            "(core#602). Without it a broken image builds cleanly and the "
+            "failure surfaces in the production blue/green post-swap probe -- "
+            "the most expensive place to learn it. The running container said "
+            "exactly this: No module named 'mcp.server.fastmcp'. "
+            "It must be `.server`, not the bare package: "
+            "`datanika_mcp/__init__.py` is a docstring and a version string, so "
+            "`import datanika_mcp` succeeds against precisely the break this "
+            "guards. `.server` is the module holding "
+            "`from mcp.server.fastmcp import FastMCP`."
+        )
+
+    def test_the_import_assertion_runs_in_the_image_not_the_builder(self):
+        """It must be the built venv that imports, or it proves nothing.
+
+        `uv run` may re-sync the project environment, and a check executed by
+        some other interpreter says nothing about what the container will do at
+        startup. The assertion has to be the same interpreter `CMD` reaches.
+        """
+        lines = _dockerfile_logical_lines()
+        probe = next((ln for ln in lines if "import datanika_mcp.server" in ln), None)
+        assert probe is not None, "no build-time import assertion at all (core#602)"
+        assert "/app/.venv/bin/python" in probe, (
+            "The import assertion must run under the image's own venv "
+            f"interpreter, not a builder-side python (core#602): {probe}"
+        )

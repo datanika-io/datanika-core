@@ -14,6 +14,10 @@ policies:
         matchers:
           - severity = critical
         group_wait: 10s
+        # core#598: without this the route inherits the root group_interval (5m), so a
+        # RESOLVED notice can never arrive sooner than 5 minutes after the FIRING one —
+        # every gap looks like a 5-minute outage regardless of the real duration.
+        group_interval: 1m
         repeat_interval: 1h
       - receiver: telegram
         matchers:

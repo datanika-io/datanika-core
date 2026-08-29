@@ -222,8 +222,7 @@ class TestSubPackagePinsAreNoLooserThanCore:
             "Sub-package dependencies with no upper bound (core#602). These are "
             "installed by a separate `uv pip install` step that does NOT consult "
             "uv.lock, so an unbounded spec floats to whatever PyPI serves on "
-            "build day -- that is how `mcp` 2.x reached production:\n  "
-            + "\n  ".join(unbounded)
+            "build day -- that is how `mcp` 2.x reached production:\n  " + "\n  ".join(unbounded)
         )
 
     def test_sub_package_may_not_raise_a_ceiling_core_set(self):
@@ -264,16 +263,13 @@ class TestTheImageCannotFloatAwayFromTheLock:
 
     def test_every_install_after_the_sync_is_constrained_to_the_lock(self):
         lines = _dockerfile_logical_lines()
-        sync = next(
-            (i for i, ln in enumerate(lines) if "uv sync" in ln and "--frozen" in ln), None
-        )
+        sync = next((i for i, ln in enumerate(lines) if "uv sync" in ln and "--frozen" in ln), None)
         assert sync is not None, "Dockerfile no longer installs from the lock at all"
 
         floating = [
             ln
             for ln in lines[sync + 1 :]
-            if "uv pip install" in ln
-            and not re.search(r"(--constraint[= ]|\s-c\s|--no-deps)", ln)
+            if "uv pip install" in ln and not re.search(r"(--constraint[= ]|\s-c\s|--no-deps)", ln)
         ]
         assert not floating, (
             "An install step after `uv sync --frozen` can re-resolve and move "
@@ -299,10 +295,30 @@ class TestTheImageCannotFloatAwayFromTheLock:
         assert install is not None, "Dockerfile no longer installs ./datanika-mcp"
 
         after = " ".join(lines[install + 1 :])
-        assert "import datanika_mcp" in after, (
-            "The build must import `datanika_mcp` after installing it "
+        assert "import datanika_mcp.server" in after, (
+            "The build must import `datanika_mcp.server` after installing it "
             "(core#602). Without it a broken image builds cleanly and the "
             "failure surfaces in the production blue/green post-swap probe -- "
             "the most expensive place to learn it. The running container said "
-            "exactly this: No module named 'mcp.server.fastmcp'."
+            "exactly this: No module named 'mcp.server.fastmcp'. "
+            "It must be `.server`, not the bare package: "
+            "`datanika_mcp/__init__.py` is a docstring and a version string, so "
+            "`import datanika_mcp` succeeds against precisely the break this "
+            "guards. `.server` is the module holding "
+            "`from mcp.server.fastmcp import FastMCP`."
+        )
+
+    def test_the_import_assertion_runs_in_the_image_not_the_builder(self):
+        """It must be the built venv that imports, or it proves nothing.
+
+        `uv run` may re-sync the project environment, and a check executed by
+        some other interpreter says nothing about what the container will do at
+        startup. The assertion has to be the same interpreter `CMD` reaches.
+        """
+        lines = _dockerfile_logical_lines()
+        probe = next((ln for ln in lines if "import datanika_mcp.server" in ln), None)
+        assert probe is not None, "no build-time import assertion at all (core#602)"
+        assert "/app/.venv/bin/python" in probe, (
+            "The import assertion must run under the image's own venv "
+            f"interpreter, not a builder-side python (core#602): {probe}"
         )

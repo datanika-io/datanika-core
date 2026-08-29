@@ -5,9 +5,17 @@ description = "MCP server for Datanika — browse connections, preview data, and
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"
 readme = "README.md"
+# Upper bounds are load-bearing, not hygiene (core#602). The Docker image
+# installs this package with a *separate* `uv pip install ./datanika-mcp` that
+# runs after `uv sync --frozen` and does NOT consult core's `uv.lock`, so
+# whatever is declared here is what decides the shipped version. `mcp` is
+# declared only in core's dev extra and the image syncs `--no-dev`, which means
+# core installs no `mcp` at all: this list was the sole constraint on it.
+# Unbounded, it took `mcp` 2.x, where `FastMCP` was renamed to `MCPServer`,
+# `datanika_mcp.server` stopped importing, and `/mcp` silently never mounted.
 dependencies = [
-    "mcp>=1.0.0",
-    "httpx>=0.27",
+    "mcp>=1.0.0,<2",
+    "httpx>=0.27,<0.29",
 ]
 
 [project.scripts]

@@ -30,7 +30,6 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -42,6 +41,7 @@ SCRIPT = ROOT / "scripts" / "deploy-bluegreen.sh"
 BLUE_BE, BLUE_FE, BLUE_CTR = "8000", "3000", "datanika-app"
 GREEN_BE, GREEN_FE, GREEN_CTR = "8010", "3010", "datanika-app-b"
 
+
 def _bash() -> str:
     exe = shutil.which("bash")
     if exe is None:  # pragma: no cover - a box with no bash cannot run the deploy either
@@ -49,13 +49,50 @@ def _bash() -> str:
     return exe
 
 
+def _posix_path(path: Path) -> str:
+    """A path safe to place in a colon-separated bash PATH.
+
+    `Path.as_posix()` keeps the Windows drive letter (`D:/Temp/x`); bash reads the `:` as
+    the PATH separator. `cygpath` is authoritative where it exists (Git Bash ships it);
+    the manual fallback covers a POSIX box, where the path is already correct.
+    """
+    exe = shutil.which("cygpath")
+    if exe:
+        return subprocess.run(
+            [exe, "-u", str(path)], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    text = path.as_posix()
+    if len(text) > 1 and text[1] == ":":
+        return f"/{text[0].lower()}{text[2:]}"
+    return text
+
+
+def _write_lf(path: Path, body: str) -> None:
+    """Write with LF endings, always.
+
+    `Path.write_text` translates `\\n` to `\\r\\n` on Windows. Every file here is consumed
+    by bash, and a stray CR is invisible in a diff and lethal in a comparison: the shims
+    returned `401\\r`, so `[ "$BE_MCP" = 401 ]` was false for a *correct* answer. The
+    failure-path tests still went green — they only need the deploy to abort, and it did,
+    for the wrong reason. Only the happy path could expose it, which is precisely why a
+    control case earns its place in a suite about failures.
+    """
+    path.write_bytes(body.encode("utf-8"))
+
+
 def _write_exec(path: Path, body: str) -> None:
-    path.write_text(body, encoding="utf-8")
+    _write_lf(path, body)
     path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
 class Harness:
     """A fake prod box: an Apache include, a compose dir, and programmable shims."""
+
+    # A healthy prod box is NOT "every URL 200". An unauthenticated /mcp answers **401**,
+    # and the script asserts exactly that — a 200 there is the Reflex SPA fall-through that
+    # means the vhost never routed /mcp to the backend. A blanket-200 baseline therefore
+    # modelled a *broken* box, and the happy path could not pass on any correct script.
+    HTTP_BASELINE = {"/mcp": 401}
 
     def __init__(self, tmp: Path) -> None:
         self.tmp = tmp
@@ -68,27 +105,27 @@ class Harness:
         self.include = self.root / "etc/apache2/conf-enabled/datanika-prod-active.conf"
         self.include.parent.mkdir(parents=True)
         # Blue is live, so the script's target is green — same as prod on 2026-08-29.
-        self.include.write_text(
+        _write_lf(
+            self.include,
             "# Active prod backend/frontend ports — rewritten by deploy-bluegreen.sh.\n"
-            "# Parsed before sites-enabled/*, where the vhost consumes ${DATANIKA_BE} / ${DATANIKA_FE}.\n"
+            "# Parsed before sites-enabled/*, where the vhost consumes the two Defines.\n"
             f"Define DATANIKA_BE {BLUE_BE}\n"
             f"Define DATANIKA_FE {BLUE_FE}\n",
-            encoding="utf-8",
         )
 
         compose_dir = self.root / "opt/datanika/datanika"
         compose_dir.mkdir(parents=True)
-        (compose_dir / ".env.docker").write_text("POSTGRES_PASSWORD=fake\n", encoding="utf-8")
+        _write_lf(compose_dir / ".env.docker", "POSTGRES_PASSWORD=fake\n")
 
-        # Shim defaults: a healthy target, a running container, every URL 200, and a
-        # configtest that passes. Each test degrades exactly one of these.
+        # Shim defaults: a healthy target, a running container, the healthy HTTP baseline,
+        # and a configtest that passes. Each test degrades exactly one of these.
         self.set_health("healthy")
         self.set_running("true")
         self.set_configtest(0)
         self.set_http({})
 
         calls = self.fake / "calls.log"
-        calls.write_text("", encoding="utf-8")
+        _write_lf(calls, "")
 
         _write_exec(
             self.bin / "docker",
@@ -133,18 +170,22 @@ exit 0
 
     # --- shim programming -------------------------------------------------------------
     def set_health(self, status: str) -> None:
-        (self.fake / "health").write_text(status + "\n", encoding="utf-8")
+        _write_lf(self.fake / "health", status + "\n")
 
     def set_running(self, value: str) -> None:
-        (self.fake / "running").write_text(value + "\n", encoding="utf-8")
+        _write_lf(self.fake / "running", value + "\n")
 
     def set_configtest(self, rc: int) -> None:
-        (self.fake / "configtest").write_text(str(rc) + "\n", encoding="utf-8")
+        _write_lf(self.fake / "configtest", str(rc) + "\n")
 
     def set_http(self, plan: dict[str, int]) -> None:
-        (self.fake / "http").write_text(
-            "".join(f"{pat}|{code}\n" for pat, code in plan.items()), encoding="utf-8"
-        )
+        """Overlay `plan` on the healthy baseline, so a test states only what it breaks.
+
+        Test entries are written first and the shim takes the first pattern that matches,
+        so they override the baseline.
+        """
+        merged = list(plan.items()) + list(self.HTTP_BASELINE.items())
+        _write_lf(self.fake / "http", "".join(f"{pat}|{code}\n" for pat, code in merged))
 
     # --- run + inspect ----------------------------------------------------------------
     def run(self) -> subprocess.CompletedProcess[str]:
@@ -153,11 +194,19 @@ exit 0
         # PATH is prepended *inside* bash rather than through the environment: on Windows
         # an inherited `;`-separated Windows PATH is rewritten on the way in, and the shim
         # directory is exactly the entry that must survive intact.
+        #
+        # ⚠️ The entry must be in POSIX form (`/d/Temp/...`), NOT `Path.as_posix()`
+        # (`D:/Temp/...`). bash splits PATH on `:`, so a drive letter silently splits one
+        # entry into the two nonexistent directories `D` and `/Temp/...`. The shims are
+        # then invisible and every scenario below runs against the machine's REAL docker,
+        # curl and apachectl — which is how this suite first ran: green-looking shims that
+        # were never once invoked. Asserting on the shim call log is what exposed it.
         return subprocess.run(
             [
                 _bash(),
                 "-c",
-                f'export PATH="{self.bin.as_posix()}:$PATH"; exec bash "{SCRIPT.as_posix()}" --env prod',
+                f'export PATH="{_posix_path(self.bin)}:$PATH"; '
+                f'exec bash "{SCRIPT.as_posix()}" --env prod',
             ],
             capture_output=True,
             text=True,
@@ -178,7 +227,21 @@ exit 0
         return ""
 
     def stopped(self, service: str) -> bool:
-        return any(f"stop {service}" in c for c in self.calls)
+        """Whether `docker ... stop <service>` was issued for exactly this service.
+
+        Token-wise, not substring: the two services are `app` and `app_b`, so a
+        `"stop app" in call` test is TRUE for `stop app_b`. That made
+        `assert not box.stopped("app")` — the assertion protecting the live colour from
+        being killed during a rollback — fire on the correct behaviour and pass on
+        nothing. A check that reports the wrong answer for the case it exists to catch is
+        worse than no check.
+        """
+        for call in self.calls:
+            tokens = call.split()
+            for i, token in enumerate(tokens[:-1]):
+                if token == "stop" and tokens[i + 1] == service:
+                    return True
+        return False
 
     def graceful_count(self) -> int:
         return sum(1 for c in self.calls if c == "apachectl graceful")
@@ -187,6 +250,26 @@ exit 0
 @pytest.fixture
 def box(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
+
+
+def test_the_harness_actually_intercepts_docker_curl_and_apachectl(box: Harness) -> None:
+    """Guard on the guards: prove the shims are on PATH before trusting any verdict below.
+
+    On the first run of this suite they were not — the PATH entry carried a Windows drive
+    letter, bash split it on the `:`, and every scenario silently drove the machine's real
+    docker and curl. The tests still *ran*, and a couple of the assertions would have gone
+    green on a script that did nothing at all.
+
+    A harness that stops intercepting does not fail loudly, it fails *permissively*. So
+    assert the interception itself, not just its consequences.
+    """
+    box.run()
+
+    programs = {call.split()[0] for call in box.calls}
+    assert programs == {"docker", "curl", "apachectl"}, (
+        f"shims not intercepted — the deploy ran against real binaries: {programs}"
+    )
+    assert any(call.startswith("docker compose") for call in box.calls)
 
 
 def test_happy_path_swaps_to_green_and_retires_blue(box: Harness) -> None:
@@ -302,22 +385,30 @@ def test_target_backend_missing_mcp_fails_before_apache_is_touched(box: Harness)
     assert not box.stopped("app")
 
 
-def test_sigterm_mid_swap_rolls_back(box: Harness) -> None:
+def test_sigterm_after_the_swap_rolls_back(box: Harness) -> None:
     """A cancelled CD job closes the SSH channel, which signals this script mid-swap.
 
-    Signals do not fire an ERR trap either, so before core#603 a cancellation abandoned
-    the swap in whatever state it had reached.
+    The signal is delivered from the `sleep 2` that follows the Apache reload — so bash is
+    *between commands*, with the swap already applied and real state to unwind.
+
+    **That injection point is the whole test.** An earlier version fired the signal from
+    inside the post-swap `CODE=$(curl ...)` substitution, and it passed against the
+    pre-#603 script too: a command substitution killed by a signal is a *command failure*,
+    so the old ERR trap caught it and rolled back correctly. Measured against a mutant
+    carrying the full old shape — ERR trap, no signal traps, bare `exit 1` — that version
+    was green, which made it evidence for nothing.
+
+    Between commands there is no failing command for ERR to catch. Without a signal trap
+    bash takes the default action and dies where it stands, leaving production on the
+    half-swapped colour. That is the failure this test exists to see.
     """
-    # Fire the signal from inside the post-swap proxy check: Apache has been repointed by
-    # then, so there is real state to unwind.
-    killer = box.bin / "kill-me"
-    _write_exec(killer, "#!/usr/bin/env bash\nkill -TERM $PPID\nexit 0\n")
-    curl = box.bin / "curl"
-    body = curl.read_text(encoding="utf-8").replace(
-        'printf \'%s\' "$code"',
-        'case "$url" in *127.0.0.1/readyz*) kill -TERM "$PPID" ;; esac\nprintf \'%s\' "$code"',
+    _write_exec(
+        box.bin / "sleep",
+        "#!/usr/bin/env bash\n"
+        "# `sleep 2` runs only after the Apache reload; the health loop uses `sleep 5`.\n"
+        '[ "$1" = 2 ] && kill -TERM "$PPID"\n'
+        "exit 0\n",
     )
-    _write_exec(curl, body)
 
     result = box.run()
 
@@ -334,11 +425,11 @@ def test_no_bare_exit_1_survives_in_the_script() -> None:
     `... || { log "FATAL"; exit 1; }` would reintroduce exactly core#603, and would pass
     every scenario above that does not happen to exercise its line.
     """
-    lines = SCRIPT.read_text(encoding="utf-8").splitlines()
-    offenders = [
+    code = [
         line.strip()
-        for line in lines
-        if "exit 1;" in line or line.rstrip().endswith("exit 1")
+        for line in SCRIPT.read_text(encoding="utf-8").splitlines()
+        if not line.strip().startswith("#")  # the header *documents* the bad pattern
     ]
+    offenders = [line for line in code if "exit 1;" in line or line.rstrip().endswith("exit 1")]
     assert len(offenders) == 1, f"expected only fatal() to exit 1, found: {offenders}"
     assert offenders[0].startswith("fatal()"), offenders[0]

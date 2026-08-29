@@ -63,10 +63,18 @@ _INSTALLED_SNIPPET = (
     "for d in m.distributions() if d.metadata['Name']}))"
 )
 
-# The exact chain `datanika/datanika.py` imports to mount /mcp. Kept as the
-# submodules rather than the top-level package because the observed failure was
-# `No module named 'mcp.server.fastmcp'`, raised from inside `datanika_mcp.server`
-# — importing only the top-level package can succeed while the mount still fails.
+# The exact chain `datanika/datanika.py` imports to mount /mcp.
+#
+# ⚠️ The SUBMODULES are load-bearing, and this is measured rather than argued.
+# Against a real image carrying mcp 2.1.1:
+#
+#     import datanika_mcp                                  -> SUCCEEDS
+#     from datanika_mcp.server import make_remote_transport -> ModuleNotFoundError:
+#         No module named 'mcp.server.fastmcp'
+#
+# So a probe that checked only the top-level package would have gone GREEN on the
+# exact image that broke production. The failure is raised from inside
+# `datanika_mcp.server`, which is why the chain has to be walked.
 _MCP_IMPORT_SNIPPET = (
     "import datanika_mcp;"
     "from datanika_mcp.client import DatanikaClient;"
@@ -136,6 +144,16 @@ def pin_drift(
     return drift
 
 
+def last_line(text: str) -> str:
+    """The final non-empty stdout line.
+
+    Anything the interpreter emits ahead of our own `print` (a deprecation
+    notice, a config warning) would otherwise be parsed as the answer.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-1].strip() if lines else ""
+
+
 def run_in_image(image: str, argv: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "run", "--rm", "--network", "none", image, *argv],
@@ -177,7 +195,7 @@ def main() -> int:
     print("[A] datanika_mcp import chain")
     result = run_in_image(args.image, [*py, "-c", _MCP_IMPORT_SNIPPET])
     if result.returncode == 0:
-        print(f"    OK — datanika_mcp imports; mcp version {result.stdout.strip()}")
+        print(f"    OK — datanika_mcp imports; mcp version {last_line(result.stdout)}")
     else:
         tail = (result.stderr or result.stdout).strip().splitlines()
         detail = tail[-1] if tail else "(no output)"
@@ -235,7 +253,8 @@ def main() -> int:
             failures.append(f"C: could not enumerate installed packages: {result.stderr.strip()}")
             print("    FAIL — could not enumerate installed packages")
         else:
-            installed = {normalize(k): v for k, v in json.loads(result.stdout).items()}
+            raw = json.loads(last_line(result.stdout))
+            installed = {normalize(k): v for k, v in raw.items()}
             drift = pin_drift(locked, installed)
             compared = len(set(locked) & set(installed))
             print(f"    lock names {len(locked)}, image has {len(installed)}, compared {compared}")

@@ -84,7 +84,7 @@ PROMETHEUS = MONITORING / "prometheus.yml"
 # deleted. The bug can neither be forgotten nor silently repaired.
 KNOWN_VIOLATIONS = {
     ("blip", "app-unhealthy"): (
-        "core#604 — `max(up{job=~\"datanika-app(-b)?\"}) == 0` is a filtering "
+        'core#604 — `max(up{job=~"datanika-app(-b)?"}) == 0` is a filtering '
         "expression with for: 30s against a 60s window + 30s group interval, so "
         "one failed scrape pages critical. #600 fixed the two probe rules with "
         "this exact shape and left this one behind"
@@ -96,18 +96,41 @@ KNOWN_VIOLATIONS = {
 }
 
 _UNIT_SECONDS = {
-    "s": 1, "sec": 1, "secs": 1, "second": 1, "seconds": 1,
-    "m": 60, "min": 60, "mins": 60, "minute": 60, "minutes": 60,
-    "h": 3600, "hour": 3600, "hours": 3600,
-    "d": 86400, "day": 86400, "days": 86400,
-    "w": 604800, "week": 604800, "weeks": 604800,
+    "s": 1,
+    "sec": 1,
+    "secs": 1,
+    "second": 1,
+    "seconds": 1,
+    "m": 60,
+    "min": 60,
+    "mins": 60,
+    "minute": 60,
+    "minutes": 60,
+    "h": 3600,
+    "hour": 3600,
+    "hours": 3600,
+    "d": 86400,
+    "day": 86400,
+    "days": 86400,
+    "w": 604800,
+    "week": 604800,
+    "weeks": 604800,
 }
 
 # Aggregations that genuinely accumulate across samples in their range.
 _RANGE_AGGREGATIONS = (
-    "count_over_time", "sum_over_time", "avg_over_time", "min_over_time",
-    "max_over_time", "stddev_over_time", "quantile_over_time",
-    "increase", "rate", "irate", "delta", "idelta",
+    "count_over_time",
+    "sum_over_time",
+    "avg_over_time",
+    "min_over_time",
+    "max_over_time",
+    "stddev_over_time",
+    "quantile_over_time",
+    "increase",
+    "rate",
+    "irate",
+    "delta",
+    "idelta",
 )
 
 # A duration claimed as the *condition's* duration, e.g. "has failed for 5
@@ -178,7 +201,8 @@ class Rule:
         self.query_text = self.expr or self.raw_sql
         self.window = _seconds(
             (self.query_nodes[0].get("relativeTimeRange") or {}).get("from")
-            if self.query_nodes else None,
+            if self.query_nodes
+            else None,
             default=0.0,
         )
         annotations = raw.get("annotations") or {}
@@ -212,9 +236,7 @@ def _rules_from(doc: dict) -> list[Rule]:
 
 def _scrape_interval(prom: dict, job_name: str | None = None) -> float:
     """Derived, not restated — a per-job override wins over the global."""
-    global_interval = _seconds(
-        (prom.get("global") or {}).get("scrape_interval"), default=15.0
-    )
+    global_interval = _seconds((prom.get("global") or {}).get("scrape_interval"), default=15.0)
     if job_name is None:
         return global_interval
     for job in prom.get("scrape_configs", []):
@@ -295,6 +317,34 @@ def _is_filtering(rule: Rule) -> bool:
     return bool(re.search(r"(==|!=|>=|<=|>|<)", stripped))
 
 
+def _evaluate(kind: str | None, value: float, params: list[float]) -> bool | None:
+    """Can a Grafana threshold evaluator ever be true for this constant value?
+
+    `None` means "not a comparison this understands" — the caller skips it
+    rather than guessing, because a wrong guess here fails a rule that is fine.
+    """
+    try:
+        if kind == "gt":
+            return value > params[0]
+        if kind == "gte":
+            return value >= params[0]
+        if kind == "lt":
+            return value < params[0]
+        if kind == "lte":
+            return value <= params[0]
+        if kind == "eq":
+            return value == params[0]
+        if kind == "ne":
+            return value != params[0]
+        if kind == "within_range":
+            return params[0] < value < params[1]
+        if kind == "outside_range":
+            return value < params[0] or value > params[1]
+    except IndexError:
+        return None
+    return None
+
+
 def _mark(kind: str, rule: Rule):
     """Attach the xfail marker for a filed-but-unfixed rule."""
     reason = KNOWN_VIOLATIONS.get((kind, rule.uid))
@@ -339,9 +389,7 @@ def test_the_config_actually_parsed():
 class TestBlipArithmetic:
     """A single failed sample must not be able to page anyone."""
 
-    @pytest.mark.parametrize(
-        "rule", [_mark("blip", r) for r in FILTERING_RULES]
-    )
+    @pytest.mark.parametrize("rule", [_mark("blip", r) for r in FILTERING_RULES])
     def test_single_sample_cannot_reach_firing(self, rule: Rule):
         if _encodes_duration_in_query(rule, GLOBAL_SCRAPE):
             return  # duration lives in the query; `for: 0s` is correct there
@@ -382,9 +430,7 @@ class TestAnnotationForAgreement:
 
         query = rule.query_text
         threshold_params = {
-            str(p)
-            for evaluator in rule.thresholds
-            for p in (evaluator.get("params") or [])
+            str(p) for evaluator in rule.thresholds for p in (evaluator.get("params") or [])
         }
 
         for number, unit in claims:
@@ -396,15 +442,14 @@ class TestAnnotationForAgreement:
             literal = number.rstrip("0").rstrip(".") if "." in number else number
             in_query = (
                 re.search(rf"\b{re.escape(literal)}\s*{unit[0].lower()}\b", query)
-                or re.search(rf"\b{re.escape(literal)}\s+{re.escape(unit)}\b",
-                             query, re.IGNORECASE)
+                or re.search(rf"\b{re.escape(literal)}\s+{re.escape(unit)}\b", query, re.IGNORECASE)
                 or re.search(rf"(?<![\w.]){re.escape(literal)}(?![\w.])", query)
                 or literal in threshold_params
             )
             if in_query:
                 continue
 
-            assert False, (
+            raise AssertionError(
                 f"{rule.uid} ({rule.title!r}) tells the on-call a duration that "
                 f"exists nowhere in the rule.\n"
                 f"    annotation claims : {number} {unit} "
@@ -441,9 +486,7 @@ def _route_violations(policy_doc: dict) -> list[str]:
         for route, parent, _ in _walk_routes(policy.get("routes"), root):
             if "group_wait" not in route:
                 continue
-            if _seconds(route["group_wait"]) >= _seconds(
-                parent.get("group_wait"), default=30.0
-            ):
+            if _seconds(route["group_wait"]) >= _seconds(parent.get("group_wait"), default=30.0):
                 continue
             if "group_interval" in route:
                 continue
@@ -498,11 +541,7 @@ def _orphan_jobs(rules: list[Rule], prom: dict) -> list[str]:
     for rule in rules:
         for op, pattern in re.findall(r'job\s*(=~|=)\s*"([^"]+)"', rule.expr):
             matcher = re.compile(f"^{pattern}$") if op == "=~" else None
-            hit = (
-                any(matcher.match(j) for j in jobs if j)
-                if matcher
-                else pattern in jobs
-            )
+            hit = any(matcher.match(j) for j in jobs if j) if matcher else pattern in jobs
             if not hit:
                 missing.append(f"  {rule.uid}: job{op}{pattern!r}")
     return missing
@@ -532,8 +571,7 @@ class TestReferentialIntegrity:
         missing = _orphan_instances(ALL_RULES, PROM_DOC)
         assert not missing, (
             "Alert rules reference probe instances that `prometheus.yml` never "
-            "scrapes, so they can never fire and look identical to healthy:\n"
-            + "\n".join(missing)
+            "scrapes, so they can never fire and look identical to healthy:\n" + "\n".join(missing)
         )
 
     def test_every_referenced_job_is_a_configured_job(self):
@@ -579,19 +617,10 @@ class TestThresholdSatisfiability:
         for evaluator in rule.thresholds:
             kind = evaluator.get("type")
             params = [float(p) for p in (evaluator.get("params") or [])]
-            satisfied = {
-                "gt": lambda: value > params[0],
-                "gte": lambda: value >= params[0],
-                "lt": lambda: value < params[0],
-                "lte": lambda: value <= params[0],
-                "eq": lambda: value == params[0],
-                "ne": lambda: value != params[0],
-                "within_range": lambda: params[0] < value < params[1],
-                "outside_range": lambda: value < params[0] or value > params[1],
-            }.get(kind)
+            satisfied = _evaluate(kind, value, params)
             if satisfied is None:
                 continue
-            assert satisfied(), (
+            assert satisfied, (
                 f"{rule.uid} ({rule.title!r}) can never fire.\n"
                 f"    expr        : {rule.expr}\n"
                 f"    always value: {value:g} (the expression filters, so the "
@@ -678,9 +707,7 @@ def _synthetic(
                 "model": {
                     "type": "threshold",
                     "expression": "B",
-                    "conditions": [
-                        {"evaluator": {"type": threshold[0], "params": threshold[1]}}
-                    ],
+                    "conditions": [{"evaluator": {"type": threshold[0], "params": threshold[1]}}],
                 },
             },
         ],
@@ -764,9 +791,7 @@ class TestTheLintCanFail:
             },
         )
         with pytest.raises(AssertionError, match="exists nowhere in the rule"):
-            TestAnnotationForAgreement().test_prose_duration_matches_something_real(
-                rule
-            )
+            TestAnnotationForAgreement().test_prose_duration_matches_something_real(rule)
 
     def test_annotation_check_accepts_prose_that_matches_for(self):
         rule = _synthetic(
@@ -792,9 +817,7 @@ class TestTheLintCanFail:
         """
         rule = _synthetic(
             for_="30s",
-            annotations={
-                "description": "More than 5 uploads failed in the last 15 minutes."
-            },
+            annotations={"description": "More than 5 uploads failed in the last 15 minutes."},
         )
         TestAnnotationForAgreement().test_prose_duration_matches_something_real(rule)
 
@@ -870,9 +893,7 @@ class TestTheLintCanFail:
             "scrape_configs": [
                 {
                     "job_name": "blackbox-http",
-                    "static_configs": [
-                        {"targets": ["https://app.datanika.io/healthz"]}
-                    ],
+                    "static_configs": [{"targets": ["https://app.datanika.io/healthz"]}],
                 }
             ]
         }
@@ -884,9 +905,7 @@ class TestTheLintCanFail:
             "scrape_configs": [
                 {
                     "job_name": "blackbox-http",
-                    "static_configs": [
-                        {"targets": ["https://app.datanika.io/healthz"]}
-                    ],
+                    "static_configs": [{"targets": ["https://app.datanika.io/healthz"]}],
                 }
             ]
         }
@@ -925,9 +944,7 @@ class TestTheLintCanFail:
             "scrape_configs": [
                 {
                     "job_name": "blackbox-http",
-                    "static_configs": [
-                        {"targets": ["https://app.datanika.io/healthz"]}
-                    ],
+                    "static_configs": [{"targets": ["https://app.datanika.io/healthz"]}],
                 }
             ]
         }
@@ -955,15 +972,11 @@ class TestTheLintCanFail:
     def test_subquery_check_rejects_a_step_that_drifted_from_the_scrape(self):
         rule = _synthetic(expr="count_over_time((probe_success == 0)[2m:30s])")
         with pytest.raises(AssertionError, match="subquery step"):
-            TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(
-                rule
-            )
+            TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(rule)
 
     def test_subquery_check_accepts_the_matching_step(self):
         rule = _synthetic(expr="count_over_time((probe_success == 0)[2m:15s])")
-        TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(
-            rule
-        )
+        TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(rule)
 
     # --- the primitives the parse guard rests on ---------------------------
 

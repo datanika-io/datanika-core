@@ -1,9 +1,27 @@
 """Security tests — file upload MIME type validation, double extensions, zip bombs."""
 
+import base64
+
 import pytest
 
 from datanika.models.user import Organization
 from datanika.services.file_upload_service import FileUploadService
+
+#: A real PHP web shell — a PHP open tag wrapping `system()` on a `$_GET`
+#: parameter — kept base64-encoded so the byte sequence never exists on disk
+#: (core#614). Decode it if you need to read it; do not paste it back.
+#:
+#: Written as a literal, Windows Defender matches it as
+#: `Backdoor:PHP/Perhetshell.B!dha` and **quarantines this file**, turning a
+#: tracked security test into a pending deletion mid-pytest-run. It bit three
+#: departments, cost one of them four reinstalls chasing a phantom broken venv,
+#: and escaped the machine-level exclusions twice by being copied into Docker
+#: build contexts outside the excluded path.
+#:
+#: Encoding it costs the test nothing: `save_file` rejects `shell.php` on the
+#: **extension** and never reads the body, so these bytes document intent rather
+#: than drive the assertion. Enforced by `tests/test_no_malware_signatures.py`.
+PHP_WEBSHELL = base64.b64decode("PD9waHAgc3lzdGVtKCRfR0VUWydjbWQnXSk7ID8+")
 
 
 @pytest.fixture
@@ -33,7 +51,7 @@ class TestDoubleExtensions:
 
     def test_php_hidden_as_json(self, svc):
         with pytest.raises(ValueError, match="Unsupported file type"):
-            svc.save_file(None, 1, "shell.php", b"<?php system($_GET['cmd']); ?>")
+            svc.save_file(None, 1, "shell.php", PHP_WEBSHELL)
 
     def test_dot_env_rejected(self, svc):
         with pytest.raises(ValueError, match="Unsupported file type"):

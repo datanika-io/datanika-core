@@ -328,7 +328,12 @@ jobs:
         if: steps.token.outputs.available == 'true'
         continue-on-error: true
         run: |
-          python core/scripts/probe_built_image.py \
+          # `python3`, not `python`: this job deliberately does NOT run
+          # actions/setup-python, so bare `python` may not exist on the runner.
+          # The probe is stdlib-only, so the runner's own interpreter is enough —
+          # and every dependency this job does not have is one fewer way for it
+          # to go red for a reason that has nothing to do with the artifact.
+          python3 core/scripts/probe_built_image.py \
             --image datanika-core:probe \
             --lock-pins lock-pins.txt
 

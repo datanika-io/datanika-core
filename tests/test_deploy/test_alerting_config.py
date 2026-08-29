@@ -82,18 +82,13 @@ PROMETHEUS = MONITORING / "prometheus.yml"
 # Rules whose defect is filed and not yet fixed. `strict=True` is load-bearing:
 # when the rule is fixed the case XPASSes, pytest fails, and the entry *must* be
 # deleted. The bug can neither be forgotten nor silently repaired.
-KNOWN_VIOLATIONS = {
-    ("blip", "app-unhealthy"): (
-        'core#604 — `max(up{job=~"datanika-app(-b)?"}) == 0` is a filtering '
-        "expression with for: 30s against a 60s window + 30s group interval, so "
-        "one failed scrape pages critical. #600 fixed the two probe rules with "
-        "this exact shape and left this one behind"
-    ),
-    ("annotation", "app-unhealthy"): (
-        "core#604 — description claims 'for 2 minutes' while `for: 30s`; the "
-        "stale prose #584 left behind, corrected on the other two rules by #600"
-    ),
-}
+# Empty on purpose. Both entries that lived here were core#604's two
+# `app-unhealthy` violations, deleted when that rule was fixed — which is exactly
+# the handoff this dict was designed for: the fix makes them XPASS, `strict=True`
+# fails the suite, and the fixer has to come here. Add an entry only for a defect
+# that is filed and deliberately not being fixed in the same change; never to get
+# a red suite green.
+KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {}
 
 _UNIT_SECONDS = {
     "s": 1,

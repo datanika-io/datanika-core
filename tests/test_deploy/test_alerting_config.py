@@ -43,6 +43,14 @@ The other assertions
   encodes nothing about the system.
 * `TestReferentialIntegrity` — a rule naming an `instance` nobody scrapes can
   never fire, and reads exactly like a rule that is fine.
+
+  ⚠️ This does **not** cover #598's "Also found" item, the `datanika-app` scrape
+  target that has been `down` since the blue/green cutover, and #599's claim
+  that it would is wrong. Both `app` and `app_b` are real services in
+  `docker-compose.yml`; under blue/green exactly one colour runs at a time, so
+  the other target failing to resolve is a **runtime** property and the intended
+  design — `app-unhealthy` collapses the pair with `max()` for precisely that
+  reason. No static check can see it, and one that appeared to would be lying.
 * `TestThresholdSatisfiability` — core#504 shipped `gt [0]` against a series
   whose value is always `0`: unsatisfiable, silently dead for months.
 * `TestScrapeIntervalCoupling` — `[2m:15s]` hardcodes the blackbox scrape
@@ -75,8 +83,16 @@ PROMETHEUS = MONITORING / "prometheus.yml"
 # when the rule is fixed the case XPASSes, pytest fails, and the entry *must* be
 # deleted. The bug can neither be forgotten nor silently repaired.
 KNOWN_VIOLATIONS = {
-    ("blip", "app-unhealthy"): "core#604 — bare `up == 0` filter with for: 30s",
-    ("annotation", "app-unhealthy"): "core#604 — prose says 2 minutes, for: 30s",
+    ("blip", "app-unhealthy"): (
+        "core#604 — `max(up{job=~\"datanika-app(-b)?\"}) == 0` is a filtering "
+        "expression with for: 30s against a 60s window + 30s group interval, so "
+        "one failed scrape pages critical. #600 fixed the two probe rules with "
+        "this exact shape and left this one behind"
+    ),
+    ("annotation", "app-unhealthy"): (
+        "core#604 — description claims 'for 2 minutes' while `for: 30s`; the "
+        "stale prose #584 left behind, corrected on the other two rules by #600"
+    ),
 }
 
 _UNIT_SECONDS = {
@@ -405,34 +421,45 @@ class TestAnnotationForAgreement:
             )
 
 
+def _walk_routes(routes, parent: dict):
+    """Yield (route, parent, inherited) for every route, depth-first."""
+    for route in routes or []:
+        inherited = {**parent, **{k: v for k, v in route.items() if k != "routes"}}
+        yield route, parent, inherited
+        yield from _walk_routes(route.get("routes"), inherited)
+
+
+def _route_violations(policy_doc: dict) -> list[str]:
+    """Routes that declare themselves urgent and then inherit slow batching.
+
+    Extracted as a pure function so `TestTheLintCanFail` can drive the shipping
+    logic with a deliberately broken policy document rather than a copy of it.
+    """
+    failures = []
+    for policy in policy_doc.get("policies", []):
+        root = {k: v for k, v in policy.items() if k != "routes"}
+        for route, parent, _ in _walk_routes(policy.get("routes"), root):
+            if "group_wait" not in route:
+                continue
+            if _seconds(route["group_wait"]) >= _seconds(
+                parent.get("group_wait"), default=30.0
+            ):
+                continue
+            if "group_interval" in route:
+                continue
+            failures.append(
+                f"  route {route.get('matchers')} shortens group_wait to "
+                f"{route['group_wait']} but inherits group_interval="
+                f"{parent.get('group_interval')} from its parent"
+            )
+    return failures
+
+
 class TestRouteCompleteness:
     """A route that shortens `group_wait` must not inherit a long `group_interval`."""
 
-    @staticmethod
-    def _walk(routes, parent: dict):
-        for route in routes or []:
-            inherited = {**parent, **{k: v for k, v in route.items() if k != "routes"}}
-            yield route, parent, inherited
-            yield from TestRouteCompleteness._walk(route.get("routes"), inherited)
-
     def test_urgent_routes_set_their_own_group_interval(self):
-        failures = []
-        for policy in POLICY_DOC.get("policies", []):
-            root = {k: v for k, v in policy.items() if k != "routes"}
-            for route, parent, _ in self._walk(policy.get("routes"), root):
-                if "group_wait" not in route:
-                    continue
-                if _seconds(route["group_wait"]) >= _seconds(
-                    parent.get("group_wait"), default=30.0
-                ):
-                    continue
-                if "group_interval" in route:
-                    continue
-                failures.append(
-                    f"  route {route.get('matchers')} shortens group_wait to "
-                    f"{route['group_wait']} but inherits group_interval="
-                    f"{parent.get('group_interval')} from its parent"
-                )
+        failures = _route_violations(POLICY_DOC)
         assert not failures, (
             "A notification route declared itself urgent and then inherited a "
             "slow batching interval:\n"
@@ -445,24 +472,64 @@ class TestRouteCompleteness:
         )
 
 
+def _configured_targets(prom: dict) -> set[str]:
+    targets: set[str] = set()
+    for job in prom.get("scrape_configs", []):
+        for static in job.get("static_configs") or []:
+            targets.update(static.get("targets") or [])
+    return targets
+
+
+def _orphan_instances(rules: list[Rule], prom: dict) -> list[str]:
+    """Alert rules naming a probe `instance` that `prometheus.yml` never scrapes."""
+    targets = _configured_targets(prom)
+    return [
+        f"  {rule.uid}: instance={instance!r}"
+        for rule in rules
+        for instance in re.findall(r'instance\s*=\s*"([^"]+)"', rule.expr)
+        if instance not in targets
+    ]
+
+
+def _orphan_jobs(rules: list[Rule], prom: dict) -> list[str]:
+    """Alert rules naming a scrape job that `prometheus.yml` does not define."""
+    jobs = {j.get("job_name") for j in prom.get("scrape_configs", [])}
+    missing = []
+    for rule in rules:
+        for op, pattern in re.findall(r'job\s*(=~|=)\s*"([^"]+)"', rule.expr):
+            matcher = re.compile(f"^{pattern}$") if op == "=~" else None
+            hit = (
+                any(matcher.match(j) for j in jobs if j)
+                if matcher
+                else pattern in jobs
+            )
+            if not hit:
+                missing.append(f"  {rule.uid}: job{op}{pattern!r}")
+    return missing
+
+
+def _orphan_scrape_targets(prom: dict, services: set[str]) -> list[str]:
+    """Scrape targets naming a host that is not a compose service."""
+    orphans = []
+    for job in prom.get("scrape_configs", []):
+        for static in job.get("static_configs") or []:
+            for target in static.get("targets") or []:
+                if target.startswith(("http://", "https://")):
+                    continue  # blackbox probe URL, not a scrape host
+                host = target.split(":")[0]
+                if host not in services:
+                    orphans.append(
+                        f"  job {job.get('job_name')!r} scrapes {target!r} "
+                        f"but no compose service is named {host!r}"
+                    )
+    return orphans
+
+
 class TestReferentialIntegrity:
     """A rule watching something nobody scrapes can never fire."""
 
-    @staticmethod
-    def _blackbox_targets(prom: dict) -> set[str]:
-        targets: set[str] = set()
-        for job in prom.get("scrape_configs", []):
-            for static in job.get("static_configs") or []:
-                targets.update(static.get("targets") or [])
-        return targets
-
     def test_every_probed_instance_is_a_configured_target(self):
-        targets = self._blackbox_targets(PROM_DOC)
-        missing = []
-        for rule in ALL_RULES:
-            for instance in re.findall(r'instance\s*=\s*"([^"]+)"', rule.expr):
-                if instance not in targets:
-                    missing.append(f"  {rule.uid}: instance={instance!r}")
+        missing = _orphan_instances(ALL_RULES, PROM_DOC)
         assert not missing, (
             "Alert rules reference probe instances that `prometheus.yml` never "
             "scrapes, so they can never fire and look identical to healthy:\n"
@@ -470,18 +537,7 @@ class TestReferentialIntegrity:
         )
 
     def test_every_referenced_job_is_a_configured_job(self):
-        jobs = {j.get("job_name") for j in PROM_DOC.get("scrape_configs", [])}
-        missing = []
-        for rule in ALL_RULES:
-            for op, pattern in re.findall(r'job\s*(=~|=)\s*"([^"]+)"', rule.expr):
-                matcher = re.compile(f"^{pattern}$") if op == "=~" else None
-                hit = (
-                    any(matcher.match(j) for j in jobs if j)
-                    if matcher
-                    else pattern in jobs
-                )
-                if not hit:
-                    missing.append(f"  {rule.uid}: job{op}{pattern!r}")
+        missing = _orphan_jobs(ALL_RULES, PROM_DOC)
         assert not missing, (
             "Alert rules reference scrape jobs that do not exist in "
             "`prometheus.yml`:\n" + "\n".join(missing)
@@ -490,23 +546,15 @@ class TestReferentialIntegrity:
     def test_every_scrape_target_is_a_real_compose_service(self):
         compose = _load(ROOT / "docker-compose.yml")
         services = set(compose.get("services") or {})
-        orphans = []
-        for job in PROM_DOC.get("scrape_configs", []):
-            for static in job.get("static_configs") or []:
-                for target in static.get("targets") or []:
-                    if target.startswith(("http://", "https://")):
-                        continue  # blackbox probe URL, not a scrape host
-                    host = target.split(":")[0]
-                    if host not in services:
-                        orphans.append(
-                            f"  job {job.get('job_name')!r} scrapes {target!r} "
-                            f"but no compose service is named {host!r}"
-                        )
+        orphans = _orphan_scrape_targets(PROM_DOC, services)
         assert not orphans, (
             "`prometheus.yml` scrapes hosts that no longer exist in "
-            "`docker-compose.yml`. A permanently-down target is the noise that "
-            "makes a real down target unremarkable (core#598 'Also found'):\n"
-            + "\n".join(orphans)
+            "`docker-compose.yml`. A scrape target naming a service that was "
+            "renamed or removed is permanently down, and a permanently-down "
+            "target is the noise that makes a real one unremarkable.\n"
+            "NB this does NOT cover the `datanika-app` target from #598 'Also "
+            "found' — see the module docstring; that one is a runtime property "
+            "of blue/green and is by design:\n" + "\n".join(orphans)
         )
 
 
@@ -573,3 +621,366 @@ class TestScrapeIntervalCoupling:
                 f"interval was retuned, this rule's threshold silently changed "
                 f"meaning; if the step was mistyped, it always was wrong."
             )
+
+
+# ---------------------------------------------------------------------------
+# Negative controls
+# ---------------------------------------------------------------------------
+#
+# core#599: "Each assertion must be demonstrated failing against a deliberately
+# broken copy before it is trusted — this whole family of monitoring bugs is
+# 'green that proves nothing', and a lint that has never failed is another
+# instance of it."
+#
+# So every assertion above is exercised here in BOTH directions: broken input
+# must raise, and the corrected input must not. These call the shipping
+# assertions and the shipping helpers directly — never a reimplementation — so
+# a check that is loosened later loses its own negative control with it.
+#
+# The fixtures are the real 2026-08-29 shapes, read off the config as it stood
+# at the parent of the fix commit (`1f9c269^`), not invented ones.
+
+
+def _synthetic(
+    *,
+    expr: str = 'probe_success{instance="https://app.datanika.io/healthz"} == 0',
+    for_: str = "30s",
+    window: int = 60,
+    interval: str = "30s",
+    threshold: tuple = ("lt", [1]),
+    reducer: str = "last",
+    annotations: dict | None = None,
+    uid: str = "synthetic",
+) -> Rule:
+    """Build one Rule with the shape Grafana provisioning actually produces."""
+    group = {"name": "synthetic-group", "interval": interval}
+    raw = {
+        "uid": uid,
+        "title": f"Synthetic {uid}",
+        "for": for_,
+        "labels": {"severity": "critical"},
+        "annotations": annotations or {},
+        "data": [
+            {
+                "refId": "A",
+                "relativeTimeRange": {"from": window, "to": 0},
+                "datasourceUid": "PBFA97CFB590B2093",
+                "model": {"expr": expr, "refId": "A"},
+            },
+            {
+                "refId": "B",
+                "datasourceUid": "__expr__",
+                "model": {"type": "reduce", "reducer": reducer, "expression": "A"},
+            },
+            {
+                "refId": "C",
+                "datasourceUid": "__expr__",
+                "model": {
+                    "type": "threshold",
+                    "expression": "B",
+                    "conditions": [
+                        {"evaluator": {"type": threshold[0], "params": threshold[1]}}
+                    ],
+                },
+            },
+        ],
+    }
+    return Rule(group, raw)
+
+
+class TestTheLintCanFail:
+    """Each assertion, demonstrated red on broken input and green on the fix."""
+
+    # --- blip arithmetic ---------------------------------------------------
+
+    def test_blip_check_rejects_the_shape_that_paged_four_times(self):
+        """The literal pre-#600 `app-external-down`: filter, for: 30s, 60s window."""
+        rule = _synthetic()  # the defaults ARE the 2026-08-29 shape
+        with pytest.raises(AssertionError, match="debounces nothing"):
+            TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_accepts_the_600_fix(self):
+        """Duration moved into the query, so `for: 0s` is correct there."""
+        rule = _synthetic(
+            expr=(
+                "count_over_time((probe_success"
+                '{instance="https://app.datanika.io/healthz"} == 0)[2m:15s])'
+            ),
+            for_="0s",
+            threshold=("gt", [3]),
+        )
+        TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_rejects_an_aggregation_that_still_needs_one_sample(self):
+        """The trap a naive "does it aggregate?" check walks straight past.
+
+        `count_over_time(...) > 0` is exactly as single-sample triggered as the
+        bare filter it replaced: one failed sample makes the count 1, which is
+        > 0. Reading the aggregation alone would call this fixed.
+        """
+        rule = _synthetic(
+            expr=(
+                "count_over_time((probe_success"
+                '{instance="https://app.datanika.io/healthz"} == 0)[2m:15s])'
+            ),
+            for_="0s",
+            threshold=("gt", [0]),
+        )
+        with pytest.raises(AssertionError, match="debounces nothing"):
+            TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_accepts_a_for_long_enough_to_outlast_the_window(self):
+        """The other legitimate fix: `for` >= window + group interval."""
+        rule = _synthetic(for_="90s")
+        TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_accepts_a_staleness_comparison(self):
+        """`time() - metric > N` cannot be satisfied by any single sample."""
+        rule = _synthetic(
+            expr="time() - datanika_backup_last_success_timestamp_seconds > 90",
+            for_="0s",
+            threshold=("gt", [0]),
+        )
+        TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_filtering_detection_discriminates(self):
+        """If `_is_filtering` collapsed, TestBlipArithmetic would silently empty."""
+        assert _is_filtering(_synthetic(expr="probe_success == 0"))
+        assert _is_filtering(_synthetic(expr='absent(up{job="datanika-app"})'))
+        # A label matcher's `=~` must not be read as a comparison operator.
+        assert not _is_filtering(_synthetic(expr='sum(rate(x{job=~"a|b"}[5m]))'))
+
+    # --- annotation / `for` agreement --------------------------------------
+
+    def test_annotation_check_rejects_prose_naming_a_dead_threshold(self):
+        """The exact drift that misdirected triage on 2026-08-29."""
+        rule = _synthetic(
+            for_="30s",
+            annotations={
+                "description": (
+                    "External blackbox probe to https://app.datanika.io/healthz "
+                    "has failed continuously for 2 minutes."
+                )
+            },
+        )
+        with pytest.raises(AssertionError, match="exists nowhere in the rule"):
+            TestAnnotationForAgreement().test_prose_duration_matches_something_real(
+                rule
+            )
+
+    def test_annotation_check_accepts_prose_that_matches_for(self):
+        rule = _synthetic(
+            for_="2m",
+            annotations={"description": "has failed continuously for 2 minutes."},
+        )
+        TestAnnotationForAgreement().test_prose_duration_matches_something_real(rule)
+
+    def test_annotation_check_accepts_a_duration_that_lives_in_the_query(self):
+        """`for: 0s` with the duration in the expression is #600's shape."""
+        rule = _synthetic(
+            expr="time() - datanika_backup_last_success_timestamp_seconds > 90",
+            for_="0s",
+            annotations={"description": "No successful backup for 90 seconds."},
+        )
+        TestAnnotationForAgreement().test_prose_duration_matches_something_real(rule)
+
+    def test_annotation_check_ignores_prose_about_the_query_window(self):
+        """Deliberately narrow: "in the last 15 minutes" is not a `for:` claim.
+
+        A duration regex that fired on every time-shaped phrase would make the
+        check unusable, and an unusable check gets relaxed away within a week.
+        """
+        rule = _synthetic(
+            for_="30s",
+            annotations={
+                "description": "More than 5 uploads failed in the last 15 minutes."
+            },
+        )
+        TestAnnotationForAgreement().test_prose_duration_matches_something_real(rule)
+
+    # --- route completeness ------------------------------------------------
+
+    def test_route_check_rejects_the_2026_08_29_policy(self):
+        broken = {
+            "policies": [
+                {
+                    "group_wait": "30s",
+                    "group_interval": "5m",
+                    "repeat_interval": "4h",
+                    "routes": [
+                        {
+                            "matchers": ["severity = critical"],
+                            "group_wait": "10s",
+                            "repeat_interval": "1h",
+                        }
+                    ],
+                }
+            ]
+        }
+        assert _route_violations(broken), (
+            "the urgent route inherits group_interval: 5m and the check missed it"
+        )
+
+    def test_route_check_accepts_a_route_that_sets_its_own_interval(self):
+        fixed = {
+            "policies": [
+                {
+                    "group_wait": "30s",
+                    "group_interval": "5m",
+                    "routes": [
+                        {
+                            "matchers": ["severity = critical"],
+                            "group_wait": "10s",
+                            "group_interval": "1m",
+                        }
+                    ],
+                }
+            ]
+        }
+        assert not _route_violations(fixed)
+
+    def test_route_check_reaches_nested_routes(self):
+        """A violation one level down must not be invisible."""
+        nested = {
+            "policies": [
+                {
+                    "group_wait": "30s",
+                    "group_interval": "5m",
+                    "routes": [
+                        {
+                            "matchers": ["team = infra"],
+                            "routes": [
+                                {
+                                    "matchers": ["severity = critical"],
+                                    "group_wait": "5s",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+        assert _route_violations(nested)
+
+    # --- referential integrity ---------------------------------------------
+
+    def test_instance_check_rejects_an_unscraped_instance(self):
+        rule = _synthetic(expr='probe_success{instance="https://gone.example/"} == 0')
+        prom = {
+            "scrape_configs": [
+                {
+                    "job_name": "blackbox-http",
+                    "static_configs": [
+                        {"targets": ["https://app.datanika.io/healthz"]}
+                    ],
+                }
+            ]
+        }
+        assert _orphan_instances([rule], prom)
+
+    def test_instance_check_accepts_a_scraped_instance(self):
+        rule = _synthetic()
+        prom = {
+            "scrape_configs": [
+                {
+                    "job_name": "blackbox-http",
+                    "static_configs": [
+                        {"targets": ["https://app.datanika.io/healthz"]}
+                    ],
+                }
+            ]
+        }
+        assert not _orphan_instances([rule], prom)
+
+    def test_job_check_rejects_an_undefined_job(self):
+        rule = _synthetic(expr='up{job="datanika-app-c"} == 0')
+        prom = {"scrape_configs": [{"job_name": "datanika-app"}]}
+        assert _orphan_jobs([rule], prom)
+
+    def test_job_check_resolves_a_regex_matcher(self):
+        """`job=~"datanika-app(-b)?"` matches real jobs and must not be flagged."""
+        rule = _synthetic(expr='max(up{job=~"datanika-app(-b)?"}) == 0')
+        prom = {
+            "scrape_configs": [
+                {"job_name": "datanika-app"},
+                {"job_name": "datanika-app-b"},
+            ]
+        }
+        assert not _orphan_jobs([rule], prom)
+
+    def test_scrape_target_check_rejects_a_renamed_service(self):
+        prom = {
+            "scrape_configs": [
+                {
+                    "job_name": "cadvisor",
+                    "static_configs": [{"targets": ["cadvisor-old:8080"]}],
+                }
+            ]
+        }
+        assert _orphan_scrape_targets(prom, {"cadvisor", "app"})
+
+    def test_scrape_target_check_ignores_blackbox_probe_urls(self):
+        """A probe URL is a parameter, not a host to resolve against compose."""
+        prom = {
+            "scrape_configs": [
+                {
+                    "job_name": "blackbox-http",
+                    "static_configs": [
+                        {"targets": ["https://app.datanika.io/healthz"]}
+                    ],
+                }
+            ]
+        }
+        assert not _orphan_scrape_targets(prom, set())
+
+    # --- threshold satisfiability ------------------------------------------
+
+    def test_threshold_check_rejects_the_core_504_shape(self):
+        """A `== 0` filtered series compared `gt [0]` can never be true."""
+        rule = _synthetic(expr="datanika_upload_failures == 0", threshold=("gt", [0]))
+        with pytest.raises(AssertionError, match="can never fire"):
+            TestThresholdSatisfiability().test_threshold_can_be_satisfied(rule)
+
+    def test_threshold_check_accepts_a_satisfiable_threshold(self):
+        rule = _synthetic(expr="probe_success == 0", threshold=("lt", [1]))
+        TestThresholdSatisfiability().test_threshold_can_be_satisfied(rule)
+
+    def test_threshold_check_accepts_absent_against_gt_zero(self):
+        """`absent()` yields 1 when the metric is missing, so `gt [0]` is right."""
+        rule = _synthetic(expr='absent(up{job="datanika-app"})', threshold=("gt", [0]))
+        TestThresholdSatisfiability().test_threshold_can_be_satisfied(rule)
+
+    # --- subquery / scrape coupling ----------------------------------------
+
+    def test_subquery_check_rejects_a_step_that_drifted_from_the_scrape(self):
+        rule = _synthetic(expr="count_over_time((probe_success == 0)[2m:30s])")
+        with pytest.raises(AssertionError, match="subquery step"):
+            TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(
+                rule
+            )
+
+    def test_subquery_check_accepts_the_matching_step(self):
+        rule = _synthetic(expr="count_over_time((probe_success == 0)[2m:15s])")
+        TestScrapeIntervalCoupling().test_subquery_step_matches_the_scrape_interval(
+            rule
+        )
+
+    # --- the primitives the parse guard rests on ---------------------------
+
+    def test_duration_parsing_covers_the_grafana_forms(self):
+        assert _seconds("30s") == 30
+        assert _seconds("2m") == 120
+        assert _seconds("0s") == 0
+        assert _seconds(60) == 60  # `relativeTimeRange.from` is a bare int
+        assert _seconds(None, default=7.5) == 7.5
+        with pytest.raises(ValueError):
+            _seconds("soon")
+
+    def test_scrape_interval_prefers_a_per_job_override(self):
+        prom = {
+            "global": {"scrape_interval": "15s"},
+            "scrape_configs": [{"job_name": "slow", "scrape_interval": "60s"}],
+        }
+        assert _scrape_interval(prom) == 15
+        assert _scrape_interval(prom, "slow") == 60
+        assert _scrape_interval(prom, "absent-job") == 15

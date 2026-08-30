@@ -349,6 +349,49 @@ groups:
           description: "Container {{ $labels.name }} has restarted more than 3 times in the last hour."
 
       # --- Container High Memory ---
+      # core#622 -- this rule had TWO independent defects and fired a false warning
+      # on the 2026-08-29 promotion deploy. Both are fixed here; either alone is worse
+      # than useless (regex-only fires on both colours on the wrong metric; metric-only
+      # stays blind for as long as green serves).
+      #
+      # 1. BLUE/GREEN BLIND. `datanika-(app|celery)` does not match `datanika-app-b`,
+      #    and PromQL anchors the regex, so the green colour was never in the series
+      #    set at all. Prod served from green for five straight weeks. Measured on the
+      #    box 2026-08-30:
+      #      count_over_time(...{name=~"datanika-(app|celery)"}[30d:1h])
+      #        datanika-celery 707+13 | datanika-app 13+1 | datanika-app-b ABSENT
+      #      count_over_time(...{name=~"datanika-(app(-b)?|celery)"}[30d:1h])
+      #        datanika-app-b 707   <-- 707 hourly buckets the rule could not see
+      #    app-container-down and container-down already carry `(-b)?`; this rule was
+      #    missed. A rule that cannot fire looks exactly like a healthy system.
+      #
+      # 2. WRONG METRIC. container_memory_usage_bytes counts reclaimable page cache;
+      #    container_memory_working_set_bytes (what `docker stats` reports) does not.
+      #    At the moment it fired, 2026-08-29 20:33:50Z:
+      #      usage       1,509,556,224  ->  0.64% OVER the old 1.5GB threshold
+      #      working set 1,318,297,600  ->  12%   UNDER it
+      #    with 3.5GB available on the host. There was no memory pressure at all.
+      #
+      # THRESHOLD is taken from 30 days of recorded working set, not chosen by feel:
+      #      datanika-app     max 1,500,459,008  (1.500 GB)
+      #      datanika-app-b   max 1,315,770,368  (1.316 GB)
+      #      datanika-celery  max   640,794,624  (0.641 GB)
+      #    2GB sits ~33% above that ceiling. core#622 suggested 1.6GB, which is only
+      #    6.6% above it -- still inside normal range, so it would flap again. Flapping
+      #    is the fault being fixed, not an acceptable cost of fixing it.
+      #
+      # There is NO cgroup memory limit on these containers, so there is no OOM cliff
+      # to sit beneath -- the backstop is host memory (8.46GB total, 3.7GB available).
+      # Verified 2026-08-30 four ways: `docker inspect` Memory=0, the container own
+      # memory.max=max, the host-side docker-<id>.scope memory.max=max, and cadvisor
+      # container_spec_memory_limit_bytes=0. The `1.875GiB` shown in the Limit column
+      # of `docker stats` is NOT a cgroup ceiling -- do not tune against it.
+      #
+      # `for: 5m` must stay >= query window (60s) + group interval (30s) or the blip
+      # lint in tests/test_deploy/test_alerting_config.py fails. It also covers the
+      # blue/green swap, where both colours are briefly resident at ~1.3GB each: each
+      # is individually under 2GB, so a swap cannot trip this rule. Keep the threshold
+      # per-container -- a sum across colours would destroy that property.
       - uid: container-high-memory
         title: Container High Memory
         condition: C
@@ -361,7 +404,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'container_memory_usage_bytes{name=~"datanika-(app|celery)"} > 1.5e+9'
+              expr: 'container_memory_working_set_bytes{name=~"datanika-(app(-b)?|celery)"} > 2e+9'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -390,8 +433,8 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Container {{ $labels.name }} memory over 1.5GB"
-          description: "Container {{ $labels.name }} is using more than 1.5GB of memory."
+          summary: "Container {{ $labels.name }} working set over 2GB"
+          description: "Container {{ $labels.name }} has held a working set above 2GB for more than 5 minutes. Working set excludes reclaimable page cache, so this is resident pressure rather than cache. The 30-day observed ceiling is 1.50GB on the app and 0.64GB on celery, and these containers carry no cgroup memory limit -- the real backstop is host memory. Check `docker stats` and node_memory_MemAvailable_bytes before restarting anything. Background: core#622."
 
   - orgId: 1
     name: Application Alerts

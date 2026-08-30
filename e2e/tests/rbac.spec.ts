@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/auth";
+import { test, expect, ORG_A_READONLY_KEY } from "../fixtures/auth";
 
 /**
  * API-key SCOPE enforcement.
@@ -35,16 +35,30 @@ function mustEnv(name: string): string {
 test.describe("API key scope enforcement: read-only key is denied writes @slow", () => {
   test("read-only key can GET but cannot DELETE/PUT/POST-write a connection", async ({
     request,
+    apiBudget,
   }) => {
     const readOnlyKey = mustEnv("DATANIKA_E2E_API_KEY_READONLY");
     const connId = Number(mustEnv("DATANIKA_E2E_CONNECTION_ID")); // org A's own connection
     const auth = { Authorization: `Bearer ${readOnlyKey}` };
 
-    // Allowed — the key holds `connections:read`.
-    const read = await request.get(`/api/v1/connections/${connId}`, { headers: auth });
+    // core#699 — budgeted like every other API call in the suite. The denied
+    // writes below never reach the limiter (a missing scope 401s in
+    // `authenticate_api_key`, before the rate-limit check), so this key's real
+    // spend is only the successful GETs; counting all six is deliberately
+    // conservative. What matters is that a 429 can never be mistaken for the
+    // 401/403 this spec is asserting.
+    const read = await apiBudget.fetch(request, ORG_A_READONLY_KEY, `/api/v1/connections/${connId}`, {
+      method: "GET",
+      headers: auth,
+      label: "read-only key GETs its own connection",
+    });
     expect(read.status(), "read-only key should be allowed to GET its own connection").toBe(200);
 
-    const list = await request.get(`/api/v1/connections`, { headers: auth });
+    const list = await apiBudget.fetch(request, ORG_A_READONLY_KEY, `/api/v1/connections`, {
+      method: "GET",
+      headers: auth,
+      label: "read-only key lists connections",
+    });
     expect(list.status(), "read-only key should be allowed to list connections").toBe(200);
 
     // Denied — every write endpoint requires `connections:write`, which the key
@@ -60,7 +74,12 @@ test.describe("API key scope enforcement: read-only key is denied writes @slow",
       { method: "POST" as const, url: `/api/v1/connections/${connId}/test` },
     ];
     for (const w of writes) {
-      const res = await request.fetch(w.url, { method: w.method, headers: auth, data: w.data });
+      const res = await apiBudget.fetch(request, ORG_A_READONLY_KEY, w.url, {
+        method: w.method,
+        headers: auth,
+        data: w.data,
+        label: `${w.method} ${w.url} with a read-only key`,
+      });
       const status = res.status();
       expect(
         [200, 201, 202, 204].includes(status),
@@ -70,7 +89,11 @@ test.describe("API key scope enforcement: read-only key is denied writes @slow",
     }
 
     // The connection must still exist — the denied DELETE must not have committed.
-    const after = await request.get(`/api/v1/connections/${connId}`, { headers: auth });
+    const after = await apiBudget.fetch(request, ORG_A_READONLY_KEY, `/api/v1/connections/${connId}`, {
+      method: "GET",
+      headers: auth,
+      label: "connection survives the denied writes",
+    });
     expect(after.status(), "connection should survive the denied writes").toBe(200);
   });
 });

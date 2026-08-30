@@ -262,18 +262,48 @@ class TestTransferOwnership:
     def test_the_owner_count_never_dips(self, svc, db_session, org, owner, editor):
         """AC10 — asserted *inside* the transaction, not only after it.
 
-        A two-step implementation (demote, then promote) satisfies the
-        after-the-fact assertion while transiently orphaning the org, which is
-        the state this whole spec exists to eliminate. The session is not
-        committed between the two writes, so a mid-flight read is the only way
-        to tell the two apart.
+        ⚠️ **The obvious version of this test cannot fail.** Reading the count
+        twice *after* `transfer_ownership` returns sees the finished state both
+        times, so a demote-then-promote implementation — which transiently
+        leaves the org with zero owners, the exact state this spec exists to
+        eliminate — passes it. Not hypothetical: that mutation survived the
+        first draft of this test untouched, and only the mutation run said so.
+
+        So the count is sampled on an **independent channel**: an `after_flush`
+        listener, which fires once per flush inside the call. A single-flush
+        implementation produces samples that are never zero; anything that
+        flushes between the two writes produces a zero and is caught. The
+        `assert samples` line matters too — a harness that never fired would
+        otherwise pass by vacuity.
         """
-        seen = []
-        svc.transfer_ownership(db_session, org.id, editor.user_id, actor_user_id=owner.user_id)
-        seen.append(_owner_count(db_session, org.id))
-        db_session.flush()
-        seen.append(_owner_count(db_session, org.id))
-        assert seen == [1, 1]
+        from sqlalchemy import event, func, select
+
+        samples: list[int] = []
+
+        def sample(session, _flush_context):
+            samples.append(
+                session.connection()
+                .execute(
+                    select(func.count())
+                    .select_from(Membership)
+                    .where(
+                        Membership.org_id == org.id,
+                        Membership.role == MemberRole.OWNER,
+                        Membership.deleted_at.is_(None),
+                    )
+                )
+                .scalar_one()
+            )
+
+        event.listen(db_session, "after_flush", sample)
+        try:
+            svc.transfer_ownership(db_session, org.id, editor.user_id, actor_user_id=owner.user_id)
+        finally:
+            event.remove(db_session, "after_flush", sample)
+
+        assert samples, "the transfer never flushed - nothing was sampled"
+        assert 0 not in samples, f"the org was transiently ownerless: {samples}"
+        assert _owner_count(db_session, org.id) == 1
 
     def test_an_admin_cannot_transfer_ownership(self, svc, db_session, org, owner, admin, editor):
         """AC11. Otherwise transfer becomes the escalation R1 just closed."""

@@ -1,5 +1,7 @@
 import { test as base, expect, type Page } from "@playwright/test";
 
+import { ApiBudget } from "./api-budget";
+
 /**
  * Test fixtures for Datanika E2E.
  *
@@ -31,6 +33,19 @@ export type Fixtures = {
   testUser: TestUser;
   testConnection: TestConnection;
   loggedInPage: Page;
+};
+
+export type WorkerFixtures = {
+  /**
+   * Shared request budget for the seeded API keys (core#699).
+   *
+   * Worker-scoped on purpose: the `/api/v1/*` rate limit is a **server-side**
+   * resource shared by every spec that uses the same key, and the specs that
+   * spend it (`tenant-isolation`, `tenant-jwt-boundary`, `rbac`, `sso-oidc`)
+   * live in separate files. A per-file tracker would under-count exactly the
+   * way the suite already did, so the tracker has to outlive the file.
+   */
+  apiBudget: ApiBudget;
 };
 
 function mustEnv(name: string): string {
@@ -115,7 +130,14 @@ export async function signUp(
   throw new Error(`signup did not reach the app after 3 attempts (last url: ${lastUrl})`);
 }
 
-export const test = base.extend<Fixtures>({
+export const test = base.extend<Fixtures, WorkerFixtures>({
+  apiBudget: [
+    async ({}, use) => {
+      await use(new ApiBudget());
+    },
+    { scope: "worker" },
+  ],
+
   testUser: async ({}, use) => {
     await use({
       email: mustEnv("DATANIKA_E2E_USER_EMAIL"),
@@ -143,3 +165,5 @@ export const test = base.extend<Fixtures>({
 });
 
 export { expect };
+export { ApiBudget, ApiRateLimitExceeded } from "./api-budget";
+export { ORG_A_KEY, ORG_A_READONLY_KEY, ORG_B_KEY } from "./api-budget";

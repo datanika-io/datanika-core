@@ -7,6 +7,7 @@ from datanika.ui.components.connection_config_fields import type_fields
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
+from datanika.ui.components.secure_input import config_input, config_text_area
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
@@ -79,13 +80,16 @@ def connection_form() -> rx.Component:
                 size="4",
             ),
             rx.text(_t["connections.name"], size="2", weight="bold"),
-            rx.input(
+            # config_input, not rx.input: this is the first text field on the
+            # form, so it is exactly the slot Chrome fills with the saved
+            # username when it pairs against a password input below (core#618).
+            config_input(
+                "name",
                 placeholder=_t["connections.ph_name"],
                 value=ConnectionState.form_name,
                 on_change=ConnectionState.set_form_name,
                 required=True,
                 size="3",
-                width="100%",
             ),
             searchable_select(
                 PICKER_TYPES,
@@ -107,11 +111,13 @@ def connection_form() -> rx.Component:
             ),
             rx.cond(
                 ConnectionState.form_use_raw_json,
-                rx.text_area(
+                # The raw-JSON escape hatch carries the same credentials the
+                # generated fields do, so it gets the same opt-out.
+                config_text_area(
+                    "raw_json",
                     placeholder=_t["connections.ph_raw_json"],
                     value=ConnectionState.form_config,
                     on_change=ConnectionState.set_form_config,
-                    width="100%",
                 ),
             ),
             error_or_quota_callout(ConnectionState),

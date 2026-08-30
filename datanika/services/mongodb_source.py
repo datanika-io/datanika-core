@@ -29,6 +29,47 @@ from pymongo import MongoClient
 
 DEFAULT_BATCH_SIZE = 10_000
 
+#: Where MongoDB looks for the user when the URI does not say.
+#:
+#: The database in a Mongo URI path doubles as the authentication database, so
+#: omitting `authSource` means "the user lives inside the database you are
+#: reading" — which is not where anyone puts it. `MONGO_INITDB_ROOT_USERNAME`,
+#: Atlas and every managed provider create users in `admin` (core#550).
+DEFAULT_AUTH_SOURCE = "admin"
+
+
+def build_connection_uri(config: dict) -> str:
+    """Assemble a MongoDB URI from a stored connection config.
+
+    **Why this is a shared function and not two string literals (core#625).**
+    It was assembled twice — once for the run path, once for Test Connection —
+    and core#550 fixed only the first. The two then disagreed about the same
+    connection, in the direction that does the most damage: **Test Connection
+    reported failure for a configuration whose runs succeeded.** The button
+    that exists to build confidence told the user their working setup was
+    broken, and pointed them at credentials that were already correct.
+
+    Assembling it once is the only version of this fix that stays fixed. A
+    second `f"mongodb://..."` anywhere reopens the drift, and
+    `tests/test_services/test_mongodb_uri.py` asserts there isn't one.
+    """
+    from urllib.parse import quote_plus, urlencode
+
+    host = config.get("host") or "localhost"
+    port = config.get("port") or 27017
+    database = config.get("database") or ""
+    user = config.get("user") or ""
+    password = config.get("password") or ""
+
+    if not user:
+        # An unauthenticated mongod rejects nothing, so sending an authSource
+        # it will ignore would be noise.
+        return f"mongodb://{host}:{port}/{database}"
+
+    auth_source = config.get("auth_source") or DEFAULT_AUTH_SOURCE
+    query = urlencode({"authSource": auth_source})
+    return f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}?{query}"
+
 
 def _normalize_bson_types(value: Any) -> Any:
     """Recursively convert BSON types to JSON-safe primitives.

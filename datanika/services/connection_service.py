@@ -7,6 +7,7 @@ from functools import partial
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import Session
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
@@ -142,6 +143,92 @@ _NON_DB_TYPES = {
     ConnectionType.KAFKA,
     ConnectionType.OPENAPI,
 }
+
+
+# --------------------------------------------------------------------------
+# Why a connection test failed — said out loud, with the secrets taken out
+# --------------------------------------------------------------------------
+#
+# Two defects filed a day apart turned out to be one class (core#608, core#625):
+# a failed Test Connection tells the user nothing about *why*. #608 reached them
+# as Reflex's "An error occurred. Contact the website administrator." because an
+# exception escaped; #625 reached them as "Connection failed — check your
+# credentials and network settings" because `except Exception` caught the cause
+# and threw it away. In #625 the credentials were correct and the advice was
+# actively wrong: the driver had said "Authentication failed against database X",
+# which is the one sentence that would have resolved it.
+#
+# So the fix for #608 could not be another fixed string, or it would have been a
+# fresh instance of the thing it was closing.
+#
+# The reason this was not simply done in the first place is real: driver
+# exceptions quote the connection URI, and the URI contains the password. That
+# is what `_redact_secrets` is for, and why it fails **closed**.
+
+#: Config keys whose values must never appear in a message shown to a user.
+#: Superset of what any one connector stores — a key absent from a config costs
+#: nothing here, and a key missing from this set is a credential disclosure.
+_SECRET_CONFIG_KEYS = frozenset(
+    {
+        "password",
+        "token",
+        "api_key",
+        "access_token",
+        "refresh_token",
+        "client_secret",
+        "developer_token",
+        "aws_secret_access_key",
+        "keyfile_json",
+        "service_account_json",
+        "credentials",
+        "secret",
+    }
+)
+
+#: A driver's reason is one line of context, not a stack trace.
+_MAX_REASON_CHARS = 300
+
+#: Below this length a secret is too short to remove from prose without
+#: shredding it — "a" would turn "authentication failed" into "***uthentic…".
+_MIN_REDACTABLE_SECRET = 4
+
+
+def _redact_secrets(text: str, config: dict) -> str | None:
+    """Strip every secret in `config` out of `text`, or refuse.
+
+    Returns ``None`` when the text cannot be shown safely — a secret too short
+    to substring-replace cleanly. **Fails closed on purpose**: the caller then
+    falls back to the generic message, so the worst case is the old behaviour
+    rather than a password on screen.
+    """
+    for key in _SECRET_CONFIG_KEYS:
+        value = config.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        if len(value) < _MIN_REDACTABLE_SECRET:
+            return None
+        # Both spellings: drivers quote the URI we built, and we percent-encode
+        # the userinfo when building it.
+        for form in (value, quote_plus(value)):
+            text = text.replace(form, "***")
+    return text
+
+
+def _failure_reason(exc: Exception, config: dict) -> str:
+    """The driver's own explanation, redacted and trimmed — or ``""``."""
+    reason = _redact_secrets(str(exc), config)
+    if reason is None:
+        return ""
+    reason = " ".join(reason.split())
+    if len(reason) > _MAX_REASON_CHARS:
+        reason = reason[:_MAX_REASON_CHARS].rstrip() + "…"
+    return reason
+
+
+def describe_connection_failure(exc: Exception, config: dict, fallback: str) -> str:
+    """`fallback`, plus what the driver actually said, when it can be shown."""
+    reason = _failure_reason(exc, config)
+    return f"{fallback}: {reason}" if reason else fallback
 
 
 def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
@@ -384,30 +471,35 @@ class ConnectionService:
 
     @staticmethod
     def _test_mongodb(config: dict) -> tuple[bool, str]:
-        """Test MongoDB connectivity via server_info(). Returns (success, message)."""
+        """Test MongoDB connectivity via server_info(). Returns (success, message).
+
+        The URI comes from `mongodb_source.build_connection_uri` — the same
+        function the run path uses — rather than being assembled here (core#625).
+        It *was* assembled here, and core#550's `authSource` fix landed only on
+        the run path, so this reported failure for connections whose runs
+        succeeded: `server_info()` authenticates for real, and without
+        `authSource` the driver looked for the user inside the database being
+        read instead of in `admin`.
+        """
         try:
             from pymongo import MongoClient
         except ImportError:
             return False, "Driver not installed for mongodb"
 
-        host = config.get("host", "localhost")
-        port = config.get("port", 27017)
-        user = config.get("user", "")
-        password = config.get("password", "")
-        database = config.get("database", "")
+        from datanika.services.mongodb_source import build_connection_uri
 
-        if user:
-            uri = f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}"
-        else:
-            uri = f"mongodb://{host}:{port}/{database}"
+        uri = build_connection_uri(config)
 
         try:
             client = MongoClient(uri, serverSelectionTimeoutMS=5000)
             client.server_info()
             client.close()
             return True, "Connected successfully"
-        except Exception:
-            return False, "Connection failed — check your credentials and network settings"
+        except Exception as exc:
+            logger.warning("MongoDB connection test failed", exc_info=True)
+            return False, describe_connection_failure(
+                exc, config, "Connection failed — check your credentials and network settings"
+            )
 
     @staticmethod
     def _test_file_source(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
@@ -486,10 +578,37 @@ class ConnectionService:
         elif connection_type != ConnectionType.SQLITE:
             connect_args = {"connect_timeout": 5}
 
+        # Build the engine. Every failure here has to come back as a verdict.
+        #
+        # This used to catch `ImportError` alone (core#608). SQLAlchemy raises
+        # `NoSuchModuleError` — an `ArgumentError`, *not* an `ImportError` —
+        # when a URL names a dialect that is not registered, so `databricks`
+        # escaped the service, escaped the Reflex event handler, and the user
+        # got "An error occurred. Contact the website administrator." for a
+        # cloud warehouse: the destination they are most likely evaluating us
+        # on, and an administrator they do not have.
+        #
+        # The line below already had a broad `except Exception`; the line above
+        # it did not, and that asymmetry was the whole bug. Widening to
+        # `(ImportError, NoSuchModuleError)` would have fixed the reported type
+        # and left the next surprise uncaught, which is the same bug again —
+        # `bigquery` proves the point, since its dialect does ship and it
+        # crashed anyway.
         try:
             engine = create_engine(url, connect_args=connect_args)
+        except NoSuchModuleError:
+            return False, (
+                f"No database driver for {connection_type.value} is installed in this build"
+            )
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
+        except Exception as exc:
+            logger.warning("Could not build a %s engine", connection_type.value, exc_info=True)
+            return False, describe_connection_failure(
+                exc,
+                config,
+                f"Could not open a {connection_type.value} connection",
+            )
 
         # Oracle rejects a bare ``SELECT 1`` (ORA-00923) — it needs FROM DUAL.
         probe = "SELECT 1 FROM DUAL" if connection_type == ConnectionType.ORACLE else "SELECT 1"
@@ -499,8 +618,14 @@ class ConnectionService:
             return True, "Connected successfully"
         except ImportError:
             return False, f"Driver not installed for {connection_type.value}"
-        except Exception:
-            return False, "Connection failed — check your credentials and network settings"
+        except Exception as exc:
+            # The driver's own words, secrets removed (core#625). "check your
+            # credentials and network settings" is advice, not information, and
+            # when the credentials are in fact correct it is the wrong advice.
+            logger.warning("Connection test failed for %s", connection_type.value, exc_info=True)
+            return False, describe_connection_failure(
+                exc, config, "Connection failed — check your credentials and network settings"
+            )
         finally:
             engine.dispose()
 

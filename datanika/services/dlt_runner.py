@@ -12,6 +12,7 @@ from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
+from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,9 @@ DEFAULT_GOOGLE_ADS_QUERY = (
 #: `authSource` means "the user lives inside the database you are reading" —
 #: which is not where anyone puts it. `MONGO_INITDB_ROOT_USERNAME`, Atlas and
 #: every managed provider create users in `admin` (core#550).
-DEFAULT_MONGO_AUTH_SOURCE = "admin"
+#: Re-exported so existing importers keep working; the value and the URI
+#: assembly that reads it now live together in `mongodb_source` (core#625).
+DEFAULT_MONGO_AUTH_SOURCE = _MONGO_DEFAULT_AUTH_SOURCE
 
 #: Cloud-warehouse fields whose stored name is not the name dlt reads (core#565).
 #:
@@ -158,14 +161,53 @@ _WAREHOUSE_CREDENTIAL_RENAMES = {
     "snowflake": {"account": "host"},
 }
 
-#: Keys stored on a warehouse connection that are *not* credentials. dlt rejects
-#: unknown fields, and `schema`/`dataset` describe where to write rather than
-#: how to authenticate.
-_NON_CREDENTIAL_WAREHOUSE_KEYS = {
-    "bigquery": {"dataset"},
-    "databricks": {"schema"},
-    "snowflake": {"schema"},
+#: The config key on a warehouse connection that names **where to write** — the
+#: BigQuery dataset, the Databricks / Snowflake schema.
+#:
+#: One table, two uses, and that is the point (core#610). It used to exist only
+#: as `_NON_CREDENTIAL_WAREHOUSE_KEYS` below — a set of keys to *strip* from the
+#: credentials — and the stripped value was then dropped on the floor:
+#: `creds.pop(key, None)` with the return value unbound. So `dataset` was
+#: correctly recognised as "not a credential" and never routed anywhere else. A
+#: required, user-filled BigQuery **Dataset** field changed nothing, and rows
+#: landed in a dataset named after the *upload* instead. Proven on prod: the user
+#: set `docs_bigquery`, BigQuery reported `bigqueryfirstrun`.
+#:
+#: The comment on the old set described the right intent ("`schema`/`dataset`
+#: describe where to write rather than how to authenticate") — only half of it
+#: was implemented. Deriving the strip set from this mapping means a key can no
+#: longer be removed from the credentials without something knowing where it
+#: belongs.
+_DESTINATION_DATASET_KEYS = {
+    "bigquery": "dataset",
+    "databricks": "schema",
+    "snowflake": "schema",
 }
+
+#: Keys stored on a warehouse connection that are *not* credentials. dlt rejects
+#: unknown fields. Derived, never written out — see above.
+_NON_CREDENTIAL_WAREHOUSE_KEYS = {
+    destination_type: {key} for destination_type, key in _DESTINATION_DATASET_KEYS.items()
+}
+
+
+def destination_dataset_name(destination_type: str, destination_config: dict) -> str | None:
+    """The dataset / schema the user named on the destination connection.
+
+    ``None`` when the destination has no such concept (postgres, mysql, duckdb,
+    ...), which is the signal for the caller to fall back to its own default.
+    Returning ``None`` rather than ``""`` matters: an empty string is a valid
+    argument to ``dlt.pipeline(dataset_name=...)`` and would silently create a
+    nameless dataset.
+    """
+    key = _DESTINATION_DATASET_KEYS.get(destination_type)
+    if key is None:
+        return None
+    value = destination_config.get(key)
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
 
 INTERNAL_CONFIG_KEYS = {
     "mode",
@@ -1243,30 +1285,17 @@ class DltRunnerService:
         does keep the user inside the target database sets `auth_source` to that
         database name and is back to the previous behaviour — explicitly.
         """
-        from urllib.parse import quote_plus, urlencode
-
-        from datanika.services.mongodb_source import mongodb_source
+        from datanika.services.mongodb_source import build_connection_uri, mongodb_source
 
         database = config.get("database") or dlt_config.get("database", "")
         if not database:
             raise DltRunnerError("MongoDB source requires 'database' in config")
 
-        host = config.get("host", "localhost")
-        port = config.get("port", 27017)
-        user = config.get("user", "")
-        password = config.get("password", "")
-
-        if user:
-            # Only authenticated connections carry authSource — an unauthenticated
-            # mongod rejects nothing, and sending one would be noise.
-            auth_source = config.get("auth_source") or DEFAULT_MONGO_AUTH_SOURCE
-            query = urlencode({"authSource": auth_source})
-            uri = (
-                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
-                f"@{host}:{port}/{database}?{query}"
-            )
-        else:
-            uri = f"mongodb://{host}:{port}/{database}"
+        # Assembled by the shared builder rather than inline. The URI used to be
+        # written out here *and* in `connection_service._test_mongodb`, and the
+        # `authSource` fix above landed only here — so Test Connection failed on
+        # connections whose runs succeeded (core#625).
+        uri = build_connection_uri({**config, "database": database})
 
         collection_names = dlt_config.get("collection_names")
 

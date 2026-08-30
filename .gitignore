@@ -226,3 +226,7 @@ secrets/
 
 # Per-agent scratch executor scripts (e.g. infra_exec.sh, qa_exec.sh, engineer_exec.sh) — never commit
 *_exec.sh
+
+# Written by scripts/check_scheduled_workflows.py when it finds a stopped cron.
+# Ephemeral CI artifact; never a source file (core#628).
+problems.md

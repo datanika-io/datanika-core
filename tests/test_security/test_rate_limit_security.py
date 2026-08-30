@@ -185,22 +185,22 @@ class TestRateLimitBypass:
         """Different API keys in the same org get independent counters (by design).
         This is not a bypass — it's expected behavior. Verify it works correctly."""
         for _ in range(10):
-            svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=10)
+            svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=10)
         # Key 1 is at limit
-        r1 = svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=10)
+        r1 = svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=10)
         assert r1.allowed is False
         # Key 2 in the same org still has full quota
-        r2 = svc.check_rate_limit(api_key_id=2, org_id=10, limit_rpm=10)
+        r2 = svc.check_rate_limit(bucket="2", org_id=10, limit_rpm=10)
         assert r2.allowed is True
 
     def test_counter_increments_even_when_blocked(self, svc):
         """Blocked requests must still increment the counter to prevent
         attackers from timing retries to reset their count."""
         for _ in range(10):
-            svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=10)
+            svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=10)
         # Now over limit — send 5 more
         for _ in range(5):
-            result = svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=10)
+            result = svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=10)
         assert result.current_count == 15
         assert result.allowed is False
 
@@ -208,9 +208,9 @@ class TestRateLimitBypass:
         """Burst limit should block even when minute limit isn't reached."""
         # Burst of 3/sec, but minute allows 100
         for _ in range(3):
-            svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=100, burst_per_sec=3)
+            svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=100, burst_per_sec=3)
         result = svc.check_rate_limit(
-            api_key_id=1,
+            bucket="1",
             org_id=10,
             limit_rpm=100,
             burst_per_sec=3,
@@ -231,7 +231,7 @@ class TestRedisFailure:
         broken_redis.pipeline.side_effect = ConnectionError("Redis is down")
         svc = RateLimitService(redis_client=broken_redis)
         with pytest.raises(ConnectionError):
-            svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=60)
+            svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=60)
 
     def test_redis_timeout_propagates(self):
         """Redis timeout should not silently pass requests through."""
@@ -239,7 +239,7 @@ class TestRedisFailure:
         broken_redis.pipeline.side_effect = TimeoutError("Redis timeout")
         svc = RateLimitService(redis_client=broken_redis)
         with pytest.raises(TimeoutError):
-            svc.check_rate_limit(api_key_id=1, org_id=10, limit_rpm=60)
+            svc.check_rate_limit(bucket="1", org_id=10, limit_rpm=60)
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,17 @@ services:
     container_name: datanika-postgres-exporter
     ports:
       - "127.0.0.1:9187:9187"
+    # core#616: the `stat_statements` collector is OFF by default in this image, so
+    # `pg_stat_statements_seconds_total` -- which the `pg-slow-queries` alert rule has
+    # always alerted on, under its correct name -- was never exported. The extension
+    # itself is installed in the prod DB (`select extname from pg_extension`), so this
+    # flag is the whole gap. Verified against the prod DB with a throwaway container of
+    # this same image (0.20.1): 100 series appear immediately.
+    #
+    # ⚠️ This flag only reaches production because `deploy-pointer.yml` now lists
+    # postgres-exporter in its `up -d` line. It was in none of the deploy's service
+    # lists before, so it had run 6 weeks with no way to pick up a config change.
+    command: ["--collector.stat_statements"]
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER:-datanika}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-datanika}?sslmode=disable"
     depends_on:

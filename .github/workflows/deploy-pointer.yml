@@ -62,10 +62,31 @@ jobs:
           chmod 600 ~/.ssh/config
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
-      - name: Build image + datastores
+      - name: Build image + datastores + the sidecars nothing else recreates
+        # `postgres-exporter`, `cadvisor` and `node-exporter` join this list in core#616.
+        #
+        # None of the three appeared in ANY deploy step before -- not here, not in the
+        # blue/green swap, not in the monitoring `--force-recreate`. Their running config
+        # was frozen at whatever it was the last time somebody ran a full
+        # `docker compose up` by hand, which for all three was 6 weeks earlier. A compose
+        # change to them landed in the transferred tree and never reached the container.
+        #
+        # That is not a hypothetical: core#616's fix is a `command:` on postgres-exporter,
+        # and shipping it alone would have left `pg-slow-queries` firing on nothing while
+        # every artefact -- the commit, the deploy, the rule text read back from Grafana --
+        # said it was fixed. **Config CD does not apply is config that is not deployed.**
+        # `test_deploy_covers_every_compose_service` now fails when a service is added to
+        # docker-compose.yml and to no deploy step.
+        #
+        # Plain `up -d`, deliberately NOT `--force-recreate`: compose recreates only on a
+        # config-hash change, so this is a no-op on every deploy that does not touch these
+        # services' own definitions. The monitoring trio below needs `--force-recreate`
+        # for a different reason -- their single-FILE bind mounts pin the inode -- and
+        # forcing these three would recreate cadvisor on every deploy, putting a gap in
+        # the container metrics the alert rules read.
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery app_b && docker compose up -d postgres redis'
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery app_b && docker compose up -d postgres redis postgres-exporter cadvisor node-exporter'
 
       # The app is deployed by SWAPPING colours, not by recreating one container.
       #

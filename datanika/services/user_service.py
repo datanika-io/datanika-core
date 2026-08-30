@@ -26,6 +26,7 @@ class UserService:
             raise UserServiceError("Email is required")
         if not password:
             raise UserServiceError("Password is required")
+        self._validate_password(password)
 
         email = email.strip().lower()
 
@@ -37,6 +38,10 @@ class UserService:
             email=email,
             password_hash=self._auth.hash_password(password),
             full_name=full_name,
+            # A human chose this password, so the account is a password account
+            # from now on. ``find_or_create_oauth_user`` deliberately leaves the
+            # column NULL, which is what makes it a reliable discriminator.
+            password_changed_at=datetime.now(UTC),
         )
         session.add(user)
         session.flush()
@@ -104,6 +109,119 @@ class UserService:
     def get_user(self, session: Session, user_id: int) -> User | None:
         stmt = select(User).where(User.id == user_id)
         return session.execute(stmt).scalar_one_or_none()
+
+    # -- Password management (core#623) --
+
+    def _validate_password(self, password: str) -> None:
+        """Adapt the one validator to this service's error type."""
+        try:
+            self._auth.validate_password_strength(password)
+        except ValueError as exc:
+            raise UserServiceError(str(exc)) from exc
+
+    @staticmethod
+    def has_usable_password(user: User) -> bool:
+        """Whether a human ever chose this account's password.
+
+        ⚠️ Deliberately **not** ``user.oauth_provider is None``.
+        ``find_or_create_oauth_user`` backfills ``oauth_provider`` onto a
+        pre-existing password account the first time its owner signs in with a
+        provider, so that inference reports False for people who *do* have a
+        password — and the caller then skips current-password re-verification,
+        letting anyone with a hijacked live session change it without knowing
+        the old one.
+
+        ``password_changed_at`` is a stored fact instead of an inference:
+        written by ``register_user`` and by every password change, never
+        written by OAuth account creation, and never cleared by provider
+        linking.
+        """
+        return user.password_changed_at is not None
+
+    def change_password(
+        self,
+        session: Session,
+        user_id: int,
+        new_password: str,
+        *,
+        current_password: str = "",
+    ) -> User:
+        """Set a new password. Raises ``UserServiceError`` on any refusal.
+
+        One method covers both the "change" and the "set" cases, because the
+        difference between them is a fact about the *account*, not a choice the
+        caller gets to make. An account that has a password always has to prove
+        knowledge of it; passing nothing is refused rather than treated as the
+        set-a-password case. A UI that forgets the field therefore fails closed.
+        """
+        user = self.get_user(session, user_id)
+        if user is None or not user.is_active:
+            raise UserServiceError("User not found")
+
+        if self.has_usable_password(user):
+            if not current_password:
+                raise UserServiceError("Current password is required")
+            if not self._auth.verify_password(current_password, user.password_hash):
+                raise UserServiceError("Current password is incorrect")
+
+        self._validate_password(new_password)
+
+        if self._auth.verify_password(new_password, user.password_hash):
+            raise UserServiceError("Choose a password different from your current one")
+
+        user.password_hash = self._auth.hash_password(new_password)
+        user.password_changed_at = datetime.now(UTC)
+        session.flush()
+        return user
+
+    def redeem_refresh_token(self, session: Session, refresh_token: str) -> dict | None:
+        """Exchange a refresh token for a fresh access token, or ``None``.
+
+        This is where the *enforceable* half of "sign out other sessions" lives
+        (core#623, D4). Datanika has no durable session to invalidate — Reflex
+        state is in-memory and per-process — but the refresh token is a real
+        7-day bearer credential, and it already carries ``iat``. A token minted
+        before the password changed is refused here, with no new claim, no new
+        table, and no database read on the 15-minute access path.
+
+        ``iat`` is whole seconds while ``password_changed_at`` has microseconds,
+        so the boundary is floored to the second. Without that, the session a
+        user establishes *immediately* after changing their password is revoked
+        by the change that just happened.
+        """
+        payload = self._auth.decode_token(refresh_token, expected_type="refresh")
+        if payload is None:
+            return None
+
+        user = self.get_user(session, payload.get("user_id", 0))
+        if user is None or not user.is_active:
+            return None
+
+        changed_at = user.password_changed_at
+        if changed_at is not None:
+            if changed_at.tzinfo is None:
+                changed_at = changed_at.replace(tzinfo=UTC)
+            issued_at = payload.get("iat")
+            if issued_at is None:
+                return None
+            if int(issued_at) < int(changed_at.replace(microsecond=0).timestamp()):
+                return None
+
+        stmt = (
+            select(Membership)
+            .where(Membership.user_id == user.id, Membership.deleted_at.is_(None))
+            .order_by(Membership.id.desc())
+            .limit(1)
+        )
+        membership = session.execute(stmt).scalar_one_or_none()
+        if membership is None:
+            return None
+
+        return {
+            "user": user,
+            "access_token": self._auth.create_access_token(user.id, membership.org_id),
+            "refresh_token": self._auth.create_refresh_token(user.id),
+        }
 
     # -- Org management --
 

@@ -304,6 +304,56 @@ groups:
           description: "The nightly pg_dump off-site backup to Aweb has not succeeded in more than 26 hours. Check /var/log/datanika-backup.log on the pointer.gr box."
 
       # --- Container Restart Loop ---
+      # core#615 -- this rule was structurally unable to fire for its entire life.
+      #
+      # 1. `increase()` ON A TIMESTAMP GAUGE IS ALWAYS 0. `container_start_time_seconds`
+      #    carries a per-container `id` label. A restart does not move that series, it
+      #    ENDS one and BEGINS another under a new id, and `increase()` is per-series
+      #    over a constant. Backtested against 30d of prod Prometheus, a window that
+      #    contains real restarts (blackbox/grafana/prometheus were force-recreated on
+      #    every deploy): the old expression yields **0 series**. With `noDataState: OK`
+      #    it read healthy the whole time while measuring nothing.
+      #
+      # 2. THE MESSAGE DID NOT MATCH THE MATHS. Even had it worked, `increase()` on this
+      #    gauge measures how many SECONDS the start timestamp advanced, not how many
+      #    restarts happened -- one restart of a container up an hour advances it ~3600,
+      #    so `> 3` meant "one restart", not "more than 3". Same annotation-vs-reality
+      #    class as core#604.
+      #
+      # The fix counts distinct container instances per name instead of differencing a
+      # timestamp: N series for one name inside the window means N-1 restarts.
+      #
+      # ⚠️ THE CANDIDATE IN THE ISSUE WAS NOT SAFE TO SHIP AS WRITTEN -- it kept
+      # `name=~"datanika-.*"`, and PromQL anchors the regex at both ends, so `.*` also
+      # matches `datanika-staging-*`. Staging is redeployed on EVERY push to `dev`, with
+      # five departments merging. Backtested over the same 30d:
+      #
+      #     staging INCLUDED -> 82 five-minute buckets over threshold
+      #                         (datanika-staging-app 41, datanika-staging-celery 41)
+      #     staging EXCLUDED -> 0
+      #
+      # So the proposed fix would have converted a rule that cannot fire into one that
+      # pages `critical` on ordinary staging deploys. Excluded by a NEGATIVE filter
+      # rather than an allow-list of prod names, deliberately: core#622 was exactly an
+      # allow-list that silently stopped matching when a container name changed.
+      #
+      # Threshold validated against the same 30d, prod names only:
+      #     > 3 (>=4 instances/h) -> 0 buckets
+      #     > 2 (>=3 instances/h) -> 0 buckets
+      #     > 1 (>=2 instances/h) -> 132 buckets  <- the deploy signature: blackbox,
+      #         grafana, prometheus (force-recreated) and celery (recreated), 1 restart
+      #         each per deploy
+      # Prod has never reached 3 instances in an hour, so `> 3` keeps two full steps of
+      # headroom over normal deploy behaviour. Three prod deploys inside 60 minutes would
+      # put celery at 4 and page -- rare, and arguably worth a look when it happens.
+      #
+      # I first shipped this WITHOUT the outer `[2m:15s]` debounce, reasoning that a
+      # `[1h]` range already puts the duration in the query. QA's alerting lint (core#632,
+      # `TestBlipArithmetic`) rejected it, and the lint is right: the inner range bounds
+      # how long a series is *counted*, not how many samples must agree that the count is
+      # 4. One cadvisor scrape reporting a phantom series would page `critical` on the
+      # spot. Recording the wrong reasoning because it is the tempting one — "the window
+      # is long, therefore it is debounced" conflates the range with the sample count.
       - uid: container-restart-loop
         title: Container Restart Loop
         condition: C
@@ -316,7 +366,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'increase(container_start_time_seconds{name=~"datanika-.*"}[1h]) > 3'
+              expr: 'count_over_time((count by (name) (count_over_time(container_start_time_seconds{name=~"datanika-.*", name!~"datanika-staging-.*"}[1h])) > 3)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -339,14 +389,17 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [0]
+                    params: [3]
               refId: C
         for: 0s
         labels:
           severity: critical
         annotations:
           summary: "Container {{ $labels.name }} is restart-looping"
-          description: "Container {{ $labels.name }} has restarted more than 3 times in the last hour."
+          # "at least 3", not "more than 3": >3 instances means >=4 instances in the
+          # hour, which is >=3 restarts. The old wording overstated by one and is the
+          # defect core#615 flagged in its own right.
+          description: "Container {{ $labels.name }} has restarted at least 3 times in the last hour (4 or more distinct container instances seen), sustained across 4 of the last 8 samples in a 2m window. Staging containers are excluded — they are recreated on every push to dev."
 
       # --- Container High Memory ---
       # core#622 -- this rule had TWO independent defects and fired a false warning
@@ -839,6 +892,47 @@ groups:
     interval: 5m
     rules:
       # --- Slow query rate spike ---
+      # core#616 -- this rule alerted on a metric Prometheus had never held, so with
+      # `noDataState: OK` it read healthy since the monitoring rebuild while measuring
+      # nothing. The cause is NOT the one the issue guessed, and the difference decides
+      # the fix, so it is recorded here:
+      #
+      #   The issue said `pg_stat_statements_seconds_total` "does not look like a name
+      #   that exporter emits under any collector" and told whoever fixed it to read the
+      #   real name off a running exporter. Done, 2026-08-30, against the prod DB with a
+      #   throwaway `prometheuscommunity/postgres-exporter:0.20.1` container:
+      #
+      #     # HELP pg_stat_statements_seconds_total Total time spent in the statement, in seconds
+      #
+      #   The name in the rule is EXACTLY RIGHT and always was. 100 series appeared the
+      #   moment the collector was on. The sole defect is that `--collector.stat_statements`
+      #   is off by default in that image and the compose service passed no flags.
+      #
+      # ⚠️ AND THE COMPOSE CHANGE ALONE WOULD NOT HAVE WORKED. `deploy-pointer.yml` only
+      # touches app/celery (blue/green), `up -d postgres redis`, and a `--force-recreate`
+      # of prometheus/grafana/blackbox. `postgres-exporter` was in NONE of those lists --
+      # it had been up 6 weeks with no mechanism to ever pick up a config change. Adding
+      # the flag to docker-compose.yml without adding the service to the deploy would have
+      # shipped a rule that still fires on nothing, which is the exact failure this issue
+      # is about. The service is now in the deploy's `up -d` list (config-hash recreate,
+      # not force-recreate: no-op unless its compose config actually changed).
+      #
+      # Threshold validated against the real thing rather than kept on faith. Two samples
+      # 120s apart from the probe exporter, prod DB, idle (0 users):
+      #     100 series, 0 appeared, 0 vanished  -- no queryid churn to alias on
+      #     max per-statement rate 0.001236 s/s
+      #     sum across all statements 0.002356 s/s
+      # `> 0.5` therefore sits ~400x above idle. It has NOT been backtested against load,
+      # because with the collector off no history exists -- once data accumulates this
+      # threshold is calibratable and should be revisited.
+      #
+      # `for: 10m` retired for the duration-in-query form (core#604): `> 0.5` filters, so
+      # `reduce: last` never observes a recovery and `for:` cannot debounce it. The
+      # original "sustained ~10 minutes" intent now lives in `[10m:15s]` with a Grafana
+      # threshold of `gt [27]` — 28 of the 40 samples in the window, i.e. ~70% of ten
+      # minutes. The step is 15s because that is `prometheus.yml`'s scrape interval and
+      # the lint couples them (core#632): a step that drifts from the scrape silently
+      # changes what the sample count means.
       - uid: pg-slow-queries
         title: PostgreSQL Slow Query Spike
         condition: C
@@ -851,7 +945,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'rate(pg_stat_statements_seconds_total{datname="datanika"}[5m]) > 0.5'
+              expr: 'count_over_time((rate(pg_stat_statements_seconds_total{datname="datanika"}[5m]) > 0.5)[10m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -874,14 +968,14 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [0]
+                    params: [27]
               refId: C
-        for: 10m
+        for: 0s
         labels:
           severity: warning
         annotations:
           summary: "PostgreSQL slow query rate elevated"
-          description: "pg_stat_statements reports elevated query time. Check docker logs datanika-postgres for queries over 500ms."
+          description: "A single statement has consumed more than 0.5s of execution time per wall-second across 28 of the last 40 samples (a 10m window at the 15s scrape). Idle baseline measured 2026-08-30 is 0.0012s/s, so this is ~400x above idle. Inspect with: docker exec datanika-postgres psql -U datanika -d datanika -c 'select queryid, calls, total_exec_time, mean_exec_time, left(query,120) from pg_stat_statements order by total_exec_time desc limit 10;'"
 
   # Revenue-facing alerts. Data source is the Postgres `subscriptions` + `plans`
   # tables rather than Prometheus counters — the Paddle webhook handler in

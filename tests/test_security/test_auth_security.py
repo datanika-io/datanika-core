@@ -86,15 +86,15 @@ class TestRegistrationSecurity:
 
     def test_duplicate_email_rejected(self, db_session, svc):
         email = f"dup-{uuid.uuid4().hex[:6]}@test.com"
-        svc.register_user(db_session, email, "pass1", "User 1")
+        svc.register_user(db_session, email, "user one password", "User 1")
         with pytest.raises(UserServiceError, match="Email already exists"):
-            svc.register_user(db_session, email, "pass2", "User 2")
+            svc.register_user(db_session, email, "user two password", "User 2")
 
     def test_case_insensitive_email_duplicate(self, db_session, svc):
         email = f"CaseTest-{uuid.uuid4().hex[:6]}@Test.com"
-        svc.register_user(db_session, email, "pass1", "User 1")
+        svc.register_user(db_session, email, "user one password", "User 1")
         with pytest.raises(UserServiceError, match="Email already exists"):
-            svc.register_user(db_session, email.upper(), "pass2", "User 2")
+            svc.register_user(db_session, email.upper(), "user two password", "User 2")
 
 
 class TestRoleEscalation:

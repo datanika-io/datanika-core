@@ -1,7 +1,20 @@
-"""Connection type-specific config form fields."""
+"""Connection type-specific config form fields.
+
+Every text control here goes through ``config_input`` / ``config_text_area``
+rather than ``rx.input`` / ``rx.text_area`` directly. That is not style: a bare
+input on this form carries no ``autocomplete``, ``name`` or ``id``, and Chrome
+then fills the user's saved Datanika credentials into whichever text/password
+pair it finds by position — which for ``google_ads`` means the account password
+lands in ``Developer token`` and is transmitted to Google on the next run.
+See ``datanika/ui/components/secure_input.py`` and core#618.
+
+Mark a credential field with ``secret=True``; never write ``type="password"`` or
+an ``autocomplete`` value by hand.
+"""
 
 import reflex as rx
 
+from datanika.ui.components.secure_input import config_input, config_text_area
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -12,43 +25,43 @@ def db_fields() -> rx.Component:
     """Fields for postgres / mysql / mssql / redshift."""
     return rx.vstack(
         rx.text(_t["connections.host"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "host",
             placeholder=_t["connections.ph_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.port"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "port",
             placeholder=_t["connections.ph_port"],
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.user"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "user",
             placeholder=_t["connections.ph_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
-            width="100%",
         ),
         rx.text(_t["connections.password"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "password",
+            secret=True,
             placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
-            type="password",
-            width="100%",
         ),
         rx.text(_t["connections.database"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "database",
             placeholder=_t["connections.ph_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -59,12 +72,12 @@ def sqlite_fields() -> rx.Component:
     """Fields for sqlite."""
     return rx.vstack(
         rx.text(_t["connections.db_path"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "path",
             placeholder=_t["connections.ph_db_path"],
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -75,27 +88,27 @@ def bigquery_fields() -> rx.Component:
     """Fields for bigquery."""
     return rx.vstack(
         rx.text(_t["connections.gcp_project"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "project",
             placeholder=_t["connections.ph_gcp_project"],
             value=ConnectionState.form_project,
             on_change=ConnectionState.set_form_project,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.dataset"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "dataset",
             placeholder=_t["connections.ph_dataset"],
             value=ConnectionState.form_dataset,
             on_change=ConnectionState.set_form_dataset,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
-        rx.text_area(
+        config_text_area(
+            "keyfile_json",
             placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_keyfile_json,
             on_change=ConnectionState.set_form_keyfile_json,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -106,57 +119,57 @@ def snowflake_fields() -> rx.Component:
     """Fields for snowflake."""
     return rx.vstack(
         rx.text(_t["connections.account"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "account",
             placeholder=_t["connections.ph_snowflake_account"],
             value=ConnectionState.form_account,
             on_change=ConnectionState.set_form_account,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.user"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "user",
             placeholder=_t["connections.ph_snowflake_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.password"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "password",
+            secret=True,
             placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
-            type="password",
-            width="100%",
         ),
         rx.text(_t["connections.database"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "database",
             placeholder=_t["connections.ph_snowflake_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.warehouse"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "warehouse",
             placeholder=_t["connections.ph_snowflake_warehouse"],
             value=ConnectionState.form_warehouse,
             on_change=ConnectionState.set_form_warehouse,
-            width="100%",
         ),
         rx.text(_t["connections.role"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "role",
             placeholder=_t["connections.ph_snowflake_role"],
             value=ConnectionState.form_role,
             on_change=ConnectionState.set_form_role,
-            width="100%",
         ),
         rx.text(_t["connections.schema"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "schema",
             placeholder=_t["connections.ph_snowflake_schema"],
             value=ConnectionState.form_schema,
             on_change=ConnectionState.set_form_schema,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -167,41 +180,41 @@ def s3_fields() -> rx.Component:
     """Fields for s3."""
     return rx.vstack(
         rx.text(_t["connections.bucket_url"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "bucket_url",
             placeholder=_t["connections.ph_bucket_url"],
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.aws_access_key"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "aws_access_key_id",
             placeholder=_t["connections.ph_aws_access_key"],
             value=ConnectionState.form_aws_access_key_id,
             on_change=ConnectionState.set_form_aws_access_key_id,
-            width="100%",
         ),
         rx.text(_t["connections.aws_secret_key"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "aws_secret_access_key",
+            secret=True,
             placeholder=_t["connections.ph_secret_key"],
             value=ConnectionState.form_aws_secret_access_key,
             on_change=ConnectionState.set_form_aws_secret_access_key,
-            type="password",
-            width="100%",
         ),
         rx.text(_t["connections.region"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "region_name",
             placeholder=_t["connections.ph_region"],
             value=ConnectionState.form_region_name,
             on_change=ConnectionState.set_form_region_name,
-            width="100%",
         ),
         rx.text(_t["connections.endpoint_url"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "endpoint_url",
             placeholder=_t["connections.ph_endpoint_url"],
             value=ConnectionState.form_endpoint_url,
             on_change=ConnectionState.set_form_endpoint_url,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -243,11 +256,11 @@ def file_upload_fields() -> rx.Component:
             ),
         ),
         rx.text(_t["connections.or_enter_path"], size="1", color_scheme="gray"),
-        rx.input(
+        config_input(
+            "bucket_url",
             placeholder=_t["connections.ph_file_path"],
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -258,27 +271,27 @@ def rest_api_fields() -> rx.Component:
     """Fields for rest_api."""
     return rx.vstack(
         rx.text(_t["connections.base_url"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "base_url",
             placeholder=_t["connections.ph_base_url"],
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.api_key"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
-            width="100%",
         ),
         rx.text(_t["connections.extra_headers"], size="2", weight="bold"),
-        rx.text_area(
+        config_text_area(
+            "extra_headers",
             placeholder=_t["connections.ph_extra_headers"],
             value=ConnectionState.form_extra_headers,
             on_change=ConnectionState.set_form_extra_headers,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -289,19 +302,19 @@ def google_sheets_fields() -> rx.Component:
     """Fields for google_sheets connection."""
     return rx.vstack(
         rx.text(_t["connections.spreadsheet_url"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "spreadsheet_url",
             placeholder=_t["connections.ph_spreadsheet_url"],
             value=ConnectionState.form_spreadsheet_url,
             on_change=ConnectionState.set_form_spreadsheet_url,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.service_account_json"], " *", size="2", weight="bold"),
-        rx.text_area(
+        config_text_area(
+            "service_account_json",
             placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_service_account_json,
             on_change=ConnectionState.set_form_service_account_json,
-            width="100%",
             min_height="120px",
         ),
         rx.callout(
@@ -352,12 +365,12 @@ def duckdb_fields() -> rx.Component:
     """Fields for duckdb — path to database file."""
     return rx.vstack(
         rx.text(_t["connections.db_path"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "path",
             placeholder=_t["connections.ph_duckdb_path"],
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -368,13 +381,13 @@ def stripe_fields() -> rx.Component:
     """Fields for stripe source."""
     return rx.vstack(
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_stripe_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -385,29 +398,29 @@ def github_fields() -> rx.Component:
     """Fields for github source."""
     return rx.vstack(
         rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_github_token"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.owner"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "owner",
             placeholder=_t["connections.ph_github_owner"],
             value=ConnectionState.form_owner,
             on_change=ConnectionState.set_form_owner,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.repo"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "repo",
             placeholder=_t["connections.ph_github_repo"],
             value=ConnectionState.form_repo,
             on_change=ConnectionState.set_form_repo,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -418,43 +431,43 @@ def databricks_fields() -> rx.Component:
     """Fields for databricks."""
     return rx.vstack(
         rx.text(_t["connections.host"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "host",
             placeholder=_t["connections.ph_databricks_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.http_path"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "http_path",
             placeholder=_t["connections.ph_http_path"],
             value=ConnectionState.form_http_path,
             on_change=ConnectionState.set_form_http_path,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.token"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "token",
+            secret=True,
             placeholder=_t["connections.ph_token"],
             value=ConnectionState.form_token,
             on_change=ConnectionState.set_form_token,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.catalog"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "catalog",
             placeholder=_t["connections.ph_catalog"],
             value=ConnectionState.form_catalog,
             on_change=ConnectionState.set_form_catalog,
-            width="100%",
         ),
         rx.text(_t["connections.schema"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "schema",
             placeholder=_t["connections.ph_schema"],
             value=ConnectionState.form_schema,
             on_change=ConnectionState.set_form_schema,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -465,13 +478,13 @@ def saas_api_key_fields() -> rx.Component:
     """Shared fields for SaaS sources that only need an API key (HubSpot, Slack)."""
     return rx.vstack(
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -482,21 +495,21 @@ def salesforce_fields() -> rx.Component:
     """Fields for salesforce source."""
     return rx.vstack(
         rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_salesforce_token"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.instance_url"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "instance_url",
             placeholder=_t["connections.ph_instance_url"],
             value=ConnectionState.form_instance_url,
             on_change=ConnectionState.set_form_instance_url,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -507,21 +520,21 @@ def shopify_fields() -> rx.Component:
     """Fields for shopify source."""
     return rx.vstack(
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_shopify_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.store_name"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "store",
             placeholder=_t["connections.ph_store_name"],
             value=ConnectionState.form_store,
             on_change=ConnectionState.set_form_store,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -532,28 +545,28 @@ def jira_fields() -> rx.Component:
     """Fields for jira source."""
     return rx.vstack(
         rx.text(_t["connections.jira_domain"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "domain",
             placeholder=_t["connections.ph_jira_domain"],
             value=ConnectionState.form_domain,
             on_change=ConnectionState.set_form_domain,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.jira_email"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "email",
             placeholder=_t["connections.ph_jira_email"],
             value=ConnectionState.form_email,
             on_change=ConnectionState.set_form_email,
-            width="100%",
         ),
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_jira_token"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -564,19 +577,19 @@ def google_analytics_fields() -> rx.Component:
     """Fields for google_analytics source."""
     return rx.vstack(
         rx.text(_t["connections.property_id"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "property_id",
             placeholder=_t["connections.ph_property_id"],
             value=ConnectionState.form_property_id,
             on_change=ConnectionState.set_form_property_id,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
-        rx.text_area(
+        config_text_area(
+            "api_key",
             placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -591,57 +604,62 @@ def google_ads_fields() -> rx.Component:
     account JSON and could not authenticate with either. Google Ads needs a
     developer token on every request, and a *user* OAuth credential rather than
     a service account.
+
+    This is also where core#618 was found. ``Customer ID`` sits exactly in the
+    slot Chrome treats as the username, immediately above a password input, so
+    the account email and the account password landed in the top two fields —
+    and ``developer_token`` is sent to Google as a request header.
     """
     return rx.vstack(
         rx.text(_t["connections.customer_id"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "customer_id",
             placeholder=_t["connections.ph_customer_id"],
             value=ConnectionState.form_customer_id,
             on_change=ConnectionState.set_form_customer_id,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.developer_token"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "developer_token",
+            secret=True,
             placeholder=_t["connections.ph_developer_token"],
             value=ConnectionState.form_developer_token,
             on_change=ConnectionState.set_form_developer_token,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.oauth_client_id"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "client_id",
             placeholder=_t["connections.ph_oauth_client_id"],
             value=ConnectionState.form_client_id,
             on_change=ConnectionState.set_form_client_id,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.oauth_client_secret"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "client_secret",
+            secret=True,
             placeholder=_t["connections.ph_oauth_client_secret"],
             value=ConnectionState.form_client_secret,
             on_change=ConnectionState.set_form_client_secret,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.oauth_refresh_token"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "refresh_token",
+            secret=True,
             placeholder=_t["connections.ph_oauth_refresh_token"],
             value=ConnectionState.form_refresh_token,
             on_change=ConnectionState.set_form_refresh_token,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.login_customer_id"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "login_customer_id",
             placeholder=_t["connections.ph_customer_id"],
             value=ConnectionState.form_login_customer_id,
             on_change=ConnectionState.set_form_login_customer_id,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -652,21 +670,21 @@ def facebook_ads_fields() -> rx.Component:
     """Fields for facebook_ads source."""
     return rx.vstack(
         rx.text(_t["connections.access_token"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_fb_token"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.account_id"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "account_id",
             placeholder=_t["connections.ph_fb_account_id"],
             value=ConnectionState.form_account_id,
             on_change=ConnectionState.set_form_account_id,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -677,28 +695,28 @@ def zendesk_fields() -> rx.Component:
     """Fields for zendesk source."""
     return rx.vstack(
         rx.text(_t["connections.zendesk_subdomain"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "domain",
             placeholder=_t["connections.ph_zendesk_subdomain"],
             value=ConnectionState.form_domain,
             on_change=ConnectionState.set_form_domain,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.jira_email"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "email",
             placeholder=_t["connections.ph_jira_email"],
             value=ConnectionState.form_email,
             on_change=ConnectionState.set_form_email,
-            width="100%",
         ),
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_zendesk_token"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -709,21 +727,21 @@ def freshdesk_fields() -> rx.Component:
     """Fields for freshdesk source (domain + API key)."""
     return rx.vstack(
         rx.text(_t["connections.freshdesk_domain"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "domain",
             placeholder=_t["connections.ph_freshdesk_domain"],
             value=ConnectionState.form_domain,
             on_change=ConnectionState.set_form_domain,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -734,21 +752,21 @@ def airtable_fields() -> rx.Component:
     """Fields for airtable source."""
     return rx.vstack(
         rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_airtable_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.base_id"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "base_id",
             placeholder=_t["connections.ph_base_id"],
             value=ConnectionState.form_base_id,
             on_change=ConnectionState.set_form_base_id,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -759,27 +777,27 @@ def kafka_fields() -> rx.Component:
     """Fields for kafka source."""
     return rx.vstack(
         rx.text(_t["connections.bootstrap_servers"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "bootstrap_servers",
             placeholder=_t["connections.ph_bootstrap_servers"],
             value=ConnectionState.form_bootstrap_servers,
             on_change=ConnectionState.set_form_bootstrap_servers,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.topics"], " *", size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "topics",
             placeholder=_t["connections.ph_topics"],
             value=ConnectionState.form_topics,
             on_change=ConnectionState.set_form_topics,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.group_id"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "group_id",
             placeholder=_t["connections.ph_group_id"],
             value=ConnectionState.form_group_id,
             on_change=ConnectionState.set_form_group_id,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -790,42 +808,42 @@ def mongodb_fields() -> rx.Component:
     """Fields for mongodb (host/port/user/pass/database — no schema)."""
     return rx.vstack(
         rx.text(_t["connections.host"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "host",
             placeholder=_t["connections.ph_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
             required=True,
-            width="100%",
         ),
         rx.text(_t["connections.port"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "port",
             placeholder=_t["connections.ph_port"],
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
-            width="100%",
         ),
         rx.text(_t["connections.user"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "user",
             placeholder=_t["connections.ph_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
-            width="100%",
         ),
         rx.text(_t["connections.password"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "password",
+            secret=True,
             placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
-            type="password",
-            width="100%",
         ),
         rx.text(_t["connections.database"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "database",
             placeholder=_t["connections.ph_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
-            width="100%",
         ),
         spacing="2",
         width="100%",
@@ -861,27 +879,27 @@ def openapi_fields() -> rx.Component:
     return rx.vstack(
         rx.callout(_t["connections.openapi_hint"], icon="info", size="1"),
         rx.text(_t["connections.openapi_spec"], " *", size="2", weight="bold"),
-        rx.text_area(
+        config_text_area(
+            "openapi_spec",
             placeholder=_t["connections.ph_openapi_spec"],
             value=ConnectionState.form_openapi_spec,
             on_change=ConnectionState.set_form_openapi_spec,
-            width="100%",
             min_height="160px",
         ),
         rx.text(_t["connections.base_url"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "base_url",
             placeholder=_t["connections.ph_base_url"],
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
-            width="100%",
         ),
         rx.text(_t["connections.api_key"], size="2", weight="bold"),
-        rx.input(
+        config_input(
+            "api_key",
+            secret=True,
             placeholder=_t["connections.ph_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
-            type="password",
-            width="100%",
         ),
         spacing="2",
         width="100%",

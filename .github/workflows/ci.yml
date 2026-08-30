@@ -683,8 +683,33 @@ jobs:
       # upload artifacts, because a quarantined test that stops producing
       # evidence is just a disabled one — and you would never learn it had
       # started passing.
+      # ⚠️ The tier can legitimately be EMPTY, and it is as of 2026-08-30 —
+      # `golden-path` graduated into the gating tier (core#529) and nothing has
+      # replaced it. Both obvious spellings of this step are wrong when it is:
+      #   * as written, `playwright test --grep` exits **1** on "No tests found",
+      #     so `continue-on-error` catches it and the tier reports a permanent
+      #     phantom FAILURE — into the exact line QA reads to count graduations;
+      #   * `--pass-with-no-tests` alone makes it exit 0, which is worse: a
+      #     phantom PASS that counts a green toward graduating nothing, and three
+      #     of those would "graduate" an empty set.
+      # So the tier size is established first and the verdict has FOUR states:
+      # success / failure / empty / unknown.
+      - name: Count the informational tier
+        id: info_count
+        working-directory: e2e
+        env:
+          DATANIKA_E2E_SLOW: "1"
+          DATANIKA_E2E_SKIP_SEED: "1"
+          DATANIKA_E2E_USER_EMAIL: collected-count@datanika.test
+        run: |
+          LAST=$(npx playwright test --list --grep "@informational" --pass-with-no-tests | tail -1)
+          N=$(printf '%s' "$LAST" | grep -oE '[0-9]+' | head -1)
+          echo "count=${N:-0}" >> "$GITHUB_OUTPUT"
+          echo "informational tier holds ${N:-0} spec(s) — playwright --list said: $LAST"
+
       - name: Run informational E2E specs (not gating)
         id: informational
+        if: steps.info_count.outputs.count != '0'
         working-directory: e2e
         continue-on-error: true
         run: npx playwright test --grep "@informational"
@@ -694,11 +719,19 @@ jobs:
       - name: Report informational tier result
         if: always()
         run: |
+          COUNT='${{ steps.info_count.outputs.count }}'
           OUTCOME='${{ steps.informational.outcome }}'
-          echo "INFORMATIONAL_RESULT=$OUTCOME"
-          if [ "$OUTCOME" = "success" ]; then
+          if [ -z "$COUNT" ]; then
+            echo "INFORMATIONAL_RESULT=unknown"
+            echo "::warning::Could not determine the informational tier size — the count step reported nothing. Neither green nor red; fix that step before trusting this line."
+          elif [ "$COUNT" = "0" ]; then
+            echo "INFORMATIONAL_RESULT=empty"
+            echo "::notice::Informational tier is EMPTY — no spec is currently earning a track record. Neither a green nor a red: it counts toward nothing, exactly like a skip."
+          elif [ "$OUTCOME" = "success" ]; then
+            echo "INFORMATIONAL_RESULT=success"
             echo "::warning::Informational E2E specs PASSED. That is 1 green toward graduation — see PLAN_QA.md §E2E tiers. Three consecutive greens on dev and they move into the gating tier."
           else
+            echo "INFORMATIONAL_RESULT=failure"
             echo "::notice::Informational E2E specs failed (not gating). Graduation counter resets to 0."
           fi
 
@@ -727,7 +760,10 @@ jobs:
           # down since the 2026-07-17 outage; overage belongs to the nightly
           # soak), and "46 passed" reads like full coverage until you notice.
           GATING=$(npx playwright test --list --grep-invert "@informational" | tail -1)
-          INFO=$(npx playwright test --list --grep "@informational" | tail -1)
+          # --pass-with-no-tests: an empty tier is legal (see above), and without
+          # it this substitution exits 1 under `bash -e -o pipefail` and takes the
+          # whole step — and therefore the e2e-staging job — down with it.
+          INFO=$(npx playwright test --list --grep "@informational" --pass-with-no-tests | tail -1)
           echo "gating tier:        $GATING"
           echo "informational tier: $INFO"
           echo "::notice::Tier split — gating: ${GATING}; informational: ${INFO}. Skipped specs belong to NEITHER tier; a skip is not a green."

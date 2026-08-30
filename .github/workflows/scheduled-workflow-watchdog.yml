@@ -1,0 +1,116 @@
+name: Scheduled workflow watchdog
+
+# Something has to assert that our crons are still firing, because nothing else
+# will (core#628).
+#
+# On 2026-08-30, `daily-rebuild.yml` in datanika-landing was found in state
+# `disabled_inactivity` -- 70 days after its last run. GitHub auto-disables
+# `schedule:` triggers in a public repository after 60 days without repository
+# activity and notifies nobody. The consequence was invisible and real: that
+# workflow's only job is to dispatch `deploy.yml` so blog posts whose
+# `publishedAt` has crossed `now` get published, so no scheduled post published
+# for ten weeks.
+#
+# A cron whose failure mode is SILENCE is the same defect class as the alert
+# rules in core#615 / core#616 -- it is indistinguishable from a healthy system.
+#
+# WHY THIS LIVES IN CORE AND NOT IN THE REPO IT WATCHES: a watchdog inside
+# datanika-landing would have been disabled by the same 60-day rule, on the same
+# day, as the workflow it was watching. Core has near-daily activity, so its own
+# schedule stays alive. The residual is stated rather than hidden: if core itself
+# goes 60 days quiet, this dies too. That is acceptable -- it fails loudly in the
+# case that actually happened, where one repo goes quiet while another does not.
+#
+# CRON CHOICE: 16:41 UTC, deliberately off the top of the hour. GitHub names the
+# start of an hour as a high-load window, and the skew here is not small --
+# measured 2026-08-30, landing's `0 6 * * *` fired 3h22m-5h03m late, and core's
+# own `0 3 * * *` and `30 3 * * *` nightlies fired 6h05m and 5h52m late the same
+# morning. 16:41 is late enough to see the result of the same morning's
+# schedules even at roughly twice the worst skew observed.
+#
+# The 12h grace inside the script means one missed day is tolerated and two
+# consecutive misses fire. That is intentional: GitHub documents that queued
+# jobs may be dropped under load, and a watchdog that pages on a single skipped
+# run would be retrained away within a week.
+
+on:
+  schedule:
+    - cron: "41 16 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install --quiet pyyaml
+
+      - name: Check every scheduled workflow in both public repos
+        id: check
+        continue-on-error: true
+        env:
+          # Both repos are public, so the default token reads them fine --
+          # `connector-count-parity.yml` in datanika-landing already relies on
+          # exactly this to read core's README.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_scheduled_workflows.py \
+            datanika-io/datanika-core \
+            datanika-io/datanika-landing
+
+      - name: File an issue when a schedule has stopped
+        if: steps.check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # One open issue is enough -- don't stack a new one every morning.
+          existing=$(gh issue list --state open \
+            --search "in:title Scheduled workflow stopped firing" \
+            --json number --jq '.[0].number // empty')
+
+          # `problems.md` is written by the script only when there are problems.
+          # If it is missing the script failed for some other reason (a token
+          # problem, an API change), which is still a real failure -- say so
+          # rather than filing an empty issue.
+          if [ ! -f problems.md ]; then
+            echo "::error::The watchdog exited non-zero but wrote no problems.md."
+            echo "::error::That means it failed to RUN, not that it found a fault."
+            echo "::error::Check the step above -- most likely the token cannot"
+            echo "::error::read one of the repos, or the workflows API changed."
+            exit 1
+          fi
+
+          if [ -n "$existing" ]; then
+            echo "Already tracked in #$existing; adding today's findings there."
+            {
+              printf 'Still failing as of %s:\n\n' "$(date -u +%FT%TZ)"
+              cat problems.md
+            } > /tmp/comment.md
+            gh issue comment "$existing" --body-file /tmp/comment.md
+            exit 1
+          fi
+
+          {
+            cat problems.md
+            printf '\n\n---\n\n'
+            printf 'Filed automatically by `.github/workflows/scheduled-workflow-watchdog.yml` (core#628).\n\n'
+            printf 'A workflow in state `disabled_inactivity` is re-activated by a commit that **changes its cron expression** '
+            printf '(GitHub documents this under "actor for scheduled workflows"), which is the git-native fix and also lets you '
+            printf 'move the schedule off the top of the hour at the same time. Re-enabling from the Actions UI works too, but '
+            printf 'leaves the original cron in place and puts the repo state out of step with the repo contents.\n'
+          } > /tmp/body.md
+
+          gh issue create \
+            --title "Scheduled workflow stopped firing" \
+            --body-file /tmp/body.md
+          exit 1

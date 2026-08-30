@@ -442,7 +442,24 @@ class SettingsState(BaseState):
             self.error_message = self._safe_error(e, "Failed to leave organization")
             return
         self.error_message = ""
-        return rx.redirect("/")
+
+        # ⚠️ Redirecting to "/" is not enough, and this is the part that is easy
+        # to get wrong. The session is still pointed at the org just left: the
+        # access token carries its `org_id` claim, `current_org` still names it,
+        # and `BaseState._get_org_id` reads `current_org` — so the next page
+        # would go on operating inside an org this user is no longer a member
+        # of, until the 10-minute token expiry happened to bite.
+        #
+        # Re-derive membership from the database, then either move the session
+        # to a remaining org (`switch_org` mints fresh tokens and re-reads the
+        # role) or end it. A member who arrived by invitation may have had only
+        # this one org, so "log out" is a real branch, not a defensive stub.
+        auth_state.user_orgs = [
+            o for o in auth_state.user_orgs if o.id != auth_state.current_org.id
+        ]
+        if auth_state.user_orgs:
+            return auth_state.switch_org(auth_state.user_orgs[0].id)
+        return auth_state.logout()
 
     async def cancel_invitation(self, invitation_id: int):
         if not await self._check_role("admin"):

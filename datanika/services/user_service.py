@@ -426,9 +426,16 @@ class UserService:
            ``email_verified`` is keyword-only and defaults to ``False`` so that a
            caller which forgets it fails closed instead of trusting silently.
 
+        3. Rule 2 is only half of the decision. It establishes that *the
+           provider* proved the address; it says nothing about whether **the
+           account being linked to** ever proved it. Both sides have to hold, or
+           an address typed at signup by someone who never owned it becomes a
+           trap for the person who does. See
+           ``_assert_local_account_proved_its_email``.
+
         Auto-linking a verified provider email onto an existing password account
         is a deliberate product decision (SPEC_SIGNUP_SOCIAL_AUTH.md), not an
-        oversight — but it is only sound because of rule 2.
+        oversight — but it is only sound because of rules 2 **and** 3.
         """
         email = email.strip().lower()
         oauth_provider_id = (oauth_provider_id or "").strip()
@@ -466,6 +473,7 @@ class UserService:
                         "identity at this provider."
                     )
             elif not user.oauth_provider:
+                self._assert_local_account_proved_its_email(user)
                 user.oauth_provider = oauth_provider
                 user.oauth_provider_id = oauth_provider_id
                 session.flush()
@@ -498,6 +506,39 @@ class UserService:
         session.flush()
 
         return user, True
+
+    @staticmethod
+    def _assert_local_account_proved_its_email(user: User) -> None:
+        """SECURITY (auth boundary). The other side of rule 2.
+
+        Binding a provider identity to a pre-existing row hands whoever holds
+        that row's password everything the arriving user does from then on, and
+        hands the arriving user an account they did not create. That is only
+        acceptable when the row is entitled to the address.
+
+        Two ways it can be:
+
+        * ``email_verified`` — someone followed the link we mailed to that
+          address, so the row has proved it. Set by ``/api/verify-email``, by
+          the create branch above, and by completing a password reset (which is
+          the same proof by a different route, and is the recovery path for
+          every account that predates verification being wired up).
+        * ``password_changed_at IS NULL`` — no human ever chose a password for
+          this row, so there is no password login to hand over. Linking can only
+          grant access to someone who has already proved the address.
+
+        Anything else is an unproven claim on both sides of the join, and the
+        refusal has to name a way back or it is a lockout: the password still
+        works, and the reset flow both proves the address and clears this.
+        """
+        if user.email_verified or user.password_changed_at is None:
+            return
+        raise UserServiceError(
+            "An account already exists for this email address and has not been "
+            "confirmed, so it cannot be linked to a social login yet. Sign in "
+            "with your password, or use 'Forgot password' to confirm the "
+            "address first."
+        )
 
     # -- Helpers --
 

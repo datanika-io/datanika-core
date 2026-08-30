@@ -162,6 +162,18 @@ Content-Type: application/json
   call). Always compile first to catch Jinja errors, then preview.
 - **Use `?wait=true`** on run triggers instead of polling `GET /runs/{{id}}`
   in a loop. Default timeout is 120s, max 300s.
+- **With `?wait=true`, the status code carries the run's outcome**, not just
+  the transport's — so `curl --fail` and `raise_for_status()` are correct
+  idioms for "did my pipeline work?":
+  - `200` — the run finished **successfully**
+  - `408` — still `pending`/`running` when the wait timed out; the body has
+    `"timed_out": true` and the run is still going. Poll `GET /runs/{{id}}`
+    or re-wait; this is not a failure.
+  - `422` — the run reached a **terminal, non-success** status (`failed`,
+    `cancelled`). Not a 5xx: the failure is in your pipeline, not our server.
+  The serialised run is the body in all three cases, so `status` and
+  `error_message` remain the source of truth. Without `?wait=true` the trigger
+  still returns `202` immediately and says nothing about the outcome.
 - **Cancel + retry** if a run appears stuck — `POST /runs/{{id}}/cancel`
   then re-trigger.
 - **Introspect before building** — list source tables and columns

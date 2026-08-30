@@ -526,10 +526,37 @@ def delete_upload(request, api_key, session):
 
 
 async def _trigger_and_maybe_wait(request, api_key, run):
-    """Shared helper: fire-and-forget (202) or wait for completion (200/408).
+    """Shared helper: fire-and-forget (202) or wait for the outcome (200/408/422).
 
     If ``?wait=true`` is set, polls the run until it reaches a terminal
     status or the timeout expires. Default timeout 120s, max 300s.
+
+    **The status line carries the run's outcome, not just the transport's**
+    (#663). ``?wait=true`` is the caller explicitly asking to block until the
+    result is known, and every CI system in common use keys off ``curl``'s exit
+    status — a step that reports success on a failed load turns a loud failure
+    into a silent one.
+
+    ===========================  ======
+    outcome                      status
+    ===========================  ======
+    success                      200
+    still running at timeout     408
+    terminal, not success        422
+    ===========================  ======
+
+    422 rather than 5xx because the failure is in the caller's pipeline — their
+    credentials, their SQL, their source — not in our server; a 5xx would page us
+    for their typo. The serialised run is the body in every case, so ``status``
+    and ``error_message`` stay the source of truth.
+
+    ⚠️ **The branch tests for "not success", never for ``failed`` by name.**
+    ``RunStatus`` already has ``cancelled``, and a terminal status added later
+    must not silently rejoin the 200 branch.
+
+    ⚠️ 408 and 422 here are **results**, so any client of these three endpoints
+    has to treat them as such rather than as transport errors. Ours does —
+    ``datanika_mcp.client.DatanikaClient._post``, via ``result_statuses``.
     """
     wait = request.query_params.get("wait", "").lower() in ("true", "1")
     if not wait:
@@ -551,6 +578,8 @@ async def _trigger_and_maybe_wait(request, api_key, run):
     if final_run.status.value in ("pending", "running"):
         result["timed_out"] = True
         return JSONResponse(result, status_code=408)
+    if final_run.status.value != RunStatus.SUCCESS.value:
+        return JSONResponse(result, status_code=422)
     return JSONResponse(result)
 
 

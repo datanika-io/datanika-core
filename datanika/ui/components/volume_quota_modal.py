@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import reflex as rx
 
+from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.state.base_state import BaseState
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.i18n_state import I18nState
@@ -41,7 +42,7 @@ def _free_hard_block_content() -> rx.Component:
                 color_scheme="violet",
                 variant="solid",
             ),
-            href="/settings?tab=billing",
+            href=BILLING_ROUTE,
         ),
         spacing="3",
         align="start",

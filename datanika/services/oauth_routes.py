@@ -17,7 +17,7 @@ from datanika.services.oauth_service import (
     github_provider,
     google_provider,
 )
-from datanika.services.user_service import UserService
+from datanika.services.user_service import UserService, UserServiceError
 
 _OAUTH_STATE_COOKIE = "oauth_state"
 
@@ -118,6 +118,14 @@ async def oauth_callback(request: Request) -> RedirectResponse:
         try:
             result = await svc.handle_callback(providers[provider], code, redirect_uri, session)
             session.commit()
+        except UserServiceError:
+            # A refusal, not a failure. The user can act on this one — their
+            # password still works and the reset flow proves the address — so it
+            # must not be flattened into "authentication failed", which reads as
+            # "try again" and never succeeds. The flag is bounded on purpose:
+            # the login page renders a fixed translated callout, never text from
+            # the query string.
+            return RedirectResponse(url=_frontend("/login?link_blocked=1"), status_code=302)
         except Exception:
             return RedirectResponse(
                 url=_frontend("/login?error=OAuth+authentication+failed"), status_code=302

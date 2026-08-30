@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.state.base_state import BaseState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -31,7 +32,7 @@ def error_or_quota_callout(state_cls: type[BaseState]) -> rx.Component:
                                 color_scheme="amber",
                                 variant="solid",
                             ),
-                            href="/settings?tab=billing",
+                            href=BILLING_ROUTE,
                         ),
                         align="center",
                         spacing="3",

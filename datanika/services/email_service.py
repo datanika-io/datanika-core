@@ -5,6 +5,9 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from datanika.config import settings
+from datanika.plugin_registry import BILLING_ROUTE
+
 logger = logging.getLogger(__name__)
 
 
@@ -106,16 +109,40 @@ class EmailService:
         metric_label: str,
         used: int,
         limit: int,
+        *,
+        billing_enabled: bool | None = None,
     ) -> bool:
+        """Warn that a quota is nearly spent, with an upgrade CTA **only where
+        there is a billing page** (#682).
+
+        ``send_quota_warning_email_task`` is registered in **core**, so it is
+        invokable by name on any deployment, while ``BILLING_ROUTE`` is served by
+        the cloud plugin. Building the link unconditionally meant a self-hoster
+        could receive an "Upgrade Plan" button from our own address pointing at a
+        route nothing registers.
+
+        The predicate is the one ``SettingsState.redirect_legacy_billing_tab``
+        already uses, deliberately — two predicates for "is billing available"
+        is how they start disagreeing. ``billing_enabled`` is injectable so the
+        two branches are testable without patching global config, but the caller
+        that matters passes nothing, so the default has to be right on its own.
+        """
+        if billing_enabled is None:
+            billing_enabled = settings.datanika_edition == "cloud"
+
         percent = int(used / limit * 100) if limit else 0
-        upgrade_url = f"{self._frontend_url}/settings?tab=billing"
+        upgrade_block = ""
+        if billing_enabled:
+            upgrade_block = _QUOTA_UPGRADE_BLOCK.format(
+                upgrade_url=f"{self._frontend_url}{BILLING_ROUTE}"
+            )
         html = _QUOTA_WARNING_TEMPLATE.format(
             plan_name=plan_name,
             metric_label=metric_label,
             used=used,
             limit=limit,
             percent=percent,
-            upgrade_url=upgrade_url,
+            upgrade_block=upgrade_block,
             app_name="Datanika",
         )
         return self.send(to, f"You've used {percent}% of your {plan_name} plan — Datanika", html)
@@ -210,6 +237,19 @@ If you didn't request this, you can ignore this email - nothing has changed
 and your current password still works.
 """
 
+#: The upgrade CTA, spliced into the quota warning only on a deployment that
+#: serves a billing page (#682). Kept as its own template rather than an ``if``
+#: around the ``<a>``: dropping the href but leaving the button would be worse
+#: than the dead link it replaces.
+_QUOTA_UPGRADE_BLOCK = """\
+  <p style="color: #444; line-height: 1.6;">
+    Upgrade your plan to avoid hitting the limit.
+  </p>
+  <p style="margin: 32px 0;">
+    <a href="{upgrade_url}" style="background: #7c3aed; color: #fff; padding: 12px 28px; \
+border-radius: 6px; text-decoration: none; font-weight: 600;">Upgrade Plan</a>
+  </p>"""
+
 _QUOTA_WARNING_TEMPLATE = """\
 <!DOCTYPE html>
 <html>
@@ -220,13 +260,7 @@ max-width: 560px; margin: 0 auto; padding: 40px 20px;">
     Your organization has used <strong>{used}</strong> of <strong>{limit}</strong>
     {metric_label} this billing period.
   </p>
-  <p style="color: #444; line-height: 1.6;">
-    Upgrade your plan to avoid hitting the limit.
-  </p>
-  <p style="margin: 32px 0;">
-    <a href="{upgrade_url}" style="background: #7c3aed; color: #fff; padding: 12px 28px; \
-border-radius: 6px; text-decoration: none; font-weight: 600;">Upgrade Plan</a>
-  </p>
+{upgrade_block}
   <p style="color: #888; font-size: 13px;">
     This is an automated notification from {app_name}. You will receive this email
     once per billing period when your usage crosses 80%.

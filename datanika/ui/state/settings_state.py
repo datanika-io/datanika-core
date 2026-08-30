@@ -1,8 +1,10 @@
 """Settings state — org profile and member management."""
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings as app_settings
+from datanika.plugin_registry import BILLING_ROUTE
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService
 from datanika.ui.state.auth_state import AuthState
@@ -34,6 +36,26 @@ class SettingsState(BaseState):
     edit_org_name: str = ""
     edit_org_slug: str = ""
     edit_default_dbt_schema: str = ""
+
+    def redirect_legacy_billing_tab(self):
+        """Send `/settings?tab=billing` to the billing page (#654).
+
+        Core has never read a `tab` parameter, so the link was wrong from the
+        day it was written — but one of the four call sites was the
+        quota-warning email, which cloud queues per org owner
+        (`datanika_cloud/billing/meter.py`). A URL in somebody's inbox cannot be
+        edited, so fixing the source is not the whole fix.
+
+        In the **core** edition there is no billing page to send them to: the
+        route is registered by the plugin. The parameter stays ignored there,
+        which is exactly what it has always been, rather than 404ing on a route
+        that does not exist.
+        """
+        if self.router.page.params.get("tab") != "billing":
+            return None
+        if app_settings.datanika_edition != "cloud":
+            return None
+        return rx.redirect(BILLING_ROUTE)
 
     def set_edit_org_name(self, value: str):
         self.edit_org_name = value

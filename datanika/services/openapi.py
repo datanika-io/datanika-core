@@ -573,20 +573,75 @@ def _delete_op(tag, summary):
     }
 
 
-def _trigger_op(tag, summary):
+_WAIT_PARAM = {
+    "name": "wait",
+    "in": "query",
+    "required": False,
+    "description": (
+        "Block until the run reaches a terminal status. The status code then "
+        "carries the run's **outcome**, not just the transport's: 200 success, "
+        "408 still running at the timeout, 422 terminal but not successful. "
+        "`curl --fail` and `raise_for_status()` are therefore correct idioms "
+        "for 'did my pipeline work?'."
+    ),
+    "schema": {"type": "boolean", "default": False},
+}
+
+_TIMEOUT_PARAM = {
+    "name": "timeout",
+    "in": "query",
+    "required": False,
+    "description": "Seconds to wait when `wait=true`. Clamped to 1..300.",
+    "schema": {"type": "integer", "default": 120, "minimum": 1, "maximum": 300},
+}
+
+
+def _trigger_op(tag, summary, *, waitable=False):
+    """Build a trigger operation.
+
+    ``waitable`` documents the ``?wait=true`` outcome-on-the-status-line
+    contract (#663). It is **off by default** because
+    ``/connections/{id}/test`` shares this helper and has no run to wait for —
+    documenting 408/422 there would describe responses it cannot produce.
+    """
+    responses = {
+        "202": {
+            "description": "Accepted — dispatched, outcome not yet known",
+            "content": _json_content(_ref("TriggerResult")),
+        },
+        "401": _401,
+        "404": _404,
+        "429": _429,
+    }
+    parameters = [_ID_PARAM]
+    if waitable:
+        parameters = [_ID_PARAM, _WAIT_PARAM, _TIMEOUT_PARAM]
+        responses["200"] = {
+            "description": "`wait=true` — the run finished successfully",
+            "content": _json_content(_ref("Run")),
+        }
+        responses["408"] = {
+            "description": (
+                "`wait=true` — still pending/running when the wait expired. The "
+                "body is the run with `timed_out: true`; it is still going. Not "
+                "a failure — poll `GET /api/v1/runs/{id}` or wait again."
+            ),
+            "content": _json_content(_ref("Run")),
+        }
+        responses["422"] = {
+            "description": (
+                "`wait=true` — the run reached a terminal status that is not "
+                "success (`failed`, `cancelled`). The body is the run, so "
+                "`status` and `error_message` remain the source of truth. Not a "
+                "5xx: the failure is in your pipeline, not in the server."
+            ),
+            "content": _json_content(_ref("Run")),
+        }
     return {
         "tags": [tag],
         "summary": summary,
-        "parameters": [_ID_PARAM],
-        "responses": {
-            "202": {
-                "description": "Accepted",
-                "content": _json_content(_ref("TriggerResult")),
-            },
-            "401": _401,
-            "404": _404,
-            "429": _429,
-        },
+        "parameters": parameters,
+        "responses": responses,
     }
 
 
@@ -698,7 +753,7 @@ def build_openapi_spec() -> dict:
         action = "Test" if resource == "connections" else "Trigger"
         suffix = "test" if resource == "connections" else "run"
         paths[f"/api/v1/{resource}/{{id}}/{suffix}"] = {
-            "post": _trigger_op(tag, f"{action} {resource[:-1]}"),
+            "post": _trigger_op(tag, f"{action} {resource[:-1]}", waitable=suffix == "run"),
         }
 
     # Tier 2 Agent Compatibility: transformation compile + preview

@@ -22,6 +22,8 @@ would still have worked in dev*, where the origins differ. Hence the explicit
 import ast
 import inspect
 
+import pytest
+
 import datanika.ui.components.cost_estimator_card as cost_estimator_card
 import datanika.ui.components.elt_nudge_card as elt_nudge_card
 import datanika.ui.pages.login as login_page_module
@@ -32,12 +34,40 @@ def _rendered(component) -> str:
     return str(component.render())
 
 
+def _window_around(html: str, needle: str, radius: int = 400) -> str:
+    start = html.find(needle)
+    assert start != -1, f"{needle} not on the page"
+    return html[max(0, start - radius) : start + radius]
+
+
 class TestSocialLoginStaysInTheTab:
-    def test_no_new_tab_anywhere_on_the_login_page(self):
-        assert "_blank" not in _rendered(login_page()), (
-            "A social-login button opening in a new tab leaves the user signed "
+    """Narrowed 2026-08-30 (#656), deliberately, and the reason matters.
+
+    This used to be ``"_blank" not in _rendered(login_page())`` — a page-wide
+    ban. That was a fine proxy while the login page had no legitimate off-site
+    link, and it stopped being one the moment Terms and Privacy were added: they
+    *must* open in a new tab, or reading them loses the form. A page-wide ban
+    would then have had to be deleted outright to unblock that, taking the real
+    guard with it.
+
+    So it is now scoped to what #418 was actually about — the two provider
+    buttons — which makes it strictly more precise: a `_blank` on a social
+    button still fails, and it would have failed before only by accident of
+    being the only link on the page.
+    """
+
+    @pytest.mark.parametrize("provider", ["google", "github"])
+    def test_a_social_button_never_opens_a_new_tab(self, provider):
+        window = _window_around(_rendered(login_page()), f"/api/auth/login/{provider}")
+        assert "_blank" not in window, (
+            f"the {provider} button opens in a new tab, which leaves the user signed "
             "in there while the original tab still shows the form (#418)."
         )
+
+    def test_the_window_probe_is_not_vacuous(self):
+        """A radius that captured nothing would make the test above always pass."""
+        window = _window_around(_rendered(login_page()), "/api/auth/login/google")
+        assert "window.location.assign" in window
 
     def test_both_providers_do_a_real_browser_navigation(self):
         """Not a router push — the endpoint is served by the backend."""

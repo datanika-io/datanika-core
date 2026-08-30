@@ -6,6 +6,7 @@ import reflex as rx
 
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
+from datanika.ui.components.layout import legal_links
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -76,6 +77,22 @@ def _forgot_password_link() -> rx.Component:
     )
 
 
+def _help_key():
+    """Remedy text for a refused social link — it must name a remedy that exists.
+
+    With no relay, ``_forgot_password_link`` above hides the reset entry point
+    entirely and no verification mail is ever sent, so "confirm your address"
+    names something the instance cannot do. The password still works, which is
+    the only true remedy there.
+
+    Import-time, like ``_forgot_password_link``: instance configuration, not
+    per-request state.
+    """
+    if settings.smtp_host:
+        return _t["auth.social_link_blocked_help"]
+    return _t["auth.social_link_blocked_help_no_email"]
+
+
 def login_page() -> rx.Component:
     return rx.center(
         rx.vstack(
@@ -100,6 +117,20 @@ def login_page() -> rx.Component:
                 rx.callout(
                     _t["auth.session_expired"],
                     icon="clock",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AuthState.show_link_blocked,
+                rx.callout(
+                    rx.vstack(
+                        rx.text(_t["auth.social_link_blocked"], weight="medium"),
+                        rx.text(_help_key(), size="2"),
+                        spacing="1",
+                        align="start",
+                    ),
+                    icon="shield_alert",
                     color_scheme="amber",
                     width="100%",
                 ),
@@ -168,6 +199,12 @@ def login_page() -> rx.Component:
                 size="2",
                 color="gray",
             ),
+            # #656. Rendered from the shared component rather than written
+            # here, so the `is_external` (= new tab) that these off-site links
+            # need stays out of this module — the AST guard in
+            # test_external_links.py is about the *social* buttons, and a
+            # module-wide ban is easier to keep true than to keep meaningful.
+            legal_links(),
             spacing="4",
             width="360px",
             padding="32px",

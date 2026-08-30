@@ -10,6 +10,7 @@ from datanika.config import settings
 from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.captcha_service import CaptchaService
+from datanika.services.email_verification import request_email_verification
 from datanika.services.user_service import UserService, UserServiceError
 from datanika.ui.state.base_state import check_role_hierarchy, get_sync_session
 
@@ -117,6 +118,18 @@ class AuthState(rx.State):
         telling the second group their session expired is confusing.
         """
         return self.router.page.params.get("expired", "") == "1"
+
+    @rx.var
+    def show_link_blocked(self) -> bool:
+        """Whether a social login was refused because the local account is unproven.
+
+        A **bounded flag**, not the message: the backend route that sets it is a
+        Starlette redirect, so it cannot write ``auth_error`` (server-side state
+        the redirect never touches), and rendering free text out of the query
+        string would put a phishing surface on the sign-in page. Same shape as
+        ``?reset=1`` and ``?expired=1``, for the same reason.
+        """
+        return self.router.page.params.get("link_blocked", "") == "1"
 
     @rx.var
     def org_id(self) -> int:
@@ -297,9 +310,19 @@ class AuthState(rx.State):
                 # the pattern in user_service.find_or_create_oauth_user. #127.
                 org_slug = f"{_slugify(full_name)}-{user.id}"
                 org = svc.create_org(session, org_name, org_slug, user.id)
-                # Capture id before commit expires ORM attributes
+                # Capture ids before commit expires ORM attributes
                 org_id = org.id
+                user_id = user.id
+                user_email = user.email
                 session.commit()
+
+            # Confirm the address. Until this call existed, ``email_verified``
+            # was False on every password account ever created, which is what
+            # made an unproven account eligible for a social-login auto-link.
+            # Best-effort by construction: the account is already committed, so
+            # a missing relay or an unreachable broker must not surface as a
+            # failed signup. See services/email_verification.py.
+            request_email_verification(user_id, user_email, AuthService(settings.secret_key))
 
             # Now authenticate to get tokens
             with get_sync_session() as session:

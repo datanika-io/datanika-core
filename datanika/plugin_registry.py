@@ -83,3 +83,22 @@ def get_page_scripts(page_key: str) -> list[rx.Component]:
     don't share component identity across mount cycles.
     """
     return [rx.script(js) for js in _page_scripts.get(page_key, [])]
+
+
+#: Where the billing page lives.
+#:
+#: **Core does not serve this page** — the cloud plugin registers it
+#: (``datanika_cloud/plugin.py``). But core links to it from four upgrade
+#: call-to-actions, one of them inside an email, so the string has to exist in
+#: core and the plugin has to match it. That is precisely the seam this module
+#: is for.
+#:
+#: It used to be two hand-written strings that disagreed: core linked
+#: ``/settings?tab=billing``, which core's ``/settings`` does not read and never
+#: has, so every click that converts free → paid landed on the generic Settings
+#: page at the moment of highest intent (#654). Same shape as #651 — two copies
+#: of one fact — and the fix is the same: one copy, and a test on the link.
+#:
+#: The plugin asserts equality in its own suite, which is the only place that
+#: can see the route ``app.add_page`` is actually called with.
+BILLING_ROUTE = "/settings/billing"

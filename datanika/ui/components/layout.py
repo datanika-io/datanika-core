@@ -73,6 +73,47 @@ def sidebar_user_section() -> rx.Component:
     )
 
 
+#: The published policy documents. Absolute and cross-origin on purpose:
+#: a root-relative "/terms/" with ``is_external`` opens app.datanika.io/terms/,
+#: a route the Reflex app does not serve (#418). ``is_external`` in Reflex means
+#: *new tab*, which is what we want here — a user reading the terms mid-signup
+#: must not lose what they typed.
+TERMS_URL = "https://datanika.io/terms/"
+PRIVACY_URL = "https://datanika.io/privacy/"
+
+
+def legal_links() -> rx.Component:
+    """Terms and Privacy, reachable from inside the product (#656).
+
+    Rendered at the foot of the sidebar, so it is one click away from every
+    authenticated page. Before this the application referenced neither document
+    anywhere — a logged-in user could not find the terms they had agreed to.
+    """
+    return rx.hstack(
+        rx.link(
+            rx.text(_t["legal.terms"], size="1"),
+            href=TERMS_URL,
+            is_external=True,
+            color_scheme="gray",
+        ),
+        # A list separator between two standalone links, not a connective inside
+        # a sentence — so unlike the signup line (#682) it carries no grammar and
+        # needs no locale to place it. Do not "fix" this by analogy.
+        rx.text("·", size="1", color="gray"),
+        rx.link(
+            rx.text(_t["legal.privacy"], size="1"),
+            href=PRIVACY_URL,
+            is_external=True,
+            color_scheme="gray",
+        ),
+        spacing="2",
+        align="center",
+        justify="center",
+        width="100%",
+        padding_bottom="8px",
+    )
+
+
 def sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
@@ -101,6 +142,7 @@ def sidebar() -> rx.Component:
             ),
             rx.spacer(),
             sidebar_user_section(),
+            legal_links(),
             spacing="0",
             height="100vh",
         ),

@@ -15,7 +15,7 @@ from datanika.services.auth import AuthService
 from datanika.services.encryption import EncryptionService
 from datanika.services.oidc_token import IdTokenError, verify_id_token
 from datanika.services.sso_service import SSOService
-from datanika.services.user_service import UserService
+from datanika.services.user_service import UserService, UserServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -271,6 +271,14 @@ async def sso_callback(request: Request) -> RedirectResponse:
                 )
             ).scalar_one_or_none()
             # Gross imports above — let me fix inline
+        except UserServiceError:
+            # Same distinction the OAuth callback draws: the link was refused
+            # because the local account never proved this address, which the
+            # user can fix. Note this closes an org-scoped variant too — an SSO
+            # admin configuring their own IdP could otherwise assert any address
+            # and be auto-linked onto whatever unproven account already held it.
+            logger.info("SSO link refused for org %s: local account unproven", org_slug)
+            return RedirectResponse(url=_frontend("/login?link_blocked=1"), status_code=302)
         except SamlValidationError:
             # A forged / unsigned / tampered / expired / replayed assertion is
             # an attack, not a user error — reject with 401, issue no session.

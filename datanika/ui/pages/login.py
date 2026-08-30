@@ -77,6 +77,22 @@ def _forgot_password_link() -> rx.Component:
     )
 
 
+def _help_key():
+    """Remedy text for a refused social link — it must name a remedy that exists.
+
+    With no relay, ``_forgot_password_link`` above hides the reset entry point
+    entirely and no verification mail is ever sent, so "confirm your address"
+    names something the instance cannot do. The password still works, which is
+    the only true remedy there.
+
+    Import-time, like ``_forgot_password_link``: instance configuration, not
+    per-request state.
+    """
+    if settings.smtp_host:
+        return _t["auth.social_link_blocked_help"]
+    return _t["auth.social_link_blocked_help_no_email"]
+
+
 def login_page() -> rx.Component:
     return rx.center(
         rx.vstack(
@@ -101,6 +117,20 @@ def login_page() -> rx.Component:
                 rx.callout(
                     _t["auth.session_expired"],
                     icon="clock",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AuthState.show_link_blocked,
+                rx.callout(
+                    rx.vstack(
+                        rx.text(_t["auth.social_link_blocked"], weight="medium"),
+                        rx.text(_help_key(), size="2"),
+                        spacing="1",
+                        align="start",
+                    ),
+                    icon="shield_alert",
                     color_scheme="amber",
                     width="100%",
                 ),

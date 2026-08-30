@@ -88,6 +88,14 @@ services:
       - .env.docker
     environment:
       GRANIAN_WORKERS: "4"
+      # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
+      # Without it, `StateManager.create()` falls to StateManagerDisk and
+      # `TokenManager.create()` to LocalTokenManager, both of which are PER PROCESS -
+      # so each of the 4 workers above keeps its own session store and a reconnect
+      # that lands on another one is served a stale state. Measured on prod
+      # 2026-08-30: 48% of reconnects (11 stale / 23), 0/23 on a single socket.
+      # AuthState.access_token lives in that state, so a stale read is a logout (#646).
+      REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
       # Pinned absolute: the default `./uploaded_files` (config.py) resolves against the
       # working directory, so app and celery could silently diverge. See #471.
@@ -138,6 +146,14 @@ services:
       - .env.docker
     environment:
       GRANIAN_WORKERS: "4"
+      # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
+      # Without it, `StateManager.create()` falls to StateManagerDisk and
+      # `TokenManager.create()` to LocalTokenManager, both of which are PER PROCESS -
+      # so each of the 4 workers above keeps its own session store and a reconnect
+      # that lands on another one is served a stale state. Measured on prod
+      # 2026-08-30: 48% of reconnects (11 stale / 23), 0/23 on a single socket.
+      # AuthState.access_token lives in that state, so a stale read is a logout (#646).
+      REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
       # Pinned absolute on purpose. The default is `./uploaded_files` (config.py), which
       # resolves against the working directory — so app and celery writing from different

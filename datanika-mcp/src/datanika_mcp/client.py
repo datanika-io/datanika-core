@@ -42,10 +42,39 @@ class DatanikaClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def _post(self, path: str, json: dict | None = None) -> dict:
+    async def _post(
+        self,
+        path: str,
+        json: dict | None = None,
+        *,
+        result_statuses: tuple[int, ...] = (),
+    ) -> dict:
+        """POST and return the parsed body, raising on 4xx/5xx.
+
+        ``result_statuses`` names status codes that are **outcomes rather than
+        transport failures** for this particular endpoint, and returns their
+        bodies instead of raising.
+
+        Only the three ``?wait=true`` trigger endpoints pass it, and only for
+        ``(408, 422)`` (#663). Those codes carry the *run's* result on the status
+        line — a failed pipeline, or a wait that timed out — and the body holds
+        ``status`` and ``error_message``. Raising there tells an agent that
+        something went wrong and throws away the one field saying what.
+
+        ⚠️ **Deliberately opt-in per call, not a blanket rule in this method.**
+        422 is not a run outcome anywhere else in the API; treating it as one
+        everywhere would silently swallow real validation errors, which is the
+        same defect one layer down.
+        """
         resp = await self._http.post(path, json=json)
+        if resp.status_code in result_statuses:
+            return resp.json()
         resp.raise_for_status()
         return resp.json()
+
+    #: Status codes the ``?wait=true`` trigger endpoints use to report the *run's*
+    #: outcome. See ``_post`` and core#663.
+    _RUN_OUTCOME_STATUSES = (408, 422)
 
     # ------------------------------------------------------------------
     # Read-only — Tier 1: Discover & Introspect
@@ -205,16 +234,16 @@ class DatanikaClient:
         path = f"/api/v1/uploads/{upload_id}/run"
         if wait:
             path += "?wait=true"
-        return await self._post(path)
+        return await self._post(path, result_statuses=self._RUN_OUTCOME_STATUSES)
 
     async def trigger_pipeline(self, pipeline_id: int, wait: bool = False) -> dict:
         path = f"/api/v1/pipelines/{pipeline_id}/run"
         if wait:
             path += "?wait=true"
-        return await self._post(path)
+        return await self._post(path, result_statuses=self._RUN_OUTCOME_STATUSES)
 
     async def trigger_transformation(self, transformation_id: int, wait: bool = False) -> dict:
         path = f"/api/v1/transformations/{transformation_id}/run"
         if wait:
             path += "?wait=true"
-        return await self._post(path)
+        return await self._post(path, result_statuses=self._RUN_OUTCOME_STATUSES)

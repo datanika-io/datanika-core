@@ -12,7 +12,7 @@
   "nav.settings": "Настройки",
   "legal.terms": "Условия использования",
   "legal.privacy": "Политика конфиденциальности",
-  "legal.signup_agreement": "Создавая аккаунт, вы соглашаетесь с нашими",
+  "legal.signup_agreement": "Создавая аккаунт, вы соглашаетесь с нашими документами: {terms} и {privacy}.",
   "auth.sign_in": "Войти",
   "auth.sign_up": "Регистрация",
   "auth.sign_in_heading": "Войдите в свой аккаунт",

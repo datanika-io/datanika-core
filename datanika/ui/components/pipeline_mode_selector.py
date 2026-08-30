@@ -40,6 +40,10 @@ def _current_mode_hint() -> rx.Component:
 def _mode_labels_row() -> rx.Component:
     # Render the three labels so the orphan i18n scanner sees each key,
     # then let rx.radio_group render the functional selector below.
+    #
+    # The "·" below separates three standalone labels; it is punctuation in a
+    # list, not a connective inside a sentence, so it carries no grammar. That
+    # is the distinction #682 turned on — see ui/components/i18n_text.py.
     return rx.hstack(
         rx.text(_t["pipelines.mode_auto"], size="1", color="var(--gray-11)"),
         rx.text("·", size="1", color="var(--gray-9)"),

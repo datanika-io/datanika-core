@@ -13,6 +13,7 @@ from starlette.routing import Route
 from datanika.config import settings
 from datanika.services.auth import AuthService
 from datanika.services.encryption import EncryptionService
+from datanika.services.oidc_token import IdTokenError, verify_id_token
 from datanika.services.sso_service import SSOService
 from datanika.services.user_service import UserService
 
@@ -396,20 +397,22 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
             # exchange just minted: the issuer is the one saying this.
             return user_info.get("email", ""), user_info.get("name", ""), True
 
-        # Fallback for issuers that publish no `userinfo_endpoint`.
+        # Fallback for issuers that publish no `userinfo_endpoint`. The claims
+        # are only attributable to the issuer once the signature over them
+        # chains to a key the issuer publishes, so a failure here yields
+        # nothing at all rather than an unverified address.
         id_token = tokens.get("id_token", "")
         if id_token:
-            import base64
-            import json
-
-            payload = id_token.split(".")[1]
-            payload += "=" * (4 - len(payload) % 4)
-            claims = json.loads(base64.urlsafe_b64decode(payload))
-            # The signature over these claims is NOT checked, so nothing here is
-            # attributable to the issuer yet. Reported as unverified, which makes
-            # find_or_create_oauth_user refuse it — failing closed until the
-            # JWKS verification lands and this becomes True.
-            return claims.get("email", ""), claims.get("name", ""), False
+            try:
+                claims = await verify_id_token(
+                    client, id_token, disco, client_id=sso.oidc_client_id
+                )
+            except IdTokenError:
+                logger.warning(
+                    "OIDC id_token failed verification for issuer %s", disco.get("issuer")
+                )
+                return "", "", False
+            return claims.get("email", ""), claims.get("name", ""), True
 
     return "", "", False
 

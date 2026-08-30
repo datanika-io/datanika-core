@@ -34,8 +34,16 @@ class EmailService:
     def is_enabled(self) -> bool:
         return bool(self._host)
 
-    def send(self, to: str, subject: str, html_body: str) -> bool:
-        """Send an HTML email.  Returns True on success, False on failure."""
+    def send(self, to: str, subject: str, html_body: str, text_body: str | None = None) -> bool:
+        """Send an email.  Returns True on success, False on failure.
+
+        ``text_body`` is optional and opt-in, so the pre-existing templates are
+        untouched. Supplying it attaches a ``text/plain`` alternative **before**
+        the HTML part — RFC 2046 §5.1.4 orders a ``multipart/alternative``
+        least-preferred first — which matters for deliverability: an HTML-only
+        alternative is a spam-filter signal, and the password-reset message is
+        the one email that has to land.
+        """
         if not self.is_enabled():
             return False
 
@@ -43,6 +51,8 @@ class EmailService:
         msg["From"] = f"{self._from_name} <{self._from_email}>"
         msg["To"] = to
         msg["Subject"] = subject
+        if text_body:
+            msg.attach(MIMEText(text_body, "plain"))
         msg.attach(MIMEText(html_body, "html"))
 
         try:
@@ -72,6 +82,22 @@ class EmailService:
             url=url, org_name=org_name, inviter_name=inviter_name, app_name="Datanika"
         )
         return self.send(to, f"You're invited to {org_name} — Datanika", html)
+
+    def send_password_reset_email(self, to: str, token: str) -> bool:
+        """Send the "set a new password" link (core#623).
+
+        The link is a **frontend** path, unlike the two templates above which
+        point at ``/api/`` routes. Two reasons, both load-bearing: the Apache
+        vhost forwards an explicit list of prefixes to the backend and
+        everything else to the Reflex frontend, so a new backend route outside
+        ``/api/`` silently serves the SPA instead of itself — this is what broke
+        ``/mcp`` and every OAuth discovery document — and the destination has to
+        render a *form*, which an act-and-redirect route cannot do.
+        """
+        url = f"{self._frontend_url}/reset-password?token={token}"
+        html = _PASSWORD_RESET_TEMPLATE.format(url=url, app_name="Datanika")
+        text = _PASSWORD_RESET_TEXT.format(url=url, app_name="Datanika")
+        return self.send(to, "Set a new password — Datanika", html, text_body=text)
 
     def send_quota_warning_email(
         self,
@@ -142,6 +168,47 @@ border-radius: 6px; text-decoration: none; font-weight: 600;">Accept Invitation<
   </p>
 </body>
 </html>"""
+
+_PASSWORD_RESET_TEMPLATE = """\
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; \
+max-width: 560px; margin: 0 auto; padding: 40px 20px;">
+  <h2 style="color: #1a1a2e;">Set a new password</h2>
+  <p style="color: #444; line-height: 1.6;">
+    Someone asked to reset the password for this {app_name} account. Use the
+    button below to choose a new one.
+  </p>
+  <p style="margin: 32px 0;">
+    <a href="{url}" style="background: #7c3aed; color: #fff; padding: 12px 28px; \
+border-radius: 6px; text-decoration: none; font-weight: 600;">Set a new password</a>
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    This link expires in 60 minutes and can only be used once.
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    If you didn't request this, you can ignore this email — nothing has changed
+    and your current password still works.
+  </p>
+  <p style="color: #888; font-size: 13px;">
+    Or copy this link: {url}
+  </p>
+</body>
+</html>"""
+
+_PASSWORD_RESET_TEXT = """\
+Set a new password
+
+Someone asked to reset the password for this {app_name} account.
+Open this link to choose a new one:
+
+{url}
+
+This link expires in 60 minutes and can only be used once.
+
+If you didn't request this, you can ignore this email - nothing has changed
+and your current password still works.
+"""
 
 _QUOTA_WARNING_TEMPLATE = """\
 <!DOCTYPE html>

@@ -98,6 +98,17 @@ class AuthState(rx.State):
         return self.access_token != ""
 
     @rx.var
+    def show_reset_done(self) -> bool:
+        """Whether /login arrived from a completed password reset (core#623).
+
+        The reset flow lands here signed out rather than signing the user in —
+        an emailed link that produces a live session makes the email itself a
+        bearer credential. This is the callout that tells them it worked, and it
+        matches how ``verify_email`` and ``accept_invite`` already flag success.
+        """
+        return self.router.page.params.get("reset", "") == "1"
+
+    @rx.var
     def org_id(self) -> int:
         return self.current_org.id if self.current_org.id else 0
 

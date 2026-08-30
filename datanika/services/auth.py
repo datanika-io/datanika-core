@@ -12,6 +12,17 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
 
 ALGORITHM = "HS256"
 
+# NIST SP 800-63B: length only. No character-class requirements, no forced
+# rotation, no hints — those measurably push people toward weaker, reused
+# passwords without buying anything.
+MIN_PASSWORD_LENGTH = 8
+
+# bcrypt silently ignores everything past 72 bytes, so a 100-character
+# passphrase is really a 72-character one — and if the algorithm ever changes,
+# those users' passwords change meaning. Reject rather than truncate. Bytes,
+# not characters: 40 accented characters are 80 bytes.
+MAX_PASSWORD_BYTES = 72
+
 
 class AuthService:
     def __init__(self, secret_key: str):
@@ -25,6 +36,23 @@ class AuthService:
 
     def verify_password(self, plain: str, hashed: str) -> bool:
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+    @staticmethod
+    def validate_password_strength(password: str) -> None:
+        """Raise ``ValueError`` if ``password`` breaks a rule (core#623, D8).
+
+        The **only** password rule in the product. It is a ``staticmethod`` and
+        it lives here rather than in each caller because three places that must
+        agree is how they stop agreeing — ``register_user``, the Settings
+        change form and the reset flow all route through this one function.
+        """
+        if len(password) < MIN_PASSWORD_LENGTH:
+            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+        if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+            raise ValueError(
+                f"Password must be at most {MAX_PASSWORD_BYTES} bytes. Accented "
+                "characters and emoji count as more than one byte each."
+            )
 
     # -- JWT tokens --
 

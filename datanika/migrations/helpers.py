@@ -33,6 +33,7 @@ PUBLIC_TABLES: set[str] = {
     "oauth_clients",
     "oauth_grants",
     "oauth_tokens",
+    "password_reset_tokens",
 }
 
 # Tables managed by Alembic but not belonging to either category

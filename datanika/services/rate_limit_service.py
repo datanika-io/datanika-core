@@ -56,12 +56,30 @@ class RateLimitService:
 
     def check_rate_limit(
         self,
-        api_key_id: int,
+        bucket: str,
         org_id: int,
         limit_rpm: int,
         burst_per_sec: int | None = None,
     ) -> RateLimitResult:
-        """Check and record a request against the rate limit.
+        """Check and record a request against a per-minute rate limit.
+
+        ``bucket`` names the subject being limited. It used to be an
+        ``api_key_id: int``, which was the only thing this method ever did with
+        it — password reset (core#623) needs the same sliding window keyed on an
+        email digest or a client IP, so the parameter became a string rather
+        than a second limiter growing up beside this one. API-key callers pass
+        ``f"{api_key.id}"``, which produces byte-identical Redis keys.
+        """
+        return self.check_window(bucket, limit_rpm, window_seconds=60, burst_per_sec=burst_per_sec)
+
+    def check_window(
+        self,
+        bucket: str,
+        limit: int,
+        window_seconds: int = 60,
+        burst_per_sec: int | None = None,
+    ) -> RateLimitResult:
+        """Check and record a request against an arbitrary fixed window.
 
         Returns a RateLimitResult indicating whether the request is allowed.
         The request is always counted (even if over limit) to prevent
@@ -69,22 +87,24 @@ class RateLimitService:
         """
         r = self._get_redis()
         now = int(time.time())
-        window_key = f"{self.KEY_PREFIX}{api_key_id}:{now // 60}"
+        window_key = f"{self.KEY_PREFIX}{bucket}:{now // window_seconds}"
+        limit_rpm = limit
 
         # Atomic increment + set TTL
         pipe = r.pipeline()
         pipe.incr(window_key)
-        pipe.expire(window_key, 120)  # 2 minutes to cover window overlap
+        # Double the window to cover overlap, as the per-minute case always did.
+        pipe.expire(window_key, window_seconds * 2)
         results = pipe.execute()
         count = results[0]
 
-        reset_at = (now // 60 + 1) * 60
+        reset_at = (now // window_seconds + 1) * window_seconds
         ttl = r.ttl(window_key)
-        retry_after = max(ttl, 1) if ttl > 0 else 60
+        retry_after = max(ttl, 1) if ttl > 0 else window_seconds
 
         # Check burst limit (per-second window)
         if burst_per_sec is not None:
-            burst_key = f"{self.KEY_PREFIX}{api_key_id}:s:{now}"
+            burst_key = f"{self.KEY_PREFIX}{bucket}:s:{now}"
             pipe = r.pipeline()
             pipe.incr(burst_key)
             pipe.expire(burst_key, 2)

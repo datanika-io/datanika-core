@@ -39,6 +39,13 @@ def run_maintenance_task() -> dict:
             results["orphaned_archives"] = cleanup_orphaned_archives(
                 session, settings.file_uploads_dir
             )
+            # Spent reset tokens (core#623). They are only hashes of dead
+            # capabilities, but they land in every nightly dump forever
+            # otherwise. Rides the existing sweep rather than becoming new
+            # infrastructure.
+            from datanika.services.password_reset_service import PasswordResetService
+
+            results["expired_reset_tokens"] = PasswordResetService.purge_expired(session)
             session.commit()
     except Exception:
         logger.exception("Maintenance DB cleanup failed")

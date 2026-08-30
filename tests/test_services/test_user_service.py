@@ -61,28 +61,28 @@ def user_with_org(db_session, user, org):
 
 class TestRegisterUser:
     def test_returns_user_with_hash(self, svc, db_session):
-        u = svc.register_user(db_session, "alice@example.com", "secret", "Alice")
+        u = svc.register_user(db_session, "alice@example.com", "alice password", "Alice")
         assert isinstance(u, User)
         assert isinstance(u.id, int)
         assert u.full_name == "Alice"
         assert u.password_hash != "secret"
 
     def test_email_lowercased(self, svc, db_session):
-        u = svc.register_user(db_session, "ALICE@EXAMPLE.COM", "secret", "Alice")
+        u = svc.register_user(db_session, "ALICE@EXAMPLE.COM", "alice password", "Alice")
         assert u.email == "alice@example.com"
 
     def test_is_active_default(self, svc, db_session):
-        u = svc.register_user(db_session, "alice@example.com", "secret", "Alice")
+        u = svc.register_user(db_session, "alice@example.com", "alice password", "Alice")
         assert u.is_active is True
 
     def test_duplicate_email_error(self, svc, db_session):
-        svc.register_user(db_session, "dup@example.com", "secret", "First")
+        svc.register_user(db_session, "dup@example.com", "first password", "First")
         with pytest.raises(UserServiceError, match="[Ee]mail.*already"):
-            svc.register_user(db_session, "dup@example.com", "secret", "Second")
+            svc.register_user(db_session, "dup@example.com", "second password", "Second")
 
     def test_empty_email_error(self, svc, db_session):
         with pytest.raises(UserServiceError, match="[Ee]mail.*required"):
-            svc.register_user(db_session, "", "secret", "Alice")
+            svc.register_user(db_session, "", "alice password", "Alice")
 
     def test_empty_password_error(self, svc, db_session):
         with pytest.raises(UserServiceError, match="[Pp]assword.*required"):

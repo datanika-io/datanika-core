@@ -6,6 +6,7 @@ from datanika.config import settings
 from datanika.ui.components.billing_preview_modal import billing_preview_modal
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
+from datanika.ui.state.account_state import AccountState
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
 from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
@@ -13,6 +14,120 @@ from datanika.ui.state.notification_state import ChannelItem, NotificationState
 from datanika.ui.state.settings_state import InvitationItem, MemberItem, SettingsState
 
 _t = I18nState.translations
+
+
+def account_card() -> rx.Component:
+    """Change (or first set) your own password — core#623, Part A.
+
+    Rendered **first** on /settings. Every other card on the page is org-scoped
+    (Organization Profile, Members, Invite, Notifications, API Keys, Backup);
+    this is the first user-scoped control, so it says so in a subtitle rather
+    than being buried between two org cards.
+
+    ⚠️ ``rx.form`` + ``on_submit``, deliberately unlike every other card here.
+    The rest of this page binds inputs to state vars, which for a password field
+    means the plaintext is shipped to the server on **every keystroke** and then
+    sits in server-side Reflex state for the life of the session. Submitting the
+    form sends it once — which is what /login and /signup already do.
+    """
+    return rx.card(
+        rx.vstack(
+            rx.heading(_t["account.title"], size="4"),
+            rx.text(_t["account.subtitle"], size="2", color="gray"),
+            rx.cond(
+                AccountState.error != "",
+                rx.callout(
+                    AccountState.error,
+                    icon="triangle_alert",
+                    color_scheme="red",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AccountState.success,
+                rx.vstack(
+                    rx.callout(
+                        _t["account.password_updated"],
+                        icon="circle_check",
+                        color_scheme="green",
+                        width="100%",
+                    ),
+                    rx.text(
+                        _t["account.review_api_keys"],
+                        size="1",
+                        color="gray",
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
+            rx.form(
+                rx.vstack(
+                    rx.text(
+                        rx.cond(
+                            AccountState.has_password,
+                            _t["account.change_password"],
+                            _t["auth.set_password"],
+                        ),
+                        size="2",
+                        weight="bold",
+                    ),
+                    # D6: an account that has never had a password gets no
+                    # current-password field, because it could never fill one.
+                    # An account that has one always faces it — including one
+                    # that later linked Google, which is why this branches on a
+                    # stored fact and not on ``oauth_provider``.
+                    rx.cond(
+                        AccountState.has_password,
+                        rx.vstack(
+                            rx.text(_t["account.current_password"], size="2", weight="medium"),
+                            rx.input(
+                                name="current_password",
+                                type="password",
+                                custom_attrs={"autoComplete": "current-password"},
+                                width="100%",
+                            ),
+                            spacing="1",
+                            width="100%",
+                        ),
+                        rx.text(_t["account.set_password_hint"], size="2", color="gray"),
+                    ),
+                    rx.text(_t["auth.new_password"], size="2", weight="medium"),
+                    rx.input(
+                        name="password",
+                        type="password",
+                        custom_attrs={"autoComplete": "new-password"},
+                        width="100%",
+                    ),
+                    rx.text(_t["auth.confirm_password"], size="2", weight="medium"),
+                    rx.input(
+                        name="confirm",
+                        type="password",
+                        custom_attrs={"autoComplete": "new-password"},
+                        width="100%",
+                    ),
+                    rx.text(_t["account.password_rules"], size="1", color="gray"),
+                    rx.button(
+                        rx.cond(
+                            AccountState.has_password,
+                            _t["account.update_password"],
+                            _t["auth.set_password"],
+                        ),
+                        type="submit",
+                        size="2",
+                    ),
+                    spacing="3",
+                    width="100%",
+                ),
+                on_submit=AccountState.change_password,
+                reset_on_submit=True,
+                width="100%",
+            ),
+            spacing="4",
+            width="100%",
+        ),
+        width="100%",
+    )
 
 
 def org_profile_card() -> rx.Component:
@@ -530,6 +645,8 @@ def settings_page() -> rx.Component:
                 SettingsState.error_message != "",
                 error_or_quota_callout(SettingsState),
             ),
+            # First card on the page: the only user-scoped control here.
+            account_card(),
             org_profile_card(),
             # V2 pricing pivot — billing preview, gated by feature flag.
             (billing_preview_modal() if settings.datanika_dual_mode_ux_enabled else rx.fragment()),

@@ -5,6 +5,7 @@ from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.dependency import Dependency, NodeType
 from datanika.models.mcp_oauth import OAuthClient, OAuthGrant, OAuthToken
+from datanika.models.password_reset import PasswordResetToken
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.run import Run, RunStatus
 from datanika.models.schedule import Schedule
@@ -45,4 +46,5 @@ __all__ = [
     "OAuthClient",
     "OAuthGrant",
     "OAuthToken",
+    "PasswordResetToken",
 ]

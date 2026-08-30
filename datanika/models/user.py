@@ -36,6 +36,21 @@ class User(Base, TimestampMixin):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # When a human last chose this password (core#623). Two jobs:
+    #
+    # 1. NULL means "never set a password", which is the discriminator the
+    #    Settings card uses to offer "Set a password" instead of a
+    #    current-password field it could never satisfy. It must NOT be inferred
+    #    from ``oauth_provider``: ``find_or_create_oauth_user`` backfills that
+    #    column onto a *pre-existing password account* on first social login, so
+    #    gating on it would drop current-password re-verification for people who
+    #    do have one.
+    # 2. Refresh tokens minted before it are refused at redemption. That is the
+    #    only long-lived credential we issue (7 days) and the only revocation
+    #    available — there is no durable session to invalidate.
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     onboarding_checklist_dismissed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

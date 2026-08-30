@@ -158,6 +158,21 @@ Per-tenant isolation exists only for dbt projects: each org gets its own directo
 
 bcrypt hashing directly (no passlib — it has compatibility issues with newer bcrypt versions). JWT access tokens (15 min) + refresh tokens (7 days) via python-jose.
 
+**Password rules** live in one place, `AuthService.validate_password_strength`, called by registration, the Settings change form and the reset flow. Minimum 8 characters, maximum **72 bytes**, no composition rules (NIST SP 800-63B: length only). The byte ceiling is not cosmetic — bcrypt silently ignores everything past 72 bytes, so a longer passphrase is really a truncated one, and it would change meaning if the algorithm ever changed. Rejected, never truncated.
+
+### Password change and reset
+
+`users.password_changed_at` is written whenever a human chooses a password, and left NULL by OAuth account creation. It does two jobs:
+
+- **"Has this account ever had a password?"** — NULL means no, which is how the Settings card decides between demanding the current password and offering to set a first one. ⚠️ This must **not** be inferred from `oauth_provider`: `find_or_create_oauth_user` backfills that column onto a pre-existing *password* account on first social login, so gating on it would drop re-verification for people who do have a password.
+- **Revocation.** A refresh token whose `iat` predates it is refused at redemption (`UserService.redeem_refresh_token`). That is the only long-lived credential Datanika mints; there is no durable session to invalidate, since Reflex state is in-memory and per-process. Access tokens live 15 minutes and are deliberately **not** checked against the database.
+
+Reset is an emailed link to `/reset-password?token=…`. The token is opaque (`secrets.token_urlsafe(32)`), stored **only as a SHA-256 hash**, valid 60 minutes, single-use, and superseded by any newer request for the same account — mirroring `OAuthGrant.code_hash` rather than `Invitation.token`, which stores its JWT in plaintext. Rendering the page validates but never consumes the token, because corporate mail scanners fetch every link in an inbound message before the recipient sees it.
+
+Both reset screens are **Reflex pages**, not Starlette routes: the reverse proxy forwards an explicit prefix list to the backend and everything else to the frontend, so a backend route outside `/api/` would serve the SPA instead of itself.
+
+Responses on `/forgot-password` are identical whether or not the address has an account, including when its rate-limit bucket is spent. On an instance with no `SMTP_HOST` the "Forgot your password?" link is hidden entirely; the Settings change form still works with no mail server at all.
+
 ### OAuth2 (Google + GitHub)
 
 OAuth routes are plain Starlette `Route` objects (not FastAPI — Reflex 0.8.x uses Starlette internally):

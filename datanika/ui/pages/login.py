@@ -53,6 +53,29 @@ def _social_login_button(label: str, provider: str) -> rx.Component:
     )
 
 
+def _forgot_password_link() -> rx.Component:
+    """The "Forgot your password?" link — hidden without SMTP (core#623, D9).
+
+    ``EmailService.send()`` returns False when ``smtp_host`` is empty, which is
+    the **default** for a self-hosted instance. Offering the link there leads to
+    a "check your inbox" screen for an email that was never sent. The Settings
+    change-password card still works with no mail server at all, so nothing is
+    lost by hiding this.
+
+    Evaluated at import time on purpose: it is instance configuration, not
+    per-request state, so there is nothing to react to.
+    """
+    if not settings.smtp_host:
+        return rx.fragment()
+    return rx.link(
+        _t["auth.forgot_password"],
+        href="/forgot-password",
+        on_click=AuthState.clear_auth_error,
+        size="2",
+        color="gray",
+    )
+
+
 def login_page() -> rx.Component:
     return rx.center(
         rx.vstack(
@@ -63,6 +86,15 @@ def login_page() -> rx.Component:
                 align="center",
             ),
             rx.text(_t["auth.sign_in_heading"], size="3", color="gray"),
+            rx.cond(
+                AuthState.show_reset_done,
+                rx.callout(
+                    _t["auth.password_reset_done"],
+                    icon="circle_check",
+                    color_scheme="green",
+                    width="100%",
+                ),
+            ),
             rx.cond(
                 AuthState.auth_error != "",
                 rx.callout(
@@ -107,6 +139,7 @@ def login_page() -> rx.Component:
                 ),
                 on_submit=AuthState.login,
             ),
+            _forgot_password_link(),
             rx.divider(),
             rx.text(_t["auth.or_continue_with"], size="2", color="gray", text_align="center"),
             rx.hstack(

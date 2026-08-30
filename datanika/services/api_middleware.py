@@ -119,7 +119,7 @@ async def _run_async_handler(
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
         result = _rate_limit_svc.check_rate_limit(
-            api_key_id=api_key.id,
+            bucket=f"{api_key.id}",
             org_id=api_key.org_id,
             limit_rpm=limit_rpm,
             burst_per_sec=settings.api_rate_limit_burst,
@@ -184,7 +184,7 @@ def _run_sync_handler(
 
         limit_rpm = _rate_limit_svc.get_limit_for_org(api_key.org_id)
         result = _rate_limit_svc.check_rate_limit(
-            api_key_id=api_key.id,
+            bucket=f"{api_key.id}",
             org_id=api_key.org_id,
             limit_rpm=limit_rpm,
             burst_per_sec=settings.api_rate_limit_burst,

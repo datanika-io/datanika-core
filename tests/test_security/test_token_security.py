@@ -161,7 +161,7 @@ class TestAccountEnumeration:
     def test_inactive_user_returns_none(self, db_session, svc, org):
         """Deactivated accounts also return None, not a specific error."""
         email = f"inactive-{uuid.uuid4().hex[:6]}@test.com"
-        user = svc.register_user(db_session, email, "pass123", "Inactive")
+        user = svc.register_user(db_session, email, "inactive user password", "Inactive")
         membership = Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER)
         db_session.add(membership)
         db_session.flush()

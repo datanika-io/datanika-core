@@ -83,7 +83,9 @@ class TestAcceptInvitation:
         db_session.flush()
 
         # Create the user who will accept
-        user = user_svc.register_user(db_session, "accept@test.com", "pass123", "Accepter")
+        user = user_svc.register_user(
+            db_session, "accept@test.com", "accepter password", "Accepter"
+        )
         db_session.flush()
 
         membership = inv_svc.accept_invitation(db_session, inv.token)
@@ -104,7 +106,7 @@ class TestAcceptInvitation:
         inv = inv_svc.create_invitation(
             db_session, org.id, "twice@test.com", MemberRole.VIEWER, owner.id
         )
-        user_svc.register_user(db_session, "twice@test.com", "pass123", "Twice")
+        user_svc.register_user(db_session, "twice@test.com", "twice password", "Twice")
         db_session.flush()
 
         inv_svc.accept_invitation(db_session, inv.token)

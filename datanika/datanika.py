@@ -11,12 +11,14 @@ from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
 from datanika.ui.pages.dag import dag_page
 from datanika.ui.pages.dashboard import dashboard_page
+from datanika.ui.pages.forgot_password import forgot_password_page
 from datanika.ui.pages.login import login_page
 from datanika.ui.pages.model_detail import model_detail_page
 from datanika.ui.pages.models import models_page
 from datanika.ui.pages.oauth_consent import oauth_consent_page
 from datanika.ui.pages.pipeline_templates import pipeline_templates_page
 from datanika.ui.pages.pipelines import pipelines_page
+from datanika.ui.pages.reset_password import reset_password_page
 from datanika.ui.pages.runs import runs_page
 from datanika.ui.pages.schedules import schedules_page
 from datanika.ui.pages.settings import settings_page
@@ -24,6 +26,7 @@ from datanika.ui.pages.signup import signup_page
 from datanika.ui.pages.sql_editor import sql_editor_page
 from datanika.ui.pages.transformations import transformations_page
 from datanika.ui.pages.uploads import uploads_page
+from datanika.ui.state.account_state import AccountState
 from datanika.ui.state.api_key_state import ApiKeyState
 from datanika.ui.state.audit_state import AuditState
 from datanika.ui.state.auth_state import AuthState
@@ -37,6 +40,7 @@ from datanika.ui.state.model_state import ModelState
 from datanika.ui.state.notification_center_state import NotificationCenterState
 from datanika.ui.state.notification_state import NotificationState
 from datanika.ui.state.onboarding_state import OnboardingState
+from datanika.ui.state.password_reset_state import PasswordResetState
 from datanika.ui.state.pipeline_state import PipelineState
 from datanika.ui.state.run_state import RunState
 from datanika.ui.state.schedule_state import ScheduleState
@@ -91,6 +95,27 @@ app.add_page(
     route="/signup",
     title="Sign Up | Datanika",
     on_load=[AuthState.prefill_invite_email],
+)
+# Account recovery (core#623). Public by design — a signed-out user is the only
+# kind that can need them, so neither carries AuthState.check_auth.
+#
+# These are Reflex *pages*, not backend Starlette routes. The Apache vhost
+# forwards an explicit prefix list to :8000 and everything else to the frontend,
+# so a backend route outside /api/ silently serves the SPA instead of itself.
+# A page needs no vhost change at all.
+app.add_page(
+    forgot_password_page,
+    route="/forgot-password",
+    title="Reset your password | Datanika",
+    on_load=[PasswordResetState.check_availability],
+)
+app.add_page(
+    reset_password_page,
+    route="/reset-password",
+    title="Set a new password | Datanika",
+    # Validates the token for rendering only, and never consumes it — mail
+    # scanners prefetch this URL before the recipient ever clicks it.
+    on_load=[PasswordResetState.load_token],
 )
 
 # Protected pages
@@ -181,6 +206,8 @@ app.add_page(
     title="Settings | Datanika",
     on_load=[
         AuthState.check_auth,
+        # Decides between "Change password" and "Set a password" (core#623).
+        AccountState.load_account,
         SettingsState.load_settings,
         ApiKeyState.load_api_keys,
         NotificationState.load_channels,

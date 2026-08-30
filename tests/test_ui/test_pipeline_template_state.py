@@ -42,6 +42,12 @@ def _make_state(**overrides):
         "form_bootstrap_servers": "",
         "form_topics": "",
         "selected_template_slug": "",
+        # Prefilling a template rewrites the type and the config, so it now
+        # invalidates any Test Connection verdict (core#609). Asserted against
+        # the real state class in tests/test_ui/test_connection_verdict_staleness.py;
+        # these two keep the stand-in faithful.
+        "test_message": "",
+        "test_success": False,
     }
     defaults.update(overrides)
 
@@ -49,6 +55,7 @@ def _make_state(**overrides):
     for k, v in defaults.items():
         setattr(obj, k, v)
     obj._apply_template_defaults = types.MethodType(ConnectionState._apply_template_defaults, obj)
+    obj._clear_test_verdict = types.MethodType(ConnectionState._clear_test_verdict, obj)
     return obj
 
 

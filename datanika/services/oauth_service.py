@@ -14,6 +14,18 @@ class OAuthError(ValueError):
     """Raised when OAuth operations fail."""
 
 
+def _claim_is_true(value: object) -> bool:
+    """Read a boolean OIDC claim, failing closed.
+
+    OIDC specifies ``email_verified`` as a boolean, but implementations vary and
+    some serialise it as a string. Anything else — including a missing claim —
+    is *not* an assertion of verification, so it reads as false.
+    """
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
+
+
 @dataclass
 class OAuthProvider:
     """Configuration for an OAuth2 provider."""
@@ -88,20 +100,23 @@ class OAuthService:
 
         # Fetch user info
         user_info = await self._fetch_userinfo(provider, access_token)
-        email = user_info.get("email")
+
+        # SECURITY (auth boundary): an email is a *claim* until the provider
+        # says it verified it. Only a verified address may be matched against
+        # local accounts — see find_or_create_oauth_user, which refuses the rest.
+        email = await self._resolve_verified_email(provider, access_token, user_info)
         if not email:
-            # GitHub may not return email in userinfo, need separate call
-            if provider.name == "github":
-                email = await self._fetch_github_email(access_token)
-            if not email:
-                raise OAuthError("OAuth provider did not return an email address")
+            raise OAuthError(
+                "This provider did not give us a verified email address. "
+                "Verify your email with the provider, then try again."
+            )
 
         full_name = user_info.get("name") or user_info.get("login") or ""
         provider_id = str(user_info.get("sub") or user_info.get("id") or "")
 
         # Find or create user
         user, is_new = self._user.find_or_create_oauth_user(
-            session, email, full_name, provider.name, provider_id
+            session, email, full_name, provider.name, provider_id, email_verified=True
         )
 
         # Get user's first org
@@ -144,8 +159,35 @@ class OAuthService:
             resp.raise_for_status()
             return resp.json()
 
+    async def _resolve_verified_email(
+        self, provider: OAuthProvider, access_token: str, user_info: dict
+    ) -> str | None:
+        """Return an address the provider states it has verified, or ``None``.
+
+        This never returns an unverified address. That is deliberate: a caller
+        cannot authenticate on one by mistake because it is never handed one.
+        """
+        if provider.name == "github":
+            # ``/user`` also carries an ``email``, but it is the *public profile*
+            # field and comes with no verification flag — short-circuiting on it
+            # would skip the only endpoint that reports ``verified``.
+            return await self._fetch_github_email(access_token)
+
+        # OIDC-shaped providers (Google): the userinfo document carries the claim.
+        if not _claim_is_true(user_info.get("email_verified")):
+            return None
+        return user_info.get("email") or None
+
     async def _fetch_github_email(self, access_token: str) -> str | None:
-        """Fetch primary email from GitHub /user/emails endpoint."""
+        """Return the account's primary *and* verified address, or ``None``.
+
+        GitHub is the only party that knows whether an address on the account
+        was confirmed; ``/user/emails`` is the one endpoint that says so. An
+        account with no primary-and-verified address gets no answer rather than
+        an arbitrary one — the ordering of this list guarantees nothing, and the
+        one situation a fallback would serve is precisely the situation in which
+        every candidate is untrustworthy.
+        """
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 "https://api.github.com/user/emails",
@@ -153,8 +195,7 @@ class OAuthService:
             )
             if resp.status_code != 200:
                 return None
-            emails = resp.json()
-            for e in emails:
+            for e in resp.json():
                 if e.get("primary") and e.get("verified"):
                     return e["email"]
-            return emails[0]["email"] if emails else None
+            return None

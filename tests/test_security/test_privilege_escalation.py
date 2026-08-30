@@ -207,6 +207,27 @@ def _owner_user_ids(db_session, org_id: int) -> set[int]:
     return {r.user_id for r in rows}
 
 
+def _transfer(svc, db_session, org, *, actor: Membership, successor: Membership) -> None:
+    """Hand ownership from ``actor`` to ``successor``, by whatever means exists.
+
+    Prefers a dedicated transfer operation (``SPEC_ORG_ROLES.md`` §3: successor
+    -> owner and actor -> admin, atomically, owner count preserved). Falls back
+    to today's two ``change_role`` calls so the controls run against current
+    ``dev`` as well.
+
+    The point of the indirection is that the *capability* -- an owner can leave
+    without orphaning the org -- has to survive the fix, while the *mechanism*
+    is explicitly changing.
+    """
+    for name in ("transfer_ownership", "transfer_org_ownership"):
+        fn = getattr(svc, name, None)
+        if fn is not None:
+            fn(db_session, org.id, successor.user_id, actor_user_id=actor.user_id)
+            return
+    _call_as(svc.change_role, actor, db_session, org.id, successor.id, MemberRole.OWNER)
+    _call_as(svc.change_role, actor, db_session, org.id, actor.id, MemberRole.ADMIN)
+
+
 def _escalate_and_evict(svc, db_session, org, founder, attacker) -> None:
     """The full chain, exactly as the two state handlers invoke it.
 
@@ -309,6 +330,124 @@ class TestEachStepOfTheChain:
         assert _live(db_session, editor.id).role is MemberRole.EDITOR
 
 
+class TestTheInvitePathIsShorterThanTheReportedOne:
+    """The escalation that needs no self-promotion step at all.
+
+    Found by Product while writing ``plans/product/SPEC_ORG_ROLES.md`` §1.1, and
+    **not in core#658's body**. ``settings.py:278`` renders the invite role
+    select as ``["owner", "admin", "editor", "viewer"]``;
+    ``add_member_by_email`` gates at ``admin``; and neither ``add_member`` nor
+    the invitation-accept path compares the granted role to the granter's.
+
+    So the attacker never touches their own row. They invite an address they
+    already control, **directly as owner**, and a second owner exists with no
+    interaction from the real owner -- which also arms the removal step, because
+    ``_check_last_owner`` permits 2 -> 1.
+
+    ⚠️ **This is why a probe scoped to the member-row dropdown under-reports the
+    hole.** Recorded because it is the specific way this issue could have been
+    closed while still being open.
+    """
+
+    @xfail_658
+    def test_an_admin_cannot_invite_a_new_member_as_owner(
+        self, svc, db_session, org, founder, attacker
+    ):
+        stooge = User(email="stooge@example.com", password_hash="h", full_name="Stooge")
+        db_session.add(stooge)
+        db_session.flush()
+        _attempt(svc.add_member, attacker, db_session, org.id, stooge.id, MemberRole.OWNER)
+        assert stooge.id not in _owner_user_ids(db_session, org.id)
+
+    @xfail_658
+    def test_the_invite_path_reaches_the_same_end_state_without_self_promotion(
+        self, svc, db_session, org, founder, attacker
+    ):
+        """Two calls, and the attacker's own role never changes.
+
+        Invite a controlled address as owner, then evict the founder -- the
+        second owner satisfies ``_check_last_owner``. The attacker is still an
+        admin throughout, so any fix that only watches for self-promotion misses
+        this entirely.
+        """
+        stooge = User(email="stooge2@example.com", password_hash="h", full_name="Stooge2")
+        db_session.add(stooge)
+        db_session.flush()
+        _attempt(svc.add_member, attacker, db_session, org.id, stooge.id, MemberRole.OWNER)
+        _attempt(svc.remove_member, attacker, db_session, org.id, founder.id)
+
+        assert _live(db_session, founder.id) is not None, (
+            "the founder was evicted by an admin who never changed their own role"
+        )
+
+    @xfail_658
+    def test_an_admin_cannot_mint_another_admin(self, svc, db_session, org, founder, attacker):
+        """SPEC_ORG_ROLES R2. ``admin`` carries delete on every resource in the org.
+
+        Who may destroy a customer's pipelines should not be a self-replicating
+        grant.
+        """
+        viewer = _member(db_session, org, "v1@example.com", MemberRole.VIEWER)
+        _attempt(svc.change_role, attacker, db_session, org.id, viewer.id, MemberRole.ADMIN)
+        assert _live(db_session, viewer.id).role is MemberRole.VIEWER
+
+    @xfail_658
+    def test_an_admin_cannot_remove_a_peer_admin(self, svc, db_session, org, founder, attacker):
+        """SPEC_ORG_ROLES R3 -- reach is strictly below the actor, not at it."""
+        peer = _member(db_session, org, "peer-admin@example.com", MemberRole.ADMIN)
+        _attempt(svc.remove_member, attacker, db_session, org.id, peer.id)
+        assert _live(db_session, peer.id) is not None
+
+
+class TestTheWrittenPermissionModelIsReachable:
+    """A green security test asserting a rule nothing enforces.
+
+    ``ROLE_PERMISSIONS`` (``services/auth.py:6-11``) says ``manage_members`` is
+    **owner-only**, and ``tests/test_security/test_auth_security.py`` asserts
+    ``has_permission("admin", "manage_members") is False`` -- and passes.
+
+    It passes because ``AuthService.has_permission`` has **zero production
+    callers**: it is referenced only from test files. So the assertion is
+    correct, the test is green, and it is evidence for a claim about the running
+    system that is false. That is a worse shape than a dead feature, because the
+    green actively argues against investigating.
+
+    This is the discriminating test the existing one is not: it asks whether the
+    control is *reachable*, which is the thing in doubt.
+    """
+
+    @xfail_658
+    def test_has_permission_has_at_least_one_production_caller(self):
+        import subprocess
+        from pathlib import Path
+
+        core = Path(__file__).resolve().parents[2]
+        out = subprocess.run(
+            ["git", "grep", "-l", "has_permission", "--", "datanika/"],
+            cwd=core,
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        callers = [p for p in out if not p.endswith("services/auth.py")]
+        assert callers, (
+            "AuthService.has_permission is defined and tested but never called "
+            "outside datanika/services/auth.py. ROLE_PERMISSIONS is documentation, "
+            "not enforcement -- and test_auth_security.py's green says otherwise."
+        )
+
+    def test_the_declared_model_still_says_member_management_is_owner_only(self):
+        """Pins the intent so a fix must move it deliberately rather than by drift.
+
+        Green today and after the fix. If Engineering decides admins *should*
+        manage members, this is the line to change, in the same commit, on
+        purpose.
+        """
+        from datanika.services.auth import ROLE_PERMISSIONS
+
+        assert "manage_members" in ROLE_PERMISSIONS["owner"]
+        assert "manage_members" not in ROLE_PERMISSIONS["admin"]
+
+
 # ---------------------------------------------------------------------------
 # Section 3 — controls. Green today, and must stay green after the fix.
 # ---------------------------------------------------------------------------
@@ -317,25 +456,28 @@ class TestEachStepOfTheChain:
 class TestLegitimateOwnershipFlowsKeepWorking:
     """core#658 acceptance criterion 3, and the guard against overshooting.
 
-    The obvious way to get this wrong is to forbid granting ``owner`` outright,
-    which would break the one flow that has to keep working.
+    ⚠️ **Ownership transfer is asserted as a capability, never as a mechanism.**
+    ``SPEC_ORG_ROLES.md`` R1 removes ``owner`` from ``change_role`` entirely --
+    it will refuse ``MemberRole.OWNER`` **from any caller, including an owner** --
+    and moves transfer to a dedicated owner-only operation (§3). So a control
+    that asserted "an owner can call ``change_role(..., OWNER)``" would go red on
+    the *decided* fix, which is the failure this suite must not have. ``_transfer``
+    below prefers a real transfer operation and falls back to today's mechanism.
     """
 
     def test_an_owner_can_transfer_ownership_and_step_down(
         self, svc, db_session, org, founder, attacker
     ):
-        _call_as(svc.change_role, founder, db_session, org.id, attacker.id, MemberRole.OWNER)
-        assert _live(db_session, attacker.id).role is MemberRole.OWNER
-
-        _call_as(svc.change_role, founder, db_session, org.id, founder.id, MemberRole.ADMIN)
-        assert _live(db_session, founder.id).role is MemberRole.ADMIN
+        _transfer(svc, db_session, org, actor=founder, successor=attacker)
         assert _owner_user_ids(db_session, org.id) == {attacker.user_id}
+        assert _live(db_session, founder.id) is not None
+        assert _live(db_session, founder.id).role is not MemberRole.OWNER
 
     def test_an_owner_can_hand_over_and_leave_entirely(
         self, svc, db_session, org, founder, attacker
     ):
-        _call_as(svc.change_role, founder, db_session, org.id, attacker.id, MemberRole.OWNER)
-        _call_as(svc.remove_member, founder, db_session, org.id, founder.id)
+        _transfer(svc, db_session, org, actor=founder, successor=attacker)
+        _call_as(svc.remove_member, attacker, db_session, org.id, founder.id)
         assert _live(db_session, founder.id) is None
         assert _owner_user_ids(db_session, org.id) == {attacker.user_id}
 

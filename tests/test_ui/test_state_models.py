@@ -137,6 +137,14 @@ class TestConnectionBuildConfig:
             "form_service_account_json": "",
             "form_use_raw_json": False,
             "form_config": "{}",
+            # The Test Connection verdict. Present because `set_form_type` now
+            # invalidates it (core#609) — a config setter that leaves a stale
+            # "Connected successfully" on screen is the bug this mirrors. The
+            # behaviour itself is asserted against the real state class in
+            # tests/test_ui/test_connection_verdict_staleness.py; these two only
+            # keep the stand-in a faithful stand-in.
+            "test_message": "",
+            "test_success": False,
         }
         defaults.update(overrides)
 
@@ -150,6 +158,7 @@ class TestConnectionBuildConfig:
         import types
 
         obj._build_config = types.MethodType(ConnectionState._build_config, obj)
+        obj._clear_test_verdict = types.MethodType(ConnectionState._clear_test_verdict, obj)
         return obj
 
     def test_build_config_postgres(self):

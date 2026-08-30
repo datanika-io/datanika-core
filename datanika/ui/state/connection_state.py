@@ -1,6 +1,7 @@
 """Connection state for Reflex UI."""
 
 import json
+import logging
 import re
 
 import reflex as rx
@@ -13,6 +14,8 @@ from datanika.services.connection_service import (
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
+
+logger = logging.getLogger(__name__)
 
 # SaaS source types that use endpoint/resource selection (not SQL mode).
 #
@@ -388,6 +391,11 @@ class ConnectionState(BaseState):
                 continue
             setattr(self, attr, value)
 
+        # Direct assignment above, so the per-setter invalidation does not fire
+        # (core#609). Prefilling a template rewrites both the type and the
+        # config, which is exactly when a previous verdict stops being true.
+        self._clear_test_verdict()
+
     async def load_template_from_query(self):
         """Read ``?template=<slug>`` from the page URL and prefill the form.
 
@@ -398,87 +406,214 @@ class ConnectionState(BaseState):
         if slug:
             self._apply_template_defaults(slug)
 
+    # ------------------------------------------------------------------
+    # Config-field setters (core#609)
+    #
+    # Every one of these routes through `_set_config_field`, which clears the
+    # test verdict. A "Connected successfully" badge is a statement about a
+    # configuration, and it must not outlive the configuration it describes —
+    # on prod a green badge survived a type change, a completely different
+    # config and a failed test, and it is *durable server-side state*, so it
+    # survived a full reload and a re-login too.
+    #
+    # They are also all written out rather than left to Reflex's auto-setters.
+    # An auto-setter assigns the var and nothing else, so there is nowhere to
+    # hang the invalidation — and `state_auto_setters` is deprecated and goes
+    # away in Reflex 0.9 regardless. `test_connection_verdict_staleness.py`
+    # sweeps every `form_*` field on the class, so a field added later without
+    # a setter here fails CI rather than silently reopening the hole.
+    #
+    # `form_name` is deliberately exempt: `_build_config` never reads it, so
+    # renaming a connection does not change what was tested. See
+    # `NON_CONFIG_FORM_FIELDS`.
+
+    def _clear_test_verdict(self) -> None:
+        """Forget any previous Test Connection result."""
+        self.test_message = ""
+        self.test_success = False
+
+    def _set_config_field(self, field: str, value) -> None:
+        """Assign a config form field and invalidate the stale verdict."""
+        setattr(self, field, value)
+        self._clear_test_verdict()
+
     def set_form_name(self, value: str):
+        # Exempt from the invalidation above — the name is a label, not config.
         self.form_name = re.sub(r"[^a-zA-Z0-9 ]", "", value)
 
     def set_form_type(self, value: str):
         self.form_type = value
         self.form_port = _DEFAULT_PORTS.get(value, "")
+        self._clear_test_verdict()
 
     def set_form_config(self, value: str):
-        self.form_config = value
+        self._set_config_field("form_config", value)
 
     def set_form_use_raw_json(self, value: bool):
-        self.form_use_raw_json = value
+        self._set_config_field("form_use_raw_json", value)
 
     def set_form_host(self, value: str):
-        self.form_host = value
+        self._set_config_field("form_host", value)
 
     def set_form_port(self, value: str):
-        self.form_port = value
+        self._set_config_field("form_port", value)
 
     def set_form_user(self, value: str):
-        self.form_user = value
+        self._set_config_field("form_user", value)
 
     def set_form_password(self, value: str):
-        self.form_password = value
+        self._set_config_field("form_password", value)
 
     def set_form_database(self, value: str):
-        self.form_database = value
+        self._set_config_field("form_database", value)
 
     def set_form_schema(self, value: str):
-        self.form_schema = value
+        self._set_config_field("form_schema", value)
 
     def set_form_path(self, value: str):
-        self.form_path = value
+        self._set_config_field("form_path", value)
 
     def set_form_project(self, value: str):
-        self.form_project = value
+        self._set_config_field("form_project", value)
 
     def set_form_dataset(self, value: str):
-        self.form_dataset = value
+        self._set_config_field("form_dataset", value)
 
     def set_form_keyfile_json(self, value: str):
-        self.form_keyfile_json = value
+        self._set_config_field("form_keyfile_json", value)
 
     def set_form_account(self, value: str):
-        self.form_account = value
+        self._set_config_field("form_account", value)
 
     def set_form_warehouse(self, value: str):
-        self.form_warehouse = value
+        self._set_config_field("form_warehouse", value)
 
     def set_form_role(self, value: str):
-        self.form_role = value
+        self._set_config_field("form_role", value)
 
     def set_form_bucket_url(self, value: str):
-        self.form_bucket_url = value
+        self._set_config_field("form_bucket_url", value)
 
     def set_form_aws_access_key_id(self, value: str):
-        self.form_aws_access_key_id = value
+        self._set_config_field("form_aws_access_key_id", value)
 
     def set_form_aws_secret_access_key(self, value: str):
-        self.form_aws_secret_access_key = value
+        self._set_config_field("form_aws_secret_access_key", value)
 
     def set_form_region_name(self, value: str):
-        self.form_region_name = value
+        self._set_config_field("form_region_name", value)
 
     def set_form_endpoint_url(self, value: str):
-        self.form_endpoint_url = value
+        self._set_config_field("form_endpoint_url", value)
 
     def set_form_base_url(self, value: str):
-        self.form_base_url = value
+        self._set_config_field("form_base_url", value)
 
     def set_form_api_key(self, value: str):
-        self.form_api_key = value
+        self._set_config_field("form_api_key", value)
 
     def set_form_extra_headers(self, value: str):
-        self.form_extra_headers = value
+        self._set_config_field("form_extra_headers", value)
+
+    def set_form_openapi_spec(self, value: str):
+        self._set_config_field("form_openapi_spec", value)
+
+    def set_form_uploaded_file_id(self, value: int):
+        self._set_config_field("form_uploaded_file_id", value)
+
+    def set_form_uploaded_file_name(self, value: str):
+        self._set_config_field("form_uploaded_file_name", value)
 
     def set_form_spreadsheet_url(self, value: str):
-        self.form_spreadsheet_url = value
+        self._set_config_field("form_spreadsheet_url", value)
 
     def set_form_service_account_json(self, value: str):
-        self.form_service_account_json = value
+        self._set_config_field("form_service_account_json", value)
+
+    def set_form_cluster_replication(self, value: bool):
+        self._set_config_field("form_cluster_replication", value)
+
+    def set_form_secure(self, value: bool):
+        self._set_config_field("form_secure", value)
+
+    def set_form_oracle_use_sid(self, value: bool):
+        self._set_config_field("form_oracle_use_sid", value)
+
+    def set_form_http_path(self, value: str):
+        self._set_config_field("form_http_path", value)
+
+    def set_form_token(self, value: str):
+        self._set_config_field("form_token", value)
+
+    def set_form_catalog(self, value: str):
+        self._set_config_field("form_catalog", value)
+
+    def set_form_owner(self, value: str):
+        self._set_config_field("form_owner", value)
+
+    def set_form_repo(self, value: str):
+        self._set_config_field("form_repo", value)
+
+    def set_form_instance_url(self, value: str):
+        self._set_config_field("form_instance_url", value)
+
+    def set_form_store(self, value: str):
+        self._set_config_field("form_store", value)
+
+    def set_form_domain(self, value: str):
+        self._set_config_field("form_domain", value)
+
+    def set_form_email(self, value: str):
+        self._set_config_field("form_email", value)
+
+    def set_form_property_id(self, value: str):
+        self._set_config_field("form_property_id", value)
+
+    def set_form_customer_id(self, value: str):
+        self._set_config_field("form_customer_id", value)
+
+    def set_form_developer_token(self, value: str):
+        self._set_config_field("form_developer_token", value)
+
+    def set_form_client_id(self, value: str):
+        self._set_config_field("form_client_id", value)
+
+    def set_form_client_secret(self, value: str):
+        self._set_config_field("form_client_secret", value)
+
+    def set_form_refresh_token(self, value: str):
+        self._set_config_field("form_refresh_token", value)
+
+    def set_form_login_customer_id(self, value: str):
+        self._set_config_field("form_login_customer_id", value)
+
+    def set_form_account_id(self, value: str):
+        self._set_config_field("form_account_id", value)
+
+    def set_form_base_id(self, value: str):
+        self._set_config_field("form_base_id", value)
+
+    def set_form_bootstrap_servers(self, value: str):
+        self._set_config_field("form_bootstrap_servers", value)
+
+    def set_form_topics(self, value: str):
+        self._set_config_field("form_topics", value)
+
+    def set_form_group_id(self, value: str):
+        self._set_config_field("form_group_id", value)
+
+    def _record_uploaded_file(self, file_id: int, original_name: str) -> None:
+        """Store the uploaded file on the form, and invalidate the verdict.
+
+        Split out of ``handle_file_upload`` so it is reachable without an async
+        context, a session or a real file — and because for csv/json/parquet the
+        uploaded file **is** the configuration, so a green badge earned by a
+        previous file must not survive a new one (core#609). This path assigns
+        the fields directly, so the per-setter invalidation never reaches it.
+        """
+        self.form_uploaded_file_id = file_id
+        self.form_uploaded_file_name = original_name
+        self._clear_test_verdict()
 
     async def handle_file_upload(self, files: list[rx.UploadFile]):
         """Receive uploaded file, call FileUploadService.save_file, store ID.
@@ -501,8 +636,7 @@ class ConnectionState(BaseState):
             with get_sync_session() as session:
                 record = file_svc.save_file(session, org_id, filename, upload_data)
                 session.commit()
-                self.form_uploaded_file_id = record.id
-                self.form_uploaded_file_name = record.original_name
+                self._record_uploaded_file(record.id, record.original_name)
                 self.error_message = ""
         except ValueError as e:
             self.error_message = str(e)
@@ -822,6 +956,11 @@ class ConnectionState(BaseState):
         self.form_topics = ""
         self.form_group_id = ""
         self.error_message = ""
+        # Assigned directly rather than via `_clear_test_verdict`: this function
+        # already cleared both halves correctly, and it is borrowed by a
+        # standalone FakeState in tests/test_ui/test_state_setters.py that has
+        # no methods bound beyond this one. Routing it through the helper would
+        # buy consistency and cost a working test its independence.
         self.test_message = ""
         self.test_success = False
 
@@ -831,7 +970,9 @@ class ConnectionState(BaseState):
         self.form_type = conn_type
         self.form_use_raw_json = False
         self.error_message = ""
-        self.test_message = ""
+        # Both halves, not just the message. Leaving `test_success` True kept a
+        # green verdict one keystroke away from reappearing (core#609).
+        self._clear_test_verdict()
 
         # Reset all type-specific fields first
         self.form_host = ""
@@ -1159,7 +1300,19 @@ class ConnectionState(BaseState):
             self.test_success = False
             self.test_message = f"Invalid config: {e}"
             return
-        ok, msg = ConnectionService.test_connection(config, ConnectionType(self.form_type))
+        # Backstop. `test_connection` is now contracted to return a verdict for
+        # every type (core#608, `tests/test_services/test_connection_test_contract.py`),
+        # so this should never fire — but an exception escaping here is what
+        # produced BOTH reported symptoms at once: Reflex's generic "Contact the
+        # website administrator" toast, *and* a previous run's green badge left
+        # untouched on screen because these two lines never ran (core#609).
+        # Converting an unknown failure into a red verdict is strictly safer
+        # than letting it through.
+        try:
+            ok, msg = ConnectionService.test_connection(config, ConnectionType(self.form_type))
+        except Exception:
+            logger.exception("Connection test crashed for type %s", self.form_type)
+            ok, msg = False, "The connection test failed unexpectedly — please report this"
         self.test_success = ok
         self.test_message = msg
 
@@ -1174,7 +1327,18 @@ class ConnectionState(BaseState):
         if config is None or conn is None:
             self._set_row_test_status(conn_id, "fail")
             return
-        ok, _msg = ConnectionService.test_connection(config, conn.connection_type)
+        # Same backstop as `test_connection_from_form`. A crash here left the row
+        # icon showing whatever it showed before — including a previous green
+        # tick — rather than reporting the failure (core#608 / core#609).
+        try:
+            ok, _msg = ConnectionService.test_connection(config, conn.connection_type)
+        except Exception:
+            logger.exception(
+                "Connection test crashed for saved connection %s (%s)",
+                conn_id,
+                conn.connection_type.value,
+            )
+            ok = False
         self._set_row_test_status(conn_id, "ok" if ok else "fail")
 
     def _set_row_test_status(self, conn_id: int, status: str):

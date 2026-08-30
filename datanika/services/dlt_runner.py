@@ -12,6 +12,7 @@ from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
+from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,9 @@ DEFAULT_GOOGLE_ADS_QUERY = (
 #: `authSource` means "the user lives inside the database you are reading" —
 #: which is not where anyone puts it. `MONGO_INITDB_ROOT_USERNAME`, Atlas and
 #: every managed provider create users in `admin` (core#550).
-DEFAULT_MONGO_AUTH_SOURCE = "admin"
+#: Re-exported so existing importers keep working; the value and the URI
+#: assembly that reads it now live together in `mongodb_source` (core#625).
+DEFAULT_MONGO_AUTH_SOURCE = _MONGO_DEFAULT_AUTH_SOURCE
 
 #: Cloud-warehouse fields whose stored name is not the name dlt reads (core#565).
 #:
@@ -1243,30 +1246,17 @@ class DltRunnerService:
         does keep the user inside the target database sets `auth_source` to that
         database name and is back to the previous behaviour — explicitly.
         """
-        from urllib.parse import quote_plus, urlencode
-
-        from datanika.services.mongodb_source import mongodb_source
+        from datanika.services.mongodb_source import build_connection_uri, mongodb_source
 
         database = config.get("database") or dlt_config.get("database", "")
         if not database:
             raise DltRunnerError("MongoDB source requires 'database' in config")
 
-        host = config.get("host", "localhost")
-        port = config.get("port", 27017)
-        user = config.get("user", "")
-        password = config.get("password", "")
-
-        if user:
-            # Only authenticated connections carry authSource — an unauthenticated
-            # mongod rejects nothing, and sending one would be noise.
-            auth_source = config.get("auth_source") or DEFAULT_MONGO_AUTH_SOURCE
-            query = urlencode({"authSource": auth_source})
-            uri = (
-                f"mongodb://{quote_plus(user)}:{quote_plus(password)}"
-                f"@{host}:{port}/{database}?{query}"
-            )
-        else:
-            uri = f"mongodb://{host}:{port}/{database}"
+        # Assembled by the shared builder rather than inline. The URI used to be
+        # written out here *and* in `connection_service._test_mongodb`, and the
+        # `authSource` fix above landed only here — so Test Connection failed on
+        # connections whose runs succeeded (core#625).
+        uri = build_connection_uri({**config, "database": database})
 
         collection_names = dlt_config.get("collection_names")
 

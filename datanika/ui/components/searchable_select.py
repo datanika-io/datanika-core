@@ -2,6 +2,8 @@
 
 import reflex as rx
 
+from datanika.ui.components.secure_input import no_autofill_attrs
+
 
 def searchable_select(
     options: rx.Var[list[str]] | list[str],
@@ -62,10 +64,16 @@ def searchable_select(
             rx.vstack(
                 rx.input(
                     id=input_id,
+                    name=input_id,
                     placeholder=search_placeholder,
                     size="2",
                     width="100%",
                     auto_focus=True,
+                    # This filter box sits inside forms that also carry password
+                    # inputs (the connection form is one), so it is eligible for
+                    # the same positional autofill that core#618 was about. It
+                    # is a transient filter, never a credential — opt it out.
+                    custom_attrs=no_autofill_attrs(),
                 ),
                 rx.scroll_area(
                     rx.vstack(

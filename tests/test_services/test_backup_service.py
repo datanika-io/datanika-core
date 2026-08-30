@@ -5,7 +5,13 @@ from cryptography.fernet import Fernet
 
 from datanika.models.connection import ConnectionType
 from datanika.models.user import Organization
-from datanika.services.backup_service import BackupService, ImportErrorCode, ImportValidationError
+from datanika.services.backup_service import (
+    BACKUP_VERSION,
+    REDACTED,
+    BackupService,
+    ImportErrorCode,
+    ImportValidationError,
+)
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.upload_service import UploadService
@@ -74,12 +80,12 @@ class TestExportBackup:
         backup = BackupService.export_backup(db_session, org.id, encryption)
         conns = backup["connections"]
         pg = next(c for c in conns if c["name"] == "My Postgres")
-        assert pg["config"]["password"] == "CHANGE_ME"
+        assert pg["config"]["password"] == REDACTED
         assert pg["config"]["host"] == "localhost"
         assert pg["config"]["port"] == 5432
 
         bq = next(c for c in conns if c["name"] == "Target DWH")
-        assert bq["config"]["service_account_json"] == "CHANGE_ME"
+        assert bq["config"]["service_account_json"] == REDACTED
         assert bq["config"]["project"] == "my-proj"
 
     def test_export_includes_all_connections(self, db_session, encryption, org, sample_connections):
@@ -116,7 +122,7 @@ class TestExportBackup:
         self, db_session, encryption, org, sample_connections
     ):
         backup = BackupService.export_backup(db_session, org.id, encryption)
-        assert backup["version"] == 2
+        assert backup["version"] == BACKUP_VERSION
         assert "exported_at" in backup
 
 

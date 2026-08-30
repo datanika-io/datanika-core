@@ -40,6 +40,20 @@ def _with_org(db_session, user, slug):
     return user
 
 
+def _confirmed(db_session, user):
+    """Mark the address confirmed, as clicking the verification link does.
+
+    Required before ``find_or_create_oauth_user`` will bind a provider to a
+    password account (#679): the provider proving the address is only half the
+    decision, and the account has to have proved it too. The tests below pin
+    what happens *after* a link, so this is the precondition that makes that
+    state reachable — not a relaxation of anything they assert.
+    """
+    user.email_verified = True
+    db_session.flush()
+    return user
+
+
 @pytest.fixture
 def user(db_session, svc):
     u = svc.register_user(db_session, "alice@example.com", "correct horse", "Alice")
@@ -199,6 +213,7 @@ class TestHasUsablePassword:
         """
         alice = svc.register_user(db_session, "alice@example.com", "correct horse", "Alice")
         _with_org(db_session, alice, "alice")
+        _confirmed(db_session, alice)
         same, is_new = svc.find_or_create_oauth_user(
             db_session, "alice@example.com", "Alice", "google", "g-alice", email_verified=True
         )
@@ -210,6 +225,7 @@ class TestHasUsablePassword:
     def test_such_a_user_still_needs_the_current_password_to_change_it(self, svc, db_session):
         alice = svc.register_user(db_session, "alice@example.com", "correct horse", "Alice")
         _with_org(db_session, alice, "alice")
+        _confirmed(db_session, alice)
         svc.find_or_create_oauth_user(
             db_session, "alice@example.com", "Alice", "google", "g-alice", email_verified=True
         )
@@ -264,6 +280,7 @@ class TestRegisterStampsPasswordChangedAt:
     def test_oauth_linking_does_not_clear_it(self, svc, db_session):
         alice = svc.register_user(db_session, "alice@example.com", "correct horse", "Alice")
         _with_org(db_session, alice, "alice")
+        _confirmed(db_session, alice)
         stamped = alice.password_changed_at
         svc.find_or_create_oauth_user(
             db_session, "alice@example.com", "Alice", "google", "g-alice", email_verified=True

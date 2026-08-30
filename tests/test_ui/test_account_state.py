@@ -195,6 +195,11 @@ class TestOAuthOnlyAccount:
         self, db_session, user, svc
     ):
         """The D6 trap at the state layer."""
+        # Confirming the address is the precondition for the link since #679 —
+        # the provider proving it is only half the decision. What this test
+        # pins, the state after linking, is unchanged.
+        user.email_verified = True
+        db_session.flush()
         svc.find_or_create_oauth_user(
             db_session, "alice@example.com", "Alice", "google", "g-a", email_verified=True
         )

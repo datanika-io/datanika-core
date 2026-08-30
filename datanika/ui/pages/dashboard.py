@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.config import settings
+from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.components.getting_started_checklist import getting_started_checklist
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.dashboard_state import DashboardState
@@ -123,7 +124,7 @@ def _runs_dimension() -> rx.Component:
                         color="var(--red-11)",
                         weight="medium",
                     ),
-                    href="/settings?tab=billing",
+                    href=BILLING_ROUTE,
                 ),
                 align="center",
                 spacing="1",

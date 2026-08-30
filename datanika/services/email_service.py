@@ -5,6 +5,8 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from datanika.plugin_registry import BILLING_ROUTE
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +110,7 @@ class EmailService:
         limit: int,
     ) -> bool:
         percent = int(used / limit * 100) if limit else 0
-        upgrade_url = f"{self._frontend_url}/settings?tab=billing"
+        upgrade_url = f"{self._frontend_url}{BILLING_ROUTE}"
         html = _QUOTA_WARNING_TEMPLATE.format(
             plan_name=plan_name,
             metric_label=metric_label,

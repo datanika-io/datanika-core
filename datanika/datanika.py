@@ -206,6 +206,8 @@ app.add_page(
     title="Settings | Datanika",
     on_load=[
         AuthState.check_auth,
+        # `/settings?tab=billing` is in already-sent quota-warning email (#654).
+        SettingsState.redirect_legacy_billing_tab,
         # Decides between "Change password" and "Set a password" (core#623).
         AccountState.load_account,
         SettingsState.load_settings,

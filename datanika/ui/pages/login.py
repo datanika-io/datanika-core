@@ -6,6 +6,7 @@ import reflex as rx
 
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
+from datanika.ui.components.layout import legal_links
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -168,6 +169,12 @@ def login_page() -> rx.Component:
                 size="2",
                 color="gray",
             ),
+            # #656. Rendered from the shared component rather than written
+            # here, so the `is_external` (= new tab) that these off-site links
+            # need stays out of this module — the AST guard in
+            # test_external_links.py is about the *social* buttons, and a
+            # module-wide ban is easier to keep true than to keep meaningful.
+            legal_links(),
             spacing="4",
             width="360px",
             padding="32px",

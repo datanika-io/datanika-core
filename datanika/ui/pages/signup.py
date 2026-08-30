@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.captcha import captcha_script
+from datanika.ui.components.layout import PRIVACY_URL, TERMS_URL
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -73,6 +74,24 @@ def signup_page() -> rx.Component:
                     width="100%",
                 ),
                 on_submit=AuthState.signup,
+            ),
+            rx.text(
+                _t["legal.signup_agreement"],
+                " ",
+                rx.link(
+                    _t["legal.terms"],
+                    href=TERMS_URL,
+                    is_external=True,
+                ),
+                " · ",
+                rx.link(
+                    _t["legal.privacy"],
+                    href=PRIVACY_URL,
+                    is_external=True,
+                ),
+                size="1",
+                color="gray",
+                align="center",
             ),
             rx.text(
                 _t["auth.have_account"],

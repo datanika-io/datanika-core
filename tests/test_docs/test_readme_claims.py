@@ -11,6 +11,7 @@ The count is derived from :class:`ConnectionType` rather than hardcoded, so
 adding a connector fails this test until the README is updated in the same PR.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -129,4 +130,92 @@ def test_mcp_install_uses_the_published_package(readme: str) -> None:
     assert "uvx datanika-mcp" in readme, "README lost the PyPI install command"
     assert "#subdirectory=datanika-mcp" not in readme, (
         "README regressed to the pre-PyPI git+subdirectory install string"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Claims about OTHER people's products — a different defect class
+# ---------------------------------------------------------------------------
+#
+# Found 2026-08-30 by Growth on the landing repo and swept into core here. The
+# comparison row said Airbyte "400+" and Fivetran "500+" while both vendors now
+# publish 600+/700+ — stale in the direction that makes our own table look
+# either careless or dishonest to the one reader who checks.
+#
+# ⚠️ The obvious guard is the wrong one, and the landing repo has the scar.
+# There, two tests asserted `expect(html).toContain("500+")`. When Growth
+# corrected the number to the true one, **the suite went red for the correct
+# change.** Growth's phrasing is the right one to keep: *a number pinned in a
+# test with no source is a lock, not a guard.* It is the mirror image of an
+# over-mocked test — one passes on wrong code, the other fails on right code,
+# and neither tracks truth.
+#
+# So this pins **nothing about the competitors' numbers.** It requires that any
+# such claim carries a footnote and that the footnote carries a date, which is
+# what lets a reader decide whether to trust it. Staleness becomes visible to
+# the reader instead of enforced against the person fixing it.
+_ISO_DATE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+
+
+def test_competitor_counts_are_sourced_and_dated(readme: str) -> None:
+    row = next((line for line in readme.splitlines() if "Extract + Load" in line), None)
+    assert row is not None, "comparison table lost its 'Extract + Load' row"
+
+    # Any "NNN+" in that row is a claim about someone else's catalogue.
+    foreign_claims = re.findall(r"\b\d{2,4}\+", row)
+    if not foreign_claims:
+        return  # no claim, nothing to source
+
+    assert "[^1]" in row, (
+        f"the comparison row claims {foreign_claims} about other vendors' connector "
+        "catalogues with no footnote marker. Cite the source and date it, or drop the "
+        "number — we do not track their catalogues and an unsourced count rots silently."
+    )
+    footnote = next((ln for ln in readme.splitlines() if ln.startswith("[^1]:")), None)
+    assert footnote is not None, "README references [^1] but defines no footnote"
+
+    body = readme.split("[^1]:", 1)[1][:400]
+    assert _ISO_DATE.search(body), (
+        "the competitor-count footnote carries no ISO date, so a reader cannot tell "
+        "how old the claim is. That date is the whole guard — this test deliberately "
+        "does NOT pin the counts themselves (see the comment above)."
+    )
+
+
+def test_this_guard_does_not_pin_the_competitor_numbers() -> None:
+    """Meta-check, and it is load-bearing rather than cute.
+
+    If someone later "strengthens" the guard above by asserting that the row
+    contains a specific count, it silently becomes the lock the landing repo
+    already had — red for the *correct* change, on a fact we do not own. So this
+    fails that edit, here, with the explanation attached.
+
+    Parsed with ``ast`` rather than grepped: comments and docstrings are not in
+    the tree, so the prose above (which quotes the landing repo's bad assertion
+    verbatim) cannot trip it. A grep version did, on its first run.
+    """
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    docstrings = {
+        id(node.body[0].value)
+        for node in ast.walk(tree)
+        if isinstance(getattr(node, "body", None), list)
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+    pinned = sorted(
+        {
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+            and re.fullmatch(r"\d{3,4}\+", node.value)
+        }
+    )
+    assert not pinned, (
+        f"a competitor connector count {pinned} has been hardcoded into this file. "
+        "That makes the suite fail when someone corrects the number — the exact "
+        "defect this section exists to avoid. Guard the citation, never the value."
     )

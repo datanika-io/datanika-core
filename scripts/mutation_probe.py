@@ -57,6 +57,24 @@ from pathlib import Path
 DEFAULT_STATE_DIRNAME = ".mutation-probe-state"
 
 
+def clean_env(**extra: str) -> dict:
+    """`os.environ` minus every ``GIT_*`` variable.
+
+    🚨 `git` reads `GIT_DIR` / `GIT_INDEX_FILE` / `GIT_WORK_TREE` from the
+    environment and they **win over `cwd`**. Git hooks set them. So a `git status`
+    issued from inside a hook-invoked process reports on whatever repository ran
+    the hook, not on `--repo`. This probe's own test suite hit exactly that under
+    `git push` and committed a sandbox fixture onto a feature branch before
+    anyone noticed.
+
+    Also applied to the pytest subprocess, so nothing the tests shell out to can
+    inherit it either.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(extra)
+    return env
+
+
 # ────────────────────────────────────────────────────────────── state & safety
 class Store:
     """On-disk record of what has been mutated. The whole safety story lives here."""
@@ -121,7 +139,11 @@ class Store:
         rc = 0
         for repo in self.repos() | (extra_repos or set()):
             out = subprocess.run(
-                ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True
+                ["git", "status", "--porcelain"],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                env=clean_env(),
             )
             dirty = [ln for ln in out.stdout.splitlines() if ln.strip()]
             if dirty:
@@ -241,7 +263,7 @@ def apply_mut(src: str, m: Mut) -> str | None:
 def run_tests(
     repo: Path, tests: list[str], timeout: int, k: str | None, python: str
 ) -> tuple[bool, str]:
-    env = dict(os.environ, UV_NO_SYNC="1", PYTHONDONTWRITEBYTECODE="1")
+    env = clean_env(UV_NO_SYNC="1", PYTHONDONTWRITEBYTECODE="1")
     cmd = [python, "-m", "pytest", *tests, "-x", "-q", "--no-header", "-p", "no:cacheprovider"]
     if k:
         cmd[len(cmd) - 5 : len(cmd) - 5] = ["-k", k]
@@ -294,7 +316,13 @@ def main() -> int:
         print("[pre-flight] stale sentinel from an earlier run; restoring it first")
         if store.restore() != 0:
             return 5
-    st = subprocess.run(["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True)
+    st = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=clean_env(),
+    )
     if st.stdout.strip():
         print("[pre-flight] REFUSING — the tree is dirty, so a restore could destroy work:")
         print(st.stdout)

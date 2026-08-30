@@ -83,7 +83,7 @@ tag tells you immediately whether you're affected.
 
 | | Datanika | Airbyte | Fivetran | dbt Cloud |
 |---|---|---|---|---|
-| Extract + Load | ✅ 36 connectors | ✅ 400+ | ✅ 500+ | ❌ |
+| Extract + Load | ✅ 36 connectors | ✅ 600+ [^1] | ✅ 700+ [^1] | ❌ |
 | Transformations | ✅ dbt built-in | ❌ | ❌ (add-on) | ✅ |
 | Scheduling | ✅ Cron + DAG | ✅ Basic | ✅ Basic | ✅ |
 | Pipeline DAG | ✅ Visual | ❌ | ❌ | ❌ |
@@ -91,6 +91,11 @@ tag tells you immediately whether you're affected.
 | Open source | ✅ AGPL-3.0 | ⚠️ ELv2 | ❌ | ❌ |
 | Notifications | ✅ Slack/Telegram/Email/Webhook | ✅ | ✅ | ✅ |
 | Pricing | Free forever | Free tier limited | ~$250+/mo | ~$100+/mo |
+
+[^1]: Competitor connector counts as published by each vendor's own connector
+directory, **checked 2026-08-30**. Ours is derived from `ConnectionType` in code,
+not written by hand. We do not track other vendors' catalogues continuously — if
+this footnote's date looks old, check the source rather than trusting the number.
 
 ---
 

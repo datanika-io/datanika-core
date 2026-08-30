@@ -72,6 +72,7 @@ class TestRegisterUserEmailVerified:
             full_name="OAuth User",
             oauth_provider="google",
             oauth_provider_id="123",
+            email_verified=True,
         )
         assert is_new is True
         assert user.email_verified is True

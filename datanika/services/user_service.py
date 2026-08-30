@@ -277,13 +277,62 @@ class UserService:
         full_name: str,
         oauth_provider: str,
         oauth_provider_id: str,
+        *,
+        email_verified: bool = False,
     ) -> tuple[User, bool]:
-        """Find existing user by email or create for OAuth. Returns (user, is_new)."""
+        """Find existing user by OAuth identity or email, else create. -> (user, is_new).
+
+        SECURITY (auth boundary). Two rules decide who this returns:
+
+        1. ``(oauth_provider, oauth_provider_id)`` is the identity. It is looked
+           up first and compared on *every* login, not written once at link
+           time — a provider presenting a different subject for the same address
+           is telling us the address changed hands.
+        2. The email is only a claim. It may reach an existing account, or
+           create one, **only** when the caller states the provider verified it.
+           ``email_verified`` is keyword-only and defaults to ``False`` so that a
+           caller which forgets it fails closed instead of trusting silently.
+
+        Auto-linking a verified provider email onto an existing password account
+        is a deliberate product decision (SPEC_SIGNUP_SOCIAL_AUTH.md), not an
+        oversight — but it is only sound because of rule 2.
+        """
         email = email.strip().lower()
+        oauth_provider_id = (oauth_provider_id or "").strip()
+
+        # 1. Identity first. An empty subject is not an identity and must never
+        #    be used as a lookup key, or it would match every unbound row.
+        if oauth_provider_id:
+            stmt = select(User).where(
+                User.oauth_provider == oauth_provider,
+                User.oauth_provider_id == oauth_provider_id,
+            )
+            user = session.execute(stmt).scalars().first()
+            if user is not None:
+                return user, False
+
+        # 2. Past this point the email is the only thing linking the caller to
+        #    an account, so it has to be worth something.
+        if not email_verified:
+            raise UserServiceError(
+                "Cannot sign in: the identity provider did not confirm this email address."
+            )
+
         user = self.get_user_by_email(session, email)
         if user is not None:
-            # Update OAuth fields if not set
-            if not user.oauth_provider:
+            if user.oauth_provider == oauth_provider:
+                stored_id = (user.oauth_provider_id or "").strip()
+                if not stored_id:
+                    # Linked before the subject was recorded — bind it now
+                    # rather than locking a legitimate user out.
+                    user.oauth_provider_id = oauth_provider_id
+                    session.flush()
+                elif stored_id != oauth_provider_id:
+                    raise UserServiceError(
+                        "Cannot sign in: this account is linked to a different "
+                        "identity at this provider."
+                    )
+            elif not user.oauth_provider:
                 user.oauth_provider = oauth_provider
                 user.oauth_provider_id = oauth_provider_id
                 session.flush()
@@ -295,7 +344,9 @@ class UserService:
             email=email,
             password_hash=random_hash,
             full_name=full_name or email.split("@")[0],
-            email_verified=True,  # OAuth provider already verified the email
+            # Safe because the gate above refused anything unverified. This
+            # comment used to assert it; now the code enforces it.
+            email_verified=True,
             oauth_provider=oauth_provider,
             oauth_provider_id=oauth_provider_id,
         )

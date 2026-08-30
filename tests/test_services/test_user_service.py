@@ -425,14 +425,14 @@ class TestGetMembership:
 class TestFindOrCreateOAuthUser:
     def test_existing_user_returns_not_new(self, svc, db_session, user):
         result_user, is_new = svc.find_or_create_oauth_user(
-            db_session, user.email, "Existing", "google", "g123"
+            db_session, user.email, "Existing", "google", "g123", email_verified=True
         )
         assert result_user.id == user.id
         assert is_new is False
 
     def test_new_user_creates_user_and_org(self, svc, db_session):
         result_user, is_new = svc.find_or_create_oauth_user(
-            db_session, "new_oauth@test.com", "OAuth User", "github", "gh456"
+            db_session, "new_oauth@test.com", "OAuth User", "github", "gh456", email_verified=True
         )
         assert is_new is True
         assert result_user.email == "new_oauth@test.com"
@@ -447,6 +447,8 @@ class TestFindOrCreateOAuthUser:
     def test_oauth_fields_set_on_existing_user(self, svc, db_session, user):
         """If existing user has no oauth_provider, it gets updated."""
         assert user.oauth_provider is None
-        svc.find_or_create_oauth_user(db_session, user.email, "Existing", "google", "g789")
+        svc.find_or_create_oauth_user(
+            db_session, user.email, "Existing", "google", "g789", email_verified=True
+        )
         assert user.oauth_provider == "google"
         assert user.oauth_provider_id == "g789"

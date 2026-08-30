@@ -56,6 +56,28 @@ The other assertions
 * `TestScrapeIntervalCoupling` — `[2m:15s]` hardcodes the blackbox scrape
   interval. If `prometheus.yml` retunes that job, the sample count per window
   changes and the threshold silently means something else.
+* `TestBlueGreenColourCoverage` — **added 2026-08-30, core#599 gap (b), out of
+  core#622.** A label selector that matches `datanika-app` but not
+  `datanika-app-b` watches *nothing* for as long as the other colour serves,
+  and the colours alternate on every deploy. `container-high-memory` did this
+  for five weeks. ⚠️ It sat **inside** the 30 rules core#604's audit examined
+  and passed, because that audit classified rules by *debounce shape* and this
+  defect is in *series selection* — an orthogonal axis. Query shape (#600/#604)
+  and series selection (#615, #616, #622) are the two axes with known
+  instances; assume a third exists.
+
+Tightened 2026-08-30 — core#599 gap (a)
+---------------------------------------
+`_encodes_duration_in_query` used to exempt the staleness form
+`time() - <metric> > N`. That exemption meant `container-down` and
+`app-container-down`, both `severity: critical`, were green **in both
+directions**: they did not appear in the red control run either, so nothing
+about `TestBlipArithmetic` discriminated the bug from the fix on them. A
+staleness threshold gates *entering* the failing state and says nothing about
+blindness to *recovery*, which is the property this file exists to enforce.
+Measured against the real pre-core#617 config (`63ef6df~2`), removing it takes
+`TestBlipArithmetic` from **1 flagged rule to 3**, with no false positives on
+current `dev`.
 
 Everything here is derived from the config rather than restated from it, per
 `test_deployment_manifest_parity.py`: a restated list drifts, and drift is the
@@ -82,12 +104,25 @@ PROMETHEUS = MONITORING / "prometheus.yml"
 # Rules whose defect is filed and not yet fixed. `strict=True` is load-bearing:
 # when the rule is fixed the case XPASSes, pytest fails, and the entry *must* be
 # deleted. The bug can neither be forgotten nor silently repaired.
-# Empty on purpose. Both entries that lived here were core#604's two
-# `app-unhealthy` violations, deleted when that rule was fixed — which is exactly
-# the handoff this dict was designed for: the fix makes them XPASS, `strict=True`
-# fails the suite, and the fixer has to come here. Add an entry only for a defect
-# that is filed and deliberately not being fixed in the same change; never to get
-# a red suite green.
+# The two entries that lived here before were core#604's `app-unhealthy`
+# violations, deleted when that rule was fixed — which is exactly the handoff
+# this dict was designed for: the fix makes them XPASS, `strict=True` fails the
+# suite, and the fixer has to come here. Add an entry only for a defect that is
+# filed and deliberately not being fixed in the same change; never to get a red
+# suite green.
+# Empty on purpose, twice over now.
+#
+# The first pair of entries were core#604's `app-unhealthy` violations, deleted
+# when Infra fixed that rule. The third was `("colour", "container-high-memory")`
+# for core#622, added while writing `TestBlueGreenColourCoverage` because the
+# check and the fix lived in different files (`tests/` vs `monitoring/`) owned by
+# different departments, and the alternative was either a red `dev` or holding a
+# finished check hostage to another team's queue.
+#
+# It lasted about an hour. Infra's fix landed on `dev` mid-rebase, the case
+# XPASSed, `strict=True` failed the suite, and the entry had to come out — which
+# is the entire mechanism, observed live rather than argued for. An entry here
+# cannot outlive the defect it documents.
 KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {}
 
 _UNIT_SECONDS = {
@@ -145,6 +180,68 @@ _RANGE_SELECTOR = re.compile(r"\[(\d+(?:\.\d+)?)([smhdw])(?::(\d+(?:\.\d+)?)([sm
 # `time() - <anything> > 90` — a staleness comparison. The metric must have been
 # missing for N seconds, so no single sample can satisfy it.
 _STALENESS = re.compile(r"time\(\s*\)\s*-.*?>\s*(\d+(?:\.\d+)?)", re.DOTALL)
+
+# --- blue/green colour coverage (core#599 gap (b), out of core#622) ----------
+# The app runs as a PAIR and the colours alternate on every deploy. A selector
+# that names one colour watches NOTHING for as long as the other one serves —
+# silently, with the rule still listed, still evaluating, still green.
+#
+# These are the two literal container/job names. Prometheus label matchers are
+# fully anchored, so the check is: compile the matcher, test it against both
+# strings, and flag anything that matches exactly one. That is semantic rather
+# than a grep for `(-b)?`, so `datanika-.*` passes and `datanika-(app|celery)`
+# does not.
+#
+# The container name and the Prometheus job name happen to be identical per
+# colour, so one pair of literals covers both label families.
+BLUE = "datanika-app"
+GREEN = "datanika-app-b"
+
+# Labels whose values carry a colour. `instance` and `datname` do not.
+_COLOUR_LABELS = ("name", "job", "container", "container_name", "pod")
+
+# `foo=~"bar"`, `foo="bar"`, and the negative forms.
+_LABEL_MATCHER = re.compile(r'(\w+)\s*(=~|!~|=|!=)\s*"([^"]*)"')
+
+
+def _matches(operator: str, value: str, candidate: str) -> bool:
+    """Evaluate one Prometheus label matcher against a concrete label value.
+
+    Regex matchers in Prometheus are **fully anchored** — `=~"datanika-app"`
+    does not match `datanika-app-b`. `re.fullmatch` is that semantic exactly;
+    `re.search` would silently make this check pass on the bug it exists to
+    catch, which is worth stating because it is a one-character mistake.
+    """
+    if operator in ("=~", "!~"):
+        try:
+            hit = re.fullmatch(value, candidate) is not None
+        except re.error:  # pragma: no cover - an invalid regex is its own bug
+            return False
+    else:
+        hit = value == candidate
+    return not hit if operator in ("!=", "!~") else hit
+
+
+def _colour_blind_matchers(expr: str) -> list[str]:
+    """Matchers on a colour-bearing label that cover exactly ONE colour.
+
+    Covering neither is fine — that is a selector about some other container
+    (`datanika-(celery|postgres|redis)`), not a half-blind app selector.
+    """
+    if not expr:
+        return []
+    offenders = []
+    for label, operator, value in _LABEL_MATCHER.findall(expr):
+        if label not in _COLOUR_LABELS:
+            continue
+        blue = _matches(operator, value, BLUE)
+        green = _matches(operator, value, GREEN)
+        if blue != green:
+            seen = BLUE if blue else GREEN
+            missed = GREEN if blue else BLUE
+            offenders.append(f'{label}{operator}"{value}"  (matches {seen}, MISSES {missed})')
+    return offenders
+
 
 _GRAFANA_DURATION = re.compile(r"^(\d+(?:\.\d+)?)\s*([smhdw]?)$")
 
@@ -243,24 +340,41 @@ def _scrape_interval(prom: dict, job_name: str | None = None) -> float:
 def _encodes_duration_in_query(rule: Rule, scrape_interval: float) -> bool:
     """Does the *query* already demand more than one sample?
 
-    Two accepted forms, both narrow on purpose:
+    ONE accepted form, narrow on purpose: a range/subquery aggregation whose
+    window spans >= 2 samples **and** whose threshold demands >= 2 of them. The
+    second half matters: `count_over_time((probe_success == 0)[2m:15s]) > 0`
+    passes a naive "uses an aggregation" test while being exactly as
+    single-sample triggered as the bare filter it replaced (core#599 comment).
 
-    1. A range/subquery aggregation whose window spans >= 2 samples **and**
-       whose threshold demands >= 2 of them. The second half matters:
-       `count_over_time((probe_success == 0)[2m:15s]) > 0` passes a naive
-       "uses an aggregation" test while being exactly as single-sample
-       triggered as the bare filter it replaced (core#599 comment).
-    2. A staleness comparison `time() - <metric> > N` with N >= 2 samples.
-       The metric must have gone unseen for N seconds, which no single scrape
-       can produce.
+    ⚠️ **The staleness form `time() - <metric> > N` used to be accepted here and
+    is NOT any more (core#599 gap (a), removed 2026-08-30).** The old rationale
+    was "the metric must have gone unseen for N seconds, which no single scrape
+    can produce" — true, and about the wrong half of the mechanism. A staleness
+    threshold raises the bar for *entering* the failing state. It does nothing
+    about blindness to *recovery*, which is what core#598 actually was:
+
+        - one cadvisor stall of 61s produces ONE sample where
+          `time() - container_last_seen > 60`
+        - that sample is filtered-in, so it sits in the 60s query window
+        - `reduce: last` returns it for 2 evaluations at the 30s group interval
+        - `for: 30s` is satisfied — and the box was healthy the whole time
+
+    "No single scrape can produce it" and "no single *sample* can page you" are
+    different claims, and only the second is the property this check exists to
+    enforce. The exemption meant `container-down` and `app-container-down`
+    (both `severity: critical`) were green here **in both directions** — they
+    did not appear in the red control run either, so nothing about this check
+    discriminated the bug from the fix on them. A check that cannot fail on a
+    whole family of rules is the same silent-green defect one layer up.
+
+    Removing it costs no false positives: `backup-stale` is the only remaining
+    bare-staleness rule and it carries `for: 30m` against a 90s requirement, so
+    it passes on the `for` path. The two container rules were fixed in core#617
+    and pass on the aggregation path above.
     """
     expr = rule.expr
     if not expr:
         return False
-
-    staleness = _STALENESS.search(expr)
-    if staleness and float(staleness.group(1)) >= 2 * scrape_interval:
-        return True
 
     selector = _RANGE_SELECTOR.search(expr)
     if not selector:
@@ -647,6 +761,77 @@ class TestScrapeIntervalCoupling:
             )
 
 
+class TestBlueGreenColourCoverage:
+    """A rule that watches one colour watches nothing half the time.
+
+    core#622: `container-high-memory` selects
+    `name=~"datanika-(app|celery)"`. Prometheus anchors regex matchers, so that
+    does **not** match `datanika-app-b` — the rule watched celery alone for 719
+    of the last 720 hours, and nobody noticed because a rule watching nothing
+    is indistinguishable from a rule watching something healthy.
+
+    ⚠️ **The core#604 audit could not have caught this, and that is the point.**
+    That audit classified all 30 rules by *debounce shape* — how the duration
+    requirement is encoded. This defect is in *which series the rule selects*,
+    an orthogonal axis, so #622 sat **inside** the set #604 examined and passed.
+    Two axes now have known instances: query shape (#600/#604) and series
+    selection (#615, #616, #622). Expect a third.
+
+    The check is mechanical and semantic rather than a grep for `(-b)?`: compile
+    each matcher and evaluate it against both literal colour names. Matching
+    neither is fine (that is a selector about some other container); matching
+    exactly one is the bug.
+    """
+
+    @pytest.mark.parametrize("rule", [_mark("colour", r) for r in PROMQL_RULES])
+    def test_selectors_cover_both_colours(self, rule: Rule):
+        offenders = _colour_blind_matchers(rule.expr)
+        listed = "".join(f"    {o}\n" for o in offenders)
+        assert not offenders, (
+            f"{rule.uid} ({rule.title!r}) selects only ONE blue/green colour:\n"
+            f"{listed}"
+            f"    expr: {rule.expr}\n\n"
+            f"The app runs as a pair and the colours ALTERNATE on every deploy "
+            f"({BLUE} = blue, {GREEN} = green), so this rule is blind for as "
+            f"long as the colour it misses is the one serving. It does not go "
+            f"red when that happens — it goes quiet, which reads identically "
+            f"to healthy.\n\n"
+            f"Fix by making the matcher cover both: `datanika-app(-b)?`, or "
+            f"`datanika-(app(-b)?|celery)` for a mixed selector, or "
+            f"`datanika-.*` where the rule genuinely applies to every "
+            f"container. Prometheus anchors regex matchers, so the optional "
+            f"group is required — `datanika-app` alone does NOT match "
+            f"`datanika-app-b`."
+        )
+
+    def test_the_colour_check_is_looking_at_something(self):
+        """Anti-vacuity: this suite passes trivially if nothing is selected.
+
+        Every parametrized check in this file can go green by collecting
+        nothing, and two of them already would have. If the label names or the
+        expression shape move, this fails instead of quietly passing.
+        """
+        seen = [r.uid for r in PROMQL_RULES if _LABEL_MATCHER.search(r.expr or "")]
+        assert len(seen) >= 5, (
+            f"only {len(seen)} rules have any label matcher at all ({seen}); "
+            f"the colour check is almost certainly parsing nothing."
+        )
+        covering = [
+            r.uid
+            for r in PROMQL_RULES
+            if any(
+                _matches(op, val, BLUE) or _matches(op, val, GREEN)
+                for lbl, op, val in _LABEL_MATCHER.findall(r.expr or "")
+                if lbl in _COLOUR_LABELS
+            )
+        ]
+        assert len(covering) >= 3, (
+            f"only {len(covering)} rules select an app colour at all "
+            f"({covering}). Either the colour names changed (update BLUE/GREEN) "
+            f"or matcher parsing broke — both make this check vacuous."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Negative controls
 # ---------------------------------------------------------------------------
@@ -756,14 +941,126 @@ class TestTheLintCanFail:
         rule = _synthetic(for_="90s")
         TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
 
-    def test_blip_check_accepts_a_staleness_comparison(self):
-        """`time() - metric > N` cannot be satisfied by any single sample."""
+    def test_blip_check_rejects_a_bare_staleness_comparison(self):
+        """core#599 gap (a). This control asserted the OPPOSITE until 2026-08-30.
+
+        The old claim was "`time() - metric > N` cannot be satisfied by any
+        single sample", which is true and about the wrong half of the mechanism.
+        A staleness threshold raises the bar for *entering* the failing state;
+        it says nothing about blindness to *recovery*. One 61s cadvisor stall
+        produces one filtered-in sample, `reduce: last` returns it for two
+        evaluations at a 30s group interval, and `for: 30s` is satisfied while
+        the box was healthy throughout.
+
+        The cost of the old exemption was not a wrong message — it was that
+        `container-down` and `app-container-down`, both `severity: critical`,
+        were green here **in both directions**. They did not appear in the red
+        control run either, so this check discriminated nothing on them.
+
+        The fixture is the real pre-core#617 `container-down`, not an invention.
+        """
         rule = _synthetic(
-            expr="time() - datanika_backup_last_success_timestamp_seconds > 90",
+            expr=(
+                "time() - max by (name) "
+                '(container_last_seen{name=~"datanika-(celery|postgres|redis)"}) > 60'
+            ),
+            for_="30s",
+            threshold=("gt", [0]),
+        )
+        with pytest.raises(AssertionError, match="debounces nothing"):
+            TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_accepts_the_617_staleness_fix(self):
+        """Wrapping the same staleness expr in a counted subquery is the fix."""
+        rule = _synthetic(
+            expr=(
+                "count_over_time(((time() - max by (name) "
+                '(container_last_seen{name=~"datanika-(celery|postgres|redis)"}))'
+                " > 60)[2m:15s])"
+            ),
             for_="0s",
+            threshold=("gt", [3]),
+        )
+        TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    def test_blip_check_still_accepts_backup_stale(self):
+        """Tightening gap (a) must not cost a false positive on the real config.
+
+        `backup-stale` is the only bare-staleness rule left after core#617. It
+        is legitimate on the `for` path (`30m` against a 90s requirement), and
+        it is also the one rule where the staleness argument genuinely holds:
+        `datanika_backup_last_success_timestamp_seconds` only advances when a
+        backup succeeds, so the condition cannot self-clear between two
+        evaluations the way a liveness heartbeat can. That distinction is not
+        mechanically visible in the expression, which is exactly why the check
+        must not try to infer it — it defers to `for` instead.
+        """
+        rule = _synthetic(
+            expr="time() - datanika_backup_last_success_timestamp_seconds > 93600",
+            for_="30m",
             threshold=("gt", [0]),
         )
         TestBlipArithmetic().test_single_sample_cannot_reach_firing(rule)
+
+    # --- blue/green colour coverage (core#599 gap (b)) ----------------------
+
+    def test_colour_check_rejects_the_622_selector(self):
+        """The literal `container-high-memory` matcher, five weeks unnoticed."""
+        rule = _synthetic(
+            expr='container_memory_usage_bytes{name=~"datanika-(app|celery)"} > 1.5e+9'
+        )
+        with pytest.raises(AssertionError, match="selects only ONE blue/green colour"):
+            TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_check_accepts_the_optional_group(self):
+        rule = _synthetic(expr='max(up{job=~"datanika-app(-b)?"}) == 0')
+        TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_check_accepts_a_wildcard(self):
+        rule = _synthetic(
+            expr='increase(container_start_time_seconds{name=~"datanika-.*"}[1h]) > 3'
+        )
+        TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_check_ignores_selectors_about_other_containers(self):
+        """Matching NEITHER colour is not a violation — `container-down` is fine."""
+        rule = _synthetic(
+            expr=(
+                "time() - max by (name) "
+                '(container_last_seen{name=~"datanika-(celery|postgres|redis)"}) > 60'
+            )
+        )
+        TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_check_ignores_labels_that_carry_no_colour(self):
+        """`datname`/`instance` are not colour-bearing; flagging them is noise."""
+        rule = _synthetic(
+            expr='rate(pg_stat_statements_seconds_total{datname="datanika"}[5m]) > 0.5'
+        )
+        TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_check_catches_an_exact_match_not_just_a_regex(self):
+        """`job="datanika-app"` is the same defect written without a regex."""
+        rule = _synthetic(expr='up{job="datanika-app"} == 0')
+        with pytest.raises(AssertionError, match="MISSES datanika-app-b"):
+            TestBlueGreenColourCoverage().test_selectors_cover_both_colours(rule)
+
+    def test_colour_matcher_anchors_like_prometheus_does(self):
+        """`re.search` here would pass the bug through; `fullmatch` is the point.
+
+        Prometheus anchors regex label matchers. One character of difference in
+        this helper (`search` for `fullmatch`) makes the whole check green on
+        core#622, so it is asserted directly rather than only through the rules.
+        """
+        assert _matches("=~", "datanika-app", BLUE)
+        assert not _matches("=~", "datanika-app", GREEN), (
+            "unanchored: 'datanika-app' must NOT match 'datanika-app-b'"
+        )
+        assert _matches("=~", "datanika-app(-b)?", GREEN)
+        assert _matches("=~", "datanika-.*", GREEN)
+        assert not _matches("=~", "datanika-(app|celery)", GREEN)
+        assert _matches("=", "datanika-app", BLUE)
+        assert not _matches("=", "datanika-app", GREEN)
 
     def test_filtering_detection_discriminates(self):
         """If `_is_filtering` collapsed, TestBlipArithmetic would silently empty."""

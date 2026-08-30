@@ -160,6 +160,15 @@ class PasswordResetService:
 
         user.password_hash = self._users._auth.hash_password(new_password)
         user.password_changed_at = datetime.now(UTC)
+        # Reaching this line means somebody followed a link we mailed to the
+        # address on file, which is precisely the evidence ``email_verified``
+        # records — the same proof ``/api/verify-email`` collects, by a
+        # different route. Writing it here is what gives accounts created
+        # before verification was wired up a way past the social-login link
+        # guard in ``user_service._assert_local_account_proved_its_email``.
+        # It rides on the successful branch deliberately: a dead token or a
+        # rejected password returns above without touching this.
+        user.email_verified = True
         session.flush()
         return user
 

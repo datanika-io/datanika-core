@@ -173,6 +173,19 @@ Both reset screens are **Reflex pages**, not Starlette routes: the reverse proxy
 
 Responses on `/forgot-password` are identical whether or not the address has an account, including when its rate-limit bucket is spent. On an instance with no `SMTP_HOST` the "Forgot your password?" link is hidden entirely; the Settings change form still works with no mail server at all.
 
+Completing a reset also sets `users.email_verified`. Following a link that was mailed to the address on file is the same proof `/api/verify-email` collects, and it is the only route to that proof for accounts created before signup started sending the confirmation mail.
+
+### Email confirmation
+
+`users.email_verified` records that **we** have seen someone act on a message sent to the address — not that a provider told us it was verified. Two writers, and no others:
+
+- `GET /api/verify-email?token=…` — a 24-hour `email_verify` JWT, minted at signup by `services/email_verification.request_email_verification` and dispatched through `send_verification_email_task`.
+- completing a password reset, as above.
+
+It is deliberately **not** a login gate. `authenticate(require_email_verified=…)` exists and production never passes `True`: turning it on would lock out every account that predates the confirmation mail, and it is not what the column is for.
+
+What it *is* for is the second half of the social-login link decision below. An instance with no `SMTP_HOST` sends nothing and confirms nobody; that is a supported configuration, and the only thing it costs is auto-linking a provider onto an existing password account.
+
 ### OAuth2 (Google + GitHub)
 
 OAuth routes are plain Starlette `Route` objects (not FastAPI — Reflex 0.8.x uses Starlette internally):
@@ -181,6 +194,18 @@ OAuth routes are plain Starlette `Route` objects (not FastAPI — Reflex 0.8.x u
 2. `/api/auth/callback/{provider}` — verifies HMAC state signature (CSRF protection), exchanges code for tokens, creates/links user, redirects to frontend with `?token=...&refresh=...&is_new=0|1`
 
 Routes are mounted by appending to `app._api.routes` after `rx.App()` creation.
+
+#### Which account a provider identity may be bound to
+
+`find_or_create_oauth_user` is the auth boundary, and it decides in this order:
+
+1. **`(oauth_provider, oauth_provider_id)` is the identity**, looked up first and compared on *every* login. A provider presenting a different subject for the same address is telling us the address changed hands.
+2. **The email is only a claim.** It may reach an existing account, or create one, only when the caller states the provider verified it. The parameter is keyword-only and defaults to `False`, so a caller that forgets it fails closed.
+3. **Both sides have to be proven.** Rule 2 establishes that the *provider* proved the address; it says nothing about whether the account being linked *to* ever did. Auto-linking onto a pre-existing account therefore also requires `email_verified`, **or** `password_changed_at IS NULL` — no human-chosen password on that row means there is no password login to hand over.
+
+Rule 3 is why an address typed at signup by someone who never owned it cannot become a trap for the person who does. The refusal is recoverable by design: the password still works, and the reset flow both proves the address and clears the block. The OAuth and SSO callbacks translate it into `/login?link_blocked=1`, a **bounded flag** rather than a message — a login page that rendered arbitrary text out of its own query string would be a phishing surface.
+
+Rule 3 covers SSO too, and there it closes an org-scoped variant: an SSO admin configuring their own IdP can assert any address, and without it would be auto-linked onto whatever unconfirmed account already held it.
 
 ### RBAC
 

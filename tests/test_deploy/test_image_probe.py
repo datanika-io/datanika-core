@@ -233,3 +233,107 @@ class TestTheProbeIsNotJustAVersionAssert:
 )
 def test_drift_count_is_what_the_verdict_rests_on(locked, installed, expected):
     assert len(probe.pin_drift(locked, installed)) == expected
+
+
+# ---------------------------------------------------------------------------
+# The probe's CI WIRING — graduated to gating 2026-08-30 (core#602).
+# ---------------------------------------------------------------------------
+# The probe graduated on six consecutive `INFORMATIONAL_RESULT=success` runs on
+# `dev` against a bar of three, and `image-probe` is now a REQUIRED CHECK.
+#
+# Which creates a new way to lose it silently, and it is the same shape as the
+# defect the probe exists to catch: every way of un-gating this job leaves the
+# job still present, still running, still green-ticked, and no longer able to
+# hold a merge. Re-adding `continue-on-error` does it. So does renaming the job,
+# because branch protection matches the check-run name as a literal string — a
+# required check that never reports is not "failing", it is *absent*, and GitHub
+# does not warn you.
+#
+# So the wiring gets asserted the same way the artifact does.
+_CI_WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "ci.yml"
+
+# The literal string in `dev`'s branch protection `contexts`. If you change the
+# job's `name:`, you MUST change it in branch protection in the same breath, and
+# in that order: rename lands on dev first, protection follows. Doing it the
+# other way blocks every PR on a check that cannot report.
+REQUIRED_CHECK_NAME = "image-probe"
+
+
+def _image_probe_job() -> dict:
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(_CI_WORKFLOW.read_text(encoding="utf-8"))
+    assert "image-probe" in doc["jobs"], (
+        "the `image-probe` job is gone from ci.yml entirely. It is a required "
+        "check on `dev`; removing the job blocks every PR on a check that can "
+        "never report."
+    )
+    return doc["jobs"]["image-probe"]
+
+
+def _probe_step(job: dict) -> dict:
+    for step in job.get("steps", []):
+        if step.get("id") == "probe":
+            return step
+    raise AssertionError(
+        "no step with `id: probe` in the image-probe job — the gating assertion "
+        "is identified by that id, so losing it loses the check."
+    )
+
+
+class TestImageProbeIsActuallyGating:
+    """Four independent ways to un-gate this job without any tick turning red."""
+
+    def test_the_probe_step_does_not_swallow_its_own_failure(self):
+        step = _probe_step(_image_probe_job())
+        assert "continue-on-error" not in step, (
+            "`continue-on-error` is back on the image-probe step. That "
+            "quarantines the VERDICT: the probe still runs, the job still goes "
+            "green, and a broken image merges — which is core#602 exactly. The "
+            "probe graduated to gating 2026-08-30 on six consecutive greens; "
+            "if you mean to demote it, that needs an issue and a plan entry, "
+            "not a flag (PLAN_QA.md §E2E tiers: demotion is not the inverse of "
+            "graduation)."
+        )
+
+    def test_the_job_name_still_matches_the_required_check(self):
+        name = _image_probe_job().get("name")
+        assert name == REQUIRED_CHECK_NAME, (
+            f"the image-probe job reports as {name!r}, but `dev`'s branch "
+            f"protection requires the literal context {REQUIRED_CHECK_NAME!r}. "
+            f"These are matched as strings. A required check that never "
+            f"reports under its expected name does not fail the PR — it leaves "
+            f"it PENDING forever, so this typo blocks every merge into dev "
+            f"rather than announcing itself."
+        )
+
+    def test_the_job_still_runs_on_pull_requests(self):
+        """A push-only required check blocks every merge, permanently."""
+        job = _image_probe_job()
+        assert "if" not in job, (
+            f"the image-probe job grew a job-level `if:` "
+            f"({job.get('if')!r}). Required checks must report on "
+            f"`pull_request`, and a job whose `if` is false is SKIPPED, which "
+            f"never satisfies a required context. This is the documented trap "
+            f"that keeps deploy-staging / e2e-staging / smoke-* out of the "
+            f"required set (CLAUDE.md, Branching Strategy §4): they are "
+            f"push-only, so requiring one would block every merge forever."
+        )
+
+    def test_it_no_longer_emits_the_informational_marker(self):
+        """One marker, one owner — see the blended-verdict incident below."""
+        body = _CI_WORKFLOW.read_text(encoding="utf-8")
+        emitters = [
+            line.strip()
+            for line in body.splitlines()
+            if "INFORMATIONAL_RESULT=" in line and line.lstrip().startswith("echo")
+        ]
+        assert len(emitters) == 1, (
+            "`INFORMATIONAL_RESULT=` is emitted by "
+            f"{len(emitters)} steps: {emitters}.\n\n"
+            "Exactly one job may own this marker (`e2e-staging`'s informational "
+            "tier). While image-probe also emitted it, a grep over a run log "
+            "returned a verdict blended across two jobs — the probe was 6/6 "
+            "green while e2e-staging's tier was 3/6, and the blend was nearly "
+            "reported upward as 'the probe is flapping'. If you add a third "
+            "informational tier, give it its own marker name."
+        )

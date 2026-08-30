@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.transformation import Materialization, Transformation
+from datanika.services.connection_service import get_org_connection
 
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
@@ -37,6 +38,7 @@ class TransformationService:
         if tests_config is None:
             tests_config = {}
         self.validate_tests_config(tests_config)
+        self._require_own_connection(session, org_id, destination_connection_id)
 
         transformation = Transformation(
             org_id=org_id,
@@ -98,6 +100,7 @@ class TransformationService:
             self.validate_tests_config(kwargs["tests_config"])
             transformation.tests_config = kwargs["tests_config"]
         if "destination_connection_id" in kwargs:
+            self._require_own_connection(session, org_id, kwargs["destination_connection_id"])
             transformation.destination_connection_id = kwargs["destination_connection_id"]
         if "tags" in kwargs:
             transformation.tags = kwargs["tags"]
@@ -106,6 +109,19 @@ class TransformationService:
 
         session.flush()
         return transformation
+
+    @staticmethod
+    def _require_own_connection(session: Session, org_id: int, conn_id: int | None) -> None:
+        """Refuse a destination connection the caller's org does not own.
+
+        `destination_connection_id` is optional here — a transformation without
+        one inherits its pipeline's destination — so None is legitimate and only
+        a supplied id is checked.
+        """
+        if conn_id is None:
+            return
+        if get_org_connection(session, org_id, conn_id) is None:
+            raise TransformationConfigError(f"Invalid destination connection {conn_id}: must exist")
 
     def delete_transformation(self, session: Session, org_id: int, transformation_id: int) -> bool:
         transformation = self.get_transformation(session, org_id, transformation_id)

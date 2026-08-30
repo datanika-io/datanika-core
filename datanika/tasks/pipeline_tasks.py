@@ -14,7 +14,7 @@ from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
-from datanika.services.connection_service import _build_sa_url
+from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
@@ -198,7 +198,12 @@ def run_pipeline(
         if own_session:
             session.commit()
 
-        dst_conn = session.get(Connection, pipeline.destination_connection_id)
+        dst_conn = get_org_connection(session, org_id, pipeline.destination_connection_id)
+        if dst_conn is None:
+            raise ValueError(
+                f"Destination connection {pipeline.destination_connection_id} is not "
+                f"available to org {org_id}"
+            )
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
         org = session.get(Organization, org_id)

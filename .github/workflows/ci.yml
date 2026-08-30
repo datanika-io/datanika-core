@@ -202,7 +202,7 @@ jobs:
         run: helm template test-release deploy/helm/datanika > /dev/null
 
   # ===========================================================================
-  # image-probe — INFORMATIONAL TIER, does not gate. (core#602, QA)
+  # image-probe — GATING. Red here holds the merge. (core#602, QA)
   # ===========================================================================
   #
   # The image is the one artifact that ships, and it was the one artifact
@@ -223,30 +223,46 @@ jobs:
   # theirs cannot do, because nothing was building the image on a PR.
   #
   # ---------------------------------------------------------------------------
-  # WHY THIS IS INFORMATIONAL, AND WHY THAT IS NOT A HEDGE
+  # GRADUATED TO GATING 2026-08-30 (QA) — it was informational until then
   # ---------------------------------------------------------------------------
-  # It is legitimately RED until Engineering's pin lands, because the defect it
-  # asserts on is real and unfixed. Landing it gating would have made the only
-  # cheap way to merge anything "loosen the assertion", which is the exact
-  # incentive inversion PLAN_QA's tier policy exists to prevent. A red here is a
-  # finding, not flakiness.
+  # It shipped informational because it was legitimately RED until Engineering's
+  # pin landed: the defect it asserts on was real and unfixed. Landing it gating
+  # then would have made the only cheap way to merge anything "loosen the
+  # assertion", which is the exact incentive inversion PLAN_QA's tier policy
+  # exists to prevent.
   #
-  # It is NOT in `dev`'s required checks (lint, test, helm-lint,
-  # migration-roundtrip), so it cannot block a merge, and the probe step carries
-  # continue-on-error so the job's tick stays green.
+  # The bar was 3 consecutive `INFORMATIONAL_RESULT=success` on `dev`, read from
+  # the LOG LINE and not the job tick. Re-derived from the per-job logs on
+  # 2026-08-30 — every `dev` push since #612 landed, oldest→newest:
   #
-  # ⚠️ Which means THE TICK IS NOT THE EVIDENCE. Read `INFORMATIONAL_RESULT=` in
-  # the log — continue-on-error masks the step's own result, exactly as it does
-  # for the informational E2E specs.
+  #   79b0993e ✅  5f7acf4f ✅  cfa98ab1 ✅  63ef6df5 ✅  cb81fe9e ✅  7165ad1a ✅
   #
-  # GRADUATION into the gating tier is mechanical and identical to the E2E
-  # policy: 3 consecutive `INFORMATIONAL_RESULT=success` on `dev`, then delete
-  # continue-on-error, add `image-probe` to dev's required checks, and close the
-  # tracking issue. Graduate on that evidence, NOT on "the fix landed" — the
-  # point of the probe is that a merged fix and a correct artifact are different
-  # claims.
+  # Six consecutive, twice the bar, the last being the SHA promoted to master.
+  # And the probe is proven in BOTH directions on real artifacts: red against a
+  # `dev`-built image reproducing #602's exact ImportError, green against #612's
+  # fixed image. Graduated on that evidence, not on "the fix landed" — a merged
+  # fix and a correct artifact are different claims.
+  #
+  # ⚠️ ANCHOR THE JOB NAME when re-deriving anything from a run log. Until this
+  # commit the same log carried `INFORMATIONAL_RESULT=` lines from BOTH this job
+  # and `e2e-staging`, so an unanchored grep returned a verdict blended across
+  # two jobs — that nearly got reported as "the probe is flapping" while it was
+  # 6/6. This job no longer emits that marker at all (see below), so from here
+  # `INFORMATIONAL_RESULT=` in a CI log means `e2e-staging`'s tier and nothing
+  # else.
+  #
+  # ⚠️ WHAT THIS CHECK CANNOT GATE: a fork PR gets no `CLOUD_REPO_TOKEN`, so
+  # every step below is skipped and the job reports SUCCESS having probed
+  # nothing — a green that would look identical had the artifact been broken.
+  # That is not fixable here: failing on forks would block all outside
+  # contribution, and a job-level `if:` would leave a required check permanently
+  # pending, which blocks the merge instead. The class is still caught, one step
+  # later: a fork PR cannot reach prod without a maintainer merging it, and the
+  # push-to-`dev` run then builds WITH the token. Engineering's build-time
+  # import assertion in the Dockerfile (#612) covers the same ground on any
+  # build anywhere. Treat a green here on a fork PR as "not evaluated".
   image-probe:
-    name: image-probe (informational)
+    name: image-probe
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -323,10 +339,13 @@ jobs:
           cache-from: type=gha
           platforms: linux/amd64
 
+      # NO `continue-on-error` — removed 2026-08-30 at graduation. This step's
+      # failure IS the job's failure, and the job is a required check on `dev`.
+      # Re-adding it would silently un-gate the probe while leaving every
+      # comment above claiming otherwise, which is the #602 failure mode itself.
       - name: Probe the built image
         id: probe
         if: steps.token.outputs.available == 'true'
-        continue-on-error: true
         run: |
           # `python3`, not `python`: this job deliberately does NOT run
           # actions/setup-python, so bare `python` may not exist on the runner.
@@ -337,27 +356,40 @@ jobs:
             --image datanika-core:probe \
             --lock-pins lock-pins.txt
 
-      - name: Record the informational result
-        if: always() && steps.token.outputs.available == 'true'
+      # The tick is now load-bearing, so this step no longer has to substitute
+      # for it. It stays because the *reason* still needs saying out loud, and
+      # because "did not run" and "passed" must never look alike in a log.
+      #
+      # Deliberately NOT `INFORMATIONAL_RESULT=` any more: that marker now
+      # belongs solely to `e2e-staging`'s informational tier. Two jobs emitting
+      # one marker is what produced a blended verdict across two jobs.
+      - name: Record the probe result
+        if: always()
         run: |
-          # `outcome` is the step's REAL result; `conclusion` is what
-          # continue-on-error rewrote it to. Only the first is evidence.
+          # `outcome` is the step's real result. With continue-on-error gone,
+          # `conclusion` now agrees with it — but read `outcome` regardless, so
+          # this line keeps meaning the same thing if the flag ever comes back.
           RESULT="${{ steps.probe.outcome }}"
-          echo "INFORMATIONAL_RESULT=${RESULT}"
+          echo "IMAGE_PROBE_RESULT=${RESULT}"
           case "${RESULT}" in
             success)
-              echo "::notice::image-probe passed. Graduation needs 3 consecutive INFORMATIONAL_RESULT=success on dev (core#602)."
+              echo "::notice::image-probe passed: the built image contains what production needs."
               ;;
             failure)
-              echo "::warning::image-probe FAILED (informational, not gating). The built image does not contain what production needs — see the step log. Expected red until core#602's pin lands; do not read it as flakiness, and do not loosen the assertion to clear it."
+              echo "::error::image-probe FAILED — the built image does not contain what production needs. This is GATING: fix the artifact, do not loosen the assertion. A deploy from this image would fail its blue/green post-swap check (core#602)."
+              ;;
+            skipped)
+              # Two very different reasons land here, and they must not be
+              # conflated: no cloud token (fork PR — nothing was built), or the
+              # build step failed (the job is already red from that step).
+              if [ "${{ steps.token.outputs.available }}" != "true" ]; then
+                echo "::warning::image-probe NOT EVALUATED — no CLOUD_REPO_TOKEN (fork PR?), so no image was built. This green proves NOTHING about the artifact; see the job header."
+              else
+                echo "::error::image-probe did NOT RUN — the image build above failed. That is itself a gating failure; this proves nothing about the artifact either way."
+              fi
               ;;
             *)
-              # The probe never ran — almost always because the image build
-              # failed above. A skip is in NEITHER tier and counts toward
-              # NOTHING: it is not a green for graduation and not a red to
-              # triage as a product defect. Say that plainly, because
-              # "46 passed" reads like coverage until you look.
-              echo "::warning::image-probe did NOT RUN (outcome=${RESULT}); the image build above almost certainly failed. This proves nothing about the artifact either way, and does not count toward the 3 greens graduation needs."
+              echo "::error::image-probe outcome=${RESULT} — unexpected. Treat as not evaluated."
               ;;
           esac
 

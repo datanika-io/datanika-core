@@ -95,17 +95,34 @@ class TestQuotaEmailTemplate:
     """Test that the email template renders correctly."""
 
     def test_template_contains_usage(self):
-        from datanika.services.email_service import _QUOTA_WARNING_TEMPLATE
+        """Read what the service produced, not a template the test formatted.
 
-        html = _QUOTA_WARNING_TEMPLATE.format(
-            plan_name="Free",
-            metric_label="model runs",
-            used=420,
-            limit=500,
-            percent=84,
-            upgrade_url="https://app.datanika.io/settings?tab=billing",
-            app_name="Datanika",
+        This used to call ``_QUOTA_WARNING_TEMPLATE.format(...)`` with an
+        ``upgrade_url`` the test supplied — so it never executed
+        ``send_quota_warning_email`` and could not fail on a change there. It
+        also carried ``/settings?tab=billing``, the dead URL #654 removed, kept
+        alive in a test where the AST scan over ``datanika/`` cannot see it.
+        """
+        from datanika.services.email_service import EmailService
+
+        sent = {}
+        svc = EmailService(
+            smtp_host="smtp.example.com",
+            smtp_port=25,
+            smtp_user="",
+            smtp_password="",
+            smtp_from_email="test@test.com",
+            smtp_from_name="Test",
+            smtp_use_tls=False,
+            frontend_url="https://app.datanika.io",
         )
+        svc.send = lambda to, subject, html_body, text_body=None: (
+            sent.update(html=html_body) or True
+        )
+        svc.send_quota_warning_email(
+            "owner@example.com", "Free", "model runs", 420, 500, billing_enabled=True
+        )
+        html = sent["html"]
         assert "420" in html
         assert "500" in html
         assert "84%" in html

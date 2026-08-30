@@ -14,7 +14,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import Run
 from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService
-from datanika.services.connection_service import _build_sa_url
+from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.dlt_runner import DltRunnerService, destination_dataset_name
 from datanika.services.encryption import EncryptionService
@@ -153,8 +153,12 @@ def run_upload(
             select(Upload).where(Upload.id == run.target_id, Upload.org_id == org_id)
         ).scalar_one()
 
-        src_conn = session.get(Connection, upload.source_connection_id)
-        dst_conn = session.get(Connection, upload.destination_connection_id)
+        src_conn = get_org_connection(session, org_id, upload.source_connection_id)
+        dst_conn = get_org_connection(session, org_id, upload.destination_connection_id)
+        if src_conn is None or dst_conn is None:
+            raise ValueError(
+                f"Upload {upload.id} references a connection that is not available to org {org_id}"
+            )
 
         src_config = encryption.decrypt(src_conn.config_encrypted)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)

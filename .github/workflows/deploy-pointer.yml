@@ -43,6 +43,17 @@ jobs:
         with:
           repository: datanika-io/datanika-cloud
           token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          # Pinned, not inherited. With no `ref:` this took cloud's DEFAULT branch —
+          # which IS `master`, so the behaviour is unchanged and prod has always been
+          # built from the right pair. It was correct by repository setting, though,
+          # not by anything stated here: flipping cloud's default branch would have
+          # silently started deploying cloud `dev` to production, with nothing in this
+          # file to contradict it. cloud#110 is the same omission one severity lower.
+          #
+          # `master` unconditionally, including on workflow_dispatch: this job deploys
+          # production, and production is the master/master pair. A dispatch from a core
+          # feature branch still gets cloud `master` — same as today, now on purpose.
+          ref: master
           path: datanika-cloud
       - name: Build source tarball
         run: |
@@ -62,6 +73,35 @@ jobs:
           chmod 600 ~/.ssh/config
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
+
+      # Bound docker's disk growth BEFORE building, not after. core#666.
+      #
+      # Timing is the whole design. Pruning after the swap verifies but before the old
+      # colour stops would hit an image that is still serving; pruning after it stops
+      # would hit the rollback. At the start of the *next* deploy, the previous deploy
+      # has been proven good and the colour being retired is two generations back.
+      #
+      # ⚠️ The reflex fix here — `docker image prune` — was measured on 2026-08-30 and
+      # reclaims **0 bytes**. It deletes image records whose layers the BUILDKIT CACHE
+      # still holds a reference to, so `df` does not move; the 53 GB "reclaimable" in
+      # `docker system df` is the same bytes counted twice. The capped
+      # `docker builder prune` in the script is the part that touches disk.
+      #
+      # Runs after Transfer source so the script is the version from this commit, and
+      # it is non-fatal on a prune failure but FATAL if the prune removed an image a
+      # container still references — i.e. the blue/green rollback, or a co-tenant's.
+      - name: Bound docker disk growth (capped builder prune)
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'bash /opt/datanika/datanika/scripts/prune-docker-cache.sh 20GB 5' \
+            | tee /tmp/prune.log
+          {
+            echo "### Docker prune (core#666)"
+            echo '```'
+            cat /tmp/prune.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build image + datastores + the sidecars nothing else recreates
         # `postgres-exporter`, `cadvisor` and `node-exporter` join this list in core#616.
         #

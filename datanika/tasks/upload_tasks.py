@@ -16,7 +16,7 @@ from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
-from datanika.services.dlt_runner import DltRunnerService
+from datanika.services.dlt_runner import DltRunnerService, destination_dataset_name
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.naming import to_snake_case
@@ -217,7 +217,30 @@ def run_upload(
                 from datanika.config import settings as app_cfg
 
                 runner = DltRunnerService(pipelines_dir=app_cfg.dlt_pipelines_dir)
-                dataset_name = to_dataset_name(upload.name)
+                # Where the rows land (core#610).
+                #
+                # The destination connection's own `dataset` (BigQuery) /
+                # `schema` (Databricks, Snowflake) wins. The form marks that
+                # field **required** and the user filled it in; promoting the
+                # *upload name* into a physical location instead — which is all
+                # this line used to do — ignored them silently and scattered one
+                # dataset per pipeline across a warehouse they meant to be one
+                # tidy `raw_data`.
+                #
+                # The upload name stays the fallback, and for postgres / mysql /
+                # duckdb it is still the only name available: those destinations
+                # have no such field on the connection.
+                #
+                # ⚠️ ONE variable, used for the run *and* for the catalog sync
+                # below. If they ever disagreed, the catalog would introspect a
+                # schema the rows are not in and come back empty — the data
+                # invisible in Models/Catalog while the run reported success.
+                # Pinned by test_the_catalog_is_synced_against_the_dataset_the_
+                # rows_went_to, because sharing a local today is one refactor
+                # away from not being true, and the failure is silent.
+                dataset_name = destination_dataset_name(
+                    dst_conn.connection_type.value, dst_config
+                ) or to_dataset_name(upload.name)
                 result = runner.execute(
                     pipeline_id=run_id,
                     source_type=src_conn.connection_type.value,

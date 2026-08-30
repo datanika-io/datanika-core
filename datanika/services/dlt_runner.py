@@ -161,14 +161,53 @@ _WAREHOUSE_CREDENTIAL_RENAMES = {
     "snowflake": {"account": "host"},
 }
 
-#: Keys stored on a warehouse connection that are *not* credentials. dlt rejects
-#: unknown fields, and `schema`/`dataset` describe where to write rather than
-#: how to authenticate.
-_NON_CREDENTIAL_WAREHOUSE_KEYS = {
-    "bigquery": {"dataset"},
-    "databricks": {"schema"},
-    "snowflake": {"schema"},
+#: The config key on a warehouse connection that names **where to write** — the
+#: BigQuery dataset, the Databricks / Snowflake schema.
+#:
+#: One table, two uses, and that is the point (core#610). It used to exist only
+#: as `_NON_CREDENTIAL_WAREHOUSE_KEYS` below — a set of keys to *strip* from the
+#: credentials — and the stripped value was then dropped on the floor:
+#: `creds.pop(key, None)` with the return value unbound. So `dataset` was
+#: correctly recognised as "not a credential" and never routed anywhere else. A
+#: required, user-filled BigQuery **Dataset** field changed nothing, and rows
+#: landed in a dataset named after the *upload* instead. Proven on prod: the user
+#: set `docs_bigquery`, BigQuery reported `bigqueryfirstrun`.
+#:
+#: The comment on the old set described the right intent ("`schema`/`dataset`
+#: describe where to write rather than how to authenticate") — only half of it
+#: was implemented. Deriving the strip set from this mapping means a key can no
+#: longer be removed from the credentials without something knowing where it
+#: belongs.
+_DESTINATION_DATASET_KEYS = {
+    "bigquery": "dataset",
+    "databricks": "schema",
+    "snowflake": "schema",
 }
+
+#: Keys stored on a warehouse connection that are *not* credentials. dlt rejects
+#: unknown fields. Derived, never written out — see above.
+_NON_CREDENTIAL_WAREHOUSE_KEYS = {
+    destination_type: {key} for destination_type, key in _DESTINATION_DATASET_KEYS.items()
+}
+
+
+def destination_dataset_name(destination_type: str, destination_config: dict) -> str | None:
+    """The dataset / schema the user named on the destination connection.
+
+    ``None`` when the destination has no such concept (postgres, mysql, duckdb,
+    ...), which is the signal for the caller to fall back to its own default.
+    Returning ``None`` rather than ``""`` matters: an empty string is a valid
+    argument to ``dlt.pipeline(dataset_name=...)`` and would silently create a
+    nameless dataset.
+    """
+    key = _DESTINATION_DATASET_KEYS.get(destination_type)
+    if key is None:
+        return None
+    value = destination_config.get(key)
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
 
 INTERNAL_CONFIG_KEYS = {
     "mode",

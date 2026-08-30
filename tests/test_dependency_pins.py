@@ -322,3 +322,112 @@ class TestTheImageCannotFloatAwayFromTheLock:
             "The import assertion must run under the image's own venv "
             f"interpreter, not a builder-side python (core#602): {probe}"
         )
+
+
+# ---------------------------------------------------------------------------
+# core#602, third pass (2026-08-30) — the FLOOR is load-bearing too.
+#
+# The first two passes fixed the ceiling and the mechanism, and both were right:
+# `mcp` 2.x can no longer reach the image. Neither says anything about *which
+# 1.x* arrives, and the floor was `>=1.0.0`.
+#
+# For our own image that was masked -- the Dockerfile's `--constraint` binds
+# both graft installs to `uv.lock`, so the floor never decides anything there.
+# But `datanika-mcp` is PUBLISHED TO PyPI (`release-mcp.yml`), and for anyone
+# running `pip install datanika-mcp` the floor is the ONLY constraint in play.
+# `mcp` 1.0.0 satisfied `>=1.0.0,<2` and sits inside four published advisories.
+#
+# Measured on the running production image at the time this was written (the
+# interpreter called directly, not `uv run`, per WORKFLOW_RULES section 3):
+# `mcp 1.27.0`, against a current 1.x of 1.29.1.
+#
+# The general rule, which is what these tests actually encode:
+#
+#   A floor below the version you build and test is not a constraint. It is a
+#   declaration that a version you have never run is acceptable.
+#
+# Note the symmetry that was missing: `TestSubPackagePinsAreNoLooserThanCore`
+# compared CEILINGS only, so a sub-package floor looser than core's went
+# unnoticed -- `httpx>=0.27` against core's `>=0.28`, for months. An asymmetric
+# guard on a symmetric invariant finds half the defects and reads like it found
+# all of them.
+# ---------------------------------------------------------------------------
+
+
+def _floor(spec: str) -> tuple[int, ...] | None:
+    match = re.search(r">=\s*([0-9][0-9a-zA-Z.]*)", spec)
+    if not match:
+        return None
+    return tuple(int(p) for p in match.group(1).split(".") if p.isdigit())
+
+
+class TestSubPackageFloorsAreNotBelowWhatWeBuild:
+    """A published package's floor is the only constraint its users get."""
+
+    def test_every_sub_package_dependency_declares_a_floor(self):
+        floorless = [
+            f"{name}: {spec}"
+            for name, path in _SUB_PACKAGES.items()
+            for spec in _sub_package_dependencies(path)
+            if _floor(spec) is None
+        ]
+        assert not floorless, (
+            "Sub-package dependencies with no lower bound (core#602). This "
+            "package is published to PyPI, where uv.lock does not apply, so an "
+            "absent floor lets a consumer resolve arbitrarily far back:\n  "
+            + "\n  ".join(floorless)
+        )
+
+    def test_no_sub_package_floor_is_below_the_locked_version(self):
+        locked = _locked_versions()
+        below = []
+        for name, path in _SUB_PACKAGES.items():
+            for spec in _sub_package_dependencies(path):
+                dist = _dist_name(spec).lower()
+                locked_version = locked.get(dist)
+                if locked_version is None:
+                    continue
+                floor = _floor(spec)
+                if floor is None:
+                    continue
+                locked_tuple = tuple(int(p) for p in locked_version.split(".") if p.isdigit())
+                width = min(len(floor), len(locked_tuple))
+                if floor[:width] < locked_tuple[:width]:
+                    below.append(
+                        f"{name} declares {spec!r} but uv.lock resolves {dist} "
+                        f"{locked_version} -- the floor admits versions we have "
+                        f"never built"
+                    )
+        assert not below, (
+            "A sub-package floor sits below the version we actually build and "
+            "test (core#602). Our image is protected by the Dockerfile's "
+            "`--constraint`, but this package ships to PyPI where nothing else "
+            "constrains it:\n  " + "\n  ".join(below)
+        )
+
+    def test_sub_package_may_not_lower_a_floor_core_set(self):
+        """The mirror of the ceiling check, which only ever looked one way."""
+        core = _core_specs_by_name()
+        looser = []
+        for name, path in _SUB_PACKAGES.items():
+            for spec in _sub_package_dependencies(path):
+                dist = _dist_name(spec).lower()
+                core_spec = core.get(dist)
+                if core_spec is None:
+                    continue
+                core_floor = _floor(core_spec)
+                if core_floor is None:
+                    continue
+                sub_floor = _floor(spec)
+                if sub_floor is None:
+                    looser.append(f"{name} declares {spec!r}; core declares {core_spec!r}")
+                    continue
+                width = min(len(core_floor), len(sub_floor))
+                if sub_floor[:width] < core_floor[:width]:
+                    looser.append(f"{name} declares {spec!r}; core declares {core_spec!r}")
+        assert not looser, (
+            "A sub-package declares a LOWER floor than core for the same "
+            "dependency (core#602). CI resolves core's pin, so the sub-package "
+            "is advertising support for versions nothing here has ever run:\n  "
+            + "\n  ".join(looser)
+        )

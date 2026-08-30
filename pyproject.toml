@@ -84,7 +84,11 @@ dev = [
     "pytest-cov>=7.0,<8",
     "ruff>=0.15,<0.16",
     "httpx>=0.28,<0.29",
-    "mcp>=1.0.0,<2",
+    # Floor raised from >=1.0.0 (core#602, 2026-08-30). The ceiling is what
+    # stops 2.x; the floor is what decides *which* 1.x, and >=1.0.0 decided
+    # nothing. See datanika-mcp/pyproject.toml for the full rationale — that
+    # copy is the one that reaches PyPI consumers.
+    "mcp>=1.29.1,<2",
     # Used by tests/test_mcp/test_registry_manifests.py to parse smithery.yaml.
     # Previously relied on as an undeclared transitive dep, which let those
     # manifest-drift guards skip themselves if it ever went missing (core#407 sweep).

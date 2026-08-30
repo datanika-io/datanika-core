@@ -13,9 +13,27 @@ readme = "README.md"
 # core installs no `mcp` at all: this list was the sole constraint on it.
 # Unbounded, it took `mcp` 2.x, where `FastMCP` was renamed to `MCPServer`,
 # `datanika_mcp.server` stopped importing, and `/mcp` silently never mounted.
+#
+# ⚠️ The FLOOR is load-bearing too, and for a different audience (core#602,
+# raised 2026-08-30). The ceiling stopped 2.x. The floor was `>=1.0.0`, which
+# constrained nothing: `mcp` 1.0.0 is inside four published advisories, two of
+# which are not gated on how the server is configured. Our own *image* is safe
+# from that regardless, because the Dockerfile's `--constraint` binds this
+# install to `uv.lock` — but **this package is published to PyPI**
+# (`release-mcp.yml`), so a self-hoster running `pip install datanika-mcp` is
+# constrained by this line and nothing else. Upstream's own guidance for
+# projects staying on v1 is `mcp>=1.28,<2`.
+#
+# 1.29.1 is the current 1.x. The 1.x line is in maintenance mode — security
+# fixes only — which is a supported state, not an abandoned one; upstream keeps
+# it on the `v1.x` branch expressly for projects holding a `<2` bound.
 dependencies = [
-    "mcp>=1.0.0,<2",
-    "httpx>=0.27,<0.29",
+    "mcp>=1.29.1,<2",
+    # >=0.27 -> >=0.28: matches core's own dev-extra floor and the locked
+    # 0.28.1. No advisory involved — this one is the same *shape* of gap as the
+    # `mcp` floor above, found by looking for it: the existing sub-package guard
+    # compared ceilings only, so a floor looser than core's slipped past it.
+    "httpx>=0.28,<0.29",
 ]
 
 [project.scripts]

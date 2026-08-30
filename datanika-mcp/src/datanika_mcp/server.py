@@ -402,7 +402,12 @@ async def trigger_upload(upload_id: int, wait: bool = False) -> str:
 
     Args:
         upload_id: The upload to run.
-        wait: If true, block until the run completes (up to 120s).
+        wait: If true, block until the run completes (up to 120s). The result
+            is returned either way -- a run that FAILED comes back as
+            ``{"status": "failed", "error_message": ...}``, not as an error.
+            Check ``status``; do not assume a returned result means success.
+            A wait that times out returns ``{"timed_out": true}`` with the run
+            still going.
     """
     _session().require_write("trigger_upload")
     return json.dumps(await _session().client.trigger_upload(upload_id, wait), indent=2)
@@ -418,7 +423,12 @@ async def trigger_pipeline(pipeline_id: int, wait: bool = False) -> str:
 
     Args:
         pipeline_id: The pipeline to run.
-        wait: If true, block until the run completes (up to 120s).
+        wait: If true, block until the run completes (up to 120s). The result
+            is returned either way -- a run that FAILED comes back as
+            ``{"status": "failed", "error_message": ...}``, not as an error.
+            Check ``status``; do not assume a returned result means success.
+            A wait that times out returns ``{"timed_out": true}`` with the run
+            still going.
     """
     _session().require_write("trigger_pipeline")
     return json.dumps(await _session().client.trigger_pipeline(pipeline_id, wait), indent=2)
@@ -434,7 +444,12 @@ async def trigger_transformation(transformation_id: int, wait: bool = False) -> 
 
     Args:
         transformation_id: The transformation to run.
-        wait: If true, block until the run completes (up to 120s).
+        wait: If true, block until the run completes (up to 120s). The result
+            is returned either way -- a run that FAILED comes back as
+            ``{"status": "failed", "error_message": ...}``, not as an error.
+            Check ``status``; do not assume a returned result means success.
+            A wait that times out returns ``{"timed_out": true}`` with the run
+            still going.
     """
     _session().require_write("trigger_transformation")
     return json.dumps(

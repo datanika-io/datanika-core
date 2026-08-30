@@ -40,6 +40,7 @@
   "auth.reset_link_invalid_body": "Linkovi za resetovanje koriste se samo jednom i ističu posle 60 minuta. Zatražite novi.",
   "auth.request_new_link": "Zatraži novi link",
   "auth.password_reset_done": "Lozinka je ažurirana. Prijavite se novom lozinkom.",
+  "auth.session_expired": "Ваша сесија је истекла. Пријавите се поново.",
   "auth.back_to_sign_in": "Nazad na prijavu",
   "auth.reset_unavailable": "Resetovanje lozinke imejlom nije dostupno na ovoj instanci — mejl server nije podešen. Obratite se administratoru.",
   "account.title": "Vaš nalog",

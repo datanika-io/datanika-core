@@ -40,6 +40,7 @@
   "auth.reset_link_invalid_body": "Los enlaces de restablecimiento solo pueden usarse una vez y caducan a los 60 minutos. Solicita uno nuevo.",
   "auth.request_new_link": "Solicitar un enlace nuevo",
   "auth.password_reset_done": "Tu contraseña se ha actualizado. Inicia sesión con la nueva.",
+  "auth.session_expired": "Su sesión ha expirado. Vuelva a iniciar sesión.",
   "auth.back_to_sign_in": "Volver al inicio de sesión",
   "auth.reset_unavailable": "El restablecimiento de contraseña por correo no está disponible en esta instancia: no hay servidor de correo configurado. Contacta con tu administrador.",
   "account.title": "Tu cuenta",

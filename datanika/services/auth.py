@@ -12,6 +12,20 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
 
 ALGORITHM = "HS256"
 
+# Session lifetime — founder decision, 2026-08-30 (#671).
+#
+# 10 minutes is short because it is not a session length: it is how long a
+# stolen access token stays usable, and how long a password change takes to
+# lock out the sessions it was meant to lock out. The user never sees it,
+# because ``AuthState._revalidate_session`` renews silently from the refresh
+# token on the next page load.
+#
+# ⚠️ These are the *only* numbers. Passing ``expires_minutes`` explicitly is
+# for tests that need an already-expired token; a caller that hardcodes a
+# lifetime here is a second answer to a question with one answer.
+ACCESS_TOKEN_TTL_MINUTES = 10
+REFRESH_TOKEN_TTL_DAYS = 7
+
 # NIST SP 800-63B: length only. No character-class requirements, no forced
 # rotation, no hints — those measurably push people toward weaker, reused
 # passwords without buying anything.
@@ -56,7 +70,9 @@ class AuthService:
 
     # -- JWT tokens --
 
-    def create_access_token(self, user_id: int, org_id: int, expires_minutes: int = 15) -> str:
+    def create_access_token(
+        self, user_id: int, org_id: int, expires_minutes: int = ACCESS_TOKEN_TTL_MINUTES
+    ) -> str:
         now = datetime.now(UTC)
         payload = {
             "user_id": user_id,
@@ -80,7 +96,7 @@ class AuthService:
         }
         return jwt.encode(payload, self._secret_key, algorithm=ALGORITHM)
 
-    def create_refresh_token(self, user_id: int, expires_days: int = 7) -> str:
+    def create_refresh_token(self, user_id: int, expires_days: int = REFRESH_TOKEN_TTL_DAYS) -> str:
         now = datetime.now(UTC)
         payload = {
             "user_id": user_id,

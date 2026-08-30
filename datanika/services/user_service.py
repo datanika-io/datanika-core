@@ -174,7 +174,9 @@ class UserService:
         session.flush()
         return user
 
-    def redeem_refresh_token(self, session: Session, refresh_token: str) -> dict | None:
+    def redeem_refresh_token(
+        self, session: Session, refresh_token: str, org_id: int | None = None
+    ) -> dict | None:
         """Exchange a refresh token for a fresh access token, or ``None``.
 
         This is where the *enforceable* half of "sign out other sessions" lives
@@ -207,18 +209,31 @@ class UserService:
             if int(issued_at) < int(changed_at.replace(microsecond=0).timestamp()):
                 return None
 
-        stmt = (
-            select(Membership)
-            .where(Membership.user_id == user.id, Membership.deleted_at.is_(None))
-            .order_by(Membership.id.desc())
-            .limit(1)
+        # ``org_id`` is the org the caller is *currently in*. Without it this
+        # falls back to the newest membership, which for a user in more than one
+        # org silently moves the session somewhere else on renewal — a bug you
+        # only see if your newest membership is not the org you work in (#671).
+        # It is a filter, never a grant: a membership that does not exist, or is
+        # soft-deleted, falls through to the same fallback rather than being
+        # honoured.
+        base = select(Membership).where(
+            Membership.user_id == user.id, Membership.deleted_at.is_(None)
         )
-        membership = session.execute(stmt).scalar_one_or_none()
+        membership = None
+        if org_id:
+            membership = session.execute(
+                base.where(Membership.org_id == org_id)
+            ).scalar_one_or_none()
+        if membership is None:
+            membership = session.execute(
+                base.order_by(Membership.id.desc()).limit(1)
+            ).scalar_one_or_none()
         if membership is None:
             return None
 
         return {
             "user": user,
+            "org_id": membership.org_id,
             "access_token": self._auth.create_access_token(user.id, membership.org_id),
             "refresh_token": self._auth.create_refresh_token(user.id),
         }

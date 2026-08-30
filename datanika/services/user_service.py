@@ -295,14 +295,28 @@ class UserService:
         if org is None:
             return None
 
-        # If modifying fields, verify user has admin/owner role
-        if kwargs and user_id is not None:
+        # No kwargs is a read — `SettingsState.load_settings` calls it that way
+        # purely to fetch the org — so it needs no actor.
+        #
+        # Mutation is **owner-only** (SPEC_ORG_ROLES §4, last row), and it
+        # requires an actor. Both halves changed:
+        #
+        # * the UI gated this at `owner` while the service accepted owner *or*
+        #   admin, so "the only owner-exclusive power is renaming the org" was
+        #   true through the UI and was not a property of the system;
+        # * `user_id=None` skipped the check **entirely**, which is core#658's
+        #   unauthenticated shape on a different method.
+        #
+        # An org's identity is not an admin's to change: `organizations.slug`
+        # is unique and appears in SSO URLs.
+        if kwargs:
+            if user_id is None:
+                raise UserServiceError(
+                    "Updating the organization requires the acting user's identity"
+                )
             membership = self.get_membership(session, org_id, user_id)
-            if membership is None or membership.role not in (
-                MemberRole.OWNER,
-                MemberRole.ADMIN,
-            ):
-                raise UserServiceError("Only admins and owners can update the organization")
+            if membership is None or membership.role is not MemberRole.OWNER:
+                raise UserServiceError("Only the owner can update the organization")
 
         if "name" in kwargs:
             org.name = kwargs["name"]
@@ -317,9 +331,27 @@ class UserService:
     # -- Membership management --
 
     def add_member(
-        self, session: Session, org_id: int, user_id: int, role: MemberRole
+        self,
+        session: Session,
+        org_id: int,
+        user_id: int,
+        role: MemberRole,
+        *,
+        actor_user_id: int | None = None,
     ) -> Membership:
+        """Add an existing user to an org, as `actor_user_id`.
+
+        ⚠️ `actor_user_id` is keyword-only and fails closed when omitted. This
+        is the **shorter** of core#658's two escalation paths and the one its
+        body does not describe: an admin never needs to touch their own row,
+        they invite an address they already control **directly as owner**, and
+        a second owner exists with no interaction from the real owner — which
+        also arms the removal step, because the last-owner guard permits 2 → 1.
+        A fix that only watched for self-promotion would leave this open.
+        """
         from datanika.hooks import emit
+
+        self._assert_may_manage(session, org_id, actor_user_id, granted_role=role)
 
         emit("membership.before_create", session=session, org_id=org_id)
         # Verify org exists
@@ -344,7 +376,25 @@ class UserService:
         session.flush()
         return membership
 
-    def remove_member(self, session: Session, org_id: int, membership_id: int) -> bool:
+    def remove_member(
+        self,
+        session: Session,
+        org_id: int,
+        membership_id: int,
+        *,
+        actor_user_id: int | None = None,
+    ) -> bool:
+        """Remove a member, as `actor_user_id`.
+
+        core#658 notes that this shares the UI gate with `change_role`, so
+        closing only the promotion still lets an admin evict an owner whenever
+        a second owner exists — the last-owner guard permits 2 → 1 and was
+        never an authorization check.
+
+        Removing **yourself** is always permitted (SPEC_ORG_ROLES R6) and is
+        what :meth:`leave_org` calls; it is still subject to the last-owner
+        guard, so a sole owner must transfer or delete the org first.
+        """
         stmt = select(Membership).where(
             Membership.id == membership_id,
             Membership.org_id == org_id,
@@ -352,7 +402,15 @@ class UserService:
         )
         membership = session.execute(stmt).scalar_one_or_none()
         if membership is None:
+            # Authorize before reporting absence, so a caller with no business
+            # here cannot use this as a membership-id oracle.
+            self._assert_may_manage(session, org_id, actor_user_id)
             return False
+
+        if membership.user_id != actor_user_id:
+            self._assert_may_manage(session, org_id, actor_user_id, target_role=membership.role)
+        else:
+            self._actor_membership(session, org_id, actor_user_id)
 
         # Prevent removing last owner
         if membership.role == MemberRole.OWNER:
@@ -361,6 +419,19 @@ class UserService:
         membership.deleted_at = datetime.now(UTC)
         session.flush()
         return True
+
+    def leave_org(self, session: Session, org_id: int, *, actor_user_id: int) -> bool:
+        """Remove your own membership (SPEC_ORG_ROLES R6, audit P8).
+
+        Any member may leave. The last owner cannot, and that is the point —
+        their exits are transfer-then-leave, or delete the org. Before this
+        existed a viewer or editor was in an org until somebody else removed
+        them; there was no `leave_*` handler anywhere in the codebase.
+        """
+        membership = self.get_membership(session, org_id, actor_user_id)
+        if membership is None:
+            raise UserServiceError("You are not a member of this organization")
+        return self.remove_member(session, org_id, membership.id, actor_user_id=actor_user_id)
 
     def list_members(self, session: Session, org_id: int) -> list[Membership]:
         stmt = (
@@ -374,8 +445,26 @@ class UserService:
         return list(session.execute(stmt).scalars().all())
 
     def change_role(
-        self, session: Session, org_id: int, membership_id: int, new_role: MemberRole
+        self,
+        session: Session,
+        org_id: int,
+        membership_id: int,
+        new_role: MemberRole,
+        *,
+        actor_user_id: int | None = None,
     ) -> Membership | None:
+        """Change a member's role, as `actor_user_id`.
+
+        ⚠️ **`new_role=OWNER` is refused from every caller, including an
+        owner** (SPEC_ORG_ROLES R1). Use :meth:`transfer_ownership`.
+
+        The only guard here used to fire on *demotion*
+        (`role == OWNER and new_role != OWNER`), and a promotion is not a
+        demotion — so an admin setting themselves to owner passed through
+        untouched. Raising the UI gate alone would have closed the one
+        reachable caller and left a privilege-granting method with no
+        authorization of its own.
+        """
         stmt = select(Membership).where(
             Membership.id == membership_id,
             Membership.org_id == org_id,
@@ -383,7 +472,16 @@ class UserService:
         )
         membership = session.execute(stmt).scalar_one_or_none()
         if membership is None:
+            self._assert_may_manage(session, org_id, actor_user_id, granted_role=new_role)
             return None
+
+        self._assert_may_manage(
+            session,
+            org_id,
+            actor_user_id,
+            target_role=membership.role,
+            granted_role=new_role,
+        )
 
         # Prevent demoting last owner
         if membership.role == MemberRole.OWNER and new_role != MemberRole.OWNER:
@@ -392,6 +490,69 @@ class UserService:
         membership.role = new_role
         session.flush()
         return membership
+
+    def transfer_ownership(
+        self,
+        session: Session,
+        org_id: int,
+        successor_user_id: int,
+        *,
+        actor_user_id: int,
+    ) -> Membership:
+        """Hand ownership to an existing member. Owner-only.
+
+        `SPEC_ORG_ROLES.md` §3. Successor becomes `owner`, the actor becomes
+        `admin`, atomically — **the owner count is preserved throughout**, so
+        the last-owner invariant is never transiently violated and this needs
+        no exemption from it.
+
+        This is the *only* way to reach `MemberRole.OWNER` outside the two
+        account-creation paths, which is what makes R1 safe to state absolutely:
+        a future bug in the role-change predicate cannot reach ownership,
+        because ownership is not on that control any more.
+
+        The successor must be an **existing active member** — inviting a
+        stranger straight into ownership is exactly the escalation path this
+        closes. No acceptance handshake, decided in §3 with a reason that will
+        expire: it needs a reliable email round trip, and [core#652] establishes
+        that notification channels have never dispatched.
+        """
+        actor = self._actor_membership(session, org_id, actor_user_id)
+        if actor.role is not MemberRole.OWNER:
+            raise UserServiceError("Only an owner can transfer ownership")
+
+        if successor_user_id == actor_user_id:
+            raise UserServiceError("You are already the owner")
+
+        successor = self.get_membership(session, org_id, successor_user_id)
+        if successor is None:
+            raise UserServiceError("The new owner must already be a member of this organization")
+
+        successor.role = MemberRole.OWNER
+        actor.role = MemberRole.ADMIN
+        session.flush()
+        return successor
+
+    def add_owner(
+        self, session: Session, org_id: int, user_id: int, *, actor_user_id: int
+    ) -> Membership:
+        """Promote an existing member to a second owner. Owner-only.
+
+        `SPEC_ORG_ROLES.md` §3: multi-owner stays possible — bus-factor is a
+        real need — it is simply not reachable from the role dropdown. The
+        defect was never that two owners can exist, it was that an *admin*
+        could become the second one.
+        """
+        actor = self._actor_membership(session, org_id, actor_user_id)
+        if actor.role is not MemberRole.OWNER:
+            raise UserServiceError("Only an owner can add another owner")
+
+        target = self.get_membership(session, org_id, user_id)
+        if target is None:
+            raise UserServiceError("The new owner must already be a member of this organization")
+        target.role = MemberRole.OWNER
+        session.flush()
+        return target
 
     def get_membership(self, session: Session, org_id: int, user_id: int) -> Membership | None:
         stmt = select(Membership).where(
@@ -539,6 +700,81 @@ class UserService:
             "with your password, or use 'Forgot password' to confirm the "
             "address first."
         )
+
+    # -- Member-management authorization (SPEC_ORG_ROLES.md §2, §4) --
+
+    def _actor_membership(self, session: Session, org_id: int, actor_user_id: int | None):
+        """Resolve the caller's own membership, or refuse.
+
+        ⚠️ **Fails closed on a missing actor, deliberately.** Before [core#658]
+        these mutators took no caller identity at all, so "an admin may not
+        grant owner" was not even expressible — there was nothing to compare
+        against. The single gate was `_check_role("admin")` in the Reflex state
+        layer, which the attacker passes by construction.
+
+        Defaulting `actor_user_id` to `None` and *allowing* it would leave the
+        same hole open for the next caller (an API route, the MCP surface, an
+        invitation flow) while looking fixed. This mirrors the convention
+        `find_or_create_oauth_user` already sets for `email_verified`: a caller
+        that forgets it is refused rather than trusted.
+        """
+        if actor_user_id is None:
+            raise UserServiceError("Member management requires the acting user's identity")
+        actor = self.get_membership(session, org_id, actor_user_id)
+        if actor is None:
+            raise UserServiceError("You are not a member of this organization")
+        return actor
+
+    def _assert_may_manage(
+        self,
+        session: Session,
+        org_id: int,
+        actor_user_id: int | None,
+        *,
+        target_role: MemberRole | None = None,
+        granted_role: MemberRole | None = None,
+    ):
+        """Gate one member-management operation. Returns the actor's membership.
+
+        Implements SPEC_ORG_ROLES R1-R4, derived from `ROLE_PERMISSIONS` rather
+        than restating it:
+
+        * **R1** — `owner` is never a grantable role, from any caller including
+          an owner. Ownership moves only through :meth:`transfer_ownership`.
+          This is the root-cause fix: promoting to owner and re-roling a viewer
+          used to be the same call, so any guard on it was one predicate away
+          from being wrong.
+        * **R2** — you may not grant a role at or above your own. An admin
+          cannot mint another admin.
+        * **R3** — you may only act on members strictly below you. An admin
+          cannot touch another admin, and cannot touch an owner.
+        * **R4** — one exception: an owner may act on another owner, subject to
+          the last-owner guard. Two co-founders separating must not need us.
+        """
+        from datanika.services.auth import may_grant_role, may_manage_member
+
+        actor = self._actor_membership(session, org_id, actor_user_id)
+        actor_role = actor.role.value
+
+        # The coarse gate goes through `AuthService.has_permission`, not
+        # through `ROLE_PERMISSIONS` directly. That is deliberate: until now
+        # `has_permission` had zero production callers, so
+        # `test_auth_security.py`'s green assertions described a model nothing
+        # consulted. This is the call that makes them true.
+        if not self._auth.has_permission(actor_role, "manage_members_below"):
+            raise UserServiceError("Only owners and admins can manage members")
+
+        if granted_role is not None and not may_grant_role(actor_role, granted_role.value):
+            if granted_role is MemberRole.OWNER:
+                raise UserServiceError("Ownership cannot be granted here. Use Transfer ownership.")
+            raise UserServiceError(f"An {actor_role} cannot grant the {granted_role.value} role")
+
+        if target_role is not None and not may_manage_member(actor_role, target_role.value):
+            raise UserServiceError(
+                f"An {actor_role} cannot manage a member with the {target_role.value} role"
+            )
+
+        return actor
 
     # -- Helpers --
 

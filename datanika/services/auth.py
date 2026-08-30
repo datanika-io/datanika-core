@@ -3,12 +3,95 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 
+# The org permission model. `plans/product/SPEC_ORG_ROLES.md` is the decision of
+# record; this table is the machine-readable half of it and `UserService`
+# derives its member-management checks from here rather than restating them.
+#
+# ⚠️ Until [core#658] this table had **zero production callers** —
+# `AuthService.has_permission` was referenced only from test files. So
+# `has_permission("admin", "manage_members") is False` was a *green security
+# test asserting a rule nothing enforced*, which is a worse shape than a dead
+# feature: the green argues against investigating. It is enforcement now.
+#
+# Two member-management capabilities, because reach is the thing that differs:
+#
+#   manage_members        — act on a member of ANY role, including other admins
+#                           and owners. Owner only.
+#   manage_members_below  — act only on members strictly below your own role,
+#                           and grant only roles strictly below your own.
+#                           Owner and admin.
+#
+# The "strictly below" half cannot live in a flat set — it is relational — so
+# this table answers *whether* a role may manage members and `UserService`
+# answers *which*. Admin deliberately cannot mint another admin
+# (SPEC_ORG_ROLES R2): `admin` carries `delete` on every resource in the org,
+# and who may destroy a customer's pipelines should not be self-replicating.
+#
+# `owner` is absent from every grantable role. Ownership moves only through
+# `UserService.transfer_ownership` (SPEC_ORG_ROLES R1/§3).
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "owner": {"create", "read", "update", "delete", "manage_members"},
-    "admin": {"create", "read", "update", "delete"},
+    "owner": {
+        "create",
+        "read",
+        "update",
+        "delete",
+        "manage_members",
+        "manage_members_below",
+        "manage_org",
+    },
+    "admin": {"create", "read", "update", "delete", "manage_members_below"},
     "editor": {"create", "read", "update"},
     "viewer": {"read"},
 }
+
+# Authority ordering, used for the relational half of the model above.
+# Higher acts on lower; equals may not act on each other except owner-on-owner
+# (SPEC_ORG_ROLES R4), which is handled explicitly rather than by rank.
+ROLE_RANK: dict[str, int] = {"viewer": 0, "editor": 1, "admin": 2, "owner": 3}
+
+
+def may_grant_role(actor_role: str, granted_role: str) -> bool:
+    """May `actor_role` assign `granted_role` to somebody? (R1 + R2)
+
+    `owner` is never grantable — not even by an owner — because ownership
+    moves through `UserService.transfer_ownership` alone (R1). Otherwise the
+    granted role must rank strictly below the actor's (R2).
+    """
+    if granted_role == "owner":
+        return False
+    if "manage_members_below" not in ROLE_PERMISSIONS.get(actor_role, set()):
+        return False
+    if granted_role not in ROLE_RANK:
+        return False
+    return ROLE_RANK[granted_role] < ROLE_RANK[actor_role]
+
+
+def may_manage_member(actor_role: str, target_role: str) -> bool:
+    """May `actor_role` act on a member holding `target_role`? (R3 + R4)
+
+    An owner holds `manage_members` and so reaches any member, including
+    another owner (R4). Everyone else reaches strictly below themselves.
+    """
+    perms = ROLE_PERMISSIONS.get(actor_role, set())
+    if "manage_members_below" not in perms:
+        return False
+    if "manage_members" in perms:
+        return True
+    if target_role not in ROLE_RANK:
+        return False
+    return ROLE_RANK[target_role] < ROLE_RANK[actor_role]
+
+
+def assignable_roles(actor_role: str) -> list[str]:
+    """Every role `actor_role` may grant, lowest first.
+
+    The single source for both the service check and the role selects in the
+    settings page. Rendering a control the server will refuse is core#658 AC4;
+    deriving the options from the same predicate is how it stays true after
+    the next role is added.
+    """
+    return [r for r in sorted(ROLE_RANK, key=ROLE_RANK.get) if may_grant_role(actor_role, r)]
+
 
 ALGORITHM = "HS256"
 

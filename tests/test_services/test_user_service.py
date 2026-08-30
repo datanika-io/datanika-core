@@ -54,6 +54,24 @@ def user_with_org(db_session, user, org):
     return user
 
 
+@pytest.fixture
+def org_owner(db_session, org):
+    """An owner of `org`, so member-management calls have a caller.
+
+    Added by core#658. Before it, `add_member`, `change_role` and
+    `remove_member` took no caller identity at all — these tests were
+    exercising an unauthenticated privilege-granting API and passing. The
+    actor is now required and fails closed when omitted, so every test that
+    manages a member has to say who is doing it.
+    """
+    u = User(email="org-owner@example.com", password_hash="hash", full_name="Org Owner")
+    db_session.add(u)
+    db_session.flush()
+    db_session.add(Membership(user_id=u.id, org_id=org.id, role=MemberRole.OWNER))
+    db_session.flush()
+    return u
+
+
 # ---------------------------------------------------------------------------
 # register_user
 # ---------------------------------------------------------------------------
@@ -238,14 +256,17 @@ class TestGetUserOrgs:
 
     def test_excludes_removed(self, svc, db_session, user):
         org = svc.create_org(db_session, "Co", "co-get-orgs", user.id)
-        # Add a second owner so we can remove the first
+        # Add a second owner so we can remove the first. Ownership is no
+        # longer grantable through add_member (core#658 R1) — it is reached
+        # only through add_owner / transfer_ownership.
         other = User(email="keeper@example.com", password_hash="hash", full_name="Keeper")
         db_session.add(other)
         db_session.flush()
-        svc.add_member(db_session, org.id, other.id, MemberRole.OWNER)
+        svc.add_member(db_session, org.id, other.id, MemberRole.ADMIN, actor_user_id=user.id)
+        svc.add_owner(db_session, org.id, other.id, actor_user_id=user.id)
         # Get the original membership and soft-delete it
         membership = db_session.query(Membership).filter_by(org_id=org.id, user_id=user.id).first()
-        svc.remove_member(db_session, org.id, membership.id)
+        svc.remove_member(db_session, org.id, membership.id, actor_user_id=user.id)
         orgs = svc.get_user_orgs(db_session, user.id)
         assert orgs == []
 
@@ -256,18 +277,44 @@ class TestGetUserOrgs:
 
 
 class TestUpdateOrg:
-    def test_update_name(self, svc, db_session, org):
-        updated = svc.update_org(db_session, org.id, name="Renamed")
+    def test_update_name(self, svc, db_session, org, org_owner):
+        updated = svc.update_org(db_session, org.id, user_id=org_owner.id, name="Renamed")
         assert updated is not None
         assert updated.name == "Renamed"
 
-    def test_update_slug(self, svc, db_session, org):
-        updated = svc.update_org(db_session, org.id, slug="new-slug")
+    def test_update_slug(self, svc, db_session, org, org_owner):
+        updated = svc.update_org(db_session, org.id, user_id=org_owner.id, slug="new-slug")
         assert updated is not None
         assert updated.slug == "new-slug"
 
     def test_nonexistent_returns_none(self, svc, db_session):
         assert svc.update_org(db_session, 99999, name="X") is None
+
+    def test_no_kwargs_is_a_read_and_needs_no_actor(self, svc, db_session, org):
+        """`load_settings` calls this with no kwargs purely to fetch the org."""
+        assert svc.update_org(db_session, org.id).id == org.id
+
+    def test_an_admin_cannot_rename_the_org(self, svc, db_session, org, org_owner):
+        """SPEC_ORG_ROLES section 4, last row.
+
+        The UI gated this at `owner` while the service accepted owner **or**
+        admin, so "the only owner-exclusive power is renaming the org" was true
+        only through the UI and was not a property of the system. The service
+        is the one that moved.
+        """
+        admin = User(email="renamer@example.com", password_hash="h", full_name="A")
+        db_session.add(admin)
+        db_session.flush()
+        db_session.add(Membership(user_id=admin.id, org_id=org.id, role=MemberRole.ADMIN))
+        db_session.flush()
+        with pytest.raises(UserServiceError, match="[Oo]wner"):
+            svc.update_org(db_session, org.id, user_id=admin.id, name="Hijacked")
+
+    def test_mutating_without_an_actor_is_refused(self, svc, db_session, org):
+        """`user_id=None` used to skip the check entirely — the same
+        unauthenticated shape core#658 is about, on a different method."""
+        with pytest.raises(UserServiceError):
+            svc.update_org(db_session, org.id, name="Anonymous")
 
 
 # ---------------------------------------------------------------------------
@@ -276,25 +323,40 @@ class TestUpdateOrg:
 
 
 class TestAddMember:
-    def test_returns_membership(self, svc, db_session, user, org):
-        m = svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
+    def test_returns_membership(self, svc, db_session, user, org, org_owner):
+        m = svc.add_member(
+            db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id
+        )
         assert isinstance(m, Membership)
         assert m.org_id == org.id
         assert m.user_id == user.id
         assert m.role == MemberRole.EDITOR
 
-    def test_duplicate_error(self, svc, db_session, user, org):
-        svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
+    def test_duplicate_error(self, svc, db_session, user, org, org_owner):
+        svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id)
         with pytest.raises(UserServiceError, match="[Aa]lready a member"):
-            svc.add_member(db_session, org.id, user.id, MemberRole.VIEWER)
+            svc.add_member(
+                db_session, org.id, user.id, MemberRole.VIEWER, actor_user_id=org_owner.id
+            )
 
-    def test_nonexistent_user_error(self, svc, db_session, org):
+    def test_nonexistent_user_error(self, svc, db_session, org, org_owner):
         with pytest.raises(UserServiceError, match="[Uu]ser.*not found"):
-            svc.add_member(db_session, org.id, 99999, MemberRole.VIEWER)
+            svc.add_member(db_session, org.id, 99999, MemberRole.VIEWER, actor_user_id=org_owner.id)
 
-    def test_nonexistent_org_error(self, svc, db_session, user):
-        with pytest.raises(UserServiceError, match="[Oo]rganization.*not found"):
-            svc.add_member(db_session, 99999, user.id, MemberRole.VIEWER)
+    def test_nonexistent_org_error(self, svc, db_session, user, user_with_org):
+        """The actor is not a member of org 99999, so this refuses earlier now.
+
+        Authorization runs before existence, deliberately: a caller with no
+        business in an org must not be able to use it as an id oracle.
+        """
+        with pytest.raises(UserServiceError, match="not a member"):
+            svc.add_member(
+                db_session,
+                99999,
+                user.id,
+                MemberRole.VIEWER,
+                actor_user_id=user_with_org.id,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -303,15 +365,17 @@ class TestAddMember:
 
 
 class TestRemoveMember:
-    def test_soft_deletes(self, svc, db_session, user, org):
-        m = svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
-        result = svc.remove_member(db_session, org.id, m.id)
+    def test_soft_deletes(self, svc, db_session, user, org, org_owner):
+        m = svc.add_member(
+            db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id
+        )
+        result = svc.remove_member(db_session, org.id, m.id, actor_user_id=org_owner.id)
         assert result is True
         db_session.refresh(m)
         assert m.deleted_at is not None
 
-    def test_nonexistent_returns_false(self, svc, db_session, org):
-        result = svc.remove_member(db_session, org.id, 99999)
+    def test_nonexistent_returns_false(self, svc, db_session, org, org_owner):
+        result = svc.remove_member(db_session, org.id, 99999, actor_user_id=org_owner.id)
         assert result is False
 
     def test_prevents_removing_last_owner(self, svc, db_session, user_with_org, org):
@@ -322,7 +386,7 @@ class TestRemoveMember:
             .first()
         )
         with pytest.raises(UserServiceError, match="[Ll]ast owner"):
-            svc.remove_member(db_session, org.id, membership.id)
+            svc.remove_member(db_session, org.id, membership.id, actor_user_id=user_with_org.id)
 
     def test_allows_removing_non_owner(self, svc, db_session, user_with_org, org):
         # Add a second user as editor
@@ -333,8 +397,10 @@ class TestRemoveMember:
         )
         db_session.add(other)
         db_session.flush()
-        m = svc.add_member(db_session, org.id, other.id, MemberRole.EDITOR)
-        result = svc.remove_member(db_session, org.id, m.id)
+        m = svc.add_member(
+            db_session, org.id, other.id, MemberRole.EDITOR, actor_user_id=user_with_org.id
+        )
+        result = svc.remove_member(db_session, org.id, m.id, actor_user_id=user_with_org.id)
         assert result is True
 
 
@@ -344,16 +410,19 @@ class TestRemoveMember:
 
 
 class TestListMembers:
-    def test_returns_all_active(self, svc, db_session, user, org):
-        svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
+    def test_returns_all_active(self, svc, db_session, user, org, org_owner):
+        svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id)
         members = svc.list_members(db_session, org.id)
-        assert len(members) == 1
+        # The editor, plus the owner who had to exist to add them.
+        assert len(members) == 2
 
-    def test_excludes_deleted(self, svc, db_session, user, org):
-        m = svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
-        svc.remove_member(db_session, org.id, m.id)
+    def test_excludes_deleted(self, svc, db_session, user, org, org_owner):
+        m = svc.add_member(
+            db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id
+        )
+        svc.remove_member(db_session, org.id, m.id, actor_user_id=org_owner.id)
         members = svc.list_members(db_session, org.id)
-        assert len(members) == 0
+        assert [x.user_id for x in members] == [org_owner.id]
 
     def test_empty_org(self, svc, db_session, org):
         members = svc.list_members(db_session, org.id)
@@ -366,14 +435,20 @@ class TestListMembers:
 
 
 class TestChangeRole:
-    def test_changes_role(self, svc, db_session, user, org):
-        m = svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
-        updated = svc.change_role(db_session, org.id, m.id, MemberRole.ADMIN)
+    def test_changes_role(self, svc, db_session, user, org, org_owner):
+        m = svc.add_member(
+            db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=org_owner.id
+        )
+        updated = svc.change_role(
+            db_session, org.id, m.id, MemberRole.ADMIN, actor_user_id=org_owner.id
+        )
         assert updated is not None
         assert updated.role == MemberRole.ADMIN
 
-    def test_nonexistent_returns_none(self, svc, db_session, org):
-        result = svc.change_role(db_session, org.id, 99999, MemberRole.ADMIN)
+    def test_nonexistent_returns_none(self, svc, db_session, org, org_owner):
+        result = svc.change_role(
+            db_session, org.id, 99999, MemberRole.ADMIN, actor_user_id=org_owner.id
+        )
         assert result is None
 
     def test_prevents_demoting_last_owner(self, svc, db_session, user_with_org, org):
@@ -383,7 +458,13 @@ class TestChangeRole:
             .first()
         )
         with pytest.raises(UserServiceError, match="[Ll]ast owner"):
-            svc.change_role(db_session, org.id, membership.id, MemberRole.ADMIN)
+            svc.change_role(
+                db_session,
+                org.id,
+                membership.id,
+                MemberRole.ADMIN,
+                actor_user_id=user_with_org.id,
+            )
 
     def test_allows_when_multiple_owners(self, svc, db_session, user_with_org, org):
         other = User(
@@ -393,14 +474,26 @@ class TestChangeRole:
         )
         db_session.add(other)
         db_session.flush()
-        svc.add_member(db_session, org.id, other.id, MemberRole.OWNER)
-        # Now we can demote the first owner
+        # Ownership is no longer grantable through add_member (core#658 R1);
+        # a second owner is reached through add_owner, owner-only.
+        svc.add_member(
+            db_session, org.id, other.id, MemberRole.ADMIN, actor_user_id=user_with_org.id
+        )
+        svc.add_owner(db_session, org.id, other.id, actor_user_id=user_with_org.id)
+        # Now we can demote the first owner: owner-on-owner is the one
+        # peer exception (SPEC_ORG_ROLES R4), and here it is self-demotion.
         membership = (
             db_session.query(Membership)
             .filter_by(org_id=org.id, user_id=user_with_org.id, role=MemberRole.OWNER)
             .first()
         )
-        updated = svc.change_role(db_session, org.id, membership.id, MemberRole.ADMIN)
+        updated = svc.change_role(
+            db_session,
+            org.id,
+            membership.id,
+            MemberRole.ADMIN,
+            actor_user_id=user_with_org.id,
+        )
         assert updated.role == MemberRole.ADMIN
 
 

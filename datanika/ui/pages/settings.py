@@ -180,27 +180,94 @@ def org_profile_card() -> rx.Component:
 
 
 def member_row(member: MemberItem) -> rx.Component:
+    """One row of the members table, rendered for what the viewer may do.
+
+    core#658 AC4 / SPEC_ORG_ROLES §4. This used to render the role select and
+    the Remove button for **every** member regardless of who was looking. The
+    server-side checks are real, so nothing was exploitable — a viewer simply
+    saw two controls that always failed, which is a bug report waiting to be
+    filed.
+
+    `can_manage` and `assignable_roles` are computed in `load_settings` from
+    the same predicates the service enforces, so this component does not carry
+    a second copy of the rules. `owner` is absent from the options entirely:
+    ownership moves through Transfer ownership (R1).
+    """
     return rx.table.row(
         rx.table.cell(member.email),
         rx.table.cell(member.full_name),
         rx.table.cell(
-            rx.select(
-                ["owner", "admin", "editor", "viewer"],
-                value=member.role,
-                on_change=lambda val: SettingsState.change_member_role(member.id, val),
-                size="1",
-                width="100%",
+            rx.cond(
+                member.can_manage,
+                rx.select(
+                    member.assignable_roles,
+                    value=member.role,
+                    on_change=lambda val: SettingsState.change_member_role(member.id, val),
+                    size="1",
+                    width="100%",
+                ),
+                rx.text(member.role, size="2"),
             ),
         ),
         rx.table.cell(
-            rx.button(
-                _t["settings.remove"],
-                on_click=SettingsState.remove_member(member.id),
-                size="1",
-                color_scheme="red",
-                variant="ghost",
+            rx.cond(
+                member.is_self,
+                rx.button(
+                    _t["settings.leave_org"],
+                    on_click=SettingsState.leave_org,
+                    size="1",
+                    color_scheme="red",
+                    variant="ghost",
+                ),
+                rx.cond(
+                    member.can_manage,
+                    rx.button(
+                        _t["settings.remove"],
+                        on_click=SettingsState.remove_member(member.id),
+                        size="1",
+                        color_scheme="red",
+                        variant="ghost",
+                    ),
+                    rx.fragment(),
+                ),
             ),
         ),
+    )
+
+
+def transfer_ownership_card() -> rx.Component:
+    """Owner-only. The single route to `MemberRole.OWNER` (SPEC_ORG_ROLES §3).
+
+    The successor is chosen from existing members — never an email field.
+    Inviting a stranger straight into ownership is the escalation path this
+    whole change closes.
+    """
+    return rx.cond(
+        SettingsState.is_owner,
+        rx.vstack(
+            rx.separator(),
+            rx.heading(_t["settings.transfer_ownership"], size="3"),
+            rx.text(_t["settings.transfer_ownership_help"], size="2", color="gray"),
+            rx.hstack(
+                rx.select(
+                    SettingsState.transfer_candidates,
+                    value=SettingsState.transfer_to_email,
+                    on_change=SettingsState.set_transfer_to_email,
+                    size="2",
+                ),
+                rx.button(
+                    _t["settings.transfer_ownership"],
+                    on_click=SettingsState.transfer_ownership,
+                    size="2",
+                    color_scheme="amber",
+                ),
+                spacing="2",
+            ),
+            spacing="3",
+            width="100%",
+            align="start",
+        ),
+        rx.fragment(),
     )
 
 
@@ -262,31 +329,46 @@ def members_card() -> rx.Component:
                     width="100%",
                 ),
             ),
-            rx.separator(),
-            rx.heading(_t["settings.invite_member"], size="3"),
-            rx.vstack(
-                rx.text(_t["settings.email"], size="2", weight="medium"),
-                rx.input(
-                    placeholder="user@example.com",
-                    value=SettingsState.invite_email,
-                    on_change=SettingsState.set_invite_email,
+            transfer_ownership_card(),
+            # The invite form is hidden from members who may not invite, for
+            # the same reason the member row is gated (core#658 AC4): a
+            # control that exists only to be refused is a defect.
+            rx.cond(
+                SettingsState.can_manage_members,
+                rx.vstack(
+                    rx.separator(),
+                    rx.heading(_t["settings.invite_member"], size="3"),
+                    rx.vstack(
+                        rx.text(_t["settings.email"], size="2", weight="medium"),
+                        rx.input(
+                            placeholder="user@example.com",
+                            value=SettingsState.invite_email,
+                            on_change=SettingsState.set_invite_email,
+                            width="100%",
+                        ),
+                        rx.text(_t["settings.role"], size="2", weight="medium"),
+                        rx.hstack(
+                            rx.select(
+                                SettingsState.invite_roles,
+                                value=SettingsState.invite_role,
+                                on_change=SettingsState.set_invite_role,
+                                size="2",
+                            ),
+                            rx.button(
+                                _t["common.add"],
+                                on_click=SettingsState.add_member_by_email,
+                                size="2",
+                            ),
+                            spacing="2",
+                        ),
+                        spacing="3",
+                        width="100%",
+                    ),
+                    spacing="3",
                     width="100%",
+                    align="start",
                 ),
-                rx.text(_t["settings.role"], size="2", weight="medium"),
-                rx.hstack(
-                    rx.select(
-                        ["owner", "admin", "editor", "viewer"],
-                        value=SettingsState.invite_role,
-                        on_change=SettingsState.set_invite_role,
-                        size="2",
-                    ),
-                    rx.button(
-                        _t["common.add"], on_click=SettingsState.add_member_by_email, size="2"
-                    ),
-                    spacing="2",
-                ),
-                spacing="3",
-                width="100%",
+                rx.fragment(),
             ),
             spacing="4",
             width="100%",

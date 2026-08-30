@@ -96,6 +96,9 @@ def legal_links() -> rx.Component:
             is_external=True,
             color_scheme="gray",
         ),
+        # A list separator between two standalone links, not a connective inside
+        # a sentence — so unlike the signup line (#682) it carries no grammar and
+        # needs no locale to place it. Do not "fix" this by analogy.
         rx.text("·", size="1", color="gray"),
         rx.link(
             rx.text(_t["legal.privacy"], size="1"),

@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.captcha import captcha_script
+from datanika.ui.components.i18n_text import interpolate
 from datanika.ui.components.layout import PRIVACY_URL, TERMS_URL
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
@@ -76,18 +77,24 @@ def signup_page() -> rx.Component:
                 on_submit=AuthState.signup,
             ),
             rx.text(
-                _t["legal.signup_agreement"],
-                " ",
-                rx.link(
-                    _t["legal.terms"],
-                    href=TERMS_URL,
-                    is_external=True,
-                ),
-                " · ",
-                rx.link(
-                    _t["legal.privacy"],
-                    href=PRIVACY_URL,
-                    is_external=True,
+                # One translated sentence with the links substituted into it,
+                # not fragments joined by punctuation chosen in Python (#682).
+                # The old shape hardcoded English word order and used a middot
+                # to do the work of "and"; it read as broken grammar in ru, es
+                # and el, and key parity could not see it because every
+                # fragment *was* translated.
+                *interpolate(
+                    _t["legal.signup_agreement"],
+                    terms=rx.link(
+                        _t["legal.terms"],
+                        href=TERMS_URL,
+                        is_external=True,
+                    ),
+                    privacy=rx.link(
+                        _t["legal.privacy"],
+                        href=PRIVACY_URL,
+                        is_external=True,
+                    ),
                 ),
                 size="1",
                 color="gray",

@@ -12,7 +12,7 @@
   "nav.settings": "Paramètres",
   "legal.terms": "Conditions d'utilisation",
   "legal.privacy": "Politique de confidentialité",
-  "legal.signup_agreement": "En créant un compte, vous acceptez nos",
+  "legal.signup_agreement": "En créant un compte, vous acceptez nos {terms} et notre {privacy}.",
   "auth.sign_in": "Connexion",
   "auth.sign_up": "Inscription",
   "auth.sign_in_heading": "Connectez-vous à votre compte",

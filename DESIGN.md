@@ -374,6 +374,16 @@ State classes in `ui/state/` bridge UI and services. Common patterns:
 - **Connection options**: formatted as `"{id} — {name} ({type})"` for select dropdowns
 - **Name resolution**: build `{id: name}` dicts from service list methods for display
 
+### Internationalization
+
+Nine locales (`en, ru, el, de, fr, es, zh, ar, sr`) in `datanika/i18n/*.json`, keyed flat and switched at runtime. `tests/test_i18n/` enforces key parity, that every `_t[...]` key in code exists in every locale, and that no key is orphaned.
+
+⚠️ **Key parity is not translation correctness, and the gap is a real defect class.** A sentence built by concatenating a translated lead-in, a link label and punctuation chosen in Python passes every one of those checks — each fragment *is* translated — and is still ungrammatical wherever the language inflects. The signup legal line did exactly this and read as broken Russian, Spanish and Greek for as long as it shipped (#682): the determiner, the grammatical case, the connective and the word order all live *between* the fragments, where no translator can reach them.
+
+**So a sentence is one key.** Components go into it through `ui/components/i18n_text.interpolate`, which splits the translated string on `{name}` placeholders in the browser and weaves the components in — the locale owns the whole sentence and decides where the links land. A `·` between two standalone links or labels is fine; it is punctuation in a list, not a connective, and carries no grammar.
+
+The constraint `interpolate` cannot check for itself — that the placeholders appear in the order they are passed — is asserted per locale in `tests/test_ui/test_signup_legal_sentence.py`, which also reassembles each locale's sentence and checks the seams. A rule of this shape has to be mechanical: the whole reason #682 existed is that the defect was invisible to every test in the suite.
+
 ## AI Agent Compatibility
 
 Datanika exposes a 5-tier capability stack designed for autonomous LLM agents to build complete data pipelines without human intervention. The surface is intentionally narrow — an agent only needs to learn five idea-clusters before it can go end-to-end.

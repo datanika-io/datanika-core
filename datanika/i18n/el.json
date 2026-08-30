@@ -12,7 +12,7 @@
   "nav.settings": "Ρυθμίσεις",
   "legal.terms": "Όροι χρήσης",
   "legal.privacy": "Πολιτική απορρήτου",
-  "legal.signup_agreement": "Δημιουργώντας λογαριασμό, αποδέχεστε τους",
+  "legal.signup_agreement": "Δημιουργώντας λογαριασμό, αποδέχεστε τα εξής: {terms} και {privacy}.",
   "auth.sign_in": "Σύνδεση",
   "auth.sign_up": "Εγγραφή",
   "auth.sign_in_heading": "Συνδεθείτε στον λογαριασμό σας",

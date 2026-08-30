@@ -12,7 +12,7 @@
   "nav.settings": "الإعدادات",
   "legal.terms": "شروط الخدمة",
   "legal.privacy": "سياسة الخصوصية",
-  "legal.signup_agreement": "بإنشاء حساب، فإنك توافق على",
+  "legal.signup_agreement": "بإنشاء حساب، فإنك توافق على {terms} و{privacy}.",
   "auth.sign_in": "تسجيل الدخول",
   "auth.sign_up": "إنشاء حساب",
   "auth.sign_in_heading": "سجّل الدخول إلى حسابك",

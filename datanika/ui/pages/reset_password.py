@@ -19,6 +19,7 @@ off-site: while the token is still in the address bar it would ride out on the
 
 import reflex as rx
 
+from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.password_reset_state import PasswordResetState
 
@@ -64,7 +65,7 @@ def _form() -> rx.Component:
                     id="reset-password",
                     name="password",
                     type="password",
-                    custom_attrs={"autoComplete": "new-password"},
+                    custom_attrs=autofill_attrs("new-password"),
                     width="100%",
                 ),
                 rx.el.label(
@@ -75,7 +76,7 @@ def _form() -> rx.Component:
                     id="reset-confirm",
                     name="confirm",
                     type="password",
-                    custom_attrs={"autoComplete": "new-password"},
+                    custom_attrs=autofill_attrs("new-password"),
                     width="100%",
                 ),
                 rx.text(_t["account.password_rules"], size="1", color="gray"),

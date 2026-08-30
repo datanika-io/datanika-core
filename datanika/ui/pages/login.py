@@ -7,6 +7,7 @@ import reflex as rx
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
 from datanika.ui.components.layout import legal_links
+from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -154,6 +155,11 @@ def login_page() -> rx.Component:
                         id="login-email",
                         placeholder=_t["auth.ph_email"],
                         name="email",
+                        # username + current-password is one credential to a
+                        # password manager. Declared rather than suppressed:
+                        # autofill is the *wanted* behaviour here, so this is the
+                        # opposite repair from core#618's (core#672).
+                        custom_attrs=autofill_attrs("username"),
                         width="100%",
                     ),
                     rx.el.label(
@@ -165,6 +171,7 @@ def login_page() -> rx.Component:
                         placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",
+                        custom_attrs=autofill_attrs("current-password"),
                         width="100%",
                     ),
                     rx.button(

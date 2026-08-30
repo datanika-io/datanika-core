@@ -320,20 +320,32 @@ class TestImageProbeIsActuallyGating:
         )
 
     def test_it_no_longer_emits_the_informational_marker(self):
-        """One marker, one owner — see the blended-verdict incident below."""
-        body = _CI_WORKFLOW.read_text(encoding="utf-8")
-        emitters = [
-            line.strip()
-            for line in body.splitlines()
-            if "INFORMATIONAL_RESULT=" in line and line.lstrip().startswith("echo")
+        """One marker, one owner — see the blended-verdict incident below.
+
+        Counts owning **steps**, not `echo` lines. It used to count lines,
+        which conflated "one owner" with "one echo" and went red the moment
+        `e2e-staging`'s report step grew branches for the empty / unknown
+        tier states (core#529). The incident this guards is a *second job*
+        emitting the marker; one step emitting it from four branches is not
+        that.
+        """
+        yaml = pytest.importorskip("yaml")
+        doc = yaml.safe_load(_CI_WORKFLOW.read_text(encoding="utf-8"))
+        owners = [
+            (job_name, step.get("name"))
+            for job_name, job in doc["jobs"].items()
+            for step in job.get("steps", [])
+            if "INFORMATIONAL_RESULT=" in (step.get("run") or "")
         ]
-        assert len(emitters) == 1, (
-            "`INFORMATIONAL_RESULT=` is emitted by "
-            f"{len(emitters)} steps: {emitters}.\n\n"
+        assert len(owners) == 1, (
+            f"`INFORMATIONAL_RESULT=` is emitted by {len(owners)} steps: {owners}. "
             "Exactly one job may own this marker (`e2e-staging`'s informational "
             "tier). While image-probe also emitted it, a grep over a run log "
             "returned a verdict blended across two jobs — the probe was 6/6 "
             "green while e2e-staging's tier was 3/6, and the blend was nearly "
             "reported upward as 'the probe is flapping'. If you add a third "
             "informational tier, give it its own marker name."
+        )
+        assert owners[0][0] == "e2e-staging", (
+            f"the marker is owned by {owners[0][0]}, not e2e-staging: {owners}"
         )

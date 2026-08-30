@@ -109,6 +109,16 @@ class AuthState(rx.State):
         return self.router.page.params.get("reset", "") == "1"
 
     @rx.var
+    def show_session_expired(self) -> bool:
+        """Whether /login arrived from a session that timed out (#671).
+
+        Set only when a session actually ended — ``check_auth`` distinguishes a
+        timed-out session from a visitor who was never signed in, because
+        telling the second group their session expired is confusing.
+        """
+        return self.router.page.params.get("expired", "") == "1"
+
+    @rx.var
     def org_id(self) -> int:
         return self.current_org.id if self.current_org.id else 0
 
@@ -382,12 +392,7 @@ class AuthState(rx.State):
         except Exception:
             pass  # Audit logging should never break logout
 
-        self.access_token = ""
-        self.refresh_token = ""
-        self.current_user = UserInfo()
-        self.current_org = OrgInfo()
-        self.user_orgs = []
-        self.current_role = ""
+        self._clear_session()
         self.auth_error = ""
         return rx.redirect("/login")
 
@@ -416,6 +421,15 @@ class AuthState(rx.State):
     def _apply_org_switch(self, org_id: int) -> bool:
         """Move the session to ``org_id``. False (with ``auth_error``) if not a member."""
         self.auth_error = ""
+        # This mints a fresh access *and* refresh token. Without this guard it
+        # is a way to extend a session indefinitely without ever passing the
+        # check ``check_auth`` performs — click "switch org" every ten minutes
+        # and the expiry never applies to you (#671). Fails closed for all
+        # three callers rather than at each one.
+        if not self._revalidate_session():
+            self._clear_session()
+            self.auth_error = "Your session has expired. Please sign in again."
+            return False
         # Verify the user is a member of the target org
         svc = self._get_user_service()
         with get_sync_session() as session:
@@ -477,9 +491,78 @@ class AuthState(rx.State):
         self._load_current_role(user_id, org_id)
         return rx.redirect(self._post_auth_redirect_target())
 
-    async def check_auth(self):
+    def _clear_session(self) -> None:
+        """Drop every trace of the signed-in user from this state object.
+
+        Shared by ``logout`` and by the revalidation failure path, because
+        "clear the session" that clears five of six vars is the shape that
+        leaves a half-signed-in shell: ``is_authenticated`` reads
+        ``access_token``, but the sidebar renders ``current_org`` and
+        ``current_role``.
+        """
+        self.access_token = ""
+        self.refresh_token = ""
+        self.current_user = UserInfo()
+        self.current_org = OrgInfo()
+        self.user_orgs = []
+        self.current_role = ""
+
+    def _revalidate_session(self) -> bool:
+        """Whether this session may continue — renewing the access token if needed.
+
+        Called from every protected page load, so the common case has to be
+        cheap: a valid access token returns on a signature check with **no
+        database read**. Only an aged-out token pays for a query.
+
+        The renewal goes through ``UserService.redeem_refresh_token``, which is
+        where the ``password_changed_at`` comparison lives. That is what makes a
+        password change end other sessions: the access token those sessions hold
+        expires within ``ACCESS_TOKEN_TTL_MINUTES``, and the refresh token they
+        would renew with was minted before the change, so it is refused.
+
+        Revocation latency is therefore the access-token TTL, not zero. Making
+        it zero means reading ``password_changed_at`` on every protected page
+        load; 10 minutes was the founder's call on that trade (#671).
+        """
         if not self.access_token:
-            return rx.redirect("/login")
+            return False
+
+        auth = AuthService(settings.secret_key)
+        if auth.decode_token(self.access_token, expected_type="access") is not None:
+            return True
+
+        if not self.refresh_token:
+            return False
+
+        svc = self._get_user_service()
+        with get_sync_session() as session:
+            renewed = svc.redeem_refresh_token(
+                session, self.refresh_token, self.current_org.id or None
+            )
+            if renewed is None:
+                return False
+            self.access_token = renewed["access_token"]
+            self.refresh_token = renewed["refresh_token"]
+            org_id = renewed["org_id"]
+
+        if org_id != self.current_org.id:
+            for o in self.user_orgs:
+                if o.id == org_id:
+                    self.current_org = o
+                    break
+
+        return True
+
+    async def check_auth(self):
+        # ⚠️ This used to be `if not self.access_token`, which tests that a
+        # string is non-empty. It never decoded the token, so the expiry was
+        # unenforced and nothing ever re-checked a session after login (#671).
+        had_session = bool(self.access_token)
+        if not self._revalidate_session():
+            self._clear_session()
+            # A visitor who was never signed in is not a session that timed
+            # out, and telling them their session expired is confusing.
+            return rx.redirect("/login?expired=1" if had_session else "/login")
         # Ensure current_role is loaded (e.g. after page refresh)
         if not self.current_role and self.current_user.id and self.current_org.id:
             self._load_current_role(self.current_user.id, self.current_org.id)

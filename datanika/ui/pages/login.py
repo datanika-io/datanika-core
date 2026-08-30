@@ -96,6 +96,15 @@ def login_page() -> rx.Component:
                 ),
             ),
             rx.cond(
+                AuthState.show_session_expired,
+                rx.callout(
+                    _t["auth.session_expired"],
+                    icon="clock",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
                 AuthState.auth_error != "",
                 rx.callout(
                     AuthState.auth_error,

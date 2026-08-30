@@ -123,6 +123,21 @@ def account_card() -> rx.Component:
                 reset_on_submit=True,
                 width="100%",
             ),
+            # Cross-link to the published docs. Safe here and NOT on
+            # /reset-password: that page still has the token in the address bar
+            # when it loads, and any off-site link would carry it out on the
+            # Referer.
+            rx.link(
+                rx.hstack(
+                    rx.icon("external-link", size=14),
+                    rx.text(_t["guide.docs_link"], size="1"),
+                    align="center",
+                    spacing="1",
+                ),
+                href="https://datanika.io/docs/organizations",
+                is_external=True,
+                color_scheme="violet",
+            ),
             spacing="4",
             width="100%",
         ),

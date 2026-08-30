@@ -273,6 +273,12 @@ class TestAccountCard:
 
         assert "account.review_api_keys" in str(account_card())
 
+    def test_it_cross_links_to_the_published_docs(self):
+        """Safe on this page and deliberately absent from /reset-password."""
+        from datanika.ui.pages.settings import account_card
+
+        assert "datanika.io/docs/organizations" in str(account_card())
+
 
 class TestNoSecretsInRenderedOutput:
     def test_no_page_declares_a_state_var_holding_a_password(self):

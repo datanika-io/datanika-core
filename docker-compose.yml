@@ -207,6 +207,63 @@ services:
     command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
     restart: unless-stopped
 
+  # --- Celery Beat (core#653) ---
+  # `celery_app.py:46` has defined an hourly `datanika.run_maintenance` since forever and
+  # NO BEAT PROCESS HAS EVER EXISTED, so none of the five maintenance sweeps has ever run
+  # in production. Measured 2026-08-30, not inferred: the only `run_maintenance` line in
+  # `docker logs datanika-celery` is `. datanika.run_maintenance` — the worker's task
+  # *registration* banner, not an execution.
+  #
+  # Why its own container instead of `worker -B`
+  # --------------------------------------------
+  # `-B` is the smaller diff and the wrong one. A beat thread that dies inside a live
+  # worker leaves the container `Up` and `healthy`, so the observable state is identical
+  # to the bug being fixed here: nothing happens, and nothing says so. A separate
+  # container has a `container_last_seen` series, which is why `container-down` in
+  # monitoring/…/alerts.yml now carries `beat` in its regex. Celery's own docs also scope
+  # `-B` to development.
+  #
+  # Why it is safe to have exactly one, without any new mechanism
+  # ------------------------------------------------------------
+  # Beat is a pure producer — it only puts messages on the broker — so the exactly-once
+  # requirement is satisfied by the same thing `celery` already relies on: it is NOT
+  # blue/green, and the deploy *recreates* it rather than standing a second one beside it
+  # (`up -d celery beat`, deploy-pointer.yml). Two beats would double-fire every entry,
+  # which is the same hazard that keeps `celery` out of the blue/green pair.
+  #
+  # ⚠️ `beat_state` is load-bearing, not tidiness
+  # ---------------------------------------------
+  # `beat_schedule` uses an INTERVAL (`schedule: 3600.0`). PersistentScheduler seeds
+  # `last_run_at = now` when it finds no stored state, so a beat with an ephemeral
+  # schedule file restarts its hour on every deploy — and on a day with 16 promotions the
+  # hourly job fires zero times while every container reads healthy. That is core#653
+  # reproduced in a subtler form, so the shelve DB goes on a named volume and survives
+  # `up -d`. Verified on the staging image 2026-08-30: the file appears at
+  # /app/beat_state/celerybeat-schedule (16 KB) within seconds of `beat: Starting...`.
+  #
+  # No `--pidfile`: celery 5 defaults to no PID file (`beat --help`), so there is no
+  # stale-pidfile crash loop to guard against. Checked rather than assumed.
+  # No dbt/uploads mounts: beat dispatches, it never touches either tree.
+  beat:
+    image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: datanika/Dockerfile
+    container_name: datanika-beat
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - beat_state:/app/beat_state
+    command: >
+      uv run celery -A datanika.tasks.celery_app:celery_app beat -l info
+      --schedule /app/beat_state/celerybeat-schedule
+    restart: unless-stopped
+
   # --- Monitoring ---
 
   prometheus:
@@ -307,6 +364,9 @@ volumes:
   # Shared rw by app, app_b and celery — see #471. The load runs in the worker, so a
   # web-only path would fail at run time rather than upload time.
   uploaded_files:
+  # Celery Beat's shelve DB. On a volume so `last_run_at` survives a deploy — without it
+  # an interval entry restarts its hour on every recreate and may never fire (core#653).
+  beat_state:
   pg_backups:
   prometheus_data:
   grafana_data:

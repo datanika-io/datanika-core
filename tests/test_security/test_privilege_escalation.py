@@ -74,26 +74,6 @@ from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService
 
-xfail_658 = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "core#658: change_role takes no caller identity and its only guard is on "
-        "demotion, so an admin may grant itself owner and then remove the founder."
-    ),
-)
-
-xfail_658_ui = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "core#658 (UI honesty half): member_row renders the role dropdown and the "
-        "Remove button for every viewer regardless of role. Server-side checks make "
-        "it unexploitable -- it shows controls that always fail."
-    ),
-)
-
-
 # Keyword names a fix might use to carry the caller's identity into the service.
 _ACTOR_KWARGS = (
     "actor_user_id",
@@ -248,24 +228,20 @@ def _escalate_and_evict(svc, db_session, org, founder, attacker) -> None:
 class TestTheFounderCannotBeLockedOut:
     """Each test runs the whole chain and asserts one facet of the end state."""
 
-    @xfail_658
     def test_the_founder_still_belongs_to_their_organization(
         self, svc, db_session, org, founder, attacker
     ):
         _escalate_and_evict(svc, db_session, org, founder, attacker)
         assert _live(db_session, founder.id) is not None
 
-    @xfail_658
     def test_the_founder_is_still_an_owner(self, svc, db_session, org, founder, attacker):
         _escalate_and_evict(svc, db_session, org, founder, attacker)
         assert founder.user_id in _owner_user_ids(db_session, org.id)
 
-    @xfail_658
     def test_the_attacker_is_not_the_sole_owner(self, svc, db_session, org, founder, attacker):
         _escalate_and_evict(svc, db_session, org, founder, attacker)
         assert _owner_user_ids(db_session, org.id) != {attacker.user_id}
 
-    @xfail_658
     def test_the_org_is_still_listed_for_the_founder(self, svc, db_session, org, founder, attacker):
         """The lockout, from the victim's side.
 
@@ -291,12 +267,10 @@ class TestEachStepOfTheChain:
     owner exists.
     """
 
-    @xfail_658
     def test_an_admin_cannot_grant_itself_owner(self, svc, db_session, org, founder, attacker):
         _attempt(svc.change_role, attacker, db_session, org.id, attacker.id, MemberRole.OWNER)
         assert _live(db_session, attacker.id).role is MemberRole.ADMIN
 
-    @xfail_658
     def test_an_admin_cannot_grant_owner_to_a_third_party(self, svc, db_session, org, attacker):
         """Escalation by proxy -- granting owner to an account the actor controls."""
         _member(db_session, org, "keeper@example.com", MemberRole.OWNER)
@@ -304,7 +278,6 @@ class TestEachStepOfTheChain:
         _attempt(svc.change_role, attacker, db_session, org.id, patsy.id, MemberRole.OWNER)
         assert _live(db_session, patsy.id).role is MemberRole.VIEWER
 
-    @xfail_658
     def test_an_admin_cannot_remove_an_owner(self, svc, db_session, org, founder, attacker):
         """Independent of the promotion step.
 
@@ -316,7 +289,6 @@ class TestEachStepOfTheChain:
         _attempt(svc.remove_member, attacker, db_session, org.id, founder.id)
         assert _live(db_session, founder.id) is not None
 
-    @xfail_658
     def test_an_editor_cannot_grant_itself_owner(self, svc, db_session, org, founder):
         """The service layer has no caller check at all, so role is irrelevant to it.
 
@@ -349,7 +321,6 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
     closed while still being open.
     """
 
-    @xfail_658
     def test_an_admin_cannot_invite_a_new_member_as_owner(
         self, svc, db_session, org, founder, attacker
     ):
@@ -359,7 +330,6 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
         _attempt(svc.add_member, attacker, db_session, org.id, stooge.id, MemberRole.OWNER)
         assert stooge.id not in _owner_user_ids(db_session, org.id)
 
-    @xfail_658
     def test_the_invite_path_reaches_the_same_end_state_without_self_promotion(
         self, svc, db_session, org, founder, attacker
     ):
@@ -380,7 +350,6 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
             "the founder was evicted by an admin who never changed their own role"
         )
 
-    @xfail_658
     def test_an_admin_cannot_mint_another_admin(self, svc, db_session, org, founder, attacker):
         """SPEC_ORG_ROLES R2. ``admin`` carries delete on every resource in the org.
 
@@ -391,7 +360,6 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
         _attempt(svc.change_role, attacker, db_session, org.id, viewer.id, MemberRole.ADMIN)
         assert _live(db_session, viewer.id).role is MemberRole.VIEWER
 
-    @xfail_658
     def test_an_admin_cannot_remove_a_peer_admin(self, svc, db_session, org, founder, attacker):
         """SPEC_ORG_ROLES R3 -- reach is strictly below the actor, not at it."""
         peer = _member(db_session, org, "peer-admin@example.com", MemberRole.ADMIN)
@@ -416,7 +384,6 @@ class TestTheWrittenPermissionModelIsReachable:
     control is *reachable*, which is the thing in doubt.
     """
 
-    @xfail_658
     def test_has_permission_has_at_least_one_production_caller(self):
         import subprocess
         from pathlib import Path
@@ -536,7 +503,6 @@ class TestMemberControlsAreRoleGated:
     the invariant survives markup refactors.
     """
 
-    @xfail_658_ui
     def test_member_row_gates_its_controls_on_a_condition(self):
         row = _member_row_source()
         has_cond = any(

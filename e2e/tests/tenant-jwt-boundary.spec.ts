@@ -1,4 +1,4 @@
-import { test, expect } from "../fixtures/auth";
+import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
 
 /**
  * Staging-flavored port of tests/test_security/test_tenant_jwt_boundary.py
@@ -111,17 +111,28 @@ function orgBResourceId(resourceKey: MutationRoute["resourceKey"]): number {
 }
 
 test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
+  // core#699 — every request below is budgeted through `apiBudget`, which may
+  // pause once for the server's rate-limit window to roll over (the suite needs
+  // 36 requests on org A's key and the Free plan allows 30/minute). The pause is
+  // bounded by one minute, so the per-test timeout has to clear it.
+  test.describe.configure({ timeout: 120_000 });
+
   for (const route of MUTATION_ROUTES) {
     const id = `${route.method} ${route.pathTemplate}`;
-    test(`${id} — org A cannot mutate org B resource`, async ({ request }) => {
+    test(`${id} — org A cannot mutate org B resource`, async ({ request, apiBudget }) => {
       const apiKeyA = mustEnv("DATANIKA_E2E_API_KEY_ORG_A");
       const victimId = orgBResourceId(route.resourceKey);
       const url = route.pathTemplate.replace("{id}", String(victimId));
 
-      const response = await request.fetch(url, {
+      // A 429 never reaches the assertions below: `apiBudget.fetch` raises it as
+      // an explicit harness failure. Rate-limit rejection happens *before* the
+      // handler runs, so accepting it here would let this spec report success
+      // for requests that never exercised tenant isolation. See core#699.
+      const response = await apiBudget.fetch(request, ORG_A_KEY, url, {
         method: route.method,
         headers: { Authorization: `Bearer ${apiKeyA}` },
         data: route.body ?? undefined,
+        label: `${id} (cross-tenant probe)`,
       });
       const status = response.status();
 
@@ -137,7 +148,10 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
     });
   }
 
-  test("write-through guard — PUT does not mutate B-owned connection", async ({ request }) => {
+  test("write-through guard — PUT does not mutate B-owned connection", async ({
+    request,
+    apiBudget,
+  }) => {
     // Belt-and-suspenders: even if a cross-tenant PUT returned an error,
     // verify the B-owned row's content is unchanged. Catches a "error
     // response but the update still committed" bug.
@@ -146,36 +160,47 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
     const victimId = orgBResourceId("connection");
 
     // Snapshot the victim's current state via B's own key
-    const before = await request.get(`/api/v1/connections/${victimId}`, {
+    const before = await apiBudget.fetch(request, ORG_B_KEY, `/api/v1/connections/${victimId}`, {
+      method: "GET",
       headers: { Authorization: `Bearer ${apiKeyB}` },
+      label: "write-through guard: snapshot B's connection",
     });
     expect(before.status()).toBe(200);
     const originalName = (await before.json()).name;
 
     // Attempt cross-tenant PUT with A's key
-    const attack = await request.put(`/api/v1/connections/${victimId}`, {
+    const attack = await apiBudget.fetch(request, ORG_A_KEY, `/api/v1/connections/${victimId}`, {
+      method: "PUT",
       headers: { Authorization: `Bearer ${apiKeyA}` },
       data: { name: "pwned-by-a" },
+      label: "write-through guard: cross-tenant PUT",
     });
     expect(attack.status()).toBe(404);
 
     // Re-read via B's key and assert nothing changed
-    const after = await request.get(`/api/v1/connections/${victimId}`, {
+    const after = await apiBudget.fetch(request, ORG_B_KEY, `/api/v1/connections/${victimId}`, {
+      method: "GET",
       headers: { Authorization: `Bearer ${apiKeyB}` },
+      label: "write-through guard: re-read B's connection",
     });
     expect(after.status()).toBe(200);
     expect((await after.json()).name).toBe(originalName);
   });
 
-  test("sanity: org B can still access own resource with own key", async ({ request }) => {
+  test("sanity: org B can still access own resource with own key", async ({
+    request,
+    apiBudget,
+  }) => {
     // The boundary check must not accidentally wall off the rightful
     // owner. Using B's own key, the same endpoint that 404'd for A
     // must succeed.
     const apiKeyB = mustEnv("DATANIKA_E2E_API_KEY_ORG_B");
     const victimId = orgBResourceId("connection");
 
-    const response = await request.get(`/api/v1/connections/${victimId}`, {
+    const response = await apiBudget.fetch(request, ORG_B_KEY, `/api/v1/connections/${victimId}`, {
+      method: "GET",
       headers: { Authorization: `Bearer ${apiKeyB}` },
+      label: "sanity: org B reads its own connection",
     });
     expect(response.status()).toBe(200);
   });

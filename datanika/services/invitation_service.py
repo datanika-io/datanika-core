@@ -26,7 +26,20 @@ class InvitationService:
         invited_by_user_id: int,
         expires_days: int = 7,
     ) -> Invitation:
-        """Create a pending invitation.  Raises ValueError on duplicates."""
+        """Create a pending invitation.  Raises ValueError on duplicates.
+
+        ⚠️ Authorized through the **same** seam as `UserService.add_member`
+        (`SPEC_ORG_ROLES.md` §2), not a second copy of the rules. This path
+        used to compare the granted role to nothing at all, and the invite-role
+        select offered `owner` — which is core#658's shorter escalation, the
+        one where the attacker's own role never changes.
+        """
+        from datanika.services.user_service import UserService
+
+        UserService(self._auth)._assert_may_manage(
+            session, org_id, invited_by_user_id, granted_role=role
+        )
+
         email = email.strip().lower()
 
         # Check if already a member
@@ -85,6 +98,20 @@ class InvitationService:
         if invitation.expires_at < datetime.now(UTC):
             invitation.status = InvitationStatus.EXPIRED
             session.flush()
+            return None
+
+        # An invitation is a role grant that outlives the check that made it.
+        # SPEC_ORG_ROLES R1 puts `owner` off every grant path, so a stored
+        # `owner` invitation — created before this landed, or by any future
+        # writer of the Invitation table — must not become an owner membership
+        # on accept. Refused rather than silently downgraded: an owner can
+        # re-issue it, and quietly handing someone a different role than the
+        # one they were offered is its own surprise.
+        if invitation.role is MemberRole.OWNER:
+            logger.warning(
+                "Refusing invitation %s: ownership is not grantable by invitation",
+                invitation.id,
+            )
             return None
 
         # Find the user by email

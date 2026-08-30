@@ -233,9 +233,23 @@ class TestFileSourceMovesRows:
     No credential, no Docker, no network: a real CSV on disk, through the real
     ``DltRunnerService.execute()``, into a real DuckDB file.
 
-    Scope, stated rather than implied: ``csv`` only. ``json`` and ``parquet`` share
-    the same lister-plus-reader assembly and differ solely in the transformer
-    ``_build_format_reader`` returns; ``s3`` additionally needs a credential.
+    Scope, stated rather than implied (core#684 closed the gap #545 left):
+    ``csv``, ``json`` (all three shapes ``_json_chunks`` handles) and ``parquet``
+    are measured here.
+
+    **``s3`` is NOT measured, and is deferred on a named blocker** rather than
+    left to look done: it needs a reachable bucket plus a key pair, which is a
+    credential this suite deliberately does not take (see the module docstring —
+    everything here must run in PR CI with no account). Covering it means either
+    a `minio` service in the compose stack or an AWS key in
+    ``plans/SECRETS_INVENTORY.md``; until one exists, ``s3``'s only assertions
+    are the mocked kwargs tests in ``test_dlt_runner.py``, which are the exact
+    kind that could not see #492.
+
+    What ``s3`` *does* share with the three above is the format resolution path:
+    it carries no format in its type, so ``_resolve_file_format`` falls to the
+    glob's extension and **raises** on a bare ``*`` rather than guessing. That
+    refusal is unit-tested. The unmeasured part is the transport.
     """
 
     @staticmethod
@@ -264,6 +278,120 @@ class TestFileSourceMovesRows:
             "`| read_csv()` pipe yields one row per file describing the file — and "
             "a row COUNT still looks healthy, which is why the count is not the "
             "assertion here."
+        )
+
+    # ── core#684: the formats #545 left unmeasured ──────────────────────────
+    #
+    # #545 proved `csv` only, and recorded the reason the rest were deferred:
+    # "json and parquet share the same lister-plus-reader assembly and differ
+    # solely in the transformer `_build_format_reader` returns."
+    #
+    # That argument is weaker than it looks, and reading the code is what shows
+    # it. `csv` and `parquet` are dlt's own `read_csv` / `read_parquet`. **`json`
+    # is ours** — `dlt_runner.read_json`, a hand-written `@dlt.transformer` that
+    # exists because dlt's `read_jsonl` is JSON-Lines-only while our default glob
+    # for the `json` type is `*.json`. Feeding an array to `read_jsonl` does not
+    # raise: it parses as one value, and dlt writes a parent row with no business
+    # columns plus a `__value` child table — #492 again, in a new costume.
+    #
+    # So `_json_chunks` detects the shape, in three branches, none of which had
+    # ever been observed to put a record in a destination. Each gets its own test
+    # below, because "shares the assembly" is exactly the reasoning that has to
+    # be false for any of this to be worth writing.
+
+    @staticmethod
+    def _payload_lines() -> list[str]:
+        return [json.dumps(w) for w in WIDGETS]
+
+    def test_json_array_rows_land_in_the_destination(self, tmp_path):
+        """Branch 1: a `[...]` array — the shape our default `*.json` glob implies."""
+        drop = tmp_path / "drop"
+        drop.mkdir()
+        (drop / "widgets.json").write_text(json.dumps(WIDGETS), encoding="utf-8")
+
+        db_path = _extract_load(
+            tmp_path,
+            "json",
+            {"bucket_url": str(drop)},
+            {"file_glob": "widgets.json"},
+        )
+
+        assert _rows(db_path, "widgets") == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "json (array) did not deliver record CONTENTS into DuckDB. Losing the "
+            "reader pipe yields one row per file describing the file; routing an "
+            "array through `read_jsonl` instead yields a parent row with no "
+            "business columns and a `__value` child table. Both report a healthy "
+            "row count, which is why the count is not the assertion."
+        )
+
+    def test_jsonl_rows_land_in_the_destination(self, tmp_path):
+        """Branch 2: JSON Lines, streamed a line at a time."""
+        drop = tmp_path / "drop"
+        drop.mkdir()
+        payload = "\n".join(self._payload_lines()) + "\n"
+        (drop / "widgets.jsonl").write_text(payload, encoding="utf-8")
+
+        db_path = _extract_load(
+            tmp_path,
+            "json",
+            {"bucket_url": str(drop)},
+            {"file_glob": "widgets.jsonl"},
+        )
+
+        assert _rows(db_path, "widgets") == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "json (JSON Lines) did not deliver record CONTENTS into DuckDB."
+        )
+
+    def test_pretty_printed_single_object_lands_as_one_record(self, tmp_path):
+        """Branch 3: one indented object spanning many lines.
+
+        Reached only through `_json_chunks`' `except` fallback: the first line is
+        a bare `{`, which fails to parse as a line-delimited record, and the file
+        is then re-read whole. A silent regression here would look like an empty
+        load, not an error.
+        """
+        drop = tmp_path / "drop"
+        drop.mkdir()
+        (drop / "widget.json").write_text(json.dumps(WIDGETS[0], indent=2), encoding="utf-8")
+
+        db_path = _extract_load(
+            tmp_path,
+            "json",
+            {"bucket_url": str(drop)},
+            {"file_glob": "widget.json"},
+        )
+
+        assert _rows(db_path, "widget") == [("alpha", 100)], (
+            "a pretty-printed single JSON object did not land as one record"
+        )
+
+    def test_parquet_rows_land_in_the_destination(self, tmp_path):
+        """`read_parquet` is dlt's, but the pipe that reaches it is ours."""
+        import pyarrow
+        import pyarrow.parquet
+
+        drop = tmp_path / "drop"
+        drop.mkdir()
+        pyarrow.parquet.write_table(
+            pyarrow.table(
+                {
+                    "id": [w["id"] for w in WIDGETS],
+                    "name": [w["name"] for w in WIDGETS],
+                    "price": [w["price"] for w in WIDGETS],
+                }
+            ),
+            drop / "widgets.parquet",
+        )
+
+        db_path = _extract_load(
+            tmp_path,
+            "parquet",
+            {"bucket_url": str(drop)},
+            {"file_glob": "widgets.parquet"},
+        )
+
+        assert _rows(db_path, "widgets") == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "parquet did not deliver record CONTENTS into DuckDB."
         )
 
 

@@ -17,6 +17,14 @@ class MemberItem(BaseModel):
     email: str = ""
     full_name: str = ""
     role: str = ""
+    # Per-row capability, computed server-side from the same rules the service
+    # enforces (SPEC_ORG_ROLES R2/R3). Carried on the row because a Reflex
+    # `rx.cond` in the table body cannot run the relational check itself, and
+    # duplicating the rank comparison in the component would be a second
+    # answer to a question that already has one.
+    can_manage: bool = False
+    is_self: bool = False
+    assignable_roles: list[str] = []
 
 
 class InvitationItem(BaseModel):
@@ -36,6 +44,20 @@ class SettingsState(BaseState):
     edit_org_name: str = ""
     edit_org_slug: str = ""
     edit_default_dbt_schema: str = ""
+    # Viewer context for UI honesty (SPEC_ORG_ROLES §4). core#658 AC4: the
+    # member table used to render a role select and a Remove button for every
+    # member regardless of who was looking. The server checks were real, so a
+    # viewer simply saw controls that always failed.
+    current_role: str = ""
+    current_user_id: int = 0
+    can_manage_members: bool = False
+    is_owner: bool = False
+    invite_roles: list[str] = []
+    # Successor picker for Transfer ownership. Emails, not ids: the value
+    # is what the owner reads in the dialog, and it is resolved back to a
+    # membership server-side.
+    transfer_candidates: list[str] = []
+    transfer_to_email: str = ""
 
     def redirect_legacy_billing_tab(self):
         """Send `/settings?tab=billing` to the billing page (#654).
@@ -89,10 +111,24 @@ class SettingsState(BaseState):
                 self.edit_org_name = org.name
                 self.edit_org_slug = org.slug
                 self.edit_default_dbt_schema = org.default_dbt_schema
+            from datanika.services.auth import (
+                assignable_roles,
+                may_manage_member,
+            )
+
+            self.current_role = auth_state.current_role
+            self.current_user_id = auth_state.current_user.id
+            self.invite_roles = assignable_roles(self.current_role)
+            self.can_manage_members = bool(self.invite_roles)
+            self.is_owner = self.current_role == "owner"
+            if self.invite_role not in self.invite_roles:
+                self.invite_role = self.invite_roles[0] if self.invite_roles else ""
+
             members = svc.list_members(session, auth_state.current_org.id)
             self.members = []
             for m in members:
                 user = svc.get_user(session, m.user_id)
+                is_self = m.user_id == self.current_user_id
                 self.members.append(
                     MemberItem(
                         id=m.id,
@@ -100,8 +136,16 @@ class SettingsState(BaseState):
                         email=user.email if user else "",
                         full_name=user.full_name if user else "",
                         role=m.role.value,
+                        is_self=is_self,
+                        can_manage=(
+                            not is_self and may_manage_member(self.current_role, m.role.value)
+                        ),
+                        assignable_roles=self.invite_roles,
                     )
                 )
+            self.transfer_candidates = [m.email for m in self.members if not m.is_self]
+            if self.transfer_to_email not in self.transfer_candidates:
+                self.transfer_to_email = ""
 
             # Load pending invitations
             from datanika.services.invitation_service import InvitationService
@@ -230,6 +274,7 @@ class SettingsState(BaseState):
                     auth_state.current_org.id,
                     user.id,
                     MemberRole(self.invite_role),
+                    actor_user_id=auth_state.current_user.id,
                 )
                 self._audit(
                     session,
@@ -263,6 +308,7 @@ class SettingsState(BaseState):
                     auth_state.current_org.id,
                     membership_id,
                     MemberRole(new_role),
+                    actor_user_id=auth_state.current_user.id,
                 )
                 self._audit(
                     session,
@@ -293,7 +339,12 @@ class SettingsState(BaseState):
                 old_values = (
                     {"email": member_info.email, "role": member_info.role} if member_info else {}
                 )
-                svc.remove_member(session, auth_state.current_org.id, membership_id)
+                svc.remove_member(
+                    session,
+                    auth_state.current_org.id,
+                    membership_id,
+                    actor_user_id=auth_state.current_user.id,
+                )
                 self._audit(
                     session,
                     auth_state.current_org.id,
@@ -309,6 +360,106 @@ class SettingsState(BaseState):
             return
         self.error_message = ""
         await self.load_settings()
+
+    def set_transfer_to_email(self, value: str):
+        self.transfer_to_email = value
+
+    async def transfer_ownership(self):
+        """Hand ownership to another member (SPEC_ORG_ROLES §3).
+
+        Owner-only, and the **only** route to `MemberRole.OWNER` outside
+        account creation. Audited as its own action rather than as two
+        `change_role` events, so the org history says what happened.
+        """
+        if not await self._check_role("owner"):
+            return
+        auth_state = await self.get_state(AuthState)
+        svc = self._get_user_service()
+        successor = next(
+            (m for m in self.members if m.email == self.transfer_to_email and not m.is_self),
+            None,
+        )
+        if successor is None:
+            self.error_message = "Choose the member who will become the owner"
+            return
+        successor_id = successor.user_id
+        try:
+            with get_sync_session() as session:
+                svc.transfer_ownership(
+                    session,
+                    auth_state.current_org.id,
+                    successor_id,
+                    actor_user_id=auth_state.current_user.id,
+                )
+                self._audit(
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "transfer_ownership",
+                    "member",
+                    resource_id=successor_id,
+                    old_values={"owner_user_id": auth_state.current_user.id},
+                    new_values={"owner_user_id": successor_id},
+                )
+                session.commit()
+        except Exception as e:
+            self.error_message = self._safe_error(e, "Failed to transfer ownership")
+            return
+        self.transfer_to_email = ""
+        self.error_message = ""
+        # The actor is an admin from this point on. Without this the session
+        # keeps its stale `owner` role and every owner-only control stays
+        # rendered until the next full page load.
+        auth_state._load_current_role(auth_state.current_user.id, auth_state.current_org.id)
+        await self.load_settings()
+
+    async def leave_org(self):
+        """Remove your own membership (SPEC_ORG_ROLES R6, audit P8).
+
+        Deliberately **not** gated on a minimum role: leaving is the one
+        member-management action every member has. The last owner is refused
+        by the service's owner-count invariant, not by a role check.
+        """
+        auth_state = await self.get_state(AuthState)
+        svc = self._get_user_service()
+        try:
+            with get_sync_session() as session:
+                svc.leave_org(
+                    session,
+                    auth_state.current_org.id,
+                    actor_user_id=auth_state.current_user.id,
+                )
+                self._audit(
+                    session,
+                    auth_state.current_org.id,
+                    auth_state.current_user.id,
+                    "delete",
+                    "member",
+                    old_values={"email": auth_state.current_user.email},
+                )
+                session.commit()
+        except Exception as e:
+            self.error_message = self._safe_error(e, "Failed to leave organization")
+            return
+        self.error_message = ""
+
+        # ⚠️ Redirecting to "/" is not enough, and this is the part that is easy
+        # to get wrong. The session is still pointed at the org just left: the
+        # access token carries its `org_id` claim, `current_org` still names it,
+        # and `BaseState._get_org_id` reads `current_org` — so the next page
+        # would go on operating inside an org this user is no longer a member
+        # of, until the 10-minute token expiry happened to bite.
+        #
+        # Re-derive membership from the database, then either move the session
+        # to a remaining org (`switch_org` mints fresh tokens and re-reads the
+        # role) or end it. A member who arrived by invitation may have had only
+        # this one org, so "log out" is a real branch, not a defensive stub.
+        auth_state.user_orgs = [
+            o for o in auth_state.user_orgs if o.id != auth_state.current_org.id
+        ]
+        if auth_state.user_orgs:
+            return auth_state.switch_org(auth_state.user_orgs[0].id)
+        return auth_state.logout()
 
     async def cancel_invitation(self, invitation_id: int):
         if not await self._check_role("admin"):

@@ -39,7 +39,11 @@ def error_or_quota_callout(state_cls: type[BaseState]) -> rx.Component:
                     ),
                     spacing="2",
                 ),
-                icon="arrow_up_circle",
+                # lucide orders this noun-first. `arrow_up_circle` is not a tag,
+                # and Reflex substitutes `circle_help` for an unknown one — so
+                # the upgrade callout showed a question mark, silently, warning
+                # only to stdout where nothing was listening.
+                icon="circle_arrow_up",
                 color_scheme="amber",
             ),
             # Regular error — plain red callout

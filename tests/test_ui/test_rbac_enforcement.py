@@ -75,6 +75,7 @@ EXPECTED_ROLES = {
         "revoke_api_key": "admin",
     },
     "backup_state": {
+        "export_backup": "admin",
         "handle_restore_upload": "admin",
     },
     "notification_state": {

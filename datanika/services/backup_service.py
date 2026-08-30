@@ -14,14 +14,35 @@ from datanika.models.connection import Connection, ConnectionType
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
-from datanika.services.connection_service import ConnectionService
+from datanika.models.user import Organization
+from datanika.services.connection_service import SECRET_CONFIG_KEYS, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 
-SENSITIVE_KEYS = {"password", "aws_secret_access_key", "service_account_json", "api_key"}
-BACKUP_VERSION = 2
+#: Derived, never copied. This used to be a second literal holding 4 of the
+#: canonical 12 keys, so an export masked `password` while shipping the OAuth
+#: refresh token beside it — and the masking is what made that dangerous, since
+#: a file showing `"password": "CHANGE_ME"` reads as safe to email. #651.
+SENSITIVE_KEYS = SECRET_CONFIG_KEYS
+
+#: v3 (#651): the export marks redacted keys with a sentinel the importer
+#: recognises, and carries the org it came from.
+#: v2: uploads/pipelines/transformations. v1: connections + uploads only.
+BACKUP_VERSION = 3
+SUPPORTED_BACKUP_VERSIONS = (1, 2, 3)
+
+#: What a redacted value looks like in an exported file.
+REDACTED = "__REDACTED__"
+
+#: v1/v2 wrote this placeholder and the importer wrote it straight back into the
+#: connection, overwriting a working credential with the literal string. It is
+#: recognised as a redaction marker so those files restore without destroying
+#: anything.
+_LEGACY_REDACTED = "CHANGE_ME"
+
+_REDACTION_MARKERS = frozenset({REDACTED, _LEGACY_REDACTED})
 
 _TRANSFORMATION_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
@@ -318,10 +339,70 @@ class BackupService:
             raise ImportValidationError(errors)
 
     @staticmethod
+    def foreign_org(data: dict, org_id: int, org_slug: str | None = None) -> str:
+        """Name the org a backup was exported from, when it is not this one.
+
+        Returns ``""`` when the backup belongs here, or carries no provenance at
+        all (v1/v2 files predate the field — absence is not evidence of a
+        different org, and warning on every legacy file would train the user to
+        click through the warning).
+
+        ``org_slug`` is worth passing when the caller has it: two deployments
+        can both have an org with id 5, and then the id comparison alone says
+        "same org" about a file from somewhere else entirely.
+        """
+        origin = data.get("org")
+        if not isinstance(origin, dict):
+            return ""
+        same_id = origin.get("id") == org_id
+        same_slug = org_slug is None or origin.get("slug") == org_slug
+        if same_id and same_slug:
+            return ""
+        return str(origin.get("name") or origin.get("slug") or origin.get("id") or "another org")
+
+    @staticmethod
+    def _redact(config: dict) -> dict:
+        """Replace every secret value with the sentinel, leaving the key in place.
+
+        The key stays so the importer can tell "this was redacted" from "this
+        connector has no such field" — which is what makes the round trip
+        non-destructive.
+        """
+        return {k: (REDACTED if k in SENSITIVE_KEYS else v) for k, v in config.items()}
+
+    @staticmethod
+    def _resolve_redactions(config: dict, stored: dict | None) -> tuple[dict, bool]:
+        """Turn a redacted config back into a storable one.
+
+        Overwriting an existing connection carries its stored secret forward, so
+        an export/import round trip is a no-op. With nothing to carry forward the
+        key is **dropped** rather than stored as the sentinel: a connection
+        holding the literal string ``__REDACTED__`` as its password looks
+        configured and fails at connect time with a driver error, while an absent
+        key shows up as an empty field in the edit form.
+
+        Returns ``(config, needs_credentials)``.
+        """
+        resolved: dict = {}
+        needs_credentials = False
+        for key, value in config.items():
+            if isinstance(value, str) and value in _REDACTION_MARKERS:
+                if stored is not None and key in stored:
+                    resolved[key] = stored[key]
+                else:
+                    needs_credentials = True
+                continue
+            resolved[key] = value
+        return resolved, needs_credentials
+
+    @staticmethod
     def export_backup(session: Session, org_id: int, encryption: EncryptionService) -> dict:
         """Export all non-deleted connections and uploads for an org.
 
-        Sensitive credential values are replaced with ``"CHANGE_ME"``.
+        Every value under a key in :data:`SENSITIVE_KEYS` is replaced with
+        :data:`REDACTED`. Nothing else is filtered, so treat any *new* field that
+        can hold a credential as needing a ``format: password`` marker in
+        ``CONFIG_SCHEMAS`` — that is what feeds this set.
         """
         conns = list(
             session.execute(
@@ -337,8 +418,7 @@ class BackupService:
         exported_conns: list[dict] = []
         for c in conns:
             conn_id_to_name[c.id] = c.name
-            config = encryption.decrypt(c.config_encrypted)
-            masked = {k: ("CHANGE_ME" if k in SENSITIVE_KEYS else v) for k, v in config.items()}
+            masked = BackupService._redact(encryption.decrypt(c.config_encrypted))
             exported_conns.append(
                 {
                     "name": c.name,
@@ -425,9 +505,18 @@ class BackupService:
                 entry["incremental_config"] = t.incremental_config
             exported_transformations.append(entry)
 
+        org = session.get(Organization, org_id)
+
         return {
             "version": BACKUP_VERSION,
             "exported_at": datetime.now(UTC).isoformat(),
+            # Provenance, so a restore into a different org can say so before it
+            # runs. Names and slugs only — nothing here identifies a user.
+            "org": {
+                "id": org_id,
+                "name": org.name if org else "",
+                "slug": org.slug if org else "",
+            },
             "connections": exported_conns,
             "uploads": exported_uploads,
             "pipelines": exported_pipelines,
@@ -454,8 +543,10 @@ class BackupService:
         Returns counts of imported and skipped items.
         """
         version = data.get("version")
-        if version not in (1, BACKUP_VERSION):
-            raise ValueError(f"Unsupported backup version {version}, expected {BACKUP_VERSION}")
+        if version not in SUPPORTED_BACKUP_VERSIONS:
+            raise ValueError(
+                f"Unsupported backup version {version}, expected one of {SUPPORTED_BACKUP_VERSIONS}"
+            )
 
         BackupService.validate_backup(session, org_id, data)
 
@@ -470,6 +561,10 @@ class BackupService:
         imported_conns = 0
         skipped = 0
 
+        # Connections whose credentials could not be recovered from the file
+        # (it never had them) and had nothing stored to carry forward.
+        credentials_required: list[str] = []
+
         for c_data in data.get("connections", []):
             name = c_data["name"]
             resolution = conflict_resolutions.get(("connection", name))
@@ -480,15 +575,25 @@ class BackupService:
                     skipped += 1
                     continue
                 elif resolution == "overwrite":
+                    target_id = conn_name_to_id[name]
+                    stored_conn = conn_svc.get_connection(session, org_id, target_id)
+                    stored = (
+                        encryption.decrypt(stored_conn.config_encrypted) if stored_conn else None
+                    )
+                    config, needs_credentials = BackupService._resolve_redactions(
+                        c_data["config"], stored
+                    )
                     conn_svc.update_connection(
                         session,
                         org_id,
-                        conn_name_to_id[name],
+                        target_id,
                         name=name,
                         connection_type=ConnectionType(c_data["connection_type"]),
-                        config=c_data["config"],
+                        config=config,
                     )
-                    name_to_new_id[name] = conn_name_to_id[name]
+                    if needs_credentials:
+                        credentials_required.append(name)
+                    name_to_new_id[name] = target_id
                     imported_conns += 1
                     continue
                 elif resolution == "rename":
@@ -499,13 +604,21 @@ class BackupService:
                     skipped += 1
                     continue
 
+            # A new connection has nothing stored to carry a redacted value
+            # forward from, so the secret is dropped and reported. Deliberately
+            # not carried from a same-named connection under `rename` — that is
+            # a copy, and silently cloning a credential into a new object is a
+            # different decision from restoring one in place.
+            config, needs_credentials = BackupService._resolve_redactions(c_data["config"], None)
             conn = conn_svc.create_connection(
                 session,
                 org_id,
                 name,
                 ConnectionType(c_data["connection_type"]),
-                c_data["config"],
+                config,
             )
+            if needs_credentials:
+                credentials_required.append(name)
             # Map the original backup name to the new ID
             name_to_new_id[c_data["name"]] = conn.id
             imported_conns += 1
@@ -688,6 +801,7 @@ class BackupService:
             "pipelines_imported": imported_pipelines,
             "transformations_imported": imported_transformations,
             "skipped": skipped,
+            "credentials_required": credentials_required,
         }
 
     @staticmethod

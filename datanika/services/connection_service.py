@@ -168,7 +168,7 @@ _NON_DB_TYPES = {
 #: Config keys whose values must never appear in a message shown to a user.
 #: Superset of what any one connector stores — a key absent from a config costs
 #: nothing here, and a key missing from this set is a credential disclosure.
-_SECRET_CONFIG_KEYS = frozenset(
+SECRET_CONFIG_KEYS = frozenset(
     {
         "password",
         "token",
@@ -182,6 +182,16 @@ _SECRET_CONFIG_KEYS = frozenset(
         "service_account_json",
         "credentials",
         "secret",
+        # Added #651. Every one of these is already marked `format: password`
+        # in CONFIG_SCHEMAS and was absent here, so its value could be quoted
+        # back verbatim in a connection-test error. The link that would have
+        # caught it now exists: tests/test_services/test_secret_key_coverage.py
+        # asserts this set is a superset of every sensitive schema field.
+        "api_token",
+        "auth_password",
+        "auth_token",
+        "aws_access_key_id",
+        "security_token",
     }
 )
 
@@ -201,7 +211,7 @@ def _redact_secrets(text: str, config: dict) -> str | None:
     falls back to the generic message, so the worst case is the old behaviour
     rather than a password on screen.
     """
-    for key in _SECRET_CONFIG_KEYS:
+    for key in SECRET_CONFIG_KEYS:
         value = config.get(key)
         if not isinstance(value, str) or not value:
             continue

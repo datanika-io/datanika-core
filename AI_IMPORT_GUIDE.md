@@ -13,11 +13,11 @@
 
 You are helping a user set up data pipelines in Datanika. The user will describe what they want in natural language. Your job is to produce a JSON file that they can upload to Datanika via **Settings > Import File**.
 
-## JSON Format (version 2)
+## JSON Format (version 3)
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "connections": [...],
   "uploads": [...],
   "pipelines": [...],
@@ -26,6 +26,8 @@ You are helping a user set up data pipelines in Datanika. The user will describe
 ```
 
 All sections are optional. Include only what the user needs. The import is **non-destructive** — it merges with existing data, never deletes anything.
+
+Versions 1 and 2 still import. A file Datanika *exports* is version 3, which additionally carries an `org` object naming the workspace it came from; importing it into a different workspace asks the user to confirm first. You do not need to write an `org` object in a file you author.
 
 ---
 
@@ -65,7 +67,9 @@ Direction (source/destination/both) is automatically determined from `connection
 
 ### Supported connection types with config examples
 
-Set sensitive values (`password`, `api_key`, `aws_secret_access_key`, `service_account_json`) to `"CHANGE_ME"`. The user will enter real credentials after import.
+Set every sensitive value to `"CHANGE_ME"` — the examples below show which fields those are for each connector. Datanika recognises that placeholder and does **not** store it: the key is left unset, and the user enters the real credential after import. Overwriting an existing connection keeps the credential it already has, so re-importing a file never destroys a working connection.
+
+A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An export never contains a real credential, so it cannot be used to move one between workspaces.
 
 #### Databases (source + destination)
 

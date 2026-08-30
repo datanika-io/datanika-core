@@ -327,6 +327,7 @@ def backup_restore_card() -> rx.Component:
                 ),
                 spacing="3",
             ),
+            rx.text(_t["settings.export_backup_hint"], size="1", color_scheme="gray"),
             rx.separator(),
             rx.text(_t["settings.restore_backup"], size="2", weight="medium"),
             rx.upload(
@@ -337,13 +338,30 @@ def backup_restore_card() -> rx.Component:
                 id="backup_upload",
             ),
             rx.cond(
-                BackupState.restore_conflicts.length() > 0,
+                BackupState.restore_pending,
                 rx.vstack(
-                    rx.callout(
-                        _t["settings.restore_conflicts"],
-                        icon="triangle_alert",
-                        color_scheme="orange",
-                        width="100%",
+                    rx.cond(
+                        BackupState.restore_foreign_org != "",
+                        rx.callout(
+                            rx.vstack(
+                                rx.text(_t["settings.restore_foreign_org"], weight="bold"),
+                                rx.text(BackupState.restore_foreign_org),
+                                rx.text(_t["settings.restore_foreign_org_hint"], size="1"),
+                                spacing="1",
+                            ),
+                            icon="shield_alert",
+                            color_scheme="red",
+                            width="100%",
+                        ),
+                    ),
+                    rx.cond(
+                        BackupState.restore_conflicts.length() > 0,
+                        rx.callout(
+                            _t["settings.restore_conflicts"],
+                            icon="triangle_alert",
+                            color_scheme="orange",
+                            width="100%",
+                        ),
                     ),
                     rx.foreach(BackupState.restore_conflicts, _conflict_row),
                     rx.hstack(

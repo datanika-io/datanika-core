@@ -39,6 +39,28 @@ _ORIGINAL = (
 )
 
 
+def _clean_env(**extra: str) -> dict:
+    """`os.environ` with every ``GIT_*`` variable removed.
+
+    🚨 **This is load-bearing and it cost a real repair.** `git` reads `GIT_DIR`,
+    `GIT_INDEX_FILE` and `GIT_WORK_TREE` from the environment and they win over
+    `cwd`. The **pre-push hook sets them** — so when this suite ran under
+    `git push`, the sandbox fixture's `git init` / `git add -A` / `git commit`
+    executed against **the real worktree's index**, not the tmp_path sandbox. It
+    emptied the index, staged three sandbox files, and committed `seed` onto the
+    feature branch. The test reported an ERROR, which was the only visible sign.
+
+    It passed every time it was run by hand, because a bare `pytest` sets no
+    `GIT_*`. The failure existed only under the one invoker that matters.
+
+    **Any test that shells out to git must scrub this, or it operates on
+    whichever repository invoked it.**
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(UV_NO_SYNC="1", **extra)
+    return env
+
+
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-c", "user.email=t@example.com", "-c", "user.name=T", *args],
@@ -46,6 +68,7 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         check=True,
+        env=_clean_env(),
     )
 
 
@@ -87,7 +110,7 @@ def _run_probe(repo: Path, *args: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
         timeout=300,
-        env=dict(os.environ, UV_NO_SYNC="1"),
+        env=_clean_env(),
     )
 
 
@@ -112,7 +135,7 @@ class TestAHardKillIsRecoverable:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env=dict(os.environ, UV_NO_SYNC="1"),
+            env=_clean_env(),
         )
         saw_a_mutation = False
         deadline = time.monotonic() + 120
@@ -224,3 +247,76 @@ class TestApplyingAMutant:
         src = "def f(n):\n    return n >= 10\n"
         m = next(x for x in mp.enumerate_mutants(src) if x.kind == "cmp")
         assert mp.apply_mut(src, m) == "def f(n):\n    return n < 10\n"
+
+
+class TestTheAmbientGitEnvironmentCannotRedirectIt:
+    """Regression for the incident described on `_clean_env`.
+
+    This ran green by hand for an entire session and destroyed the worktree's
+    index the first time it ran under `git push`, because the pre-push hook
+    exports `GIT_DIR`. The difference between those two invocations was invisible
+    to every assertion in this file, so it gets its own.
+    """
+
+    @pytest.fixture
+    def decoy(self, tmp_path: Path) -> Path:
+        """A second, deliberately DIRTY repo, standing in for the real worktree."""
+        d = tmp_path / "decoy"
+        d.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=d, check=True, env=_clean_env())
+        (d / "someone-elses-work.txt").write_text("do not touch", encoding="utf-8")
+        return d
+
+    def test_a_hook_style_git_dir_does_not_redirect_the_probe(self, sandbox: Path, decoy: Path):
+        """⚠️ This deliberately does NOT use `_run_probe`, and that is the point.
+
+        The first version did. `_run_probe` hands the child a *scrubbed* env, so
+        the probe never saw `GIT_DIR` and the test passed identically with the
+        probe's own scrub removed — **a test that could not fail**, written inside
+        the audit about tests that cannot fail. Caught only by re-running it
+        against a deliberately weakened `mutation_probe.py`.
+
+        So this one launches the probe with the **polluted** environment a git hook
+        would actually give it, which is the only way the probe's own defence is
+        under test.
+        """
+        polluted = dict(
+            os.environ,
+            UV_NO_SYNC="1",
+            GIT_DIR=str(decoy / ".git"),
+            GIT_WORK_TREE=str(decoy),
+        )
+        r = subprocess.run(
+            [sys.executable, str(PROBE), "--repo", str(sandbox), "--check"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            env=polluted,
+        )
+        # The sandbox is clean and the decoy is dirty, so the two answers differ:
+        # an unscrubbed probe reads the decoy, sees an untracked file, returns 4.
+        assert r.returncode == 0, (
+            "the probe read the repository named by $GIT_DIR instead of --repo:\n" + r.stdout
+        )
+        assert "someone-elses-work" not in r.stdout
+
+    def test_the_sandbox_fixture_itself_is_not_redirected(
+        self, sandbox: Path, decoy: Path, monkeypatch
+    ):
+        """The fixture's own `git init`/`add`/`commit` is what did the damage."""
+        monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(decoy))
+        assert _git(sandbox, "status", "--porcelain").stdout.strip() == ""
+        log = _git(sandbox, "log", "--oneline", "-1").stdout
+        assert "seed" in log
+        # and nothing was committed into the decoy
+        decoy_log = subprocess.run(
+            ["git", "log", "--oneline"],
+            cwd=decoy,
+            capture_output=True,
+            text=True,
+            env=_clean_env(),
+        )
+        assert decoy_log.returncode != 0 or not decoy_log.stdout.strip(), (
+            f"a commit landed in the decoy repo: {decoy_log.stdout!r}"
+        )

@@ -5,6 +5,7 @@ import reflex as rx
 from datanika.ui.components.captcha import captcha_script
 from datanika.ui.components.i18n_text import interpolate
 from datanika.ui.components.layout import PRIVACY_URL, TERMS_URL
+from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -40,6 +41,7 @@ def signup_page() -> rx.Component:
                         id="signup-full-name",
                         placeholder=_t["auth.ph_full_name"],
                         name="full_name",
+                        custom_attrs=autofill_attrs("name"),
                         width="100%",
                     ),
                     rx.el.label(
@@ -51,6 +53,7 @@ def signup_page() -> rx.Component:
                         placeholder=_t["auth.ph_email"],
                         name="email",
                         default_value=AuthState.invite_email,
+                        custom_attrs=autofill_attrs("username"),
                         width="100%",
                     ),
                     rx.el.label(
@@ -62,6 +65,11 @@ def signup_page() -> rx.Component:
                         placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",
+                        # new-password, NOT current-password: this makes Chrome
+                        # offer to *generate* rather than fill the account's
+                        # existing saved Datanika password into a brand-new
+                        # account (core#672).
+                        custom_attrs=autofill_attrs("new-password"),
                         width="100%",
                     ),
                     rx.button(

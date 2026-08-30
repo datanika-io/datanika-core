@@ -52,6 +52,11 @@ services:
     environment:
       FILE_UPLOADS_DIR: /app/uploaded_files
       GRANIAN_WORKERS: "2"
+      # See docker-compose.yml: Reflex reads REFLEX_REDIS_URL, not REDIS_URL. Without
+      # it each worker keeps its own session store and a reconnect served by the other
+      # one loses the session (#646). This is why golden-path.spec.ts was 3-of-6 here:
+      # `gotoReady` does a full page.goto per step, so every step re-rolls the dice.
+      REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
     depends_on:
       postgres:
@@ -88,6 +93,11 @@ services:
     environment:
       FILE_UPLOADS_DIR: /app/uploaded_files
       GRANIAN_WORKERS: "2"
+      # See docker-compose.yml: Reflex reads REFLEX_REDIS_URL, not REDIS_URL. Without
+      # it each worker keeps its own session store and a reconnect served by the other
+      # one loses the session (#646). This is why golden-path.spec.ts was 3-of-6 here:
+      # `gotoReady` does a full page.goto per step, so every step re-rolls the dice.
+      REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
     depends_on:
       postgres:

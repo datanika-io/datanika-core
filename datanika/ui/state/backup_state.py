@@ -16,6 +16,14 @@ class BackupState(BaseState):
     restore_conflicts: list[dict] = []
     restore_data: dict = {}
     restore_result: str = ""
+    #: Name of the org an uploaded backup was exported from, when that is not
+    #: this org. Blank otherwise, including for v1/v2 files that carry no
+    #: provenance at all.
+    restore_foreign_org: str = ""
+    #: Whether a restore is held awaiting confirmation. Set by *either* a name
+    #: conflict or a foreign-org warning, so the confirm/cancel block does not
+    #: have to know which reason held it.
+    restore_pending: bool = False
 
     def set_conflict_resolution(self, key: str, value: str):
         self.restore_conflicts = [
@@ -26,8 +34,16 @@ class BackupState(BaseState):
         self.restore_conflicts = []
         self.restore_data = {}
         self.restore_result = ""
+        self.restore_foreign_org = ""
+        self.restore_pending = False
 
     async def export_backup(self):
+        # An export decrypts every connection config in the org. Redaction keeps
+        # credentials out of the file, but the rest — hostnames, database names,
+        # bucket paths, account ids — is still the org's infrastructure map, and
+        # restore already requires admin. #651.
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         if not org_id:
             return
@@ -58,7 +74,10 @@ class BackupState(BaseState):
             self.error_message = f"Invalid JSON file: {e}"
             return
 
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
         if not org_id:
             return
 
@@ -69,11 +88,17 @@ class BackupState(BaseState):
             self.error_message = self._safe_error(e, "Failed to detect conflicts")
             return
 
-        if conflicts:
+        # Slug as well as id: two deployments can each have an org with id 5,
+        # and comparing ids alone would call that file "same org".
+        foreign = BackupService.foreign_org(data, org_id, auth.current_org.slug)
+        self.restore_foreign_org = foreign
+
+        if conflicts or foreign:
             self.restore_data = data
             self.restore_conflicts = [
                 {**c, "key": f"{c['type']}:{c['name']}", "resolution": "skip"} for c in conflicts
             ]
+            self.restore_pending = True
         else:
             await self._do_import(org_id, data, {})
 
@@ -88,6 +113,8 @@ class BackupState(BaseState):
         await self._do_import(org_id, self.restore_data, resolutions)
         self.restore_conflicts = []
         self.restore_data = {}
+        self.restore_foreign_org = ""
+        self.restore_pending = False
 
     async def _do_import(self, org_id: int, data: dict, resolutions: dict[tuple[str, str], str]):
         from datanika.ui.state.auth_state import AuthState
@@ -124,3 +151,10 @@ class BackupState(BaseState):
             f"{result['uploads_imported']} uploads. "
             f"Skipped {result['skipped']}."
         )
+        # A backup never contains credentials, so a restored connection cannot
+        # connect until someone re-enters them. Saying which ones is the
+        # difference between "it restored" and "it restored and half of it is
+        # inert". Names only — a dynamic list, so not an i18n key.
+        needs = result.get("credentials_required") or []
+        if needs:
+            self.restore_result += " Credentials must be re-entered for: " + ", ".join(needs) + "."

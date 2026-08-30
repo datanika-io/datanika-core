@@ -95,9 +95,9 @@ class TestTheGuardCanActuallyFail:
     """
 
     def test_it_finds_a_module_level_call(self):
-        assert _module_level_scheduler_calls(
-            "import x\nscheduler_integration.start()\n"
-        ), "the detector missed a bare module-level start()"
+        assert _module_level_scheduler_calls("import x\nscheduler_integration.start()\n"), (
+            "the detector missed a bare module-level start()"
+        )
 
     def test_it_finds_one_nested_in_a_module_level_with_block(self):
         """The real file's ``sync_all`` sits inside a module-level ``with``."""
@@ -160,9 +160,7 @@ class TestTheSchedulerIsNotArmedByImport:
 
         source = inspect.getsource(schedule_service)
         mutations = [
-            call
-            for call in ("sync_schedule", "remove_schedule")
-            if f"_scheduler.{call}(" in source
+            call for call in ("sync_schedule", "remove_schedule") if f"_scheduler.{call}(" in source
         ]
         assert not mutations, (
             f"ScheduleService still drives the in-process scheduler ({', '.join(mutations)}). "

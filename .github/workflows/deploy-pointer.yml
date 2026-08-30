@@ -179,10 +179,17 @@ jobs:
       # Celery is NOT blue/green: it serves no HTTP traffic, so a brief restart costs
       # nothing (tasks stay queued in Redis) and running two workers on one broker would
       # double-consume. Recreate it after the swap so it picks up the same new image.
-      - name: Recreate celery worker
+      #
+      # `beat` (core#653) joins it here for exactly the same reason, and this line is the
+      # whole of its exactly-one guarantee: it is recreated, never stood up beside itself.
+      # Two beats would double-fire every scheduled entry. It is also what keeps
+      # tests/test_deploy/test_deploy_service_coverage.py green — a compose service named
+      # by no deploy step runs on whatever config it started with, indefinitely and
+      # silently, which is what core#616 was.
+      - name: Recreate celery worker and beat
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery'
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery beat'
 
       # Assert the colour that is actually SERVING is healthy — not a hardcoded container
       # name, which is what made the old check meaningless once colours alternate.

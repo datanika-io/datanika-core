@@ -503,7 +503,7 @@ jobs:
           set -e
           cd /opt/datanika-staging
           set -a && . ./.env.docker && set +a
-          if docker compose -p datanika-staging up -d postgres redis app celery; then
+          if docker compose -p datanika-staging up -d postgres redis app celery beat; then
             echo "staging stack up"
           else
             echo "compose up failed - clearing the whole project's containers, retrying once"
@@ -513,7 +513,7 @@ jobs:
             # Named volumes are untouched by `docker rm`, so staging data survives.
             docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' \
               | xargs -r docker rm -f || true
-            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery
+            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat
             echo "staging stack up after recovery"
           fi
           STAGING

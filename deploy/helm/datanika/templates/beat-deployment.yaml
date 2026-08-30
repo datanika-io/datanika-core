@@ -1,0 +1,77 @@
+{{- if .Values.beat.enabled }}
+# Celery Beat (core#653).
+#
+# Without this Deployment the chart ships the same defect production had: `celery_app.py`
+# defines an hourly `datanika.run_maintenance` and no process ever runs it, so dbt targets,
+# orphaned dlt working directories, orphaned upload archives, runs past their retention and
+# spent password-reset token hashes accumulate forever. There is no error and no log line —
+# the sweeps simply never happen.
+#
+# Exactly one, enforced by the manifest rather than by convention:
+#   * `replicas` is NOT `.Values.beat.replicaCount`. It is hardcoded to 1 and validated
+#     below, because a second beat double-fires every scheduled entry. Making it a knob
+#     would be offering a footgun with a friendly name.
+#   * `strategy: Recreate` — a RollingUpdate would run the old and new beat together for
+#     the length of the rollout, which is exactly the double-fire window.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "datanika.fullname" . }}-beat
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: beat
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "datanika.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: beat
+  template:
+    metadata:
+      labels:
+        {{- include "datanika.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: beat
+    spec:
+      serviceAccountName: {{ include "datanika.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: beat
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            {{- toYaml .Values.beat.command | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ include "datanika.fullname" . }}-env
+          volumeMounts:
+            # Must match the `--schedule` path in `.Values.beat.command`.
+            - name: beat-state
+              mountPath: /app/beat_state
+          resources:
+            {{- toYaml .Values.beat.resources | nindent 12 }}
+      volumes:
+        - name: beat-state
+          persistentVolumeClaim:
+            claimName: {{ include "datanika.fullname" . }}-beat-state
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

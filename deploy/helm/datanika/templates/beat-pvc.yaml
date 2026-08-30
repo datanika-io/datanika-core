@@ -1,0 +1,26 @@
+{{- if .Values.beat.enabled }}
+# Celery Beat's shelve schedule DB (core#653).
+#
+# ReadWriteOnce, not ReadWriteMany: exactly one beat pod may exist, and RWO is the
+# access mode that says so. If a second replica is ever configured, most CSI drivers
+# will refuse to attach the volume twice on different nodes — which turns "two beats
+# double-fire every task" into a scheduling failure that is visible instead of silent.
+#
+# It is small on purpose (16 KB of shelve), but it must be persistent: PersistentScheduler
+# seeds `last_run_at = now` when it finds no stored state, so an emptyDir would restart the
+# hourly interval on every rollout and, on a busy day, the maintenance task would never
+# fire while every pod reads Ready. That is core#653 reproduced in a subtler form.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "datanika.fullname" . }}-beat-state
+  labels:
+    {{- include "datanika.labels" . | nindent 4 }}
+    app.kubernetes.io/component: beat
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.beat.persistence.size }}
+{{- end }}

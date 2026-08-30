@@ -11,7 +11,7 @@ from datanika.models.connection import Connection, ConnectionDirection, Connecti
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import DbtCommand, Pipeline
 from datanika.models.transformation import Materialization, Transformation
-from datanika.models.user import MemberRole, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -503,10 +503,22 @@ class TestMembershipBeforeCreateHook:
         db_session.add(user)
         db_session.flush()
 
-        return org, user, svc
+        # core#658: add_member is authenticated now and fails closed, so
+        # the org needs an owner to do the adding.
+        owner = User(
+            email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
+            password_hash=auth.hash_password("password123"),
+            full_name="Owner",
+        )
+        db_session.add(owner)
+        db_session.flush()
+        db_session.add(Membership(user_id=owner.id, org_id=org.id, role=MemberRole.OWNER))
+        db_session.flush()
+
+        return org, user, svc, owner
 
     def test_handler_raising_blocks_add_member(self, db_session, setup_membership):
-        org, user, svc = setup_membership
+        org, user, svc, owner = setup_membership
 
         def quota_check(**kw):
             raise ValueError("Member limit reached")
@@ -514,10 +526,18 @@ class TestMembershipBeforeCreateHook:
         hooks.on("membership.before_create", quota_check)
 
         with pytest.raises(ValueError, match="Member limit reached"):
-            svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
+            svc.add_member(
+                db_session,
+                org.id,
+                user.id,
+                MemberRole.EDITOR,
+                actor_user_id=owner.id,
+            )
 
     def test_no_handler_allows_add_member(self, db_session, setup_membership):
-        org, user, svc = setup_membership
+        org, user, svc, owner = setup_membership
 
-        membership = svc.add_member(db_session, org.id, user.id, MemberRole.EDITOR)
+        membership = svc.add_member(
+            db_session, org.id, user.id, MemberRole.EDITOR, actor_user_id=owner.id
+        )
         assert membership.id is not None

@@ -215,7 +215,15 @@ class TestRunUploadTask:
         db_session.refresh(upload)
         assert upload.status == UploadStatus.ERROR
 
-    def test_passes_dataset_name_derived_from_upload_name(self, db_session, setup_upload):
+    def test_uses_the_destination_connections_dataset(self, db_session, setup_upload):
+        """core#610 — the dataset the user named on the connection is where rows land.
+
+        The fixture's destination is a BigQuery connection carrying
+        `dataset: "d"`, and the upload is named "test". **This test used to
+        assert `"test"`** — it codified the bug rather than catching it: a
+        required, user-filled `Dataset` field was collected and then ignored
+        while the upload *name* was promoted into a physical location.
+        """
         org, upload, run, encryption = setup_upload
         with _mock_dlt_runner() as mock_runner_cls:
             instance = mock_runner_cls.return_value
@@ -232,11 +240,19 @@ class TestRunUploadTask:
             )
 
             call_kwargs = instance.execute.call_args[1]
-            assert call_kwargs["dataset_name"] == "test"
+            assert call_kwargs["dataset_name"] == "d"
 
-    def test_dataset_name_converts_spaces_to_underscores(
+    def test_the_upload_name_is_the_fallback_and_still_snake_cases(
         self, upload_svc, conn_svc, exec_svc, db_session, encryption
     ):
+        """A **postgres** destination has no dataset field, so the name is all there is.
+
+        This is what the old `test_dataset_name_converts_spaces_to_underscores`
+        was really covering. That test asserted it against a *BigQuery*
+        destination that carried `dataset="d"`, where it is now wrong — so the
+        `to_snake_case` behaviour moves here, to the destination where the
+        upload name is still the only available name.
+        """
         import uuid
 
         slug = f"acme-ds-{uuid.uuid4().hex[:8]}"
@@ -244,18 +260,14 @@ class TestRunUploadTask:
         db_session.add(org)
         db_session.flush()
         src = conn_svc.create_connection(
-            db_session,
-            org.id,
-            "S",
-            ConnectionType.POSTGRES,
-            {"host": "src", "port": 5432},
+            db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432}
         )
         dst = conn_svc.create_connection(
             db_session,
             org.id,
             "D",
-            ConnectionType.BIGQUERY,
-            {"project": "p", "dataset": "d"},
+            ConnectionType.POSTGRES,
+            {"host": "dst", "port": 5432, "database": "warehouse"},
         )
         upload = upload_svc.create_upload(
             db_session,
@@ -282,6 +294,37 @@ class TestRunUploadTask:
             )
             call_kwargs = instance.execute.call_args[1]
             assert call_kwargs["dataset_name"] == "my_sales_pipeline"
+
+    def test_a_blank_dataset_on_the_connection_falls_back_to_the_upload_name(
+        self, upload_svc, conn_svc, exec_svc, db_session, encryption
+    ):
+        """An empty field must not become an empty dataset.
+
+        `dlt.pipeline(dataset_name="")` is accepted, so returning `""` rather
+        than `None` from the router would silently create a nameless dataset —
+        a different flavour of the same "rows are somewhere else" failure.
+        """
+        import uuid
+
+        org = Organization(name="Acme", slug=f"acme-blank-{uuid.uuid4().hex[:8]}")
+        db_session.add(org)
+        db_session.flush()
+        src = conn_svc.create_connection(
+            db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432}
+        )
+        dst = conn_svc.create_connection(
+            db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "   "}
+        )
+        upload = upload_svc.create_upload(
+            db_session, org.id, "Fallback Name", "desc", src.id, dst.id, {}
+        )
+        run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
+
+        with _mock_dlt_runner() as mock_runner_cls:
+            instance = mock_runner_cls.return_value
+            instance.execute.return_value = {"rows_loaded": 1, "load_info": "x"}
+            run_upload(run_id=run.id, org_id=org.id, session=db_session, encryption=encryption)
+            assert instance.execute.call_args[1]["dataset_name"] == "fallback_name"
 
 
 class TestCatalogSyncAfterUpload:
@@ -319,6 +362,30 @@ class TestCatalogSyncAfterUpload:
                 encryption=encryption,
             )
         return org, upload, run, mock_introspect, mock_dbt_instance
+
+    def test_the_catalog_is_synced_against_the_dataset_the_rows_went_to(
+        self, db_session, setup_upload
+    ):
+        """The run and the catalog must name the same dataset (core#610).
+
+        `run_upload` passes one `dataset_name` to both `runner.execute` and
+        `_sync_catalog_after_upload`. If they ever diverged the catalog would
+        introspect a schema the rows are not in and come back empty, so the data
+        would be invisible in Models/Catalog while the run reported success —
+        the same silent failure one layer along.
+
+        Pinned rather than left to the fact that they share a variable today: it
+        is one refactor away from not being true, and the failure is silent.
+        """
+        org, upload, run, mock_introspect, _ = self._run_with_catalog_mocks(
+            db_session,
+            setup_upload,
+        )
+        # The fixture's destination is BigQuery with `dataset: "d"`.
+        assert mock_introspect.call_args.kwargs["schema_name"] == "d"
+        entries = CatalogService.list_entries(db_session, org.id)
+        assert entries[0].schema_name == "d"
+        assert entries[0].dataset_name == "d"
 
     def test_syncs_catalog_entries_after_success(self, db_session, setup_upload):
         org, upload, run, mock_introspect, _ = self._run_with_catalog_mocks(

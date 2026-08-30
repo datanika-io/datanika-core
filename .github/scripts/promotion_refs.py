@@ -83,6 +83,32 @@ def run(*args: str) -> str:
     return result.stdout
 
 
+def introduced_the_commit(pull: dict) -> bool:
+    """Did this PR actually bring the commit in, or does its branch merely contain it?
+
+    `GET /repos/{repo}/commits/{sha}/pulls` returns **every** pull whose branch
+    contains the commit -- not just the one that introduced it. Any open feature
+    branch cut from `dev` therefore comes back for every commit already on `dev`,
+    and without this filter it donates its closing keywords to the promotion.
+
+    That is core#635, caught on promotion PR #634 before merge: the block claimed
+    `Closes #608 ... via #633` while #633 was still open and one commit ahead of
+    `dev`. Merging would have retired an issue whose fix had not shipped.
+
+    Direction matters here. This automation replaced hand-enumeration because that
+    failed **open** -- issues left open after shipping (WORKFLOW_RULES.md section 8).
+    The bug made it fail **closed**, which is worse: an open issue gets re-triaged,
+    a closed one does not.
+
+    Two independent reasons to skip, and neither subsumes the other:
+      * not merged  -> the branch merely contains the commit
+      * base master -> a previous promotion PR, which IS merged
+    """
+    if pull.get("merged_at") is None:
+        return False
+    return pull.get("base", {}).get("ref") != "master"
+
+
 def gh_api(path: str) -> object:
     out = run("gh", "api", path)
     if not out.strip():
@@ -119,8 +145,8 @@ def main() -> int:
         if not isinstance(pulls, list):
             continue
         for pull in pulls:
-            if pull.get("base", {}).get("ref") == "master":
-                continue  # a previous promotion PR, not a feature PR
+            if not introduced_the_commit(pull):
+                continue
             for num in find_refs(pull.get("title", ""), pull.get("body") or ""):
                 refs.setdefault(num, set()).add(f"#{pull['number']}")
 
@@ -169,11 +195,11 @@ def main() -> int:
         ]
     )
 
-    current = run("gh", "pr", "view", pr_number, "--repo", repo, "--json", "body", "-q", ".body") or ""
+    current = (
+        run("gh", "pr", "view", pr_number, "--repo", repo, "--json", "body", "-q", ".body") or ""
+    )
     if START in current and END in current:
-        body = re.sub(
-            re.escape(START) + r".*?" + re.escape(END), block, current, flags=re.DOTALL
-        )
+        body = re.sub(re.escape(START) + r".*?" + re.escape(END), block, current, flags=re.DOTALL)
     else:
         body = (current.rstrip() + "\n\n" + block).lstrip()
 

@@ -220,6 +220,53 @@ class TestOpenApiSourceMovesRows:
         )
 
 
+class TestFileSourceMovesRows:
+    """``_build_file_source`` — the last outstanding row of the audit (core#545).
+
+    This is the builder #492 actually broke, and until now its only live assertion
+    was ``e2e/tests/golden-path.spec.ts``. That spec reads the **Runs table's
+    ``Rows`` column** (``e2e/fixtures/data.ts`` → ``runUploadAndAwait``, cell 5),
+    which is the pipeline's own report of its own work — precisely the number #492
+    made look plausible while the contents were a listing. So a green golden path
+    does not retire this row. Reading the destination back does.
+
+    No credential, no Docker, no network: a real CSV on disk, through the real
+    ``DltRunnerService.execute()``, into a real DuckDB file.
+
+    Scope, stated rather than implied: ``csv`` only. ``json`` and ``parquet`` share
+    the same lister-plus-reader assembly and differ solely in the transformer
+    ``_build_format_reader`` returns; ``s3`` additionally needs a credential.
+    """
+
+    @staticmethod
+    def _write_csv(directory) -> None:
+        header = "id,name,price\n"
+        body = "".join(f"{w['id']},{w['name']},{w['price']}\n" for w in WIDGETS)
+        (directory / "widgets.csv").write_text(header + body, encoding="utf-8")
+
+    def test_rows_land_in_the_destination(self, tmp_path):
+        drop = tmp_path / "drop"
+        drop.mkdir()
+        self._write_csv(drop)
+
+        db_path = _extract_load(
+            tmp_path,
+            "csv",
+            {"bucket_url": str(drop)},
+            {"file_glob": "widgets.csv"},
+        )
+
+        rows = _rows(db_path, "widgets")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "csv did not deliver the record CONTENTS into DuckDB. That is #492's "
+            "exact shape: `filesystem()` on its own is a *lister*, so losing the "
+            "`| read_csv()` pipe yields one row per file describing the file — and "
+            "a row COUNT still looks healthy, which is why the count is not the "
+            "assertion here."
+        )
+
+
 def _docker_available() -> bool:
     try:
         import docker

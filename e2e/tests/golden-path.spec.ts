@@ -44,21 +44,33 @@ import {
  * because the job is slow, the fix is a smaller fixture — not dropping the tag,
  * and not un-setting the flag.
  *
- * ── Tier: @informational (core#521, supersedes the #520 quarantine) ──────────
- * This spec runs on every push to `dev` and uploads artifacts, but its result
- * does NOT hold the promotion. It was authored 2026-07-22 and has not yet
- * passed; a test with no track record was never protecting production, and
- * letting it gate meant a spec written that morning held back a P0 the same
- * afternoon (#520).
+ * ── Tier: GATING (graduated 2026-08-30 — core#529, under core#521's policy) ──
+ * This spec now holds the promotion. It was @informational from 2026-07-22,
+ * while it had no track record: a test that has never passed was never
+ * protecting production, and letting one gate meant a spec written that morning
+ * held back a P0 the same afternoon (#520).
+ *
+ * It graduated on RUNS, not on reasoning — three consecutive
+ * `INFORMATIONAL_RESULT=success` on `dev`, read from the `e2e-staging` job's own
+ * log rather than from the step's tick, which `continue-on-error` masks:
+ * 2026-08-30 at 13:26:57Z, 13:48:49Z and 14:13:49Z. One run in between had its
+ * `deploy-staging` skipped, which took the whole downstream chain with it; a skip
+ * is in neither tier and counted toward nothing.
+ *
+ * What makes those greens meaningful rather than lucky is that the flake had a
+ * root cause and it was fixed. core#646: prod and staging ran several Reflex
+ * worker processes over a PER-PROCESS state store, because Reflex reads
+ * `REFLEX_REDIS_URL` and the compose files set `REDIS_URL` — a name nothing in
+ * Reflex looks at. `gotoReady` does a full `page.goto` at EVERY step, so each
+ * step opened a new socket and re-rolled that dice. Measured on prod with a
+ * `/_event` wire-protocol probe: 48% of reconnects were served a stale session
+ * before the fix (which in this app is a logout), 0% after.
  *
  * The line, and it is load-bearing: a spec that USED TO PASS must stay gating —
- * demoting one hides a regression. This tier is for specs that have not yet
- * earned in, never a bolt-hole for ones that broke.
- *
- * **Graduation: 3 consecutive greens on `dev` → remove `@informational`.** The
- * run log prints `INFORMATIONAL_RESULT=` each time, and a green emits a CI
- * warning, so the evidence is mechanical rather than remembered. Procedure and
- * owner: `plans/qa/PLAN_QA.md` §E2E tiers.
+ * demoting one hides a regression. The informational tier is for specs that have
+ * not yet earned in, never a bolt-hole for ones that broke. **This spec has now
+ * passed. It does not go back.** Policy and procedure: `plans/qa/PLAN_QA.md`
+ * §E2E tiers.
  */
 
 const CSV_ROWS = 3;
@@ -72,17 +84,19 @@ const CSV_CONTENT = ["id,name,amount", "1,alpha,100", "2,beta,200", "3,gamma,300
  */
 const SHARED_DIR = process.env.DATANIKA_E2E_SHARED_DIR ?? "/app/uploaded_files";
 
-// Artifacts unconditionally while this spec is @informational (core#521).
+// Artifacts unconditionally — KEPT after graduation to gating (core#529).
 //
 // The global config is `retain-on-failure`, which would in fact cover a genuine
-// failure — this is belt and braces, deliberately. An informational spec exists
-// to produce evidence, and its whole value is the trace of the round it is
-// currently losing; every fix so far (#508, #515, #529) came out of one. Losing
-// that to a config nuance would leave a spec that runs and teaches nothing.
+// failure — this is belt and braces, deliberately. The justification changed
+// with the tier but the conclusion did not: this is now the one spec whose red
+// BLOCKS a promotion, so the round it loses is the round someone has to diagnose
+// under time pressure. Every fix so far (#508, #515, #529, #646) came out of one
+// of these traces. Losing that to a config nuance would leave a gating spec that
+// stops the line and explains nothing.
 //
-// (It previously read "while quarantined (core#520)" and justified itself by
-// `test.fail()` classifying failures as `expected`. That marker is gone — the
-// tier replaced it — so the reasoning is restated rather than left stale.)
+// (It previously read "while quarantined (core#520)", then "while this spec is
+// @informational (core#521)". Both markers are gone; the reasoning is restated
+// rather than left stale.)
 //
 // Must be file top-level, NOT inside the describe: `use({ trace })` forces a new
 // worker, and Playwright refuses it in a describe group — which fails collection
@@ -90,7 +104,7 @@ const SHARED_DIR = process.env.DATANIKA_E2E_SHARED_DIR ?? "/app/uploaded_files";
 // have taken all 62 tests down.
 test.use({ trace: "on", screenshot: "on", video: "retain-on-failure" });
 
-test.describe("Golden path: signup → connection → pipeline → run @slow @informational", () => {
+test.describe("Golden path: signup → connection → pipeline → run @slow", () => {
   // Signup, two connections, an upload and a Celery round trip. The default
   // 60s covers none of that. Deliberately NOT larger: every interaction is
   // individually bounded in fixtures/data.ts, so this cap should never be what

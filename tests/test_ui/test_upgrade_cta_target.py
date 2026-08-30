@@ -109,8 +109,16 @@ class TestOneRouteNotTwo:
 
 class TestTheEmailCarriesAWorkingUrl:
     def test_the_upgrade_url_is_the_billing_route(self):
+        """Read the URL the **service** builds, never one the test builds (#682 §3).
+
+        This used to format `_QUOTA_WARNING_TEMPLATE` with an `upgrade_url` the
+        test supplied and then assert that same string came back — so
+        `email_service.py`'s own construction, the line the fix touched, was
+        never executed and the assertion could not fail. Capturing `send` runs it.
+        """
+        sent = {}
         svc = email_service_module.EmailService(
-            smtp_host="",
+            smtp_host="smtp.example.com",
             smtp_port=25,
             smtp_user="",
             smtp_password="",
@@ -119,17 +127,13 @@ class TestTheEmailCarriesAWorkingUrl:
             smtp_use_tls=False,
             frontend_url="https://app.datanika.io/",
         )
-        html = email_service_module._QUOTA_WARNING_TEMPLATE.format(
-            plan_name="Pro",
-            metric_label="runs",
-            used=9,
-            limit=10,
-            percent=90,
-            upgrade_url=f"https://app.datanika.io{BILLING_ROUTE}",
-            app_name="Datanika",
+        svc.send = lambda to, subject, html_body, text_body=None: (
+            sent.update(html=html_body) or True
         )
-        assert f"https://app.datanika.io{BILLING_ROUTE}" in html
-        assert svc.is_enabled() is False  # the fixture is inert by construction
+        svc.send_quota_warning_email(
+            "owner@example.com", "Pro", "runs", 9, 10, billing_enabled=True
+        )
+        assert f"https://app.datanika.io{BILLING_ROUTE}" in sent["html"]
 
 
 class TestTheAlreadySentUrlStillWorks:

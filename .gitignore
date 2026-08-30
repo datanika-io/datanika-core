@@ -230,3 +230,10 @@ secrets/
 # Written by scripts/check_scheduled_workflows.py when it finds a stopped cron.
 # Ephemeral CI artifact; never a source file (core#628).
 problems.md
+
+# scripts/mutation_probe.py keeps its sentinel + pristine originals here.
+# ⚠️ Load-bearing: the probe refuses to start on a dirty tree, so if its own
+# bookkeeping were tracked, every run after the first would refuse. It is also
+# where a killed run's recovery data lives — do not delete it while a probe is
+# in flight; run `python scripts/mutation_probe.py --restore` first.
+.mutation-probe-state/

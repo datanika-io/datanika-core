@@ -91,7 +91,12 @@ class TestHandleCallback:
 
         svc._exchange_code = AsyncMock(return_value={"access_token": "provider_token"})
         svc._fetch_userinfo = AsyncMock(
-            return_value={"email": "user@test.com", "name": "Test User", "sub": "123"}
+            return_value={
+                "email": "user@test.com",
+                "name": "Test User",
+                "sub": "123",
+                "email_verified": True,
+            }
         )
 
         session = MagicMock()
@@ -101,7 +106,7 @@ class TestHandleCallback:
         assert result["refresh_token"] == "jwt_refresh"
         assert result["is_new"] is False
         mock_user_svc.find_or_create_oauth_user.assert_called_once_with(
-            session, "user@test.com", "Test User", "google", "123"
+            session, "user@test.com", "Test User", "google", "123", email_verified=True
         )
 
     @pytest.mark.asyncio
@@ -115,7 +120,12 @@ class TestHandleCallback:
 
         svc._exchange_code = AsyncMock(return_value={"access_token": "tok"})
         svc._fetch_userinfo = AsyncMock(
-            return_value={"email": "new@test.com", "name": "New", "sub": "456"}
+            return_value={
+                "email": "new@test.com",
+                "name": "New",
+                "sub": "456",
+                "email_verified": True,
+            }
         )
 
         session = MagicMock()
@@ -140,8 +150,9 @@ class TestHandleCallback:
             await svc.handle_callback(google, "code", "http://cb", session)
 
     @pytest.mark.asyncio
-    async def test_github_email_fallback(self, svc, github, mock_user_svc):
-        """GitHub may not return email in userinfo; falls back to /user/emails."""
+    async def test_github_email_comes_from_the_emails_endpoint(self, svc, github, mock_user_svc):
+        """GitHub's userinfo carries no verification flag, so the authoritative
+        /user/emails list is always what decides."""
         user = MagicMock()
         user.id = 3
         org = MagicMock()

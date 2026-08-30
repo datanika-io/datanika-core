@@ -228,9 +228,14 @@ async def sso_callback(request: Request) -> RedirectResponse:
 
         try:
             if sso.protocol.value == "oidc":
-                email, full_name = await _oidc_exchange(request, sso, svc)
+                email, full_name, email_verified = await _oidc_exchange(request, sso, svc)
             elif sso.protocol.value == "saml":
                 email, full_name = await _saml_parse(request, sso, stored_state)
+                # The assertion is only reached here after full validation
+                # against the org's configured IdP certificate, so the address
+                # is asserted by the IdP the org's own admin designated as
+                # authoritative for its users.
+                email_verified = True
             else:
                 return RedirectResponse(
                     url=_frontend("/login?error=Unsupported+protocol"), status_code=302
@@ -252,6 +257,7 @@ async def sso_callback(request: Request) -> RedirectResponse:
                 full_name or email.split("@")[0],
                 oauth_provider=provider_name,
                 oauth_provider_id=email,
+                email_verified=email_verified,
             )
 
             # Ensure user is a member of the SSO org
@@ -331,8 +337,20 @@ async def sso_callback(request: Request) -> RedirectResponse:
     return response
 
 
-async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, str]:
-    """Exchange OIDC authorization code for user info."""
+async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, str, bool]:
+    """Exchange an OIDC authorization code for user info.
+
+    Returns ``(email, name, email_verified)``. The third element states whether
+    this address was actually asserted *by the issuer*, and it is what stops the
+    caller from linking a session to an account on an unauthenticated claim.
+
+    Note the trust model differs from public social login (``oauth_service``):
+    there we require the provider's own ``email_verified`` claim, because anyone
+    may open a Google or GitHub account. Here the org's admin configured this
+    issuer as authoritative for their users, so establishing that the response
+    genuinely came from *that issuer* is the check that matters. Many enterprise
+    IdPs never emit ``email_verified`` at all.
+    """
     import httpx
 
     code = request.query_params.get("code", "")
@@ -373,11 +391,12 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
             )
             user_resp.raise_for_status()
             user_info = user_resp.json()
-            email = user_info.get("email", "")
-            name = user_info.get("name", "")
-            return email, name
+            # Reached over TLS at an endpoint named by the issuer's own
+            # discovery document, authenticated with the access token this
+            # exchange just minted: the issuer is the one saying this.
+            return user_info.get("email", ""), user_info.get("name", ""), True
 
-        # Try extracting from ID token
+        # Fallback for issuers that publish no `userinfo_endpoint`.
         id_token = tokens.get("id_token", "")
         if id_token:
             import base64
@@ -386,9 +405,13 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
             payload = id_token.split(".")[1]
             payload += "=" * (4 - len(payload) % 4)
             claims = json.loads(base64.urlsafe_b64decode(payload))
-            return claims.get("email", ""), claims.get("name", "")
+            # The signature over these claims is NOT checked, so nothing here is
+            # attributable to the issuer yet. Reported as unverified, which makes
+            # find_or_create_oauth_user refuse it — failing closed until the
+            # JWKS verification lands and this becomes True.
+            return claims.get("email", ""), claims.get("name", ""), False
 
-    return "", ""
+    return "", "", False
 
 
 async def _saml_parse(request: Request, sso, state: str) -> tuple[str, str]:

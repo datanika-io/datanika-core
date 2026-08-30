@@ -136,8 +136,31 @@ services:
     command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
     restart: unless-stopped
 
+  # Celery Beat (core#653). Mirrors the prod service — see docker-compose.yml for the
+  # full rationale (own container rather than `worker -B`, and why `beat_state` is
+  # load-bearing). Staging carries it so "exactly one beat across a swap" can be
+  # *demonstrated* here rather than reasoned about in a prod deploy, which is core#653's
+  # own acceptance criterion 2.
+  beat:
+    image: ghcr.io/datanika-io/datanika-core:staging
+    container_name: datanika-staging-beat
+    env_file:
+      - .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - staging_beat_state:/app/beat_state
+    command: >
+      uv run celery -A datanika.tasks.celery_app:celery_app beat -l info
+      --schedule /app/beat_state/celerybeat-schedule
+    restart: unless-stopped
+
 volumes:
   staging_pgdata:
   staging_redisdata:
   staging_dbt:
   staging_uploads:
+  staging_beat_state:

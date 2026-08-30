@@ -33,7 +33,20 @@ groups:
               # duration now lives in the query. Max staleness ever observed in 30d is
               # 26s against a 60s threshold, so this has never fired — the fix is
               # pre-emptive, not a response to an incident.
-              expr: 'count_over_time(((time() - max by (name) (container_last_seen{name=~"datanika-(celery|postgres|redis)"})) > 60)[2m:15s])'
+              #
+              # core#653: `beat` joins this list, and that is the *reason* it is its own
+              # container rather than `celery worker -B`. A beat thread dying inside a
+              # live worker leaves the container Up and healthy — indistinguishable from
+              # the bug core#653 reports, where the hourly maintenance task simply never
+              # arrives and nothing says so. As a container it has a `container_last_seen`
+              # series, so its death is the same observable event as any other tier's.
+              #
+              # ⚠️ The anchoring that makes this safe is worth stating, because core#615
+              # got it wrong in the other direction: Prometheus anchors regexes at both
+              # ends, so `datanika-(celery|beat|postgres|redis)` matches `datanika-beat`
+              # and does NOT match `datanika-staging-beat`. Staging is redeployed on every
+              # push to dev; a `datanika-.*` here would page critical on every merge.
+              expr: 'count_over_time(((time() - max by (name) (container_last_seen{name=~"datanika-(celery|beat|postgres|redis)"})) > 60)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:

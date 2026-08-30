@@ -103,6 +103,43 @@ celery:
       cpu: "1"
       memory: 1Gi
 
+## Celery Beat — the periodic-task scheduler (core#653).
+##
+## ⚠️ There is deliberately NO `replicaCount` here. Beat is a singleton: two of them
+## double-fire every scheduled entry, so the Deployment hardcodes `replicas: 1` with
+## `strategy: Recreate`. `enabled: false` is the only supported way to not run it, and
+## turning it off means the maintenance sweeps below never run at all.
+##
+## What stops running if you disable it: cleanup_dbt_targets, cleanup_orphaned_dlt_dirs,
+## cleanup_orphaned_archives, purge_old_runs, PasswordResetService.purge_expired.
+beat:
+  enabled: true
+  command:
+    - uv
+    - run
+    - celery
+    - -A
+    - datanika.tasks.celery_app:celery_app
+    - beat
+    - -l
+    - info
+    # Must match the beat-state volumeMount path in beat-deployment.yaml.
+    - --schedule
+    - /app/beat_state/celerybeat-schedule
+  persistence:
+    ## 16 KB of shelve. The size is irrelevant; the persistence is not — see beat-pvc.yaml.
+    size: 1Gi
+  ## Beat only computes due times and publishes to the broker. Measured at 250 MiB RSS on
+  ## the production image (2026-08-30, a lone beat container on the pointer.gr box), so the
+  ## request is set above that and the limit leaves headroom for the import graph.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 320Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
 ## PostgreSQL (stub — for real clusters, set enabled=false and provide
 ## externalDatabase.host). Uses a StatefulSet + PVC for data durability.
 postgres:

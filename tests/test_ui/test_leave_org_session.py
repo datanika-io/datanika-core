@@ -94,6 +94,34 @@ async def _run(auth, service=None):
     return result, state, service
 
 
+class TestTheHandlerDependsOnRealAuthStateMethods:
+    """The stand-in above cannot see a rename, so pin the two real names.
+
+    `leave_org` calls `auth_state.switch_org(...)` and `auth_state.logout()` on
+    the instance returned by `get_state`. That pattern is established —
+    `auth_state.py`'s own `switch_org_by_name` does `return self.switch_org(...)`
+    — but a stand-in with hand-written methods keeps passing after either is
+    renamed, and the break would surface only in the browser.
+    """
+
+    def test_auth_state_still_has_the_methods_leave_org_calls(self):
+        from datanika.ui.state.auth_state import AuthState
+
+        for name in ("switch_org", "logout"):
+            assert hasattr(AuthState, name), f"AuthState.{name} is gone; leave_org calls it"
+
+    def test_switch_org_takes_an_org_id(self):
+        import inspect
+
+        from datanika.ui.state.auth_state import AuthState
+
+        # Reflex wraps a public method as an EventHandler on the class, so the
+        # signature lives on `.fn`.
+        handler = AuthState.switch_org
+        fn = getattr(handler, "fn", handler)
+        assert "org_id" in inspect.signature(fn).parameters
+
+
 class TestLeavingAlsoMovesTheSession:
     @pytest.mark.asyncio
     async def test_the_membership_is_actually_removed(self):

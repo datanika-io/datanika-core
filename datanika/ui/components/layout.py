@@ -155,6 +155,66 @@ def sidebar() -> rx.Component:
     )
 
 
+def verification_mail_notice() -> rx.Component:
+    """Say what happened to the confirmation mail after signup (core#700 AC1).
+
+    Lives in the shell rather than on /signup because signup authenticates the user and
+    redirects straight to their destination, so a callout on the signup page would never
+    be seen. Dismissible, since it is an acknowledgement rather than a standing state.
+
+    **Nothing renders for ``no_relay``** on purpose: a self-hosted deployment with no SMTP
+    relay is a normal deployment, and telling that operator we could not send their mail
+    would be a false alarm. Only a real failure gets the warning.
+    """
+    return rx.fragment(
+        rx.cond(
+            AuthState.verification_mail_state == "queued",
+            rx.callout(
+                rx.hstack(
+                    rx.text(_t["auth.verification_mail_sent"]),
+                    rx.spacer(),
+                    rx.button(
+                        _t["common.dismiss"],
+                        on_click=AuthState.dismiss_verification_notice,
+                        size="1",
+                        variant="ghost",
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                icon="mail_check",
+                color_scheme="green",
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AuthState.verification_mail_state == "failed",
+            rx.callout(
+                rx.hstack(
+                    rx.vstack(
+                        rx.text(_t["auth.verification_mail_failed"], weight="medium"),
+                        rx.text(_t["auth.verification_mail_failed_help"], size="2"),
+                        spacing="1",
+                        align="start",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        _t["common.dismiss"],
+                        on_click=AuthState.dismiss_verification_notice,
+                        size="1",
+                        variant="ghost",
+                    ),
+                    width="100%",
+                    align="start",
+                ),
+                icon="mail_warning",
+                color_scheme="amber",
+                width="100%",
+            ),
+        ),
+    )
+
+
 def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
     return rx.cond(
         AuthState.is_authenticated,
@@ -162,6 +222,7 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             sidebar(),
             rx.box(
                 rx.vstack(
+                    verification_mail_notice(),
                     rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
                     *children,
                     spacing="4",

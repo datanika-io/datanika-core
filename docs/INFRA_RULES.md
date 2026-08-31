@@ -333,6 +333,44 @@ survived three CI rounds and two departments because the spec asserted a run's *
 **Grow the smoke URL list on demand; never point a crawler at it.** `/healthz` is deliberately
 excluded — the Reflex SPA catch-all makes it a permanent false positive.
 
+🚨 **`git` exports `GIT_DIR` to its hooks — anything shelling out to git from inside a hook acts on
+the REAL repository, whatever `cwd=` says.** git does **not** set `GIT_WORK_TREE` alongside it, so
+git treats the *current directory* as the work tree while the metadata goes to the real `.git`.
+That combination is why passing `cwd=` looks like it should isolate you and does not.
+
+It fails in exactly one place: inside a hook. Standalone runs and CI have no `GIT_DIR`, so a test
+that shells out to git passes everywhere except the context it exists to guard. Measured on
+`tests/test_hooks/` — 19 of 20 error with `GIT_DIR` set, 20 pass without. When it bit, a `tmp_path`
+fixture committed a stray commit onto the live branch and overwrote `user.email` / `user.name` in
+the repo-local config, so a later `--amend` folded real work into a mis-authored commit.
+
+🚨 **The effect that outlives the obvious ones: `git init` under a stray `GIT_DIR` sets
+`core.bare = true` on the SHARED repo config.** Reproduced from clean: create a repo with a
+worktree, run `git init` from an unrelated directory with `GIT_DIR=<the worktree gitdir>`, and
+`core.bare` in the *common* config goes `false` → `true`. The main checkout then refuses every
+work-tree operation while **every linked worktree keeps working** — `git rev-parse
+--is-bare-repository` returns `false` inside them regardless — so nothing fails, no agent notices,
+and it can sit indefinitely. `git worktree list` showing the main checkout as `(bare)` beside a
+directory full of source files is the tell.
+
+Two independent signatures date it without needing file mtimes, which are useless here because
+`.git/config` is rewritten constantly: **`logallrefupdates = true` next to `bare = true` is
+self-contradictory** (git writes the former only for non-bare repos, and `git init --bare` never
+produces the pair), and a bare repo does not have a 40-entry working tree beside it. Restore with
+`git config --file <repo>/.git/config core.bare false` — the key belongs at `false`, not deleted.
+
+Fix for the class: strip `GIT_*` from the child environment. Reproduce any suspected case with
+`GIT_DIR=/path/to/.git pytest <target>`. Applies to any hook, CI helper, or `<dept>_exec.sh` that
+runs git in a temporary directory. **After any such incident, check `core.bare` explicitly** — the
+commit and the identity announce themselves; this one does not.
+
+**A gate that has never been watched refuse is not known to refuse.** The `pre-push` helm-lint
+filter read `git diff @{upstream}..HEAD` with `2>/dev/null || true`; on a branch that had never been
+pushed `@{upstream}` did not resolve, the error was swallowed, the file list came back empty, and
+the lint was skipped — on precisely the push where a chart change was least reviewed. It read as
+"no chart changes" for as long as it existed. Range resolution belongs against `origin/dev`, every
+error path means *do the work*, and the refusal itself needs a test.
+
 ---
 
 ## 11. Working practices

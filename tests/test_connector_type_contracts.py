@@ -128,3 +128,75 @@ def test_a_withdrawn_type_still_resolves_for_stored_connections():
 
 def test_file_source_types_are_non_sql():
     assert FILE_SOURCE_TYPES <= NON_SQL_SOURCE_TYPES
+
+
+# ── The transform-destination contract (core#825, core#862) ─────────────────────
+#
+# `DESTINATION_TYPES` (what dlt can LOAD into) and `SUPPORTED_ADAPTERS` (what dbt
+# can TRANSFORM in) are two literals in two modules describing different
+# capabilities. Until core#825 they were textually identical — the same eleven
+# strings — so nothing had ever diverged and nothing bound them.
+#
+# They are not identical any more, and the failure mode is expensive:
+# `generate_profiles_yml` raises AFTER `run.before_execute` has fired and after
+# `start_run`, so offering a destination dbt cannot build in consumes the
+# tenant's quota on a run that was never capable of succeeding.
+
+
+def test_transform_destinations_are_exactly_the_loadable_destinations_dbt_can_build_in():
+    """The explicit set must equal the computed intersection.
+
+    `TRANSFORM_DESTINATION_TYPES` is written out longhand so that adding a
+    connector forces a deliberate choice rather than inheriting one, and so that
+    `connection_service` does not have to import `dbt.cli.main`. This is what
+    stops the longhand from rotting.
+    """
+    from datanika.services.connection_service import (
+        DESTINATION_TYPES,
+        TRANSFORM_DESTINATION_TYPES,
+    )
+    from datanika.services.dbt_project import SUPPORTED_ADAPTERS
+
+    expected = DESTINATION_TYPES & SUPPORTED_ADAPTERS
+    assert expected == TRANSFORM_DESTINATION_TYPES, (
+        "TRANSFORM_DESTINATION_TYPES has drifted from DESTINATION_TYPES & "
+        f"SUPPORTED_ADAPTERS.\n  missing: {sorted(expected - TRANSFORM_DESTINATION_TYPES)}"
+        f"\n  extra:   {sorted(TRANSFORM_DESTINATION_TYPES - expected)}"
+    )
+
+
+def test_mysql_specifically_is_no_longer_offered_as_a_transform_destination():
+    """The one member core#825 removes, named rather than left to the set algebra.
+
+    The test above would keep passing if BOTH sets regained mysql together, which
+    is exactly what re-adding `dbt-mysql` would do — and that would silently drag
+    the whole dbt stack back to 1.7 and six advisories with it. This one names
+    the member, so the two tests fail on different mistakes.
+    """
+    from datanika.services.connection_service import (
+        DESTINATION_TYPES,
+        TRANSFORM_DESTINATION_TYPES,
+    )
+
+    assert "mysql" in DESTINATION_TYPES, (
+        "mysql should still be a LOAD destination — dlt loads into MySQL through "
+        "SQLAlchemy/pymysql and never through dbt. core#825 removed only the "
+        "transform capability."
+    )
+    assert "mysql" not in TRANSFORM_DESTINATION_TYPES, (
+        "mysql is offered as a dbt transformation destination, but no dbt-mysql "
+        "adapter is installed (core#825). generate_profiles_yml raises AFTER "
+        "run.before_execute fires, so the run consumes quota before failing."
+    )
+
+
+# ⚠️ NOT asserted here, and the omission is deliberate: `sqlite`, `databricks`
+# and `synapse` are in `TRANSFORM_DESTINATION_TYPES` with **no adapter
+# installed** (measured with `importlib.util.find_spec` — `pyproject.toml`
+# documents two of the three as deliberately absent while `_build_profile_output`
+# has purpose-built branches for them). A test asserting every offered transform
+# destination has an importable adapter goes RED on three today. It belongs in
+# **core#862** with the save-time refusal, help text and i18n that make the
+# narrowing a product change rather than a silent one — Product is shipping it
+# there with that negative control. Adding a knowingly-red test here, or
+# xfail-ing it, would only obscure which of the two changes is outstanding.

@@ -33,9 +33,13 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 #: `mysql` was removed in core#825: `dbt-mysql`'s last release is 1.7.0
 #: (2024-04-26, personal repo, pinning `dbt-core~=1.7.0`) and it held the whole
 #: dbt stack on 1.7, blocking six CRITICAL/HIGH advisories. No maintained MySQL
-#: adapter exists on PyPI. MySQL is unaffected as an extract source and as a
-#: dlt load destination — neither goes through dbt.
-#: See tests/test_services/test_mysql_after_dbt_mysql_removal.py.
+#: adapter exists on PyPI. MySQL is unaffected as an **extract source**, which
+#: does not go through dbt — verified against a real MySQL server in
+#: tests/test_services/test_mysql_after_dbt_mysql_removal.py.
+#:
+#: ⚠️ It is NOT "also unaffected as a load destination", which core#825 and an
+#: earlier draft of this comment both claimed: `dlt.destinations` has no `mysql`
+#: attribute, so MySQL loads have always raised AttributeError (core#865).
 #:
 #: ⚠️ PRE-EXISTING and NOT fixed here (core#825 found it, did not cause it):
 #: `sqlite`, `databricks` and `synapse` are listed below with **no installed

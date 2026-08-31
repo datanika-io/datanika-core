@@ -270,11 +270,20 @@ A single `BackgroundScheduler` with `SQLAlchemyJobStore` (sync PostgreSQL URL) f
 
 ### Profile Generation
 
-`generate_profiles_yml()` builds adapter-specific connection dicts from decrypted credentials. Supports postgres, mysql, mssql, sqlite, bigquery, snowflake, redshift.
+`generate_profiles_yml()` builds adapter-specific connection dicts from decrypted credentials. Supports postgres, mssql, bigquery, snowflake, redshift, clickhouse, duckdb.
+
+> ⚠️ **This is NOT the same set as the dlt destination list above, and it is not a subset of it either.** dbt needs an *installed adapter*; dlt needs only a driver. **MySQL is a load destination and not a transformation target** — `dbt-mysql` was dropped in [core#825] (its last release was 1.7.0, 2024-04-26, and it pinned the whole dbt stack to 1.7, blocking six CRITICAL/HIGH advisories; no maintained MySQL adapter exists on PyPI). MySQL is unaffected as an extract source and as a dlt load destination — both go through SQLAlchemy/`pymysql`, never through dbt.
+>
+> `SUPPORTED_ADAPTERS` additionally lists **sqlite, databricks and synapse, none of which has an installed adapter**, so `generate_profiles_yml()` will write a profile dbt cannot load. Pre-existing; tracked in [core#862] with Product, because removing them withdraws advertised capability.
 
 ### Command Execution
 
-Uses `dbtRunner().invoke()` with dynamic args (selector expressions, full-refresh flag). Parses `adapter_response.rows_affected` from result nodes. Returns `{success, rows_affected, logs}`.
+Uses `dbtRunner().invoke()` with dynamic args (selector expressions, full-refresh flag). Parses `rows_affected` out of `adapter_response` from result nodes. Returns `{success, rows_affected, logs}`.
+
+> ⚠️ **`adapter_response` is a `dict`, not an object** — measured against real dbt 1.11.14, which returns e.g. `{'_message': 'OK'}`. `_sum_rows_affected` handles both forms; `run_snapshot` handles only the object form and therefore always reports `rows_affected: 0`. Every consumer of the dbt result reads it through `getattr(..., default)`, so a renamed field degrades **silently** rather than raising — including `billable_nodes`, the usage-metering counter. `tests/test_services/test_dbt_result_contract.py` pins that contract against a real `dbt run`; the 19 `MagicMock` doubles in `test_dbt_project.py` cannot.
+
+[core#825]: https://github.com/datanika-io/datanika-core/issues/825
+[core#862]: https://github.com/datanika-io/datanika-core/issues/862
 
 ## Hooks System
 

@@ -172,23 +172,34 @@ class TestGenerateProfilesYml:
         assert profile["type"] == "postgres"
         assert profile["host"] == "localhost"
 
-    def test_mysql_profile(self, svc):
+    def test_mysql_profile_is_refused_since_the_adapter_was_dropped(self, svc):
+        """Was ``test_mysql_profile``, asserting a ``type: mysql`` profile (core#825).
+
+        Inverted rather than deleted. `dbt-mysql`'s last release is 1.7.0
+        (2024-04-26) and it pinned the whole dbt stack to 1.7, blocking six
+        CRITICAL/HIGH advisories; there is no maintained replacement on PyPI.
+
+        Kept here, beside the other adapters' profile tests, because a reader
+        comparing this class against `SUPPORTED_ADAPTERS` should find out why
+        mysql is missing *here* rather than concluding someone forgot it. The
+        full three-role coverage — mysql remains an extract source and a dlt
+        load destination, and both are proven against a real MySQL server — is
+        in `test_mysql_after_dbt_mysql_removal.py`.
+        """
         svc.ensure_project(1)
-        path = svc.generate_profiles_yml(
-            1,
-            "mysql",
-            {
-                "host": "localhost",
-                "port": 3306,
-                "user": "admin",
-                "password": "secret",
-                "database": "mydb",
-                "schema": "public",
-            },
-        )
-        content = yaml.safe_load(path.read_text())
-        profile = content["tenant_1"]["outputs"]["default"]
-        assert profile["type"] == "mysql"
+        with pytest.raises(DbtProjectError, match="mysql"):
+            svc.generate_profiles_yml(
+                1,
+                "mysql",
+                {
+                    "host": "localhost",
+                    "port": 3306,
+                    "user": "admin",
+                    "password": "secret",
+                    "database": "mydb",
+                    "schema": "public",
+                },
+            )
 
     def test_bigquery_profile(self, svc):
         svc.ensure_project(1)

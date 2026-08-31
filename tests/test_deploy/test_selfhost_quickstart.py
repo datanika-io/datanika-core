@@ -233,9 +233,9 @@ def test_datastore_urls_point_at_compose_services_not_localhost() -> None:
         key, value = line.split("=", 1)
         if not key.strip().endswith("_URL"):
             continue
-        if host := re.search(r"//(?:[^@/]*@)?([A-Za-z0-9_.-]+):\d+", value):
-            if host.group(1) not in services:
-                offenders[key.strip()] = host.group(1)
+        host = re.search(r"//(?:[^@/]*@)?([A-Za-z0-9_.-]+):\d+", value)
+        if host and host.group(1) not in services:
+            offenders[key.strip()] = host.group(1)
     assert not offenders, (
         f"{ENV_EXAMPLE.name} points these at a host that is not a Compose service: "
         f"{offenders}. Inside a container that name does not reach the datastore; use the "

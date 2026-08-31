@@ -152,11 +152,40 @@
 
 11. After promoting, sync `dev` back to `master` so they don't diverge:
     ```bash
-    # From local machine
+    # From any checkout or worktree of the repo. The branch you happen to have
+    # checked out is irrelevant to this push -- see the hook note below.
     cd datanika
     git fetch origin
     git push origin origin/master:refs/heads/dev        # fast-forward, NO --force
     ```
+
+    ### ⚠️ What the pre-push hook does with this push, and what a refusal means (core#556, core#771)
+
+    This push names `origin/master` — a **remote-tracking ref**, not the branch you have
+    checked out — so `scripts/hooks/pre-push` reads its **stdin**, where git supplies one
+    line per ref (`<local ref> <local sha> <remote ref> <remote sha>`). It sees that the sha
+    being pushed is not `HEAD` and prints:
+
+    ```
+    pre-push: pushing a ref that is not HEAD (refspec push) — skipping rebase and tests.
+              Your working tree is irrelevant to what is being pushed.
+    ```
+
+    then exits 0. **Nothing is rebased and the ~4,000-test suite does not run**, which is
+    correct: the push introduces no new objects, so there is nothing for the hook to validate.
+
+    **Before core#556 (2026-07-22) the hook inferred intent from `git rev-parse --abbrev-ref
+    HEAD` instead.** It therefore refused a push carrying zero commits *and* rebased whatever
+    branch happened to be checked out — a branch this push does not touch, with no prompt and
+    no mention of that branch's name in the output. `datanika-cloud` carried the same defect
+    until 2026-08-31 (`datanika-cloud#131`), and it is what made the cloud resync fail that
+    night. Both repos now read stdin.
+
+    🚨 **If you see `pre-push: branch is behind origin/dev — rebasing...` from *this* command**,
+    you are on a checkout whose hook predates that fix. Stop before pushing again: run
+    `git log -1 --format=%cr` on the branch it just rewrote to see whether it took real work
+    with it, then update `scripts/hooks/pre-push`. Do not simply retry — a retry succeeds, but
+    it succeeds by validating your worktree, which is an answer to a question nobody asked.
 
     ### ⚠️ Never `--force` this push, and never disarm protection to make it work (changed 2026-07-22)
 

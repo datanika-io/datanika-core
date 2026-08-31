@@ -736,9 +736,11 @@ class TestS3FileSourceMovesRows:
     this module reads from a local directory, so ``filesystem()`` resolves to
     ``LocalFileSystem`` and no S3 code path runs at all. The *reader* is shared;
     the *transport* is not, and the transport is the half that has never been
-    observed. Dropping ``endpoint_url`` from ``AWS_CREDENTIAL_KEYS`` turns these
-    tests red — which is what distinguishes them from a local-filesystem test
-    wearing an ``s3://`` label.
+    observed. Dropping ``endpoint_url`` from ``AWS_CREDENTIAL_KEYS`` turns the
+    three tests that have to reach the server red and leaves the fourth — which
+    raises before any socket is opened — green. That asymmetry is what
+    distinguishes these from a local-filesystem test wearing an ``s3://`` label;
+    a mutation that reddened all four would only show the harness is fragile.
     """
 
     BUCKET = "probe-bucket"
@@ -817,7 +819,17 @@ class TestS3FileSourceMovesRows:
                 got = client.get_object(Bucket=self.BUCKET, Key="csv/widgets.csv")
                 assert got["Body"].read() == self._csv_bytes()
 
-            await_setup("minio accepting bucket writes", _seed)
+            # 30 attempts, not the 12 default. `DockerContainer` is the
+            # GENERIC wrapper — unlike `MongoDbContainer` it carries no
+            # readiness wait of its own, so this retry is the only thing
+            # standing between the fixture and a half-started server. core#758
+            # is a filed S3 saying the 12 s default already fails under normal
+            # multi-department Docker contention on this machine, for a
+            # container whose happy path is ~9 s. Shipping a new fixture on
+            # that budget would be repeating a known defect. This is a SETUP
+            # retry (core#578) and hides nothing: the loads and assertions
+            # below are never retried.
+            await_setup("minio accepting bucket writes", _seed, attempts=30)
             yield endpoint
 
     def _config(self, endpoint: str, prefix: str) -> dict:

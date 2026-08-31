@@ -82,7 +82,18 @@ def _services_named_in(text: str) -> set[str]:
                 continue
             if token in ("&&", "||", "|", ";", "\\"):
                 break
-            found.add(token.strip("\"'"))
+            # `... up -d postgres redis app celery beat celery-exporter; then` — staging's
+            # primary `up -d` is the condition of an `if`, so the command ends at a `;`
+            # ATTACHED to the last service name rather than standing alone. Without this,
+            # the set picked up `celery-exporter;`, `beat;` and `then`. Harmless for the
+            # orphan direction (junk in `named` cannot hide a missing service) and wrong
+            # for the reverse one, which asks whether every deployed name is a real
+            # service. Prod's lines carry no `;`, so nothing there changes.
+            name = token.strip("\"'")
+            if name.endswith(";"):
+                found.add(name[:-1])
+                break
+            found.add(name)
     found.discard("-d")
     return found
 
@@ -157,4 +168,85 @@ def test_deploy_names_no_service_compose_does_not_define(compose_services, deplo
     assert not unknown, (
         "these service names appear in a deploy step but are not defined in "
         "docker-compose.yml:\n" + "".join(f"    {s}\n" for s in unknown)
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════════════
+# The same question, asked of STAGING (core#762)
+# ══════════════════════════════════════════════════════════════════════════════════════
+#
+# Everything above guards exactly one file, because `COMPOSE` is a constant pointing at
+# the prod manifest. A service already slipped through that gap: core#704 added
+# `celery-exporter` to BOTH compose files, the prod deploy names it, and the tests above
+# went green — while `deploy/staging/docker-compose.yml` described a container that
+# nothing started. Naming services explicitly means only those start, so staging's
+# exporter simply never existed.
+#
+# The shape is the reusable part: the prod half was caught by an automated guard within
+# minutes and the staging half was not caught at all — not because anyone reasoned
+# differently about it, but because the guard's `COMPOSE` constant pointed at one path.
+# A guard's coverage is part of the guard.
+
+STAGING_COMPOSE = ROOT / "deploy" / "staging" / "docker-compose.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+
+# Services deliberately present in the staging manifest and deliberately not started.
+# ⚠️ An entry here is a claim that needs a reason, not a way to silence the test. The
+# blanket alternative — exempting every service behind a `profiles:` key — would be much
+# worse: `postgres-exporter`, `cadvisor`, `node-exporter` and `celery-exporter` are all
+# profile-gated on PROD and requiring them is precisely the core#616 fix. Exempting
+# profiles wholesale would undo it.
+STAGING_NOT_DEPLOYED = {
+    "app_b": (
+        "core#596 decided against blue/green on staging, so the green colour is scaffolding "
+        "the deploy must never start. It is kept in the manifest because the recreate step "
+        "relies on it existing to justify NOT passing --remove-orphans: with the bluegreen "
+        "profile inactive, compose would classify app_b as an orphan and delete it."
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def staging_compose_services() -> set[str]:
+    data = yaml.safe_load(STAGING_COMPOSE.read_text(encoding="utf-8"))
+    return set(data["services"])
+
+
+@pytest.fixture(scope="module")
+def staging_deployed_services() -> set[str]:
+    """Parsed from ci.yml, which carries both the primary `up -d` and its recovery retry.
+
+    Deliberately the whole workflow rather than a line range: the recovery path is a
+    second `up -d` with `--force-recreate`, and core#762 landed with the exporter missing
+    from exactly one of the two.
+    """
+    return _services_named_in(CI_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_the_staging_parsers_actually_found_something(
+    staging_compose_services, staging_deployed_services
+):
+    """Same guard-the-guard as above: a parser that matches nothing is green forever."""
+    assert len(staging_compose_services) >= 6, staging_compose_services
+    assert len(staging_deployed_services) >= 5, staging_deployed_services
+    assert "postgres" in staging_deployed_services, sorted(staging_deployed_services)
+    assert set(STAGING_NOT_DEPLOYED) <= staging_compose_services, (
+        "an entry in STAGING_NOT_DEPLOYED names a service the staging manifest no longer "
+        "defines — delete the entry rather than carrying a stale excuse"
+    )
+
+
+def test_staging_deploy_covers_every_staging_compose_service(
+    staging_compose_services, staging_deployed_services
+):
+    orphans = sorted(
+        staging_compose_services - staging_deployed_services - set(STAGING_NOT_DEPLOYED)
+    )
+    assert not orphans, (
+        "these services are defined in deploy/staging/docker-compose.yml and named by NO "
+        "staging deploy step:\n" + "".join(f"    {s}\n" for s in orphans) + "\n"
+        "They will never start, and nothing will fail — the file on disk simply describes "
+        "a container that does not exist (core#762). Add them to BOTH `up -d` lines in "
+        "ci.yml (the primary and the --force-recreate recovery), or record the reason in "
+        "STAGING_NOT_DEPLOYED."
     )

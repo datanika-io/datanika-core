@@ -316,7 +316,9 @@ class AuthState(rx.State):
                 )
                 audit_session.commit()
         except Exception:
-            pass  # Audit logging should never break login
+            # Deliberate swallow, loud failure (core#723): a broken audit write
+            # must not stop a login, but it must not vanish either.
+            logger.exception("Audit write failed and was dropped: action=LOGIN user=%s", user_id)
 
         # Apply auth state
         self.access_token = access_token
@@ -433,7 +435,15 @@ class AuthState(rx.State):
                                 )
                             session.commit()
                     except Exception:
-                        pass  # Invitation acceptance is best-effort
+                        # Best-effort by design -- signup must succeed even if
+                        # the invitation cannot be applied. But this one is
+                        # user-visible when it fails (they sign up and are not
+                        # in the org they were invited to), so it is exactly the
+                        # thing support needs a log line for (core#723).
+                        logger.exception(
+                            "Invitation acceptance failed during signup and was dropped: email=%s",
+                            self.email,
+                        )
         except UserServiceError as exc:
             # Typed validation errors from user_service carry curated,
             # user-facing messages ("Email already exists", "Name is
@@ -483,7 +493,8 @@ class AuthState(rx.State):
                     )
                     audit_session.commit()
         except Exception:
-            pass  # Audit logging should never break logout
+            # As with LOGIN above: swallow, but leave evidence (core#723).
+            logger.exception("Audit write failed and was dropped: action=LOGOUT")
 
         self._clear_session()
         self.auth_error = ""

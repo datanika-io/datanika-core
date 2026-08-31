@@ -679,7 +679,7 @@ jobs:
           set -e
           cd /opt/datanika-staging
           set -a && . ./.env.docker && set +a
-          if docker compose -p datanika-staging up -d postgres redis app celery beat; then
+          if docker compose -p datanika-staging up -d postgres redis app celery beat celery-exporter; then
             echo "staging stack up"
           else
             echo "compose up failed - clearing the whole project's containers, retrying once"
@@ -689,7 +689,7 @@ jobs:
             # Named volumes are untouched by `docker rm`, so staging data survives.
             docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' \
               | xargs -r docker rm -f || true
-            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat
+            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat celery-exporter
             echo "staging stack up after recovery"
           fi
           STAGING
@@ -700,6 +700,18 @@ jobs:
             'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
   smoke-staging:
+    # core#753: this job READS the stack `deploy-staging` mutates, so it must hold the same
+    # lock. `deploy-staging`'s group serialised the deploy and then RELEASED it -- while its
+    # own verifiers were still running against the stack -- so the next push's deploy was
+    # free to recreate containers underneath a suite mid-flight. Measured at 38 false-red
+    # gating E2E results on 2026-08-31, and one auto-filed issue against an innocent commit
+    # whose entire diff was a shell script.
+    #
+    # The lock must not be released until nothing is still reading the stack it protects.
+    # See the note on `e2e-staging` for what this does and does not buy.
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -781,6 +793,36 @@ jobs:
   # Env is job-level so both tiers share one definition — two copies is how
   # they drift apart, which is the failure mode this whole job has been fixing.
   e2e-staging:
+    # core#753. Same lock as the mutation it verifies -- see `smoke-staging` above.
+    #
+    # ⚠️ What this buys, precisely, because the shape is easy to over-claim. GitHub runs one
+    # job per group and holds ONE pending job; a newly queued job cancels the previously
+    # pending one. So:
+    #
+    #   GUARANTEED: no `deploy-staging` can run while a verifier holds the lock. That is the
+    #   whole of the measured harm -- every failing assertion in the 2026-08-31 evidence
+    #   returned 502 (x9) or 503 (x5) and none returned anything else, i.e. containers being
+    #   recreated mid-test. That failure mode is now impossible.
+    #
+    #   NOT guaranteed: a burst can still cancel a run's pending verification, because a
+    #   third run's deploy queuing cancels whatever was pending. A CANCELLED verdict is
+    #   neither green nor red and reads as absent, which is a far better failure than a red
+    #   on the tenant-isolation and RBAC specs -- those run last, so a false red here wore
+    #   the most alarming possible headline on the night a real cross-tenant S1 was being
+    #   promoted. The newest push always wins the queue, which is the right polarity: the
+    #   promotion pre-flight needs a verdict for `dev`'s exact HEAD.
+    #
+    # ⚠️ `cancel-in-progress` must stay false in every member. `true` on the deploy is
+    # core#572 (a cancelled deploy left renamed containers and wedged staging); `true` here
+    # discards a verdict the promotion pre-flight needs.
+    #
+    # Deliberately NOT linearised behind `smoke-staging`. Chaining them would not prevent a
+    # competing deploy cancelling this job's pending slot -- it only changes which of the two
+    # is sacrificed -- while it WOULD make a red smoke skip E2E entirely, and a skipped gate
+    # reads like a pass at a glance.
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -1031,16 +1073,26 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          # Dedup: comment on the open e2e-failure issue if one exists, else
-          # open one. Without this, a red streak files one issue PER SHA — on
+          # Dedup: comment on this CHANNEL's open issue if one exists, else open
+          # one. Without this, a red streak files one issue PER SHA — on
           # 2026-07-22 that produced SIX issues for TWO causes inside two hours
           # (#495, #498 harness; #506, #512, #513, #519 golden-path), which
           # buries the real signal in bookkeeping and makes a two-cause outage
-          # look like six problems. The overage nightly already dedups this way;
-          # only this copy was missed.
+          # look like six problems.
+          #
+          # ⚠️ The dedup key is `e2e-staging-failure`, NOT `e2e-failure` (#818).
+          # `e2e-failure` is the human-facing UMBRELLA label — e2e-staging and
+          # e2e-sso both write it, so keying dedup on it makes an SSO failure
+          # comment onto a staging thread and vice versa. Each filer gets its own
+          # channel label; `overage-e2e-nightly.yml` had this right all along and
+          # is the pattern being followed here. Never dedup on `e2e-failure`.
+          gh label create e2e-staging-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Dedup channel: e2e-staging (auto-filed)" --force || true
+          gh label create e2e-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Umbrella: any auto-filed E2E failure. NOT a dedup key." --force || true
           existing=$(gh issue list \
             --repo ${{ github.repository }} \
-            --label e2e-failure \
+            --label e2e-staging-failure \
             --state open \
             --limit 1 \
             --json number --jq '.[0].number // empty')
@@ -1063,6 +1115,7 @@ jobs:
               --repo ${{ github.repository }} \
               --title "[QA] e2e-staging failure on $SHORT_SHA" \
               --body "$body" \
+              --label "e2e-staging-failure" \
               --label "e2e-failure"
           fi
 
@@ -1098,12 +1151,18 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          # Same dedup CHANNEL as a red (the `e2e-failure` label): a flaky gating
+          # Same dedup CHANNEL as a red (`e2e-staging-failure`): a flaky gating
           # spec is the same event as a red one that happened to retry into a
           # green, so it belongs on the same thread rather than in a parallel one.
+          # Sharing a channel WITHIN a job is deliberate; sharing one ACROSS jobs
+          # is the #818 defect. See the note on the red filer above.
+          gh label create e2e-staging-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Dedup channel: e2e-staging (auto-filed)" --force || true
+          gh label create e2e-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Umbrella: any auto-filed E2E failure. NOT a dedup key." --force || true
           existing=$(gh issue list \
             --repo ${{ github.repository }} \
-            --label e2e-failure \
+            --label e2e-staging-failure \
             --state open \
             --limit 1 \
             --json number --jq '.[0].number // empty')
@@ -1126,6 +1185,7 @@ jobs:
               --repo ${{ github.repository }} \
               --title "[QA] e2e-staging GATING spec flaky (green run) on $SHORT_SHA" \
               --body "$body" \
+              --label "e2e-staging-failure" \
               --label "e2e-failure"
           fi
 
@@ -1157,6 +1217,34 @@ jobs:
   # required checks on dev until it has earned that — a permanently-red gate is how a
   # whole tier gets ignored, which is the history behind #222, #230 and #232.
   e2e-sso:
+    # core#765: its OWN queued group, not `staging-deploy`. This job mutates things nothing
+    # else touches -- a fixed compose project name `e2e`, fixed container names, host port
+    # 9000, a `docker network connect` onto datanika-staging_default, and
+    # /opt/datanika/e2e-sso/.sso-fixture.json rewritten in place -- all on the shared
+    # production box. Two overlapping runs interleave badly and the teardown is the sharp
+    # edge: run A's `if: always()` `down -v` destroys run B's IdP mid-test and then
+    # `rm -rf`s the directory B is reading its fixture from. B fails with connection errors
+    # that look like a broken SSO implementation and are not.
+    #
+    # ⚠️ `cancel-in-progress: false` is the load-bearing half. `true` would cancel a run
+    # BETWEEN its `up -d` and its `if: always()` cleanup, and a cancelled job's always()
+    # steps are not guaranteed to complete -- leaving four Authentik containers and a network
+    # attachment stranded on the production box. That is core#536's failure mode with an IdP
+    # attached, and recovery then has to clean up by LABEL, because compose no longer
+    # recognises a renamed container as that service.
+    #
+    # ⚠️ Its own group and not `staging-deploy`, deliberately, with a residual: this job is
+    # therefore still exposed to a `deploy-staging` recreating the staging app underneath it.
+    # Sharing `staging-deploy` would close that but serialise SSO behind the ~10-minute
+    # e2e-staging, roughly doubling staging latency for every push, and the two mutate
+    # different things. e2e-sso is the informational tier (core#521) and does not gate a
+    # merge, so a collision costs a spurious red rather than a blocked one. Revisit before
+    # it graduates to gating -- a collision-induced red RESETS the three-consecutive-greens
+    # counter, which is the exact mechanism by which #222, #230 and #232 ended with a whole
+    # tier being ignored.
+    concurrency:
+      group: staging-e2e-sso
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     continue-on-error: true
@@ -1367,24 +1455,13 @@ jobs:
           ssh root@$SSH_HOST "docker network disconnect datanika-staging_default e2e-authentik-server-1 2>/dev/null || true"
           ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && docker compose -p e2e -f docker-compose.test.yml down -v 2>/dev/null; rm -rf /opt/datanika/e2e-sso" || true
 
-      - name: Telegram alert on failure
-        if: failure()
-        env:
-          COMMIT_SHA: ${{ github.sha }}
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          SHORT_SHA=${COMMIT_SHA:0:7}
-          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *SSO E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
-          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=1201995" \
-            --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
-
+      # ⚠️ ORDER IS LOAD-BEARING: the filer runs BEFORE the Telegram step, and the
+      # Telegram step branches on what the filer did. See #818 — this job was red on
+      # every push for a real product bug (#830) and filed a fresh issue AND paged the
+      # founder each time: ten issues and ten pages for one condition. The tracker was
+      # ~15% duplicate noise and the alarm had stopped carrying information.
       - name: File issue on failure
+        id: file_issue
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1393,14 +1470,76 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          gh issue create \
+          # ⚠️ The dedup key is `e2e-sso-failure`, and copying the e2e-staging block
+          # verbatim would have been WRONG: that copy keys on `e2e-failure`, which both
+          # jobs write, so a staging failure would comment onto an SSO thread and vice
+          # versa. `e2e-failure` stays as the human-facing umbrella label so
+          # `--label e2e-failure` still finds everything; it is never a dedup key.
+          # `tests/test_deploy/test_ci_autofiler_dedup.py` enforces both halves.
+          gh label create e2e-sso-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Dedup channel: e2e-sso (auto-filed)" --force || true
+          gh label create e2e-failure --repo ${{ github.repository }} \
+            --color D93F0B --description "Umbrella: any auto-filed E2E failure. NOT a dedup key." --force || true
+          existing=$(gh issue list \
             --repo ${{ github.repository }} \
-            --title "[QA] e2e-sso failure on $SHORT_SHA" \
-            --body "**Run:** $RUN_URL
-          **Commit:** \`$SHORT_SHA\`
-          **Message:** $FIRST_LINE
-          **Report:** playwright-report-sso artifact on the run page" \
-            --label "e2e-failure"
+            --label e2e-sso-failure \
+            --state open \
+            --limit 1 \
+            --json number --jq '.[0].number // empty')
+          # printf with the strings indented INSIDE the block scalar. The previous
+          # version used a multi-line shell double-quoted string, so every continuation
+          # line carried ten leading spaces into the issue body and rendered as a code
+          # block (see #824 and its nine siblings).
+          body=$(printf '%s\n' \
+            "**Run:** $RUN_URL" \
+            "**Commit:** \`$SHORT_SHA\`" \
+            "**Message:** $FIRST_LINE" \
+            "**Report:** playwright-report-sso artifact on the run page" \
+            "" \
+            "e2e-sso is the INFORMATIONAL tier (core#521) — it does not gate a merge." \
+            "Repeat failures comment here rather than opening a new issue (#818).")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo ${{ github.repository }} \
+              --body "Another e2e-sso failure on \`$SHORT_SHA\`: $RUN_URL"
+            echo "dedup=commented" >> "$GITHUB_OUTPUT"
+            echo "issue=$existing" >> "$GITHUB_OUTPUT"
+          else
+            created=$(gh issue create \
+              --repo ${{ github.repository }} \
+              --title "[QA] e2e-sso failure on $SHORT_SHA" \
+              --body "$body" \
+              --label "e2e-sso-failure" \
+              --label "e2e-failure")
+            echo "dedup=created" >> "$GITHUB_OUTPUT"
+            echo "issue=${created##*/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Page once per CONDITION, not once per push. This is a re-arming filter, not a
+      # mute: the alarm fires whenever a NEW `e2e-sso-failure` thread is opened, and it
+      # re-arms by itself the moment that thread is closed. A condition the founder has
+      # already been paged about, and which is still open on the tracker, does not page
+      # again.
+      #
+      # ⚠️ The polarity is deliberately FAIL-OPEN. If the filer step itself dies, its
+      # outputs are unset, `'' != 'commented'` is true, and this still pages — losing
+      # the issue must never also lose the alert.
+      - name: Telegram alert on new failure
+        if: failure() && steps.file_issue.outputs.dedup != 'commented'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ISSUE: ${{ steps.file_issue.outputs.issue }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 *SSO E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Issue:* #%s\n*Run:* %s\n\nFurther failures of this condition will comment on the issue instead of paging.' \
+            "$SHORT_SHA" "$FIRST_LINE" "${ISSUE:-?}" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
 
   # Prod post-deploy smoke gates (smoke = URL gate, smoke-prod = pytest shape)
   # moved to .github/workflows/deploy-pointer.yml — they run after the prod deploy

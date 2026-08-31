@@ -37,6 +37,15 @@ from datanika.services.connection_service import ConnectionService
 #: A config that gets every type past its early returns and as far as the code
 #: under test. Values are deliberately unroutable — nothing here should open a
 #: socket, and `create_engine` is patched in the sweeps besides.
+#:
+#: 🚨 **Do not add SaaS credential fields here** (`api_key`, `access_token`,
+#: `api_token`, `bot_token`, `store`, `domain`, `subdomain`, `instance_url`).
+#: Since core#821 the SaaS branch issues a **real HTTP request** when the
+#: credentials are present, so adding one turns this offline sweep into a unit
+#: suite that calls Stripe, Slack and GitHub on every run — slow, flaky, and
+#: leaking fabricated tokens to third parties. The types stop at their
+#: missing-field guard precisely because these keys are absent, and
+#: `test_the_probe_config_cannot_reach_a_vendor` keeps it that way.
 _PROBE_CONFIG = {
     "host": "127.0.0.1",
     "port": "1",
@@ -100,7 +109,7 @@ def test_a_missing_dialect_is_a_verdict_for_every_type(connection_type, monkeypa
         f"{connection_type.value}: expected a (success, message) pair, got {result!r}"
     )
     ok, message = result
-    assert isinstance(ok, bool), f"{connection_type.value}: {ok!r} is not a bool"
+    assert ok is None or isinstance(ok, bool), f"{connection_type.value}: {ok!r} is not a verdict"
     assert isinstance(message, str) and message, (
         f"{connection_type.value}: message must be a non-empty string, got {message!r}"
     )
@@ -127,7 +136,7 @@ def test_an_unexpected_engine_error_is_also_a_verdict(connection_type, monkeypat
 
     ok, message = ConnectionService.test_connection(dict(_PROBE_CONFIG), connection_type)
 
-    assert isinstance(ok, bool)
+    assert ok is None or isinstance(ok, bool)
     assert isinstance(message, str) and message
 
 
@@ -139,3 +148,28 @@ def test_the_sweep_actually_covers_the_reported_types():
     """
     values = {t.value for t in ConnectionType}
     assert {"bigquery", "databricks"} <= values
+
+
+def test_the_probe_config_cannot_reach_a_vendor():
+    """The offline sweeps must stay offline (core#821).
+
+    `test_connection` now makes a real request for SaaS types once credentials
+    are present. `_PROBE_CONFIG` is shared by both sweeps above and by anything
+    added later, so a well-meaning `"api_key": "x"` would silently turn this
+    file into a client of fourteen third-party APIs — on every CI run, with
+    fabricated tokens. Nothing else would fail; the suite would just get slow
+    and occasionally red.
+    """
+    from datanika.services import connection_service as cs
+
+    credential_fields = set()
+    for probe in cs.SAAS_PROBES.values():
+        for group in probe["fields"]:
+            credential_fields.update(group)
+
+    present = sorted(credential_fields & set(_PROBE_CONFIG))
+    assert not present, (
+        f"_PROBE_CONFIG now carries SaaS credential field(s) {present}, so the "
+        "offline sweeps in this file will issue real requests to those vendors. "
+        "Remove them, or patch build_guarded_session in the sweeps."
+    )

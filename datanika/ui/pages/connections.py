@@ -125,8 +125,20 @@ def connection_form() -> rx.Component:
                 ConnectionState.test_message,
                 rx.callout(
                     ConnectionState.test_message,
-                    icon=rx.cond(ConnectionState.test_success, "check", "triangle_alert"),
-                    color_scheme=rx.cond(ConnectionState.test_success, "green", "red"),
+                    # core#821: three states. `not tested` must not be green
+                    # (that was the bug — 20 connector types reported success
+                    # having made no request) and must not be red either, since
+                    # the connection may well be fine.
+                    icon=rx.cond(
+                        ConnectionState.test_untested,
+                        "info",
+                        rx.cond(ConnectionState.test_success, "check", "triangle_alert"),
+                    ),
+                    color_scheme=rx.cond(
+                        ConnectionState.test_untested,
+                        "gray",
+                        rx.cond(ConnectionState.test_success, "green", "red"),
+                    ),
                 ),
             ),
             rx.hstack(
@@ -158,6 +170,88 @@ def connection_form() -> rx.Component:
             width="100%",
         ),
         width="100%",
+    )
+
+
+def _delete_connection_dialog(conn) -> rx.Component:
+    """Ask before retiring a connection (core#804).
+
+    Delete used to be wired straight to the handler, so one click removed a
+    production connection with no dialog, no toast and no undo affordance —
+    and the safety procedure we wrote for ourselves in `WORKFLOW_RULES.md`
+    §7b told agents to *"assert the dialog is open"*, describing a control that
+    did not exist. Following that literally means concluding the click failed
+    and clicking again, which on this page is a second deletion.
+
+    `rx.alert_dialog` renders Radix's AlertDialog, i.e. a real
+    ``role="alertdialog"`` element — that is what makes the rule true again
+    rather than merely differently worded.
+
+    Self-gating on ``can_delete``: moving the button into a helper put it out of
+    reach of the lexical gate-scan in `tests/test_ui/test_rbac_ui_visibility.py`,
+    so the gate lives *here* rather than at the call site. A viewer that reaches
+    a delete control by accident is the regression that guard exists for, and
+    keeping it able to see this button matters more than where the `rx.cond` is
+    written.
+    """
+    return rx.cond(
+        AuthState.can_delete,
+        rx.alert_dialog.root(
+            rx.alert_dialog.trigger(
+                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+            ),
+            rx.alert_dialog.content(
+                rx.alert_dialog.title(_t["connections.delete_title"]),
+                rx.alert_dialog.description(_t["connections.delete_body"]),
+                rx.vstack(
+                    # Name what is about to go, by id *and* name: the id alone
+                    # is what an agent aims by, the name is what a human
+                    # recognises.
+                    rx.card(
+                        rx.text("#", conn.id, "  ", conn.name, size="2", weight="bold"),
+                        rx.text(conn.connection_type, size="1", color="var(--gray-9)"),
+                    ),
+                    rx.cond(
+                        conn.dependent_count > 0,
+                        rx.callout(
+                            rx.vstack(
+                                rx.hstack(
+                                    rx.text(conn.dependent_count, size="2", weight="bold"),
+                                    rx.text(_t["connections.delete_dependents"], size="2"),
+                                    spacing="1",
+                                ),
+                                rx.text(conn.dependent_names, size="1"),
+                                spacing="1",
+                                align="start",
+                            ),
+                            icon="triangle_alert",
+                            color_scheme="amber",
+                            width="100%",
+                        ),
+                    ),
+                    rx.text(_t["connections.delete_reversible"], size="1", color="var(--gray-9)"),
+                    spacing="3",
+                    width="100%",
+                    margin_top="12px",
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            _t["connections.delete_confirm"],
+                            color_scheme="red",
+                            on_click=ConnectionState.delete_connection(conn.id),
+                        ),
+                    ),
+                    spacing="3",
+                    justify="end",
+                    margin_top="16px",
+                ),
+                max_width="480px",
+            ),
+        ),
     )
 
 
@@ -222,15 +316,8 @@ def connections_table() -> rx.Component:
                                     on_click=ConnectionState.copy_connection(conn.id),
                                 ),
                             ),
-                            rx.cond(
-                                AuthState.can_delete,
-                                rx.button(
-                                    _t["common.delete"],
-                                    color_scheme="red",
-                                    size="1",
-                                    on_click=ConnectionState.delete_connection(conn.id),
-                                ),
-                            ),
+                            # Gate lives inside the helper — see its docstring.
+                            _delete_connection_dialog(conn),
                             spacing="2",
                             align="center",
                         ),

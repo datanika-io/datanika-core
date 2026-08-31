@@ -261,6 +261,11 @@ class ConnectionItem(BaseModel):
     name: str = ""
     connection_type: str = ""
     test_status: str = ""  # "" = untested, "ok" = success, "fail" = failure
+    #: How many live uploads / pipelines / transformations point at this
+    #: connection, and their names, so the delete dialog can say what it is
+    #: about to break rather than deleting silently (core#804, core#805).
+    dependent_count: int = 0
+    dependent_names: str = ""
 
 
 class ConnectionState(BaseState):
@@ -278,6 +283,11 @@ class ConnectionState(BaseState):
     # Test connection feedback
     test_message: str = ""
     test_success: bool = False
+    #: core#821 — the verdict has three states, not two. `test_success`
+    #: alone cannot express *not tested*, and rendering that as failure is
+    #: the same lie as rendering it as success: the connection may be fine,
+    #: we simply did not check. Both flags false = a plain failure.
+    test_untested: bool = False
 
     # SQL database fields (postgres, mysql, mssql, redshift)
     form_host: str = ""
@@ -431,6 +441,7 @@ class ConnectionState(BaseState):
         """Forget any previous Test Connection result."""
         self.test_message = ""
         self.test_success = False
+        self.test_untested = False
 
     def _set_config_field(self, field: str, value) -> None:
         """Assign a config form field and invalidate the stale verdict."""
@@ -963,6 +974,7 @@ class ConnectionState(BaseState):
         # buy consistency and cost a working test its independence.
         self.test_message = ""
         self.test_success = False
+        self.test_untested = False
 
     def _populate_form_from_config(self, name: str, conn_type: str, config: dict):
         """Fill form fields from a decrypted config dict."""
@@ -1145,14 +1157,19 @@ class ConnectionState(BaseState):
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
             rows = svc.list_connections(session, org_id)
-            self.connections = [
-                ConnectionItem(
-                    id=c.id,
-                    name=c.name,
-                    connection_type=c.connection_type.value,
+            items = []
+            for c in rows:
+                dependents = svc.list_dependents(session, org_id, c.id)
+                items.append(
+                    ConnectionItem(
+                        id=c.id,
+                        name=c.name,
+                        connection_type=c.connection_type.value,
+                        dependent_count=len(dependents),
+                        dependent_names=", ".join(dependents),
+                    )
                 )
-                for c in rows
-            ]
+            self.connections = items
         self.error_message = ""
 
     async def save_connection(self):
@@ -1286,18 +1303,31 @@ class ConnectionState(BaseState):
             )
             session.commit()
         await self.load_connections()
+        # Nothing told the user the delete happened beyond a row vanishing, and
+        # for a *reversible* soft delete that reads far scarier than it is
+        # (core#804). Translated from the reactive dict rather than hardcoded,
+        # so the eight non-English locales are not silently English here.
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        yield rx.toast.success(
+            i18n.translations.get("connections.deleted_toast", "Connection retired"),
+            position="top-right",
+        )
 
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""
         validation_error = self._validate_form()
         if validation_error:
             self.test_success = False
+            self.test_untested = False
             self.test_message = validation_error
             return
         try:
             config = self._build_config()
         except (json.JSONDecodeError, ValueError) as e:
             self.test_success = False
+            self.test_untested = False
             self.test_message = f"Invalid config: {e}"
             return
         # Backstop. `test_connection` is now contracted to return a verdict for
@@ -1313,7 +1343,11 @@ class ConnectionState(BaseState):
         except Exception:
             logger.exception("Connection test crashed for type %s", self.form_type)
             ok, msg = False, "The connection test failed unexpectedly — please report this"
-        self.test_success = ok
+        # core#821: `ok` is now True / False / None. A crash above yields
+        # False, so an unknown failure still reads as a failure and never as
+        # the neutral verdict.
+        self.test_success = ok is True
+        self.test_untested = ok is None
         self.test_message = msg
 
     async def test_saved_connection(self, conn_id: int):
@@ -1339,7 +1373,13 @@ class ConnectionState(BaseState):
                 conn.connection_type.value,
             )
             ok = False
-        self._set_row_test_status(conn_id, "ok" if ok else "fail")
+        # core#821: an untested type gets no row icon at all — `""` is the
+        # column's existing 'no verdict' state. Showing a red cross for a
+        # connection nobody checked would be a fresh false claim.
+        if ok is None:
+            self._set_row_test_status(conn_id, "")
+        else:
+            self._set_row_test_status(conn_id, "ok" if ok else "fail")
 
     def _set_row_test_status(self, conn_id: int, status: str):
         """Update test_status for a specific connection row."""

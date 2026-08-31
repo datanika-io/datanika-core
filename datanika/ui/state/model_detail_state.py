@@ -1,6 +1,7 @@
 """Model detail state for Reflex UI — view/edit a single catalog entry."""
 
 import json
+import logging
 
 from pydantic import BaseModel
 
@@ -16,6 +17,8 @@ from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
+
+_log = logging.getLogger(__name__)
 
 _VALID_STRING_TESTS = {"not_null", "unique"}
 _VALID_DICT_TESTS = {"accepted_values", "relationships"}
@@ -552,7 +555,15 @@ class ModelDetailState(BaseState):
                         dbt_config=dbt_config,
                     )
             except Exception:
-                pass  # YML regeneration is best-effort
+                # Best-effort by design: the catalog edit is already valid and
+                # must commit. But a dropped YML rewrite means the dbt project
+                # on disk silently disagrees with the catalog the user just
+                # saved, and the next dbt run is what discovers it (core#723).
+                _log.exception(
+                    "dbt YML regeneration failed and was dropped: entry=%s type=%s",
+                    getattr(entry, "table_name", "?"),
+                    getattr(entry, "entry_type", "?"),
+                )
 
             session.commit()
         self.error_message = ""

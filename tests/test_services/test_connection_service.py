@@ -416,11 +416,18 @@ class TestTestConnection:
         assert ok is False
         assert "not applicable" not in msg.lower()
 
-    def test_non_db_type_skipped_rest_api(self, svc):
+    def test_rest_api_is_reported_as_not_tested(self, svc):
+        """core#821: this used to answer `(True, "Test not applicable")`.
+
+        `True` paints the message green, so a connector nobody had checked
+        read as verified. `rest_api` still cannot be probed — a base URL plus
+        arbitrary auth offers no endpoint we know is safe to call — but the
+        honest answer to "did it work?" is *not tested*, not *yes*.
+        """
         config = {"base_url": "https://api.example.com"}
         ok, msg = svc.test_connection(config, ConnectionType.REST_API)
-        assert ok is True
-        assert "not applicable" in msg.lower()
+        assert ok is None, f"expected the neutral verdict, got {ok!r}"
+        assert "not tested" in msg.lower()
 
     def test_mongodb_connection_mocked(self, svc):
         """Mock pymongo.MongoClient to verify server_info() is called."""

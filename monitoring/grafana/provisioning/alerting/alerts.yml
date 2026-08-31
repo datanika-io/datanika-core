@@ -224,24 +224,50 @@ groups:
           summary: "High memory usage: {{ $value }}%"
           description: "Memory usage has been above 90% for 5 minutes."
 
-      # --- Disk Space ---
-      - uid: disk-space-critical
-        title: Disk Space Critical
+      # --- Disk Space (core#727) ---
+      # Two bands, and the numbers are NOT invented here: they mirror
+      # `scripts/prune-docker-cache.sh`, which WARNS under 20 GiB free and FAILS the deploy
+      # under 5 GiB. Before this, the alert paged `critical` at 80% used -- about 32 GiB
+      # free on this 158 GB disk -- while the deploy step called the same disk merely
+      # "warning" until 20 GiB. Two instruments telling different stories about one number
+      # is the defect. The bands now each mean something operational:
+      #   warning  = the next deploy will warn
+      #   critical = the next deploy will FAIL
+      #
+      # ⚠️ `mountpoint="/"` is LOAD-BEARING, not tidiness, and switching from a percentage
+      # to a byte threshold is what makes it so. A percentage is scale-free and tolerates a
+      # loose selector; a byte threshold does not. node-exporter reports six filesystems on
+      # this box and one is a `ramfs` with `node_filesystem_avail_bytes = 0`, plus a 5 MiB
+      # tmpfs -- both match `< 5 GiB` on the FIRST evaluation and would page critical
+      # forever. Measured, not supposed. `fstype!~` is defence in depth behind the
+      # mountpoint selector, not a substitute for it: `ramfs` is neither tmpfs nor overlay.
+      #
+      # ⚠️ Duration in the QUERY, `for: 0s` (core#604). `<` filters, so a healthy sample is
+      # not a member of the series at all and `reduce: last` never observes a recovery --
+      # `for:` cannot debounce this shape. 10m at the 15s scrape is 40 samples and
+      # `gt [20]` demands more than half of them, which no blip can reach. Disk is
+      # slow-moving, so a generous window costs nothing.
+      #
+      # ⚠️ The percentage this used to compute is NOT the one `df` prints: `avail/size`
+      # counts root-reserved blocks, so the old rule read 38.28% where `df` read 36%. A
+      # third reason to state the threshold in the units the deploy step already uses.
+      - uid: disk-space-warning
+        title: Disk Space Low
         condition: C
         noDataState: OK
         execErrState: Alerting
         data:
           - refId: A
             relativeTimeRange:
-              from: 60
+              from: 600
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: '(1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 80'
+              expr: 'count_over_time((node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|ramfs"} < 21474836480)[10m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:
-              from: 60
+              from: 600
               to: 0
             datasourceUid: __expr__
             model:
@@ -251,7 +277,7 @@ groups:
               refId: B
           - refId: C
             relativeTimeRange:
-              from: 60
+              from: 600
               to: 0
             datasourceUid: __expr__
             model:
@@ -260,14 +286,58 @@ groups:
               conditions:
                 - evaluator:
                     type: gt
-                    params: [0]
+                    params: [20]
               refId: C
-        for: 5m
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Root filesystem below 20 GiB free"
+          description: "Free space on / has been under 20 GiB for more than half of the last 10 minutes. This is the same threshold `scripts/prune-docker-cache.sh` warns at, so the next deploy will warn too; under 5 GiB it aborts. Check `docker builder du` -- `docker system df` reports a different and much smaller number for the same box (1.256 GB reclaimable against 55.18 GB of build cache), so it is the wrong instrument here. Duration is in the query, so `for` is 0s (core#604)."
+
+      - uid: disk-space-critical
+        title: Disk Space Critical
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time((node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|ramfs"} < 5368709120)[10m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [20]
+              refId: C
+        for: 0s
         labels:
           severity: critical
         annotations:
-          summary: "Disk usage above 80%: {{ $value }}%"
-          description: "Root filesystem is running low on space."
+          summary: "Root filesystem below 5 GiB free"
+          description: "Free space on / has been under 5 GiB for more than half of the last 10 minutes. `scripts/prune-docker-cache.sh` ABORTS the deploy below this floor, so production can no longer be deployed. Reclaim with a capped `docker builder prune --max-used-space`; never `-af` (empties the cache, so the next deploy is a fully cold build that compiles lxml/xmlsec from source) and never `system prune -a` (unreferences the Exited rollback image). Duration is in the query, so `for` is 0s (core#604)."
 
       # --- Backup Stale ---
       # Fires when the nightly off-site pg_dump has not succeeded in over 26h
@@ -787,21 +857,74 @@ groups:
       #    3h window at about the rate the new one accumulates, so an ordinary deploy does
       #    not move this rule at all.
       #
-      # 3. The `_created` guard is what stops it paging after an EXPORTER restart. The
-      #    exporter's counters live in memory. On restart, the child for this task is
-      #    recreated at the value of the first event that follows, and a flat series has
-      #    an `increase` of 0 -- so without the guard the rule would fire for up to an
-      #    hour after any exporter recreate, which is how a rule earns a permanent mute.
-      #    `celery_task_succeeded_created` is the exporter's own record of when it began
-      #    observing this task; `min()` takes the oldest child, and until that is older
-      #    than the window the guard yields no series and the rule is silent. It errs
-      #    toward silence during churn ON PURPOSE, and the two watchdogs in the Monitoring
-      #    Liveness group are what cover the silence: `absent(up{job="celery"})` fires if
-      #    the exporter is not scraped at all, `absent(celery_worker_up)` if no worker is
-      #    reporting. Neither has a guard.
+      # 3. A guard is required at all because the exporter's counters live in memory: after
+      #    a restart a flat series has an `increase` of 0, so without one the rule fires
+      #    for up to an hour after any exporter recreate, which is how a rule earns a
+      #    permanent mute. It errs toward silence during churn ON PURPOSE, and the two
+      #    watchdogs in the Monitoring Liveness group cover that silence:
+      #    `absent(up{job="celery"})` fires if the exporter is not scraped at all,
+      #    `absent(celery_worker_up)` if no worker is reporting. Neither has a guard.
+      #
+      # 4. core#786 -- `or vector(0)` and the guard rebuilt on `celery_worker_up`. This
+      #    rule previously guarded on `celery_task_succeeded_created` and could not fire in
+      #    the one scenario it exists for. Two defects, both measured on prod:
+      #
+      #    (a) prometheus_client creates the labelled child on the FIRST SUCCESS it
+      #        observes. If maintenance has stopped, the series never appears, so
+      #        `sum(increase(...))` returns nothing, `< bool 1` returns nothing, and
+      #        `and on()` yields nothing. Against a task name that has never run -- which is
+      #        observationally identical to beat being dead -- the old shape returned
+      #        **0 series** and the new one returns **1**. `or vector(0)` supplies the zero
+      #        the missing series cannot.
+      #
+      #    (b) `celery_task_succeeded_created` is seeded by the first post-restart SUCCESS,
+      #        so coverage resumed 3h after that rather than 3h after the restart -- a
+      #        measured blind window of 3h48m, sitting immediately after every deploy,
+      #        which is the single most likely moment for beat to break.
+      #
+      #    ⚠️ The obvious replacement DOES NOT EXIST HERE and fails silently. core#786
+      #    proposed `process_start_time_seconds{job="celery"}`; danihodovic/celery-exporter
+      #    is a **Go** binary exposing 23 `celery_*` families and no `process_*` at all, so
+      #    that resolves to no series and `and on()` would make the rule PERMANENTLY unable
+      #    to fire. Five of the six scrape jobs do expose it, which is what makes the
+      #    assumption reasonable and the failure quiet. Verified with a query, not by
+      #    reading the exporter's docs.
+      #
+      #    `sum_over_time(celery_worker_up[3h])` is the guard that works: workers heartbeat
+      #    every few seconds, so the series reappears within seconds of the exporter
+      #    starting, and because the gauge is 1 while a worker is alive the sum over the
+      #    window IS "how long we have been watching a live worker". No waiting for a
+      #    success. Measured: 719 over a 3h window (armed), 120 over 30m (silent); the
+      #    threshold is 700 of a possible 720 at the 15s scrape.
+      #
+      #    `max()` and not `sum()`: `--purge-offline-worker-metrics 0` retains a retired
+      #    worker's series at 0 forever, and measurement confirms the pair reads
+      #    {retired: 0, live: 719}. `max` follows the live one; `sum` would too, but `avg`
+      #    or a bare series would halve on every deploy.
+      #
+      #    ⚠️ NOT `count_over_time`, though it measures the same thing here and was the
+      #    first draft. `test_alerting_config.py`'s duration-in-query detector branches on
+      #    the literal string `count_over_time` and then reads the RULE's threshold to ask
+      #    "how many samples are required" -- which is right when the count is the value
+      #    being thresholded and wrong when it sits inside a guard, as here. It flagged
+      #    this rule for having `for: 0s`. The lint is not wrong to be crude there, so the
+      #    expression avoids the ambiguity rather than the lint being loosened to admit it.
+      #
+      #    Deliberate consequence: if no worker has been up for the window, the guard is
+      #    false and this rule is silent. That is correct -- maintenance cannot run without
+      #    a worker, and `container-down` (which carries `celery`) plus
+      #    `absent(celery_worker_up)` are what report that condition.
       #
       # Window is 3h against an hourly schedule -- two consecutive misses, not one. A
       # missed maintenance sweep is housekeeping, not user-facing, hence `warning`.
+      #
+      # ⚠️ The remaining 3h blind window after an exporter restart is STRUCTURAL: you
+      # cannot detect a 3-hour absence with less than 3 hours of observation. Removing it
+      # means not deriving this from in-memory counters at all -- `backup-stale` and
+      # `restore-drill-stale` are restart-proof precisely because their timestamp is a
+      # node-exporter textfile metric, and that collector is already wired on the box
+      # (`--collector.textfile.directory=/textfile` <- /opt/datanika/node_textfile).
+      # Tracked on core#786; needs the task to write the file, which is Engineering's.
       - uid: celery-maintenance-not-firing
         title: Scheduled maintenance has stopped running
         condition: C
@@ -814,7 +937,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: '(sum(increase(celery_task_succeeded_total{name="datanika.run_maintenance"}[3h])) < bool 1) and on() ((time() - min(celery_task_succeeded_created{name="datanika.run_maintenance"})) > 10800)'
+              expr: '((sum(increase(celery_task_succeeded_total{name="datanika.run_maintenance"}[3h])) or vector(0)) < bool 1) and on() (max(sum_over_time(celery_worker_up[3h])) > 700)'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -844,7 +967,7 @@ groups:
           severity: warning
         annotations:
           summary: "datanika.run_maintenance has not succeeded in the last 3h"
-          description: "Celery Beat schedules datanika.run_maintenance hourly and it has not completed successfully in the last 3 hours, so at least two firings have been missed. Beat may be alive but wedged -- its container being Up is not evidence it is still producing. Check `docker logs datanika-beat` for 'Sending due task hourly-maintenance' and `docker logs datanika-celery` for the matching receipt. Duration is in the query, so `for` is 0s (core#604)."
+          description: "Celery Beat schedules datanika.run_maintenance hourly and it has not completed successfully in the last 3 hours, so at least two firings have been missed. Beat may be alive but wedged -- its container being Up is not evidence it is still producing. Check `docker logs datanika-beat` for 'Sending due task hourly-maintenance' and `docker logs datanika-celery` for the matching receipt. This now fires even when the success series is ABSENT, which is what a never-started task looks like (core#786). Duration is in the query, so `for` is 0s (core#604)."
 
   - orgId: 1
     name: External Probes

@@ -71,6 +71,17 @@ dependencies = [
     # Config & utilities
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
+    # 🚨 STUCK at 45.x, and not by choice (core#819). 45.0.7 is inside four
+    # CRITICAL/HIGH advisories — CVE-2026-26007 (fixed 46.0.5),
+    # GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1), CVE-2026-69249
+    # (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) — and this
+    # is the library `EncryptionService` uses on customer warehouse credentials.
+    #
+    # Every cryptography >= 46.0.1 requires `cffi>=2.0.0` on Python >= 3.9, and
+    # `dbt-core>=1.7.19,<1.8` above declares `cffi<2.0.0`. So the ceiling here
+    # is a consequence of the dbt pin, not an independent judgement: raising it
+    # makes `uv lock` unsatisfiable. Do not "fix" this line on its own.
+    # See BLOCKED_BY_DBT_1_7 in tests/test_security/test_dependency_advisories.py.
     "cryptography>=45.0,<46",
     # Monitoring
     "prometheus-client>=0.21,<0.26",
@@ -102,12 +113,107 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.uv]
+# Security floors for packages we do not declare directly (core#819).
+#
+# `image-cve` scanned the image the deploy builds and found 61 fixed-available
+# CRITICAL/HIGH findings. Almost all of them are transitive — reached via dlt,
+# dbt, reflex, snowflake-connector-python — so there is no direct pin to raise.
+# A constraint is the right tool: it binds the resolver without declaring a
+# dependency we do not ourselves import, and unlike `uv lock --upgrade-package`
+# it is a *durable* statement, so the next unrelated re-lock cannot roll it back.
+#
+# Each floor is the HIGHEST fix version across every CRITICAL/HIGH advisory
+# affecting the version we were shipping — not the first one the scanner named.
+# Several of these are chains where the later record is a bypass of the earlier
+# fix; GitPython is nine deep. `tests/test_security/test_dependency_advisories.py`
+# carries the per-CVE justification and fails if the lock drops below any of them.
+#
+# 🚨 FIVE findings are NOT here, and they are the five worst. All five are held
+# down by one line: `dbt-core>=1.7.19,<1.8` above.
+#
+#   redshift-connector  CVE-2026-8838 CRITICAL RCE — dbt-redshift 1.7.7 pins <2.0.918
+#   cryptography        4 HIGH        — dbt-core 1.7 pins cffi<2.0.0; every
+#                                       cryptography >=46.0.1 needs cffi>=2.0.0
+#   pyopenssl           CVE-2026-27459 — 26.0.0 needs cryptography>=46.0.0, ditto
+#   sqlparse            3 HIGH        — dbt-core 1.7 pins sqlparse<0.6.0
+#   protobuf            CVE-2026-0994 — dbt-core 1.7 pins protobuf<5
+#
+# The `cffi<2.0.0` link is the one nobody predicts from reading a CVE list, and
+# it is what puts the credential-encryption library on the blocked side. They
+# are recorded in BLOCKED_BY_DBT_1_7 in
+# tests/test_security/test_dependency_advisories.py, which goes red the moment
+# the dbt pin moves — so the dbt bump cannot land without re-deriving them.
+# Tracked as core#825.
+#
+# Each entry carries a CEILING as well as a floor, for the reason
+# `test_dependency_pins.py` already states about declared dependencies: an
+# unbounded spec makes a major bump something that happens on whichever day a
+# maintainer cuts a release. Without the ceilings this list floated pyarrow
+# 23.0.0 -> 25.0.1 (two majors, on dlt's parquet path) as a side effect of
+# fixing a use-after-free that 23.0.1 already fixes. A security change should
+# move the minimum needed to clear the advisory and no further, so that when
+# something breaks the bisect is short.
+#
+# lxml is the one place a MAJOR is unavoidable: CVE-2026-41066 has no 5.x fix.
+constraint-dependencies = [
+    "aiohttp>=3.14.3,<4",
+    "gitpython>=3.1.58,<4",
+    "granian>=2.7.4,<3",
+    "lxml>=6.1.0,<7",
+    "mako>=1.3.12,<2",
+    "pyasn1>=0.6.4,<0.7",
+    "pyjwt>=2.13.0,<3",
+    "pyarrow>=23.0.1,<24",
+    "python-engineio>=4.13.2,<5",
+    "python-multipart>=0.0.30,<0.1",
+    "python-socketio>=5.16.2,<6",
+    "soupsieve>=2.8.4,<3",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+# "S" is flake8-bandit — the SAST half of core#723. It is enabled here, in the
+# SAME change that fixes what it found, so the gating `lint` job never goes red
+# on `dev`. Do not land the select without the fixes.
+#
+# It earns its CI minutes in this codebase specifically: we encrypt and decrypt
+# customer warehouse credentials, and the expensive mistakes in that area —
+# `subprocess(shell=True)` on a variable, a hardcoded fallback key, a broadened
+# `except` around a crypto call — are all cheap for bandit to catch and easy to
+# write.
+#
+# ⚠️ The first run found 23 findings in application code, not the ~11 the issue
+# estimated. Seven were `try`/`except`/`pass`, four of those on the session and
+# audit path, and they were the real ones: each swallow was correct and each was
+# silent, so an audit trail could stop recording with no signal anywhere. Those
+# are fixed rather than ignored. The rest are name-based false positives
+# (a URL assigned to `*_TOKEN_URL`, an HTML template named `_PASSWORD_RESET_*`)
+# and carry an inline `# noqa` with the reason, so a genuine hardcoded secret in
+# the same file is still caught.
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# ⚠️ CI lints with `--exclude datanika/migrations` while the pre-push hook does
+# not, so before this the two gates saw different file sets. Putting the
+# migration exemption HERE means both read the same rules, which is the only way
+# a local green predicts a CI green.
+#
+# Migrations are S608 by construction: `op.execute()` takes SQL text, and the
+# interpolated values are literals in the migration's own source. There is no
+# request path into them and no user input to sanitise.
+"datanika/migrations/**" = ["S608"]
+
+# Tests: 5,558 findings, of which 5,558 are noise. `assert` IS the test (S101);
+# fixture credentials are fixtures (S105/S106/S107); the harnesses that shell out
+# to `uv`, `docker` and `alembic` are the point of those tests (S603/S607); and
+# a bound-to-all-interfaces address in a testcontainer is not a production
+# listener (S104). Left as an explicit list rather than a blanket `"S"` so that,
+# for example, S301 (pickle) or S324 (weak hash) in a test still fails.
+"tests/**" = ["S101", "S104", "S105", "S106", "S107", "S108", "S603", "S607", "S608"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -37,6 +37,40 @@ so it cannot silently endorse the wrong one.
 no promotion, and it **fails the moment the fix lands unless the marker is removed
 with it**, so the coverage cannot ship switched off. A regression test parked on a
 branch is a regression test nobody runs.
+
+⚠️ That last property was **not true when this file was first written**, and the
+way it was untrue is worth keeping
+-----------------------------------------------------------------------------
+
+The detector pruned ``def``/``class``/``lambda`` but walked into ``ast.If``, so a
+call behind a module-level role guard was flagged as an import-time start. The
+docstring on ``_module_level_scheduler_calls`` said the opposite — *"the same call
+inside a function or an ``if`` guard is fine"* — and ``TestTheGuardCanActuallyFail``
+had a case for every shape **except** the one they disagreed about.
+
+Measured on the two shapes, old detector against new:
+
+=================  ==========  ==========================================
+``datanika.py``    detector    strict-xfail outcome
+=================  ==========  ==========================================
+defect (today)     old         XFAIL — suite green, reads "still broken"
+defect (today)     new         XFAIL — suite green, reads "still broken"
+env-guarded fix    old         **XFAIL — suite green, reads "still broken"**
+env-guarded fix    new         XPASS → FAILURE, marker must be removed
+=================  ==========  ==========================================
+
+The old detector returns the **same** verdict for the defect and for the fix. So
+if Engineering had shipped core#648's opt-in-flag fix — one of the three
+candidates named in the decision, and the one the docstring pointed at — this
+file would have gone on xfailing, the suite would have stayed green, and the only
+signal that the fix had landed would have been absent. The marker outlives the
+defect and reads exactly like the defect.
+
+Generalising, because this is the third instance in this repo: **a guard whose
+prose and whose code disagree will be trusted according to its prose and behave
+according to its code**, and a guard-the-guard suite only closes that gap for the
+cases it enumerates. Enumerate the shapes the fix is expected to take, not just
+the shapes the bug takes.
 """
 
 import ast
@@ -54,11 +88,32 @@ SCHEDULER_OBJECT = "scheduler_integration"
 
 
 def _module_level_scheduler_calls(source: str) -> list[str]:
-    """Calls like ``scheduler_integration.start()`` at module scope.
+    """Calls like ``scheduler_integration.start()`` that run on a plain import.
 
-    Module scope only: the same call inside a function or an ``if`` guard is
-    fine — that is what several of the candidate fixes look like. What is not
-    fine is a statement that runs merely because something imported this module.
+    What this accepts and rejects, stated as a table because the prose version
+    of it drifted from the code once already (see the module docstring):
+
+    ==========================================  ==========
+    shape                                       verdict
+    ==========================================  ==========
+    ``scheduler_integration.start()``           **flagged**
+    inside a module-level ``with``              **flagged**
+    inside ``try:`` / ``except:``               **flagged**
+    inside ``def`` / ``async def`` / ``class``  accepted
+    inside ``if`` / ``else`` at module scope    accepted
+    ``if __name__ == "__main__":``              accepted
+    passed as a reference, not called           accepted
+    ==========================================  ==========
+
+    The rule is *conditional*, not *indented*. A ``try`` block still calls the
+    thing on every import — swallowing the exception changes what happens when
+    arming fails, not whether it is attempted. An ``if`` does not: a web process
+    that imports the app with ``DATANIKA_ROLE`` unset arms nothing.
+
+    The ``if`` carve-out is deliberately coarse — ``if True:`` would pass. This
+    is a tripwire for the *shape* of the defect, not a proof of single
+    ownership; the behavioural half of core#648 is what proves that, and it
+    cannot be a manifest or AST assertion (see the module docstring).
     """
     found: list[str] = []
 
@@ -68,6 +123,14 @@ def _module_level_scheduler_calls(source: str) -> list[str]:
         # fail every correct fix. Caught by TestTheGuardCanActuallyFail below,
         # which is the entire reason that class exists.
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda):
+            return
+        # Prune both branches of a module-level conditional, for the same
+        # reason — a role guard, a settings flag and `if __name__` are three of
+        # the candidate fixes on core#648, and flagging them would hold the
+        # strict xfail below red *after* the fix shipped. The condition itself
+        # is still visited: `if scheduler_integration.start():` is not a guard.
+        if isinstance(node, ast.If):
+            visit(node.test)
             return
         if isinstance(node, ast.Call):
             func = node.func
@@ -119,6 +182,66 @@ class TestTheGuardCanActuallyFail:
     def test_it_ignores_an_unrelated_start(self):
         source = "celery_app.start()\n"
         assert not _module_level_scheduler_calls(source)
+
+    # ------------------------------------------------------------------
+    # The `if`-guard cases. These were missing, and their absence is what
+    # let the detector and this file's own docstring disagree for the whole
+    # life of the marker below — see the module docstring's "what this
+    # accepts" table. A guarded start is one of the three candidate fixes
+    # named on core#648, so rejecting it would leave the strict xfail
+    # xfailing *after* the fix shipped: green suite, live defect, and no
+    # signal that the marker was due for removal.
+    # ------------------------------------------------------------------
+
+    def test_it_ignores_a_call_behind_a_module_level_env_guard(self):
+        """`DATANIKA_ROLE=scheduler` — the opt-in-flag fix from core#648 §3."""
+        source = (
+            "import os\n"
+            "if os.environ.get('DATANIKA_ROLE') == 'scheduler':\n"
+            "    scheduler_integration.start()\n"
+        )
+        assert not _module_level_scheduler_calls(source), (
+            "a start behind a role guard does not arm a scheduler when a web "
+            "process imports the app — flagging it would keep this file's "
+            "strict xfail red after the fix landed"
+        )
+
+    def test_it_ignores_a_call_behind_a_settings_flag_including_its_with_block(self):
+        source = (
+            "if settings.run_scheduler:\n"
+            "    scheduler_integration.start()\n"
+            "    with get_sync_session() as s:\n"
+            "        scheduler_integration.sync_all(s)\n"
+        )
+        assert not _module_level_scheduler_calls(source), (
+            "the guard must cover the whole conditional block, not just its first statement"
+        )
+
+    def test_it_ignores_a_dunder_main_entrypoint(self):
+        source = "if __name__ == '__main__':\n    scheduler_integration.start()\n"
+        assert not _module_level_scheduler_calls(source), (
+            "an `if __name__` block never runs on import, which is the entire property under test"
+        )
+
+    def test_it_ignores_a_call_in_an_else_branch(self):
+        source = "if settings.web_tier:\n    pass\nelse:\n    scheduler_integration.start()\n"
+        assert not _module_level_scheduler_calls(source), (
+            "`orelse` is as conditional as `body`; missing it would flag a "
+            "correct fix written the other way round"
+        )
+
+    def test_it_still_finds_a_call_wrapped_only_in_try_except(self):
+        """`try` is not a guard — the call still runs on every import.
+
+        This is the boundary of the rule above and the reason it is stated as
+        *conditional*, not as *indented*. Swallowing the exception changes what
+        happens when arming fails; it does not stop the arming.
+        """
+        source = "try:\n    scheduler_integration.start()\nexcept RuntimeError:\n    pass\n"
+        assert _module_level_scheduler_calls(source), (
+            "a try/except around the call is not a role guard — it arms a "
+            "scheduler in every process that imports the app"
+        )
 
 
 class TestTheSchedulerIsNotArmedByImport:

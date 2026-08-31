@@ -28,6 +28,7 @@ what "done" means from the user's side.
 | [`SPEC_PII_SEPARATION.md`](SPEC_PII_SEPARATION.md) | Personal data into `<parent>_pii` tables with a shared PK/FK; erasure, org deletion, email change. **Live and being implemented** — §2c is amended against a production column census. | In flight ([#655](https://github.com/datanika-io/datanika-core/issues/655)) |
 | [`SPEC_PASSWORD_RESET.md`](SPEC_PASSWORD_RESET.md) | Password change and account recovery — token shape, the non-consuming GET, what the copy may and may not claim about sessions. | Part B shipped ([#623](https://github.com/datanika-io/datanika-core/issues/623)) |
 | [`SPEC_ORG_ROLES.md`](SPEC_ORG_ROLES.md) | The org permission model: who may change whose role, owner transfer, and why nobody may strand the last owner. | Decided, not built ([#658](https://github.com/datanika-io/datanika-core/issues/658)) |
+| [`SPEC_RUN_CANCELLATION.md`](SPEC_RUN_CANCELLATION.md) | What cancelling a run promises — best-effort stop, partial data left in place, billing to the stop point — and the seven hand-maintained status lists that a new `cancelling` state has to reach. | Decided, not built ([#657](https://github.com/datanika-io/datanika-core/issues/657)) |
 | [`SPEC_SIGNUP_SOCIAL_AUTH.md`](SPEC_SIGNUP_SOCIAL_AUTH.md) | Social auth on `/signup`, and the context (`template`, `invite_token`, `next`) that the OAuth path currently drops. | Spec only ([#624](https://github.com/datanika-io/datanika-core/issues/624)) |
 | [`SPEC_MONGODB_TLS_SRV.md`](SPEC_MONGODB_TLS_SRV.md) | `tls` + SRV on the MongoDB connection form — the first dependent field pair in the connection form. | Spec only ([#626](https://github.com/datanika-io/datanika-core/issues/626)) |
 | [`SPEC_DUAL_MODE_UX.md`](SPEC_DUAL_MODE_UX.md) | The ETL/ELT mode selector, cost estimator, and dual-dimension volume-billing UX. | Shipped behind `datanika_dual_mode_ux_enabled` (default off) |
@@ -39,7 +40,7 @@ what "done" means from the user's side.
 
 ---
 
-All sixteen moved here on 2026-08-31 from a local planning directory outside any git repository,
+Sixteen of these moved here on 2026-08-31 from a local planning directory outside any git repository,
 under [`SPEC_PLANS_CONSOLIDATION`](https://github.com/datanika-io/datanika-core/issues/724) —
 Engineering's and Infra's first, Product's with [#734](https://github.com/datanika-io/datanika-core/issues/734).
 

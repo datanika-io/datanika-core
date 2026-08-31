@@ -11,14 +11,13 @@ from sqlalchemy.orm import Session
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
-from datanika.models.run import Run
 from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.dlt_runner import DltRunnerService, destination_dataset_name
 from datanika.services.encryption import EncryptionService
-from datanika.services.execution_service import ExecutionService
+from datanika.services.execution_service import ExecutionService, get_org_run
 from datanika.services.naming import to_snake_case
 from datanika.services.upload_service import to_dataset_name
 from datanika.tasks.celery_app import celery_app
@@ -144,11 +143,11 @@ def run_upload(
 
         emit("run.before_execute", session=session, org_id=org_id, predicted_runs=1)
 
-        execution_service.start_run(session, run_id)
+        execution_service.start_run(session, org_id, run_id)
         if own_session:
             session.commit()
 
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         upload = session.execute(
             select(Upload).where(Upload.id == run.target_id, Upload.org_id == org_id)
         ).scalar_one()
@@ -199,11 +198,17 @@ def run_upload(
 
             if uploaded_file_id:
                 from datanika.config import settings as app_settings
-                from datanika.models.uploaded_file import UploadedFile
-                from datanika.services.file_upload_service import FileUploadService
+                from datanika.services.file_upload_service import (
+                    FileUploadService,
+                    get_org_uploaded_file,
+                )
 
                 file_svc = FileUploadService(app_settings.file_uploads_dir)
-                uploaded_file = session.get(UploadedFile, uploaded_file_id)
+                # #732: the record names an archive path this task extracts
+                # and reads, so a cross-org id reads another tenant's
+                # uploaded data. The bare lookup also ignored `deleted_at`,
+                # whose archive `cleanup_orphaned_archives` may have removed.
+                uploaded_file = get_org_uploaded_file(session, upload.org_id, uploaded_file_id)
                 if uploaded_file:
                     extracted_dir = file_svc.extract_for_dlt(uploaded_file)
                     dlt_config["bucket_url"] = extracted_dir
@@ -263,7 +268,7 @@ def run_upload(
                 if extracted_dir and uploaded_file:
                     file_svc.cleanup_extracted(uploaded_file)
 
-        execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
+        execution_service.complete_run(session, org_id, run_id, rows_loaded=rows, logs=logs)
 
         table_count = 1  # fallback
         try:
@@ -283,6 +288,7 @@ def run_upload(
             # a user concluding the product does not work (core#494).
             execution_service.append_logs(
                 session,
+                org_id,
                 run_id,
                 "WARNING: the data loaded successfully, but the catalog sync failed, "
                 "so these tables will not appear under Models/Catalog: "
@@ -299,11 +305,12 @@ def run_upload(
             session.rollback()
         execution_service.fail_run(
             session,
+            org_id,
             run_id,
             error_message=str(exc),
             logs=traceback.format_exc(),
         )
-        run_obj = session.get(Run, run_id)
+        run_obj = get_org_run(session, org_id, run_id)
         if run_obj:
             upload = session.execute(
                 select(Upload).where(Upload.id == run_obj.target_id, Upload.org_id == org_id)

@@ -15,6 +15,7 @@ VUs with 4 workers — theoretical max was 97. Wrapping sync handlers in
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -25,6 +26,7 @@ from starlette.responses import JSONResponse
 from datanika.config import settings
 from datanika.db import get_sync_session
 from datanika.services.api_key_service import ApiKeyService
+from datanika.services.client_ip import resolve_client_ip
 from datanika.services.rate_limit_service import RateLimitService
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,91 @@ def _error(status: int, message: str, headers: dict[str, str] | None = None) -> 
         for k, v in headers.items():
             resp.headers[k] = v
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Load shedding, in front of everything that costs a database session (#774)
+# ---------------------------------------------------------------------------
+#
+# Ordering was the defect. Authentication ran first, so a request with an
+# invalid key was answered 401 having already spent a session checkout, a
+# sha256 and an indexed SELECT — and was never counted, so there was nothing
+# for it to exceed (40 of 40 measured unthrottled on production). A valid key
+# over its limit was worse: it paid *two* sessions and 9 Redis commands to be
+# told no, which is exactly what a 200 costs. A limiter that does not shed load
+# amplifies it.
+#
+# Everything below is advisory and suppresses Redis errors. That is deliberate:
+# it is an optimisation in front of `check_rate_limit`, which is authoritative
+# and still fails **closed**. When Redis is unavailable this layer disappears
+# and behaviour is what it was before this change — it must never be the reason
+# a request is refused or 500s.
+
+
+def _client_bucket(request: Request) -> str:
+    """The caller's address bucket, or "" when we cannot name them.
+
+    "" means *skip the address bucket entirely*. It must not degrade into a
+    placeholder bucket like ``apiauth:ip:``: in production the socket peer is
+    always 127.0.0.1 (Cloudflare → Apache → :8000), so one shared bucket is the
+    whole internet, and the tenth failure from anyone would lock out everyone.
+    See services/client_ip.py, which exists to answer exactly this and to refuse
+    when it cannot.
+    """
+    try:
+        headers = dict(request.headers)
+        if request.client is not None:
+            headers["asgi-scope-client"] = request.client.host
+        address = resolve_client_ip(headers)
+    except Exception:
+        return ""
+    return RateLimitService.client_bucket(address) if address else ""
+
+
+def _shed_before_auth(raw_key: str, request: Request) -> JSONResponse | None:
+    """Refuse, from Redis alone, anything we already know we will refuse.
+
+    Returns a 429 response when the request must not reach the database, or
+    ``None`` to proceed. The response carries only ``Retry-After``: pre-auth we
+    have not identified the caller, so we must not describe an entitlement.
+    """
+    try:
+        result = _rate_limit_svc.preauth_check(
+            credential=RateLimitService.credential_bucket(raw_key),
+            client=_client_bucket(request),
+            window_seconds=settings.api_auth_failure_window_seconds,
+            credential_failure_limit=settings.api_auth_failure_limit,
+            client_failure_limit=settings.api_auth_failure_ip_limit,
+        )
+        if result.allowed:
+            return None
+        retry_after = max(int(result.retry_after), 1)
+    except Exception:
+        return None
+    return _error(
+        429,
+        f"Too many requests. Retry after {retry_after} seconds.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _record_auth_failure(raw_key: str, request: Request) -> None:
+    """Count a rejected credential so the next one can be refused for free."""
+    with contextlib.suppress(Exception):
+        _rate_limit_svc.record_auth_failure(
+            credential=RateLimitService.credential_bucket(raw_key),
+            client=_client_bucket(request),
+            window_seconds=settings.api_auth_failure_window_seconds,
+        )
+
+
+def _mark_refused(raw_key: str, retry_after: int) -> None:
+    """Arm the pre-auth refusal for a key that just exceeded its own limit."""
+    with contextlib.suppress(Exception):
+        _rate_limit_svc.mark_refused(
+            credential=RateLimitService.credential_bucket(raw_key),
+            retry_after=retry_after,
+        )
 
 
 def api_endpoint(
@@ -107,9 +194,16 @@ async def _run_async_handler(
     handler: Callable, request: Request, raw_key: str, required_scope: str | None
 ) -> JSONResponse:
     """Original async-handler path — kept for backward compat."""
+    # #774: before the session, not after. Nothing below this line runs for a
+    # caller we have already decided to refuse.
+    shed = _shed_before_auth(raw_key, request)
+    if shed is not None:
+        return shed
+
     with _get_session() as session:
         api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
         if api_key is None:
+            _record_auth_failure(raw_key, request)
             return _error(401, "Invalid or expired API key")
         # Release the auth-read txn before Redis rate-limit/idempotency
         # work and before the handler runs (#292). Keeps `idle in
@@ -126,6 +220,7 @@ async def _run_async_handler(
         )
 
         if not result.allowed:
+            _mark_refused(raw_key, result.retry_after)
             return _error(
                 429,
                 f"Rate limit exceeded ({limit_rpm} requests/minute). "
@@ -174,9 +269,16 @@ def _run_sync_handler(
     Same logic as the async path but all calls stay sync. SQLAlchemy sessions
     are not thread-safe; we create one per invocation and close on exit.
     """
+    # #774: before the session, not after. Kept identical to the async path —
+    # a shedding rule that applies to only one of the two is not a rule.
+    shed = _shed_before_auth(raw_key, request)
+    if shed is not None:
+        return shed
+
     with _get_session() as session:
         api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
         if api_key is None:
+            _record_auth_failure(raw_key, request)
             return _error(401, "Invalid or expired API key")
         # Release the auth-read txn before Redis rate-limit/idempotency
         # work and before the handler runs (#292).
@@ -191,6 +293,7 @@ def _run_sync_handler(
         )
 
         if not result.allowed:
+            _mark_refused(raw_key, result.retry_after)
             return _error(
                 429,
                 f"Rate limit exceeded ({limit_rpm} requests/minute). "

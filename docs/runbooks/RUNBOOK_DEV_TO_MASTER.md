@@ -27,6 +27,73 @@
 
 ---
 
+## 🚨 Order: **cloud first, or every run is billed twice**
+
+**Promote `datanika-cloud` before `datanika-core`. Never the other way round.**
+
+There are now **two independent** reasons, and the second one costs money.
+
+**1. Mechanical (always true).** Cloud ships *inside* core's image: `deploy-pointer.yml` checks the
+cloud repo out at a pinned `ref: master` and tars both trees to the box, which rebuilds. So a
+promoted cloud tree reaches production **only on the next core `master` push**. Promote core first
+and that push builds production against the **pre-fix cloud tree** — while both branches read as
+promoted and every check is green.
+
+**2. Billing (true right now, measured 2026-08-31).** Core `dev` calls `bootstrap_cloud()` **twice**;
+cloud `master` has no idempotence guard. Re-derive it, don't trust this paragraph:
+
+```bash
+# core: count real call sites (not comments) on each ref
+for R in origin/master origin/dev; do
+  for F in datanika/datanika.py datanika/tasks/celery_app.py; do
+    echo "$R $F $(git cat-file -p "$R:$F" | grep -cE '^\s*bootstrap_cloud\(\)')"
+  done
+done
+# cloud: is the guard present?
+git cat-file -p origin/master:datanika_cloud/plugin.py | grep -c '_on_once'
+git cat-file -p origin/dev:datanika_cloud/plugin.py    | grep -c '_on_once'
+```
+
+Measured on 2026-08-31:
+
+| ref | `bootstrap_cloud()` call sites | `_on_once` |
+|---|---|---|
+| core `origin/master` | **1** (`datanika.py` only) | — |
+| core `origin/dev` | **2** (`+ tasks/celery_app.py`, core#772) | — |
+| cloud `origin/master` | — | **0** |
+| cloud `origin/dev` | — | present (cloud#129's commit) |
+
+`datanika.hooks.on` is a bare `setdefault(...).append(...)`. The Reflex web process imports **both**
+`datanika.datanika` and `datanika.tasks.celery_app`, so on core `dev` it reaches the call twice —
+and against a cloud tree without `_on_once` that **subscribes every handler twice**. `model_runs`
+metering is *deliberately* not deduplicated (`docs/billing_contract.md`: "calling the handler twice
+is two charges"), so the result is a **double-count on a billing dimension**, on a path that has
+never run in production.
+
+⚠️ **Nothing would page you.** Both containers come up healthy, every check is green, and the only
+symptom is usage numbers that are exactly 2×.
+
+> ### Why the in-code warning is easy to dismiss, and must not be
+>
+> `datanika/tasks/celery_app.py:82` carries the warning and cites **cloud#129**. Following that
+> reference is *unconvincing*: cloud#129 is titled *"charge_cycle_overages and
+> emit_charge_incoming_notices are not Celery tasks and are in no schedule"* and says nothing about
+> `_on_once`, idempotence, or promotion order — so a reader checking it concludes the warning is
+> stale or misfiled, and promotes in whatever order is convenient.
+>
+> The citation is not *wrong*: `_on_once` genuinely landed in the commit that fixes cloud#129
+> (`2edb22c`, "Give the V2 overage path a production caller"), but only as an **"Also here" rider in
+> the commit body** — a place nobody looks when checking a reference. The reachability half belongs
+> to **core#772**, which is what adds the second caller.
+>
+> **Verify with the two commands above, not with the issue link.** Reported to Engineering as a
+> comment-accuracy fix; this runbook section is the control that does not depend on it.
+
+**Corollary for issue closure:** a cloud fix's issues close after the **core** deploy verifies it on
+the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
+
+---
+
 ## Pre-flight
 
 - [ ] Confirm nothing you meant to include is still open. ~~check with Engineering~~ — since
@@ -152,11 +219,40 @@
 
 11. After promoting, sync `dev` back to `master` so they don't diverge:
     ```bash
-    # From local machine
+    # From any checkout or worktree of the repo. The branch you happen to have
+    # checked out is irrelevant to this push -- see the hook note below.
     cd datanika
     git fetch origin
     git push origin origin/master:refs/heads/dev        # fast-forward, NO --force
     ```
+
+    ### ⚠️ What the pre-push hook does with this push, and what a refusal means (core#556, core#771)
+
+    This push names `origin/master` — a **remote-tracking ref**, not the branch you have
+    checked out — so `scripts/hooks/pre-push` reads its **stdin**, where git supplies one
+    line per ref (`<local ref> <local sha> <remote ref> <remote sha>`). It sees that the sha
+    being pushed is not `HEAD` and prints:
+
+    ```
+    pre-push: pushing a ref that is not HEAD (refspec push) — skipping rebase and tests.
+              Your working tree is irrelevant to what is being pushed.
+    ```
+
+    then exits 0. **Nothing is rebased and the ~4,000-test suite does not run**, which is
+    correct: the push introduces no new objects, so there is nothing for the hook to validate.
+
+    **Before core#556 (2026-07-22) the hook inferred intent from `git rev-parse --abbrev-ref
+    HEAD` instead.** It therefore refused a push carrying zero commits *and* rebased whatever
+    branch happened to be checked out — a branch this push does not touch, with no prompt and
+    no mention of that branch's name in the output. `datanika-cloud` carried the same defect
+    until 2026-08-31 (`datanika-cloud#131`), and it is what made the cloud resync fail that
+    night. Both repos now read stdin.
+
+    🚨 **If you see `pre-push: branch is behind origin/dev — rebasing...` from *this* command**,
+    you are on a checkout whose hook predates that fix. Stop before pushing again: run
+    `git log -1 --format=%cr` on the branch it just rewrote to see whether it took real work
+    with it, then update `scripts/hooks/pre-push`. Do not simply retry — a retry succeeds, but
+    it succeeds by validating your worktree, which is an answer to a question nobody asked.
 
     ### ⚠️ Never `--force` this push, and never disarm protection to make it work (changed 2026-07-22)
 

@@ -93,67 +93,67 @@ class TestCreateRun:
 class TestStartRun:
     def test_sets_running_and_started_at(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        started = svc.start_run(db_session, run.id)
+        started = svc.start_run(db_session, org.id, run.id)
         assert started is not None
         assert started.status == RunStatus.RUNNING
         assert started.started_at is not None
 
-    def test_nonexistent(self, svc, db_session):
-        assert svc.start_run(db_session, 99999) is None
+    def test_nonexistent(self, svc, db_session, org):
+        assert svc.start_run(db_session, org.id, 99999) is None
 
 
 class TestCompleteRun:
     def test_sets_success_and_finished_at(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        svc.start_run(db_session, run.id)
-        completed = svc.complete_run(db_session, run.id, rows_loaded=100, logs="OK")
+        svc.start_run(db_session, org.id, run.id)
+        completed = svc.complete_run(db_session, org.id, run.id, rows_loaded=100, logs="OK")
         assert completed is not None
         assert completed.status == RunStatus.SUCCESS
         assert completed.finished_at is not None
         assert completed.rows_loaded == 100
         assert completed.logs == "OK"
 
-    def test_nonexistent(self, svc, db_session):
-        assert svc.complete_run(db_session, 99999, 0, "") is None
+    def test_nonexistent(self, svc, db_session, org):
+        assert svc.complete_run(db_session, org.id, 99999, 0, "") is None
 
 
 class TestFailRun:
     def test_sets_failed_and_finished_at(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        svc.start_run(db_session, run.id)
-        failed = svc.fail_run(db_session, run.id, "boom", "traceback here")
+        svc.start_run(db_session, org.id, run.id)
+        failed = svc.fail_run(db_session, org.id, run.id, "boom", "traceback here")
         assert failed is not None
         assert failed.status == RunStatus.FAILED
         assert failed.finished_at is not None
         assert failed.error_message == "boom"
         assert failed.logs == "traceback here"
 
-    def test_nonexistent(self, svc, db_session):
-        assert svc.fail_run(db_session, 99999, "err", "") is None
+    def test_nonexistent(self, svc, db_session, org):
+        assert svc.fail_run(db_session, org.id, 99999, "err", "") is None
 
 
 class TestCancelRun:
     def test_cancel_pending(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        cancelled = svc.cancel_run(db_session, run.id)
+        cancelled = svc.cancel_run(db_session, org.id, run.id)
         assert cancelled is not None
         assert cancelled.status == RunStatus.CANCELLED
 
     def test_cancel_running(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        svc.start_run(db_session, run.id)
-        cancelled = svc.cancel_run(db_session, run.id)
+        svc.start_run(db_session, org.id, run.id)
+        cancelled = svc.cancel_run(db_session, org.id, run.id)
         assert cancelled is not None
         assert cancelled.status == RunStatus.CANCELLED
 
     def test_cancel_completed_fails(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        svc.start_run(db_session, run.id)
-        svc.complete_run(db_session, run.id, 0, "")
-        assert svc.cancel_run(db_session, run.id) is None
+        svc.start_run(db_session, org.id, run.id)
+        svc.complete_run(db_session, org.id, run.id, 0, "")
+        assert svc.cancel_run(db_session, org.id, run.id) is None
 
-    def test_nonexistent(self, svc, db_session):
-        assert svc.cancel_run(db_session, 99999) is None
+    def test_nonexistent(self, svc, db_session, org):
+        assert svc.cancel_run(db_session, org.id, 99999) is None
 
 
 class TestGetRun:
@@ -184,7 +184,7 @@ class TestListRuns:
     def test_filter_by_status(self, svc, db_session, org, upload):
         r1 = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
         svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        svc.start_run(db_session, r1.id)
+        svc.start_run(db_session, org.id, r1.id)
         result = svc.list_runs(db_session, org.id, status=RunStatus.RUNNING)
         assert len(result) == 1
         assert result[0].id == r1.id

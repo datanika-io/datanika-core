@@ -393,6 +393,182 @@ jobs:
               ;;
           esac
 
+  # ---------------------------------------------------------------------------
+  # image-cve — trivy scan of the BUILT IMAGE (#723, placement resolved with #728)
+  #
+  # WHY THE ARTIFACT AND NOT `uv.lock`. The Dockerfile runs two graft installs
+  # *after* `uv sync --frozen`:
+  #
+  #     RUN uv pip install --constraint /tmp/lock-constraints.txt /cloud
+  #     RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
+  #
+  # That constraints file is an exported `uv.lock`, so it binds only packages
+  # CORE ALREADY LOCKS. Anything the grafted trees pull in that core does not
+  # lock is unconstrained and appears in NO manifest — the residue of #602 that
+  # the constraints fix does not cover. Add `FROM python:3.12-slim` and
+  # `COPY --from=ghcr.io/astral-sh/uv:latest`, two floating tags in no lockfile
+  # at all, and a manifest scan is measuring the wrong artifact entirely.
+  #
+  # WHY A SEPARATE JOB AND NOT A STEP IN `image-probe`. image-probe is a
+  # REQUIRED check on `dev`. A scan step inside it would gate every merge on
+  # third-party CVEs no PR author can fix — the exact objection #728 raises. As
+  # its own NON-REQUIRED job it reports without blocking, while the scan step
+  # itself still hard-fails (no `continue-on-error` quarantine), which is what
+  # #723 asks for. Promoting it to required later is one API call, and by then
+  # we will know the noise floor.
+  #
+  # ⚠️ ACTION PIN. `aquasecurity/trivy-action` tags carry a `v` PREFIX and there
+  # is NO major-only tag. Re-derived against the registry 2026-08-31, by HTTP
+  # status rather than response body:
+  #     v0.36.0 -> 200 (sha a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8, latest release)
+  #     0.36.0  -> 404      v0 -> 404      0.33.1 -> 404
+  # A `@0.33.1`-style pin written from memory does not resolve and the job never
+  # runs. Do NOT "simplify" this to `@v0`.
+  # ---------------------------------------------------------------------------
+  image-cve:
+    name: image-cve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Deliberately NO `security-events: write`. Uploading SARIF would start
+      # creating code-scanning alerts on a repo that has none today; do that as
+      # a separate, deliberate change once the baseline volume is known.
+    steps:
+      - name: Checkout core (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: core
+
+      - name: Check the cloud token is available
+        id: token
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+        run: |
+          # A fork PR gets no secrets, so no image can be built. image-probe has
+          # the same guard and the same hazard: without this the job reports
+          # green having scanned nothing at all.
+          if [ -z "${CLOUD_REPO_TOKEN}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CLOUD_REPO_TOKEN unavailable (fork PR?) — no image can be built, so this scan proves NOTHING about this commit."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout cloud (private)
+        if: steps.token.outputs.available == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: datanika-io/datanika-cloud
+          # Pair against the branch this PR targets, matching image-probe.
+          # NOTE: production builds cloud at a pinned `ref: master`, so a PR into
+          # dev scans core-PR + cloud-dev — the right basis for a PR gate, but
+          # not the shipping pairing. See the promotion-ordering rule.
+          ref: ${{ github.base_ref || github.ref_name }}
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: cloud
+
+      - name: Reshape build context
+        if: steps.token.outputs.available == 'true'
+        run: |
+          # The Dockerfile assumes the monorepo layout with datanika/ and
+          # datanika-cloud/ at the root — same reshape as image-probe.
+          mkdir -p build-context
+          cp -r core build-context/datanika
+          mv cloud build-context/datanika-cloud
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.token.outputs.available == 'true'
+
+      - name: Build the production image
+        if: steps.token.outputs.available == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: build-context
+          file: build-context/datanika/Dockerfile
+          push: false
+          load: true
+          tags: datanika-core:cve
+          # Reads the cache image-probe and build-push-image populate, so this
+          # usually pays only the layers the diff invalidated.
+          cache-from: type=gha
+          platforms: linux/amd64
+
+      # ── CANARY, and it runs BEFORE the gate on purpose ──────────────────────
+      # A scan reporting no findings is indistinguishable from a scan that never
+      # loaded its vulnerability database, never parsed the image, or had its
+      # exit-code plumbing misconfigured. This project has shipped that exact
+      # shape repeatedly (#615 and #616 were structurally unable to fire; a
+      # restore drill asserted seed data), so a green from the gate below is not
+      # evidence until this step has been seen to go red.
+      #
+      # It scans THE SAME image with the net thrown as wide as it goes: every
+      # severity, unfixed included. A Debian-based Python image cannot be clean
+      # at LOW+. If this finds nothing, trivy is not working — and we learn that
+      # instead of publishing a reassuring green.
+      #
+      # Deliberately NOT a pinned known-vulnerable image: that needs an extra
+      # pull, and it silently stops proving anything the day its findings get
+      # fixed or dropped from the DB.
+      - name: Canary — prove the scanner can actually fail
+        id: canary
+        if: steps.token.outputs.available == 'true'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Trivy pulls its DB from ghcr.io; anonymous pulls from shared runner
+          # IPs get 429'd. This is the AUTOMATIC GITHUB_TOKEN — not a configured
+          # secret, nothing to provision, and it works on forks.
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: datanika-core:cve
+          scan-type: image
+          format: table
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "1"
+
+      - name: Assert the canary went red
+        if: steps.token.outputs.available == 'true'
+        run: |
+          # `outcome` is the step's real result even though continue-on-error
+          # forced `conclusion` to success.
+          if [ "${{ steps.canary.outcome }}" != "failure" ]; then
+            echo "::error::CANARY DID NOT FIRE. Trivy reported no findings at ANY severity, including unfixed, on a Debian-based image. The scanner is not armed — treat the gate below as proving nothing, and fix trivy before trusting this job."
+            exit 1
+          fi
+          echo "::notice::Canary fired as expected — trivy is armed and its exit-code plumbing works."
+
+      # ── The actual gate ─────────────────────────────────────────────────────
+      - name: Scan the built image
+        if: steps.token.outputs.available == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: datanika-core:cve
+          scan-type: image
+          format: table
+          # CRITICAL+HIGH, fixed-only, and the reason is written down per #728's
+          # "say why": a python:3.12-slim base carries a long tail of MEDIUM/LOW
+          # OS CVEs Debian will not fix in a slim image, and an unfixable CVE is
+          # a base-image decision, not an action item for a PR author. A report
+          # that is always red gets ignored, which is the same as no report.
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Record what this job actually evaluated
+        if: always()
+        run: |
+          if [ "${{ steps.token.outputs.available }}" != "true" ]; then
+            echo "::warning::image-cve NOT EVALUATED — no image was built (fork PR). This green proves nothing."
+          else
+            echo "::notice::image-cve scanned the built artifact (CRITICAL+HIGH, fixed-only); canary confirmed the scanner armed."
+          fi
+
   # Prod deploy is handled by .github/workflows/deploy-pointer.yml (build-from-source
   # to pointer.gr on push:master). The old GHCR-pull-to-Hetzner deploy job was
   # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.
@@ -677,6 +853,36 @@ jobs:
         working-directory: e2e
         run: npx playwright test --grep-invert "@informational"
 
+      # ── core#757: a flaky GATING spec is a green run that filed nothing ─────
+      # `retries: process.env.CI ? 1 : 0` means a gating spec that fails and then
+      # passes on retry is reported `flaky` and Playwright exits 0 — so the step
+      # above succeeds, the job succeeds, and every alert below (`if: failure()`)
+      # never fires. That is the mechanism by which core#744 reached production:
+      # de00365 was `1 flaky / 16 skipped / 45 passed`, concluded `success`, filed
+      # no issue, and was promoted.
+      #
+      # `docs/QA_RULES.md` §12 already forbids retrying an assertion. This step is
+      # the pipeline finally implementing the rule that was only written down.
+      #
+      # ⚠️ It MUST stay above "Assert the @slow specs were actually collected".
+      # That step runs `playwright test --list` three times, and each run
+      # regenerates the report from zero tests — which is why the artifact really
+      # uploaded for de00365 reads `{"files":[],"stats":{"total":0,"flaky":0,
+      # "ok":true}}` with a 61 ms duration. Reading the report after those calls
+      # measures the `--list`, not the run.
+      #
+      # `always()`: a genuinely red run can also carry flaky specs, and the report
+      # deserves reading either way. The detector never fails the job itself —
+      # the gate's verdict is deliberately left unchanged until core#753 stops
+      # staging injecting infrastructure noise (hardening the gate while false
+      # reds are being injected would punish honest specs, which is the failure
+      # the tier policy exists to prevent).
+      - name: Detect flaky gating specs
+        id: flaky_gate
+        if: always()
+        working-directory: e2e
+        run: python3 scripts/detect_flaky_gating.py results-gating.json --github-output
+
       # ── TIER 2: INFORMATIONAL ───────────────────────────────────────────────
       # New specs earning a track record. `continue-on-error` quarantines the
       # VERDICT, never the execution: they still run against staging and still
@@ -712,6 +918,12 @@ jobs:
         if: steps.info_count.outputs.count != '0'
         working-directory: e2e
         continue-on-error: true
+        env:
+          # Keep this run's JSON out of the gating report's file. The detector
+          # above has already read it, so this is belt-and-braces — but a future
+          # reorder that moved the detector down would otherwise have it grading
+          # the informational tier while reporting on the gating one.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results-informational.json
         run: npx playwright test --grep "@informational"
 
       # `continue-on-error` masks the step's conclusion, so the graduation
@@ -850,6 +1062,69 @@ jobs:
             gh issue create \
               --repo ${{ github.repository }} \
               --title "[QA] e2e-staging failure on $SHORT_SHA" \
+              --body "$body" \
+              --label "e2e-failure"
+          fi
+
+      # ── core#757: the same two alerts, for a run that stayed GREEN ──────────
+      # These are NOT `if: failure()`. That is the entire point: the run they
+      # exist to report on concludes `success`, which is why nothing fired for
+      # de00365. They branch on the detector's own output instead.
+      - name: Telegram alert on flaky gating spec
+        if: always() && steps.flaky_gate.outputs.status == 'flaky'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\nThe run is GREEN. A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
+            "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
+      - name: File issue on flaky gating spec
+        if: always() && steps.flaky_gate.outputs.status == 'flaky'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          # Same dedup CHANNEL as a red (the `e2e-failure` label): a flaky gating
+          # spec is the same event as a red one that happened to retry into a
+          # green, so it belongs on the same thread rather than in a parallel one.
+          existing=$(gh issue list \
+            --repo ${{ github.repository }} \
+            --label e2e-failure \
+            --state open \
+            --limit 1 \
+            --json number --jq '.[0].number // empty')
+          body=$(printf '%s\n' \
+            "**The run is GREEN. This is not a red that was retried away — it is a red that Playwright reported as \`flaky\` and exited 0 on.**" \
+            "" \
+            "**Run:** $RUN_URL" \
+            "**Commit:** \`$SHORT_SHA\`" \
+            "**Message:** $FIRST_LINE" \
+            "**Flaky gating specs:** $FLAKY_SPECS" \
+            "" \
+            "\`docs/QA_RULES.md\` §12 — a retry around container startup hides nothing; a retry around an assertion hides a product bug. These are gating specs, so this is the second kind." \
+            "" \
+            "core#757 is why this alert exists: core#744 reached production because a run in exactly this shape concluded \`success\`.")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo ${{ github.repository }} \
+              --body "$body"
+          else
+            gh issue create \
+              --repo ${{ github.repository }} \
+              --title "[QA] e2e-staging GATING spec flaky (green run) on $SHORT_SHA" \
               --body "$body" \
               --label "e2e-failure"
           fi

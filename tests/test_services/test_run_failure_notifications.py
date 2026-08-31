@@ -73,7 +73,9 @@ class TestFailedRunsAnnounce:
         seen = []
         clean_hooks.on("run.failed", lambda **kw: seen.append(kw))
 
-        ExecutionService().fail_run(db_session, run.id, error_message="boom", logs="trace")
+        ExecutionService().fail_run(
+            db_session, run.org_id, run.id, error_message="boom", logs="trace"
+        )
 
         assert len(seen) == 1, "a failed run announced nothing"
         payload = seen[0]
@@ -87,18 +89,21 @@ class TestFailedRunsAnnounce:
         seen = []
         clean_hooks.on("run.failed", lambda **kw: seen.append(kw))
 
-        ExecutionService().fail_run(db_session, run.id, error_message="boom", logs="t")
+        ExecutionService().fail_run(db_session, run.org_id, run.id, error_message="boom", logs="t")
 
         payload = seen[0]
         assert payload["target_type"] == NodeType.UPLOAD.value
         assert payload["target_id"] == 7
         assert isinstance(payload["target_type"], str), "enum would not serialise for Celery"
 
-    def test_a_missing_run_announces_nothing(self, db_session, clean_hooks):
+    def test_a_missing_run_announces_nothing(self, db_session, org, clean_hooks):
         seen = []
         clean_hooks.on("run.failed", lambda **kw: seen.append(kw))
 
-        assert ExecutionService().fail_run(db_session, 999999, error_message="x", logs="y") is None
+        assert (
+            ExecutionService().fail_run(db_session, org.id, 999999, error_message="x", logs="y")
+            is None
+        )
         assert seen == []
 
     def test_a_broken_notifier_cannot_mask_the_failure(self, db_session, run, clean_hooks):
@@ -109,7 +114,9 @@ class TestFailedRunsAnnounce:
 
         clean_hooks.on("run.failed", explode)
 
-        result = ExecutionService().fail_run(db_session, run.id, error_message="boom", logs="t")
+        result = ExecutionService().fail_run(
+            db_session, run.org_id, run.id, error_message="boom", logs="t"
+        )
 
         assert result is not None
         assert result.status == RunStatus.FAILED
@@ -128,7 +135,7 @@ class TestTheNotificationActuallyArrives:
         register_in_app_notification_hooks()
 
         ExecutionService().fail_run(
-            db_session, run.id, error_message="dbt command failed", logs="t"
+            db_session, run.org_id, run.id, error_message="dbt command failed", logs="t"
         )
 
         # The hook creates an org-wide notification (no user_id), which
@@ -167,7 +174,7 @@ class TestFailuresAreNotMetered:
         ):
             clean_hooks.on(event, lambda _event=event, **kw: metered_hits.append(_event))
 
-        ExecutionService().fail_run(db_session, run.id, error_message="boom", logs="t")
+        ExecutionService().fail_run(db_session, run.org_id, run.id, error_message="boom", logs="t")
 
         assert metered_hits == [], (
             f"a failed run fired metered events {metered_hits} — cloud's handlers "

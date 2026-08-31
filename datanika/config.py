@@ -73,6 +73,23 @@ class Settings(BaseSettings):
     api_rate_limit_rpm: int = 60
     api_rate_limit_burst: int = 10
 
+    # Load shedding in front of the limiter (#774). These bound what an
+    # *unauthenticated* caller can cost us: before this, a request with an
+    # invalid key was never counted at all, so 40 of 40 measured requests each
+    # bought a session checkout, a sha256 and an indexed SELECT for free.
+    # Failures only — a valid key never touches these counters, so a legitimate
+    # caller behind a shared address is unaffected until that address itself is
+    # failing at this rate. Set either to 0 to disable that bucket.
+    api_auth_failure_limit: int = 10  # per presented credential, per window
+    api_auth_failure_ip_limit: int = 60  # per client address, per window
+    api_auth_failure_window_seconds: int = 60
+
+    # How long a resolved per-org rate limit may be reused before the plan is
+    # read again. 89% of the measured cost of enforcing a rate limit was the DB
+    # session opened to discover a value that changes about monthly
+    # (4.20 ms of 4.74 ms, on the production box). 0 disables the cache.
+    api_plan_limit_cache_seconds: int = 60
+
     # App
     app_name: str = "Datanika"
     debug: bool = False

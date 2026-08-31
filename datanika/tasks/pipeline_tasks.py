@@ -10,14 +10,13 @@ from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import Pipeline, PipelineStatus
-from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
-from datanika.services.execution_service import ExecutionService
+from datanika.services.execution_service import ExecutionService, get_org_run
 from datanika.services.pipeline_service import PipelineService
 from datanika.tasks.celery_app import celery_app
 
@@ -176,7 +175,7 @@ def run_pipeline(
         # selectors where the static model list under-counts.
         from datanika.hooks import emit as _emit_hook
 
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         pipeline = session.execute(
             select(Pipeline).where(Pipeline.id == run.target_id, Pipeline.org_id == org_id)
         ).scalar_one()
@@ -194,7 +193,7 @@ def run_pipeline(
             predicted_runs=predicted,
         )
 
-        execution_service.start_run(session, run_id)
+        execution_service.start_run(session, org_id, run_id)
         if own_session:
             session.commit()
 
@@ -242,6 +241,7 @@ def run_pipeline(
         if result["success"]:
             execution_service.complete_run(
                 session,
+                org_id,
                 run_id,
                 rows_loaded=result["rows_affected"],
                 logs=result["logs"],
@@ -274,6 +274,7 @@ def run_pipeline(
         else:
             execution_service.fail_run(
                 session,
+                org_id,
                 run_id,
                 error_message="dbt command failed",
                 logs=result["logs"],
@@ -289,11 +290,12 @@ def run_pipeline(
             session.rollback()
         execution_service.fail_run(
             session,
+            org_id,
             run_id,
             error_message=str(exc),
             logs=traceback.format_exc(),
         )
-        run_obj = session.get(Run, run_id)
+        run_obj = get_org_run(session, org_id, run_id)
         if run_obj:
             pipe = session.execute(
                 select(Pipeline).where(Pipeline.id == run_obj.target_id, Pipeline.org_id == org_id)

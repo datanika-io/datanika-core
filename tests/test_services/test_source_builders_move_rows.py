@@ -53,7 +53,7 @@ import time
 import duckdb
 import pytest
 
-from datanika.services.dlt_runner import DltRunnerService
+from datanika.services.dlt_runner import DltRunnerError, DltRunnerService
 
 # ── The fixture payloads ────────────────────────────────────────────────────────
 # Distinct values per row so a "rows landed" assertion cannot be satisfied by the
@@ -237,19 +237,21 @@ class TestFileSourceMovesRows:
     ``csv``, ``json`` (all three shapes ``_json_chunks`` handles) and ``parquet``
     are measured here.
 
-    **``s3`` is NOT measured, and is deferred on a named blocker** rather than
-    left to look done: it needs a reachable bucket plus a key pair, which is a
-    credential this suite deliberately does not take (see the module docstring —
-    everything here must run in PR CI with no account). Covering it means either
-    a `minio` service in the compose stack or an AWS key in
-    ``plans/SECRETS_INVENTORY.md``; until one exists, ``s3``'s only assertions
-    are the mocked kwargs tests in ``test_dlt_runner.py``, which are the exact
-    kind that could not see #492.
+    ``s3`` is measured too, in ``TestS3FileSourceMovesRows`` below, against a real
+    MinIO container (core#684).
 
-    What ``s3`` *does* share with the three above is the format resolution path:
-    it carries no format in its type, so ``_resolve_file_format`` falls to the
-    glob's extension and **raises** on a bare ``*`` rather than guessing. That
-    refusal is unit-tested. The unmeasured part is the transport.
+    ⚠️ **This paragraph used to say ``s3`` was "NOT measured, deferred on a named
+    blocker" — and it kept saying that AFTER the s3 tests landed in the same
+    file.** Corrected 2026-08-31. It is worth leaving the correction visible
+    rather than silently rewriting, because a docstring asserting that a thing is
+    uncovered, sitting a few hundred lines above the tests that cover it, is the
+    same defect this module exists to catch: a claim about coverage that nobody
+    re-derived. Scope claims go stale in the direction that flatters nobody —
+    check them against the class list, not against memory.
+
+    What every file format here shares is the format resolution path: a type that
+    carries no format falls to the glob's extension and **raises** on a bare
+    ``*`` rather than guessing. That refusal is unit-tested.
     """
 
     @staticmethod
@@ -713,3 +715,188 @@ class TestKafkaSourceMovesRows:
             rows = _rows(db_path, "widgets")
 
         assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)]
+
+
+@requires_docker
+class TestS3FileSourceMovesRows:
+    """``s3`` over a real object store — the last unproven row of #545 (core#684).
+
+    **The blocker this sat behind was not real.** It was recorded as needing "a
+    bucket + key pair, which is a credential this suite deliberately does not
+    take". But ``endpoint_url`` is in ``AWS_CREDENTIAL_KEYS``, the connector form
+    exposes it as a first-class field, and ``datanika.io/docs/connectors/s3/``
+    ships it to users as *"only needed for S3-compatible stores (MinIO,
+    Backblaze B2, etc.)"* — checked against the live page, not the repo. So the
+    S3 *protocol* is exercisable with no AWS account, no vendor sign-up and no
+    secret on disk, exactly as Mongo and Kafka are exercised above.
+
+    Which makes the gap worse than "a format we did not get to": we **published**
+    a capability and never once executed it. The deferral held for four months,
+    over the transport belonging to the format ``#492`` actually broke.
+
+    **Why "csv already passes" does not cover this.** Every other file test in
+    this module reads from a local directory, so ``filesystem()`` resolves to
+    ``LocalFileSystem`` and no S3 code path runs at all. The *reader* is shared;
+    the *transport* is not, and the transport is the half that has never been
+    observed. Dropping ``endpoint_url`` from ``AWS_CREDENTIAL_KEYS`` turns the
+    three tests that have to reach the server red and leaves the fourth — which
+    raises before any socket is opened — green. That asymmetry is what
+    distinguishes these from a local-filesystem test wearing an ``s3://`` label;
+    a mutation that reddened all four would only show the harness is fragile.
+    """
+
+    BUCKET = "probe-bucket"
+    ACCESS_KEY = "probeaccesskey"
+    SECRET_KEY = "probesecretkey"
+
+    @staticmethod
+    def _csv_bytes() -> bytes:
+        header = "id,name,price\n"
+        body = "".join(f"{w['id']},{w['name']},{w['price']}\n" for w in WIDGETS)
+        return (header + body).encode("utf-8")
+
+    @staticmethod
+    def _parquet_bytes() -> bytes:
+        import io
+
+        import pyarrow
+        import pyarrow.parquet
+
+        buf = io.BytesIO()
+        pyarrow.parquet.write_table(
+            pyarrow.table(
+                {
+                    "id": [w["id"] for w in WIDGETS],
+                    "name": [w["name"] for w in WIDGETS],
+                    "price": [w["price"] for w in WIDGETS],
+                }
+            ),
+            buf,
+        )
+        return buf.getvalue()
+
+    @pytest.fixture(scope="class")
+    def bucket(self):
+        """One MinIO for the class, seeded with a CSV and a Parquet object.
+
+        Defined here rather than imported: pytest registers an imported fixture
+        as a separate FixtureDef in the importing module, so sharing a
+        ``scope="class"`` fixture by import starts a second container. See
+        ``tests/test_fixture_sharing.py``.
+        """
+        from testcontainers.core.container import DockerContainer
+
+        container = (
+            DockerContainer("minio/minio:RELEASE.2025-09-07T16-13-09Z")
+            .with_command("server /data")
+            .with_env("MINIO_ROOT_USER", self.ACCESS_KEY)
+            .with_env("MINIO_ROOT_PASSWORD", self.SECRET_KEY)
+            .with_exposed_ports(9000)
+        )
+        with container as running:
+            endpoint = f"http://{running.get_container_host_ip()}:{running.get_exposed_port(9000)}"
+
+            # SETUP retry only (core#578): MinIO answers its port before the
+            # object layer is initialised, so the first `create_bucket` races
+            # it. The loads and the assertions below are never retried.
+            def _seed():
+                import boto3
+
+                client = boto3.client(
+                    "s3",
+                    endpoint_url=endpoint,
+                    aws_access_key_id=self.ACCESS_KEY,
+                    aws_secret_access_key=self.SECRET_KEY,
+                    region_name="us-east-1",
+                )
+                client.create_bucket(Bucket=self.BUCKET)
+                client.put_object(Bucket=self.BUCKET, Key="csv/widgets.csv", Body=self._csv_bytes())
+                client.put_object(
+                    Bucket=self.BUCKET, Key="pq/widgets.parquet", Body=self._parquet_bytes()
+                )
+                # Read one back through the same client. Without this the
+                # fixture is satisfied by a PUT that 200s against a
+                # half-started server, and the empty listing that follows
+                # would read as a product bug.
+                got = client.get_object(Bucket=self.BUCKET, Key="csv/widgets.csv")
+                assert got["Body"].read() == self._csv_bytes()
+
+            # 30 attempts, not the 12 default. `DockerContainer` is the
+            # GENERIC wrapper — unlike `MongoDbContainer` it carries no
+            # readiness wait of its own, so this retry is the only thing
+            # standing between the fixture and a half-started server. core#758
+            # is a filed S3 saying the 12 s default already fails under normal
+            # multi-department Docker contention on this machine, for a
+            # container whose happy path is ~9 s. Shipping a new fixture on
+            # that budget would be repeating a known defect. This is a SETUP
+            # retry (core#578) and hides nothing: the loads and assertions
+            # below are never retried.
+            await_setup("minio accepting bucket writes", _seed, attempts=30)
+            yield endpoint
+
+    def _config(self, endpoint: str, prefix: str) -> dict:
+        return {
+            "bucket_url": f"s3://{self.BUCKET}/{prefix}",
+            "aws_access_key_id": self.ACCESS_KEY,
+            "aws_secret_access_key": self.SECRET_KEY,
+            "endpoint_url": endpoint,
+            "region_name": "us-east-1",
+        }
+
+    def test_rows_land_in_the_destination(self, tmp_path, bucket):
+        """csv, end to end: s3:// -> fsspec -> reader -> DuckDB."""
+        db_path = _extract_load(tmp_path, "s3", self._config(bucket, "csv"), {"file_glob": "*.csv"})
+
+        # `*.csv` is a wildcard, so `_file_table_name` falls past the glob-stem
+        # branch to the connection type. Asserting the real default rather than
+        # setting `table_name` keeps this honest about what a user actually gets.
+        assert _rows(db_path, "s3") == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "s3 did not deliver record CONTENTS into DuckDB over a real object "
+            "store. #492's shape is one row per file carrying that file's own "
+            "metadata, and its row COUNT looks healthy — which is why the count "
+            "is not the assertion here."
+        )
+
+    def test_parquet_rows_land_over_the_same_transport(self, tmp_path, bucket):
+        """The reader and the transport are independent axes.
+
+        `test_parquet_rows_land_in_the_destination` above proves `read_parquet`
+        against a local directory; the test above this one proves the S3
+        transport with `read_csv`. Neither proves the pair, and pyarrow opens a
+        remote file through a different fsspec path than a local one — which is
+        exactly the "shares the assembly" reasoning #545 was written to distrust.
+        """
+        db_path = _extract_load(
+            tmp_path, "s3", self._config(bucket, "pq"), {"file_glob": "*.parquet"}
+        )
+
+        assert _rows(db_path, "s3") == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "parquet did not deliver record CONTENTS into DuckDB over s3."
+        )
+
+    def test_a_bare_glob_refuses_rather_than_guessing(self, tmp_path, bucket):
+        """The `s3` default glob is `*`, and that MUST raise.
+
+        `s3` carries no format in its connection type, so `_resolve_file_format`
+        has only the glob's extension to go on and a bare `*` reaches nothing.
+        Guessing there reproduces #492 one layer along: a plausible row count
+        read through the wrong reader. Unit-tested already, never over the real
+        transport — and the refusal has to arrive before any bytes move.
+        """
+        with pytest.raises(DltRunnerError, match="no way to read it"):
+            _extract_load(tmp_path, "s3", self._config(bucket, "csv"), {})
+
+    def test_a_missing_prefix_fails_instead_of_loading_nothing(self, tmp_path, bucket):
+        """#493 over S3: matching nothing is not a successful load of nothing.
+
+        A typo'd prefix is the most likely S3 misconfiguration there is — the
+        bucket is real, the credentials work, the listing is simply empty — and
+        it is the case that used to report `success` / `Rows: 0`. Every other
+        test of this guard exercises the LOCAL branch of
+        `describe_empty_file_match`, which is the one that can inspect the path;
+        the remote branch has never been run.
+        """
+        with pytest.raises(DltRunnerError, match="No files matched"):
+            _extract_load(
+                tmp_path, "s3", self._config(bucket, "no-such-prefix"), {"file_glob": "*.csv"}
+            )

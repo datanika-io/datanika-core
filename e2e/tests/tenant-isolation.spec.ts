@@ -21,8 +21,11 @@ import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
  * by datanika/scripts/e2e_seed.py (core#172); global-setup.ts maps them to
  * DATANIKA_E2E_* env vars. Un-skipped in core#297.
  */
-// @slow — real HTTP against a seeded second tenant; gated to master promotion
-// PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P1 Multi-Tenancy.
+// @slow — real HTTP against a seeded second tenant.
+// @slow. Runs wherever DATANIKA_E2E_SLOW=1 is set — which is EVERY
+// `e2e-staging` run on `dev` (ci.yml sets it on the job), not only
+// promotion PRs.
+// Multi-tenancy scope is tracked as `[QA]` issues.
 
 type ReadResource = {
   collection: string;

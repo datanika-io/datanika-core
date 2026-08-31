@@ -5,9 +5,8 @@ import logging
 from celery.exceptions import MaxRetriesExceededError
 
 from datanika.models.dependency import NodeType
-from datanika.models.run import Run
 from datanika.services.dependency_check import check_upstream_dependencies
-from datanika.services.execution_service import ExecutionService
+from datanika.services.execution_service import ExecutionService, get_org_run
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ def check_deps_or_retry(
         session = get_sync_session()
 
     try:
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return
 
@@ -66,7 +65,7 @@ def check_deps_or_retry(
                 f"{DEPENDENCY_MAX_RETRIES} retries: {unsatisfied_str}"
             )
             exec_svc = ExecutionService()
-            exec_svc.fail_run(session, run_id, error_message=error_msg, logs=error_msg)
+            exec_svc.fail_run(session, org_id, run_id, error_message=error_msg, logs=error_msg)
             if own_session:
                 session.commit()
             raise

@@ -30,7 +30,28 @@ class ApiKeyService:
         """Create an API key. Returns (ApiKey, raw_key).
 
         The raw key is only available at creation time — only the hash is stored.
+
+        Emits ``api_key.before_create`` first (core#706). This was the only
+        priced dimension with no gate, and the reason was structural rather than
+        an oversight in the limiter: ``api_middleware`` resolves
+        ``rate_limit_rpm`` per **org** and buckets per **key**, so the published
+        per-plan rate bounds nothing while key creation is unbounded. A per-key
+        bucket cannot enforce a per-plan entitlement; only a cap on keys can.
+
+        ``emit``, not ``announce`` — a subscriber refusing is the entire point,
+        and exceptions must propagate or enforcement silently dies (core#456).
+        Emitted **before** the row is built, so a refusal leaves nothing in the
+        session for the caller's next flush to commit, and so a handler counting
+        rows counts the ones it is deciding about.
+
+        Core subscribes nothing: the cap lives on ``plans.max_api_keys`` and is
+        enforced by the cloud plugin. In the core edition ``emit`` returns
+        immediately and behaviour is unchanged.
         """
+        from datanika.hooks import emit
+
+        emit("api_key.before_create", session=session, org_id=org_id, user_id=user_id)
+
         raw_key = KEY_PREFIX + secrets.token_urlsafe(KEY_BYTES)
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 

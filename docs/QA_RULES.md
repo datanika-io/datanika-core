@@ -29,12 +29,40 @@ seven, because each looked like health at the time:
 | An alert rule structurally unable to fire | two rules were green for weeks because their expressions could never evaluate true |
 | A green about the wrong layer | the nightly Kafka smoke listed topics with a library **the workflow installs and production does not have** — a green about connectivity, never about rows |
 | Silence read as health | zero `/_event` errors across 14 days of logs, because the socket carried ~9 connections in that window |
+| A wait whose success condition **is** absence | `gotoReady` returned when the `/_event` socket had been quiet for 600ms — so a socket that had died satisfied it *sooner* than a healthy one, and one that never opened became a silent 12-second sleep. It could not fail. |
 | A correct assertion about unreachable code | `has_permission("admin", "manage_members") is False` passes, and `has_permission` has zero production callers |
 
 **Corollary — the deferral trap.** A note once claimed a gap was covered "by the nightly connector
 smoke and the restore check". Both are API-level; neither could catch either of the two P0s that
 were then found by a person clicking through production. *Check what the named coverage actually
 exercises before accepting it as coverage.*
+
+**Corollary — a readiness gate must be able to fail, and "quiet" is not a readiness signal.**
+(core#744, 2026-08-31.) `golden-path` flaked ~50% on `dev` and held a promotion for a day. Two
+rounds of triage went to the Celery worker, because the assertion text ended *"Is the Celery worker
+running?"* — a hypothesis embedded in a failure string, and the worker was healthy and consuming
+other tasks from the same queue throughout.
+
+The actual defect was in the harness's own readiness helper. It waited for the Reflex `/_event`
+socket to go **quiet** and then returned successfully whatever it had observed. Silence is what a
+*dead* socket produces best, so its success condition was satisfied fastest by the exact failure it
+existed to prevent — and, having no failure branch, it degraded to a 12-second sleep and said
+nothing. Downstream, the run helper clicked *Run* and navigated away 30–60 ms later (measured in
+the failing traces), which is inside the window where Reflex has not yet put the event on the wire
+and the unload handler disconnects the socket. Reflex's own comment for that path:
+*"otherwise we throw the event into the void."*
+
+**Rules:**
+1. **A wait must have a failure branch, and the failure must name what was missing.** If every
+   outcome returns the same way, it is a sleep wearing a predicate's name.
+2. **Wait on a positive signal the test reads, never on the absence of one.** Here the right signal
+   was the framework's own `is_hydrated_rx_state_":true` on the wire — an open socket, an answering
+   backend, and a page that says it is mounted, rather than "nothing happened recently".
+3. **A click is not delivered when `click()` resolves.** That proves a DOM node was pressed. If the
+   next thing you do can tear the page down, first wait until the event is observably on the wire.
+4. **Split a multi-process assertion so each layer has its own message.** "No run row appeared"
+   spans the browser, the web app and the worker; one sentence naming the worker sent two people to
+   the wrong process on nights the worker was fine.
 
 ## 2. Any green you have not personally forced red is unproven
 
@@ -50,6 +78,45 @@ And its twin: **a red you have not shown can go green may be asserting something
 suites backwards, scoring the blind one 92% and the one that catches a real defect 62%. The
 replacement is *shown red as a required artifact*. "Make the guarded thing worse" catches all three
 failure shapes; "mutate the source" catches one.
+
+### 2a. A derivation that depends on import side effects is not a derivation
+
+**(2026-08-31, Engineering finding, verified by QA.)** Several guards here derive their input set
+rather than listing it — the `/api/v1` route table (core#719), the tenant-owned model set (core#732),
+the compose services a deploy must name. Deriving is right: a hand-written list is stale the day
+after it is written. But **where the derivation reads from decides whether it can silently cover a
+subset.**
+
+`SQLAlchemy`'s `Base.registry` is populated by whatever has been *imported*. Inside a full
+`pytest tests/` run that is everything, because some other test module imported it. So a
+registry-based model set returns all 17 models in CI and a handful when the file is run alone. The
+guard in question **passed with its own import loop deleted entirely**, and standalone covered
+**13 of 17** while reporting clean. Nothing about the result said "partial".
+
+The fix is to read from something that cannot vary with import order — here, an **AST walk over
+`datanika/models/*.py`** — and then to cross-check that against the runtime registry in a test that
+does its own explicit import loop.
+
+**Both halves of that cross-check must be shown red, and they fail differently.** Measured on
+`tests/test_security/test_tenant_fk_boundary.py`:
+
+| mutation | what it models | what fires |
+|---|---|---|
+| stop recognising the bare `TenantMixin` base | derivation returns **nothing** | `assert derived` — "the AST walk has stopped working" |
+| walk `models/[a-r]*.py` instead of `*.py` | derivation returns a **subset** | the set comparison: `only in registry=['SSOConfig', 'Schedule', 'Transformation', 'Upload', 'UploadedFile']` |
+
+The second is the one worth insisting on. An emptiness assertion is cheap and everyone adds it; the
+realistic defect is *12 of 17*, which is non-empty, looks healthy, and is caught only by comparing
+against an independently-derived set.
+
+**Rules:**
+1. **Ask what populates the thing you are deriving from.** If the answer is "imports", the answer is
+   "whatever ran first".
+2. **Assert the derivation is non-empty AND that it agrees with a second, independent derivation.**
+   Neither alone is sufficient.
+3. **Run the guard in its own pytest session**, not only as part of the suite. A guard that is only
+   ever exercised alongside 4,000 other tests has never been observed in the state a bisect or a
+   `-k` run puts it in.
 
 ## 3. Negative controls are what attribute a red
 
@@ -93,6 +160,13 @@ Use `pytest.mark.xfail(strict=True, raises=<Specific>)`.
 - A `KNOWN_VIOLATIONS`-style allowlist must be `strict` too. One entry lasted about an hour before
   the defect it named was fixed elsewhere and the suite correctly failed. **An entry there cannot
   outlive its defect** — that is the point of it.
+- **A bare `assert` in the SETUP of an `xfail(raises=AssertionError)` test is absorbed by the
+  marker**, so a broken harness reports as a satisfied expected-failure — indistinguishable from the
+  defect being present. Raise a non-`AssertionError` (a local `HarnessError`) for setup invariants,
+  so only the assertion under test can xfail. Related: when you CLEAR an xfail, mutate the fix back
+  and confirm the test goes red *for the stated reason* — one strict xfail on this project was being
+  satisfied by an `IndentationError` inside `ast.parse(inspect.getsource(...))`, visible only on
+  removing the marker.
 
 ## 6. Validate against the real consumer
 

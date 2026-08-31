@@ -36,6 +36,30 @@ export default defineConfig({
   reporter: [
     ["list"],
     ["html", { outputFolder: "playwright-report", open: "never" }],
+    // JSON report for core#757's flaky-gating detector.
+    //
+    // ⚠️ The path is deliberately OUTSIDE `playwright-report/`, and that is not
+    // tidiness. The "Assert the @slow specs were actually collected" step in
+    // ci.yml runs `npx playwright test --list` three times AFTER the tests, and
+    // each one regenerates the report folder from a zero-test run. The report
+    // really uploaded for de00365 — the run with a flaky golden-path that
+    // reached production — is:
+    //
+    //   {"files":[],"stats":{"total":0,"flaky":0,"ok":true}}   (duration 61ms)
+    //
+    // i.e. it asserts success having recorded nothing. A JSON report written
+    // into that folder would be destroyed identically and the detector would
+    // read an empty file, which is the same silent green one level up.
+    //
+    // PLAYWRIGHT_JSON_OUTPUT_NAME (Playwright's own env var) overrides this so
+    // the gating and informational runs can write to separate files.
+    [
+      "json",
+      {
+        outputFile:
+          process.env.PLAYWRIGHT_JSON_OUTPUT_NAME ?? "results-gating.json",
+      },
+    ],
   ],
   use: {
     baseURL: BASE_URL,

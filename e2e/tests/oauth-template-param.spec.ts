@@ -13,7 +13,8 @@ import { test, expect } from "../fixtures/auth";
  * and GitHub OAuth subtests stay skipped — staging has OAuth disabled
  * (callbacks aren't registered for staging-app.datanika.io), and the local
  * compose stack has mock providers but the call chain isn't wired here
- * yet. Re-enable both with a mock IdP once SSO scoping lands (PLAN_QA §P2).
+ * yet. Re-enable both with a mock IdP once SSO scoping lands (tracked as a
+ * `[QA]` issue; `plans/qa/PLAN_QA.md` was retired 2026-08-31).
  */
 test.describe("?template= preservation through OAuth signup", () => {
   test("email signup preserves template param", async ({ page }) => {

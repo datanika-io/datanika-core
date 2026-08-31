@@ -1,7 +1,7 @@
 # SLO Targets (v1) — k6 Baseline Reference
 
-> **Status**: Rough v1, agreed by Engineering for the QA P2 k6 work in
-> `plans/qa/PLAN_QA.md`. These are the numbers QA should bake into the
+> **Status**: Rough v1, agreed by Engineering for QA's k6 load-test work
+> (tracked as `[QA]` issues). These are the numbers QA should bake into the
 > first baseline. Revise once the harness has run against staging for a
 > week and we have real p50/p95 curves to argue from.
 
@@ -92,8 +92,7 @@ investigate, not an auto-page.
 - Weekly k6 scheduled GHA run, diff vs last week's baseline.
 - Regression = any SLI crosses its target OR shifts > 20 % from the
   previous week's median. Alert to Telegram.
-- Monthly roll-up into the QA health report described in
-  `plans/qa/PLAN_QA.md` §First 90 Days.
+- Monthly roll-up into the QA health report (tracked as a `[QA]` issue).
 
 ## Revision policy
 

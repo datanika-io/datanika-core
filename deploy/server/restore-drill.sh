@@ -1,13 +1,16 @@
 #!/bin/bash
 # Restore drill — proves the OFF-SITE backups actually restore (an untested backup
-# is not a backup). Pulls the latest dump from Aweb, restores it into a throwaway
-# postgres container, verifies row counts against the LIVE database, tears
-# everything down. Never touches the prod postgres/volume.
+# is not a backup). Pulls the latest dump from Aweb, DECRYPTS it, restores it into
+# a throwaway postgres container, verifies row counts against the LIVE database,
+# tears everything down. Never touches the prod postgres/volume.
 #
 # Deployed to:   /opt/datanika/scripts/restore-drill.sh on 185.25.22.188
 # Cron (monthly): 0 5 1 * * /opt/datanika/scripts/restore-drill.sh >> /var/log/datanika-restore-drill.log 2>&1
 # Canonical copy: deploy/server/restore-drill.sh (datanika-core)
-# Invariants pinned by: tests/test_deploy/test_restore_drill.py
+# Invariants pinned by: tests/test_deploy/test_backup_encryption.py
+#
+# ⚠️ NOTHING DEPLOYS THIS FILE (core#747) — the copy that runs is hand-installed.
+# After changing it, install it and compare sha256 against git.
 #
 # ⚠️ The assertion is the whole value of this script, and its first version was
 # `plans >= 5`. That is seed data written by seed_v2_plans.py, never by a
@@ -21,6 +24,14 @@
 #
 # So: compare every table against the live database instead. No hardcoded list,
 # because a hardcoded list is the same mistake with more rows.
+#
+# ── Encryption (core#675, 2026-08-31) ────────────────────────────────────────
+# The off-site artifact is now GPG ciphertext. This drill is therefore also the
+# only thing that regularly proves the encryption round-trips — if it ever stops
+# decrypting, we find out on a schedule instead of during a recovery.
+# It additionally FAILS if any plaintext dump is found off-site, so a silent
+# revert to unencrypted backups becomes a loud monthly failure rather than a
+# quiet reappearance of core#675.
 
 set -euo pipefail
 
@@ -33,6 +44,7 @@ CONTAINER=datanika-restore-test
 PROD_CONTAINER=datanika-postgres
 TEXTFILE_DIR=/opt/datanika/node_textfile   # the ONLY dir node-exporter reads
 STAMP_FILE=/opt/datanika/monitoring/restore-drill-last-success.txt
+export GNUPGHOME="${GNUPGHOME:-/root/.gnupg}"   # overridable: cron leaves it unset, but a test must be able to remove the key
 
 cleanup() { docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true; rm -rf "${WORK}"; }
 trap cleanup EXIT
@@ -40,12 +52,36 @@ trap cleanup EXIT
 mkdir -p "${WORK}"
 START_EPOCH=$(date +%s)
 
+# Guard: encryption must not have silently regressed. '*.sql.gz' does not match
+# '*.sql.gz.gpg', so this counts plaintext dumps only.
+echo "[$(date)] checking no plaintext dumps remain off-site..."
+PLAINTEXT_COUNT=$(ssh ${SSH_OPTS} "${REMOTE}" "ls -1 ${REMOTE_DIR}/*.sql.gz 2>/dev/null | wc -l")
+if [ "${PLAINTEXT_COUNT}" != 0 ]; then
+    echo "[$(date)] RESTORE DRILL FAIL — ${PLAINTEXT_COUNT} UNENCRYPTED dump(s) on the off-site host."
+    echo "  That is core#675 reappearing. Check backup-offsite.sh on this box is the encrypting version."
+    exit 1
+fi
+
 echo "[$(date)] fetching latest off-site dump from ${REMOTE}..."
-LATEST=$(ssh ${SSH_OPTS} "${REMOTE}" "ls -t ${REMOTE_DIR}/*.sql.gz 2>/dev/null | head -1")
+LATEST=$(ssh ${SSH_OPTS} "${REMOTE}" "ls -t ${REMOTE_DIR}/*.sql.gz.gpg 2>/dev/null | head -1")
 if [ -z "${LATEST}" ]; then echo "[$(date)] ERROR: no off-site dump found"; exit 1; fi
 echo "[$(date)] latest: ${LATEST}"
 rsync -az -e "ssh ${SSH_OPTS}" "${REMOTE}:${LATEST}" "${WORK}/"
-DUMP="${WORK}/$(basename "${LATEST}")"
+ENC="${WORK}/$(basename "${LATEST}")"
+DUMP="${WORK}/$(basename "${LATEST}" .gpg)"
+
+# Decrypt. A failure here is the single most important thing this drill can
+# report: it means the off-site copies are unreadable and the backup is not a
+# backup. Do not add a fallback to plaintext — a fallback would mask exactly this.
+echo "[$(date)] decrypting off-site artifact..."
+if ! gpg --batch --quiet --yes --decrypt "${ENC}" > "${DUMP}" 2>"${WORK}/gpg.log"; then
+    echo "[$(date)] RESTORE DRILL FAIL — could not decrypt ${ENC}"
+    echo "  The off-site backups cannot be read with the key on this box."
+    echo "  Escrowed copy: secrets/datanika-backup-privkey.asc (founder dev machine)."
+    tail -10 "${WORK}/gpg.log" || true
+    exit 1
+fi
+echo "[$(date)] decrypted ok ($(stat -c%s "${DUMP}") bytes)"
 
 # Cheap pre-flight the size gate cannot do: a complete pg_dump ends with its own
 # terminator. A dump cut off mid-COPY does not, and is otherwise a valid gzip.
@@ -119,7 +155,7 @@ if [ -n "${MISSING}" ]; then
     exit 1
 fi
 
-echo "[$(date)] RESTORE DRILL PASS (${LIVE_POPULATED} populated tables all present, ${RESTORED_ROWS} rows, ${ELAPSED}s)"
+echo "[$(date)] RESTORE DRILL PASS (${LIVE_POPULATED} populated tables all present, ${RESTORED_ROWS} rows, decrypted off-site copy, ${ELAPSED}s)"
 
 # Freshness metric. Must land in TEXTFILE_DIR as *.prom or node-exporter never
 # sees it: the first version wrote a .txt into /opt/datanika/monitoring, which is
@@ -137,6 +173,9 @@ TMP="${TEXTFILE_DIR}/datanika_restore_drill.prom.$$"
     echo "# HELP datanika_restore_drill_duration_seconds Wall-clock duration of the last passing drill"
     echo "# TYPE datanika_restore_drill_duration_seconds gauge"
     echo "datanika_restore_drill_duration_seconds ${ELAPSED}"
+    echo "# HELP datanika_restore_drill_decrypted_offsite Whether the last passing drill decrypted a GPG off-site artifact"
+    echo "# TYPE datanika_restore_drill_decrypted_offsite gauge"
+    echo "datanika_restore_drill_decrypted_offsite 1"
 } > "${TMP}"
 mv "${TMP}" "${TEXTFILE_DIR}/datanika_restore_drill.prom"
 date -u +%Y-%m-%dT%H:%M:%SZ > "${STAMP_FILE}"

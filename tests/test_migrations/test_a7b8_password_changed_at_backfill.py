@@ -30,6 +30,26 @@ from tests.test_migrations.conftest import _run_alembic
 PARENT_REVISION = "b3f9d17c245e"
 THIS_REVISION = "a7b8c9d0e1f2"
 
+# 🚨 Every alembic call in this file names one of the two revisions above.
+# **Never `head` or `-1` here**, however convenient they look.
+#
+# This class tested `a7b8c9d0e1f2`'s rollback window with `downgrade -1` /
+# `upgrade head`, which was correct for exactly as long as `a7b8c9d0e1f2` was
+# the head. `c1d2e3f4a5b6` (core#713) was appended on 2026-08-31 and silently
+# re-pointed both: `-1` became "undo the plan seeding", so the users column
+# under test was never dropped and the rollback window this file exists to
+# exercise stopped happening.
+#
+# ⚠️ **Only one of the four tests went red.** The other three passed —
+# vacuously, having stopped exercising their subject — and
+# `test_the_column_round_trips_by_value` in particular now compared a value to
+# itself across two no-ops. A test pinned to its subject by *position* does not
+# fail when the position moves; it quietly starts testing whatever is there
+# instead. The red one was luck, and it is the only reason this was found.
+#
+# `test_roundtrip.py` keeps `-1`/`head` deliberately, and that is not the same
+# thing: its subject genuinely *is* "whichever migration is at head".
+
 
 @pytest.fixture
 def seeded_at_parent(roundtrip_db_url):
@@ -143,7 +163,7 @@ def at_head_with_a_changed_password(roundtrip_db_url):
         conn.execute(text("DROP SCHEMA public CASCADE"))
         conn.execute(text("CREATE SCHEMA public"))
 
-    result = _run_alembic(["upgrade", "head"], roundtrip_db_url)
+    result = _run_alembic(["upgrade", THIS_REVISION], roundtrip_db_url)
     assert result.returncode == 0, result.stderr
 
     with engine.begin() as conn:
@@ -210,8 +230,8 @@ class TestRollbackPreservesTheRevocationBaseline:
         """Every row's value, including the NULLs, comes back as it was."""
         before = _baseline(at_head_with_a_changed_password)
 
-        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
-        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["downgrade", PARENT_REVISION], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["upgrade", THIS_REVISION], roundtrip_db_url).returncode == 0
 
         after = _baseline(at_head_with_a_changed_password)
         assert after == before, (
@@ -237,7 +257,7 @@ class TestRollbackPreservesTheRevocationBaseline:
         stashed values. Without this test, deleting the backfill outright
         passes every other assertion in this class.
         """
-        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["downgrade", PARENT_REVISION], roundtrip_db_url).returncode == 0
 
         with at_head_with_a_changed_password.begin() as conn:
             conn.execute(
@@ -250,7 +270,7 @@ class TestRollbackPreservesTheRevocationBaseline:
                 {"created": CREATED},
             )
 
-        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["upgrade", THIS_REVISION], roundtrip_db_url).returncode == 0
 
         after = _baseline(at_head_with_a_changed_password)
         assert after["during@example.com"] is not None, (
@@ -269,8 +289,8 @@ class TestRollbackPreservesTheRevocationBaseline:
         so a stash left in place turns this fix into a round-trip failure
         somewhere else — a fix that breaks a different guard is not a fix.
         """
-        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
-        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["downgrade", PARENT_REVISION], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["upgrade", THIS_REVISION], roundtrip_db_url).returncode == 0
 
         with at_head_with_a_changed_password.begin() as conn:
             leftovers = conn.execute(
@@ -291,8 +311,8 @@ class TestRollbackPreservesTheRevocationBaseline:
         second downgrade half-applied.
         """
         for _ in range(2):
-            assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
-            assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+            assert _run_alembic(["downgrade", PARENT_REVISION], roundtrip_db_url).returncode == 0
+            assert _run_alembic(["upgrade", THIS_REVISION], roundtrip_db_url).returncode == 0
 
         after = _baseline(at_head_with_a_changed_password)
         assert after["changed@example.com"].startswith("2026-08-30T12:00:00")

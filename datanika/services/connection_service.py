@@ -437,13 +437,62 @@ class ConnectionService:
             return None
         return self._encryption.decrypt(conn.config_encrypted)
 
-    def list_connections(self, session: Session, org_id: int) -> list[Connection]:
-        stmt = (
-            select(Connection)
-            .where(Connection.org_id == org_id, Connection.deleted_at.is_(None))
-            .order_by(Connection.created_at.desc())
+    def list_connections(
+        self, session: Session, org_id: int, *, include_deleted: bool = False
+    ) -> list[Connection]:
+        """List an org's connections.
+
+        ``include_deleted`` exists for *display* only, and is off by default so
+        no caller picks up retired rows by accident. It is what lets a screen
+        say ``q3signupsexport (deleted)`` instead of the bare ``#31`` that
+        core#805 was filed about: the name is still on the row, it was only the
+        join that filtered it out. Never use it to resolve a connection for
+        running anything — that is ``get_connection``, which filters
+        ``deleted_at`` and must keep doing so.
+        """
+        # The org_id constraint stays literally inside the first `.where()`.
+        # Building the conditions in a list first is equivalent SQL and made
+        # `tests/test_security/test_tenant_fk_boundary.py` stop recognising this
+        # query as org-scoped — the S1 guard from core#733 would have gone blind
+        # here while the code stayed correct, which is worse than a red test.
+        stmt = select(Connection).where(Connection.org_id == org_id)
+        if not include_deleted:
+            stmt = stmt.where(Connection.deleted_at.is_(None))
+        return list(session.execute(stmt.order_by(Connection.created_at.desc())).scalars().all())
+
+    @staticmethod
+    def list_dependents(session: Session, org_id: int, conn_id: int) -> list[str]:
+        """Names of the live objects that would break if ``conn_id`` were deleted.
+
+        Deleting a connection is a pure soft delete with no cascade and no
+        check, so nothing told the user that three uploads pointed at it
+        (core#805). Returning *names* rather than a count is deliberate: the
+        count answers "how many" and the names answer "which", and the user
+        needs the second to decide.
+
+        Reads live rows only — a dependent that is itself soft-deleted is not
+        a reason to keep a connection.
+        """
+        from datanika.models.pipeline import Pipeline
+        from datanika.models.transformation import Transformation
+        from datanika.models.upload import Upload
+
+        names: list[str] = []
+        upload_stmt = select(Upload.name).where(
+            Upload.org_id == org_id,
+            Upload.deleted_at.is_(None),
+            (Upload.source_connection_id == conn_id)
+            | (Upload.destination_connection_id == conn_id),
         )
-        return list(session.execute(stmt).scalars().all())
+        names.extend(session.execute(upload_stmt).scalars().all())
+        for model in (Pipeline, Transformation):
+            stmt = select(model.name).where(
+                model.org_id == org_id,
+                model.deleted_at.is_(None),
+                model.destination_connection_id == conn_id,
+            )
+            names.extend(session.execute(stmt).scalars().all())
+        return names
 
     def update_connection(
         self, session: Session, org_id: int, conn_id: int, **kwargs

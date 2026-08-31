@@ -372,6 +372,101 @@ def upload_form() -> rx.Component:
     )
 
 
+def _connection_cell(name, is_deleted) -> rx.Component:
+    """A connection reference that stays readable after the connection is retired.
+
+    Soft-deleting a connection dropped it out of the name map, so the row fell
+    through to a bare ``#31`` — a raw internal identifier, in no i18n key, and
+    indistinguishable from a connection with an empty name (core#805). The name
+    was never gone; only the join filtered it out.
+    """
+    return rx.hstack(
+        rx.text(name, size="2"),
+        rx.cond(
+            is_deleted,
+            rx.badge(_t["common.deleted"], color_scheme="red", variant="soft", size="1"),
+        ),
+        spacing="1",
+        align="center",
+    )
+
+
+def _delete_upload_dialog(u) -> rx.Component:
+    """core#804 AC3 — /uploads Delete had the same missing confirmation.
+
+    Self-gating on ``can_delete`` for the reason given in
+    ``connections._delete_connection_dialog``: the RBAC visibility guard scans
+    lexically, so a control moved into a helper must carry its own gate.
+    """
+    return rx.cond(
+        AuthState.can_delete,
+        rx.alert_dialog.root(
+            rx.alert_dialog.trigger(
+                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+            ),
+            rx.alert_dialog.content(
+                rx.alert_dialog.title(_t["uploads.delete_title"]),
+                rx.alert_dialog.description(_t["uploads.delete_body"]),
+                rx.card(
+                    rx.text("#", u.id, "  ", u.name, size="2", weight="bold"),
+                    margin_top="12px",
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            _t["uploads.delete_confirm"],
+                            color_scheme="red",
+                            on_click=UploadState.delete_upload(u.id),
+                        ),
+                    ),
+                    spacing="3",
+                    justify="end",
+                    margin_top="16px",
+                ),
+                max_width="480px",
+            ),
+        ),
+    )
+
+
+def _run_control(u) -> rx.Component:
+    """Run, or a disabled Run that says why (core#805 AC3).
+
+    A live control that queues a doomed run is worse than a disabled one: the
+    failure surfaces only in the run, and for a scheduled upload that is at
+    03:00 with nobody watching. The reason is rendered beside the button rather
+    than in a tooltip because a disabled button takes no pointer events, so its
+    tooltip never fires — the explanation would be there and unreachable.
+
+    Self-gating on ``can_edit``, same reason as the delete dialogs.
+    """
+    return rx.cond(
+        AuthState.can_edit,
+        rx.cond(
+            u.is_blocked,
+            rx.hstack(
+                rx.button(_t["common.run"], size="1", color_scheme="gray", disabled=True),
+                rx.text(
+                    _t["uploads.run_blocked_reason"],
+                    size="1",
+                    color="var(--gray-9)",
+                ),
+                spacing="1",
+                align="center",
+            ),
+            rx.button(
+                _t["common.run"],
+                size="1",
+                color_scheme=_run_button_color(u.last_run_status),
+                on_click=UploadState.run_upload(u.id),
+            ),
+        ),
+    )
+
+
 def uploads_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
@@ -392,12 +487,20 @@ def uploads_table() -> rx.Component:
                     rx.table.cell(u.name),
                     rx.table.cell(
                         rx.badge(
-                            u.status,
-                            color_scheme=rx.cond(u.status == "active", "green", "gray"),
+                            # An upload whose connection is gone must not read
+                            # `active` — it cannot run (core#805 AC2).
+                            rx.cond(u.is_blocked, _t["uploads.status_blocked"], u.status),
+                            color_scheme=u.status_color,
                         ),
                     ),
-                    rx.table.cell(u.source_connection_name),
-                    rx.table.cell(u.destination_connection_name),
+                    rx.table.cell(
+                        _connection_cell(u.source_connection_name, u.source_connection_deleted),
+                    ),
+                    rx.table.cell(
+                        _connection_cell(
+                            u.destination_connection_name, u.destination_connection_deleted
+                        ),
+                    ),
                     rx.table.cell(
                         rx.hstack(
                             rx.cond(
@@ -418,24 +521,9 @@ def uploads_table() -> rx.Component:
                                     on_click=UploadState.copy_upload(u.id),
                                 ),
                             ),
-                            rx.cond(
-                                AuthState.can_edit,
-                                rx.button(
-                                    _t["common.run"],
-                                    size="1",
-                                    color_scheme=_run_button_color(u.last_run_status),
-                                    on_click=UploadState.run_upload(u.id),
-                                ),
-                            ),
-                            rx.cond(
-                                AuthState.can_delete,
-                                rx.button(
-                                    _t["common.delete"],
-                                    color_scheme="red",
-                                    size="1",
-                                    on_click=UploadState.delete_upload(u.id),
-                                ),
-                            ),
+                            # Both helpers carry their own role gate.
+                            _run_control(u),
+                            _delete_upload_dialog(u),
                             spacing="2",
                         ),
                     ),

@@ -261,6 +261,11 @@ class ConnectionItem(BaseModel):
     name: str = ""
     connection_type: str = ""
     test_status: str = ""  # "" = untested, "ok" = success, "fail" = failure
+    #: How many live uploads / pipelines / transformations point at this
+    #: connection, and their names, so the delete dialog can say what it is
+    #: about to break rather than deleting silently (core#804, core#805).
+    dependent_count: int = 0
+    dependent_names: str = ""
 
 
 class ConnectionState(BaseState):
@@ -1145,14 +1150,19 @@ class ConnectionState(BaseState):
         svc = ConnectionService(encryption)
         with get_sync_session() as session:
             rows = svc.list_connections(session, org_id)
-            self.connections = [
-                ConnectionItem(
-                    id=c.id,
-                    name=c.name,
-                    connection_type=c.connection_type.value,
+            items = []
+            for c in rows:
+                dependents = svc.list_dependents(session, org_id, c.id)
+                items.append(
+                    ConnectionItem(
+                        id=c.id,
+                        name=c.name,
+                        connection_type=c.connection_type.value,
+                        dependent_count=len(dependents),
+                        dependent_names=", ".join(dependents),
+                    )
                 )
-                for c in rows
-            ]
+            self.connections = items
         self.error_message = ""
 
     async def save_connection(self):
@@ -1286,6 +1296,17 @@ class ConnectionState(BaseState):
             )
             session.commit()
         await self.load_connections()
+        # Nothing told the user the delete happened beyond a row vanishing, and
+        # for a *reversible* soft delete that reads far scarier than it is
+        # (core#804). Translated from the reactive dict rather than hardcoded,
+        # so the eight non-English locales are not silently English here.
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        yield rx.toast.success(
+            i18n.translations.get("connections.deleted_toast", "Connection retired"),
+            position="top-right",
+        )
 
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""

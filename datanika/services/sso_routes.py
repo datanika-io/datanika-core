@@ -12,6 +12,7 @@ from starlette.routing import Route
 
 from datanika.config import settings
 from datanika.services.auth import AuthService
+from datanika.services.auth_redirects import login_error_path
 from datanika.services.encryption import EncryptionService
 from datanika.services.oidc_token import IdTokenError, verify_id_token
 from datanika.services.sso_service import SSOService
@@ -98,7 +99,7 @@ async def sso_login(request: Request) -> RedirectResponse:
 
     if sso is None or not sso.is_active:
         return RedirectResponse(
-            url=_frontend("/login?error=SSO+not+configured+for+this+organization"),
+            url=_frontend(login_error_path("sso_not_configured")),
             status_code=302,
         )
 
@@ -107,7 +108,9 @@ async def sso_login(request: Request) -> RedirectResponse:
     elif sso.protocol.value == "saml":
         return await _saml_login(request, sso, org_slug)
 
-    return RedirectResponse(url=_frontend("/login?error=Unsupported+SSO+protocol"), status_code=302)
+    return RedirectResponse(
+        url=_frontend(login_error_path("sso_unsupported_protocol")), status_code=302
+    )
 
 
 async def _oidc_login(request: Request, sso, org_slug: str) -> RedirectResponse:
@@ -122,14 +125,12 @@ async def _oidc_login(request: Request, sso, org_slug: str) -> RedirectResponse:
             config = resp.json()
     except Exception:
         logger.exception("Failed to fetch OIDC discovery for %s", org_slug)
-        return RedirectResponse(
-            url=_frontend("/login?error=SSO+provider+unreachable"), status_code=302
-        )
+        return RedirectResponse(url=_frontend(login_error_path("sso_unreachable")), status_code=302)
 
     authorize_url = config.get("authorization_endpoint", "")
     if not authorize_url:
         return RedirectResponse(
-            url=_frontend("/login?error=Invalid+OIDC+configuration"), status_code=302
+            url=_frontend(login_error_path("sso_misconfigured")), status_code=302
         )
 
     state = secrets.token_urlsafe(32)
@@ -154,7 +155,7 @@ async def _saml_login(request: Request, sso, org_slug: str) -> RedirectResponse:
     """Build SAML AuthnRequest and redirect to IDP SSO URL."""
     if not sso.saml_idp_sso_url:
         return RedirectResponse(
-            url=_frontend("/login?error=SAML+IDP+not+configured"), status_code=302
+            url=_frontend(login_error_path("saml_idp_not_configured")), status_code=302
         )
 
     try:
@@ -200,7 +201,9 @@ async def _saml_login(request: Request, sso, org_slug: str) -> RedirectResponse:
         return response
     except Exception:
         logger.exception("Failed to build SAML AuthnRequest for %s", org_slug)
-        return RedirectResponse(url=_frontend("/login?error=SAML+request+failed"), status_code=302)
+        return RedirectResponse(
+            url=_frontend(login_error_path("saml_request_failed")), status_code=302
+        )
 
 
 async def sso_callback(request: Request) -> RedirectResponse:
@@ -209,14 +212,18 @@ async def sso_callback(request: Request) -> RedirectResponse:
     cookie_value = request.cookies.get(_SSO_STATE_COOKIE, "")
     parts = cookie_value.split(":")
     if len(parts) < 3:
-        return RedirectResponse(url=_frontend("/login?error=Invalid+SSO+state"), status_code=302)
+        return RedirectResponse(
+            url=_frontend(login_error_path("sso_invalid_state")), status_code=302
+        )
 
     org_slug = parts[0]
     stored_state = parts[1]
     signature = parts[2]
 
     if not _verify_state(stored_state, signature):
-        return RedirectResponse(url=_frontend("/login?error=Invalid+SSO+state"), status_code=302)
+        return RedirectResponse(
+            url=_frontend(login_error_path("sso_invalid_state")), status_code=302
+        )
 
     with _get_session() as session:
         svc = _sso_service()
@@ -224,7 +231,7 @@ async def sso_callback(request: Request) -> RedirectResponse:
 
         if sso is None or not sso.is_active:
             return RedirectResponse(
-                url=_frontend("/login?error=SSO+not+configured"), status_code=302
+                url=_frontend(login_error_path("sso_not_configured")), status_code=302
             )
 
         try:
@@ -239,12 +246,12 @@ async def sso_callback(request: Request) -> RedirectResponse:
                 email_verified = True
             else:
                 return RedirectResponse(
-                    url=_frontend("/login?error=Unsupported+protocol"), status_code=302
+                    url=_frontend(login_error_path("sso_unsupported_protocol")), status_code=302
                 )
 
             if not email:
                 return RedirectResponse(
-                    url=_frontend("/login?error=SSO+did+not+return+email"), status_code=302
+                    url=_frontend(login_error_path("sso_no_email")), status_code=302
                 )
 
             # Reuse OAuth user creation flow
@@ -286,9 +293,7 @@ async def sso_callback(request: Request) -> RedirectResponse:
             return Response("Unauthorized: SAML assertion failed validation.", status_code=401)
         except Exception:
             logger.exception("SSO callback failed for %s", org_slug)
-            return RedirectResponse(
-                url=_frontend("/login?error=SSO+authentication+failed"), status_code=302
-            )
+            return RedirectResponse(url=_frontend(login_error_path("sso_failed")), status_code=302)
 
         # Issue JWT tokens
         from sqlalchemy import select

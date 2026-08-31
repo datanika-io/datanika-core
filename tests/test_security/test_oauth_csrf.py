@@ -30,7 +30,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", _make_state_cookie("legitimate_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=attacker_state")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_empty_state_parameter_rejected(self, client):
         """Empty state in callback URL."""
@@ -39,7 +39,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", _make_state_cookie("real"))
             resp = client.get("/api/auth/callback/google?code=abc&state=")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_missing_state_parameter_rejected(self, client):
         """No state parameter at all in callback URL."""
@@ -48,7 +48,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", _make_state_cookie("real"))
             resp = client.get("/api/auth/callback/google?code=abc")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_replayed_state_with_different_cookie(self, client):
         """Attacker uses a valid state from a different session."""
@@ -58,7 +58,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", _make_state_cookie("session_A_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=session_B_state")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_tampered_signature_in_cookie(self, client):
         """Attacker modifies the HMAC signature in the cookie."""
@@ -69,7 +69,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", bad_cookie)
             resp = client.get(f"/api/auth/callback/google?code=abc&state={state}")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_no_cookie_at_all(self, client):
         """No oauth_state cookie present."""
@@ -77,7 +77,7 @@ class TestOAuthCSRF:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             resp = client.get("/api/auth/callback/google?code=abc&state=any")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_cookie_without_colon_separator(self, client):
         """Malformed cookie value without colon separator."""
@@ -86,7 +86,7 @@ class TestOAuthCSRF:
             client.cookies.set("oauth_state", "no_colon_here")
             resp = client.get("/api/auth/callback/google?code=abc&state=no_colon_here")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
 
 class TestOAuthProviderInjection:

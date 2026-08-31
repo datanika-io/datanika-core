@@ -1,4 +1,14 @@
-"""Text inputs a password manager will not fill.
+"""Every ``autocomplete`` decision in the product, in both directions.
+
+The module began as *"text inputs a password manager will not fill"* (core#618)
+and now owns the opposite case too (core#672). That is deliberate rather than
+tidy-mindedness: **the two are one decision seen from two sides**, and splitting
+them is what produced #672. The connection form was hardened while ``/login`` and
+``/signup`` — the two oldest and most-used forms in the product — were left
+declaring nothing at all, because nothing named the choice in a single place a
+reader would meet. Suppression lives in :func:`no_autofill_attrs`, declaration in
+:func:`autofill_attrs`, and picking the wrong one is now a visible mistake
+instead of an invisible omission.
 
 **Why this module exists (core#618).** Not one input in the connection form set
 ``autocomplete``, ``name`` or ``id``. With nothing to disambiguate on, Chrome
@@ -49,6 +59,52 @@ def no_autofill_attrs(*, secret: bool = False) -> dict[str, str]:
         "autoComplete": "new-password" if secret else "off",
         **_MANAGER_IGNORE_FLAGS,
     }
+
+
+#: The WHATWG autofill tokens the auth forms are allowed to declare.
+#:
+#: ``username`` is the *account identifier*, which is what our email fields are —
+#: not ``email``, which is for a contact address on an ordinary form. The
+#: distinction matters to a password manager: ``username`` + ``current-password``
+#: is the pair it stores and recalls as one credential, and an ``email`` token
+#: does not join that pair.
+AUTH_AUTOFILL_TOKENS = frozenset({"username", "current-password", "new-password", "name"})
+
+
+def autofill_attrs(token: str) -> dict[str, str]:
+    """Declare an auth input's autofill role (core#672).
+
+    The **inverse** of :func:`no_autofill_attrs`, and choosing between them is
+    the whole decision:
+
+    * A **connector credential** must not be filled from the browser's store —
+      the value belongs to a third-party system, and #618 is what happens when
+      the browser guesses. Use :func:`no_autofill_attrs`.
+    * An **auth form** must be filled from the browser's store — it is the
+      Datanika credential, and a manager recalling it is the desired behaviour.
+      Use this. ⚠️ Reaching for ``no_autofill_attrs`` here is the plausible wrong
+      repair: it wears a security label and ships a usability regression.
+      ``tests/test_ui/test_auth_form_autofill.py`` refuses it.
+
+    Note the vendor opt-out flags (``data-1p-ignore``, ``data-lpignore``) are
+    deliberately **absent** — this function is the half that invites managers in.
+
+    Args:
+        token: one of :data:`AUTH_AUTOFILL_TOKENS`. Validated rather than passed
+            through, because a typo (``"current_password"``, ``"newpassword"``)
+            is silently ignored by every browser: the attribute is present, the
+            page looks fixed, and the behaviour is identical to having no token
+            at all. That is the exact shape of defect this module exists for, so
+            it fails loudly here instead.
+    """
+    if token not in AUTH_AUTOFILL_TOKENS:
+        raise ValueError(
+            f"{token!r} is not a recognised autofill token. "
+            f"Browsers ignore an unknown token silently, so this would look "
+            f"fixed and behave exactly like the bug (core#672). "
+            f"Expected one of: {sorted(AUTH_AUTOFILL_TOKENS)}"
+        )
+    return {"autoComplete": token}
 
 
 def config_input(

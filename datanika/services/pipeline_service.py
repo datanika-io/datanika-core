@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
+from datanika.services.connection_service import get_org_connection
 
 
 class PipelineConfigError(ValueError):
@@ -31,6 +32,7 @@ class PipelineService:
         if models is None:
             models = []
         self.validate_models(models)
+        self._require_own_connection(session, org_id, destination_connection_id)
 
         pipeline = Pipeline(
             org_id=org_id,
@@ -75,6 +77,7 @@ class PipelineService:
                 raise PipelineConfigError("Pipeline name cannot be empty")
             pipeline.name = kwargs["name"]
         if "destination_connection_id" in kwargs:
+            self._require_own_connection(session, org_id, kwargs["destination_connection_id"])
             pipeline.destination_connection_id = kwargs["destination_connection_id"]
         if "description" in kwargs:
             pipeline.description = kwargs["description"]
@@ -100,6 +103,17 @@ class PipelineService:
         pipeline.deleted_at = datetime.now(UTC)
         session.flush()
         return True
+
+    @staticmethod
+    def _require_own_connection(session: Session, org_id: int, conn_id: int) -> None:
+        """Refuse a destination connection the caller's org does not own.
+
+        The message deliberately does not distinguish "belongs to someone else"
+        from "does not exist" — telling them apart turns this into an oracle for
+        probing which connection ids are live in other orgs.
+        """
+        if get_org_connection(session, org_id, conn_id) is None:
+            raise PipelineConfigError(f"Invalid destination connection {conn_id}: must exist")
 
     @staticmethod
     def validate_models(models) -> None:

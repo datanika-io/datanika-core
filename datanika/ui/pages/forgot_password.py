@@ -19,6 +19,7 @@ stated so waiting is bounded, and /signup is one click away.
 
 import reflex as rx
 
+from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.password_reset_state import PasswordResetState
 
@@ -66,6 +67,11 @@ def _request_form() -> rx.Component:
                     placeholder=_t["auth.ph_email"],
                     name="email",
                     type="email",
+                    # Not in core#672's body — measured here while driving the
+                    # reset flow on prod. The account identifier, so the manager
+                    # should offer the saved Datanika address: that is what makes
+                    # the typo this page's copy warns about less likely.
+                    custom_attrs=autofill_attrs("username"),
                     width="100%",
                 ),
                 rx.button(

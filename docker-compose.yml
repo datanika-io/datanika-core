@@ -1,9 +1,37 @@
+# Two env filenames, both optional, and the reason is core#736.
+#
+# Compose resolves this file through two INDEPENDENT channels:
+#   * `${VAR}` interpolation, fed by the shell environment or the project `.env` file —
+#     never by `env_file:`;
+#   * `env_file:`, which populates the CONTAINER's environment and is invisible to
+#     interpolation.
+#
+# Production satisfies both by sourcing the box's `.env.docker` into the shell before
+# calling compose (`set -a && . ./.env.docker && set +a`, deploy-pointer.yml). That file is
+# deliberately never shipped — the deploy preserves the box's copy — so a fresh clone has
+# no `.env.docker` at all, and the published quickstart's `cp .env.example .env` produced
+# `env file …/.env.docker not found`, which is fatal to the whole `up`.
+#
+# ⚠️ Copying the example to `.env.docker` instead does NOT fix it. That was the obvious
+# one-word remedy and it still fails, on `required variable GRAFANA_ADMIN_PASSWORD is
+# missing a value` — because that is the interpolation channel, which `env_file:` does not
+# feed. It renders cleanly only in a shell that has already sourced the file.
+#
+# Listing both names with `required: false` lets whichever one exists win: `.env` for a
+# self-hoster (and Compose reads it for interpolation automatically, closing the second
+# channel for free), `.env.docker` on the box, listed last so it takes precedence there.
+# `required: false` needs Compose >= 2.24; the prod box runs 2.32.4, CI runners newer.
+# Guarded by tests/test_deploy/test_selfhost_quickstart.py.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: datanika-postgres
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-datanika}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
@@ -35,6 +63,20 @@ services:
     restart: unless-stopped
 
   postgres-exporter:
+    # --- `monitoring` profile (core#736) ---------------------------------------------
+    # A plain `docker compose up -d` used to start ELEVEN services, six of them this
+    # production observability stack, on a box whose owner asked for a data pipeline.
+    # It also made GRAFANA_ADMIN_PASSWORD mandatory for someone who never wanted Grafana,
+    # because Compose interpolates the whole file before starting anything.
+    #
+    # ⚠️ This does NOT change the deploy. Naming a profiled service explicitly on the
+    # command line auto-enables its profile, so deploy-pointer.yml's
+    # `up -d postgres redis postgres-exporter cadvisor node-exporter` and
+    # `up -d --force-recreate prometheus grafana blackbox` still start all six.
+    # Verified with `--dry-run` against those exact lines before shipping, not assumed.
+    # Prod's own invocation is unchanged; `--profile monitoring` is for anyone bringing
+    # the stack up by hand.
+    profiles: ["monitoring"]
     image: prometheuscommunity/postgres-exporter:latest
     container_name: datanika-postgres-exporter
     ports:
@@ -85,7 +127,11 @@ services:
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:8000:8000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GRANIAN_WORKERS: "4"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
@@ -143,7 +189,11 @@ services:
       - "127.0.0.1:3010:3000"
       - "127.0.0.1:8010:8000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GRANIAN_WORKERS: "4"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
@@ -191,7 +241,11 @@ services:
       dockerfile: datanika/Dockerfile
     container_name: datanika-celery
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       # Must match app/app_b exactly — the LOAD runs here, so if the worker resolves a
       # different directory the failure surfaces at run time, not at upload time (#471).
@@ -204,7 +258,69 @@ services:
     volumes:
       - dbt_projects:/app/dbt_projects
       - uploaded_files:/app/uploaded_files
-    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
+    # `-E` (core#704) is what makes the worker publish task-lifecycle events onto the
+    # broker. It is NOT cosmetic and it is not the exporter's job: measured on staging
+    # 2026-08-31, an exporter pointed at a worker running WITHOUT `-E` emits
+    # `celery_worker_up`, `celery_queue_length`, `celery_active_worker_count` and
+    # `celery_active_process_count` — and ZERO `celery_task_*` series, because those come
+    # from events while the others come from broker/inspect introspection. So the
+    # exporter looks healthy and every task metric is still missing. Dropping `-E` would
+    # silently re-create exactly the blindness core#704 is about, one layer lower down.
+    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info -E
+    restart: unless-stopped
+
+  # --- Celery exporter (core#704) ---
+  # Prometheus scraped seven targets and none was Celery. `celery_tasks_total` is
+  # incremented by signal handlers in `services/metrics.py:139-166` — which run in the
+  # WORKER process — while `/metrics` is a Starlette route in the APP process, so the
+  # counters were never served. Measured against prod Prometheus 2026-08-31:
+  # `celery_tasks_total` returns 0 series, so the `celery-task-failures` alert rule has
+  # never been able to fire. (`celery_queue_length` is the exception and does work: the
+  # app computes it at scrape time from Redis, in-process.)
+  #
+  # This reads the event stream off the broker instead, so it covers every task rather
+  # than just the one we thought to instrument, and needs no application change.
+  #
+  # ⚠️ Pinned to 0.12.2 deliberately, and `:latest` is a trap here: on Docker Hub
+  # `latest` resolves to 0.10.14 (2024-11-11) while 0.12.2 (2025-07-15) is the current
+  # release — `latest` is four releases and eight months stale. Both were run against
+  # the staging broker on 2026-08-31 and emit identical metric names and labels; 0.12.2
+  # is pinned because it is the one that is both current and measured.
+  #
+  # ⚠️ `--purge-offline-worker-metrics 0` is load-bearing. The default (600) DELETES a
+  # worker's series 10 minutes after its last heartbeat, so a dead worker would make
+  # `celery_task_succeeded_total` vanish — and `increase(<vanished series>)` yields no
+  # series, which with `noDataState: OK` reads as healthy at precisely the moment it is
+  # not. Cardinality is not a concern here: one worker, ~15 task names.
+  #
+  # ⚠️ `profiles: ["monitoring"]` is required, and the reason is a guard that runs in the
+  # OPPOSITE direction to the one this service was written against.
+  # `test_deploy_service_coverage.py` asks "is every service named by SOME deploy step?"
+  # — satisfied by adding this to `up -d celery beat celery-exporter`.
+  # `test_selfhost_quickstart.py` asks "does a plain `up -d` start ONLY what the
+  # application needs?" — and a self-hoster following the published four-line quickstart
+  # has no Prometheus to scrape this with. Without the profile the second guard fails.
+  # Naming a profiled service explicitly still starts it, which is exactly how
+  # `up -d ... postgres-exporter cadvisor node-exporter` works today, so the deploy is
+  # unaffected. Every other operator-only service here carries the same profile.
+  celery-exporter:
+    profiles: ["monitoring"]
+    image: danihodovic/celery-exporter:0.12.2
+    container_name: datanika-celery-exporter
+    environment:
+      # Passed as an env var rather than `--broker-url` on purpose: the URL carries the
+      # Redis password, and a command-line argument is visible in `ps` output to every
+      # process on this shared box. `CE_` is the exporter's own env prefix.
+      # `:?` aborts the deploy loudly if `.env.docker` ever stops carrying REDIS_URL —
+      # the deploy PRESERVES that file rather than shipping it, so it is not in the repo.
+      CE_BROKER_URL: ${REDIS_URL:?REDIS_URL must be set in .env.docker on the box}
+    command:
+      - "--purge-offline-worker-metrics=0"
+    ports:
+      - "127.0.0.1:9808:9808"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # --- Celery Beat (core#653) ---
@@ -251,7 +367,11 @@ services:
       dockerfile: datanika/Dockerfile
     container_name: datanika-beat
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -267,6 +387,7 @@ services:
   # --- Monitoring ---
 
   prometheus:
+    profiles: ["monitoring"]
     image: prom/prometheus:latest
     container_name: datanika-prometheus
     ports:
@@ -288,6 +409,7 @@ services:
   # Used for sitemap health checks and the SEO probe. Prometheus scrapes this
   # via the scrape configs in monitoring/prometheus.yml.
   blackbox:
+    profiles: ["monitoring"]
     image: prom/blackbox-exporter:latest
     container_name: datanika-blackbox
     ports:
@@ -299,12 +421,25 @@ services:
     restart: unless-stopped
 
   grafana:
+    # Profiled for the reason above, and for a second one: the two `../datanika-cloud`
+    # bind mounts below reach into a PRIVATE sibling repository. A self-hoster cloning
+    # only datanika-core does not have it, and Docker creates a *directory* at a missing
+    # bind-mount source — so Grafana would find directories where it expects dashboard
+    # JSON, silently. Behind the profile, a default `up -d` never creates the container
+    # and never creates those paths. Residual, tracked separately: someone who *does* run
+    # `--profile monitoring` from a core-only clone still hits them; the durable fix is a
+    # compose override the cloud edition supplies, which needs a deploy change (Infra).
+    profiles: ["monitoring"]
     image: grafana/grafana:latest
     container_name: datanika-grafana
     ports:
       - "127.0.0.1:3001:3000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env.docker}
@@ -323,6 +458,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
+    profiles: ["monitoring"]
     image: prom/node-exporter:latest
     container_name: datanika-node-exporter
     ports:
@@ -342,6 +478,7 @@ services:
     restart: unless-stopped
 
   cadvisor:
+    profiles: ["monitoring"]
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: datanika-cadvisor
     ports:

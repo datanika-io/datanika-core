@@ -7,6 +7,7 @@ import reflex as rx
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
 from datanika.ui.components.layout import legal_links
+from datanika.ui.components.secure_input import autofill_attrs
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -136,6 +137,81 @@ def login_page() -> rx.Component:
                 ),
             ),
             rx.cond(
+                AuthState.show_email_verified,
+                rx.callout(
+                    _t["auth.email_verified"],
+                    icon="circle_check",
+                    color_scheme="green",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AuthState.show_invite_accepted,
+                rx.callout(
+                    _t["auth.invite_accepted"],
+                    icon="circle_check",
+                    color_scheme="green",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AuthState.show_verify_error,
+                rx.callout(
+                    _t["auth.email_verify_error"],
+                    icon="triangle_alert",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
+                AuthState.show_invite_error,
+                rx.callout(
+                    rx.vstack(
+                        rx.text(_t["auth.invite_error"], weight="medium"),
+                        rx.text(_t["auth.invite_error_help"], size="2"),
+                        spacing="1",
+                        align="start",
+                    ),
+                    icon="mail_x",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+            ),
+            # A closed set (#686): the slug picks the sentence, and an unrecognised slug
+            # picks nothing at all. Several slugs share a sentence on purpose - an end
+            # user cannot act differently on "SAML IdP not configured" than on "Invalid
+            # OIDC configuration", but an operator reading the URL can.
+            #
+            # The keys are written out rather than generated from the whitelist so the
+            # project's i18n scanner, which greps datanika/ui/ for bracketed literal keys, can
+            # see them - generated arms make every key here look orphaned. The test file
+            # test_login_signal_coverage.py links the two mechanically instead.
+            rx.cond(
+                AuthState.auth_error_reason != "",
+                rx.callout(
+                    rx.match(
+                        AuthState.auth_error_reason,
+                        ("invalid_state", _t["auth.error.retry"]),
+                        ("missing_code", _t["auth.error.retry"]),
+                        ("oauth_failed", _t["auth.error.provider_failed"]),
+                        ("saml_idp_not_configured", _t["auth.error.sso_not_configured"]),
+                        ("saml_request_failed", _t["auth.error.provider_failed"]),
+                        ("sso_failed", _t["auth.error.provider_failed"]),
+                        ("sso_invalid_state", _t["auth.error.retry"]),
+                        ("sso_misconfigured", _t["auth.error.sso_not_configured"]),
+                        ("sso_no_email", _t["auth.error.sso_no_email"]),
+                        ("sso_not_configured", _t["auth.error.sso_not_configured"]),
+                        ("sso_unreachable", _t["auth.error.sso_unreachable"]),
+                        ("sso_unsupported_protocol", _t["auth.error.sso_not_configured"]),
+                        ("unknown_provider", _t["auth.error.unknown_provider"]),
+                        "",
+                    ),
+                    icon="triangle_alert",
+                    color_scheme="red",
+                    width="100%",
+                ),
+            ),
+            rx.cond(
                 AuthState.auth_error != "",
                 rx.callout(
                     AuthState.auth_error,
@@ -154,6 +230,11 @@ def login_page() -> rx.Component:
                         id="login-email",
                         placeholder=_t["auth.ph_email"],
                         name="email",
+                        # username + current-password is one credential to a
+                        # password manager. Declared rather than suppressed:
+                        # autofill is the *wanted* behaviour here, so this is the
+                        # opposite repair from core#618's (core#672).
+                        custom_attrs=autofill_attrs("username"),
                         width="100%",
                     ),
                     rx.el.label(
@@ -165,6 +246,7 @@ def login_page() -> rx.Component:
                         placeholder=_t["auth.ph_password"],
                         name="password",
                         type="password",
+                        custom_attrs=autofill_attrs("current-password"),
                         width="100%",
                     ),
                     rx.button(

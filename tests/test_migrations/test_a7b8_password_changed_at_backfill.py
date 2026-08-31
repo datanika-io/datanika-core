@@ -14,6 +14,10 @@ handing them a form that takes no current password.
 
 So this seeds all three shapes at the parent revision, migrates, and checks
 where each one lands. Both the wrong clause and a missing backfill fail it.
+
+``TestRollbackPreservesTheRevocationBaseline`` covers the *second* consumer this
+column acquired, which did not exist when the backfill above was written — see
+that class's docstring.
 """
 
 from __future__ import annotations
@@ -120,6 +124,178 @@ class TestBackfillOnRealRows:
                 text("SELECT count(*) FROM users WHERE password_changed_at <> created_at")
             ).scalar()
         assert mismatched == 0
+
+
+CREATED = "2026-01-01 00:00:00+00"
+CHANGED = "2026-08-30 12:00:00+00"
+
+
+@pytest.fixture
+def at_head_with_a_changed_password(roundtrip_db_url):
+    """A database at head holding one account that has changed its password.
+
+    ``created_at`` is deliberately eight months before ``password_changed_at``:
+    the whole defect is the gap between them, so a fixture where they are close
+    together would make a wrong restore look almost right.
+    """
+    engine = create_engine(roundtrip_db_url)
+    with engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+
+    result = _run_alembic(["upgrade", "head"], roundtrip_db_url)
+    assert result.returncode == 0, result.stderr
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (email, password_hash, full_name, is_active, "
+                "email_verified, oauth_provider, created_at, updated_at, "
+                "password_changed_at) VALUES "
+                # Changed their password long after signing up — the row whose
+                # revocation baseline a rollback must not move.
+                "('changed@example.com', '$2b$12$abcdefghijklmnopqrstuv', 'Changed', "
+                "true, true, NULL, :created, :created, :changed), "
+                # Never changed it: carries the backfill's own value.
+                "('never@example.com', '$2b$12$abcdefghijklmnopqrstuv', 'Never', "
+                "true, true, NULL, :created, :created, :created), "
+                # Created by OAuth *after* this migration ran, so the column is
+                # genuinely NULL — ``find_or_create_oauth_user`` never stamps it.
+                # NULL is the "never had a human-chosen password" discriminator,
+                # so restoring it as a timestamp is a silent behaviour change,
+                # not a rounding error.
+                "('oauthonly@example.com', '$2b$12$abcdefghijklmnopqrstuv', 'OAuthOnly', "
+                "true, true, 'google', :created, :created, NULL)"
+            ),
+            {"created": CREATED, "changed": CHANGED},
+        )
+    yield engine
+    engine.dispose()
+
+
+def _baseline(engine) -> dict[str, str | None]:
+    """{email: password_changed_at as an ISO string, or None}."""
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("SELECT email, password_changed_at FROM users ORDER BY email")
+        ).all()
+    return {email: (stamp.isoformat() if stamp is not None else None) for email, stamp in rows}
+
+
+class TestRollbackPreservesTheRevocationBaseline:
+    """A downgrade + re-upgrade must not move ``password_changed_at`` backwards.
+
+    When this migration was written the column had exactly one consumer: the
+    Settings card's "has this account ever had a human-chosen password" gate,
+    which reads only NULL vs non-NULL. #671 gave it a second one —
+    ``redeem_refresh_token`` refuses a refresh token whose ``iat`` predates it,
+    which is what makes a password change end other sessions.
+
+    That second consumer reads the **value**, and the value is what a rollback
+    destroys: ``downgrade()`` drops the column, and the next ``upgrade()``
+    re-backfills every row from ``created_at``. So a password change performed
+    *because* the account was believed compromised is silently undone by an
+    unrelated schema rollback, and every refresh token minted since signup is
+    valid again.
+
+    It fails **open**, and it is invisible to every assertion that was watching:
+    the column comes back with the same name, type and nullability, the row
+    count is unchanged, and no value is NULL. Only comparing the values catches
+    it, which is #726's whole subject.
+    """
+
+    def test_the_column_round_trips_by_value(
+        self, at_head_with_a_changed_password, roundtrip_db_url
+    ):
+        """Every row's value, including the NULLs, comes back as it was."""
+        before = _baseline(at_head_with_a_changed_password)
+
+        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+
+        after = _baseline(at_head_with_a_changed_password)
+        assert after == before, (
+            "password_changed_at did not survive a downgrade + re-upgrade.\n"
+            f"  before: {before}\n"
+            f"  after:  {after}\n"
+            "If a baseline moved backwards, every refresh token minted between "
+            "those two instants is valid again, so a password change that was "
+            "meant to lock somebody out no longer does. If a NULL became a "
+            "timestamp, an OAuth-only account is now asked for a current "
+            "password it does not have. See this class's docstring."
+        )
+
+    def test_a_row_created_while_downgraded_is_still_backfilled(
+        self, at_head_with_a_changed_password, roundtrip_db_url
+    ):
+        """The negative control, and the one that keeps the fix honest.
+
+        A rollback window is served by the *previous* release, which happily
+        creates users while knowing nothing about this column. Those rows are
+        in no stash, so the re-upgrade's backfill still has to reach them —
+        which means the fix cannot simply skip the backfill whenever it finds
+        stashed values. Without this test, deleting the backfill outright
+        passes every other assertion in this class.
+        """
+        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
+
+        with at_head_with_a_changed_password.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO users (email, password_hash, full_name, is_active, "
+                    "email_verified, created_at, updated_at) VALUES "
+                    "('during@example.com', '$2b$12$abcdefghijklmnopqrstuv', 'During', "
+                    "true, true, :created, :created)"
+                ),
+                {"created": CREATED},
+            )
+
+        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+
+        after = _baseline(at_head_with_a_changed_password)
+        assert after["during@example.com"] is not None, (
+            "A user created during the rollback window came back with a NULL "
+            "password_changed_at, which reads as 'never had a password' and "
+            "offers to set one without asking for the current one."
+        )
+        assert after["during@example.com"].startswith("2026-01-01T00:00:00")
+
+    def test_the_rollback_leaves_no_table_behind(
+        self, at_head_with_a_changed_password, roundtrip_db_url
+    ):
+        """Whatever carries the values across must not survive the re-upgrade.
+
+        ``test_roundtrip.py`` compares the table set before and after the cycle,
+        so a stash left in place turns this fix into a round-trip failure
+        somewhere else — a fix that breaks a different guard is not a fix.
+        """
+        assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
+        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+
+        with at_head_with_a_changed_password.begin() as conn:
+            leftovers = conn.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name LIKE '%stash%'"
+                )
+            ).all()
+        assert leftovers == [], f"stash table survived the re-upgrade: {leftovers}"
+
+    def test_a_second_rollback_cycle_still_preserves_the_baseline(
+        self, at_head_with_a_changed_password, roundtrip_db_url
+    ):
+        """Rolling back twice is not exotic — it is a bad release day.
+
+        A stash created with a plain ``CREATE TABLE`` succeeds the first time
+        and raises ``DuplicateTable`` on the second, which would leave the
+        second downgrade half-applied.
+        """
+        for _ in range(2):
+            assert _run_alembic(["downgrade", "-1"], roundtrip_db_url).returncode == 0
+            assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+
+        after = _baseline(at_head_with_a_changed_password)
+        assert after["changed@example.com"].startswith("2026-08-30T12:00:00")
 
 
 class TestTokenTableOnPostgres:

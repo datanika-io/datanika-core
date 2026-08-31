@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
+from datanika.services.auth_redirects import AUTH_ERROR_KEYS
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.email_verification import request_email_verification
 from datanika.services.user_service import UserService, UserServiceError
@@ -83,7 +84,24 @@ class AuthState(rx.State):
     current_role: str = ""
 
     auth_error: str = ""
+    # Set by ``BaseState._check_role`` when a mutating handler finds the session
+    # has ended (#673). It lives here, not on ``BaseState``, on purpose: every
+    # substate gets its *own* copy of an inherited var, so a flag set on
+    # ``ApiKeyState`` is invisible to ``page_layout``. ``AuthState`` is one
+    # object, and the layout already reads it.
+    #
+    # ⚠️ Distinct from ``show_session_expired``, which reads ``?expired=1`` on
+    # ``/login`` — that is the *page-load* path (#671), where the tab navigates
+    # and can carry a query parameter. A handler cannot navigate, so it has to
+    # leave a mark on the state the layout can see.
+    session_expired: bool = False
     invite_email: str = ""
+    # What happened to the confirmation mail on the most recent signup (core#700).
+    # One of VerificationMailResult's values, or "" when nothing has been attempted.
+    # Until this existed a successful send and a failed one were the same event to
+    # every surface a person can see, and the only proof either way was opening an
+    # inbox by hand.
+    verification_mail_state: str = ""
 
     def clear_auth_error(self):
         self.auth_error = ""
@@ -130,6 +148,51 @@ class AuthState(rx.State):
         ``?reset=1`` and ``?expired=1``, for the same reason.
         """
         return self.router.page.params.get("link_blocked", "") == "1"
+
+    @rx.var
+    def auth_error_reason(self) -> str:
+        """The ``?auth_error=`` slug, or "" when it is not one we publish (#686).
+
+        A **whitelist**, not a passthrough. The page renders a translated sentence chosen
+        by this slug; it never renders the query string itself. Under the previous
+        free-text parameter anyone could send a link that put their own text inside our
+        sign-in card, under our logo, in our styling.
+        """
+        reason = self.router.page.params.get("auth_error", "")
+        return reason if reason in AUTH_ERROR_KEYS else ""
+
+    @rx.var
+    def show_email_verified(self) -> bool:
+        """Whether /login arrived from a completed email confirmation (#700, #659)."""
+        return self.router.page.params.get("verified", "") == "1"
+
+    @rx.var
+    def show_verify_error(self) -> bool:
+        """Whether the confirmation link was invalid, expired, or failed to apply (#700).
+
+        Sent by three separate branches of ``verify_email``; one message covers all of
+        them because the remedy is identical - sign in and ask for a new link.
+        """
+        return self.router.page.params.get("verify_error", "") == "1"
+
+    @rx.var
+    def show_invite_accepted(self) -> bool:
+        """Whether an invitation was accepted and the user should now sign in (#659).
+
+        The happy path already worked *silently*: ``org_id`` on the same redirect is read
+        below and switches the session into the invited org. Only the acknowledgement was
+        missing.
+        """
+        return self.router.page.params.get("invite_accepted", "") == "1"
+
+    @rx.var
+    def show_invite_error(self) -> bool:
+        """Whether an invitation link failed (#659).
+
+        The costly one. An invitee has no account, no error, and no reason not to click
+        the same dead link again - and the person who invited them gets no signal either.
+        """
+        return self.router.page.params.get("invite_error", "") == "1"
 
     @rx.var
     def org_id(self) -> int:
@@ -322,7 +385,10 @@ class AuthState(rx.State):
             # Best-effort by construction: the account is already committed, so
             # a missing relay or an unreachable broker must not surface as a
             # failed signup. See services/email_verification.py.
-            request_email_verification(user_id, user_email, AuthService(settings.secret_key))
+            mail_result = request_email_verification(
+                user_id, user_email, AuthService(settings.secret_key)
+            )
+            self.verification_mail_state = mail_result.value
 
             # Now authenticate to get tokens
             with get_sync_session() as session:
@@ -395,6 +461,10 @@ class AuthState(rx.State):
         # /connections?template=<slug> instead of the default /.
         extra_events = collect_events("user.signup_completed", user_id=self.current_user.id)
         return [*extra_events, rx.redirect(self._post_auth_redirect_target())]
+
+    def dismiss_verification_notice(self):
+        """Clear the post-signup confirmation banner (core#700)."""
+        self.verification_mail_state = ""
 
     def logout(self):
         # Audit logout before clearing state
@@ -529,6 +599,10 @@ class AuthState(rx.State):
         self.current_org = OrgInfo()
         self.user_orgs = []
         self.current_role = ""
+        # Cleared here so a deliberate ``logout`` never lands on the "you were
+        # signed out" panel. ``_check_role`` sets it True *after* calling this
+        # (#673), which is the one path that means it.
+        self.session_expired = False
 
     def _revalidate_session(self) -> bool:
         """Whether this session may continue — renewing the access token if needed.

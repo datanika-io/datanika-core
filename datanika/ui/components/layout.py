@@ -155,6 +155,99 @@ def sidebar() -> rx.Component:
     )
 
 
+def verification_mail_notice() -> rx.Component:
+    """Say what happened to the confirmation mail after signup (core#700 AC1).
+
+    Lives in the shell rather than on /signup because signup authenticates the user and
+    redirects straight to their destination, so a callout on the signup page would never
+    be seen. Dismissible, since it is an acknowledgement rather than a standing state.
+
+    **Nothing renders for ``no_relay``** on purpose: a self-hosted deployment with no SMTP
+    relay is a normal deployment, and telling that operator we could not send their mail
+    would be a false alarm. Only a real failure gets the warning.
+    """
+    return rx.fragment(
+        rx.cond(
+            AuthState.verification_mail_state == "queued",
+            rx.callout(
+                rx.hstack(
+                    rx.text(_t["auth.verification_mail_sent"]),
+                    rx.spacer(),
+                    rx.button(
+                        _t["common.dismiss"],
+                        on_click=AuthState.dismiss_verification_notice,
+                        size="1",
+                        variant="ghost",
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                icon="mail_check",
+                color_scheme="green",
+                width="100%",
+            ),
+        ),
+        rx.cond(
+            AuthState.verification_mail_state == "failed",
+            rx.callout(
+                rx.hstack(
+                    rx.vstack(
+                        rx.text(_t["auth.verification_mail_failed"], weight="medium"),
+                        rx.text(_t["auth.verification_mail_failed_help"], size="2"),
+                        spacing="1",
+                        align="start",
+                    ),
+                    rx.spacer(),
+                    rx.button(
+                        _t["common.dismiss"],
+                        on_click=AuthState.dismiss_verification_notice,
+                        size="1",
+                        variant="ghost",
+                    ),
+                    width="100%",
+                    align="start",
+                ),
+                icon="mail_warning",
+                color_scheme="amber",
+                width="100%",
+            ),
+        ),
+    )
+
+
+def signed_out_panel() -> rx.Component:
+    """Shown when a mutating handler discovered the session had ended (#673).
+
+    A handler cannot navigate, so unlike the page-load path it cannot hand the
+    user to ``/login?expired=1`` with a query parameter. It clears the session
+    instead, which drops this tab into ``is_authenticated``'s false branch —
+    previously a bare spinner, and a spinner forever is indistinguishable from a
+    hang. This says what happened and offers the way back.
+    """
+    return rx.center(
+        rx.card(
+            rx.vstack(
+                # "log-out", hyphenated, matching the sidebar's proven spelling.
+                # Reflex does not raise on an unknown icon name — it warns on
+                # stderr and silently renders ``circle_help``.
+                rx.icon("log-out", size=28, color="var(--amber-9)"),
+                rx.heading(_t["auth.signed_out_title"], size="5"),
+                rx.text(_t["auth.signed_out_body"], size="2", align="center"),
+                rx.link(
+                    rx.button(_t["auth.signed_out_cta"], size="3"),
+                    href="/login?expired=1",
+                    underline="none",
+                ),
+                spacing="3",
+                align="center",
+            ),
+            padding="32px",
+            max_width="420px",
+        ),
+        height="100vh",
+    )
+
+
 def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
     return rx.cond(
         AuthState.is_authenticated,
@@ -162,6 +255,7 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             sidebar(),
             rx.box(
                 rx.vstack(
+                    verification_mail_notice(),
                     rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
                     *children,
                     spacing="4",
@@ -173,8 +267,14 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             ),
             rx.toast.provider(duration=3000),
         ),
-        rx.center(
-            rx.spinner(size="3"),
-            height="100vh",
+        # Not signed in. Two very different reasons land here: the page is still
+        # hydrating (spinner), or a handler just ended the session (#673).
+        rx.cond(
+            AuthState.session_expired,
+            signed_out_panel(),
+            rx.center(
+                rx.spinner(size="3"),
+                height="100vh",
+            ),
         ),
     )

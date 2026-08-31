@@ -18,11 +18,27 @@ would then fail on the unique email constraint.
 """
 
 import logging
+from enum import StrEnum
 
 from datanika.services.auth import AuthService
 from datanika.tasks.email_tasks import send_verification_email_task
 
 logger = logging.getLogger(__name__)
+
+
+class VerificationMailResult(StrEnum):
+    """Why the verification mail was or was not queued.
+
+    Three outcomes, not two (core#700 AC2). The bool this replaced returned ``False``
+    for both *a self-hoster has configured no relay* — an ordinary deployment where
+    nothing is wrong — and *the broker was unreachable*, which is a real failure a user
+    should be told about. Collapsing them meant the caller could not act on either, so
+    it acted on neither and dropped the value.
+    """
+
+    QUEUED = "queued"
+    NO_RELAY = "no_relay"
+    FAILED = "failed"
 
 
 def request_email_verification(
@@ -31,8 +47,8 @@ def request_email_verification(
     auth: AuthService,
     *,
     smtp_host: str | None = None,
-) -> bool:
-    """Enqueue the verification mail for ``email``. Returns whether it was queued.
+) -> VerificationMailResult:
+    """Enqueue the verification mail for ``email``. Never raises.
 
     ``smtp_host`` is passed in rather than read here so the caller's settings
     snapshot is the one that decides, and so tests do not have to patch global
@@ -48,12 +64,12 @@ def request_email_verification(
         # broken one. The account still works; the address simply stays
         # unconfirmed, which only ever costs the social-login auto-link.
         logger.info("Skipping verification email for user %s: no SMTP relay configured", user_id)
-        return False
+        return VerificationMailResult.NO_RELAY
 
     try:
         token = auth.create_email_verification_token(user_id, email)
         send_verification_email_task.delay(email, token)
     except Exception:
         logger.exception("Failed to enqueue verification email for user %s", user_id)
-        return False
-    return True
+        return VerificationMailResult.FAILED
+    return VerificationMailResult.QUEUED

@@ -4,12 +4,16 @@
 account that never proved its own email address. That refusal has a remedy — sign
 in with the password, or run the reset — but only if it reaches the person.
 
-It did not. ``oauth_callback`` funnels every exception into
-``/login?error=OAuth+authentication+failed``, and **nothing on the login page
-reads ``?error``** — ``login_page`` renders ``AuthState.auth_error``, which is
-server-side state that a full-page redirect from a Starlette route never sets. So
-the entire class of OAuth and SSO failure messages has always been dropped on the
-floor. Filed separately; this file only pins the one case the link guard needs.
+It did not. ``oauth_callback`` funnelled every exception into a free-text
+``error`` parameter, and **nothing on the login page read it** — ``login_page``
+renders ``AuthState.auth_error``, which is server-side state that a full-page
+redirect from a Starlette route never sets. So the entire class of OAuth and SSO
+failure messages was dropped on the floor.
+
+**Fixed in #686**: those redirects now carry a slug from a closed set, and the page
+renders one translated sentence per slug. This file still pins the one case the link
+guard needs, which is a *different* signal (``link_blocked``) precisely because its
+remedy is specific rather than generic.
 
 The signal is a **bounded flag**, not the message text, for the same reason
 ``?reset=1`` and ``?expired=1`` are: a login page that renders arbitrary text from
@@ -69,7 +73,7 @@ class TestTheCallbackDistinguishesARefusalFromAFailure:
         response = await oauth_routes.oauth_callback(_request("google"))
         location = response.headers["location"]
         assert "link_blocked" not in location
-        assert "error=" in location
+        assert "auth_error=" in location
 
 
 class TestTheLoginPageShowsIt:

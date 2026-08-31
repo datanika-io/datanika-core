@@ -36,10 +36,46 @@ class BaseState(rx.State):
         return auth.current_org.id if auth.current_org.id else 0
 
     async def _check_role(self, min_role: str) -> bool:
-        """Check if current user has at least min_role. Sets error_message if not."""
+        """Check that the session is live **and** carries at least ``min_role``.
+
+        Two questions, in this order, because they have different answers (#673).
+
+        #671 put session revalidation in ``AuthState.check_auth``, which runs
+        from ``on_load`` — so it fires on *navigation*. A tab that is already
+        open and never navigates again keeps acting on the state object it
+        holds, so a mutating handler still executed for a session whose access
+        token had aged out, and transitively for one a password change was meant
+        to end. Every such handler already routes through here, so this is the
+        one place that covers all of them.
+
+        The common case stays free: ``_revalidate_session`` returns on a
+        signature check with **no database read**, and only an aged-out token
+        pays for a query. That is what makes a per-handler guard affordable, and
+        it is asserted by a test.
+
+        ⚠️ **``_get_org_id`` is deliberately NOT guarded** (#673 AC5). It is on
+        the read path and is called while rendering, so revalidating there would
+        put a session decision — and, on renewal, a database write — inside
+        template evaluation, where the failure mode is a half-rendered page
+        rather than a refused action. Page loads are already covered by
+        ``check_auth``, so the exposure left is *reading* stale data in a tab
+        that never navigates, which is bounded by that tab staying open. Writes
+        are the thing worth stopping, and writes come through here.
+        """
         from datanika.ui.state.auth_state import AuthState
 
         auth = await self.get_state(AuthState)
+
+        if not auth._revalidate_session():
+            auth._clear_session()
+            auth.session_expired = True
+            # Not an error_message: "Permission denied. Requires admin role or
+            # higher." is the wrong thing to tell somebody who needs to sign in
+            # — it sends them to ask an admin for access they already have. The
+            # layout renders the translated signed-out panel off the flag.
+            self.error_message = ""
+            return False
+
         role = auth.current_role
         if not check_role_hierarchy(role, min_role):
             self.error_message = f"Permission denied. Requires {min_role} role or higher."

@@ -24,6 +24,7 @@ class EmailService:
         smtp_from_name: str,
         smtp_use_tls: bool,
         frontend_url: str,
+        raise_on_error: bool = False,
     ):
         self._host = smtp_host
         self._port = smtp_port
@@ -33,6 +34,11 @@ class EmailService:
         self._from_name = smtp_from_name
         self._use_tls = smtp_use_tls
         self._frontend_url = frontend_url.rstrip("/")
+        # Opt-in, and off by default so every synchronous web caller keeps the bool it
+        # already handles. Celery tasks turn it on: an exception is the only thing
+        # ``autoretry_for`` can see, so with this off their retry config is dead
+        # letters (core#700).
+        self._raise_on_error = raise_on_error
 
     def is_enabled(self) -> bool:
         return bool(self._host)
@@ -68,6 +74,8 @@ class EmailService:
             return True
         except Exception:
             logger.exception("Failed to send email to %s", to)
+            if self._raise_on_error:
+                raise
             return False
 
     # ------------------------------------------------------------------

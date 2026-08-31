@@ -348,6 +348,24 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
     raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
 
 
+def get_org_connection(session: Session, org_id: int, conn_id: int) -> Connection | None:
+    """Resolve a connection *within* an org — the single definition of ownership.
+
+    Every read of a `Connection` goes through here. A bare
+    `session.get(Connection, conn_id)` returns whichever tenant's row happens to
+    carry that primary key, and connection ids are small sequential integers, so
+    an id that arrived in a request body is another org's id until proven
+    otherwise. `tests/test_security/test_tenant_fk_boundary.py` fails the build
+    if a primary-key lookup reappears anywhere under `datanika/`.
+    """
+    stmt = select(Connection).where(
+        Connection.id == conn_id,
+        Connection.org_id == org_id,
+        Connection.deleted_at.is_(None),
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
 class ConnectionService:
     def __init__(self, encryption: EncryptionService):
         self._encryption = encryption
@@ -411,12 +429,7 @@ class ConnectionService:
         return conn.source_template_slug
 
     def get_connection(self, session: Session, org_id: int, conn_id: int) -> Connection | None:
-        stmt = select(Connection).where(
-            Connection.id == conn_id,
-            Connection.org_id == org_id,
-            Connection.deleted_at.is_(None),
-        )
-        return session.execute(stmt).scalar_one_or_none()
+        return get_org_connection(session, org_id, conn_id)
 
     def get_connection_config(self, session: Session, org_id: int, conn_id: int) -> dict | None:
         conn = self.get_connection(session, org_id, conn_id)

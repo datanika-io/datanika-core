@@ -133,7 +133,30 @@ services:
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files
-    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
+    # `-E` publishes task-lifecycle events for the celery-exporter (core#704). See the
+    # prod `docker-compose.yml` for why this is not optional: without it the exporter
+    # still reports `celery_worker_up` and reads healthy while emitting no task metrics
+    # at all. Staging carries it so the exporter can be exercised here first.
+    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info -E
+    restart: unless-stopped
+
+  # Celery exporter (core#704). Mirrors the prod service — see docker-compose.yml for the
+  # version-pinning and `--purge-offline-worker-metrics=0` rationale. Staging is not
+  # scraped by the prod Prometheus (different docker network, no published route), so
+  # this exists to make the exporter's behaviour testable on a real worker before a
+  # prod deploy rather than reasoned about afterwards.
+  celery-exporter:
+    image: danihodovic/celery-exporter:0.12.2
+    container_name: datanika-staging-celery-exporter
+    environment:
+      CE_BROKER_URL: ${REDIS_URL:?REDIS_URL must be set in the staging .env.docker}
+    command:
+      - "--purge-offline-worker-metrics=0"
+    ports:
+      - "127.0.0.1:9818:9808"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # Celery Beat (core#653). Mirrors the prod service — see docker-compose.yml for the

@@ -23,6 +23,7 @@ def send_email_task(to: str, subject: str, html_body: str) -> bool:
         smtp_from_name=settings.smtp_from_name,
         smtp_use_tls=settings.smtp_use_tls,
         frontend_url=settings.frontend_url,
+        raise_on_error=True,
     )
     return svc.send(to, subject, html_body)
 
@@ -47,6 +48,7 @@ def send_verification_email_task(to: str, token: str) -> bool:
         smtp_from_name=settings.smtp_from_name,
         smtp_use_tls=settings.smtp_use_tls,
         frontend_url=settings.frontend_url,
+        raise_on_error=True,
     )
     return svc.send_verification_email(to, token)
 
@@ -71,6 +73,7 @@ def send_invitation_email_task(to: str, org_name: str, inviter_name: str, token:
         smtp_from_name=settings.smtp_from_name,
         smtp_use_tls=settings.smtp_use_tls,
         frontend_url=settings.frontend_url,
+        raise_on_error=True,
     )
     return svc.send_invitation_email(to, org_name, inviter_name, token)
 
@@ -99,6 +102,7 @@ def send_password_reset_email_task(to: str, token: str) -> bool:
         smtp_from_name=settings.smtp_from_name,
         smtp_use_tls=settings.smtp_use_tls,
         frontend_url=settings.frontend_url,
+        raise_on_error=True,
     )
     return svc.send_password_reset_email(to, token)
 
@@ -119,5 +123,6 @@ def send_quota_warning_email_task(
         smtp_from_name=settings.smtp_from_name,
         smtp_use_tls=settings.smtp_use_tls,
         frontend_url=settings.frontend_url,
+        raise_on_error=True,
     )
     return svc.send_quota_warning_email(to, plan_name, metric_label, used, limit)

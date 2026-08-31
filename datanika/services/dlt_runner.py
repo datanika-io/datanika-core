@@ -320,6 +320,173 @@ class DltRunnerError(ValueError):
     """Raised when dlt runner encounters an unsupported configuration."""
 
 
+# ---------------------------------------------------------------------------
+# SaaS pagination (core#823)
+# ---------------------------------------------------------------------------
+#
+# Every SaaS connector reaches ``_rest_api_fallback``, which used to pass **no
+# paginator at all** — so all of them depended on dlt's *runtime*
+# auto-detection. Measured on production: a Stripe account holding 15 customers
+# landed 10, and the run reported `success` with a plausible row count.
+#
+# Auto-detection is not a safety net here; it is the bug's hiding place. It
+# scores a paginator per response, and against the real vendor response shapes
+# it produces three different wrong answers (all measured against
+# ``dlt.sources.helpers.rest_client.detector.PaginatorFactory``):
+#
+#   * ``SinglePagePaginator`` for Stripe, HubSpot, Jira, Airtable and Asana —
+#     one page, no error, run green. This is the reported defect.
+#   * a *correct* paginator for Link-header APIs and for Zendesk/Facebook,
+#     which is why those connectors happened to work.
+#   * a cursor paginator with the **wrong query parameter** for Notion and
+#     Pipedrive (it guesses ``cursor``; the vendors use ``start_cursor`` and
+#     ``start``), which re-requests page one rather than truncating.
+#
+# So silence is not neutral, and the fix is to state the contract per vendor.
+#
+# 🚨 **These are dicts, and every one was checked against ``rest_api_source``
+# itself — not against ``create_paginator``.** The two dlt entry points
+# disagree: ``create_paginator`` happily builds a paginator carrying
+# ``has_more_path`` or ``stop_after_empty_page``, and ``rest_api_source``'s
+# config schema then **rejects** the same dict, because
+# ``JSONResponseCursorPaginatorConfig`` declares neither field. A table
+# validated with the factory therefore passes its own test and fails in
+# production — which is what the first draft of this table did.
+#
+# Dicts rather than paginator *instances* is also deliberate: an instance is
+# stateful (it carries the cursor between pages), so a module-level one would
+# leak position across runs. Dicts are additionally the only thing a user can
+# express through **Use raw JSON config**, so whatever we can write here, they
+# can write too.
+SAAS_PAGINATORS: dict[str, dict] = {
+    # `starting_after` carrying the last item's id. There is deliberately no
+    # `has_more` stop condition — the schema rejects `has_more_path` — so the
+    # walk ends when a page comes back empty and `data.[-1].id` resolves to
+    # nothing. That costs exactly one extra request per resource and cannot
+    # run away.
+    "stripe": {
+        "type": "cursor",
+        "cursor_path": "data.[-1].id",
+        "cursor_param": "starting_after",
+    },
+    # RFC 5988 `Link: <...>; rel="next"`. Absent on the last page, which the
+    # paginator reads as "stop" rather than as an error.
+    "github": {"type": "header_link"},
+    "shopify": {"type": "header_link"},
+    "freshdesk": {"type": "header_link"},
+    # CRM v3: `{"results": [...], "paging": {"next": {"after": "..."}}}`.
+    # `paging` is omitted entirely on the last page — safe, no has_more_path.
+    "hubspot": {"type": "cursor", "cursor_path": "paging.next.after", "cursor_param": "after"},
+    # Web API cursor: `response_metadata.next_cursor`, empty when exhausted.
+    "slack": {
+        "type": "cursor",
+        "cursor_path": "response_metadata.next_cursor",
+        "cursor_param": "cursor",
+    },
+    # Both hand back an absolute next-page URL rather than a cursor to re-send.
+    "zendesk": {"type": "json_link", "next_url_path": "next_page"},
+    "facebook_ads": {"type": "json_link", "next_url_path": "paging.next"},
+    # Asana's offset token, echoed back as `offset`.
+    "asana": {"type": "cursor", "cursor_path": "next_page.offset", "cursor_param": "offset"},
+    # Pipedrive v1 is offset/limit. `total_path` is None deliberately: the
+    # response has no `total`, and OffsetPaginator's default of "total" would
+    # look for a key that never arrives. A short page ends the walk.
+    "pipedrive": {
+        "type": "offset",
+        "limit": 100,
+        "offset_param": "start",
+        "limit_param": "limit",
+        "total_path": None,
+    },
+    # Notion echoes `next_cursor` back as **`start_cursor`**. Worth stating
+    # rather than leaving to auto-detection, which guesses the parameter name
+    # `cursor`: Notion ignores an unknown parameter and returns page one again,
+    # so the guess re-reads the same rows instead of truncating.
+    "notion": {"type": "cursor", "cursor_path": "next_cursor", "cursor_param": "start_cursor"},
+    # Airtable's continuation token is `offset` in both directions. Same
+    # reasoning as Notion — auto-detection guesses `cursor` here too.
+    "airtable": {"type": "cursor", "cursor_path": "offset", "cursor_param": "offset"},
+}
+
+#: Connectors deliberately left to dlt's auto-detection, each with the hazard
+#: that a client-level paginator would introduce. Not "unsure" — a reason.
+#:
+#: A paginator is configured on the **client**, so it applies to every resource
+#: the connector defines. Both entries below have default resources whose
+#: pagination contracts differ from one another, and for both the damage from
+#: guessing is worse than the truncation this table exists to fix. The real fix
+#: for these is per-resource ``endpoint.paginator`` entries, which is a larger
+#: change than this one.
+SAAS_PAGINATION_EXEMPT: dict[str, str] = {
+    "salesforce": (
+        "The default resources are `sobjects/{Name}` *describe* endpoints, which "
+        "return one metadata object each, not a record list. There is nothing to "
+        "paginate. That this connector therefore fetches no Account/Contact "
+        "records at all is a separate defect (core#847), not this one."
+    ),
+    "jira": (
+        "`rest/api/3/search` is offset-paginated (startAt/maxResults) while "
+        "`rest/api/3/project` returns a bare unpaginated array. An offset "
+        "paginator would page `search` correctly and then re-request `project` "
+        "forever, since Jira ignores `startAt` there and keeps answering with "
+        "the same non-empty array. A hang is worse than a short table."
+    ),
+}
+
+#: Every connector type that reaches ``_rest_api_fallback``.
+#:
+#: Kept as data so the paginator decision can be *enforced* rather than
+#: remembered: ``tests/test_services/test_saas_pagination.py`` re-derives this
+#: set from the source of ``_build_saas_source`` and fails if the two disagree,
+#: so connector fifteen cannot be added without answering the question that
+#: fourteen connectors had never been asked.
+REST_FALLBACK_SAAS_TYPES: frozenset[str] = frozenset(
+    {
+        "stripe",
+        "github",
+        "hubspot",
+        "salesforce",
+        "shopify",
+        "jira",
+        "slack",
+        "facebook_ads",
+        "zendesk",
+        "airtable",
+        "notion",
+        "pipedrive",
+        "freshdesk",
+        "asana",
+    }
+)
+
+
+#: The paginator ``type`` values dlt accepts, derived from dlt rather than
+#: restated, so this cannot drift when dlt adds one.
+def _paginator_type_names() -> list[str]:
+    from dlt.sources.rest_api.config_setup import PAGINATOR_MAP
+
+    return sorted(PAGINATOR_MAP)
+
+
+def describe_paginator_rejection(spec, exc: Exception) -> str:
+    """Turn dlt's paginator validation failure into something actionable.
+
+    dlt is right to refuse a bad paginator, but it refuses in the form of a
+    sixteen-line dump of every config type it tried — which reaches the user as
+    the upload's error message. This says what to do instead.
+
+    Same shape as core#608's ``NoSuchModuleError`` handling: the underlying
+    library's verdict is correct and its wording is unusable.
+    """
+    return (
+        f"Invalid paginator config {spec!r}. Expected a dict with a 'type' key, "
+        f"one of: {', '.join(_paginator_type_names())} — plus that type's own "
+        f"fields. Note dlt's paginator *classes* accept options its *config "
+        f"schema* does not (has_more_path, stop_after_empty_page), so an option "
+        f"you find in the paginator docs may still be refused here. dlt said: {exc}"
+    )
+
+
 # Drivernames used by sql_database() source (SQLAlchemy connections)
 SOURCE_DRIVERNAME_MAP = {
     "postgres": "postgresql",
@@ -1185,7 +1352,28 @@ class DltRunnerService:
         rest_config: dict = {"client": client_config, "resources": resources}
         if resource_defaults:
             rest_config["resource_defaults"] = resource_defaults
-        return rest_api_source(rest_config)
+
+        if not paginator:
+            return rest_api_source(rest_config)
+
+        # A bad paginator must fail, and fail *legibly* (core#823). dlt already
+        # rejects one — but with a sixteen-line dump of every config type it
+        # tried, which is what the user sees on their upload.
+        #
+        # Whether the paginator is to blame is decided **behaviourally**: build
+        # again without it and see if that succeeds. A substring match on dlt's
+        # message would be a second, worse model of dlt's validator — and this
+        # whole defect came from consulting the wrong part of dlt.
+        try:
+            return rest_api_source(rest_config)
+        except Exception as exc:
+            without = dict(rest_config)
+            without["client"] = {k: v for k, v in client_config.items() if k != "paginator"}
+            try:
+                rest_api_source(without)
+            except Exception:
+                raise  # something other than the paginator is wrong; keep dlt's words
+            raise DltRunnerError(describe_paginator_rejection(paginator, exc)) from exc
 
     def _build_rest_api_source(self, config: dict, dlt_config: dict):
         """Build a dlt REST API source from connection config + dlt_config."""
@@ -1341,6 +1529,19 @@ class DltRunnerService:
         ``dlt init``, and the imports are what make that work with no code
         change. They are simply not the path anyone here exercises.
         """
+        # core#823. Resolved once, for every branch below.
+        #
+        # The user's own paginator wins over ours: ``"paginator"`` has always
+        # been an accepted ``dlt_config`` key (it is in ``INTERNAL_CONFIG_KEYS``)
+        # and this builder never read it, so the documented **Use raw JSON
+        # config** escape hatch turned the run green having changed nothing.
+        # It has to work here, because our per-vendor table is a set of claims
+        # about other people's APIs and some of them will be wrong.
+        #
+        # An override applies to the ``SAAS_PAGINATION_EXEMPT`` connectors too —
+        # those are the ones most likely to need it.
+        paginator = dlt_config.get("paginator") or SAAS_PAGINATORS.get(connection_type)
+
         if connection_type == "stripe":
             api_key = config.get("api_key") or config.get("stripe_secret_key", "")
             if not api_key:
@@ -1369,6 +1570,7 @@ class DltRunnerService:
                         {"name": "prices", "endpoint": {"path": "prices"}},
                         {"name": "charges", "endpoint": {"path": "charges"}},
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "github":
@@ -1421,6 +1623,7 @@ class DltRunnerService:
                         "Authorization": f"Bearer {access_token}",
                         "Accept": "application/vnd.github+json",
                     },
+                    paginator=paginator,
                 )
 
         if connection_type == "hubspot":
@@ -1456,6 +1659,7 @@ class DltRunnerService:
                             },
                         },
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "salesforce":
@@ -1492,6 +1696,7 @@ class DltRunnerService:
                             },
                         },
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "shopify":
@@ -1532,6 +1737,7 @@ class DltRunnerService:
                         },
                     ],
                     headers={"X-Shopify-Access-Token": api_key},
+                    paginator=paginator,
                 )
 
         if connection_type == "jira":
@@ -1561,6 +1767,7 @@ class DltRunnerService:
                         {"name": "projects", "endpoint": {"path": "rest/api/3/project"}},
                     ],
                     headers={"Authorization": f"Basic {auth_str}"},
+                    paginator=paginator,
                 )
 
         if connection_type == "slack":
@@ -1585,6 +1792,7 @@ class DltRunnerService:
                         },
                         {"name": "users", "endpoint": {"path": "api/users.list"}},
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "google_analytics":
@@ -1652,6 +1860,7 @@ class DltRunnerService:
                         {"name": "ads", "endpoint": {"path": f"{account}/ads"}},
                         {"name": "creatives", "endpoint": {"path": f"{account}/adcreatives"}},
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "zendesk":
@@ -1681,6 +1890,7 @@ class DltRunnerService:
                         },
                     ],
                     headers={"Authorization": f"Bearer {api_token}"},
+                    paginator=paginator,
                 )
 
         if connection_type == "airtable":
@@ -1700,6 +1910,7 @@ class DltRunnerService:
                     or [
                         {"name": "tables", "endpoint": {"path": ""}},
                     ],
+                    paginator=paginator,
                 )
 
         if connection_type == "notion":
@@ -1720,6 +1931,7 @@ class DltRunnerService:
                         {"name": "pages", "endpoint": {"path": "pages"}},
                     ],
                     headers={"Notion-Version": "2022-06-28"},
+                    paginator=paginator,
                 )
 
         # Pipedrive / Freshdesk / Asana have no pinned verified-source module, so
@@ -1742,6 +1954,7 @@ class DltRunnerService:
                     {"name": "stages", "endpoint": {"path": "stages"}},
                     {"name": "users", "endpoint": {"path": "users"}},
                 ],
+                paginator=paginator,
             )
 
         if connection_type == "freshdesk":
@@ -1762,6 +1975,7 @@ class DltRunnerService:
                     {"name": "companies", "endpoint": {"path": "companies"}},
                     {"name": "groups", "endpoint": {"path": "groups"}},
                 ],
+                paginator=paginator,
             )
 
         if connection_type == "asana":
@@ -1779,6 +1993,7 @@ class DltRunnerService:
                     {"name": "users", "endpoint": {"path": "users"}},
                     {"name": "tags", "endpoint": {"path": "tags"}},
                 ],
+                paginator=paginator,
             )
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
@@ -2029,6 +2244,8 @@ class DltRunnerService:
         base_url: str,
         auth: dict | None,
         resources: list,
+        *,
+        paginator: dict | None,
         headers: dict | None = None,
     ):
         """Generic REST API source used when a verified source module is not installed.
@@ -2048,8 +2265,17 @@ class DltRunnerService:
         is no longer available; ``tests/test_security/
         test_egress_saas_fallback_pinning.py`` fails any new call site that
         reaches for ``rest_api_source`` directly.
+
+        ``paginator`` is **keyword-only and has no default** on purpose
+        (core#823). It used to be absent entirely, so every SaaS connector
+        loaded page one and stopped — silently, on a green run. A default of
+        ``None`` would reinstate exactly that failure for the next connector
+        somebody adds; with no default, forgetting it is a ``TypeError`` at
+        build time instead of five missing customers in a warehouse.
         """
-        return cls._rest_api_from_parts(base_url, resources, auth=auth, headers=headers)
+        return cls._rest_api_from_parts(
+            base_url, resources, auth=auth, headers=headers, paginator=paginator
+        )
 
     def build_pipeline(
         self,

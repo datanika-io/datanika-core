@@ -71,6 +71,17 @@ dependencies = [
     # Config & utilities
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
+    # 🚨 STUCK at 45.x, and not by choice (core#819). 45.0.7 is inside four
+    # CRITICAL/HIGH advisories — CVE-2026-26007 (fixed 46.0.5),
+    # GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1), CVE-2026-69249
+    # (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) — and this
+    # is the library `EncryptionService` uses on customer warehouse credentials.
+    #
+    # Every cryptography >= 46.0.1 requires `cffi>=2.0.0` on Python >= 3.9, and
+    # `dbt-core>=1.7.19,<1.8` above declares `cffi<2.0.0`. So the ceiling here
+    # is a consequence of the dbt pin, not an independent judgement: raising it
+    # makes `uv lock` unsatisfiable. Do not "fix" this line on its own.
+    # See BLOCKED_BY_DBT_1_7 in tests/test_security/test_dependency_advisories.py.
     "cryptography>=45.0,<46",
     # Monitoring
     "prometheus-client>=0.21,<0.26",
@@ -101,6 +112,64 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+# Security floors for packages we do not declare directly (core#819).
+#
+# `image-cve` scanned the image the deploy builds and found 61 fixed-available
+# CRITICAL/HIGH findings. Almost all of them are transitive — reached via dlt,
+# dbt, reflex, snowflake-connector-python — so there is no direct pin to raise.
+# A constraint is the right tool: it binds the resolver without declaring a
+# dependency we do not ourselves import, and unlike `uv lock --upgrade-package`
+# it is a *durable* statement, so the next unrelated re-lock cannot roll it back.
+#
+# Each floor is the HIGHEST fix version across every CRITICAL/HIGH advisory
+# affecting the version we were shipping — not the first one the scanner named.
+# Several of these are chains where the later record is a bypass of the earlier
+# fix; GitPython is nine deep. `tests/test_security/test_dependency_advisories.py`
+# carries the per-CVE justification and fails if the lock drops below any of them.
+#
+# 🚨 FIVE findings are NOT here, and they are the five worst. All five are held
+# down by one line: `dbt-core>=1.7.19,<1.8` above.
+#
+#   redshift-connector  CVE-2026-8838 CRITICAL RCE — dbt-redshift 1.7.7 pins <2.0.918
+#   cryptography        4 HIGH        — dbt-core 1.7 pins cffi<2.0.0; every
+#                                       cryptography >=46.0.1 needs cffi>=2.0.0
+#   pyopenssl           CVE-2026-27459 — 26.0.0 needs cryptography>=46.0.0, ditto
+#   sqlparse            3 HIGH        — dbt-core 1.7 pins sqlparse<0.6.0
+#   protobuf            CVE-2026-0994 — dbt-core 1.7 pins protobuf<5
+#
+# The `cffi<2.0.0` link is the one nobody predicts from reading a CVE list, and
+# it is what puts the credential-encryption library on the blocked side. They
+# are recorded in BLOCKED_BY_DBT_1_7 in
+# tests/test_security/test_dependency_advisories.py, which goes red the moment
+# the dbt pin moves — so the dbt bump cannot land without re-deriving them.
+# Tracked as core#825.
+#
+# Each entry carries a CEILING as well as a floor, for the reason
+# `test_dependency_pins.py` already states about declared dependencies: an
+# unbounded spec makes a major bump something that happens on whichever day a
+# maintainer cuts a release. Without the ceilings this list floated pyarrow
+# 23.0.0 -> 25.0.1 (two majors, on dlt's parquet path) as a side effect of
+# fixing a use-after-free that 23.0.1 already fixes. A security change should
+# move the minimum needed to clear the advisory and no further, so that when
+# something breaks the bisect is short.
+#
+# lxml is the one place a MAJOR is unavoidable: CVE-2026-41066 has no 5.x fix.
+constraint-dependencies = [
+    "aiohttp>=3.14.3,<4",
+    "gitpython>=3.1.58,<4",
+    "granian>=2.7.4,<3",
+    "lxml>=6.1.0,<7",
+    "mako>=1.3.12,<2",
+    "pyasn1>=0.6.4,<0.7",
+    "pyjwt>=2.13.0,<3",
+    "pyarrow>=23.0.1,<24",
+    "python-engineio>=4.13.2,<5",
+    "python-multipart>=0.0.30,<0.1",
+    "python-socketio>=5.16.2,<6",
+    "soupsieve>=2.8.4,<3",
+]
 
 [tool.ruff]
 target-version = "py311"

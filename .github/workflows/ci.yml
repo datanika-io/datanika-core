@@ -1230,8 +1230,15 @@ jobs:
 
       # ── core#757: the same two alerts, for a run that stayed GREEN ──────────
       # These are NOT `if: failure()`. That is the entire point: the run they
-      # exist to report on concludes `success`, which is why nothing fired for
-      # de00365. They branch on the detector's own output instead.
+      # exist to report on usually concludes `success`, which is why nothing
+      # fired for de00365. They branch on the detector's own output instead.
+      #
+      # ⚠️ core#877 (QA): this alert used to open with the hardcoded sentence
+      # "The run is GREEN." It fired on `94b1ec9`, where `e2e-staging` concluded
+      # `failure`. The `if:` was right and the sentence beside it was a claim
+      # about a state the step never checked — the same defect as core#873 one
+      # step further along, and the reason the colour is now DERIVED from the
+      # `verdict` step rather than asserted. A run can be flaky and red at once.
       - name: Telegram alert on flaky gating spec
         if: always() && steps.flaky_gate.outputs.status == 'flaky'
         env:
@@ -1240,11 +1247,19 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+          VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\nThe run is GREEN. A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
+          case "$VERDICT" in
+            clean)         STATE="The run is GREEN." ;;
+            infra_only)    STATE="The gating specs PASSED; the run is red for a NON-TEST reason (core#873)." ;;
+            gating_failed) STATE="The run is RED and a gating spec ALSO retried into a pass — two findings, not one." ;;
+            cancelled)     STATE="The run was CANCELLED, so its verdict is neither green nor red." ;;
+            *)             STATE="Run state: ${VERDICT:-unknown}." ;;
+          esac
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
+            "$STATE" "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
@@ -1257,9 +1272,19 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+          VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          # core#877: derive the run's colour, never assert it. This body used to
+          # open "The run is GREEN" unconditionally; a run can be flaky AND red.
+          case "$VERDICT" in
+            clean)         STATE="**The run is GREEN.**" ;;
+            infra_only)    STATE="**The gating specs PASSED. The run is red for a NON-TEST reason (core#873), not for this.**" ;;
+            gating_failed) STATE="**The run is RED on the gating tier AND a gating spec retried into a pass. Two findings, not one.**" ;;
+            cancelled)     STATE="**The run was CANCELLED** — its verdict is neither green nor red." ;;
+            *)             STATE="**Run state: ${VERDICT:-unknown}.**" ;;
+          esac
           # Same dedup CHANNEL as a red (`e2e-staging-failure`): a flaky gating
           # spec is the same event as a red one that happened to retry into a
           # green, so it belongs on the same thread rather than in a parallel one.
@@ -1276,7 +1301,7 @@ jobs:
             --limit 1 \
             --json number --jq '.[0].number // empty')
           body=$(printf '%s\n' \
-            "**The run is GREEN. This is not a red that was retried away — it is a red that Playwright reported as \`flaky\` and exited 0 on.**" \
+            "$STATE This is not a red that was retried away — it is a red that Playwright reported as \`flaky\` and exited 0 on." \
             "" \
             "**Run:** $RUN_URL" \
             "**Commit:** \`$SHORT_SHA\`" \

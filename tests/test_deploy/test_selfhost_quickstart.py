@@ -89,9 +89,7 @@ def _strip_comment_lines(text: str) -> str:
     ``REFLEX_REDIS_URL`` default carries ``(#646)`` *inside* its `:?` message, and
     truncating there would silently drop the variable this test exists to notice.
     """
-    return "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def _env_file_paths(service: dict) -> list[str]:
@@ -113,11 +111,7 @@ def _env_file_paths(service: dict) -> list[str]:
 
 def _default_profile_services(compose: dict) -> dict[str, dict]:
     """Services a plain `docker compose up -d` starts: those with no `profiles:` key."""
-    return {
-        name: svc
-        for name, svc in compose["services"].items()
-        if not svc.get("profiles")
-    }
+    return {name: svc for name, svc in compose["services"].items() if not svc.get("profiles")}
 
 
 def _application_services(compose: dict) -> set[str]:

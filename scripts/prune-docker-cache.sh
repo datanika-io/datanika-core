@@ -129,8 +129,15 @@ say "cache   : ${BEFORE_CACHE:-unknown} -> ${AFTER_CACHE:-unknown}"
 say "disk    : ${BEFORE_USED} -> ${AFTER_USED} GiB used, ${BEFORE_AVAIL} -> ${AFTER_AVAIL} GiB free"
 say "rollback images intact: $PROTECTED_N/$PROTECTED_N"
 
-# No alert rule watches disk on this box (core#666). Until one does, the deploy is
-# the only recurring job that looks — so it says something rather than nothing.
+# Two Grafana rules DO watch disk on this box — `disk-space-warning` and
+# `disk-space-critical` — and they fire at exactly the two numbers below (core#727;
+# `tests/test_deploy/test_disk_thresholds_agree.py` keeps the three in step). This check
+# is defence in depth, not the only coverage: it looks at the one moment the alert cannot
+# help with, which is immediately before a build that needs the headroom.
+#
+# ⚠️ This comment used to read "No alert rule watches disk on this box". That was FALSE
+# and was carried for weeks — a rule existed, was evaluated, and discriminated. It is
+# corrected rather than deleted because the false version actively mis-answered a triage.
 AVAIL_INT=${AFTER_AVAIL%%.*}
 if [ "$AVAIL_INT" -lt "$MIN_FREE_GB" ]; then
   say "::error::only ${AFTER_AVAIL} GiB free after pruning (floor ${MIN_FREE_GB} GiB)."

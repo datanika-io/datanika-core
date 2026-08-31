@@ -393,6 +393,182 @@ jobs:
               ;;
           esac
 
+  # ---------------------------------------------------------------------------
+  # image-cve — trivy scan of the BUILT IMAGE (#723, placement resolved with #728)
+  #
+  # WHY THE ARTIFACT AND NOT `uv.lock`. The Dockerfile runs two graft installs
+  # *after* `uv sync --frozen`:
+  #
+  #     RUN uv pip install --constraint /tmp/lock-constraints.txt /cloud
+  #     RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
+  #
+  # That constraints file is an exported `uv.lock`, so it binds only packages
+  # CORE ALREADY LOCKS. Anything the grafted trees pull in that core does not
+  # lock is unconstrained and appears in NO manifest — the residue of #602 that
+  # the constraints fix does not cover. Add `FROM python:3.12-slim` and
+  # `COPY --from=ghcr.io/astral-sh/uv:latest`, two floating tags in no lockfile
+  # at all, and a manifest scan is measuring the wrong artifact entirely.
+  #
+  # WHY A SEPARATE JOB AND NOT A STEP IN `image-probe`. image-probe is a
+  # REQUIRED check on `dev`. A scan step inside it would gate every merge on
+  # third-party CVEs no PR author can fix — the exact objection #728 raises. As
+  # its own NON-REQUIRED job it reports without blocking, while the scan step
+  # itself still hard-fails (no `continue-on-error` quarantine), which is what
+  # #723 asks for. Promoting it to required later is one API call, and by then
+  # we will know the noise floor.
+  #
+  # ⚠️ ACTION PIN. `aquasecurity/trivy-action` tags carry a `v` PREFIX and there
+  # is NO major-only tag. Re-derived against the registry 2026-08-31, by HTTP
+  # status rather than response body:
+  #     v0.36.0 -> 200 (sha a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8, latest release)
+  #     0.36.0  -> 404      v0 -> 404      0.33.1 -> 404
+  # A `@0.33.1`-style pin written from memory does not resolve and the job never
+  # runs. Do NOT "simplify" this to `@v0`.
+  # ---------------------------------------------------------------------------
+  image-cve:
+    name: image-cve
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Deliberately NO `security-events: write`. Uploading SARIF would start
+      # creating code-scanning alerts on a repo that has none today; do that as
+      # a separate, deliberate change once the baseline volume is known.
+    steps:
+      - name: Checkout core (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: core
+
+      - name: Check the cloud token is available
+        id: token
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+        run: |
+          # A fork PR gets no secrets, so no image can be built. image-probe has
+          # the same guard and the same hazard: without this the job reports
+          # green having scanned nothing at all.
+          if [ -z "${CLOUD_REPO_TOKEN}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CLOUD_REPO_TOKEN unavailable (fork PR?) — no image can be built, so this scan proves NOTHING about this commit."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout cloud (private)
+        if: steps.token.outputs.available == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: datanika-io/datanika-cloud
+          # Pair against the branch this PR targets, matching image-probe.
+          # NOTE: production builds cloud at a pinned `ref: master`, so a PR into
+          # dev scans core-PR + cloud-dev — the right basis for a PR gate, but
+          # not the shipping pairing. See the promotion-ordering rule.
+          ref: ${{ github.base_ref || github.ref_name }}
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: cloud
+
+      - name: Reshape build context
+        if: steps.token.outputs.available == 'true'
+        run: |
+          # The Dockerfile assumes the monorepo layout with datanika/ and
+          # datanika-cloud/ at the root — same reshape as image-probe.
+          mkdir -p build-context
+          cp -r core build-context/datanika
+          mv cloud build-context/datanika-cloud
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.token.outputs.available == 'true'
+
+      - name: Build the production image
+        if: steps.token.outputs.available == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: build-context
+          file: build-context/datanika/Dockerfile
+          push: false
+          load: true
+          tags: datanika-core:cve
+          # Reads the cache image-probe and build-push-image populate, so this
+          # usually pays only the layers the diff invalidated.
+          cache-from: type=gha
+          platforms: linux/amd64
+
+      # ── CANARY, and it runs BEFORE the gate on purpose ──────────────────────
+      # A scan reporting no findings is indistinguishable from a scan that never
+      # loaded its vulnerability database, never parsed the image, or had its
+      # exit-code plumbing misconfigured. This project has shipped that exact
+      # shape repeatedly (#615 and #616 were structurally unable to fire; a
+      # restore drill asserted seed data), so a green from the gate below is not
+      # evidence until this step has been seen to go red.
+      #
+      # It scans THE SAME image with the net thrown as wide as it goes: every
+      # severity, unfixed included. A Debian-based Python image cannot be clean
+      # at LOW+. If this finds nothing, trivy is not working — and we learn that
+      # instead of publishing a reassuring green.
+      #
+      # Deliberately NOT a pinned known-vulnerable image: that needs an extra
+      # pull, and it silently stops proving anything the day its findings get
+      # fixed or dropped from the DB.
+      - name: Canary — prove the scanner can actually fail
+        id: canary
+        if: steps.token.outputs.available == 'true'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          # Trivy pulls its DB from ghcr.io; anonymous pulls from shared runner
+          # IPs get 429'd. This is the AUTOMATIC GITHUB_TOKEN — not a configured
+          # secret, nothing to provision, and it works on forks.
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: datanika-core:cve
+          scan-type: image
+          format: table
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: "1"
+
+      - name: Assert the canary went red
+        if: steps.token.outputs.available == 'true'
+        run: |
+          # `outcome` is the step's real result even though continue-on-error
+          # forced `conclusion` to success.
+          if [ "${{ steps.canary.outcome }}" != "failure" ]; then
+            echo "::error::CANARY DID NOT FIRE. Trivy reported no findings at ANY severity, including unfixed, on a Debian-based image. The scanner is not armed — treat the gate below as proving nothing, and fix trivy before trusting this job."
+            exit 1
+          fi
+          echo "::notice::Canary fired as expected — trivy is armed and its exit-code plumbing works."
+
+      # ── The actual gate ─────────────────────────────────────────────────────
+      - name: Scan the built image
+        if: steps.token.outputs.available == 'true'
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: datanika-core:cve
+          scan-type: image
+          format: table
+          # CRITICAL+HIGH, fixed-only, and the reason is written down per #728's
+          # "say why": a python:3.12-slim base carries a long tail of MEDIUM/LOW
+          # OS CVEs Debian will not fix in a slim image, and an unfixable CVE is
+          # a base-image decision, not an action item for a PR author. A report
+          # that is always red gets ignored, which is the same as no report.
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Record what this job actually evaluated
+        if: always()
+        run: |
+          if [ "${{ steps.token.outputs.available }}" != "true" ]; then
+            echo "::warning::image-cve NOT EVALUATED — no image was built (fork PR). This green proves nothing."
+          else
+            echo "::notice::image-cve scanned the built artifact (CRITICAL+HIGH, fixed-only); canary confirmed the scanner armed."
+          fi
+
   # Prod deploy is handled by .github/workflows/deploy-pointer.yml (build-from-source
   # to pointer.gr on push:master). The old GHCR-pull-to-Hetzner deploy job was
   # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.

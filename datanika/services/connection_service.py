@@ -727,6 +727,16 @@ class ConnectionService:
                     for name in insp.get_table_names(schema=sch):
                         tables.append({"schema": sch, "name": name})
                 except Exception:
+                    # Skipping a schema we cannot introspect is right -- one
+                    # permission-denied schema must not empty the whole table
+                    # picker. But the user then sees a SHORT list with no
+                    # indication anything was omitted, and the usual reading of
+                    # that is "the connector is broken" (core#723).
+                    logger.warning(
+                        "Schema %r skipped during table listing; the returned list is partial",
+                        sch,
+                        exc_info=True,
+                    )
                     continue
             return tables
         finally:
@@ -778,9 +788,12 @@ class ConnectionService:
                 qualified = f"{preparer.quote_schema(schema)}.{qualified}"
             if connection_type == ConnectionType.ORACLE:
                 # Oracle has no LIMIT clause — use the 12c+ row-limiting form.
-                query = f"SELECT * FROM {qualified} FETCH FIRST {limit} ROWS ONLY"
+                # noqa S608: neither interpolated value is user text. `qualified`
+                # went through the dialect's own identifier_preparer above, and
+                # `limit` is `max(1, min(int(limit), 1000))` — an int, clamped.
+                query = f"SELECT * FROM {qualified} FETCH FIRST {limit} ROWS ONLY"  # noqa: S608
             else:
-                query = f"SELECT * FROM {qualified} LIMIT {limit}"
+                query = f"SELECT * FROM {qualified} LIMIT {limit}"  # noqa: S608
             with engine.connect() as conn:
                 result = conn.execute(text(query))
                 columns = list(result.keys())

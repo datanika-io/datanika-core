@@ -93,7 +93,7 @@ class BaseState(rx.State):
         old_values: dict | None = None,
         new_values: dict | None = None,
     ):
-        """Log an audit entry. Silently ignores failures."""
+        """Log an audit entry. Never raises — but never fails silently either."""
         try:
             from datanika.models.audit_log import AuditAction
             from datanika.services.audit_service import AuditService
@@ -109,7 +109,17 @@ class BaseState(rx.State):
                 new_values=new_values,
             )
         except Exception:
-            pass  # Audit logging should never break the main operation
+            # The swallow is deliberate: audit logging must never break the
+            # operation it describes. The LOG is what makes it safe -- without
+            # it the trail can stop recording and "no audit rows" is
+            # indistinguishable from "nothing happened" (core#723).
+            _log.exception(
+                "Audit write failed and was dropped: action=%s resource=%s org=%s user=%s",
+                action,
+                resource_type,
+                org_id,
+                user_id,
+            )
 
     def _set_error(self, exc: Exception, fallback: str = "An error occurred") -> None:
         """Set error_message, is_quota_error, and quota_metric from an exception."""

@@ -45,7 +45,7 @@ def google_provider(client_id: str, client_secret: str) -> OAuthProvider:
         client_id=client_id,
         client_secret=client_secret,
         authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
-        token_url="https://oauth2.googleapis.com/token",
+        token_url="https://oauth2.googleapis.com/token",  # noqa: S106 - a URL
         userinfo_url="https://openidconnect.googleapis.com/v1/userinfo",
         scopes=["openid", "email", "profile"],
     )
@@ -57,7 +57,7 @@ def github_provider(client_id: str, client_secret: str) -> OAuthProvider:
         client_id=client_id,
         client_secret=client_secret,
         authorize_url="https://github.com/login/oauth/authorize",
-        token_url="https://github.com/login/oauth/access_token",
+        token_url="https://github.com/login/oauth/access_token",  # noqa: S106 - a URL
         userinfo_url="https://api.github.com/user",
         scopes=["read:user", "user:email"],
     )

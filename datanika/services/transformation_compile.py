@@ -189,7 +189,12 @@ def preview_transformation(
     # read-only SQL guard applies. Defense in depth: never trust that
     # dbt compiled something safe.
     inner = compile_result.compiled_sql.strip().rstrip(";")
-    query = f"SELECT * FROM (\n{inner}\n) AS _preview LIMIT {clamped}"
+    # noqa S608: the interpolation is the point, not an oversight — this wraps
+    # dbt's own compiled SQL. `clamped` is an int, and the wrapped result is
+    # handed to `ConnectionService.is_select_only()` on the very next line,
+    # which is the guard. Flagging it here would only move it somewhere ruff
+    # cannot see it.
+    query = f"SELECT * FROM (\n{inner}\n) AS _preview LIMIT {clamped}"  # noqa: S608
     if not ConnectionService.is_select_only(query):
         return PreviewResult(
             success=False,

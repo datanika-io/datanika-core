@@ -45,7 +45,7 @@ _INTERNAL_API_URL = os.environ.get("DATANIKA_MCP_INTERNAL_URL", "http://127.0.0.
 
 # Access tokens the AS issues are prefixed so the resource server can tell them
 # apart from a pasted API key (``etf_``) without a database round-trip.
-_OAUTH_TOKEN_PREFIX = "dtk_at_"
+_OAUTH_TOKEN_PREFIX = "dtk_at_"  # noqa: S105 - a public prefix, not a secret
 
 
 def _bearer_token(scope) -> str:

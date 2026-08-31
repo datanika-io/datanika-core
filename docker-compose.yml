@@ -292,7 +292,19 @@ services:
   # `celery_task_succeeded_total` vanish — and `increase(<vanished series>)` yields no
   # series, which with `noDataState: OK` reads as healthy at precisely the moment it is
   # not. Cardinality is not a concern here: one worker, ~15 task names.
+  #
+  # ⚠️ `profiles: ["monitoring"]` is required, and the reason is a guard that runs in the
+  # OPPOSITE direction to the one this service was written against.
+  # `test_deploy_service_coverage.py` asks "is every service named by SOME deploy step?"
+  # — satisfied by adding this to `up -d celery beat celery-exporter`.
+  # `test_selfhost_quickstart.py` asks "does a plain `up -d` start ONLY what the
+  # application needs?" — and a self-hoster following the published four-line quickstart
+  # has no Prometheus to scrape this with. Without the profile the second guard fails.
+  # Naming a profiled service explicitly still starts it, which is exactly how
+  # `up -d ... postgres-exporter cadvisor node-exporter` works today, so the deploy is
+  # unaffected. Every other operator-only service here carries the same profile.
   celery-exporter:
+    profiles: ["monitoring"]
     image: danihodovic/celery-exporter:0.12.2
     container_name: datanika-celery-exporter
     environment:

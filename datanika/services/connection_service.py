@@ -11,7 +11,7 @@ from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import Session
 
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
-from datanika.services.egress_guard import validate_egress_host
+from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.encryption import EncryptionService
 from datanika.services.naming import validate_name
 
@@ -143,6 +143,221 @@ _NON_DB_TYPES = {
     ConnectionType.KAFKA,
     ConnectionType.OPENAPI,
 }
+
+
+# --------------------------------------------------------------------------
+# SaaS credential probes (core#821)
+# --------------------------------------------------------------------------
+#
+# `test_connection` used to answer `(True, "Test not applicable for this type")`
+# for every type below after making **no network call at all**, and `True` is
+# what drives the green styling. Product proved it on production with a
+# fabricated token against a store that does not exist. Two credentials on disk
+# — a Pipedrive key returning 401 and a Freshdesk key returning 403
+# `account_suspended` — would both also have gone green.
+#
+# That set is exactly the connectors whose credentials expire, get revoked or
+# get mistyped, and this button is the only pre-run validation the product
+# offers. Its first real credential check was the first pipeline run, which for
+# a scheduled upload is hours later and arrives as a failed run rather than a
+# form error.
+#
+# 🚨 **Several of these APIs report failure with HTTP 200.** Slack answers
+# `200 {"ok": false, "error": "invalid_auth"}`; Pipedrive carries a `success`
+# flag. A probe that reads only `status_code` calls those a pass — which is the
+# reported bug rebuilt inside its own fix. Hence `ok:`, a per-vendor body
+# predicate, and a test that exercises both the false and the true case.
+#
+# Probes deliberately hit each vendor's cheapest *identity* endpoint rather than
+# a data endpoint: it is the credential we are testing, the response is small,
+# and it needs no scope beyond the one a token must already have.
+
+#: Kept in step with `dlt_runner.DEFAULT_FACEBOOK_API_VERSION` by
+#: `test_saas_connection_probe.py`; duplicated rather than imported because
+#: importing `dlt_runner` pulls dlt into every UI import.
+_FACEBOOK_API_VERSION = "v21.0"
+
+
+def _first(config: dict, *names: str) -> str:
+    """First non-empty value among ``names``, as a stripped string."""
+    for name in names:
+        value = config.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if value not in (None, "", {}, []):
+            return str(value)
+    return ""
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _basic(user: str, password: str) -> dict:
+    import base64
+
+    return {"Authorization": "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()}
+
+
+def _flag_check(flag: str):
+    """Body predicate for vendors that report failure inside an HTTP 200.
+
+    Returns ``(ok, detail)``. A response that is not JSON at all counts as a
+    failure: these endpoints always answer JSON, so HTML means a captive portal,
+    a proxy, or the wrong host — none of which is a working credential.
+    """
+
+    def check(response):
+        try:
+            body = response.json()
+        except ValueError:
+            return False, "the response was not JSON"
+        if body.get(flag) is True:
+            return True, ""
+        return False, str(body.get("error") or body.get("message") or body)
+
+    return check
+
+
+#: type value -> probe spec.
+#:
+#: ``fields`` is a tuple of *alternative-name groups*; every group must yield a
+#: value or the probe is skipped and the missing one named. The names match what
+#: ``dlt_runner._build_saas_source`` reads, so a connection that tests is a
+#: connection that can run.
+SAAS_PROBES: dict[str, dict] = {
+    "stripe": {
+        "fields": (("api_key", "stripe_secret_key"),),
+        "url": lambda c: "https://api.stripe.com/v1/customers",
+        "headers": lambda c: _bearer(_first(c, "api_key", "stripe_secret_key")),
+        "params": lambda c: {"limit": 1},
+    },
+    "github": {
+        "fields": (("access_token", "api_key"),),
+        "url": lambda c: "https://api.github.com/user",
+        "headers": lambda c: {
+            **_bearer(_first(c, "access_token", "api_key")),
+            "Accept": "application/vnd.github+json",
+        },
+    },
+    "hubspot": {
+        "fields": (("api_key", "access_token"),),
+        "url": lambda c: "https://api.hubapi.com/crm/v3/objects/contacts",
+        "headers": lambda c: _bearer(_first(c, "api_key", "access_token")),
+        "params": lambda c: {"limit": 1},
+    },
+    "salesforce": {
+        "fields": (("access_token", "api_key"), ("instance_url",)),
+        "url": lambda c: _first(c, "instance_url").rstrip("/") + "/services/data/v59.0/limits",
+        "headers": lambda c: _bearer(_first(c, "access_token", "api_key")),
+    },
+    "shopify": {
+        "fields": (("api_key", "access_token"), ("store",)),
+        "url": lambda c: f"https://{_first(c, 'store')}.myshopify.com/admin/api/2024-01/shop.json",
+        "headers": lambda c: {"X-Shopify-Access-Token": _first(c, "api_key", "access_token")},
+    },
+    "jira": {
+        "fields": (("api_key", "api_token"), ("domain",)),
+        "url": lambda c: f"https://{_first(c, 'domain')}.atlassian.net/rest/api/3/myself",
+        "headers": lambda c: _basic(_first(c, "email"), _first(c, "api_key", "api_token")),
+    },
+    "slack": {
+        "fields": (("api_key", "bot_token"),),
+        "url": lambda c: "https://slack.com/api/auth.test",
+        "headers": lambda c: _bearer(_first(c, "api_key", "bot_token")),
+        # 200 + {"ok": false} is Slack's normal way of saying "bad token".
+        "ok": _flag_check("ok"),
+    },
+    "facebook_ads": {
+        "fields": (("access_token", "api_key"),),
+        "url": lambda c: (
+            f"https://graph.facebook.com/{_first(c, 'api_version') or _FACEBOOK_API_VERSION}/me"
+        ),
+        "headers": lambda c: _bearer(_first(c, "access_token", "api_key")),
+    },
+    "zendesk": {
+        "fields": (("api_key", "api_token"), ("subdomain", "domain")),
+        "url": lambda c: (
+            f"https://{_first(c, 'subdomain', 'domain')}.zendesk.com/api/v2/users/me.json"
+        ),
+        "headers": lambda c: _bearer(_first(c, "api_key", "api_token")),
+    },
+    "airtable": {
+        "fields": (("api_key", "access_token"),),
+        "url": lambda c: "https://api.airtable.com/v0/meta/whoami",
+        "headers": lambda c: _bearer(_first(c, "api_key", "access_token")),
+    },
+    "notion": {
+        "fields": (("api_key", "access_token"),),
+        "url": lambda c: "https://api.notion.com/v1/users/me",
+        "headers": lambda c: {
+            **_bearer(_first(c, "api_key", "access_token")),
+            # Notion answers 400 without it, which would read as a bad token.
+            "Notion-Version": "2022-06-28",
+        },
+    },
+    "pipedrive": {
+        "fields": (("api_key", "api_token"),),
+        "url": lambda c: "https://api.pipedrive.com/v1/users/me",
+        "params": lambda c: {"api_token": _first(c, "api_key", "api_token")},
+        "ok": _flag_check("success"),
+    },
+    "freshdesk": {
+        "fields": (("api_key",), ("domain",)),
+        "url": lambda c: f"https://{_first(c, 'domain')}.freshdesk.com/api/v2/agents/me",
+        # Freshdesk takes the API key as the basic-auth *username*.
+        "headers": lambda c: _basic(_first(c, "api_key"), "X"),
+    },
+    "asana": {
+        "fields": (("api_key", "access_token"),),
+        "url": lambda c: "https://app.asana.com/api/1.0/users/me",
+        "headers": lambda c: _bearer(_first(c, "api_key", "access_token")),
+    },
+}
+
+#: Types that get an explicit **"not tested"** verdict rather than a probe.
+#:
+#: Not green, and not red either — a neutral third state, because claiming a
+#: failure for a connection that may be perfectly good is the same kind of lie
+#: as claiming success. ``test_connection`` returns ``None`` for these.
+SAAS_PROBE_EXEMPT: dict[str, str] = {
+    "rest_api": (
+        "Not tested: a REST API connection is a base URL plus arbitrary auth, "
+        "and the resource paths live on the upload rather than the connection — "
+        "there is no endpoint we know is safe to call. The first run reports."
+    ),
+    "openapi": (
+        "Not tested: authentication and the resource catalog come from the "
+        "imported spec, and calling an arbitrary catalog entry may have side "
+        "effects. The first run reports."
+    ),
+    "google_sheets": (
+        "Not tested: the credential is a service-account JSON, and verifying it "
+        "means minting an OAuth token — which belongs with the Google helpers, "
+        "not in this service. Sharing the sheet with the service account is the "
+        "step that usually fails, and it is per-upload, not per-connection."
+    ),
+    "google_analytics": (
+        "Not tested: the credential is a service-account JSON that has to be "
+        "exchanged for an OAuth token before anything can be called, and the "
+        "property grant is separate from the key being valid."
+    ),
+    "google_ads": (
+        "Not tested: authentication needs a developer token plus an OAuth "
+        "refresh exchange, so a probe here would duplicate the token-minting "
+        "code that lives with the Google Ads source."
+    ),
+    "kafka": (
+        "Not tested: Kafka is not HTTP. A metadata fetch needs a broker "
+        "connection with its own timeout and SASL negotiation, which cannot "
+        "share the guarded HTTP session the other probes use."
+    ),
+}
+
+
+def _saas_probe_url(connection_type, config: dict) -> str:
+    """The URL a type's probe would call. Separate so tests can redirect it."""
+    return SAAS_PROBES[connection_type.value]["url"](config)
 
 
 # --------------------------------------------------------------------------
@@ -622,7 +837,82 @@ class ConnectionService:
         return True, f"Connected — found files matching {file_glob}"
 
     @staticmethod
-    def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool, str]:
+    def _test_saas_source(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:
+        """Verify a SaaS credential with one cheap authenticated request (core#821).
+
+        Returns the same ``(verdict, message)`` shape as every other branch,
+        with a third verdict: ``None`` for "not tested". That third state is the
+        point. This branch used to answer ``(True, "Test not applicable for this
+        type")`` for twenty types without touching the network, and ``True`` is
+        what paints the message green — so a revoked token, a suspended account
+        and a token that was never real all read as working.
+
+        Failure and "not tested" are different answers and neither may be
+        rendered as the other: calling an unverifiable connection *failed* is
+        the same class of lie, told in the opposite direction.
+        """
+        name = connection_type.value
+
+        reason = SAAS_PROBE_EXEMPT.get(name)
+        if reason is not None:
+            return None, reason
+
+        probe = SAAS_PROBES.get(name)
+        if probe is None:
+            # Unreachable while `test_no_saas_type_is_undecided` holds. If a new
+            # type ever slips past it, "not tested" is the safe answer — the one
+            # thing we must not do is go back to claiming success.
+            return None, f"Not tested: no credential probe exists for {name}"
+
+        missing = [group[0] for group in probe["fields"] if not _first(config, *group)]
+        if missing:
+            return False, f"Missing required field(s): {', '.join(missing)}"
+
+        url = _saas_probe_url(connection_type, config)
+        # Two layers, as in `dlt_runner._rest_api_from_parts`: several of these
+        # URLs are built from free-form user input (`instance_url`, `store`,
+        # `domain`, `subdomain`), so the host is checked before a request is
+        # built and the guarded session re-checks every hop, redirects included.
+        try:
+            validate_egress_host(url)
+        except Exception as exc:
+            return False, str(exc)
+
+        session = build_guarded_session()
+        try:
+            response = session.get(
+                url,
+                headers=probe.get("headers", lambda c: {})(config),
+                params=probe.get("params", lambda c: {})(config),
+                timeout=10,
+            )
+        except Exception as exc:
+            logger.warning("Credential probe failed for %s", name, exc_info=True)
+            return False, describe_connection_failure(
+                exc, config, f"Could not reach the {name} API"
+            )
+        finally:
+            session.close()
+
+        if response.status_code in (401, 403):
+            return False, f"{name} rejected these credentials (HTTP {response.status_code})"
+        if response.status_code >= 400:
+            return False, f"{name} responded HTTP {response.status_code}"
+
+        # The 200-that-means-no case. Slack and Pipedrive both answer 200 with
+        # a failure flag in the body, so a status-only check would call a dead
+        # token healthy — the bug this method exists to remove, rebuilt inside
+        # it.
+        check = probe.get("ok")
+        if check is not None:
+            ok, detail = check(response)
+            if not ok:
+                return False, f"{name} rejected these credentials: {detail}"
+
+        return True, "Credentials verified"
+
+    @staticmethod
+    def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:
         """Test real database connectivity via SELECT 1. Returns (success, message)."""
         if not config:
             return False, "Configuration is empty"
@@ -634,7 +924,7 @@ class ConnectionService:
             return ConnectionService._test_file_source(config, connection_type)
 
         if connection_type in _NON_DB_TYPES:
-            return True, "Test not applicable for this type"
+            return ConnectionService._test_saas_source(config, connection_type)
 
         try:
             url = _build_sa_url(config, connection_type)

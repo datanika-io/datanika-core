@@ -422,7 +422,7 @@ SAAS_PAGINATION_EXEMPT: dict[str, str] = {
         "The default resources are `sobjects/{Name}` *describe* endpoints, which "
         "return one metadata object each, not a record list. There is nothing to "
         "paginate. That this connector therefore fetches no Account/Contact "
-        "records at all is a separate defect (core#847), not this one."
+        "records at all is a separate defect (core#850), not this one."
     ),
     "jira": (
         "`rest/api/3/search` is offset-paginated (startAt/maxResults) while "

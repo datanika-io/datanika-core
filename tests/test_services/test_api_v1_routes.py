@@ -950,3 +950,71 @@ class TestRejectedUpdateIsAtomic:
             )
 
             assert self._name_in_db(session, Transformation, tid) == "stg_clean"
+
+
+class TestConnectionTestEndpointVerdict:
+    """core#821 — this endpoint had no test at all, and the verdict type changed.
+
+    `ConnectionService.test_connection` gained a third state (`None`, "not
+    tested"). Nothing here would have failed if that had gone straight into
+    `{"success": ok}`: the endpoint was uncovered, so a documented boolean would
+    silently have started emitting `null` to every API client.
+    """
+
+    def _payload(self, monkeypatch, verdict, message):
+        from datanika.services import api_v1_routes
+
+        monkeypatch.setattr(
+            api_v1_routes.ConnectionService,
+            "test_connection",
+            staticmethod(lambda config, connection_type: (verdict, message)),
+        )
+        return verdict, message
+
+    @pytest.mark.parametrize(
+        "verdict,success,tested",
+        [(True, True, True), (False, False, True), (None, False, False)],
+    )
+    def test_success_stays_a_bool_and_tested_carries_the_third_state(
+        self, verdict, success, tested
+    ):
+        """The mapping, stated directly.
+
+        `success` is never null -- that is the breaking change this avoids --
+        and `tested` is what lets a client tell "your credentials are wrong"
+        from "we could not check".
+        """
+        assert (verdict is True) is success
+        assert (verdict is not None) is tested
+
+    def test_the_route_serialises_the_untested_verdict_without_null(self):
+        """Derived from the route's own source, so it cannot drift.
+
+        ⚠️ `inspect.getsource(api_v1_routes.test_connection)` returns the
+        **`@api_endpoint` wrapper**, not this route — the decorator sets no
+        `__wrapped__`, so there is nothing for `inspect` to unwrap. A version of
+        this test that used it was reading a completely different function, and
+        would have passed the day the wrapper happened to contain the string.
+        Parse the module and take the named `FunctionDef` instead.
+        """
+        import ast as _ast
+        import inspect
+
+        from datanika.services import api_v1_routes
+
+        module_src = inspect.getsource(api_v1_routes)
+        tree = _ast.parse(module_src)
+        fn = next(
+            n for n in tree.body if isinstance(n, _ast.FunctionDef) and n.name == "test_connection"
+        )
+        src = _ast.get_source_segment(module_src, fn)
+
+        assert src is not None and "ConnectionService.test_connection" in src, (
+            "found a `test_connection` that is not the route — this assertion is "
+            "not looking at the code it claims to"
+        )
+        assert '"success": ok is True' in src, (
+            "the route puts the raw verdict into `success`; None would serialise "
+            "as null and break the documented boolean type (docs/api_versioning.md)"
+        )
+        assert '"tested": ok is not None' in src

@@ -45,8 +45,10 @@ existed**. This is the thin layer that was missing, not a replacement.
 from __future__ import annotations
 
 import http.server
+import inspect
 import json
 import os
+import re
 import threading
 import time
 
@@ -417,7 +419,54 @@ requires_docker = pytest.mark.skipif(
 )
 
 
-def await_setup(what: str, thunk, attempts: int = 12, delay: float = 1.0):
+def _container_status(container) -> str | None:
+    """The container's real docker status, or None when it cannot be read.
+
+    Asks testcontainers' own `get_status`, which already handles both
+    `DockerContainer` and `DockerCompose`. Deriving rather than reaching into
+    `_container.status` ourselves means a change on their side surfaces as an
+    error here instead of silently reading `None` forever.
+    """
+    try:
+        from testcontainers.core.wait_strategies import ContainerStatusWaitStrategy
+
+        return ContainerStatusWaitStrategy().get_status(container)
+    except Exception:  # noqa: BLE001 — a status we cannot read is not a verdict
+        return None
+
+
+def _is_terminal_status(status: str) -> bool:
+    """Is this a status no amount of waiting recovers from?
+
+    **Derived by asking testcontainers' own predicate**, not by restating their
+    status list: `ContainerStatusWaitStrategy.running()` returns for `running`,
+    returns `False` for the statuses it will keep polling on, and raises
+    `StopIteration` for everything else. That `StopIteration` is exactly the
+    "give up now" signal, so catching it *is* the definition. Their list can
+    move; this cannot drift from it.
+    """
+    from testcontainers.core.wait_strategies import ContainerStatusWaitStrategy
+
+    try:
+        ContainerStatusWaitStrategy.running(status)
+    except StopIteration:
+        return True
+    return False
+
+
+def _container_log_tail(container, lines: int = 25) -> str:
+    """Last few log lines, for a container that died before we could seed it."""
+    try:
+        stdout, stderr = container.get_logs()
+        text = (stdout or b"").decode("utf-8", "replace")
+        text += (stderr or b"").decode("utf-8", "replace")
+        tail = [ln for ln in text.splitlines() if ln.strip()][-lines:]
+        return "\n".join(f"      | {ln}" for ln in tail) or "      | (no output)"
+    except Exception as exc:  # noqa: BLE001
+        return f"      | (logs unavailable: {type(exc).__name__}: {exc})"
+
+
+def await_setup(what: str, thunk, attempts: int = 30, delay: float = 2.0, container=None):
     """Retry a container **setup** step until it succeeds, then return its result.
 
     ── Read this before extending it (core#578) ────────────────────────────────
@@ -444,18 +493,278 @@ def await_setup(what: str, thunk, attempts: int = 12, delay: float = 1.0):
     pymongo seeding, before any product code ran, and passed in isolation. That
     is a readiness race, not a flaky test, and it is worth fixing at the root
     rather than moving the suite somewhere nobody reads.
+
+    ── Two failure modes, not one (core#758) ───────────────────────────────────
+    Pass ``container=`` and this distinguishes them. Without it the behaviour is
+    the old one, which conflated them.
+
+    ``_seed`` reaches ``get_exposed_port()``, and in testcontainers 4.x that
+    builds a **fresh ``ContainerStatusWaitStrategy`` on every call** with a
+    **120 s** budget. It raises ``TimeoutError("container did not become
+    running")`` from two unrelated situations:
+
+      * the container is **slow** (``created``/``restarting``) — it polls for the
+        full 120 s, and retrying with a bigger budget genuinely helps;
+      * the container is **already dead** (``exited``/``dead``/``removing``/
+        ``paused``) — ``running()`` raises ``StopIteration``, ``_poll`` returns
+        ``False`` *immediately*, and retrying is pure sleeping.
+
+    One message, opposite remedies. core#758 was filed as the first and was in
+    fact the second: 12 attempts against a 120 s inner budget is a nominal
+    1452 s, in a run that finished in **436.47 s** — so at least 9 of the 12
+    attempts had returned instantly. The proposed fix, raising the attempt
+    count, would have added ~48 s of sleeping to a run already lost.
+
+    ── The message reports what it measured ────────────────────────────────────
+    The old text printed ``attempts * delay``, which is the time spent
+    **sleeping** — the thunk's own duration is not in that product, and the
+    thunk is what slows down under the contention that causes these failures.
+    Measured with a thunk blocking 0.3 s at ``attempts=12, delay=0.1``, it
+    claimed ``1s`` against an actual **4.8 s**. That fabricated number is what
+    produced core#758's wrong diagnosis. Both are printed now, labelled.
     """
     last: Exception | None = None
+    started = time.monotonic()
+    tried = 0
     for _ in range(attempts):
+        tried += 1
         try:
             return thunk()
         except Exception as exc:  # noqa: BLE001 — any setup failure is retryable
             last = exc
+            status = _container_status(container) if container is not None else None
+            if status is not None and _is_terminal_status(status):
+                raise AssertionError(
+                    f"container setup CANNOT succeed: {what}\n"
+                    f"    container status : {status!r} — terminal. This is NOT a "
+                    f"readiness timeout; retrying cannot fix it, and a larger "
+                    f"budget would only sleep longer.\n"
+                    f"    gave up after    : {tried} attempt(s), "
+                    f"{time.monotonic() - started:.1f}s measured\n"
+                    f"    last error       : {type(last).__name__}: {last}\n"
+                    f"    Under several concurrent suites the usual causes are an "
+                    f"OOM or a ryuk reap. Container log tail:\n"
+                    f"{_container_log_tail(container)}"
+                ) from last
             time.sleep(delay)
+    final_status = _container_status(container) if container is not None else None
+    # An unreadable status must not read as "checked, and fine". If it is None
+    # while a container WAS supplied, the classification above never ran and this
+    # is the old conflating behaviour — say so rather than degrade silently.
+    if container is None:
+        status_note = "not supplied — pass `container=` to get the terminal-status check"
+    elif final_status is None:
+        status_note = (
+            "UNREADABLE — the terminal-status check did not run; "
+            "treat this verdict as the old, conflated one"
+        )
+    else:
+        status_note = f"{final_status!r} (not terminal, so retrying was right)"
     raise AssertionError(
-        f"container setup never became ready: {what} (after {attempts} attempts, "
-        f"{attempts * delay:.0f}s). Last error: {type(last).__name__}: {last}"
+        f"container setup never became ready: {what}\n"
+        f"    gave up after   : {tried} attempts, {time.monotonic() - started:.1f}s "
+        f"measured wall clock\n"
+        f"    configured      : {attempts} x {delay:g}s = {attempts * delay:.0f}s of "
+        f"SLEEPING — the difference is the thunk's own duration, which is the part "
+        f"that grows under contention\n"
+        f"    container status: {status_note}\n"
+        f"    last error      : {type(last).__name__}: {last}"
     ) from last
+
+
+class _FakeContainer:
+    """Enough of `DockerContainer` for `await_setup`'s classification path.
+
+    `_container_status` goes through testcontainers' own `get_status`, which
+    type-checks its argument — so these tests patch that one function rather
+    than pretending to be a `DockerContainer`. Patching the narrow seam keeps
+    the real `_is_terminal_status` (the part that must not drift) under test.
+    """
+
+    def __init__(self, logs: bytes = b"out-of-memory\nkilled\n"):
+        self._logs = logs
+
+    def get_logs(self):
+        return self._logs, b""
+
+
+class TestAwaitSetupBudget:
+    """`await_setup` had no test at all, and it is what stands between daemon
+    contention and a false red on someone else's push (core#758).
+
+    No Docker: the container seam is patched, and everything else is arithmetic
+    over a thunk. These run in every suite.
+    """
+
+    def test_returns_the_thunk_result_without_retrying_on_success(self):
+        calls = []
+
+        def thunk():
+            calls.append(1)
+            return "seeded"
+
+        assert await_setup("x", thunk, attempts=3, delay=0) == "seeded"
+        assert len(calls) == 1, "a successful thunk must not be called twice"
+
+    def test_succeeds_on_a_later_attempt(self):
+        state = {"n": 0}
+
+        def thunk():
+            state["n"] += 1
+            if state["n"] < 3:
+                raise ConnectionError("auth init still in flight")
+            return "seeded"
+
+        assert await_setup("x", thunk, attempts=5, delay=0) == "seeded"
+        assert state["n"] == 3
+
+    def test_exhausting_the_budget_names_what_when_and_why(self):
+        def thunk():
+            raise TimeoutError("container did not become running")
+
+        with pytest.raises(AssertionError) as excinfo:
+            await_setup("mongod accepting authenticated writes", thunk, attempts=4, delay=0)
+        message = str(excinfo.value)
+        assert "mongod accepting authenticated writes" in message
+        assert "4 attempts" in message
+        assert "TimeoutError" in message
+        assert "container did not become running" in message
+
+    def test_the_message_reports_measured_time_not_the_configured_product(self):
+        """core#758's actual defect: the old text printed `attempts * delay`.
+
+        With `delay=0` the configured sleeping budget is **0s**, so any non-zero
+        wall-clock figure in the message can only have been measured. That is
+        the discriminating assertion — a message that recomputed the product
+        would print 0.0s here and pass a test that merely checked for a number.
+        """
+
+        def thunk():
+            time.sleep(0.05)
+            raise TimeoutError("container did not become running")
+
+        with pytest.raises(AssertionError) as excinfo:
+            await_setup("x", thunk, attempts=6, delay=0)
+        message = str(excinfo.value)
+        assert "0s of" in message, "the configured sleeping budget must still be shown"
+        match = re.search(r"([\d.]+)s measured wall clock", message)
+        assert match, f"no measured wall clock in:\n{message}"
+        assert float(match.group(1)) >= 0.25, (
+            f"message reports {match.group(1)}s measured, but the thunk alone "
+            f"took ~0.3s — this is the product, not a measurement"
+        )
+
+    def test_a_terminal_container_aborts_immediately_with_a_different_message(self, monkeypatch):
+        """The core#758 case: the container was dead, not slow.
+
+        Two things are asserted, and the second is the one that matters —
+        retrying a terminal container is pure sleeping, so it must stop after
+        ONE attempt rather than burning the whole budget.
+        """
+        calls = []
+
+        def thunk():
+            calls.append(1)
+            raise TimeoutError("container did not become running")
+
+        monkeypatch.setattr(
+            "tests.test_services.test_source_builders_move_rows._container_status",
+            lambda c: "exited",
+        )
+        with pytest.raises(AssertionError) as excinfo:
+            await_setup("mongod", thunk, attempts=30, delay=0, container=_FakeContainer())
+        message = str(excinfo.value)
+        assert len(calls) == 1, f"aborted after {len(calls)} attempts; must stop at 1"
+        assert "CANNOT succeed" in message
+        assert "'exited'" in message and "terminal" in message
+        assert "retrying cannot fix it" in message
+        assert "out-of-memory" in message, "the container's log tail is the diagnosis"
+        # and it must NOT read like the timeout case
+        assert "never became ready" not in message
+
+    def test_a_slow_container_still_exhausts_the_budget(self, monkeypatch):
+        """The negative control for the abort: `created` is not terminal.
+
+        Without this, an over-eager classifier that called everything terminal
+        would pass the test above and silently stop retrying the case the retry
+        exists for — the core#578 auth-init race.
+        """
+        calls = []
+
+        def thunk():
+            calls.append(1)
+            raise TimeoutError("container did not become running")
+
+        monkeypatch.setattr(
+            "tests.test_services.test_source_builders_move_rows._container_status",
+            lambda c: "created",
+        )
+        with pytest.raises(AssertionError) as excinfo:
+            await_setup("mongod", thunk, attempts=5, delay=0, container=_FakeContainer())
+        assert len(calls) == 5, "a slow container must be retried, not abandoned"
+        assert "never became ready" in str(excinfo.value)
+        assert "'created'" in str(excinfo.value), "the status belongs in the message either way"
+
+    def test_an_unreadable_status_does_not_read_as_checked_and_fine(self, monkeypatch):
+        """The silent-fallback guard.
+
+        If `get_status` ever stops working for a real container,
+        `_container_status` returns None and the classification quietly never
+        runs — reverting to the old conflating behaviour with no sign. The
+        message has to say the check did not run, not print a reassuring blank.
+        """
+        monkeypatch.setattr(
+            "tests.test_services.test_source_builders_move_rows._container_status",
+            lambda c: None,
+        )
+
+        def thunk():
+            raise TimeoutError("container did not become running")
+
+        with pytest.raises(AssertionError) as excinfo:
+            await_setup("mongod", thunk, attempts=2, delay=0, container=_FakeContainer())
+        message = str(excinfo.value)
+        assert "UNREADABLE" in message
+        assert "did not run" in message
+        assert "not terminal" not in message, "an unread status must not claim to be non-terminal"
+
+    def test_terminal_classification_is_derived_from_testcontainers(self):
+        """Asks their predicate; never restates their status list.
+
+        `ContainerStatusWaitStrategy.running()` raises `StopIteration` for the
+        statuses it refuses to continue on. If they add one, this follows.
+        """
+        from testcontainers.core.wait_strategies import ContainerStatusWaitStrategy
+
+        assert _is_terminal_status("exited")
+        assert _is_terminal_status("dead")
+        assert not _is_terminal_status("running")
+        assert not _is_terminal_status("created")
+        # the derivation, spelled out: everything they will keep polling on is
+        # non-terminal here, whatever that set happens to be.
+        for ok in ContainerStatusWaitStrategy.CONTINUE_STATUSES:
+            assert not _is_terminal_status(ok), f"{ok} is a continue-status upstream"
+
+    def test_the_default_budget_is_bracketed_from_both_sides(self):
+        """Derived from the signature, so a future edit cannot quietly undo it.
+
+        Lower bound: core#758 failed at 12 attempts on a machine measured
+        running **four concurrent full suites**. Upper bound: a budget large
+        enough to turn a genuinely dead container into a hang is the same
+        defect one level up — which is why the terminal-status abort above
+        exists, and why this is allowed to stay finite.
+        """
+        signature = inspect.signature(await_setup)
+        attempts = signature.parameters["attempts"].default
+        delay = signature.parameters["delay"].default
+        assert attempts * delay >= 60, (
+            f"default budget is {attempts} x {delay}s = {attempts * delay}s; "
+            f"core#758 failed at 12s under normal contention"
+        )
+        assert attempts * delay <= 120, (
+            f"default budget is {attempts * delay}s — long enough that a dead "
+            f"container reads as a hang"
+        )
 
 
 class TestSaasRestFallbackMovesRows:
@@ -564,7 +873,11 @@ class TestSqlDatabaseSourceMovesRows:
         with PostgresContainer("postgres:16-alpine") as postgres:
             # SETUP retry only — see await_setup's docstring. The load below is
             # never retried.
-            config = await_setup("postgres accepting writes", lambda: self._seed(postgres))
+            config = await_setup(
+                "postgres accepting writes",
+                lambda: self._seed(postgres),
+                container=postgres,
+            )
             db_path = _extract_load(
                 tmp_path,
                 "postgres",
@@ -583,7 +896,11 @@ class TestSqlDatabaseSourceMovesRows:
         with PostgresContainer("postgres:16-alpine") as postgres:
             # SETUP retry only — see await_setup's docstring. The load below is
             # never retried.
-            config = await_setup("postgres accepting writes", lambda: self._seed(postgres))
+            config = await_setup(
+                "postgres accepting writes",
+                lambda: self._seed(postgres),
+                container=postgres,
+            )
             db_path = _extract_load(
                 tmp_path,
                 "postgres",
@@ -636,7 +953,7 @@ class TestMongoDbSourceMovesRows:
                 client["probedb"]["widgets"].delete_many({})
                 client["probedb"]["widgets"].insert_many([dict(w) for w in WIDGETS])
 
-            await_setup("mongod accepting authenticated writes", _seed)
+            await_setup("mongod accepting authenticated writes", _seed, container=mongo)
 
             db_path = _extract_load(
                 tmp_path,
@@ -700,6 +1017,7 @@ class TestKafkaSourceMovesRows:
                     bootstrap_servers=kafka.get_bootstrap_server(),
                     value_serializer=lambda v: json.dumps(v).encode(),
                 ),
+                container=kafka,
             )
             for widget in WIDGETS:
                 producer.send("widgets", widget)
@@ -821,17 +1139,15 @@ class TestS3FileSourceMovesRows:
                 got = client.get_object(Bucket=self.BUCKET, Key="csv/widgets.csv")
                 assert got["Body"].read() == self._csv_bytes()
 
-            # 30 attempts, not the 12 default. `DockerContainer` is the
-            # GENERIC wrapper — unlike `MongoDbContainer` it carries no
-            # readiness wait of its own, so this retry is the only thing
-            # standing between the fixture and a half-started server. core#758
-            # is a filed S3 saying the 12 s default already fails under normal
-            # multi-department Docker contention on this machine, for a
-            # container whose happy path is ~9 s. Shipping a new fixture on
-            # that budget would be repeating a known defect. This is a SETUP
-            # retry (core#578) and hides nothing: the loads and assertions
-            # below are never retried.
-            await_setup("minio accepting bucket writes", _seed, attempts=30)
+            # `DockerContainer` is the GENERIC wrapper — unlike
+            # `MongoDbContainer` it carries no readiness wait of its own, so
+            # this retry is the only thing standing between the fixture and a
+            # half-started server. The explicit `attempts=30` is now the
+            # default (core#758 raised it from 12), and is kept here so the
+            # intent survives a future change to that default.
+            # This is a SETUP retry (core#578) and hides nothing: the loads and
+            # assertions below are never retried.
+            await_setup("minio accepting bucket writes", _seed, attempts=30, container=running)
             yield endpoint
 
     def _config(self, endpoint: str, prefix: str) -> dict:

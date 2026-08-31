@@ -855,12 +855,34 @@ D7 stands as written.
 > is not a smaller version of the same feature; it is the declined one, and it would drag a
 > test-locked legal sentence with it.
 
-#### D14.3 · ⚠️ [core#653] is a hard prerequisite for **any** scheduled component
+#### D14.3 · ✅ [core#653] was a hard prerequisite for **any** scheduled component — and it is now SATISFIED
 
-**Celery Beat has never run in production.** `celery_app.conf.beat_schedule` declares one entry
-(`hourly-maintenance`, `celery_app.py:46-51`) and **the string `beat` appears nowhere in
-`docker-compose.yml` or the `Dockerfile`** — no process starts it. The hourly maintenance sweep has
-executed zero times.
+> 🆕 **CORRECTED 2026-08-31.** This section asserted *"Celery Beat has never run in
+> production"* and that *"the string `beat` appears nowhere in `docker-compose.yml` or the
+> `Dockerfile`"*. **Both are now false.** [core#653] closed **2026-08-30T23:58Z**; `beat` is a
+> real service on `origin/dev` (`container_name: datanika-beat`, with the load-bearing
+> `beat_state` volume) and has been live in production since 2026-08-30, where it fired the
+> first `run_maintenance` in the project's history.
+>
+> ⚠️ **This drift pointed the expensive way.** A stale blocker parks work that is not
+> blocked — §8 step 4 and criterion 17a both still read as gated. Left alone it would have
+> deferred the scheduled component indefinitely, for a reason that had stopped being true.
+
+**The original reasoning stands, which is why this is corrected rather than deleted.** A GDPR
+erasure job on a scheduler that does not run is *a compliance promise that silently does not
+happen*, and unlike a failed deploy nobody learns until a regulator asks. What changes is *what
+to verify*: not "is [core#653] closed" — an issue closing is a different claim from a process
+running — but **is beat producing, at ship time**. That is now directly measurable: since
+2026-08-31 `celery-exporter` scrapes the worker event stream as `job=celery`, so `celery_worker_up`
+and the `celery_task_*` counters answer it.
+
+⚠️ **Two traps on that exporter, both of which make a dead pipeline look healthy**, and they
+matter here because this is the signal the criterion now rests on: the worker must run with
+**`-E`** (without it the exporter still serves `celery_worker_up` and **zero** `celery_task_*`,
+which is indistinguishable from "no task has run yet"), and `--purge-offline-worker-metrics 0`
+is load-bearing (the default deletes a vanished worker's series after 10 minutes, and
+`increase()` over a vanished series yields no series, which reads as healthy at exactly the
+wrong moment).
 
 A GDPR erasure job on that scheduler is *a compliance promise that silently does not happen*, and
 unlike a failed deploy nobody learns until a regulator asks. Under D14.1 no erasure depends on it — but
@@ -1009,7 +1031,7 @@ fails; that is deliberate.
 0a. `audit_logs.old_values` and `new_values` are `jsonb` in prod (`information_schema.columns.data_type`), and `SELECT count(*) FROM audit_logs WHERE new_values ? 'email'` **executes** — today that query is a syntax error, which is the whole point of the conversion.
 0b. An index on `audit_logs (user_id)` exists, and `EXPLAIN` on `WHERE user_id = <id>` no longer shows `Seq Scan`.
 0c. **`migration-roundtrip` proves the blue/green case**, not just the forward one: a write **and** a read issued through the *pre-migration* model definition (`mapped_column(JSON, …)`) succeed against the converted column. *(Green here is what allows N₀ to ship without a code change; red means it merges into N.)*
-0d. All 116 payloads survive the conversion byte-equal as parsed values. *(A `USING` clause that silently drops a malformed row would otherwise be invisible — nothing reads this column, §2b.)*
+0d. 🆕 **CORRECTED 2026-08-31 — this cited 116, and was weak in the dangerous direction.** The table holds **117 rows**, and per §2c only **30 / 18** of them hold an *object*; the rest hold the JSON literal `null`. A criterion asserting *"all 116 payloads survive"* therefore compares mostly nulls, and **would pass while a bad `USING` clause mangled the 30 rows that actually carry anything** — the exact failure it exists to catch. **Restated:** immediately before the migration record `count(*)`, `count(*) FILTER (WHERE json_typeof(old_values) = 'object')` and the same for `new_values`; after it, all three are **unchanged** and every object-holding payload is **byte-equal as a parsed value**. The two object counts are the load-bearing half — they are the only figures a silent drop can move. *(Nothing reads this column, §2b, so no other signal exists.)*
 
 **Extraction (release N)**
 1. `user_pii`, `invitation_pii`, `notification_channel_pii` and `email_change_requests` exist, are in `PUBLIC_TABLES`, and `migration-roundtrip` is green. **`audit_log_pii` must NOT exist** (§2a/D11).
@@ -1063,7 +1085,7 @@ fails; that is deliberate.
 17. The old address receives a notice with no approve link in it.
 
 **Scheduled component (D14.3 / D14.4) — gated on [core#653]**
-17a. 🆕 **[core#653] is closed and Celery Beat is demonstrably running in production** before any scheduled part of this spec ships. *(Today `beat` appears in neither `docker-compose.yml` nor the `Dockerfile`; `beat_schedule` has one entry that has executed zero times.)*
+17a. 🆕 **Celery Beat is demonstrably PRODUCING in production at ship time**, verified on the running system rather than from an issue's state. ⚠️ **Updated 2026-08-31**: this previously read *"[core#653] is closed and..."* with a parenthetical saying `beat` appears in neither `docker-compose.yml` nor the `Dockerfile`. [core#653] **closed 2026-08-30** and `beat` is a live service, so the gate as written is already satisfied — and, read literally, would have blocked. *(An issue's closure is not evidence that a process is running. Ask the exporter: `celery_worker_up` and the `celery_task_*` counters, scraped as `job=celery`. See D14.3 for the two ways that exporter reads healthy while measuring nothing.)*
 17b. 🆕 **The job is idempotent under double delivery.** Run it twice against the same state; the second run changes nothing and its counts are zero. *(`task_acks_late=True` means a Beat task can be redelivered after a worker crash, independently of [core#648]'s APScheduler duplication.)*
 17c. 🆕 **A completion record carries row counts**, is durable beyond Celery's Redis result backend, and **distinguishes "ran and found nothing" from "raised and was swallowed."** *(`celery_tasks_total` alone cannot: `run_maintenance_task` catches its own DB exceptions and returns zeroed counters, so the two are identical at that metric.)*
 17d. 🆕 **An alert fires when the job has not reported within its period.** *(Without it, the first person to learn the erasure job stopped is whoever asks for their data.)*
@@ -1080,15 +1102,19 @@ fails; that is deliberate.
 1. **Release N**, one PR per table group but one release: PII tables + backfill + dual-write + `get_user_by_email` join + **the D12 redactor and D11's five call sites**. Nothing user-visible ships yet; this is the foundation both features stand on.
 2. **Erasure + org deletion**, same release, **synchronous** (D14.1). This is what closes the launch blocker and makes `datanika.io/privacy` §6 true — and D14.2 shows that the *synchronous* version is the only one that leaves that sentence true.
 3. **Email change**, same release if it fits, next otherwise. It is the smaller build and the one a real user hits first, but it does not block launch.
-4. 🆕 **The founder's scheduled job ships LAST and separately**, after [core#653] closes (D14.3). It is the D12.4 canary plus its completion record — not the erasure. Nothing above waits for it, which is deliberate: **no compliance obligation in this spec may depend on a scheduler that has never fired.**
+4. 🆕 **The founder's scheduled job ships LAST and separately** (D14.3). ✅ **Its prerequisite is met** — [core#653] closed 2026-08-30 and beat is live in production; verify it is *producing* at ship time rather than re-reading the issue. It is the D12.4 canary plus its completion record — not the erasure. Nothing above waits for it, which is deliberate: **no compliance obligation in this spec may depend on a scheduler that has never fired.**
 5. **N+1** and **N+2** are bookkeeping releases and should be scheduled deliberately, not left to drift. A half-finished expand/contract is worse than either end of it: the legacy columns keep accumulating personal data that the erasure sweep does not clear.
 
 **Steps 0-3 are blocked on nothing.** No new credential, no Infra change, no vhost change. The
 cross-repo pieces are D6's subscription cancellation, which lands with
 [SPEC_BILLING_SELF_SERVICE.md](https://github.com/datanika-io/datanika-cloud/blob/master/docs/specs/SPEC_BILLING_SELF_SERVICE.md), and §9a(1)'s transfer-ownership, which
 must land before or with account deletion ([SPEC_ORG_ROLES.md](SPEC_ORG_ROLES.md) §3).
-⚠️ **Step 4 is blocked, and it is the only thing here that is** — on [core#653]. It is listed as a
-blocked item rather than sequenced into the others precisely so nothing above inherits the block.
+✅ **Step 4 is NO LONGER BLOCKED** — [core#653] closed 2026-08-30 and beat has been live in
+production since. **Nothing in this spec is now blocked on another team.** It stays listed last
+because it is the least urgent, not because it is gated. ⚠️ It was kept out of the sequence
+originally so nothing above inherited the block; that separation is still right, for the
+different reason that **no compliance obligation here may depend on a scheduler**, however
+healthy it looks on the day it ships.
 
 ## 9. Filed separately by this spec
 

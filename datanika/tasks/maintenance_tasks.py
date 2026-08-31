@@ -7,6 +7,21 @@ from datanika.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 
+class MaintenanceError(RuntimeError):
+    """Raised when the maintenance task's database block does not complete.
+
+    Carries the counters gathered *before* the failure, so the Celery result backend
+    records how far the sweep got as well as that it failed.
+
+    Before core#709 this path returned a dict instead, and Celery recorded ``SUCCESS``.
+    The dict's key count was the only thing that differed — and it did not differ
+    reliably: measured against the old code, a failure returned 3 keys, 4 keys, or, when
+    ``session.commit()`` was what threw, a full **5**, indistinguishable from a clean run.
+    A commit failure is the position that matters most, because every sweep below buffers
+    its DELETEs until then.
+    """
+
+
 @celery_app.task(name="datanika.run_maintenance")
 def run_maintenance_task() -> dict:
     """Hourly maintenance: clean orphaned dlt dirs, dbt artifacts, old runs, archives."""
@@ -47,10 +62,22 @@ def run_maintenance_task() -> dict:
 
             results["expired_reset_tokens"] = PasswordResetService.purge_expired(session)
             session.commit()
-    except Exception:
-        logger.exception("Maintenance DB cleanup failed")
-        results["purged_runs"] = 0
-        results["orphaned_archives"] = 0
+    except Exception as exc:
+        # Report a failure as a failure (core#709). This handler used to log and then fall
+        # through to the same "Maintenance complete" INFO line and the same dict return as a
+        # healthy no-op, so Celery recorded SUCCESS and no observer could tell the two apart.
+        #
+        # The two zeroed counters that used to be assigned here are deliberately gone: a
+        # sweep that never ran is not a sweep that found nothing, and `purged_runs: 0` read
+        # as the latter. `results` now holds exactly the sweeps that did complete.
+        logger.exception(
+            "Maintenance FAILED: database cleanup did not complete. Sweeps that finished first: %s",
+            results,
+        )
+        raise MaintenanceError(
+            f"database cleanup did not complete ({type(exc).__name__}: {exc}); "
+            f"counters gathered before the failure: {results}"
+        ) from exc
 
     logger.info("Maintenance complete: %s", results)
     return results

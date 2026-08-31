@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import DbtCommand
-from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
+from datanika.services.connection_service import TRANSFORM_DESTINATION_TYPES, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
@@ -227,7 +227,7 @@ class PipelineState(BaseState):
             self.dest_conn_options = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns
-                if c.connection_type.value in DESTINATION_TYPES
+                if c.connection_type.value in TRANSFORM_DESTINATION_TYPES
             ]
         self.error_message = ""
         await self._load_model_names()
@@ -366,7 +366,7 @@ class PipelineState(BaseState):
             dst_opts = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns
-                if c.connection_type.value in DESTINATION_TYPES
+                if c.connection_type.value in TRANSFORM_DESTINATION_TYPES
             ]
             self.dest_conn_options = dst_opts
             self._populate_form_from_pipeline(pipeline, dst_opts)
@@ -385,7 +385,7 @@ class PipelineState(BaseState):
             dst_opts = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns
-                if c.connection_type.value in DESTINATION_TYPES
+                if c.connection_type.value in TRANSFORM_DESTINATION_TYPES
             ]
             self.dest_conn_options = dst_opts
             self._populate_form_from_pipeline(pipeline, dst_opts)

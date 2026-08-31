@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.transformation import Materialization
 from datanika.models.user import Organization
-from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
+from datanika.services.connection_service import TRANSFORM_DESTINATION_TYPES, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.ui.state.base_state import BaseState, get_sync_session
@@ -177,7 +177,7 @@ class TransformationState(BaseState):
             self.dest_conn_options = [
                 f"{c.id} — {c.name} ({c.connection_type.value})"
                 for c in conns
-                if c.connection_type.value in DESTINATION_TYPES
+                if c.connection_type.value in TRANSFORM_DESTINATION_TYPES
             ]
 
             # Schema options (unique existing + default + "Add new")

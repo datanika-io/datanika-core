@@ -1,5 +1,7 @@
 """Connection management service — CRUD with encrypted credentials."""
 
+import base64
+import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -81,6 +83,51 @@ SOURCE_TYPES = {
 DESTINATION_TYPES = {
     "postgres",
     "mysql",
+    "mssql",
+    "sqlite",
+    "bigquery",
+    "snowflake",
+    "redshift",
+    "clickhouse",
+    "duckdb",
+    "databricks",
+    "synapse",
+}
+
+#: Destinations that dbt can also TRANSFORM in — i.e. that have a dbt adapter.
+#: A strict subset of ``DESTINATION_TYPES`` since core#825.
+#:
+#: 🚨 Loading data into a destination and running dbt models against it are
+#: DIFFERENT capabilities with different requirements. dlt needs a driver; dbt
+#: needs an installed **adapter**. Until core#825 these two sets were textually
+#: identical — the same eleven strings — which is why nothing had ever diverged
+#: and why nothing bound them. ``mysql`` is now in one and not the other: dlt
+#: loads into MySQL through SQLAlchemy/``pymysql``, while ``dbt-mysql`` was
+#: dropped as an abandoned package that held the whole dbt stack on 1.7.
+#:
+#: ⚠️ Offering a transform destination dbt cannot build in is not cosmetic:
+#: ``generate_profiles_yml`` raises **after** ``run.before_execute`` has fired
+#: and after ``start_run``, so a run structurally incapable of succeeding has
+#: already consumed the tenant's quota.
+#:
+#: 🚨 **Still wrong for three of its members, deliberately.** ``sqlite``,
+#: ``databricks`` and ``synapse`` sit in ``SUPPORTED_ADAPTERS`` with **no adapter
+#: installed** (measured with ``importlib.util.find_spec``), so they survive the
+#: intersection and are still offered. Pre-existing — core#825 neither caused it
+#: nor fixes it — and tracked in **core#862**, where it lands with a save-time
+#: server-side refusal, help text and i18n across 9 locales rather than as a
+#: silent narrowing here. This change removes exactly one member, ``mysql``, so
+#: that ``dev`` is never in a state where the picker offers a destination the
+#: same commit just made impossible.
+#:
+#: Written longhand rather than computed, following ``SQL_SOURCE_TYPES`` in
+#: ``tests/test_connector_type_contracts.py``: adding a connector should force a
+#: deliberate choice instead of inheriting one. Computing it here would also drag
+#: ``dbt.cli.main`` into every module that touches connections.
+#: ``test_connector_type_contracts.py`` asserts this equals
+#: ``DESTINATION_TYPES & SUPPORTED_ADAPTERS``, so the longhand cannot rot.
+TRANSFORM_DESTINATION_TYPES = {
+    "postgres",
     "mssql",
     "sqlite",
     "bigquery",
@@ -418,6 +465,33 @@ _MAX_REASON_CHARS = 300
 _MIN_REDACTABLE_SECRET = 4
 
 
+def _credentials_json_text(value) -> str | None:
+    """The exact JSON text a credentials blob is encoded from, or ``None``.
+
+    Accepts both shapes ``dlt_runner`` accepts: the string the connection form
+    writes, and a dict. The redactor below must know the same normalisation,
+    or a spelling exists that it cannot mask.
+    """
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, dict):
+        return json.dumps(value)
+    return None
+
+
+def _secret_spellings(value: str) -> tuple[str, ...]:
+    """Every rendering of a secret that can reach a user-visible message.
+
+    Drivers quote the URI we built, we percent-encode the userinfo when
+    building it, and since core#869 the BigQuery catalog URL carries the whole
+    service-account key base64-encoded. A base64 payload matches neither of the
+    first two spellings, so without this an entire private key could be quoted
+    back verbatim in a connection-test error.
+    """
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return (value, quote_plus(value), encoded, quote_plus(encoded))
+
+
 def _redact_secrets(text: str, config: dict) -> str | None:
     """Strip every secret in `config` out of `text`, or refuse.
 
@@ -428,13 +502,18 @@ def _redact_secrets(text: str, config: dict) -> str | None:
     """
     for key in SECRET_CONFIG_KEYS:
         value = config.get(key)
+        if isinstance(value, dict):
+            # Additive: dicts were skipped entirely before, so this cannot make
+            # an existing message less redacted, and it never trips the
+            # fail-closed rule below.
+            for form in _secret_spellings(json.dumps(value)):
+                text = text.replace(form, "***")
+            continue
         if not isinstance(value, str) or not value:
             continue
         if len(value) < _MIN_REDACTABLE_SECRET:
             return None
-        # Both spellings: drivers quote the URI we built, and we percent-encode
-        # the userinfo when building it.
-        for form in (value, quote_plus(value)):
+        for form in _secret_spellings(value):
             text = text.replace(form, "***")
     return text
 
@@ -510,7 +589,23 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
     if connection_type == ConnectionType.BIGQUERY:
         project = config.get("project", "")
         dataset = config.get("dataset", "")
-        return f"bigquery://{project}/{dataset}"
+        url = f"bigquery://{project}/{dataset}"
+        # Without this the dialect falls back to Application Default
+        # Credentials, which do not exist in the container: the *load* still
+        # succeeds (dlt gets the key straight from the connection config), so
+        # rows land in BigQuery and then never appear under Models/Catalog
+        # (core#869). Every other credentialed branch embeds its secret.
+        keyfile = _credentials_json_text(
+            config.get("keyfile_json") or config.get("service_account_json")
+        )
+        if keyfile:
+            # `quote_plus` is load-bearing: base64 contains `+`, which a query
+            # string decodes back as a space. Unencoded, the payload is
+            # corrupted for exactly those keys whose encoding contains `+` --
+            # working for some service accounts and not others.
+            encoded = base64.b64encode(keyfile.encode("utf-8")).decode("ascii")
+            url += f"?credentials_base64={quote_plus(encoded)}"
+        return url
 
     if connection_type == ConnectionType.DATABRICKS:
         host = config.get("host", "")

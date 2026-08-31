@@ -419,6 +419,52 @@ requires_docker = pytest.mark.skipif(
 )
 
 
+def _s3fs_available() -> bool:
+    """Is the s3 protocol resolvable at all?
+
+    Asked by importing, not by reading a lockfile. fsspec maps the ``s3``
+    protocol to ``s3fs`` specifically, so this import is the actual precondition
+    for every ``s3://`` URL in the product.
+    """
+    try:
+        import s3fs  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+#: 🚨 This marker is the ONE case in this file where a skip is expected in CI too,
+#: and that is a deliberate departure from ``requires_docker`` directly above.
+#:
+#: ``s3fs`` was dropped in core#825 and is absent EVERYWHERE, CI included, so
+#: ``requires_docker``'s "hard-fail in CI" polarity would wedge the build
+#: permanently rather than tell anyone anything. The hazard that polarity exists
+#: to prevent — a probe that skips itself into a meaningless green — is instead
+#: covered from the other side, by
+#: ``tests/test_security/test_dependency_advisories.py::TestDeferredCapability``:
+#: that suite fails the day the blocker lifts, and its failure message names
+#: this marker. So the pair is: these tests may skip indefinitely, and something
+#: else is responsible for noticing when they should stop.
+#:
+#: ⚠️ Do NOT delete these tests. They are the only executable evidence that
+#: ``s3://`` ever worked, they cost four months to write (core#684), and the
+#: capability is still documented at datanika.io/docs/connectors/s3/. Deleting
+#: them converts a recorded deferral into a silent, unrecoverable capability
+#: loss.
+requires_s3fs = pytest.mark.skipif(
+    not _s3fs_available(),
+    reason=(
+        "s3fs is not installed (core#825). It is excluded by two constraints on "
+        "either side of a version gap: s3fs<=2025.12.0 needs aiobotocore<3.0.0 "
+        "(vs redshift-connector>=2.1.14's boto3>=1.42.22, the CVE-2026-8838 RCE "
+        "fix), and s3fs>=2026.1.0 needs fsspec>=2026.1 -> gcsfs -> "
+        "google-cloud-storage>=3.7.0 (vs dbt-bigquery's <3.2). The second is the "
+        "live one. See BLOCKED_BY_S3FS_CONFLICT in "
+        "tests/test_security/test_dependency_advisories.py."
+    ),
+)
+
+
 def _container_status(container) -> str | None:
     """The container's real docker status, or None when it cannot be read.
 
@@ -1036,6 +1082,7 @@ class TestKafkaSourceMovesRows:
 
 
 @requires_docker
+@requires_s3fs
 class TestS3FileSourceMovesRows:
     """``s3`` over a real object store — the last unproven row of #545 (core#684).
 
@@ -1051,6 +1098,19 @@ class TestS3FileSourceMovesRows:
     Which makes the gap worse than "a format we did not get to": we **published**
     a capability and never once executed it. The deferral held for four months,
     over the transport belonging to the format ``#492`` actually broke.
+
+    🔴 **SKIPPED SINCE core#825 — the capability is not currently shipped.**
+    ``s3fs`` was dropped as a consequence of taking the ``redshift-connector``
+    CVE-2026-8838 fix and moving the dbt stack off its 1.7 pin; without it,
+    fsspec cannot resolve the ``s3`` protocol at all. ``gs://`` (gcsfs) and
+    ``az://`` (adlfs) are unaffected.
+
+    ⚠️ **These tests are not obsolete and must not be deleted.** They are the
+    only executable evidence this transport ever worked, and
+    ``datanika.io/docs/connectors/s3/`` still documents it. The failure that
+    matters now is not theirs — it is that a documented connector has no working
+    implementation. See ``requires_s3fs`` above for the exact constraint pair and
+    the re-check trigger.
 
     **Why "csv already passes" does not cover this.** Every other file test in
     this module reads from a local directory, so ``filesystem()`` resolves to

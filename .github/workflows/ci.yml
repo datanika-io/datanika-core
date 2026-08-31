@@ -183,7 +183,14 @@ jobs:
         env:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
         run: |
+          # core#726: test_data_preservation_roundtrip.py is named HERE and not
+          # only left in the directory. A file that lives in tests/test_migrations/
+          # but is absent from this list is not run by the job whose name promises
+          # to have run it — and `migration-roundtrip` green would then assert
+          # something nobody measured. The `test` job runs `pytest tests/` and
+          # would pick it up, but a reader checking migration coverage looks here.
           pytest tests/test_migrations/test_roundtrip.py \
+                 tests/test_migrations/test_data_preservation_roundtrip.py \
                  tests/test_migrations/test_expand_contract.py -v --tb=long
 
   helm-lint:

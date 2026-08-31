@@ -22,9 +22,16 @@ Three properties this guard has that a scanner alone does not:
   nine of them explicitly bypasses of an earlier patch. Taking the first fix
   version would have cleared 4 findings and left 15, while reading as done.
 * **It records what we could NOT fix, and asserts the reason still holds.**
-  `TestKnownUnfixableAdvisories` fails when a blocker is lifted, so the day the
-  dbt pin moves is the day the CRITICAL redshift RCE becomes actionable rather
-  than the day it is forgotten.
+  `TestDeferredCapability` fails when a blocker is lifted, so the day a
+  deferral becomes actionable is the day someone is told, rather than the day
+  it is forgotten.
+
+  🔑 **This mechanism has now fired once, and it worked** (core#825). Its
+  predecessor `TestKnownUnfixableAdvisories` went red the moment the dbt pin
+  moved and handed over six packages with their needed versions, including the
+  CRITICAL redshift RCE and the credential-encryption library. All six are in
+  `SECURITY_FLOORS` above. The successor guards a *capability* deferral rather
+  than an advisory one, but keeps the shape, because the shape is what worked.
 
 ⚠️ **This checks the lock, which is not the artifact.** The image installs
 `/cloud` and `./datanika-mcp` *after* `uv sync --frozen`; both are bound to the
@@ -97,76 +104,115 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
     ),
     "python-socketio": ("5.16.2", "CVE-2026-48804 binary attachment accumulation DoS"),
     "soupsieve": ("2.8.4", "CVE-2026-49476 memory exhaustion and CVE-2026-49477 ReDoS"),
-}
-
-
-#: package -> (version we need, why we cannot have it).
-#:
-#: Advisories we are knowingly still exposed to because a declared bound of a
-#: dependency we do not control forbids the fix. **Every entry here is blocked
-#: by the same single line**, `dbt-core>=1.7.19,<1.8`, and that is the most
-#: useful thing on this page: one pin gates the CRITICAL RCE *and* the library
-#: we encrypt customer warehouse credentials with.
-#:
-#: Two of these are not predictable from reading the advisory list, which is
-#: why they are spelled out rather than summarised. `cryptography` is blocked
-#: through `cffi`, a package no advisory here names; `pyopenssl` is blocked
-#: through `cryptography`, one further hop out.
-BLOCKED_BY_DBT_1_7: dict[str, tuple[str, str]] = {
-    "redshift-connector": (
-        "2.1.14",
-        "CVE-2026-8838, CRITICAL, remote code execution. dbt-redshift 1.7.7 declares "
-        "redshift-connector <2.0.918. The first dbt-redshift release admitting the 2.1 "
-        "line is 1.9.x, which requires dbt-core >=1.8.0b3. This driver is on the "
-        "warehouse-credential path in both directions: dbt_project.py lists redshift in "
-        "SUPPORTED_ADAPTERS and dlt_runner.py maps it to redshift+redshift_connector.",
-    ),
+    # ---- Moved out of BLOCKED_BY_DBT_1_7 in core#825 --------------------
+    # These six were unfixable for as long as `dbt-core>=1.7.19,<1.8` stood.
+    # Dropping the abandoned `dbt-mysql` adapter freed the dbt stack to 1.11
+    # and the resolver delivered all six. They are floored HERE, not left to
+    # the resolver, because three of them (pyopenssl, urllib3, protobuf)
+    # needed no floor to arrive -- and a version the resolver happens to pick
+    # is not a version the next re-lock is obliged to keep.
     "cryptography": (
-        # 50.0.0, not 46.0.5 (core#843). The floor is max(fixed) over all four
-        # HIGH records below; 46.0.5 is merely the FIRST of them and clears one.
-        # Re-derived from OSV against the shipped 45.0.7: 13 records, max 50.0.0.
         "50.0.0",
         "CVE-2026-26007 (46.0.5), GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1), "
-        "CVE-2026-69249 (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) — "
+        "CVE-2026-69249 (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) -- "
         "four HIGH against the library EncryptionService uses on customer warehouse "
-        "credentials. Blocked through cffi: every cryptography >=46.0.1 requires "
-        "cffi>=2.0.0 on Python >=3.9, and dbt-core 1.7.19 declares cffi<2.0.0. 46.0.0 is "
-        "the only release with a cffi<2 branch and it fixes none of the four.",
+        "credentials. Was blocked through cffi by TWO independent pins: dbt-core 1.7's "
+        "cffi<2.0.0 and snowflake-connector-python 3.x's identical one.",
+    ),
+    "protobuf": (
+        "5.29.6",
+        "CVE-2026-0994 JSON recursion depth bypass. The locked version is 6.x, not 5.x, "
+        "and that major is FORCED rather than chosen: every dbt-core >=1.9.9 requires "
+        "protobuf>=6.0, and cryptography needs dbt-core >=1.10. Founder-accepted "
+        "2026-08-31. The floor stays at the advisory's fix version because that is what "
+        "this table records; the ceiling in pyproject.toml is what bounds the major.",
     ),
     "pyopenssl": (
         "26.0.0",
-        "CVE-2026-27459 DTLS cookie callback buffer overflow. pyOpenSSL 26.0.0 requires "
-        "cryptography>=46.0.0, so it inherits the cffi block above.",
+        "CVE-2026-27459 DTLS cookie callback buffer overflow. Needed cryptography>=46.0.0, "
+        "so it inherited the cffi block and cleared with it -- no floor was required to "
+        "reach it, which is exactly why one is recorded now.",
+    ),
+    "redshift-connector": (
+        "2.1.14",
+        "CVE-2026-8838, CRITICAL, remote code execution in the driver that holds and uses "
+        "customer Redshift warehouse credentials. Needed dbt-redshift >=1.9, which needs "
+        "dbt-core >=1.8.0b3.",
     ),
     "sqlparse": (
         "0.6.0",
-        "CVE-2026-71491, CVE-2026-59893 and CVE-2026-54284 — three HIGH DoS records. "
-        "dbt-core 1.7.19 declares sqlparse <0.6.0; dbt-core 1.11.14 is the first to admit it.",
+        "CVE-2026-71491, CVE-2026-59893 and CVE-2026-54284 -- three HIGH DoS records. "
+        "dbt-core 1.11.14 is the first release to admit 0.6.0.",
     ),
     "urllib3": (
         "2.7.0",
         "CVE-2025-66418 (2.6.0) unbounded decompression chain, CVE-2025-66471 (2.6.0) "
         "streaming-API handling of highly compressed data, CVE-2026-21441 (2.6.3) "
         "decompression-bomb safeguards bypassed on redirects, CVE-2026-44431 (2.7.0) "
-        "sensitive headers forwarded across origins in proxied low-level redirects — "
-        "four HIGH against the 1.26.20 we ship. dbt-core 1.7.20 declares urllib3~=1.0, "
-        "so we are held on a major that is EOL; dbt-core 1.8.0 drops the declaration "
-        "entirely. Added in core#843: this was found after core#819 merged and is in "
-        "none of its inventory, because nothing we own names urllib3 — it surfaces "
-        "only when you ask why the fix will not resolve.",
-    ),
-    "protobuf": (
-        "5.29.6",
-        "CVE-2026-0994 JSON recursion depth bypass. dbt-core 1.7.19 declares protobuf <5. "
-        "The 4.x -> 5.x move is a major-version decision, and it is not ours to take "
-        "independently: dbt-core 1.11+ requires protobuf>=6.0, so the version we land on "
-        "is decided by which dbt we move to.",
+        "sensitive headers forwarded across origins in proxied low-level redirects. "
+        "dbt-core 1.7 declared urllib3~=1.0, holding us on a major upstream has ended, "
+        "so there was no patch-level escape. This is the HTTP client the whole product "
+        "uses to reach customer sources -- not a build-time dependency.",
     ),
 }
 
-#: The pin whose existence is the blocker above. If this stops being true, every
-#: entry in ``BLOCKED_BY_DBT_1_7`` needs re-deriving.
-_DBT_CEILING_SPEC = re.compile(r"^dbt-core>=1\.7[0-9.]*,<1\.8$")
+
+#: ``BLOCKED_BY_DBT_1_7`` lived here and is **deliberately gone** (core#825).
+#: All six of its entries are now in ``SECURITY_FLOORS`` above, cleared by
+#: moving dbt-core 1.7 -> 1.11, which in turn only needed the abandoned
+#: ``dbt-mysql`` adapter dropped. The table is not kept as an empty dict: an
+#: empty blocked-set is indistinguishable from a table nobody maintains, and
+#: every assertion over it would pass vacuously. What replaces it is below --
+#: a different deferral, with the same "fail the day the blocker lifts" shape,
+#: because that shape is the part that worked.
+
+
+#: capability -> (the package that would restore it, why it is unreachable).
+#:
+#: This is NOT an advisory table. Nothing here is a security exposure; it
+#: records a **capability we ship documentation for and cannot currently
+#: resolve**, so that it is re-checked rather than quietly forgotten.
+#:
+#: 🚨 The reason this needs a guard rather than a comment: the shape of this
+#: conflict has now been mis-diagnosed three times in a row, each time by
+#: someone reasoning from one half of it. Both halves are real, they sit on
+#: either side of a version gap with no release in it, and each one names a
+#: package that looks like the culprit and is not.
+BLOCKED_BY_S3FS_CONFLICT: dict[str, tuple[str, str]] = {
+    "s3fs": (
+        "2026.1.0",
+        "`s3://` bucket URLs on the file-source connector. dlt's filesystem source "
+        "dispatches through fsspec, which maps the s3 protocol to s3fs specifically, so "
+        "no s3fs means no s3:// -- while gs:// (gcsfs) and az:// (adlfs) keep working. "
+        "TWO independent constraints exclude it, one on each side of a gap: "
+        "(1) s3fs<=2025.12.0 requires aiobotocore<3.0.0, which caps botocore around "
+        "1.41, but redshift-connector>=2.1.14 -- the CVE-2026-8838 RCE fix -- floors "
+        "boto3>=1.42.22; "
+        "(2) s3fs>=2026.1.0 requires fsspec>=2026.1, which drags gcsfs up to needing "
+        "google-cloud-storage>=3.7.0, but every dbt-bigquery through 1.12.0 declares "
+        "google-cloud-storage>=2.4,<3.2. "
+        "Constraint (1) is ALREADY DISSOLVED upstream and is not the one to watch: "
+        "aiobotocore 3.0.0 (2025-12-10) crossed into botocore 1.42 and s3fs 2026.1.0 "
+        "(2026-01-09) raised its ceiling to aiobotocore<4.0.0; aiobotocore 3.9.0 and "
+        "redshift-connector 2.1.16 resolve together in this tree today. Constraint (2) "
+        "is the live one, and it is a BigQuery/S3 collision inside Google's own client "
+        "libraries -- unrelated to security, and unrelated to dbt-core.",
+    ),
+}
+
+#: The mechanical re-check trigger for ``BLOCKED_BY_S3FS_CONFLICT``.
+#:
+#: dbt-bigquery's ``google-cloud-storage<3.2`` ceiling is the live blocker, and
+#: we cannot read dbt-bigquery's metadata offline -- but we can read its
+#: *consequence*: while that ceiling is in force the resolver cannot take
+#: google-cloud-storage to the 3.7+ that modern gcsfs (and therefore modern
+#: s3fs) requires. So the day this lock carries google-cloud-storage >= 3.7,
+#: the ceiling has moved and s3fs is worth re-testing.
+#:
+#: ⚠️ Deliberately NOT asserted as "s3fs is absent". That would be a tautology
+#: over our own pyproject.toml -- it would fail only when somebody had already
+#: done the work, which is the one moment a reminder is useless.
+_S3FS_RECHECK_GCS_VERSION = "3.7.0"
 
 
 def _declared_runtime_specs() -> list[str]:
@@ -202,6 +248,58 @@ class TestLockedTreeClearsKnownAdvisories:
             "re-run `uv lock`:\n  " + "\n  ".join(below)
         )
 
+    def test_the_dbt_pin_that_gates_six_of_these_floors_has_not_reverted(self):
+        """Six floors above are only reachable at dbt-core >= 1.10 (core#825).
+
+        Reverting the dbt declaration would make them unsatisfiable, and `uv
+        lock` would say so -- but it would say it by naming ``cffi``, which is
+        in none of the six advisories and points at nothing. That exact
+        misdirection cost a day once already: ``cffi<2.0.0`` was declared
+        independently by dbt-core 1.7 AND by snowflake-connector-python 3.x, so
+        moving dbt to 1.8 alone produced a byte-identical error and reads as
+        "the dbt pin is still the problem".
+
+        This test is the sentence the resolver will not print.
+        """
+        specs = _declared_runtime_specs()
+        dbt_core = next((s for s in specs if s.replace(" ", "").startswith("dbt-core")), None)
+        assert dbt_core is not None, "dbt-core is no longer a declared dependency"
+
+        floor = re.search(r">=\s*(\d+(?:\.\d+)*)", dbt_core)
+        assert floor is not None, f"dbt-core spec {dbt_core!r} states no lower bound"
+        assert Version(floor.group(1)) >= Version("1.10"), (
+            f"dbt-core is declared as {dbt_core!r}, whose floor is below 1.10.\n"
+            "cryptography, redshift-connector, sqlparse, urllib3, pyopenssl and "
+            "protobuf in SECURITY_FLOORS are all unreachable below dbt-core "
+            "1.10 -- cryptography specifically needs 1.10, not 1.8, because "
+            "snowflake-connector-python 3.x pins cffi<2.0.0 independently of "
+            "dbt and dbt-snowflake only admits the 4.x line from 1.10.6.\n"
+            "If this pin genuinely has to come back down, those six floors have "
+            "to move back into a blocked table in the same change -- not be "
+            "left asserting versions the resolver can no longer produce."
+        )
+
+    def test_the_abandoned_adapter_has_not_come_back(self):
+        """``dbt-mysql`` is what held the 1.7 pin, and it is still abandoned.
+
+        Its last release is 1.7.0 (2024-04-26) and it declares
+        ``dbt-core~=1.7.0``, so re-adding it silently drags the whole stack back
+        to 1.7 and every floor above with it. A future engineer restoring MySQL
+        transforms would be reintroducing six advisories, including a CRITICAL
+        RCE, and nothing else in the tree would say so.
+        """
+        offenders = [
+            s for s in _declared_runtime_specs() if s.replace(" ", "").startswith("dbt-mysql")
+        ]
+        assert not offenders, (
+            f"dbt-mysql is declared again: {offenders}. Its newest release pins "
+            "dbt-core~=1.7.0, which is incompatible with the >=1.10 floor the "
+            "six SECURITY_FLOORS entries above depend on. There is no "
+            "maintained MySQL dbt adapter on PyPI (checked 2026-08-31, "
+            "core#825). If MySQL transforms must return, that needs an adapter "
+            "decision, not a dependency line."
+        )
+
     def test_every_floor_carries_a_reason(self):
         """A floor with no advisory behind it is an unexplained pin."""
         for name, (floor, why) in SECURITY_FLOORS.items():
@@ -213,55 +311,94 @@ class TestLockedTreeClearsKnownAdvisories:
             )
 
 
-class TestKnownUnfixableAdvisories:
-    """The exposures we are carrying, and the reason each one still stands.
+class TestDeferredCapability:
+    """The capability we are knowingly not shipping, and why it is still stuck.
 
-    Every assertion here is written so that **the blocker being lifted turns it
-    red**. That is deliberate: a bump of the dbt stack is exactly the moment
-    someone must revisit a CRITICAL RCE in a warehouse driver, and it is
-    exactly the moment nobody would think to.
+    Successor to ``TestKnownUnfixableAdvisories`` (core#825), which did its job:
+    it fired the day the dbt pin moved and handed over six packages and their
+    needed versions. Those are now in ``SECURITY_FLOORS``.
+
+    The shape is kept because the shape is what worked -- **every assertion
+    here goes red when the blocker lifts**, so the day `s3://` becomes
+    resolvable again is the day someone is told, rather than a day four months
+    from now when nobody remembers the trade was made.
+
+    ⚠️ Do not "simplify" this into an assertion that s3fs is absent from
+    pyproject.toml. That reads as equivalent and is the opposite: it would fail
+    only *after* someone had already restored s3fs, i.e. only when the reminder
+    is no longer needed. The assertion has to be on the *external* condition.
     """
 
-    def test_the_blocker_for_these_advisories_still_exists(self):
-        specs = _declared_runtime_specs()
-        dbt_core = next((s for s in specs if s.replace(" ", "").startswith("dbt-core")), None)
-        assert dbt_core is not None, "dbt-core is no longer a declared dependency"
+    def test_the_blocker_for_the_deferred_capability_still_exists(self):
+        """dbt-bigquery's google-cloud-storage ceiling is what still excludes s3fs.
 
-        assert _DBT_CEILING_SPEC.match(dbt_core.replace(" ", "")), (
-            f"dbt-core is now declared as {dbt_core!r} rather than a 1.7 pin.\n"
-            "That pin was the ONLY reason these advisories were unfixable "
-            "(core#819):\n  "
+        Read through its consequence in the lock rather than from dbt-bigquery's
+        metadata, so the check needs no network and cannot pass because a fetch
+        failed.
+        """
+        locked = _locked_versions()
+        gcs = locked.get("google-cloud-storage")
+        assert gcs is not None, (
+            "google-cloud-storage is no longer in the lock. It was the package "
+            "whose ceiling excluded s3fs, so this guard can no longer see its "
+            "own blocker -- re-derive BLOCKED_BY_S3FS_CONFLICT from scratch "
+            "rather than deleting this test."
+        )
+        assert Version(gcs) < Version(_S3FS_RECHECK_GCS_VERSION), (
+            f"google-cloud-storage resolved to {gcs}, at or above "
+            f"{_S3FS_RECHECK_GCS_VERSION}. That ceiling "
+            "(dbt-bigquery: google-cloud-storage>=2.4,<3.2) was the LIVE reason "
+            "these capabilities were unreachable:\n  "
             + "\n  ".join(
                 f"{name}: needs >={need} -- {why}"
-                for name, (need, why) in sorted(BLOCKED_BY_DBT_1_7.items())
+                for name, (need, why) in sorted(BLOCKED_BY_S3FS_CONFLICT.items())
             )
-            + "\nRe-derive each one, move whatever is now reachable into "
-            "SECURITY_FLOORS, and delete it from BLOCKED_BY_DBT_1_7."
+            + "\nRe-run `uv lock` with s3fs declared. If it resolves, restore "
+            "the capability, re-enable the tests marked with "
+            "`requires_s3fs`, and delete this table."
         )
 
-    def test_the_blocked_set_and_the_floor_set_are_disjoint(self):
+    def test_the_deferred_set_and_the_floor_set_are_disjoint(self):
         """A package in both tables means one of them is stale."""
-        both = sorted(set(SECURITY_FLOORS) & set(BLOCKED_BY_DBT_1_7))
+        both = sorted(set(SECURITY_FLOORS) & set(BLOCKED_BY_S3FS_CONFLICT))
         assert not both, (
-            "A package is listed as both fixed and blocked, so one table is "
+            "A package is listed as both floored and deferred, so one table is "
             "wrong: " + ", ".join(both)
         )
 
-    def test_each_blocked_package_is_still_actually_below_its_needed_version(self):
-        """If the resolver moved it anyway, stop calling it blocked."""
+    def test_each_deferred_package_is_still_actually_absent_from_the_lock(self):
+        """If the resolver took it anyway, stop calling it deferred."""
         locked = _locked_versions()
-        no_longer_blocked = []
-        for name, (need, why) in sorted(BLOCKED_BY_DBT_1_7.items()):
-            version = locked.get(name)
-            if version is None:
-                continue
-            if Version(version) >= Version(need):
-                no_longer_blocked.append(f"{name} {version} >= {need} -- {why}")
-        assert not no_longer_blocked, (
-            "These are recorded as blocked but the lock already satisfies "
-            "them. Move them to SECURITY_FLOORS so a future `uv lock` cannot "
-            "roll them back:\n  " + "\n  ".join(no_longer_blocked)
+        present = [
+            f"{name} {locked[name]} is in the lock (deferral claims >={need} is "
+            f"unreachable) -- {why}"
+            for name, (need, why) in sorted(BLOCKED_BY_S3FS_CONFLICT.items())
+            if name in locked
+        ]
+        assert not present, (
+            "These are recorded as unreachable but the lock already carries "
+            "them, so the deferral is stale and the capability may in fact be "
+            "shipping untested:\n  " + "\n  ".join(present)
         )
+
+    def test_the_deferral_records_a_capability_not_an_advisory(self):
+        """This table must never quietly become a place to park a CVE.
+
+        ``SECURITY_FLOORS`` exists for advisories and is asserted against the
+        lock on every run. A security exposure filed here instead would be
+        recorded as an accepted product trade-off and never re-derived.
+        """
+        for name, (_need, why) in BLOCKED_BY_S3FS_CONFLICT.items():
+            offenders = [
+                token
+                for token in re.findall(r"\b(?:CVE|GHSA)-[\w-]+", why)
+                if token != "CVE-2026-8838"  # named only as the CAUSE of the conflict
+            ]
+            assert not offenders, (
+                f"{name}'s deferral names {offenders}, which suggests a security "
+                "advisory is being carried as a capability trade-off. Advisories "
+                "belong in SECURITY_FLOORS, which is checked against the lock."
+            )
 
 
 #: A fix version named inside a justification is written in parentheses --
@@ -294,13 +431,27 @@ class TestFloorIsTheMaximumFixVersionNamed:
     made *inside* the file (core#843): ``cryptography`` recorded a floor of
     46.0.5 while its own reason went on to name 48.0.1, 49.0.0 and 50.0.0.
 
-    It matters because ``BLOCKED_BY_DBT_1_7`` is not documentation -- it is the
-    hand-off. ``test_the_blocker_for_these_advisories_still_exists`` fires on the
-    day the dbt pin moves and prints ``f"{name}: needs >={need}"``, so an
-    understated floor is the number the next engineer actually applies. Taking
-    46.0.5 clears one of four HIGH records and reads as done, which is precisely
-    the PyJWT (2.12.0 vs 2.13.0) and GitPython (3.1.47 vs 3.1.58) failure the
-    module docstring warns about.
+    It mattered because the table it guarded was not documentation -- it was
+    the hand-off. The old ``BLOCKED_BY_DBT_1_7`` fired on the day the dbt pin
+    moved and printed ``f"{name}: needs >={need}"``, so an understated floor was
+    the number the next engineer actually applied. Taking 46.0.5 clears one of
+    four HIGH records and reads as done, which is precisely the PyJWT (2.12.0 vs
+    2.13.0) and GitPython (3.1.47 vs 3.1.58) failure the module docstring warns
+    about.
+
+    ⚠️ **That is not a historical note.** core#825 is the day that hand-off
+    fired, and ``cryptography`` moved into ``SECURITY_FLOORS`` carrying the
+    corrected 50.0.0 that this check forced. Had the check not existed, the
+    floor applied tonight would have been 46.0.5 and three of the four HIGH
+    records would have survived the bump silently.
+
+    Only ``SECURITY_FLOORS`` is scanned now, and that is deliberate rather than
+    an omission: it is the only remaining table whose numbers are *advisory fix
+    versions*. ``BLOCKED_BY_S3FS_CONFLICT`` records a capability restore
+    version, where "the highest number named in the prose" has no such meaning
+    -- scanning it would assert something that is not true of it.
+    ``TestDeferredCapability.test_the_deferral_records_a_capability_not_an_advisory``
+    is what keeps an advisory from being filed there to dodge this check.
 
     Prose cannot be trusted to agree with a number that sits beside it; only a
     check can.
@@ -308,10 +459,7 @@ class TestFloorIsTheMaximumFixVersionNamed:
 
     def test_no_recorded_floor_is_below_a_fix_version_it_names(self):
         understated = []
-        for table_name, table in (
-            ("SECURITY_FLOORS", SECURITY_FLOORS),
-            ("BLOCKED_BY_DBT_1_7", BLOCKED_BY_DBT_1_7),
-        ):
+        for table_name, table in (("SECURITY_FLOORS", SECURITY_FLOORS),):
             for name, (floor, why) in sorted(table.items()):
                 named = _fix_versions_named_in(why)
                 if not named:

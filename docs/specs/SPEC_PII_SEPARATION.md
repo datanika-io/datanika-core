@@ -632,6 +632,10 @@ The derived set grows on its own when a fourth PII table or a fifth PII column l
   `NotificationChannel`). So the guard asserts the exact expected contents, not merely that the
   derivation ran. **This is the one place a hand-written literal is correct: as the assertion, never
   as the source.**
+- 🆕 **Pinned name, 2026-08-31: the set is exported as
+  `datanika.services.audit_service.PII_PAYLOAD_KEYS`.** The spec describes behaviour, but the guard
+  in `tests/test_services/test_audit_pii_redaction.py` needs a handle, and a contract a test cannot
+  address is not a contract. Renaming it is fine — rename it in the guard in the same commit.
 - ⚠️ **The set is nominal.** It matches key names, so it cannot see PII stored under a non-PII key —
   precisely the `organizations.name` case. That residual is D11's, and it is why D12.1 is *both*.
 
@@ -715,6 +719,14 @@ indistinguishable from a call site that never wrote one.
 through it. The
 redactor goes there, so no new call site can bypass it. It **recurses** into nested dicts and lists:
 today every payload is a flat dict of scalars, and that is not a property anything enforces.
+
+🆕 **Pinned name and call shape, 2026-08-31: `datanika.services.audit_service.redact_pii_payload(payload)`,
+called by `log_action` through a MODULE-GLOBAL lookup, not inlined into the method body.** This is not
+style. §2c leaves this guard as the sole detector, and the only way to prove the guard is *sensitive to
+the redactor* is to substitute a no-op and watch the guard fail. A redactor inlined into `log_action`
+cannot be substituted, so the negative control silently stops being a control while still passing —
+which would be the same defect one level up. `test_negative_control_a_no_op_redactor_fails_this_guard`
+enforces this.
 
 ⚠️ **It must not raise.** `BaseState._audit` ends in `except Exception: pass` — *"Audit logging should
 never break the main operation."* A redactor that throws therefore **silently deletes the audit row**,
@@ -1008,6 +1020,24 @@ fails; that is deliberate.
 1ad. **It is installed at the chokepoint, not at the call sites**: a `log_action` call made directly, bypassing `BaseState._audit`, is redacted too. *(Three such callers already exist in `auth_state.py`.)*
 1b. 🆕 **REPLACED — §2c.** ~~"The 116 existing prod audit rows carry no email after the backfill."~~ There is no backfill and the existing rows never carried one, so that criterion was **satisfied before any code was written** — a green that proves nothing, sitting in the acceptance list of the spec about greens that prove nothing. **Replaced by a criterion that can fail:** exercising the org-update path at `settings_state.py:146-147` — the site a key-name rule cannot find (D12.1) — produces an audit row whose payload contains **neither the organization's display name nor its slug**, and the test is **shown red against the pre-D11 call site**.
 1c. 🆕 **The guard constructs its own input and is never an assertion over `audit_logs` as it stands.** A query-the-table test passes today against a **no-op redactor** (§2c: 0 of 30 payloads contain a PII key, and the five sites that could write one have never fired). Required artifact: the guard **red against a redactor stubbed to return its argument unchanged**.
+1d. 🆕 **The guard is already written and committed: `tests/test_services/test_audit_pii_redaction.py`** (Product, 2026-08-31), and its behaviour has been **measured in both directions** rather than asserted:
+    - against `dev` as it stands (no redactor): **2 passed, 6 xfailed** — CI green, nobody blocked;
+    - against a throwaway reference redactor: **all 6 XPASS(strict) → reported as failures**, and the 11 existing `test_audit_service.py` tests stayed green.
+    Both markers matter. `strict=True` means the day the redactor lands, CI goes **red until the markers are deleted** — so "shown red, then green" becomes a step of the implementing PR instead of a sentence in its description. `raises=AssertionError` means a broken harness (an `ImportError`, a renamed fixture) is reported as an **error**, not silently absorbed as the expected failure — which is the [core#709] trap, where a strict xfail was satisfied by an `IndentationError` and the assertion never ran.
+    ⚠️ It also carries `test_a_table_shaped_guard_passes_vacuously_today`, which is **expected to pass** and exists to demonstrate the forbidden shape going green with no redactor in the tree. If anyone proposes replacing the constructed-input guards with a query over `audit_logs`, that test is the counter-example, and it will still be passing.
+
+**Migration safety — the [core#809] hazard, which lands hardest on exactly this chain**
+1e. 🆕 **Every migration in this chain is checked against an explicit table manifest before review, not against reviewer instinct.** `alembic revision --autogenerate` was emitting `op.drop_table()` for four live tables — including `invitations` and `notification_channels`, both of which this spec touches. The root cause is fixed on `dev`, but **this is a four-release expand → migrate → contract chain, and the contract release is *supposed* to contain drops**, so a spurious one reads as the step doing its job. The manifest, from §4:
+
+    | release | may CREATE | may ALTER | may DROP |
+    |---|---|---|---|
+    | **N₀** | — | `audit_logs` | — |
+    | **N** | `user_pii`, `invitation_pii`, `notification_channel_pii`, `email_change_requests` | `users`, `invitations` | — |
+    | **N+1** | — | — | — *(no migration at all)* |
+    | **N+2** | — | `users`, `invitations` | **columns only** — `users.email`, `users.full_name`, `users.oauth_provider_id`, `invitations.email`, `invitations.token` |
+
+    🚨 **The discriminating rule, and it is the whole value of the manifest: `op.drop_table(` must appear ZERO times in every migration of this chain, including N+2.** The contract release drops **columns**, never tables. That is what makes the [core#809] failure mode mechanically detectable here — the "but drops are expected in this release" defence covers `drop_column` and never covers `drop_table`, so the two must not be read as one category. A generated migration naming any table outside its row above, or containing `op.drop_table` at all, is rejected without further reading.
+    ⚠️ `audit_log_pii` must not appear in any of them (§2a/D11), and `notification_channels` appears in **no** row — it is the parent of a new sidecar, not itself altered, which is precisely the table [core#809] proposed dropping.
 2. `SELECT count(*) FROM users WHERE deleted_at IS NULL` equals `SELECT count(*) FROM user_pii` after N's backfill. No user loses their email. *(This backfill is real and survives §2c — `users.email` is populated in 5 of 5. Only the **audit-payload** backfill was deleted; do not conflate them.)*
 3. Sign-in works for a password account **and** an OAuth account, and `get_user_by_email` returns `None` for a soft-deleted user. *(A join written without the `deleted_at` filter passes every other test here.)*
 4. A new invitation stores a `token_hash`; `SELECT token FROM invitations` yields nothing decodable. The emailed link still accepts.

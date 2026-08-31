@@ -17,6 +17,7 @@ it down somewhere unversioned was the remaining half of the problem.
 | `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** |
 | `backup-offsite.sh` | `/opt/datanika/scripts/backup-offsite.sh` | cron, 03:00 |
 | `restore-drill.sh` | `/opt/datanika/scripts/` | monthly cron |
+| `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | **by hand** — `gpg --import` into root's keyring |
 | `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy |
 | `deploy-pointer.sh` | dev-machine fallback | run by hand only if CD is broken |
 
@@ -36,6 +37,19 @@ ssh -i ~/.ssh/id_ed25519 root@185.25.22.188 \
 **`apache-prod-active-ports.conf` is a snapshot of a value that alternates.** It records whichever
 colour was serving when it was captured. It is here for its *shape*, never as a statement about which
 colour is live — read that from the box, per `docs/INFRA_RULES.md` §3.
+
+## `backup-pubkey.asc` is a PUBLIC key, and that is the point
+
+The off-site backup leg is encrypted to it ([core#675]). Committing the **public** half to a public
+AGPL repo is safe and deliberate — a rebuilt box needs it before it can take a backup at all, and
+`backup-offsite.sh` refuses to run without it rather than silently shipping plaintext.
+
+🚨 **The private half must never appear here, on the off-site host, or in any backup.** It is on the
+production box (root-only keyring) and escrowed on the founder's dev machine. Co-locating it with
+the ciphertext it decrypts is the specific remedy forbidden by [core#748]; see
+`docs/runbooks/RUNBOOK_RESTORE_PREREQUISITES.md`. `tests/test_deploy/test_backup_encryption.py`
+asserts the committed file is a public key block and that no deploy step ships key material
+off-site.
 
 ## The one file that is deliberately not CD-synced
 

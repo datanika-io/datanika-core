@@ -764,6 +764,17 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: pytest scripts/smoke/ -v --tb=short
 
+      # core#873 audited this job too. `if: failure()` is SAFE here today and is
+      # deliberately left alone: `Run smoke probes` is the last step that can
+      # fail, so job-red and probe-red are currently the same event — there is no
+      # artifact upload and no cleanup after it. It files no issue either, so the
+      # blast radius of a false one is a single page, not a tracker entry.
+      #
+      # 🚨 INVARIANT: nothing may be inserted between the probe and this alert
+      # without first keying the alert on `steps.smoke.outcome` (the `id` is
+      # already there for exactly that). Add an upload or a teardown below and
+      # this job starts paging "Staging smoke failed" for runs whose probes all
+      # passed — which is precisely the defect #873 removed from `e2e-staging`.
       - name: Telegram alert on failure
         if: failure()
         env:
@@ -898,7 +909,11 @@ jobs:
       # the job. Note this job is not a required check on `dev` (those are lint
       # + test), so a red is loud without blocking a merge — it blocks the
       # promotion, which is the decision that should be blocked.
+      # ⚠️ `id: gating` is load-bearing (core#873). Everything that CLAIMS an E2E
+      # failure keys on THIS step's outcome, never on the job's conclusion — the
+      # job is red for reasons that have nothing to do with the specs.
       - name: Run gating E2E specs against staging
+        id: gating
         working-directory: e2e
         run: npx playwright test --grep-invert "@informational"
 
@@ -1054,8 +1069,71 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # ── core#873: what is this job's red actually SAYING? ───────────────────
+      # The filer and the pager below used to fire on job-level `failure()`, so
+      # ANY failing step asserted a gating E2E failure. On 2026-09-01 a GitHub
+      # artifact-service timeout on `Upload Playwright report` filed against
+      # #858 and paged Telegram for a run whose every spec passed — and that run
+      # was the post-promotion verification for a 15-commit production release.
+      #
+      # The job stays red for all of these. That is deliberate (#873: losing test
+      # reports is worth knowing). What changes is what we CLAIM about the red.
+      #
+      # 🚨 TWO TRAPS, both of which turn this fix into a worse bug:
+      #
+      # 1. `if: steps.gating.outcome == 'failure'` — the spelling in #873's own
+      #    body — is WRONG and fails CLOSED. An `if:` containing none of
+      #    success()/always()/cancelled()/failure() is implicitly wrapped in
+      #    `success() && ...`. When the gating step fails the job is already
+      #    failing, so `success()` is false and the step is SKIPPED. The filer
+      #    would never fire again, on any real gating failure — silence where we
+      #    had a false alarm. Every condition below therefore leads with
+      #    `always() &&`.
+      # 2. Keying only on `== 'failure'` would go silent when the gating step
+      #    never RAN (npm ci / browser install / SSH setup died). That is not an
+      #    E2E failure, but it is not a pass either — the promotion pre-flight
+      #    gets NO verdict, and this project's recurring defect is that an
+      #    absence reads like clean. So `no_verdict` pages with its own wording
+      #    instead of being swallowed.
+      #
+      # Cancellation is excluded on purpose: the `staging-deploy` concurrency
+      # group cancels this job whenever another push lands on dev mid-run. That
+      # is normal and documented above as "neither green nor red"; paging on it
+      # would be a new false-alarm generator of exactly the kind being removed.
+      - name: Classify what this job's result means
+        id: verdict
+        if: always()
+        env:
+          GATING_OUTCOME: ${{ steps.gating.outcome }}
+          JOB_STATUS: ${{ job.status }}
+          IS_CANCELLED: ${{ cancelled() }}
+        run: |
+          if [ "$IS_CANCELLED" = "true" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
+            STATE=cancelled
+          elif [ "$GATING_OUTCOME" = "failure" ]; then
+            STATE=gating_failed
+          elif [ "$GATING_OUTCOME" = "success" ]; then
+            if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
+          else
+            STATE=no_verdict
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "gating step outcome: $GATING_OUTCOME / job status: $JOB_STATUS / verdict: $STATE"
+          case "$STATE" in
+            gating_failed)
+              echo "::error::GATING E2E specs FAILED. This red is a real test failure and holds the promotion." ;;
+            infra_only)
+              echo "::warning::The gating E2E specs PASSED — this job is red for a NON-TEST reason (artifact upload, or a step after the specs). Do not read this as an E2E failure; no issue was filed and no alert was paged. Find the failing step before treating the promotion as blocked (core#873)." ;;
+            no_verdict)
+              echo "::error::e2e-staging produced NO E2E VERDICT — the gating step did not run (outcome=$GATING_OUTCOME). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. Fix the harness, then re-run." ;;
+            cancelled)
+              echo "::notice::Job cancelled (staging-deploy concurrency group). A cancelled verdict is neither green nor red — the next push on dev produces the reading." ;;
+            clean)
+              echo "::notice::Gating E2E specs passed and the job is green." ;;
+          esac
+
       - name: Telegram alert on failure
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'gating_failed'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -1071,8 +1149,30 @@ jobs:
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
 
+      # No issue is filed for this one: a harness that never ran is not a test
+      # failure and does not belong on the `e2e-staging-failure` dedup thread,
+      # which exists to track failing SPECS. It still pages, because an absent
+      # verdict is the state most likely to be mistaken for a pass.
+      - name: Telegram alert when the E2E tier produced no verdict
+        if: always() && steps.verdict.outputs.state == 'no_verdict'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GATING_OUTCOME: ${{ steps.gating.outcome }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: NO VERDICT*\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
+            "$GATING_OUTCOME" "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
       - name: File issue on failure
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'gating_failed'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1113,7 +1213,9 @@ jobs:
             "**Message:** $FIRST_LINE" \
             "**Report:** playwright-report artifact on the run page" \
             "" \
-            "Only the GATING tier can open this — informational specs do not fail the job (core#521).")
+            "This is filed on the GATING step's own outcome, not on the job's conclusion (core#873)." \
+            "So it means the gating specs themselves went red — not that some other step failed." \
+            "Informational specs cannot open this either; they are \`continue-on-error\` (core#521).")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo ${{ github.repository }} \
               --body "Another e2e-staging failure on \`$SHORT_SHA\`: $RUN_URL"
@@ -1420,7 +1522,14 @@ jobs:
           echo "=== Staging → Authentik reachability ==="
           ssh root@${{ secrets.POINTER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
 
+      # ⚠️ `id: sso_specs` is load-bearing — same reason as `e2e-staging`'s
+      # `id: gating` (core#873). Two steps below this one run on `always()` and
+      # can fail a job whose specs all passed: the artifact upload (the exact
+      # failure that produced the false report on 2026-09-01) and the Authentik
+      # cleanup, whose `|| true` is INSIDE the remote command string, so an ssh
+      # that cannot connect still fails the step.
       - name: Run SSO specs
+        id: sso_specs
         working-directory: e2e
         env:
           CI: "true"
@@ -1467,9 +1576,67 @@ jobs:
       # every push for a real product bug (#830) and filed a fresh issue AND paged the
       # founder each time: ten issues and ten pages for one condition. The tracker was
       # ~15% duplicate noise and the alarm had stopped carrying information.
+      # core#873, same classifier as `e2e-staging`. See the long note there for
+      # why every condition leads with `always() &&` (a bare
+      # `steps.x.outcome == 'failure'` is implicitly `success() && ...` and so
+      # fails CLOSED — it would never fire again), and why a gating step that
+      # never RAN pages under its own wording instead of being swallowed.
+      - name: Classify what this job's result means
+        id: verdict
+        if: always()
+        env:
+          SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+          JOB_STATUS: ${{ job.status }}
+          IS_CANCELLED: ${{ cancelled() }}
+        run: |
+          if [ "$IS_CANCELLED" = "true" ] || [ "$SPECS_OUTCOME" = "cancelled" ]; then
+            STATE=cancelled
+          elif [ "$SPECS_OUTCOME" = "failure" ]; then
+            STATE=specs_failed
+          elif [ "$SPECS_OUTCOME" = "success" ]; then
+            if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
+          else
+            STATE=no_verdict
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "SSO specs outcome: $SPECS_OUTCOME / job status: $JOB_STATUS / verdict: $STATE"
+          case "$STATE" in
+            specs_failed)
+              echo "::error::SSO E2E specs FAILED. This red is a real test failure." ;;
+            infra_only)
+              echo "::warning::The SSO specs PASSED — this job is red for a NON-TEST reason (artifact upload, or the Authentik cleanup). No issue was filed and no alert was paged. Do not read this as an SSO regression (core#873)." ;;
+            no_verdict)
+              echo "::error::e2e-sso produced NO VERDICT — the specs did not run (outcome=$SPECS_OUTCOME), most likely an Authentik bootstrap or tunnel failure. Neither a pass nor a regression." ;;
+            cancelled)
+              echo "::notice::Job cancelled — neither green nor red." ;;
+            clean)
+              echo "::notice::SSO specs passed and the job is green." ;;
+          esac
+
+      # No issue is filed here: a harness that never came up is not a product
+      # bug and does not belong on the `e2e-sso-failure` dedup thread, which
+      # #830 is actively using. It pages, because an absent verdict on a job
+      # that is normally red is the easiest thing in this pipeline to misread
+      # as a fix.
+      - name: Telegram alert when the SSO tier produced no verdict
+        if: always() && steps.verdict.outputs.state == 'no_verdict'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *SSO E2E: NO VERDICT*\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n*Commit:* `%s`\n*Run:* %s' \
+            "$SPECS_OUTCOME" "$SHORT_SHA" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
       - name: File issue on failure
         id: file_issue
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'specs_failed'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1530,8 +1697,15 @@ jobs:
       # ⚠️ The polarity is deliberately FAIL-OPEN. If the filer step itself dies, its
       # outputs are unset, `'' != 'commented'` is true, and this still pages — losing
       # the issue must never also lose the alert.
+      #
+      # ⚠️ core#873: the `state == 'specs_failed'` conjunct is REQUIRED, not
+      # belt-and-braces. Gating the filer alone would not have fixed this step:
+      # on an artifact-upload red the filer is skipped, so `dedup` is unset,
+      # `'' != 'commented'` is true, `failure()` is true — and it pages anyway.
+      # The fail-open polarity above is preserved: if the filer DIES while the
+      # specs really failed, `dedup` is still unset and this still pages.
       - name: Telegram alert on new failure
-        if: failure() && steps.file_issue.outputs.dedup != 'commented'
+        if: always() && steps.verdict.outputs.state == 'specs_failed' && steps.file_issue.outputs.dedup != 'commented'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}

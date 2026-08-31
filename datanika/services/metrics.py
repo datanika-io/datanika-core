@@ -7,6 +7,7 @@ Exposes:
 - /metrics endpoint for Prometheus scraping
 """
 
+import logging
 import time
 
 from prometheus_client import (
@@ -20,6 +21,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+_log = logging.getLogger(__name__)
 
 # --- HTTP metrics ---
 
@@ -181,7 +184,13 @@ async def metrics_endpoint(request: Request) -> Response:
         length = r.llen("celery")
         celery_queue_length.labels("celery").set(length)
     except Exception:
-        pass
+        # Serving /metrics must not depend on Redis being reachable -- a scrape
+        # that 500s takes every other metric down with it. But the swallow has a
+        # sharp edge worth naming (core#723): `celery_queue_length` is a Gauge,
+        # so on failure it KEEPS ITS LAST VALUE rather than going absent, and a
+        # frozen gauge reads exactly like a steady queue. This log line is the
+        # only thing that distinguishes them.
+        _log.warning("celery_queue_length not refreshed; the gauge is now stale", exc_info=True)
 
     body = generate_latest(REGISTRY)
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")

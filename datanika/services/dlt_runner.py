@@ -125,7 +125,7 @@ GOOGLE_ADS_API_VERSION = "v25"
 #: test that cannot exist, and #545's lesson is that a connector with no
 #: row-level probe is a connector nobody has shown works.
 GOOGLE_ADS_API_HOST = "https://googleads.googleapis.com"
-GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 - a URL
 
 #: Campaign performance by day — the Ads equivalent of GA4's daily-traffic
 #: default: the report almost every account starts from, and one that can be

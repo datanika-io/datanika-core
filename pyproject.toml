@@ -176,7 +176,44 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+# "S" is flake8-bandit — the SAST half of core#723. It is enabled here, in the
+# SAME change that fixes what it found, so the gating `lint` job never goes red
+# on `dev`. Do not land the select without the fixes.
+#
+# It earns its CI minutes in this codebase specifically: we encrypt and decrypt
+# customer warehouse credentials, and the expensive mistakes in that area —
+# `subprocess(shell=True)` on a variable, a hardcoded fallback key, a broadened
+# `except` around a crypto call — are all cheap for bandit to catch and easy to
+# write.
+#
+# ⚠️ The first run found 23 findings in application code, not the ~11 the issue
+# estimated. Seven were `try`/`except`/`pass`, four of those on the session and
+# audit path, and they were the real ones: each swallow was correct and each was
+# silent, so an audit trail could stop recording with no signal anywhere. Those
+# are fixed rather than ignored. The rest are name-based false positives
+# (a URL assigned to `*_TOKEN_URL`, an HTML template named `_PASSWORD_RESET_*`)
+# and carry an inline `# noqa` with the reason, so a genuine hardcoded secret in
+# the same file is still caught.
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+# ⚠️ CI lints with `--exclude datanika/migrations` while the pre-push hook does
+# not, so before this the two gates saw different file sets. Putting the
+# migration exemption HERE means both read the same rules, which is the only way
+# a local green predicts a CI green.
+#
+# Migrations are S608 by construction: `op.execute()` takes SQL text, and the
+# interpolated values are literals in the migration's own source. There is no
+# request path into them and no user input to sanitise.
+"datanika/migrations/**" = ["S608"]
+
+# Tests: 5,558 findings, of which 5,558 are noise. `assert` IS the test (S101);
+# fixture credentials are fixtures (S105/S106/S107); the harnesses that shell out
+# to `uv`, `docker` and `alembic` are the point of those tests (S603/S607); and
+# a bound-to-all-interfaces address in a testcontainer is not a production
+# listener (S104). Left as an explicit list rather than a blanket `"S"` so that,
+# for example, S301 (pickle) or S324 (weak hash) in a test still fails.
+"tests/**" = ["S101", "S104", "S105", "S106", "S107", "S108", "S603", "S607", "S608"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

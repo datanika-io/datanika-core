@@ -366,7 +366,12 @@ def run_upload(
                 pipeline_id=run_id, run_id=run_id
             )
         except Exception:
-            pass
+            # Cleanup failure must not turn a successful upload into a failed
+            # task. It does, however, leak a working directory per run, and the
+            # hourly `cleanup_orphaned_dlt_dirs` sweep then quietly absorbs the
+            # symptom -- so without this line a systematic cleanup failure looks
+            # like normal disk growth (core#723).
+            logger.exception("dlt working directory not cleaned up: run_id=%s", run_id)
         if own_session:
             session.close()
 

@@ -229,7 +229,7 @@ border-radius: 6px; text-decoration: none; font-weight: 600;">Set a new password
     Or copy this link: {url}
   </p>
 </body>
-</html>"""
+</html>"""  # noqa: S105 - an HTML email body, not a credential
 
 _PASSWORD_RESET_TEXT = """\
 Set a new password
@@ -243,7 +243,7 @@ This link expires in 60 minutes and can only be used once.
 
 If you didn't request this, you can ignore this email - nothing has changed
 and your current password still works.
-"""
+"""  # noqa: S105 - a plain-text email body, not a credential
 
 #: The upgrade CTA, spliced into the quota warning only on a deployment that
 #: serves a billing page (#682). Kept as its own template rather than an ``if``

@@ -679,7 +679,7 @@ jobs:
           set -e
           cd /opt/datanika-staging
           set -a && . ./.env.docker && set +a
-          if docker compose -p datanika-staging up -d postgres redis app celery beat; then
+          if docker compose -p datanika-staging up -d postgres redis app celery beat celery-exporter; then
             echo "staging stack up"
           else
             echo "compose up failed - clearing the whole project's containers, retrying once"
@@ -689,7 +689,7 @@ jobs:
             # Named volumes are untouched by `docker rm`, so staging data survives.
             docker ps -aq --filter 'label=com.docker.compose.project=datanika-staging' \
               | xargs -r docker rm -f || true
-            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat
+            docker compose -p datanika-staging up -d --force-recreate postgres redis app celery beat celery-exporter
             echo "staging stack up after recovery"
           fi
           STAGING
@@ -700,6 +700,18 @@ jobs:
             'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
   smoke-staging:
+    # core#753: this job READS the stack `deploy-staging` mutates, so it must hold the same
+    # lock. `deploy-staging`'s group serialised the deploy and then RELEASED it -- while its
+    # own verifiers were still running against the stack -- so the next push's deploy was
+    # free to recreate containers underneath a suite mid-flight. Measured at 38 false-red
+    # gating E2E results on 2026-08-31, and one auto-filed issue against an innocent commit
+    # whose entire diff was a shell script.
+    #
+    # The lock must not be released until nothing is still reading the stack it protects.
+    # See the note on `e2e-staging` for what this does and does not buy.
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -781,6 +793,36 @@ jobs:
   # Env is job-level so both tiers share one definition — two copies is how
   # they drift apart, which is the failure mode this whole job has been fixing.
   e2e-staging:
+    # core#753. Same lock as the mutation it verifies -- see `smoke-staging` above.
+    #
+    # ⚠️ What this buys, precisely, because the shape is easy to over-claim. GitHub runs one
+    # job per group and holds ONE pending job; a newly queued job cancels the previously
+    # pending one. So:
+    #
+    #   GUARANTEED: no `deploy-staging` can run while a verifier holds the lock. That is the
+    #   whole of the measured harm -- every failing assertion in the 2026-08-31 evidence
+    #   returned 502 (x9) or 503 (x5) and none returned anything else, i.e. containers being
+    #   recreated mid-test. That failure mode is now impossible.
+    #
+    #   NOT guaranteed: a burst can still cancel a run's pending verification, because a
+    #   third run's deploy queuing cancels whatever was pending. A CANCELLED verdict is
+    #   neither green nor red and reads as absent, which is a far better failure than a red
+    #   on the tenant-isolation and RBAC specs -- those run last, so a false red here wore
+    #   the most alarming possible headline on the night a real cross-tenant S1 was being
+    #   promoted. The newest push always wins the queue, which is the right polarity: the
+    #   promotion pre-flight needs a verdict for `dev`'s exact HEAD.
+    #
+    # ⚠️ `cancel-in-progress` must stay false in every member. `true` on the deploy is
+    # core#572 (a cancelled deploy left renamed containers and wedged staging); `true` here
+    # discards a verdict the promotion pre-flight needs.
+    #
+    # Deliberately NOT linearised behind `smoke-staging`. Chaining them would not prevent a
+    # competing deploy cancelling this job's pending slot -- it only changes which of the two
+    # is sacrificed -- while it WOULD make a red smoke skip E2E entirely, and a skipped gate
+    # reads like a pass at a glance.
+    concurrency:
+      group: staging-deploy
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
@@ -1175,6 +1217,34 @@ jobs:
   # required checks on dev until it has earned that — a permanently-red gate is how a
   # whole tier gets ignored, which is the history behind #222, #230 and #232.
   e2e-sso:
+    # core#765: its OWN queued group, not `staging-deploy`. This job mutates things nothing
+    # else touches -- a fixed compose project name `e2e`, fixed container names, host port
+    # 9000, a `docker network connect` onto datanika-staging_default, and
+    # /opt/datanika/e2e-sso/.sso-fixture.json rewritten in place -- all on the shared
+    # production box. Two overlapping runs interleave badly and the teardown is the sharp
+    # edge: run A's `if: always()` `down -v` destroys run B's IdP mid-test and then
+    # `rm -rf`s the directory B is reading its fixture from. B fails with connection errors
+    # that look like a broken SSO implementation and are not.
+    #
+    # ⚠️ `cancel-in-progress: false` is the load-bearing half. `true` would cancel a run
+    # BETWEEN its `up -d` and its `if: always()` cleanup, and a cancelled job's always()
+    # steps are not guaranteed to complete -- leaving four Authentik containers and a network
+    # attachment stranded on the production box. That is core#536's failure mode with an IdP
+    # attached, and recovery then has to clean up by LABEL, because compose no longer
+    # recognises a renamed container as that service.
+    #
+    # ⚠️ Its own group and not `staging-deploy`, deliberately, with a residual: this job is
+    # therefore still exposed to a `deploy-staging` recreating the staging app underneath it.
+    # Sharing `staging-deploy` would close that but serialise SSO behind the ~10-minute
+    # e2e-staging, roughly doubling staging latency for every push, and the two mutate
+    # different things. e2e-sso is the informational tier (core#521) and does not gate a
+    # merge, so a collision costs a spurious red rather than a blocked one. Revisit before
+    # it graduates to gating -- a collision-induced red RESETS the three-consecutive-greens
+    # counter, which is the exact mechanism by which #222, #230 and #232 ended with a whole
+    # tier being ignored.
+    concurrency:
+      group: staging-e2e-sso
+      cancel-in-progress: false
     needs: [deploy-staging]
     if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     continue-on-error: true

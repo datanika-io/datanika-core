@@ -1106,9 +1106,21 @@ jobs:
         env:
           GATING_OUTCOME: ${{ steps.gating.outcome }}
           JOB_STATUS: ${{ job.status }}
-          IS_CANCELLED: ${{ cancelled() }}
         run: |
-          if [ "$IS_CANCELLED" = "true" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
+          # !! `cancelled()` MUST NOT appear in this `env:`, and that is not
+          # style. The status-check functions (success/failure/cancelled/always)
+          # are valid ONLY inside an `if:`. Anywhere else -- a step `env:`
+          # included -- GitHub rejects the whole FILE at template-validation
+          # time, before a single job is created.
+          #
+          # Measured on run 33451148336 (core#880): conclusion `failure`, ZERO
+          # jobs, `created_at == updated_at`, and `commits/<sha>/check-runs`
+          # returning an EMPTY LIST rather than a red one. A PR in that state
+          # displays NO checks at all -- indistinguishable from "CI has not
+          # started yet" -- so it sits BLOCKED forever while looking pending.
+          # `job.status` carries the same signal and IS allowed in a step
+          # `env:`. Guarded by tests/test_deploy/test_ci_autofiler_trigger.py.
+          if [ "$JOB_STATUS" = "cancelled" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
           elif [ "$GATING_OUTCOME" = "failure" ]; then
             STATE=gating_failed
@@ -1612,9 +1624,11 @@ jobs:
         env:
           SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
           JOB_STATUS: ${{ job.status }}
-          IS_CANCELLED: ${{ cancelled() }}
         run: |
-          if [ "$IS_CANCELLED" = "true" ] || [ "$SPECS_OUTCOME" = "cancelled" ]; then
+          # No `cancelled()` in this `env:` -- see the e2e-staging classifier
+          # above for why it invalidates the entire workflow file at validation
+          # time and produces a run with zero jobs and zero check-runs.
+          if [ "$JOB_STATUS" = "cancelled" ] || [ "$SPECS_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
           elif [ "$SPECS_OUTCOME" = "failure" ]; then
             STATE=specs_failed

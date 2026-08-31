@@ -299,3 +299,112 @@ def test_auditor_accepts_job_keying_when_nothing_can_fail_after_the_work() -> No
 
 def test_auditor_accepts_the_shipped_fix() -> None:
     assert _audit({"fixed.yml": _SHIPPED_FIX}) == {"job_keyed": [], "fails_closed": []}
+
+
+# ---------------------------------------------------------------------------
+# core#880: the defect that stops the workflow from running AT ALL
+# ---------------------------------------------------------------------------
+# The fix above introduced `IS_CANCELLED: ${{ cancelled() }}` into a step
+# `env:`. GitHub allows the status-check functions -- always/success/failure/
+# cancelled -- ONLY inside an `if:`. Anywhere else the whole FILE fails
+# template validation, and the failure mode is the nastiest one this repo
+# keeps rediscovering: the run is created with ZERO jobs and conclusion
+# `failure`, so `commits/<sha>/check-runs` returns an EMPTY LIST rather than a
+# red one. The PR then shows NO checks -- byte-identical to "CI has not started
+# yet" -- and sits BLOCKED indefinitely while reading as pending.
+#
+# Measured on run 33451148336: created_at == updated_at == run_started_at,
+# latest_check_runs_count 0, and `gh run view` saying only "This run likely
+# failed because of a workflow file issue."
+#
+# A plain grep cannot decide this, because `if: ${{ always() && ... }}` is the
+# legal WRAPPED form and looks identical to the illegal one. The key the string
+# hangs off is what discriminates, so this parses the YAML.
+
+_INTERPOLATION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+
+
+def _status_fn_outside_if(doc: object, path: tuple[str, ...] = ()) -> list[str]:
+    """Every `${{ ... }}` interpolation calling a status fn under a non-`if` key."""
+    found: list[str] = []
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            found += _status_fn_outside_if(value, (*path, str(key)))
+    elif isinstance(doc, list):
+        for index, value in enumerate(doc):
+            found += _status_fn_outside_if(value, (*path, str(index)))
+    elif isinstance(doc, str):
+        if path and path[-1] == "if":
+            return found  # legal, wrapped or bare
+        for expr in _INTERPOLATION.findall(doc):
+            if _STATUS_FN.search(expr):
+                found.append(f"{'.'.join(path)}: ${{{{{expr.strip()}}}}}")
+    return found
+
+
+def _validity_audit(sources: dict[str, str]) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for name, text in sources.items():
+        hits = _status_fn_outside_if(yaml.safe_load(text))
+        if hits:
+            out[name] = hits
+    return out
+
+
+_STATUS_FN_IN_ENV = """
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run specs
+        id: specs
+        run: pytest
+      - name: Classify
+        id: verdict
+        if: always()
+        env:
+          OUTCOME: ${{ steps.specs.outcome }}
+          IS_CANCELLED: ${{ cancelled() }}
+        run: echo "$IS_CANCELLED"
+"""
+
+_STATUS_FN_ONLY_IN_IF = """
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run specs
+        id: specs
+        run: pytest
+      - name: Classify
+        id: verdict
+        if: ${{ always() }}
+        env:
+          OUTCOME: ${{ steps.specs.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        run: echo "$OUTCOME"
+      - name: Alert
+        if: always() && steps.verdict.outputs.state == 'failed'
+        run: curl -fsS https://example.invalid
+"""
+
+
+def test_the_validity_auditor_can_fail() -> None:
+    """Negative control. A checker that cannot go red is not evidence of anything --
+    and this one has to catch the exact line that broke run 33451148336."""
+    hits = _validity_audit({"ci.yml": _STATUS_FN_IN_ENV})
+    assert list(hits) == ["ci.yml"], hits
+    assert any("cancelled()" in h for h in hits["ci.yml"]), hits
+
+
+def test_the_validity_auditor_allows_status_fns_inside_if() -> None:
+    """Both spellings of a legal `if:` -- wrapped `${{ always() }}` and bare
+    `always() && ...` -- must stay clean, or the rule is a blanket ban on the
+    one construct the #873 fix depends on and somebody will delete it."""
+    assert _validity_audit({"ci.yml": _STATUS_FN_ONLY_IN_IF}) == {}
+
+
+def test_no_workflow_uses_a_status_function_outside_an_if() -> None:
+    """The shipped workflows. A hit here means the file will not START on GitHub:
+    zero jobs, zero check-runs, and a PR that looks like CI is still pending."""
+    assert _validity_audit(_real_sources()) == {}

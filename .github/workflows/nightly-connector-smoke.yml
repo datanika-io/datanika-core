@@ -84,7 +84,15 @@ jobs:
             # Strip surrounding double-quotes from value — $GITHUB_ENV
             # parser treats quotes as literal chars (unlike bash/python-dotenv).
             # Without this, httpx rejects URLs like ""https://..."" (core#270).
-            line=$(echo "$line" | sed -E 's/^([A-Z_]+)="(.*)"$/\1=\2/')
+            #
+            # ⚠️ The character class MUST carry digits (core#827). It was `[A-Z_]+`,
+            # which does not match a name like `GA4_PROPERTY_ID` or `S3_BUCKET`, so
+            # those lines fell through unchanged and reached $GITHUB_ENV with their
+            # quotes still attached — i.e. core#270's bug, re-created for every
+            # variable whose name contains a digit. Invisible from both ends: the
+            # file has the value and the secret is non-empty; only the consumer sees
+            # a value wrapped in literal quote characters.
+            line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/creds.env
           rm /tmp/creds.env
@@ -111,7 +119,8 @@ jobs:
           printf '%s' "$QA_WAVE1_CREDENTIALS" | base64 -d > /tmp/wave1.env
           while IFS= read -r line; do
             case "$line" in ''|\#*) continue ;; esac
-            line=$(echo "$line" | sed -E 's/^([A-Z_]+)="(.*)"$/\1=\2/')
+            # Digits in the class — see the note on the same sed above (core#827).
+            line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/wave1.env
           rm /tmp/wave1.env
@@ -129,11 +138,38 @@ jobs:
         # above were dropped or misspelled, the gate would skip all probes at
         # collection time and pytest would still exit 0 — a perfectly green
         # nightly that tested nothing.
+        #
+        # 🚨 `set -o pipefail` is the whole point of this block (core#827), and its
+        # absence is what made this job report `success` while running
+        # `12 failed, 9 passed` for EIGHT consecutive nights, with the Telegram step
+        # `skipped` every time. A pipeline's status is its LAST command's — `tee`,
+        # which always succeeds — and GitHub's default `run:` shell is `bash -e {0}`
+        # WITHOUT `-o pipefail`. So pytest's exit code was discarded and the only
+        # thing that could still fail the step was the skip grep below.
+        #
+        # The two halves composed into the hole: the conftest was deliberately
+        # changed to turn missing creds into FAILURES rather than skips (so that
+        # "any skip" became a usable alarm), which moved every real failure into
+        # precisely the blind spot the pipe had created. Both changes were right on
+        # their own. Same defect and same fix as landing#339.
+        #
+        # `${PIPESTATUS[0]}` rather than plain `-e`: under `set -e` the step would
+        # abort on the pytest line and the skip guard would never run, so a run that
+        # both failed AND skipped would report only the failure. Both signals are
+        # worth having, and the skip guard is the more specific diagnosis.
         run: |
-          pytest tests/test_connector_smoke/ -v --tb=short -rs | tee /tmp/smoke.log
+          set -o pipefail
+          rc=0
+          pytest tests/test_connector_smoke/ -v --tb=short -rs | tee /tmp/smoke.log || rc=$?
+
           if grep -qE '[0-9]+ skipped' /tmp/smoke.log; then
             echo "::error::Smoke probes were SKIPPED — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
             exit 1
+          fi
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Connector smoke probes FAILED (pytest exit $rc). Open the log above and find the first FAILED test — this step no longer launders pytest's exit code through the pipe to tee (core#827)."
+            exit "$rc"
           fi
 
       - name: Telegram alert on failure

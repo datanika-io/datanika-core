@@ -39,6 +39,17 @@ of the wrong thing**.
   **construct** its input and be **shown red against a stub**; a sweep must be proved against a
   **planted** row. A test that has never failed has never been shown to be able to.
 
+- **A schema entry is not a form field.** `connection_schemas.py` gained `auth_source` for `mongodb`
+  in [#550](https://github.com/datanika-io/datanika-core/issues/550); the **rendered form never did**.
+  `mongodb` is special-cased to `mongodb_fields()` in `connection_config_fields.py`, which hard-codes
+  five inputs and in which `auth_source` appears **zero** times — there is no renderer for the schema
+  entry and no `ConnectionState` var for an input to bind to. A landing issue was filed on the schema
+  reading, asked for a recapture of a *"seven-field form"*, and would have re-stamped `verified_date`
+  to assert a UI change that never shipped. Driving the live form settled it in one call: **six**
+  inputs, and `auth_source` absent from `innerHTML` and `innerText` alike. The cited evidence was
+  real — it just recorded something other than what was claimed. **When the claim is about what a
+  user sees, the renderer outranks the schema, and production outranks the renderer.**
+
 ## 2. Count the instruction, not the phrase
 
 A document corrected to *deny* an old behaviour still *contains* the old words. The connector guides

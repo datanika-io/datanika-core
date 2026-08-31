@@ -100,14 +100,26 @@ class TestGetTranslations:
 
 _UI_ROOT = Path(__file__).resolve().parent.parent.parent / "datanika" / "ui"
 _KEY_RE = re.compile(r'_t\["([^"]+)"\]')
+# Second usage channel, added with core#804's delete toasts. A component tree
+# reads translations reactively as `_t["key"]`, but a *state handler* producing
+# a string in Python reads the same dict directly:
+#
+#     i18n = await self.get_state(I18nState)
+#     yield rx.toast.success(i18n.translations.get("connections.deleted_toast", …))
+#
+# Without this pattern those keys look like orphans, and the obvious response to
+# `test_no_orphan_keys_in_json` is to delete the key — which silently drops the
+# translation and leaves the fallback English string for all nine locales.
+_STATE_KEY_RE = re.compile(r'translations(?:\.get\(|\[)"([^"]+)"')
 
 
 def _collect_keys_from_code() -> set[str]:
-    """Scan all .py files under datanika/ui/ for _t["..."] references."""
+    """Scan all .py files under datanika/ui/ for translation-key references."""
     keys: set[str] = set()
     for py_file in _UI_ROOT.rglob("*.py"):
         text = py_file.read_text(encoding="utf-8")
         keys.update(_KEY_RE.findall(text))
+        keys.update(_STATE_KEY_RE.findall(text))
     return keys
 
 

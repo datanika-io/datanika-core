@@ -32,6 +32,16 @@ class UploadItem(BaseModel):
     source_connection_name: str = ""
     destination_connection_name: str = ""
     last_run_status: str = ""
+    #: Whether either end of this upload points at a soft-deleted connection
+    #: (core#805). Derived on every load, never persisted, so restoring the
+    #: connection restores the row's display and its Run button with no other
+    #: repair.
+    source_connection_deleted: bool = False
+    destination_connection_deleted: bool = False
+    is_blocked: bool = False
+    #: Colour for the status badge. Computed here rather than as nested
+    #: ``rx.cond`` in a prop so the three-way choice stays readable.
+    status_color: str = "gray"
 
 
 class UploadState(BaseState):
@@ -283,8 +293,15 @@ class UploadState(BaseState):
         upload_svc, conn_svc = self._get_services()
         exec_svc = ExecutionService()
         with get_sync_session() as session:
-            conns = conn_svc.list_connections(session, org_id)
-            conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in conns}
+            # Include retired connections in the *name* map only (core#805).
+            # Without this a soft-deleted connection fell through to the
+            # `#{id}` fallback and the row showed a raw internal identifier —
+            # not localized, in no i18n key, and indistinguishable from a
+            # connection that exists with an empty name.
+            all_conns = conn_svc.list_connections(session, org_id, include_deleted=True)
+            conn_names = {c.id: f"{c.name} ({c.connection_type.value})" for c in all_conns}
+            deleted_conn_ids = {c.id for c in all_conns if c.deleted_at is not None}
+            conns = [c for c in all_conns if c.deleted_at is None]
             rows = upload_svc.list_uploads(session, org_id)
             items = []
             for p in rows:
@@ -292,6 +309,15 @@ class UploadState(BaseState):
                     session, org_id, target_type=NodeType.UPLOAD, target_id=p.id, limit=1
                 )
                 last_status = runs[0].status.value if runs else ""
+                src_deleted = p.source_connection_id in deleted_conn_ids
+                dst_deleted = p.destination_connection_id in deleted_conn_ids
+                blocked = src_deleted or dst_deleted
+                if blocked:
+                    status_color = "red"
+                elif p.status.value == "active":
+                    status_color = "green"
+                else:
+                    status_color = "gray"
                 items.append(
                     UploadItem(
                         id=p.id,
@@ -307,6 +333,10 @@ class UploadState(BaseState):
                             p.destination_connection_id, f"#{p.destination_connection_id}"
                         ),
                         last_run_status=last_status,
+                        source_connection_deleted=src_deleted,
+                        destination_connection_deleted=dst_deleted,
+                        is_blocked=blocked,
+                        status_color=status_color,
                     )
                 )
             self.uploads = items
@@ -474,9 +504,6 @@ class UploadState(BaseState):
         self.form_sc_columns = sc.get("columns", "") if sc else ""
         self.form_sc_data_type = sc.get("data_type", "") if sc else ""
 
-        self.form_use_raw_json = False
-        self.form_config = "{}"
-
         # Restore source-type-specific fields
         conn_type = self._extract_conn_type(self.form_source_id)
         self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
@@ -506,6 +533,45 @@ class UploadState(BaseState):
         self.form_file_format = config.get("file_format", "")
         self.form_delimiter = config.get("delimiter", "")
         self.form_encoding = config.get("encoding", "")
+
+        # Last, because it asks the structured form what it just produced.
+        self._restore_raw_json_fallback(config)
+
+    def _restore_raw_json_fallback(self, config: dict) -> None:
+        """Re-enter raw-JSON mode when the structured form cannot hold ``config``.
+
+        This used to be an unconditional ``form_use_raw_json = False`` /
+        ``form_config = "{}"``, so merely *opening* the edit form on an upload
+        built with **Use raw JSON config** discarded it — and for a ``rest_api``
+        source that made the upload unrunnable, since the runner requires a
+        ``resources`` list (core#803).
+
+        The test is ``_build_config()`` itself rather than a list of "advanced"
+        keys. ``_build_config`` is the only definition of what the structured
+        form can produce, so running it answers the question exactly, stays
+        correct when a connector adds a key, and catches unrepresentable
+        *values* (an integer ``initial_value`` that a text field would
+        stringify) as well as unrepresentable keys.
+
+        Extra keys the rebuild *adds* — an explicit ``write_disposition`` where
+        the stored config relied on the default — are not a loss, so the check
+        is one-directional. Must be called after every form field is populated:
+        ``_build_config`` reads them all.
+        """
+        self.form_use_raw_json = False
+        self.form_config = "{}"
+        if not config:
+            return
+        try:
+            rebuilt = self._build_config()
+        except Exception:
+            # A config that reached the database by another route (API, MCP,
+            # a hand edit) can hold a value the structured form cannot parse
+            # back. Failing towards "keep it" is the only safe direction.
+            rebuilt = None
+        if rebuilt is None or any(k not in rebuilt or rebuilt[k] != v for k, v in config.items()):
+            self.form_use_raw_json = True
+            self.form_config = json.dumps(config, indent=2)
 
     async def edit_upload(self, upload_id: int):
         """Load an upload into the form for editing."""
@@ -587,6 +653,13 @@ class UploadState(BaseState):
             )
             session.commit()
         await self.load_uploads()
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        yield rx.toast.success(
+            i18n.translations.get("uploads.deleted_toast", "Upload deleted"),
+            position="top-right",
+        )
 
     async def run_upload(self, upload_id: int):
         if not await self._check_role("editor"):
@@ -603,6 +676,27 @@ class UploadState(BaseState):
         template_slug: str | None = None
         with get_sync_session() as session:
             upload = upload_svc.get_upload(session, org_id, upload_id)
+            # Refuse rather than queue a run that cannot succeed (core#805).
+            # `get_connection` filters `deleted_at`, so the source lookup
+            # inside the task returns nothing and the failure surfaces only in
+            # the run — at 03:00 with nobody watching, for a scheduled upload.
+            # The disabled button on the row is a claim the client makes; this
+            # is the one that holds.
+            if upload is not None:
+                missing = [
+                    conn_id
+                    for conn_id in (
+                        upload.source_connection_id,
+                        upload.destination_connection_id,
+                    )
+                    if conn_svc.get_connection(session, org_id, conn_id) is None
+                ]
+                if missing:
+                    self.error_message = (
+                        "This upload's source or destination connection was deleted. "
+                        "Restore the connection to run it again."
+                    )
+                    return
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
             self._audit(
                 session,

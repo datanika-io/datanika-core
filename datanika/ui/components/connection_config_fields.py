@@ -278,7 +278,10 @@ def rest_api_fields() -> rx.Component:
             on_change=ConnectionState.set_form_base_url,
             required=True,
         ),
-        rx.text(_t["connections.api_key"], size="2", weight="bold"),
+        # Genuinely optional here: an unauthenticated endpoint is a real use
+        # case (the production `githubpublicapi` connection has an empty key),
+        # which is why core#822 split this key rather than reworded it.
+        rx.text(_t["connections.api_key_optional"], size="2", weight="bold"),
         config_input(
             "api_key",
             secret=True,
@@ -893,7 +896,8 @@ def openapi_fields() -> rx.Component:
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
         ),
-        rx.text(_t["connections.api_key"], size="2", weight="bold"),
+        # Optional for the same reason as rest_api above (core#822).
+        rx.text(_t["connections.api_key_optional"], size="2", weight="bold"),
         config_input(
             "api_key",
             secret=True,

@@ -356,7 +356,13 @@ def test_connection(request, api_key, session):
         return _error(404, "Connection not found")
     conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
     ok, msg = ConnectionService.test_connection(config, conn.connection_type)
-    return JSONResponse({"success": ok, "message": msg})
+    # core#821: the service verdict is now True / False / **None** ("not
+    # tested"). `success` must stay strictly boolean -- letting None through
+    # would turn a documented bool into a nullable one, which
+    # `docs/api_versioning.md` classes as a breaking type change. A test that
+    # did not run did not succeed, so None maps to False, and the distinction
+    # a caller actually needs arrives as a NEW field (explicitly non-breaking).
+    return JSONResponse({"success": ok is True, "tested": ok is not None, "message": msg})
 
 
 def _load_conn_and_config(session, api_key, conn_id):

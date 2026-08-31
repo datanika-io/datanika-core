@@ -283,6 +283,11 @@ class ConnectionState(BaseState):
     # Test connection feedback
     test_message: str = ""
     test_success: bool = False
+    #: core#821 — the verdict has three states, not two. `test_success`
+    #: alone cannot express *not tested*, and rendering that as failure is
+    #: the same lie as rendering it as success: the connection may be fine,
+    #: we simply did not check. Both flags false = a plain failure.
+    test_untested: bool = False
 
     # SQL database fields (postgres, mysql, mssql, redshift)
     form_host: str = ""
@@ -436,6 +441,7 @@ class ConnectionState(BaseState):
         """Forget any previous Test Connection result."""
         self.test_message = ""
         self.test_success = False
+        self.test_untested = False
 
     def _set_config_field(self, field: str, value) -> None:
         """Assign a config form field and invalidate the stale verdict."""
@@ -968,6 +974,7 @@ class ConnectionState(BaseState):
         # buy consistency and cost a working test its independence.
         self.test_message = ""
         self.test_success = False
+        self.test_untested = False
 
     def _populate_form_from_config(self, name: str, conn_type: str, config: dict):
         """Fill form fields from a decrypted config dict."""
@@ -1313,12 +1320,14 @@ class ConnectionState(BaseState):
         validation_error = self._validate_form()
         if validation_error:
             self.test_success = False
+            self.test_untested = False
             self.test_message = validation_error
             return
         try:
             config = self._build_config()
         except (json.JSONDecodeError, ValueError) as e:
             self.test_success = False
+            self.test_untested = False
             self.test_message = f"Invalid config: {e}"
             return
         # Backstop. `test_connection` is now contracted to return a verdict for
@@ -1334,7 +1343,11 @@ class ConnectionState(BaseState):
         except Exception:
             logger.exception("Connection test crashed for type %s", self.form_type)
             ok, msg = False, "The connection test failed unexpectedly — please report this"
-        self.test_success = ok
+        # core#821: `ok` is now True / False / None. A crash above yields
+        # False, so an unknown failure still reads as a failure and never as
+        # the neutral verdict.
+        self.test_success = ok is True
+        self.test_untested = ok is None
         self.test_message = msg
 
     async def test_saved_connection(self, conn_id: int):
@@ -1360,7 +1373,13 @@ class ConnectionState(BaseState):
                 conn.connection_type.value,
             )
             ok = False
-        self._set_row_test_status(conn_id, "ok" if ok else "fail")
+        # core#821: an untested type gets no row icon at all — `""` is the
+        # column's existing 'no verdict' state. Showing a red cross for a
+        # connection nobody checked would be a fresh false claim.
+        if ok is None:
+            self._set_row_test_status(conn_id, "")
+        else:
+            self._set_row_test_status(conn_id, "ok" if ok else "fail")
 
     def _set_row_test_status(self, conn_id: int, status: str):
         """Update test_status for a specific connection row."""

@@ -167,7 +167,21 @@ class TestConnectionTestActuallyTests:
         assert "not applicable" not in message
 
     def test_non_file_types_are_untouched(self):
+        """A non-file type must not be dragged through the file-source branch.
+
+        Updated for core#821. This used to assert `ok and "not applicable"` --
+        the vacuous green that core#821 removed, where twenty connector types
+        reported success having made no request. `rest_api` still cannot be
+        probed (a base URL plus arbitrary auth offers no endpoint we know is
+        safe to call), so the honest verdict is now the neutral `None`.
+
+        What this test is actually for is unchanged: the file-source work of
+        core#493 must not reach a non-file type. That is asserted by the absence
+        of a file-source message, not by the verdict being True.
+        """
         ok, message = ConnectionService.test_connection(
             {"base_url": "https://api.example.com"}, ConnectionType.REST_API
         )
-        assert ok and "not applicable" in message
+        assert ok is None, f"expected the neutral verdict, got {ok!r} ({message!r})"
+        assert "not tested" in message.lower()
+        assert "files matching" not in message and "bucket" not in message.lower()

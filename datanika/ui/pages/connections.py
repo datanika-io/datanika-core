@@ -125,8 +125,20 @@ def connection_form() -> rx.Component:
                 ConnectionState.test_message,
                 rx.callout(
                     ConnectionState.test_message,
-                    icon=rx.cond(ConnectionState.test_success, "check", "triangle_alert"),
-                    color_scheme=rx.cond(ConnectionState.test_success, "green", "red"),
+                    # core#821: three states. `not tested` must not be green
+                    # (that was the bug — 20 connector types reported success
+                    # having made no request) and must not be red either, since
+                    # the connection may well be fine.
+                    icon=rx.cond(
+                        ConnectionState.test_untested,
+                        "info",
+                        rx.cond(ConnectionState.test_success, "check", "triangle_alert"),
+                    ),
+                    color_scheme=rx.cond(
+                        ConnectionState.test_untested,
+                        "gray",
+                        rx.cond(ConnectionState.test_success, "green", "red"),
+                    ),
                 ),
             ),
             rx.hstack(

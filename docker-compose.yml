@@ -258,7 +258,57 @@ services:
     volumes:
       - dbt_projects:/app/dbt_projects
       - uploaded_files:/app/uploaded_files
-    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info
+    # `-E` (core#704) is what makes the worker publish task-lifecycle events onto the
+    # broker. It is NOT cosmetic and it is not the exporter's job: measured on staging
+    # 2026-08-31, an exporter pointed at a worker running WITHOUT `-E` emits
+    # `celery_worker_up`, `celery_queue_length`, `celery_active_worker_count` and
+    # `celery_active_process_count` — and ZERO `celery_task_*` series, because those come
+    # from events while the others come from broker/inspect introspection. So the
+    # exporter looks healthy and every task metric is still missing. Dropping `-E` would
+    # silently re-create exactly the blindness core#704 is about, one layer lower down.
+    command: uv run celery -A datanika.tasks.celery_app:celery_app worker -l info -E
+    restart: unless-stopped
+
+  # --- Celery exporter (core#704) ---
+  # Prometheus scraped seven targets and none was Celery. `celery_tasks_total` is
+  # incremented by signal handlers in `services/metrics.py:139-166` — which run in the
+  # WORKER process — while `/metrics` is a Starlette route in the APP process, so the
+  # counters were never served. Measured against prod Prometheus 2026-08-31:
+  # `celery_tasks_total` returns 0 series, so the `celery-task-failures` alert rule has
+  # never been able to fire. (`celery_queue_length` is the exception and does work: the
+  # app computes it at scrape time from Redis, in-process.)
+  #
+  # This reads the event stream off the broker instead, so it covers every task rather
+  # than just the one we thought to instrument, and needs no application change.
+  #
+  # ⚠️ Pinned to 0.12.2 deliberately, and `:latest` is a trap here: on Docker Hub
+  # `latest` resolves to 0.10.14 (2024-11-11) while 0.12.2 (2025-07-15) is the current
+  # release — `latest` is four releases and eight months stale. Both were run against
+  # the staging broker on 2026-08-31 and emit identical metric names and labels; 0.12.2
+  # is pinned because it is the one that is both current and measured.
+  #
+  # ⚠️ `--purge-offline-worker-metrics 0` is load-bearing. The default (600) DELETES a
+  # worker's series 10 minutes after its last heartbeat, so a dead worker would make
+  # `celery_task_succeeded_total` vanish — and `increase(<vanished series>)` yields no
+  # series, which with `noDataState: OK` reads as healthy at precisely the moment it is
+  # not. Cardinality is not a concern here: one worker, ~15 task names.
+  celery-exporter:
+    image: danihodovic/celery-exporter:0.12.2
+    container_name: datanika-celery-exporter
+    environment:
+      # Passed as an env var rather than `--broker-url` on purpose: the URL carries the
+      # Redis password, and a command-line argument is visible in `ps` output to every
+      # process on this shared box. `CE_` is the exporter's own env prefix.
+      # `:?` aborts the deploy loudly if `.env.docker` ever stops carrying REDIS_URL —
+      # the deploy PRESERVES that file rather than shipping it, so it is not in the repo.
+      CE_BROKER_URL: ${REDIS_URL:?REDIS_URL must be set in .env.docker on the box}
+    command:
+      - "--purge-offline-worker-metrics=0"
+    ports:
+      - "127.0.0.1:9808:9808"
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # --- Celery Beat (core#653) ---

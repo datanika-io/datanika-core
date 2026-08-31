@@ -36,6 +36,21 @@ scrape_configs:
     static_configs:
       - targets: ["postgres-exporter:9187"]
 
+  # core#704 — until 2026-08-31 Prometheus scraped seven targets and none of them was
+  # Celery, so every task metric the code collected was discarded. `celery_tasks_total`
+  # is incremented by signal handlers that run in the WORKER process while `/metrics` is
+  # a Starlette route in the APP process; querying `celery_tasks_total` against this
+  # Prometheus returned 0 series, which is why `celery-task-failures` had never been able
+  # to fire.
+  #
+  # The exporter reads the worker's event stream off the Redis broker, so it covers every
+  # task rather than the ones we thought to instrument, and needs no application change.
+  # It depends on the worker running with `-E` — see the comment on the `celery` service
+  # in docker-compose.yml for why that is not optional.
+  - job_name: "celery"
+    static_configs:
+      - targets: ["celery-exporter:9808"]
+
   # Blackbox probes — HTTP health checks for external endpoints.
   # Targets are probed via the blackbox exporter's http_2xx module.
   - job_name: "blackbox-http"

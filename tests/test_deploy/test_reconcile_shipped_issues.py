@@ -66,6 +66,36 @@ def test_the_workflow_run_trigger_names_the_cd_workflow_exactly():
     )
 
 
+def test_label_description_fits_githubs_limit():
+    """GitHub rejects a label description over 100 chars with HTTP 422.
+
+    Found by running this for real, not by the dry run: the description was 111 characters,
+    the label was never created, all 13 `gh issue edit` calls failed with "not found", and
+    the script still exited 0 and commented on the promotion PR saying they were labelled.
+    """
+    assert len(rec.LABEL_DESC) <= rec.LABEL_DESC_MAX == 100, len(rec.LABEL_DESC)
+
+
+def test_a_label_that_cannot_be_created_stops_the_run(monkeypatch, tmp_path, capsys):
+    """Fail closed. A comment claiming issues are labelled, when they are not, is worse
+    than no comment: it is a false record on the one artifact people go back and read."""
+    monkeypatch.setenv("REPO", "datanika-io/datanika-core")
+    monkeypatch.setenv("DEPLOY_SHA", "deadbeef")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(rec, "scan_commits", lambda ref: ({704: [("abc12345", "[Infra] x")]}, 700))
+    monkeypatch.setattr(
+        rec, "open_issues", lambda repo: [{"number": 704, "title": "t", "labels": []}]
+    )
+    monkeypatch.setattr(rec, "ensure_label", lambda repo: False)
+
+    def _explode(*args, **kwargs):  # pragma: no cover - must never be reached
+        raise AssertionError("must not label or comment when the label is missing")
+
+    monkeypatch.setattr(rec, "run", _explode)
+    assert rec.main() == 1
+    assert "could not be created" in capsys.readouterr().out
+
+
 def test_the_checkout_is_not_shallow():
     """A shallow checkout scans a truncated range and under-reports."""
     assert "fetch-depth: 0" in _WORKFLOW.read_text(encoding="utf-8")

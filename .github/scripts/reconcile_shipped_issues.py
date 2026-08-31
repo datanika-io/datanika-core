@@ -53,13 +53,19 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 LABEL = "shipped-to-prod"
 LABEL_COLOR = "0E8A16"
+# ⚠️ GitHub rejects a label description over 100 characters with HTTP 422. The first live run
+# hit exactly that: the label was never created, all 13 `gh issue edit` calls then failed with
+# "'shipped-to-prod' not found", and the script still exited 0 and commented on the promotion
+# PR claiming the issues were labelled. `test_label_description_fits_githubs_limit` pins it.
 LABEL_DESC = (
-    "A commit referencing this issue is already deployed to production. "
+    "Referencing commit is already deployed to production. "
     "Close it if its acceptance criteria are met."
 )
+LABEL_DESC_MAX = 100
 
 START = "<!-- shipped-reconcile:start -->"
 END = "<!-- shipped-reconcile:end -->"
@@ -156,10 +162,20 @@ def scan_commits(prod_ref: str) -> tuple[dict[int, list[tuple[str, str]]], int]:
     return references, scanned
 
 
-def ensure_label(repo: str) -> None:
+def ensure_label(repo: str) -> bool:
+    """Create the label if absent. Returns False if it still does not exist afterwards.
+
+    This must fail CLOSED. On the first live run the create was rejected (HTTP 422, the
+    description was 111 characters against a 100-character limit) and the old version of
+    this function ignored the result. Every subsequent `gh issue edit` then failed with
+    "'shipped-to-prod' not found", and `main` went on to comment on the promotion PR saying
+    the issues were labelled. Nothing about the exit code or the comment said otherwise --
+    a run that mutated nothing reported success, which is the exact shape this whole script
+    exists to remove.
+    """
     existing = gh_api(f"repos/{repo}/labels/{LABEL}")
     if isinstance(existing, dict) and existing.get("name") == LABEL:
-        return
+        return True
     print(f"  creating label '{LABEL}'")
     run(
         "gh",
@@ -174,6 +190,8 @@ def ensure_label(repo: str) -> None:
         LABEL_DESC,
         "--force",
     )
+    confirmed = gh_api(f"repos/{repo}/labels/{LABEL}")
+    return isinstance(confirmed, dict) and confirmed.get("name") == LABEL
 
 
 def open_issues(repo: str) -> list[dict]:
@@ -305,7 +323,12 @@ def main() -> int:
             print(f"    would label #{item['number']} [{item['dept']}] {item['title'][:60]}")
         return 0
 
-    ensure_label(repo)
+    if not ensure_label(repo):
+        print(f"FAIL: label '{LABEL}' does not exist and could not be created.")
+        print("      Not labelling and not commenting — a comment saying these issues are")
+        print("      labelled, when they are not, is worse than no comment at all.")
+        return 1
+
     for item in sorted(newly, key=lambda i: i["number"]):
         print(f"    labelling #{item['number']} [{item['dept']}]")
         run("gh", "issue", "edit", str(item["number"]), "--repo", repo, "--add-label", LABEL)
@@ -316,10 +339,13 @@ def main() -> int:
         return 0
 
     body = build_comment(newly, prod_ref, deploy_sha)
-    path = "reconcile-comment.md"
-    with open(path, "w", encoding="utf-8") as handle:
+    # A temp file, not the working tree: this runs inside a checkout, and dropping an
+    # untracked .md next to the source is how a stray file ends up in someone's `git add`.
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
         handle.write(body)
+        path = handle.name
     run("gh", "pr", "comment", number, "--repo", repo, "--body-file", path)
+    os.unlink(path)
     print(f"  commented on promotion PR #{number}")
     return 0
 

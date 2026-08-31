@@ -64,11 +64,19 @@ dependencies = [
     # ten matches target different databases that merely speak the MySQL wire
     # protocol. So this one abandoned package held every advisory above.
     #
-    # ⚠️ MySQL is UNAFFECTED as a source and as a dlt load destination — both
-    # go through SQLAlchemy/`pymysql`, never through dbt. Only `dbt run`
-    # against a MySQL warehouse is gone. Guarded by
-    # tests/test_services/test_mysql_after_dbt_mysql_removal.py, which fails if
-    # MySQL quietly loses its source or destination status too.
+    # ⚠️ MySQL is UNAFFECTED as an extract SOURCE — that path goes through
+    # SQLAlchemy/`pymysql` and never through dbt. Only `dbt run` against a
+    # MySQL warehouse is gone. Verified by moving real rows through a real
+    # MySQL 8.4 server in
+    # tests/test_services/test_mysql_after_dbt_mysql_removal.py.
+    #
+    # 🚨 Do NOT extend that sentence to "and as a load destination", which is
+    # what core#825 and an earlier draft of this comment both said. MySQL is
+    # advertised in `SUPPORTED_DESTINATION_TYPES` but `dlt.destinations` has no
+    # `mysql` attribute at all, so every load has always raised AttributeError
+    # (core#865). Pre-existing, confirmed against the pre-change image, and
+    # found only because the claim was tested against a real server instead of
+    # against the set that asserts it.
     #
     # dbt-databricks requires sqlalchemy<2.0, incompatible with our stack
     # dbt-synapse requires sqlalchemy<2.0, incompatible with our stack

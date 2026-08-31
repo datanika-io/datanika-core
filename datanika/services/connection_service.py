@@ -92,6 +92,51 @@ DESTINATION_TYPES = {
     "synapse",
 }
 
+#: Destinations that dbt can also TRANSFORM in — i.e. that have a dbt adapter.
+#: A strict subset of ``DESTINATION_TYPES`` since core#825.
+#:
+#: 🚨 Loading data into a destination and running dbt models against it are
+#: DIFFERENT capabilities with different requirements. dlt needs a driver; dbt
+#: needs an installed **adapter**. Until core#825 these two sets were textually
+#: identical — the same eleven strings — which is why nothing had ever diverged
+#: and why nothing bound them. ``mysql`` is now in one and not the other: dlt
+#: loads into MySQL through SQLAlchemy/``pymysql``, while ``dbt-mysql`` was
+#: dropped as an abandoned package that held the whole dbt stack on 1.7.
+#:
+#: ⚠️ Offering a transform destination dbt cannot build in is not cosmetic:
+#: ``generate_profiles_yml`` raises **after** ``run.before_execute`` has fired
+#: and after ``start_run``, so a run structurally incapable of succeeding has
+#: already consumed the tenant's quota.
+#:
+#: 🚨 **Still wrong for three of its members, deliberately.** ``sqlite``,
+#: ``databricks`` and ``synapse`` sit in ``SUPPORTED_ADAPTERS`` with **no adapter
+#: installed** (measured with ``importlib.util.find_spec``), so they survive the
+#: intersection and are still offered. Pre-existing — core#825 neither caused it
+#: nor fixes it — and tracked in **core#862**, where it lands with a save-time
+#: server-side refusal, help text and i18n across 9 locales rather than as a
+#: silent narrowing here. This change removes exactly one member, ``mysql``, so
+#: that ``dev`` is never in a state where the picker offers a destination the
+#: same commit just made impossible.
+#:
+#: Written longhand rather than computed, following ``SQL_SOURCE_TYPES`` in
+#: ``tests/test_connector_type_contracts.py``: adding a connector should force a
+#: deliberate choice instead of inheriting one. Computing it here would also drag
+#: ``dbt.cli.main`` into every module that touches connections.
+#: ``test_connector_type_contracts.py`` asserts this equals
+#: ``DESTINATION_TYPES & SUPPORTED_ADAPTERS``, so the longhand cannot rot.
+TRANSFORM_DESTINATION_TYPES = {
+    "postgres",
+    "mssql",
+    "sqlite",
+    "bigquery",
+    "snowflake",
+    "redshift",
+    "clickhouse",
+    "duckdb",
+    "databricks",
+    "synapse",
+}
+
 
 def infer_direction(connection_type: str | ConnectionType) -> ConnectionDirection:
     """Derive direction from connection type."""

@@ -182,9 +182,12 @@ class TestGenerateProfilesYml:
         Kept here, beside the other adapters' profile tests, because a reader
         comparing this class against `SUPPORTED_ADAPTERS` should find out why
         mysql is missing *here* rather than concluding someone forgot it. The
-        full three-role coverage — mysql remains an extract source and a dlt
-        load destination, and both are proven against a real MySQL server — is
-        in `test_mysql_after_dbt_mysql_removal.py`.
+        full three-role coverage is in `test_mysql_after_dbt_mysql_removal.py`:
+        mysql remains an extract **source** (proven against a real MySQL server),
+        is no longer a transformation target (this test), and — a separate,
+        pre-existing defect that coverage uncovered — was never actually a
+        working dlt **load destination** at all, despite being advertised as one
+        (core#865).
         """
         svc.ensure_project(1)
         with pytest.raises(DbtProjectError, match="mysql"):

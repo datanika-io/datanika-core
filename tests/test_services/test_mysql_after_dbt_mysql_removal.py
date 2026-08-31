@@ -8,21 +8,34 @@ CRITICAL/HIGH advisories including ``cryptography`` (the library
 the Redshift driver. Founder decision, 2026-08-31.
 
 **The removal is narrow, and this file exists because the narrowness is the risk.**
-MySQL has three independent roles here and only one of them went:
+MySQL has three independent roles here:
 
-===========================  ==========  =====================================
-role                         status      path
-===========================  ==========  =====================================
-extract source               **KEPT**    dlt ``sql_database``/``sql_table``
-                                         → SQLAlchemy → ``pymysql``
-dlt load destination         **KEPT**    same driver, other direction
-dbt transformation target    **GONE**    was ``dbt-mysql``; no replacement
-===========================  ==========  =====================================
+===========================  ==============  =================================
+role                         status          path
+===========================  ==============  =================================
+extract source               **KEPT**        dlt ``sql_database``/``sql_table``
+                                             → SQLAlchemy → ``pymysql``
+dbt transformation target    **GONE**        was ``dbt-mysql``; no replacement
+dlt load destination         **NEVER WORKED**  advertised; ``dlt.destinations``
+                                             has no ``mysql`` (core#865)
+===========================  ==============  =================================
+
+🚨 **That third row is a correction to core#825, to this file's first draft, and
+to the landing docs.** All three said MySQL "stays a load destination". It does
+not, and it never did — ``build_destination`` does
+``getattr(dlt.destinations, connection_type)`` and dlt has no such attribute, so
+every MySQL load has always raised ``AttributeError``. Pre-existing, confirmed
+against the pre-change image, filed as core#865.
+
+**It was found by refusing to assert it cheaply.** ``"mysql" in
+SUPPORTED_DESTINATION_TYPES`` is true, and a test asserting that would have
+passed, "confirmed" the claim, and shipped it onto the marketing site. Only
+attempting a real load found it.
 
 A dependency change is exactly the shape of edit that removes more than intended
-and reports success, because the two kept roles are exercised nowhere in the diff.
-So this file asserts all three, and the two "kept" rows are asserted by **moving
-real rows through a real MySQL server** rather than by checking set membership.
+and reports success, because the roles it does NOT touch are exercised nowhere in
+the diff. So this file asserts all three, and the surviving one is asserted by
+**moving real rows through a real MySQL server**.
 
 ⚠️ **Why set membership is not sufficient for the kept roles.** ``mysql`` appearing
 in ``SUPPORTED_SOURCE_TYPES`` proves the dispatch table still lists it, not that a
@@ -42,7 +55,6 @@ import pytest
 from datanika.services.dbt_project import SUPPORTED_ADAPTERS, DbtProjectError, DbtProjectService
 from datanika.services.dlt_runner import DltRunnerService
 from tests.test_services.test_source_builders_move_rows import (
-    WIDGETS,
     _extract_load,
     _rows,
     await_setup,
@@ -103,11 +115,33 @@ class TestMysqlIsNoLongerADbtTransformTarget:
 # ── What must NOT go: MySQL as a SOURCE ─────────────────────────────────────────
 
 
+def _mysql_url(container) -> str:
+    """A SQLAlchemy URL naming the driver WE actually install.
+
+    🚨 Do not use ``container.get_connection_url()``. testcontainers returns a
+    bare ``mysql://`` URL, which SQLAlchemy resolves to ``MySQLDialect_mysqldb``
+    and therefore to ``MySQLdb`` (the ``mysqlclient`` C extension) — a package
+    this project does not install and never has. The test then dies in its own
+    seeding helper with ``ModuleNotFoundError``, which reads exactly like "MySQL
+    extraction is broken" and is nothing of the kind.
+
+    Our production mapping is correct and unaffected:
+    ``dlt_runner.SOURCE_DRIVERNAME_MAP["mysql"] == "mysql+pymysql"``. That is
+    also why this must be spelled out rather than fixed by installing
+    ``mysqlclient`` — the harness has to exercise the driver that ships.
+    """
+    return (
+        f"mysql+pymysql://{container.username}:{container.password}"
+        f"@{container.get_container_host_ip()}:{container.get_exposed_port(3306)}"
+        f"/{container.dbname}"
+    )
+
+
 def _seed_mysql(container) -> dict:
     """Create the fixture table and return the config shape ConnectionState saves."""
     import sqlalchemy
 
-    engine = sqlalchemy.create_engine(container.get_connection_url())
+    engine = sqlalchemy.create_engine(_mysql_url(container))
     with engine.begin() as conn:
         conn.execute(sqlalchemy.text("CREATE TABLE widgets (id int, name varchar(32), price int)"))
         conn.execute(
@@ -190,58 +224,78 @@ class TestMysqlStillMovesRowsAsASource:
 # ── What must NOT go: MySQL as a LOAD DESTINATION ───────────────────────────────
 
 
-@requires_docker
-class TestMysqlStillAcceptsRowsAsADestination:
-    """The other kept role, and the one most likely to be assumed rather than checked.
+class TestMysqlAsALoadDestinationIsAdvertisedAndBroken:
+    """🚨 MySQL as a dlt LOAD destination has NEVER worked. Found by core#825.
 
-    dlt loads into MySQL through the same SQLAlchemy/``pymysql`` pair, so this is
-    not covered by the source tests above — it is the other direction through a
-    different dlt destination implementation.
+    This class was written to prove the "kept" role and instead disproved it,
+    which is the whole reason it exists rather than a set-membership assertion:
+    ``"mysql" in SUPPORTED_DESTINATION_TYPES`` is true, and it means nothing.
+
+    ``build_destination`` does ``getattr(dlt.destinations, connection_type)``.
+    **dlt has no ``mysql`` attribute** — measured against dlt 1.21.0, and equally
+    absent from the pre-change image, so core#825 neither caused this nor is it
+    a regression from the dbt move. dlt's generic ``sqlalchemy`` destination is
+    what would serve MySQL, and nothing maps to it.
+
+    ``sqlite`` has the identical defect. Same shape as core#845, where Redshift's
+    ``SOURCE_DRIVERNAME_MAP`` named a SQLAlchemy dialect we do not ship.
+
+    Tracked in **core#865**. These tests assert the defect so that the day it is
+    fixed they go red and are rewritten into the positive form — a broken
+    capability with no failing test is one nobody is told about.
+
+    ⚠️ **Correction to core#825, to this PR's own commit message, and to
+    landing:** all three said MySQL "stays a load destination". Only the SOURCE
+    half of that claim survived measurement. The source half IS verified, by
+    ``TestMysqlStillMovesRowsAsASource`` above, against a real MySQL server.
     """
 
-    def test_mysql_is_still_a_declared_destination_type(self):
+    def test_mysql_is_advertised_as_a_destination(self):
+        """The advertisement, which is the half that is true."""
         assert "mysql" in DltRunnerService.SUPPORTED_DESTINATION_TYPES
 
-    def test_rows_land_in_a_real_mysql_warehouse(self, tmp_path, json_api, allow_loopback):
-        import sqlalchemy
-        from testcontainers.mysql import MySqlContainer
+    def test_but_dlt_has_no_mysql_destination_so_every_load_raises(self):
+        """The reality. Needs no container — it fails before a socket is opened."""
+        import dlt.destinations
 
-        with MySqlContainer(MYSQL_IMAGE) as mysql:
-            dst = await_setup(
-                "mysql accepting writes",
-                lambda: {
-                    "host": mysql.get_container_host_ip(),
-                    "port": int(mysql.get_exposed_port(3306)),
-                    "user": mysql.username,
-                    "password": mysql.password,
-                    "database": mysql.dbname,
-                },
-                container=mysql,
-            )
-            runner = DltRunnerService(pipelines_dir=str(tmp_path / "dlt"))
-            runner.execute(
-                pipeline_id=1,
-                source_type="rest_api",
-                source_config={"base_url": json_api},
-                destination_type="mysql",
-                destination_config=dst,
-                dlt_config={"write_disposition": "replace", "resources": ["widgets"]},
-                dataset_name=mysql.dbname,
-                run_id=1,
+        assert not hasattr(dlt.destinations, "mysql"), (
+            "dlt.destinations now HAS a `mysql` attribute, so this defect may be "
+            "fixed upstream. Re-run a real load into MySQL, and if it works, "
+            "delete this class and restore the positive test from core#825's "
+            "history (core#865)."
+        )
+
+        runner = DltRunnerService(pipelines_dir="unused")
+        with pytest.raises(AttributeError, match="mysql"):
+            runner.build_destination(
+                "mysql",
+                {"host": "h", "port": 3306, "user": "u", "password": "p", "database": "d"},
             )
 
-            # Read the warehouse back — the destination is the source of truth.
-            engine = sqlalchemy.create_engine(mysql.get_connection_url())
-            try:
-                with engine.connect() as conn:
-                    landed = conn.execute(
-                        sqlalchemy.text("SELECT name, price FROM widgets ORDER BY price")
-                    ).fetchall()
-            finally:
-                engine.dispose()
+    def test_sqlite_has_the_identical_defect(self):
+        """Recorded here rather than filed separately — one cause, one fix."""
+        import dlt.destinations
 
-        assert [tuple(r) for r in landed] == [(w["name"], w["price"]) for w in WIDGETS], (
-            "dlt did not land row contents in a real MySQL destination. MySQL "
-            "remains a load destination after core#825; only the dbt transform "
-            "adapter was removed."
+        assert "sqlite" in DltRunnerService.SUPPORTED_DESTINATION_TYPES
+        assert not hasattr(dlt.destinations, "sqlite")
+
+    def test_every_other_advertised_destination_really_exists(self):
+        """The discriminating control.
+
+        Without this, the two assertions above are satisfied by *any* breakage in
+        how the destination surface is read — a wrong import, a renamed module,
+        a typo in the probe. Nine of eleven resolving is what makes the two
+        failures a fact about mysql and sqlite rather than about this test.
+        """
+        import dlt.destinations
+
+        broken = sorted(
+            t
+            for t in DltRunnerService.SUPPORTED_DESTINATION_TYPES
+            if not hasattr(dlt.destinations, t)
+        )
+        assert broken == ["mysql", "sqlite"], (
+            f"The set of advertised-but-absent dlt destinations changed: {broken}. "
+            "If it grew, a destination just silently stopped working; if it "
+            "shrank, one was fixed and this test needs rewriting."
         )

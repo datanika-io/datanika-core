@@ -788,3 +788,165 @@ class TestNotificationChannelEndpoints:
             )
             assert resp.status_code == 200
             assert resp.json()["deleted"] is True
+
+
+# ---------------------------------------------------------------------------
+# Atomicity of a rejected update (core#790)
+# ---------------------------------------------------------------------------
+
+
+class HarnessError(RuntimeError):
+    """Raised when a test's SETUP does not hold.
+
+    Deliberately not an `AssertionError`. The two tests below are
+    `xfail(strict=True, raises=AssertionError)`, and a bare `assert` in their
+    setup would be **absorbed by the marker** — a broken harness would report as
+    a satisfied expected-failure, which is the exact trap `docs/QA_RULES.md` §5
+    describes. With this, only the one assertion under test can xfail; anything
+    else fails loudly.
+    """
+
+
+def _require(condition, message: str) -> None:
+    if not condition:
+        raise HarnessError(message)
+
+
+class TestRejectedUpdateIsAtomic:
+    """A request the API rejects must leave the row exactly as it was.
+
+    `api_endpoint` commits when the handler **returns** and rolls back only when
+    it **raises** — and `_error(400, ...)` is a return. The update services
+    assign as they go and validate in place, so a validator that raises part-way
+    down commits everything assigned above it. The API reports a clean 400 and
+    the earlier fields are durable.
+
+    🔑 **The rollback in `_name_in_db` is the assertion, not tidying.** Reading
+    the attribute straight back proves nothing: a merely-dirty value in the
+    identity map reads identically to a committed one, and two handles on the
+    same identity-mapped row move together. The first version of this probe
+    printed *"clean: nothing persisted"* over data showing the opposite, for
+    exactly that reason. `session.rollback()` is the only step that tells the
+    two apart.
+    """
+
+    @staticmethod
+    def _name_in_db(session, model, row_id) -> str:
+        from sqlalchemy import select
+
+        # An uncommitted dirty attribute does not survive this; a committed one
+        # does. That difference is the whole test.
+        session.rollback()
+        session.expire_all()
+        return str(session.execute(select(model.name).where(model.id == row_id)).scalar_one())
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="core#790 — api_endpoint commits on a RETURN, so a 400 keeps the "
+        "fields assigned before the guard that rejected the request",
+    )
+    def test_rejected_transformation_update_does_not_rename(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        from datanika.models.transformation import Transformation
+
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            created = client.post(
+                "/api/v1/transformations",
+                json={"name": "stg_orders", "sql_body": "SELECT 1"},
+                headers=_auth_headers(),
+            )
+            _require(created.status_code == 201, f"setup: create failed {created.text}")
+            tid = created.json()["id"]
+
+            # `name` is assigned before `validate_tests_config` runs.
+            resp = client.put(
+                f"/api/v1/transformations/{tid}",
+                json={"name": "renamed_by_a_rejected_request", "tests_config": {"columns": "x"}},
+                headers=_auth_headers(),
+            )
+            _require(
+                resp.status_code == 400, f"setup: expected 400, got {resp.status_code} {resp.text}"
+            )
+
+            assert self._name_in_db(session, Transformation, tid) == "stg_orders", (
+                "the API rejected this update with 400 and committed the rename anyway"
+            )
+
+    @pytest.mark.xfail(
+        strict=True,
+        raises=AssertionError,
+        reason="core#790 — same defect on the pipeline update path",
+    )
+    def test_rejected_pipeline_update_does_not_rename(self, client, fake_api_key, rate_limit_ok):
+        from datanika.models.pipeline import Pipeline
+
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            dest = client.post(
+                "/api/v1/connections",
+                json={
+                    "name": "Dest PG",
+                    "connection_type": "postgres",
+                    "config": {"host": "localhost"},
+                },
+                headers=_auth_headers(),
+            )
+            _require(dest.status_code == 201, f"setup: connection create failed {dest.text}")
+            created = client.post(
+                "/api/v1/pipelines",
+                json={"name": "Analytics", "destination_connection_id": dest.json()["id"]},
+                headers=_auth_headers(),
+            )
+            _require(created.status_code == 201, f"setup: create failed {created.text}")
+            pid = created.json()["id"]
+
+            # `name` is assigned before the destination_connection_id guard.
+            resp = client.put(
+                f"/api/v1/pipelines/{pid}",
+                json={
+                    "name": "renamed_by_a_rejected_request",
+                    "destination_connection_id": 999999,
+                },
+                headers=_auth_headers(),
+            )
+            _require(
+                resp.status_code == 400, f"setup: expected 400, got {resp.status_code} {resp.text}"
+            )
+
+            assert self._name_in_db(session, Pipeline, pid) == "Analytics", (
+                "the API rejected this update with 400 and committed the rename anyway"
+            )
+
+    def test_a_rejection_with_nothing_assigned_first_is_clean(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        """CONTROL — and the two xfails mean nothing without it.
+
+        This sends *only* the field that fails validation, so the service
+        assigns nothing before raising. It passes today. If a fix makes the two
+        above pass by rolling back indiscriminately, this still has to hold —
+        and if this one ever fails, the harness is broken rather than the app,
+        because there is no write for a 400 to have leaked.
+        """
+        from datanika.models.transformation import Transformation
+
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            created = client.post(
+                "/api/v1/transformations",
+                json={"name": "stg_clean", "sql_body": "SELECT 1"},
+                headers=_auth_headers(),
+            )
+            assert created.status_code == 201, created.text
+            tid = created.json()["id"]
+
+            resp = client.put(
+                f"/api/v1/transformations/{tid}",
+                json={"tests_config": {"columns": "x"}},
+                headers=_auth_headers(),
+            )
+            _require(
+                resp.status_code == 400, f"setup: expected 400, got {resp.status_code} {resp.text}"
+            )
+
+            assert self._name_in_db(session, Transformation, tid) == "stg_clean"

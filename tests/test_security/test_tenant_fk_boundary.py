@@ -437,3 +437,159 @@ class TestNoBarePrimaryKeyConnectionLookup:
             "this connection'. A bare primary-key lookup will happily return "
             "another tenant's row."
         )
+
+
+# Query-construction forms that resolve a `Connection`. `session.get` is the one
+# that shipped the defect; the other two are the spellings the rest of this
+# codebase actually uses, which is why matching only `get` guards the bug rather
+# than the class.
+_SELECT_FUNCS = {"select"}
+_QUERY_ATTRS = {"query"}
+
+
+def _names_connection(node: ast.expr) -> bool:
+    """True for `Connection` and for the qualified `models.Connection` form."""
+    if isinstance(node, ast.Name):
+        return node.id == "Connection"
+    if isinstance(node, ast.Attribute):
+        return node.attr == "Connection"
+    return False
+
+
+def _is_connection_query(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name) and func.id in _SELECT_FUNCS:
+        return any(_names_connection(a) for a in node.args)
+    if isinstance(func, ast.Attribute):
+        if func.attr in _QUERY_ATTRS:
+            return any(_names_connection(a) for a in node.args)
+        if func.attr == "get" and node.args:
+            return _names_connection(node.args[0])
+    return False
+
+
+def _constrains_org(stmt: ast.stmt) -> bool:
+    """Does this statement mention org scoping at all?
+
+    Deliberately generous — `Connection.org_id == org_id`, `filter_by(org_id=…)`
+    and `where(Connection.org_id.in_(…))` all count. The guard's job is to force
+    the question to be asked in the statement that builds the query, not to
+    typecheck the predicate.
+    """
+    for node in ast.walk(stmt):
+        if isinstance(node, ast.Attribute) and node.attr == "org_id":
+            return True
+        if isinstance(node, ast.keyword) and node.arg == "org_id":
+            return True
+    return False
+
+
+def _enclosing(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _climb(node: ast.AST, parents: dict[ast.AST, ast.AST], kinds: tuple) -> ast.AST | None:
+    cur = parents.get(node)
+    while cur is not None:
+        if isinstance(cur, kinds):
+            return cur
+        cur = parents.get(cur)
+    return None
+
+
+class TestEveryConnectionQueryIsOrgScoped:
+    """The same invariant as the class above, at the width of the class.
+
+    `TestNoBarePrimaryKeyConnectionLookup` pins `session.get(Connection, id)` —
+    the exact call that shipped the defect. Measured 2026-08-31 by planting a
+    synthetic module under `datanika/`: that check stays **green** on all four
+    of these, while a `session.get` in the same file turns it red, so the green
+    was coverage absence rather than a walker that never read the file:
+
+        select(Connection).where(Connection.id == conn_id)      # ← the idiom
+        session.query(Connection).get(conn_id)                  #   this repo
+        session.scalars(select(Connection).filter_by(id=cid))   #   uses
+        session.query(Connection).filter(Connection.id == cid).first()
+
+    The first is how `get_org_connection`, `list_connections` and
+    `export_backup` are all written, so the *most likely* way this defect comes
+    back is in a form the narrower check cannot see. Hence: any statement that
+    builds a `Connection` query must constrain `org_id` in that same statement.
+
+    Empty allowlist on purpose. A genuinely cross-org query is a real thing to
+    want one day — a support console, a platform-wide migration — and when it
+    is, adding its `module.py::function` here is an edit to a security test that
+    someone reviews, rather than a comment nobody reads.
+    """
+
+    CROSS_ORG_ALLOWLIST: frozenset[str] = frozenset()
+
+    def test_connection_queries_constrain_org_id(self) -> None:
+        root = pathlib.Path(__file__).resolve().parents[2] / "datanika"
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            parents = _enclosing(tree)
+            for node in ast.walk(tree):
+                if not _is_connection_query(node):
+                    continue
+                stmt = _climb(node, parents, (ast.stmt,))
+                if stmt is None or _constrains_org(stmt):
+                    continue
+                func = _climb(node, parents, (ast.FunctionDef, ast.AsyncFunctionDef))
+                fname = func.name if func is not None else "<module>"
+                rel = path.relative_to(root.parent).as_posix()
+                if f"{path.name}::{fname}" in self.CROSS_ORG_ALLOWLIST:
+                    continue
+                offenders.append(f"{rel}:{node.lineno} (in {fname})")
+
+        assert offenders == [], (
+            "Connection query with no org_id constraint at "
+            + ", ".join(offenders)
+            + " — every read of a Connection must be scoped to the caller's org "
+            "in the statement that builds it, because connection ids are small "
+            "sequential integers and an id that arrived in a request body is "
+            "another tenant's id until proven otherwise. Use "
+            "datanika.services.connection_service.get_org_connection(session, "
+            "org_id, conn_id). If the query is deliberately cross-org, add "
+            "'<module>.py::<function>' to CROSS_ORG_ALLOWLIST above so the "
+            "exemption is reviewed rather than assumed."
+        )
+
+    def test_connection_relationship_is_not_traversed_outside_models(self) -> None:
+        """The ORM route the query guard above cannot see.
+
+        `Pipeline.destination_connection`, `Upload.source_connection` and
+        `Upload.destination_connection` are declared relationships. Reading one
+        lazy-loads by foreign key with **no** org filter — the identical
+        cross-tenant read as the bare primary-key lookup, in an expression that
+        contains no query at all. Nothing traverses them today (measured), and
+        `get_org_connection(session, org_id, pipeline.destination_connection_id)`
+        sits one autocomplete away from `pipeline.destination_connection`.
+        """
+        root = pathlib.Path(__file__).resolve().parents[2] / "datanika"
+        rel_names = {"destination_connection", "source_connection"}
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(root.parent).as_posix()
+            if rel.startswith("datanika/models/"):
+                continue  # where the relationships are declared
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and node.attr in rel_names:
+                    offenders.append(f"{rel}:{node.lineno} (.{node.attr})")
+
+        assert offenders == [], (
+            "Connection reached through an ORM relationship at "
+            + ", ".join(offenders)
+            + " — a relationship load follows the foreign key with no org "
+            "filter, so it resolves another tenant's row for any cross-org or "
+            "soft-deleted reference already stored. Read the *_connection_id "
+            "column and pass it to get_org_connection(session, org_id, id)."
+        )

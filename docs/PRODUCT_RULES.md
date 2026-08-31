@@ -72,6 +72,15 @@ destructive. The long-form incident is `plans/WORKFLOW_RULES.md` §7b; these are
 2. **Scope every confirmation to the dialog and assert the dialog is open first.**
    `getByRole('dialog').getByRole('button', {name: …})`. The failure above was not a wrong button —
    it was clicking when there was nothing to click.
+   🚨 **But check that the dialog exists on that page, because on most of them it does not.**
+   Measured 2026-08-31: **twelve** destructive one-click controls in `datanika/ui/pages/`. core#804
+   added a real `role="alertdialog"` to **two** — `/connections` and `/uploads` — and it reaches
+   production only on the next promotion. The other ten (`/schedules`, `/pipelines`,
+   `/transformations`, `/settings` ×3, `/api-keys`, `/dag`, `/models`) still mutate on the first
+   click: **core#851**. An agent that follows this rule literally where no dialog exists concludes
+   the click failed and clicks again — which on a delete page is a second deletion. **This rule and
+   rule 1 are not substitutes**: aiming by row content makes a mis-click impossible, a dialog makes
+   it recoverable, and 2026-07-22 needed both.
 3. **Target by id, inside the card, with the subject asserted.** Chrome's password manager renders
    `#deleteButton` (one credential) and `#deleteAllButton` (**everything on the device**) on the same
    page, with near-identical labels in the founder's locale. The single-credential delete needs no
@@ -180,3 +189,41 @@ Two corollaries:
   license the same screenshots in the MySQL guide. Fanning out is how these guides drifted into
   documenting fields that did not exist — a redshift `Schema` field, four fictional `rest-api` auth
   fields, a Kafka SASL section — in guides that all read as authoritative.
+
+## 10. When a refactor makes a guard blind, fix the refactor — not the guard
+
+Two of this repo's guards are **lexical**: they read source *shape*, not behaviour. Both went red on
+core#804's delete dialog, neither was wrong, and each one was one keystroke away from being silenced
+in a way nobody would ever have noticed.
+
+- **`tests/test_security/test_tenant_fk_boundary.py`** recognises an org-scoped query by seeing
+  `Model.org_id == org_id` **inside the `.where()` call**. Adding an `include_deleted` flag by
+  building the conditions in a list first — `select(C).where(*conditions)` — is byte-identical SQL,
+  and the scanner stops recognising it. The S1 guard from core#733 would have gone **blind on a query
+  that was still perfectly correct.** That is strictly worse than a red test, because the red test
+  eventually goes green and the blind spot never announces itself. Fix: keep `org_id` in the first
+  `.where()` and chain the optional predicate onto the statement.
+- **`tests/test_ui/test_rbac_ui_visibility.py`'s `_GateChecker`** tracks enclosing `rx.cond` role
+  gates **lexically**. Moving a Delete button into a `_delete_connection_dialog()` helper takes it out
+  of the gate's view, even though the call site was still wrapped in `rx.cond(AuthState.can_delete,
+  …)`. Fix: make the helper **self-gating** — put the `rx.cond` inside it — rather than teaching the
+  checker to follow function calls.
+
+**The rule: when a lexical guard stops recognising your code, move the code back into the shape it
+recognises, or move the gate to where it can see it.** Do not teach the guard about indirection, and
+do not add an allowlist entry. Both trade a cheap, dumb, reliable check for a clever one, and the
+cleverness is on the wrong side of that trade — a guard's whole value is that it cannot be argued
+with.
+
+**Corollary, and it is the useful half: a guard that goes red on your refactor has just told you
+something.** The temptation is to read it as friction from a test that does not understand your
+change. Ask first whether the shape it wanted was load-bearing. Twice out of two, here, it was.
+
+⚠️ **The exception that proves it.** `tests/test_i18n/test_i18n.py`'s orphan-key scanner knew only
+`_t["key"]`, so two keys read from `i18n.translations` inside a state handler looked like orphans.
+That one *was* widened — because it was not a guard going blind, it was a guard that had never seen a
+second, legitimate usage channel. The discriminator: **would the change make a real defect
+invisible?** Widening the i18n scanner makes nothing invisible. Loosening either guard above would.
+And note the failure mode if you get it wrong here: the obvious "fix" for an orphan-key failure is to
+delete the key, which silently drops the translation for all nine locales and leaves the English
+fallback.

@@ -66,7 +66,10 @@ def client(app: Starlette) -> TestClient:
 
 @pytest.fixture
 def env():
-    with _boundary_env() as (session, b_ids):
+    # `_boundary_env` also yields the A-owned ids it seeds (core#719). This
+    # file brings its own via `_own_connection`, so they are discarded here —
+    # but the unpack has to match, and it is the pre-push that said so.
+    with _boundary_env() as (session, b_ids, _a_ids):
         yield session, b_ids
 
 

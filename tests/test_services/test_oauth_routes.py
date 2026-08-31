@@ -122,14 +122,14 @@ class TestOAuthCallback:
             client.cookies.set("oauth_state", _make_state_cookie("real_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=forged_state")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_missing_state_cookie_redirects_to_login(self, client):
         with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             resp = client.get("/api/auth/callback/google?code=abc&state=xyz")
             assert resp.status_code == 302
-            assert "Invalid+OAuth+state" in resp.headers["location"]
+            assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_missing_code_redirects_to_login(self, client):
         with patch("datanika.services.oauth_routes._get_providers") as mock:

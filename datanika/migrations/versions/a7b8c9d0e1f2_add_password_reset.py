@@ -41,6 +41,35 @@ So the choice is which way to be wrong:
 This migration takes the second. Going forward the distinction is exact:
 ``register_user`` stamps the column, ``find_or_create_oauth_user`` leaves it
 NULL on creation and never clears it when linking.
+
+----------------------------------------------------------------------------
+Why ``downgrade()`` stashes the column instead of just dropping it (#726)
+----------------------------------------------------------------------------
+
+Everything above reasons about the column's *first* consumer: the Settings
+card's "has this account ever had a human-chosen password" gate, which reads
+only NULL vs non-NULL. #671 gave it a second one, and that one reads the
+**value** — ``redeem_refresh_token`` refuses a refresh token whose ``iat``
+predates ``password_changed_at``, which is the mechanism that makes changing
+your password end your other sessions.
+
+A plain ``drop_column`` plus this file's own backfill is a data-loss cycle for
+that second consumer. Roll back one release and forward again — an ordinary bad
+deploy — and every row is re-stamped from ``created_at``, moving the revocation
+baseline back to signup. A password change performed *because* the account was
+believed compromised is silently undone, and every refresh token minted since
+the account existed is valid again. It fails **open**.
+
+Nothing that was watching could see it: the column returns with the same name,
+type and nullability, the row count is unchanged, and no value is NULL, so the
+schema round-trip and every count-based assertion stay green. Only comparing
+values catches it — which is the gap #726 was filed for.
+
+So the values are carried across the downgraded window in ``_ROLLBACK_STASH``
+and put back by the next ``upgrade()``, NULLs included. The backfill then only
+reaches rows the stash does not cover, which is exactly the set that needs it:
+a fresh install, and any account the *previous* release created while serving
+the rollback.
 """
 
 from collections.abc import Sequence
@@ -52,6 +81,11 @@ revision: str = "a7b8c9d0e1f2"
 down_revision: str | None = "b3f9d17c245e"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+# Carries ``users.password_changed_at`` across a downgrade. Exists only between
+# a ``downgrade()`` and the next ``upgrade()``; no released version of the
+# application reads it, and the re-upgrade consumes and drops it.
+_ROLLBACK_STASH = "password_changed_at_rollback_stash"
 
 
 def upgrade() -> None:
@@ -90,13 +124,35 @@ def upgrade() -> None:
     )
     op.create_index("ix_password_reset_tokens_user_id", "password_reset_tokens", ["user_id"])
 
-    # Fail closed — see the module docstring for why there is no WHERE clause.
-    op.execute(
-        "UPDATE users SET password_changed_at = created_at WHERE password_changed_at IS NULL"
-    )
+    connection = op.get_bind()
+
+    # Put back whatever a previous downgrade() set aside, before the backfill
+    # runs — see the module docstring. Absent on a first install, which is the
+    # common case and where this is a no-op.
+    stashed = sa.inspect(connection).has_table(_ROLLBACK_STASH)
+    if stashed:
+        op.execute(
+            f"UPDATE users SET password_changed_at = s.password_changed_at "  # noqa: S608
+            f"FROM {_ROLLBACK_STASH} s WHERE s.user_id = users.id"
+        )
+
+    # Fail closed — see the module docstring for why there is no WHERE clause
+    # beyond the NULL test. Rows the stash covered are excluded rather than
+    # merely non-NULL: it also held the genuine NULLs, and re-stamping one of
+    # those turns an OAuth-only account into one that "has a password".
+    backfill = "UPDATE users SET password_changed_at = created_at WHERE password_changed_at IS NULL"
+    if stashed:
+        backfill += f" AND id NOT IN (SELECT user_id FROM {_ROLLBACK_STASH})"  # noqa: S608
+    op.execute(backfill)
+
+    if stashed:
+        # expand-contract: safe in a single release. No deployed version of the
+        # application has ever read this table — it is written by downgrade()
+        # and consumed here, so the t1 window (old code, new schema) cannot
+        # observe it.
+        op.drop_table(_ROLLBACK_STASH)
 
     # Force commit — Alembic env.py with SQLAlchemy 2.0 autobegin
-    connection = op.get_bind()
     connection.commit()
 
 
@@ -104,4 +160,16 @@ def downgrade() -> None:
     op.drop_index("ix_password_reset_tokens_user_id")
     op.drop_index("ix_password_reset_tokens_token_hash")
     op.drop_table("password_reset_tokens")
+
+    # Preserve the revocation baseline across the rollback window — see the
+    # module docstring. Every row, NULLs included: NULL is itself a meaningful
+    # value in this column. DROP first, because rolling back twice in a day is
+    # a bad release day, not an exotic scenario, and a bare CREATE TABLE would
+    # raise DuplicateTable and leave the second downgrade half-applied.
+    op.execute(f"DROP TABLE IF EXISTS {_ROLLBACK_STASH}")
+    op.execute(
+        f"CREATE TABLE {_ROLLBACK_STASH} AS "  # noqa: S608
+        f"SELECT id AS user_id, password_changed_at FROM users"
+    )
+
     op.drop_column("users", "password_changed_at")

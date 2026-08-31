@@ -26,6 +26,11 @@ import pathlib
 
 MIGRATIONS = pathlib.Path(__file__).resolve().parents[2] / "datanika" / "migrations" / "versions"
 
+# Name of the module global the migration uses for its rollback stash. Referred
+# to by identifier rather than by value so this file does not restate the table
+# name and quietly stop matching if it is renamed.
+_STASH_CONST = "_ROLLBACK_STASH"
+
 
 def _migration() -> pathlib.Path:
     matches = [p for p in MIGRATIONS.glob("*.py") if "password_reset" in p.name]
@@ -62,9 +67,38 @@ def _add_column_call() -> str:
 
 class TestExpandOnly:
     def test_no_destructive_operation_in_upgrade(self):
+        """Nothing the previously-deployed release can see is removed at t1.
+
+        ``upgrade()`` drops exactly one thing: ``_ROLLBACK_STASH``, which
+        ``downgrade()`` writes and this function consumes (#726). No released
+        version of the application has ever read that table, so it does not
+        exist as far as the t1 window is concerned.
+
+        The check is per line rather than per file so it keeps its teeth: a
+        ``drop_column`` on ``users``, or a ``drop_table`` naming anything other
+        than the stash, still fails here.
+        """
         body = _upgrade_body()
-        for op in ("drop_column", "drop_table", "drop_constraint", "rename_table"):
-            assert f"op.{op}" not in body
+        for call in ("drop_column", "drop_table", "drop_constraint", "rename_table"):
+            for line in body.splitlines():
+                if f"op.{call}(" not in line:
+                    continue
+                assert call == "drop_table" and "_ROLLBACK_STASH" in line, (
+                    f"upgrade() performs op.{call} on something the deployed "
+                    f"release can still see: {line.strip()}"
+                )
+
+    def test_the_rollback_stash_is_written_by_downgrade_and_consumed_by_upgrade(self):
+        """Guard the guard above: the exemption is only sound while both halves
+        exist. A stash that ``downgrade()`` stopped writing would leave the
+        exemption permitting a drop of something nothing creates."""
+        source = _migration().read_text(encoding="utf-8")
+        start = source.index("def downgrade(")
+        downgrade_body = source[start:]
+        assert f"CREATE TABLE {{{_STASH_CONST}}}" in downgrade_body or (
+            _STASH_CONST in downgrade_body and "CREATE TABLE" in downgrade_body
+        ), "downgrade() no longer creates the rollback stash"
+        assert _STASH_CONST in _upgrade_body(), "upgrade() no longer consumes the rollback stash"
 
     def test_the_new_user_column_is_nullable(self):
         """A NOT NULL column is invisible to the old container only while it is

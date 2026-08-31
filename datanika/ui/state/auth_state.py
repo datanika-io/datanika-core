@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
+from datanika.services.auth_redirects import AUTH_ERROR_KEYS
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.email_verification import request_email_verification
 from datanika.services.user_service import UserService, UserServiceError
@@ -130,6 +131,51 @@ class AuthState(rx.State):
         ``?reset=1`` and ``?expired=1``, for the same reason.
         """
         return self.router.page.params.get("link_blocked", "") == "1"
+
+    @rx.var
+    def auth_error_reason(self) -> str:
+        """The ``?auth_error=`` slug, or "" when it is not one we publish (#686).
+
+        A **whitelist**, not a passthrough. The page renders a translated sentence chosen
+        by this slug; it never renders the query string itself. Under the previous
+        free-text parameter anyone could send a link that put their own text inside our
+        sign-in card, under our logo, in our styling.
+        """
+        reason = self.router.page.params.get("auth_error", "")
+        return reason if reason in AUTH_ERROR_KEYS else ""
+
+    @rx.var
+    def show_email_verified(self) -> bool:
+        """Whether /login arrived from a completed email confirmation (#700, #659)."""
+        return self.router.page.params.get("verified", "") == "1"
+
+    @rx.var
+    def show_verify_error(self) -> bool:
+        """Whether the confirmation link was invalid, expired, or failed to apply (#700).
+
+        Sent by three separate branches of ``verify_email``; one message covers all of
+        them because the remedy is identical - sign in and ask for a new link.
+        """
+        return self.router.page.params.get("verify_error", "") == "1"
+
+    @rx.var
+    def show_invite_accepted(self) -> bool:
+        """Whether an invitation was accepted and the user should now sign in (#659).
+
+        The happy path already worked *silently*: ``org_id`` on the same redirect is read
+        below and switches the session into the invited org. Only the acknowledgement was
+        missing.
+        """
+        return self.router.page.params.get("invite_accepted", "") == "1"
+
+    @rx.var
+    def show_invite_error(self) -> bool:
+        """Whether an invitation link failed (#659).
+
+        The costly one. An invitee has no account, no error, and no reason not to click
+        the same dead link again - and the person who invited them gets no signal either.
+        """
+        return self.router.page.params.get("invite_error", "") == "1"
 
     @rx.var
     def org_id(self) -> int:

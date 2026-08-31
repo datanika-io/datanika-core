@@ -94,7 +94,7 @@ class TestSSOLogin:
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/api/auth/sso/login/test-org", follow_redirects=False)
         assert resp.status_code == 302
-        assert "not+configured" in resp.headers["location"]
+        assert "auth_error=sso_not_configured" in resp.headers["location"]
 
 
 class TestOIDCFlow:

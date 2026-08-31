@@ -11,6 +11,7 @@ from starlette.routing import Route
 
 from datanika.config import settings
 from datanika.services.auth import AuthService
+from datanika.services.auth_redirects import login_error_path
 from datanika.services.oauth_service import (
     OAuthProvider,
     OAuthService,
@@ -67,7 +68,9 @@ async def oauth_login(request: Request) -> RedirectResponse:
     provider = request.path_params["provider"]
     providers = _get_providers()
     if provider not in providers:
-        return RedirectResponse(url=_frontend("/login?error=Unknown+provider"), status_code=302)
+        return RedirectResponse(
+            url=_frontend(login_error_path("unknown_provider")), status_code=302
+        )
 
     svc = _get_service()
     state = secrets.token_urlsafe(32)
@@ -90,26 +93,26 @@ async def oauth_callback(request: Request) -> RedirectResponse:
     provider = request.path_params["provider"]
     providers = _get_providers()
     if provider not in providers:
-        return RedirectResponse(url=_frontend("/login?error=Unknown+provider"), status_code=302)
+        return RedirectResponse(
+            url=_frontend(login_error_path("unknown_provider")), status_code=302
+        )
 
     code = request.query_params.get("code")
     if not code:
-        return RedirectResponse(
-            url=_frontend("/login?error=Missing+authorization+code"), status_code=302
-        )
+        return RedirectResponse(url=_frontend(login_error_path("missing_code")), status_code=302)
 
     # Validate CSRF state
     returned_state = request.query_params.get("state", "")
     cookie_value = request.cookies.get(_OAUTH_STATE_COOKIE, "")
     if ":" not in cookie_value:
-        return RedirectResponse(url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302)
+        return RedirectResponse(url=_frontend(login_error_path("invalid_state")), status_code=302)
     stored_state, signature = cookie_value.rsplit(":", 1)
     if (
         not returned_state
         or returned_state != stored_state
         or not _verify_state(stored_state, signature)
     ):
-        return RedirectResponse(url=_frontend("/login?error=Invalid+OAuth+state"), status_code=302)
+        return RedirectResponse(url=_frontend(login_error_path("invalid_state")), status_code=302)
 
     svc = _get_service()
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/callback/{provider}"
@@ -128,7 +131,7 @@ async def oauth_callback(request: Request) -> RedirectResponse:
             return RedirectResponse(url=_frontend("/login?link_blocked=1"), status_code=302)
         except Exception:
             return RedirectResponse(
-                url=_frontend("/login?error=OAuth+authentication+failed"), status_code=302
+                url=_frontend(login_error_path("oauth_failed")), status_code=302
             )
 
     params = urlencode(

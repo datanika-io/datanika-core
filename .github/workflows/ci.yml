@@ -854,18 +854,37 @@ jobs:
               --label "e2e-failure"
           fi
 
-  # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases)
-  # against the staging app with a disposable Authentik IdP on Hetzner.
+  # SSO E2E tests — runs 16 Playwright specs (OIDC + SAML + edge cases) against the
+  # staging app with a disposable Authentik IdP on pointer.gr.
   #
-  # Topology: Authentik on Hetzner :9000 (same host as staging), SSH tunnel
-  # to the CI runner so the Playwright browser can reach the IdP login form.
-  # Bootstrap + seed run on Hetzner via SSH (they need docker exec).
+  # Topology: Authentik on pointer.gr :9000 (same host as staging), SSH tunnel to the
+  # CI runner so the Playwright browser can reach the IdP login form. Bootstrap + seed
+  # run on pointer.gr via SSH (they need docker exec). The IdP and the app under test
+  # MUST stay co-located: they are joined by a docker network alias, and splitting them
+  # is exactly what the 2026-07-17 migration did.
+  #
+  # Re-enabled 2026-08-31 (core#714) after six weeks dark. It was switched off on
+  # 2026-07-17 in the Hetzner→pointer.gr migration because the disposable IdP lived on
+  # the box that was terminated, and #298 — which tracked rebuilding it — was closed
+  # having rebuilt only two of its three subjects.
+  #
+  # ⚠️ Nothing needed rebuilding. The whole server-side topology was rehearsed by hand
+  # on pointer.gr on 2026-08-31 and worked first time: Authentik came up, bootstrap
+  # exited 0 (OIDC + SAML providers created), the staging container reached the IdP over
+  # the docker alias (HTTP 200) with a consistent OIDC issuer, and the configs seeded
+  # (orgs e2e-fixture / e2e-fixture-saml). Peak footprint 367 MiB; prod was unaffected.
+  # What was missing was not a host — it was someone running it.
+  #
+  # ⚠️ INFORMATIONAL TIER (core#521), which is what `continue-on-error` below encodes.
+  # Sixteen specs that have not run in six weeks are NEW specs for gating purposes
+  # regardless of their file dates. They graduate to gating after three consecutive
+  # greens on dev, and demotion afterwards needs an issue. Do NOT add this to the
+  # required checks on dev until it has earned that — a permanently-red gate is how a
+  # whole tier gets ignored, which is the history behind #222, #230 and #232.
   e2e-sso:
     needs: [deploy-staging]
-    # Disabled 2026-07-17: the disposable Authentik SSO test-env lived on the dead
-    # Hetzner box and hasn't been rebuilt on pointer.gr. Re-enable (and repoint the
-    # HETZNER_HOST refs below to POINTER_HOST) once an SSO test env is stood up.
-    if: false
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    continue-on-error: true
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -888,8 +907,8 @@ jobs:
 
       - name: Configure SSH
         env:
-          SSH_KEY: ${{ secrets.HETZNER_SSH_KEY }}
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
@@ -903,7 +922,7 @@ jobs:
 
       - name: Start Authentik on staging server
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           ssh root@$SSH_HOST "mkdir -p /opt/datanika/e2e-sso/scripts"
           scp e2e/docker-compose.test.yml root@$SSH_HOST:/opt/datanika/e2e-sso/
@@ -914,26 +933,39 @@ jobs:
           # (matches the docker exec names in bootstrap-authentik.sh)
           ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && docker compose -p e2e -f docker-compose.test.yml up -d"
 
-          # Wait for Authentik to be healthy (~90s first boot with migrations)
-          ssh root@$SSH_HOST 'for i in $(seq 1 30); do
-            status=$(docker inspect --format="{{.State.Health.Status}}" e2e-authentik-server-1 2>/dev/null)
-            echo "attempt $i: $status"
-            if [ "$status" = "healthy" ]; then exit 0; fi
+          # Wait for Authentik to be READY, not merely "healthy" (core#714).
+          #
+          # ⚠️ Two things measured on pointer.gr 2026-08-31, and the old 30x10s
+          # container-health wait was wrong on both counts:
+          #   1. Cold first boot spends ~315s in django migrations. The old budget was
+          #      300s, so it expired roughly 15s BEFORE the container went healthy --
+          #      a job that would have failed while nothing was actually broken.
+          #   2. `ak healthcheck` probes /-/health/live/. Measured: live returned 200
+          #      while /-/health/ready/ was still returning 502, so docker reported
+          #      "healthy" for a server that could not yet serve an API request.
+          #      Waiting on container health is waiting on the wrong signal.
+          # Poll readiness directly, and give it 600s.
+          ssh root@$SSH_HOST 'for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:9000/-/health/ready/)
+            echo "attempt $i: ready=$code"
+            if [ "$code" = "200" ]; then exit 0; fi
             sleep 10
           done
-          echo "Authentik failed to become healthy"
+          echo "Authentik never became ready within 600s"
+          docker ps -a --filter name=e2e --format "{{.Names}}\t{{.Status}}"
+          docker inspect --format "oom={{.State.OOMKilled}} restarts={{.RestartCount}}" e2e-authentik-server-1
           docker logs e2e-authentik-server-1 --tail 50
           exit 1'
 
       - name: Bootstrap Authentik (OIDC + SAML providers)
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           ssh root@$SSH_HOST "cd /opt/datanika/e2e-sso && DATANIKA_E2E_BASE_URL=https://staging-app.datanika.io bash scripts/bootstrap-authentik.sh"
 
       - name: Bridge staging container to Authentik network
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           # Staging container needs to reach Authentik for OIDC token exchange.
           # Connect authentik-server to datanika-staging_default with an alias
@@ -949,23 +981,27 @@ jobs:
           # Rewrite fixture URLs: localhost:9000 → e2e-authentik-server:9000
           # Same hostname resolves from:
           #   - Staging container: via docker DNS alias → Authentik container
-          #   - CI runner: via /etc/hosts → 127.0.0.1 → SSH tunnel → Hetzner:9000
+          #   - CI runner: via /etc/hosts -> 127.0.0.1 -> SSH tunnel -> pointer.gr:9000
           #   - Authentik self-request: Host header matches, OIDC issuer consistent
           ssh root@$SSH_HOST "sed -i 's|http://localhost:9000|http://e2e-authentik-server:9000|g' /opt/datanika/e2e-sso/.sso-fixture.json"
           ssh root@$SSH_HOST "cat /opt/datanika/e2e-sso/.sso-fixture.json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(\"Fixture URL:\", d[\"authentik_url\"])'"
 
       - name: Seed SSO configs in staging DB
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           ssh root@$SSH_HOST "docker cp /opt/datanika/e2e-sso/.sso-fixture.json \$(/opt/datanika-staging/active-app.sh):/app/e2e/.sso-fixture.json"
-          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) uv run python e2e/scripts/seed-sso-configs.py"
+          # Call the interpreter directly, NOT `uv run` (WORKFLOW_RULES §3): `uv run`
+          # re-syncs the venv from uv.lock before running, so it mutates a live staging
+          # container on the way to seeding it. Verified working on pointer.gr
+          # 2026-08-31 -- seeded orgs e2e-fixture (OIDC) and e2e-fixture-saml (SAML).
+          ssh root@$SSH_HOST "docker exec \$(/opt/datanika-staging/active-app.sh) /app/.venv/bin/python e2e/scripts/seed-sso-configs.py"
 
       - name: Open SSH tunnel to Authentik + hosts entry
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
-          # SSH tunnel: CI runner's localhost:9000 → Hetzner:9000 → Authentik
+          # SSH tunnel: CI runner localhost:9000 -> pointer.gr:9000 -> Authentik
           ssh -f -N -L 9000:localhost:9000 root@$SSH_HOST
 
           # /etc/hosts: e2e-authentik-server → 127.0.0.1 (tunnel endpoint)
@@ -1012,7 +1048,7 @@ jobs:
           curl -sI --max-time 10 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -5 || true
           echo ""
           echo "=== Staging → Authentik reachability ==="
-          ssh root@${{ secrets.HETZNER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
+          ssh root@${{ secrets.POINTER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
 
       - name: Run SSO specs
         working-directory: e2e
@@ -1050,7 +1086,7 @@ jobs:
       - name: Cleanup Authentik
         if: always()
         env:
-          SSH_HOST: ${{ secrets.HETZNER_HOST }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
         run: |
           # Disconnect authentik from staging network before teardown
           ssh root@$SSH_HOST "docker network disconnect datanika-staging_default e2e-authentik-server-1 2>/dev/null || true"

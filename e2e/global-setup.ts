@@ -39,7 +39,7 @@ import type { FullConfig } from "@playwright/test";
  * remote DB. Example for staging:
  *
  *   DATANIKA_E2E_BASE_URL=https://staging-app.datanika.io/ \
- *   DATANIKA_E2E_SEED_CMD="ssh root@46.225.214.120 'docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'" \
+ *   DATANIKA_E2E_SEED_CMD="ssh root@185.25.22.188 'docker exec datanika-staging-app uv run python -m datanika.scripts.e2e_seed'" \
  *   npm test
  *
  * The local e2e_seed.py still runs inside the staging container and writes

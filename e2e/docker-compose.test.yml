@@ -13,10 +13,25 @@
 # The compose file is self-contained — no dependency on the main
 # docker-compose.yml. Ports deliberately avoid conflict with the main
 # stack (9000 vs 3000/8000).
+#
+# ⚠️ Two things below are about WHERE this runs, not about Authentik (core#714).
+# In CI this is started on pointer.gr — the box that also serves PRODUCTION and two
+# unrelated co-tenants — so it is not a throwaway laptop stack:
+#
+#   1. `127.0.0.1:9000:9000`, never `9000:9000`. Every other Datanika port on that box
+#      binds loopback (only 22/80/443 are public); a bare `9000:9000` would publish an
+#      Authentik carrying the hardcoded admin credentials below to the internet. The CI
+#      topology does not need more: `ssh -L 9000:localhost:9000` resolves `localhost`
+#      on the REMOTE side, so loopback is sufficient. Verified on pointer.gr 2026-08-31.
+#   2. `mem_limit` on every service. Authentik is transient here but it shares 8 GB with
+#      production; an unbounded IdP OOMing that box is a prod outage, not a failed test.
+#      Measured peak on pointer.gr 2026-08-31: server 105 MiB, worker 199 MiB, db 59 MiB,
+#      redis 4 MiB — 367 MiB total, so these limits are ~3x headroom, not a squeeze.
 
 services:
   authentik-db:
     image: postgres:16-alpine
+    mem_limit: 256m
     environment:
       POSTGRES_DB: authentik
       POSTGRES_USER: authentik
@@ -31,6 +46,7 @@ services:
 
   authentik-redis:
     image: redis:7-alpine
+    mem_limit: 128m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -40,6 +56,7 @@ services:
   authentik-server:
     image: ghcr.io/goauthentik/server:2024.12
     command: server
+    mem_limit: 1g
     environment:
       AUTHENTIK_SECRET_KEY: e2e-test-secret-key-not-for-production
       AUTHENTIK_REDIS__HOST: authentik-redis
@@ -52,7 +69,9 @@ services:
       AUTHENTIK_BOOTSTRAP_PASSWORD: e2e-admin-password
       AUTHENTIK_BOOTSTRAP_TOKEN: e2e-bootstrap-token
     ports:
-      - "9000:9000"
+      # Loopback only — see the note at the top of this file. This is started on the
+      # shared production box in CI; `ssh -L` reaches it, the internet must not.
+      - "127.0.0.1:9000:9000"
     depends_on:
       authentik-db:
         condition: service_healthy
@@ -68,6 +87,7 @@ services:
   authentik-worker:
     image: ghcr.io/goauthentik/server:2024.12
     command: worker
+    mem_limit: 1g
     environment:
       AUTHENTIK_SECRET_KEY: e2e-test-secret-key-not-for-production
       AUTHENTIK_REDIS__HOST: authentik-redis

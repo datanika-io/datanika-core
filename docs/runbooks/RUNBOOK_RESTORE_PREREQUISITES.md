@@ -19,8 +19,8 @@ below is required to turn that dump back into Datanika, and none of it is inside
 | # | Input | Lives at | Independent copies | Replaceable? |
 |---|---|---|---|---|
 | 1 | The dump itself | Aweb `185.226.65.96:/opt/datanika-backups/*.sql.gz.gpg` (30 d) + app box `/opt/datanika/backups/*.sql.gz` (7 d) | 2 | n/a |
-| 2 | **Backup decryption key** | app box `/root/.gnupg` **+** `secrets/datanika-backup-privkey.asc` | 2 | ❌ **no** — without it every off-site copy is noise |
-| 3 | **`CREDENTIAL_ENCRYPTION_KEY`** | app box `.env.docker` **+** `secrets/pointer-app.env.docker` | 2 | ❌ **NO. This is the one truly irreplaceable secret we hold.** |
+| 2 | **Backup decryption key** | app box `/root/.gnupg` **+** `secrets/datanika-backup-privkey.asc` **+** [the third location](#the-third-location-answered-2026-09-01) | 2 verified + 1 reported | ❌ **no** — without it every off-site copy is noise |
+| 3 | **`CREDENTIAL_ENCRYPTION_KEY`** | app box `.env.docker` **+** `secrets/pointer-app.env.docker` **+** [the third location](#the-third-location-answered-2026-09-01) | 2 verified + 1 reported | ❌ **NO. This is the one truly irreplaceable secret we hold.** |
 | 4 | `SECRET_KEY` | same two files | 2 | ✅ yes — rotating it invalidates sessions and outstanding reset links; users log in again |
 | 5 | `POSTGRES_PASSWORD` | same two files | 2 | ✅ yes — set it to anything on the restored instance |
 | 6 | TLS origin cert + key | app box `/etc/ssl/datanika/` **+** `secrets/datanika-origin.{pem,key}` | 2 | ✅ yes — reissue from Cloudflare |
@@ -110,25 +110,63 @@ downloads.
 
 ---
 
-## What is still owed
+## The third location — answered 2026-09-01
 
-⚠️ **Both irreplaceable secrets have exactly two copies, and one of them is the app box itself.**
-The other is a **single unreplicated laptop**. The 2026-07-14 Hetzner termination took a host, its
-data and its backups together; in that scenario the laptop is the only surviving copy of rows 2
-and 3.
+**The founder chose a personal cloud-storage account and reported placing both files in it**
+([cloud#133]). What they reported placing there:
 
-That is not something Infra should decide unilaterally, because every remaining option is about
-where the founder personally keeps a secret. **Open founder decision — a durable third location:**
+- `secrets/datanika-backup-privkey.asc` (row 2)
+- `secrets/pointer-app.env.docker` (row 3 — this is the file `CREDENTIAL_ENCRYPTION_KEY` lives in)
 
-- a password manager entry (free, and the founder already runs one), or
-- a printed copy in physical storage — both keys are short and rotate approximately never, or
-- an encrypted copy on separate physical media.
+🔑 **The location is the cloud account, not a folder on the laptop.** They reach it by syncing a
+local directory, and it is the **remote account** that is the third copy — the sync folder is on the
+same machine rows 2 and 3 are already escrowed on, so naming the path would describe a copy that
+dies with the machine it exists to survive. If the laptop is gone, sign in to the account from
+anywhere and the files are there.
 
-All three cost nothing, so the pre-revenue spend constraint does not apply. Tracked as
-**[cloud#133]** (private repo — the queue naming secret locations does not belong in public AGPL).
+🚨 **The provider and account are deliberately NOT named in this file.** `datanika-core` is public
+AGPL, and this document already states that row 3 decrypts every customer's warehouse credential;
+adding "and a copy lives at *vendor X*" turns a named internet-facing account into a target and buys
+a recoverer nothing, because they would still need its password. The two non-public records carry
+the vendor and account:
 
-Until then, treat `secrets/` as load-bearing: it is not a convenience copy, it is half of the
-disaster recovery plan.
+- `plans/SECRETS_INVENTORY.md` rows 38–39 (local-only, outside every git repo)
+- **[cloud#133]** (private repo)
+
+### Three caveats — the gap is narrowed, not closed
+
+Recorded honestly because a third copy that is believed and wrong is worse than none.
+
+1. ⚠️ **Nobody has verified the files are actually there.** This section records *what the founder
+   reported*, not a listing anyone performed. I did not look, deliberately — reading either file
+   serves no purpose here and copying secret material into a transcript is how the Docs-QA password
+   leaked three times. **Before relying on this in a recovery, confirm the two files exist** — and
+   confirm it by *presence and size*, never by printing a value.
+
+2. ⚠️ **The backup private key has no passphrase** (`cron` runs `backup-offsite.sh` unattended, so it
+   cannot have one — see row 2 and the fingerprint note in `SECRETS_INVENTORY.md`). Unless it was
+   encrypted before being placed, the escrowed copy is **the key in the clear, behind that account's
+   password alone**. I advised `gpg -c` on the file before uploading. **Whether that was done is
+   UNVERIFIED — do not assume either way.** If it was not, the account password is the only thing
+   standing between an account compromise and every off-site dump. Ask the founder; if the answer is
+   no, `gpg -c` it and re-upload, and record the answer here.
+
+3. ⚠️ **The account's own recovery key is now a dependency of our disaster recovery.** Cloud-storage
+   providers that encrypt client-side issue a recovery key that is the only way back in when the
+   password is lost. **If that recovery key lives solely on the same laptop, the third location is
+   not independent** — the laptop failure this escrow exists to survive would take the password
+   manager, the `secrets/` directory *and* the way back into the escrow account together. Founder to
+   confirm where the recovery key is kept. Until they do, treat row 2 and row 3 as **2 verified
+   copies plus 1 reported copy of unconfirmed independence**, which is what the table says.
+
+### What is still owed
+
+- Confirm the two files are present (caveat 1).
+- Confirm whether the backup key was encrypted before upload (caveat 2).
+- Confirm the account recovery key is not stored only on the escrowed laptop (caveat 3).
+
+Until all three are answered, `secrets/` remains load-bearing: it is not a convenience copy, it is
+half of the disaster recovery plan.
 
 [core#675]: https://github.com/datanika-io/datanika-core/issues/675
 [core#748]: https://github.com/datanika-io/datanika-core/issues/748

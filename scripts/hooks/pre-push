@@ -115,7 +115,28 @@ if [ -f uv.lock ]; then
   fi
 fi
 
-echo "pre-push: pytest"
+# --- does this push actually need the suite? (path-aware gate) --------------------------
+# `scripts/hooks/should-run-tests.sh` exits 0 = run, 1 = skip, and FAILS CLOSED: an
+# unresolvable range, a missing origin/dev, a detached HEAD, a git error or any unrecognised
+# path all mean "run everything". Only a positively-proven-inert change earns the skip.
+#
+# `tests/test_hooks/test_pre_push_gating.py` asserts that, mostly with negative tests —
+# break the range, delete the base ref, detach HEAD, and check it still says RUN. A path
+# filter nobody has watched *refuse* to skip is indistinguishable from one that always skips,
+# which is the failure mode of the helm gate below and of half the guards found this week.
+GATE="$REPO_ROOT/scripts/hooks/should-run-tests.sh"
+RAN_TESTS=0
+if [ -f "$GATE" ]; then
+  if GATE_OUT=$(bash "$GATE"); then RUN_TESTS=1; else RUN_TESTS=0; fi
+else
+  RUN_TESTS=1
+  GATE_OUT="RUN: gate script missing at $GATE"
+fi
+
+if [ "$RUN_TESTS" != "1" ]; then
+  echo "pre-push: pytest SKIPPED — $GATE_OUT"
+else
+echo "pre-push: pytest — $GATE_OUT"
 # UV_NO_SYNC=1 is NOT optional on Windows. test_head_downgrade_upgrade_roundtrip shells
 # out to `uv run alembic`, which tries to replace native extensions (sqlalchemy's
 # cyextension, cryptography, ...) while this pytest process still holds the files open.
@@ -128,10 +149,24 @@ echo "pre-push: pytest"
 # rediscovered the expensive way. It was still only in prose: the hook never set it.
 # Setting it here means nobody has to know.
 UV_NO_SYNC=1 "$PY" -m pytest tests/ -x -q --tb=short
+RAN_TESTS=1
+fi
 
 # Helm lint — only if chart files were modified in the push range
 if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then
-  CHANGED=$(git diff --name-only @{upstream}..HEAD -- deploy/helm/ 2>/dev/null || true)
+  # Resolved against origin/dev and failing CLOSED, for the reason the branch/commit check
+  # 70 lines above already spells out. This line used to read `@{upstream}..HEAD`: on a branch
+  # that has never been pushed @{upstream} does not resolve, git errors, `2>/dev/null || true`
+  # swallows it, CHANGED comes back empty and the lint is SKIPPED — on exactly the push where
+  # a chart change is most likely and least reviewed. The lesson was written down in this file
+  # and then not applied twelve lines later; now both gates share one shape.
+  HELM_BASE=$(git merge-base origin/dev HEAD 2>/dev/null || echo "")
+  if [ -z "$HELM_BASE" ]; then
+    CHANGED="(no merge-base with origin/dev — linting anyway)"
+  else
+    CHANGED=$(git diff --name-only "$HELM_BASE..HEAD" -- deploy/helm/ 2>/dev/null) \
+      || CHANGED="(git diff failed — linting anyway)"
+  fi
   if [ -n "$CHANGED" ]; then
     echo "pre-push: helm lint (chart files changed)"
     helm lint deploy/helm/datanika
@@ -142,7 +177,11 @@ if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then
 fi
 
 # Record that this venv satisfied the current lockfile (#557).
-if [ -f uv.lock ] && [ -d .venv ]; then
+# Gated on the suite having ACTUALLY RUN. The stamp's whole justification is "if the suite
+# passes, this venv is adequate for the current lockfile by definition" — which is exactly
+# what a skipped suite fails to establish. Stamping after a skip would mark an unproven venv
+# as proven and suppress the staleness warning on the next real run.
+if [ "$RAN_TESTS" = "1" ] && [ -f uv.lock ] && [ -d .venv ]; then
   sha256sum uv.lock 2>/dev/null | cut -d" " -f1 > "$LOCK_STAMP" || true
 fi
 

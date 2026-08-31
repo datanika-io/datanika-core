@@ -131,8 +131,11 @@ A genuine regression almost never lands on the identical values.
   pass later read it and dispatched a department to build a page that had been live in production for
   six weeks. The durable statement belongs in the spec; the tracker holds a pointer.
 - **Scope `closes #N` to what the PR actually does.** A PR fixing 4 of 36 connector guides carried
-  `closes #272`; GitHub closed it, and the remaining 31 stopped existing as tracked work. Use
-  `refs #N` and close by hand when the work is genuinely finished.
+  `closes` [datanika-landing#272](https://github.com/datanika-io/datanika-landing/issues/272); GitHub
+  closed it, and the remaining 31 stopped existing as tracked work. Use `refs #N` and close by hand
+  when the work is genuinely finished. *(Note the cross-repo hazard in that sentence: a bare `#272`
+  written in this repository auto-links to a completely unrelated core issue. Always qualify an issue
+  number that belongs to another repo.)*
 - **When you decline an acceptance criterion, say so on the record.** #682's *"no separator character
   remains in Python source"* over-reached — the survivors are list separators between standalone
   links, not connectives inside a sentence — and the implementer was right to refuse it. Agreeing in

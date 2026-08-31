@@ -7,16 +7,69 @@ license = "AGPL-3.0-only"
 requires-python = ">=3.12"
 dependencies = [
     # Data pipeline — pinned to tested versions; bump deliberately
-    "dlt[postgres,snowflake,bigquery,mssql,clickhouse,duckdb,databricks,synapse]>=1.21,<2",
-    "dbt-core>=1.7.19,<1.8",
-    "dbt-postgres>=1.7,<1.8",
-    "dbt-snowflake>=1.7,<1.8",
-    "dbt-bigquery>=1.7,<1.8",
-    "dbt-redshift>=1.7,<1.8",
-    "dbt-mysql>=1.7,<1.8",
-    "dbt-sqlserver>=1.7,<1.8",
-    "dbt-clickhouse>=1.7,<1.8",
-    "dbt-duckdb>=1.7,<1.8",
+    #
+    # ⚠️ `clickhouse` is deliberately NOT in dlt's extras list (core#825). That
+    # extra is `adlfs, clickhouse-connect, clickhouse-driver, gcsfs, pyarrow,
+    # s3fs`, and the one that matters is **s3fs**. The two ClickHouse drivers
+    # are declared directly below, so ClickHouse itself is unaffected; what is
+    # lost is `s3://` bucket URLs on the file source (`gs://` and `az://` still
+    # work — `gcsfs` and `adlfs` survive via other extras).
+    #
+    # 🔑 s3fs is excluded by TWO DIFFERENT constraints, one on each side of a
+    # gap with no release in it. Both measured with `uv lock` against this
+    # exact tree; do not re-derive from either half alone, because each looks
+    # like the whole story and each points at the wrong package.
+    #
+    #   s3fs <= 2025.12.0 -> `aiobotocore<3.0.0` -> botocore ~1.41, but
+    #     `redshift-connector>=2.1.14` (the CVE-2026-8838 RCE fix) floors
+    #     `boto3>=1.42.22`.                          Blocker: aiobotocore.
+    #   s3fs >= 2026.1.0  -> `fsspec>=2026.1` -> `gcsfs` ->
+    #     `google-cloud-storage>=3.7.0`, but EVERY dbt-bigquery through 1.12.0
+    #     declares `google-cloud-storage>=2.4,<3.2`.
+    #                                     Blocker: google-cloud-storage.
+    #
+    # ⚠️ The FIRST blocker is already dissolving upstream and is NOT the one to
+    # watch: `aiobotocore 3.0.0` (2025-12-10) crossed into botocore 1.42, and
+    # `s3fs 2026.1.0` (2026-01-09) raised its ceiling to `aiobotocore<4.0.0`.
+    # `aiobotocore 3.9.0` + `redshift-connector 2.1.16` resolve together in
+    # this tree today — verified. So the live blocker is the SECOND one, and it
+    # is a BigQuery/S3 collision inside Google's own client libraries that has
+    # nothing to do with security or with dbt-core.
+    #
+    # See BLOCKED_BY_S3FS_CONFLICT in
+    # tests/test_security/test_dependency_advisories.py for the mechanical
+    # re-check trigger. This is a deferral with a condition, not a trade.
+    "dlt[postgres,snowflake,bigquery,mssql,duckdb,databricks,synapse]>=1.21,<2",
+    # dbt-core 1.7 -> 1.11 (core#825). The 1.7 pin was the single line blocking
+    # six packages' CRITICAL/HIGH advisories, including `cryptography` (the
+    # library `EncryptionService` uses on customer warehouse credentials) and
+    # the redshift-connector RCE. Adapters take floors rather than a shared
+    # ceiling because dbt 1.8 split the adapter interface out into
+    # `dbt-adapters` and the adapters now version independently of dbt-core:
+    # at the time of writing dbt-postgres is 1.11.x while dbt-snowflake and
+    # dbt-bigquery are 1.12.x.
+    "dbt-core>=1.11,<1.12",
+    "dbt-postgres>=1.11,<2",
+    "dbt-snowflake>=1.11,<2",
+    "dbt-bigquery>=1.11,<2",
+    "dbt-redshift>=1.11,<2",
+    "dbt-sqlserver>=1.11,<2",
+    "dbt-clickhouse>=1.9,<2",
+    "dbt-duckdb>=1.11,<2",
+    # 🚨 `dbt-mysql` is GONE and is not coming back (core#825, founder decision
+    # 2026-08-31). Its last release is 1.7.0, published 2024-04-26 from a
+    # personal repository (github.com/dbeatty10/dbt-mysql), and it declares
+    # `dbt-core~=1.7.0`. A PyPI-index sweep for a successor found exactly two
+    # distributions targeting MySQL itself and both are abandoned; the other
+    # ten matches target different databases that merely speak the MySQL wire
+    # protocol. So this one abandoned package held every advisory above.
+    #
+    # ⚠️ MySQL is UNAFFECTED as a source and as a dlt load destination — both
+    # go through SQLAlchemy/`pymysql`, never through dbt. Only `dbt run`
+    # against a MySQL warehouse is gone. Guarded by
+    # tests/test_services/test_mysql_after_dbt_mysql_removal.py, which fails if
+    # MySQL quietly loses its source or destination status too.
+    #
     # dbt-databricks requires sqlalchemy<2.0, incompatible with our stack
     # dbt-synapse requires sqlalchemy<2.0, incompatible with our stack
     # Both platforms work as dlt destinations — dbt transforms deferred until adapter compat
@@ -44,6 +97,12 @@ dependencies = [
     "pymssql>=2.2,<3",
     "pymongo>=4.0,<5",
     "clickhouse-connect>=0.11,<0.12",
+    # Declared directly since core#825 dropped dlt's `clickhouse` extra, which
+    # is where this used to come from. It also arrives via `dbt-clickhouse`
+    # today — which is exactly why it needs its own line: a dependency that
+    # exists only as a side effect of an adapter we might later drop is not a
+    # dependency, it is a coincidence. Same reasoning as `duckdb-engine` below.
+    "clickhouse-driver>=0.2.10,<0.3",
     "duckdb>=1.0,<2",
     # The SQLAlchemy dialect for DuckDB. dlt writes through its own driver, so
     # loads worked without this — but catalog introspection goes through
@@ -71,18 +130,22 @@ dependencies = [
     # Config & utilities
     "pydantic>=2.0,<3",
     "pydantic-settings>=2.0,<3",
-    # 🚨 STUCK at 45.x, and not by choice (core#819). 45.0.7 is inside four
-    # CRITICAL/HIGH advisories — CVE-2026-26007 (fixed 46.0.5),
-    # GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1), CVE-2026-69249
-    # (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) — and this
-    # is the library `EncryptionService` uses on customer warehouse credentials.
+    # ✅ UNBLOCKED in core#825. This was stuck at 45.x for as long as the dbt
+    # 1.7 pin stood, inside four CRITICAL/HIGH advisories — CVE-2026-26007
+    # (46.0.5), GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1),
+    # CVE-2026-69249 (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle
+    # (50.0.0) — on the library `EncryptionService` uses to encrypt customer
+    # warehouse credentials.
     #
-    # Every cryptography >= 46.0.1 requires `cffi>=2.0.0` on Python >= 3.9, and
-    # `dbt-core>=1.7.19,<1.8` above declares `cffi<2.0.0`. So the ceiling here
-    # is a consequence of the dbt pin, not an independent judgement: raising it
-    # makes `uv lock` unsatisfiable. Do not "fix" this line on its own.
-    # See BLOCKED_BY_DBT_1_7 in tests/test_security/test_dependency_advisories.py.
-    "cryptography>=45.0,<46",
+    # 🔑 The block was through `cffi`, and it was TWO links, not one. Every
+    # cryptography >=46.0.1 needs `cffi>=2.0.0`; `dbt-core 1.7.19` declared
+    # `cffi<2.0.0` — and so, independently, did every
+    # `snowflake-connector-python` 3.x. Since `dbt-snowflake` only admits the
+    # scp 4.x line from 1.10.6 (which needs dbt-core >=1.10), moving dbt to 1.8
+    # alone would NOT have freed this, and the resolver error would have named
+    # `cffi` both times and looked identical. Recorded because that is a day
+    # someone else would otherwise lose.
+    "cryptography>=50.0,<51",
     # Monitoring
     "prometheus-client>=0.21,<0.26",
     "python3-saml>=1.16,<2",
@@ -129,22 +192,31 @@ build-backend = "hatchling.build"
 # fix; GitPython is nine deep. `tests/test_security/test_dependency_advisories.py`
 # carries the per-CVE justification and fails if the lock drops below any of them.
 #
-# 🚨 FIVE findings are NOT here, and they are the five worst. All five are held
-# down by one line: `dbt-core>=1.7.19,<1.8` above.
+# ✅ The six that used to be listed here as unfixable are FIXED (core#825). All
+# six were held down by one line, `dbt-core>=1.7.19,<1.8`, which was in turn
+# held down by one abandoned package, `dbt-mysql` (last release 2024-04-26).
+# Dropping it moved dbt to 1.11 and cleared, in one resolve:
 #
-#   redshift-connector  CVE-2026-8838 CRITICAL RCE — dbt-redshift 1.7.7 pins <2.0.918
-#   cryptography        4 HIGH        — dbt-core 1.7 pins cffi<2.0.0; every
-#                                       cryptography >=46.0.1 needs cffi>=2.0.0
-#   pyopenssl           CVE-2026-27459 — 26.0.0 needs cryptography>=46.0.0, ditto
-#   sqlparse            3 HIGH        — dbt-core 1.7 pins sqlparse<0.6.0
-#   protobuf            CVE-2026-0994 — dbt-core 1.7 pins protobuf<5
+#   redshift-connector  CVE-2026-8838 CRITICAL RCE  2.0.917 -> floor 2.1.14
+#   cryptography        4 HIGH                      45.0.7  -> floor 50.0.0
+#   sqlparse            3 HIGH                      0.5.4   -> floor 0.6.0
+#   urllib3             4 HIGH                      1.26.20 -> floor 2.7.0
+#   pyopenssl           CVE-2026-27459              25.3.0  -> floor 26.0.0
+#   protobuf            CVE-2026-0994               4.25.8  -> floor 5.29.6
 #
-# The `cffi<2.0.0` link is the one nobody predicts from reading a CVE list, and
-# it is what puts the credential-encryption library on the blocked side. They
-# are recorded in BLOCKED_BY_DBT_1_7 in
-# tests/test_security/test_dependency_advisories.py, which goes red the moment
-# the dbt pin moves — so the dbt bump cannot land without re-deriving them.
-# Tracked as core#825.
+# ⚠️ Three of those needed no floor at all — `pyopenssl`, `urllib3` and
+# `protobuf` were delivered by the resolver the moment the dbt pin moved. They
+# are floored anyway, because a version the resolver happens to pick today is
+# not a version a future re-lock is obliged to keep. The whole reason this
+# block exists is that a constraint is durable where an `--upgrade-package` is
+# not.
+#
+# 🚨 `protobuf` 4.x -> 6.x is FORCED, not chosen. Every dbt-core at or above
+# 1.9.9 requires `protobuf>=6.0`, and `cryptography` needs dbt-core >=1.10, so
+# the only way to stay on protobuf 5.x is to leave the credential-encryption
+# library on four HIGH advisories. Founder-accepted 2026-08-31. We import
+# protobuf nowhere ourselves; the exposure is entirely "do our dependencies
+# tolerate 6.x", and at dbt 1.11 the resolver says they do.
 #
 # Each entry carries a CEILING as well as a floor, for the reason
 # `test_dependency_pins.py` already states about declared dependencies: an
@@ -169,6 +241,16 @@ constraint-dependencies = [
     "python-multipart>=0.0.30,<0.1",
     "python-socketio>=5.16.2,<6",
     "soupsieve>=2.8.4,<3",
+    # ---- Unblocked by the dbt 1.11 move (core#825) ----------------------
+    # ⚠️ `protobuf` and `urllib3` take a MAJOR ceiling rather than the usual
+    # next-major one, because for both of them the fix IS the major: urllib3's
+    # 1.x line is EOL with no patch-level escape, and protobuf 6 is what
+    # dbt-core >=1.9.9 requires. The ceiling still bounds the next one.
+    "protobuf>=5.29.6,<7",
+    "pyopenssl>=26.0.0,<27",
+    "redshift-connector>=2.1.14,<3",
+    "sqlparse>=0.6.0,<0.7",
+    "urllib3>=2.7.0,<3",
 ]
 
 [tool.ruff]

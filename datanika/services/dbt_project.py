@@ -22,9 +22,36 @@ class DbtProjectError(ValueError):
 
 
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+#: dbt adapters we will write a `profiles.yml` for.
+#:
+#: 🚨 This is NOT the same set as `dlt_runner.SUPPORTED_DESTINATION_TYPES`, and
+#: since core#825 it is not a subset of it either. `mysql` is a dlt load
+#: destination and is NOT a dbt transform target; `sqlite` is the reverse.
+#: Anything reading one of these two sets to answer a question about the other
+#: will be wrong for at least one connector.
+#:
+#: `mysql` was removed in core#825: `dbt-mysql`'s last release is 1.7.0
+#: (2024-04-26, personal repo, pinning `dbt-core~=1.7.0`) and it held the whole
+#: dbt stack on 1.7, blocking six CRITICAL/HIGH advisories. No maintained MySQL
+#: adapter exists on PyPI. MySQL is unaffected as an extract source and as a
+#: dlt load destination — neither goes through dbt.
+#: See tests/test_services/test_mysql_after_dbt_mysql_removal.py.
+#:
+#: ⚠️ PRE-EXISTING and NOT fixed here (core#825 found it, did not cause it):
+#: `sqlite`, `databricks` and `synapse` are listed below with **no installed
+#: adapter**, so `generate_profiles_yml` writes a profile dbt cannot load and
+#: the failure surfaces inside a Celery task rather than at selection time.
+#: That is the same defect class this `mysql` removal fixes, but removing them
+#: withdraws advertised capability and is a product decision, not a dependency
+#: one. Tracked as core#862 together with the picker divergence above — do not
+#: quietly delete them here on your own authority.
+#:
+#: ⚠️ core#862 was filed BEFORE this line was written, and that ordering is the
+#: point: core#823 shipped a comment citing core#847, a number picked before the
+#: issue existed, which turned out to name a live and entirely unrelated QA
+#: issue. Never write a cross-reference you have not seen resolve.
 SUPPORTED_ADAPTERS = {
     "postgres",
-    "mysql",
     "mssql",
     "sqlite",
     "bigquery",

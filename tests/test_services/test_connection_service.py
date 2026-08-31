@@ -915,3 +915,112 @@ class TestConsumeTemplateFirstRun:
         conn = self._create(svc, db_session, org, slug="x")
         assert svc.consume_template_first_run(db_session, other_org.id, conn.id) is None
         assert svc.consume_template_first_run(db_session, org.id, conn.id) == "x"
+
+
+def _bq_keyfile() -> str:
+    """A service-account JSON whose base64 encoding contains ``+``.
+
+    The ``~`` is load-bearing, not decoration. Base64 of pure-ASCII text can
+    only produce ``+`` when a byte at offset ``≡ 2 (mod 3)`` is ``>`` or ``~``;
+    with neither, ``test_base64_is_percent_encoded`` would pass no matter how
+    the URL was built. ``test_fixture_actually_exercises_the_plus_case`` fails
+    loudly if an edit ever removes that property.
+    """
+    import json
+
+    return json.dumps(
+        {
+            "type": "service_account",
+            "project_id": "my-project",
+            "private_key": "-----BEGIN PRIVATE KEY-----\n~\n-----END PRIVATE KEY-----\n",
+            "client_email": "qa-smoke@datanika.iam.gserviceaccount.com",
+        }
+    )
+
+
+class TestBigQueryCatalogUrlCarriesCredentials:
+    """[#869] The BigQuery catalog/preview URL must carry the service account.
+
+    Regression: ``_build_sa_url`` returned a bare ``bigquery://project/dataset``,
+    so sqlalchemy-bigquery fell back to Application Default Credentials, which
+    do not exist in the container. The *load* still succeeded, because dlt
+    receives the key from the connection config directly -- so rows landed in
+    BigQuery and then never appeared under Models/Catalog.
+
+    These assert on the URL actually produced, which is why they are safe to
+    run anywhere: with ADC present the unfixed code returns an *empty table
+    list* rather than raising, so a test that called the catalog would pass on
+    a developer box and fail only in production.
+    """
+
+    def _url(self, **over):
+        from datanika.services.connection_service import _build_sa_url
+
+        config = {
+            "project": "my-project",
+            "dataset": "raw_data",
+            "keyfile_json": _bq_keyfile(),
+        }
+        config.update(over)
+        return _build_sa_url(config, ConnectionType.BIGQUERY)
+
+    def test_fixture_actually_exercises_the_plus_case(self):
+        import base64
+
+        assert "+" in base64.b64encode(_bq_keyfile().encode()).decode()
+
+    def test_url_carries_the_service_account(self):
+        assert "credentials_base64=" in self._url()
+
+    def test_project_and_dataset_are_preserved(self):
+        assert self._url().startswith("bigquery://my-project/raw_data")
+
+    def test_credentials_round_trip_to_the_original_keyfile(self):
+        import base64
+
+        from sqlalchemy.engine import make_url
+
+        value = make_url(self._url()).query["credentials_base64"]
+        assert base64.b64decode(value).decode() == _bq_keyfile()
+
+    def test_base64_is_percent_encoded(self):
+        """``+`` in a query string decodes to a space.
+
+        An unencoded payload is silently corrupted for exactly those keys whose
+        encoding contains ``+`` -- the fix would work for some service accounts
+        and not others, which is worse than failing outright.
+        """
+        assert "+" not in self._url().split("credentials_base64=", 1)[1]
+
+    def test_the_real_dialect_extracts_the_credentials(self):
+        """Validate against the consumer, not our model of it."""
+        import base64
+
+        from sqlalchemy.engine import make_url
+        from sqlalchemy_bigquery.base import parse_url as bq_parse_url
+
+        expected = base64.b64encode(_bq_keyfile().encode()).decode()
+        assert bq_parse_url(make_url(self._url()))[5] == expected
+
+    def test_service_account_json_is_accepted_too(self):
+        """core#565: the form writes ``keyfile_json``; the runner accepts both."""
+        url = self._url(keyfile_json=None, service_account_json=_bq_keyfile())
+        assert "credentials_base64=" in url
+
+    def test_connection_without_credentials_is_unchanged(self):
+        assert self._url(keyfile_json=None) == "bigquery://my-project/raw_data"
+
+    def test_other_destinations_are_untouched(self):
+        from datanika.services.connection_service import _build_sa_url
+
+        url = _build_sa_url(
+            {
+                "host": "db.example.com",
+                "port": 5432,
+                "user": "admin",
+                "password": "s3c",
+                "database": "mydb",
+            },
+            ConnectionType.POSTGRES,
+        )
+        assert "credentials_base64" not in url

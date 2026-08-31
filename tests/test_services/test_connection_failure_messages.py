@@ -168,3 +168,43 @@ def test_an_engine_build_failure_carries_its_reason_and_not_the_password(monkeyp
     assert ok is False
     assert "invalid port" in message
     assert _SECRET not in message
+
+
+class TestBase64SecretsAreRedacted:
+    """[#869] The BigQuery URL now carries the key as base64.
+
+    ``_redact_secrets`` knew exactly two spellings of a secret -- the raw value
+    and its ``quote_plus`` form. A base64 payload matches neither, so appending
+    ``?credentials_base64=<key>`` to the catalog URL would have put an entire
+    service-account private key into any driver exception that quotes the URL,
+    and ``describe_connection_failure`` shows that text to the user.
+
+    This is the leak the fix must not introduce, so it is asserted beside it.
+    """
+
+    def test_base64_spelling_of_a_secret_is_redacted(self):
+        import base64
+
+        from datanika.services.connection_service import describe_connection_failure
+
+        secret = '{"type":"service_account","private_key":"super-secret-body"}'
+        encoded = base64.b64encode(secret.encode()).decode()
+        message = describe_connection_failure(
+            Exception(f"could not connect: credentials_base64={encoded}"),
+            {"keyfile_json": secret},
+            "Connection failed",
+        )
+        assert encoded not in message
+        assert "super-secret-body" not in message
+
+    def test_raw_spelling_still_redacted(self):
+        """Negative control: the existing behaviour must not regress."""
+        from datanika.services.connection_service import describe_connection_failure
+
+        secret = '{"type":"service_account","private_key":"super-secret-body"}'
+        message = describe_connection_failure(
+            Exception(f"could not connect: keyfile={secret}"),
+            {"keyfile_json": secret},
+            "Connection failed",
+        )
+        assert "super-secret-body" not in message

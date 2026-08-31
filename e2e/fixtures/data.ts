@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { gotoReady } from "./auth";
+import { clickAndAwaitReflexEvent } from "./reflex-wire";
 
 /**
  * Builders for the golden path: connections, uploads, runs.
@@ -321,10 +322,24 @@ export async function runUploadAndAwait(
   await gotoReady(page, "/uploads");
   const row = page.getByRole("row").filter({ hasText: uploadName });
   await expect(row, `upload "${uploadName}" is not listed`).toBeVisible({ timeout: UI_TIMEOUT });
-  await row.getByRole("button", { name: "Run", exact: true }).click({ timeout: UI_TIMEOUT });
+
+  // ── LAYER 1: the click has to reach the wire before we leave the page ──────
+  //
+  // This used to be a bare `.click()` followed, 30-60ms later, by
+  // `gotoReady(page, "/runs")`. Measured in the traces for core#792's failing
+  // run: click at 28.34s, `goto /runs` at 28.40s, and Reflex's
+  // "Disconnect websocket on unload" 10ms after that. Reflex emits the event
+  // several microtasks after the click resolves, so the navigation could tear
+  // the socket down with the frame still unsent — no run row, no toast, no
+  // error, and an assertion that then blamed Celery.
+  await clickAndAwaitReflexEvent(page, row.getByRole("button", { name: "Run", exact: true }), {
+    handlerMatch: "run_upload",
+    what: `the Run button for "${uploadName}"`,
+    clickTimeoutMs: UI_TIMEOUT,
+  });
 
   const deadline = Date.now() + timeoutMs;
-  let last: RunOutcome = { status: "(no run row appeared)", rows: 0 };
+  let last: RunOutcome | null = null;
 
   while (Date.now() < deadline) {
     await gotoReady(page, "/runs");
@@ -340,9 +355,34 @@ export async function runUploadAndAwait(
     }
     await page.waitForTimeout(3_000);
   }
+
+  // ── The two remaining layers get DIFFERENT messages, because they are
+  // different bugs in different processes. Merging them into one sentence
+  // ending "Is the Celery worker running?" is what sent core#744 and core#792
+  // to the worker twice, on nights when the worker was healthy and consuming
+  // other tasks from the same queue throughout.
+  if (last === null) {
+    throw new Error(
+      `The Run event for "${uploadName}" WAS delivered — a /_event frame carrying ` +
+        `run_upload went out — but no run row ever appeared within ${timeoutMs}ms.` +
+        "\n\nThis is the APP, not the worker. `UploadState.run_upload` INSERTs the " +
+        "run row and commits it before `run_upload_task.delay(...)` is ever called, " +
+        "so a missing row means no task was enqueued and Celery is not implicated. " +
+        "Look at the paths that return without writing anything: " +
+        "`_check_role(\"editor\")` returning False (it only sets `error_message`), " +
+        "the cloud plugin's `run.before_execute` quota hook refusing a fresh Free " +
+        "org, or the handler raising before `session.commit()`.",
+    );
+  }
+
   throw new Error(
-    `run for "${uploadName}" did not reach a terminal state within ${timeoutMs}ms ` +
-      `(last seen: status="${last.status}", rows=${last.rows}). ` +
-      "Is the Celery worker running?",
+    `The run for "${uploadName}" was created but never reached a terminal state ` +
+      `within ${timeoutMs}ms (last seen: status="${last.status}", rows=${last.rows}).` +
+      "\n\nTHIS one is about the worker. The row exists, so the app accepted the " +
+      "click and dispatched `datanika.run_upload`; a row sitting in `pending` means " +
+      "nothing consumed it. Check that a Celery worker is up and connected to the " +
+      "broker — and note that the worker's task-registration banner " +
+      "(`. datanika.run_upload`) is NOT evidence it ran anything; look for " +
+      "`run_upload[<taskid>] received`.",
   );
 }

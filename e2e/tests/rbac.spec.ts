@@ -18,8 +18,10 @@ import { test, expect, ORG_A_READONLY_KEY } from "../fixtures/auth";
  * on a `*:write` route, scope enforcement is broken — a privilege bug, not an
  * assertion to "just fix".
  */
-// @slow — real HTTP against a seeded read-only key; gated to master promotion
-// PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P1 and #297.
+// @slow — real HTTP against a seeded read-only key.
+// @slow. Runs wherever DATANIKA_E2E_SLOW=1 is set — which is EVERY
+// `e2e-staging` run on `dev` (ci.yml sets it on the job), not only
+// promotion PRs. See #297.
 
 function mustEnv(name: string): string {
   const value = process.env[name];

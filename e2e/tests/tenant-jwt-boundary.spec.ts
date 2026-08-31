@@ -29,8 +29,11 @@ import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
  * always seeded (no opt-in flags needed). global-setup.ts maps all 25
  * seed fields to DATANIKA_E2E_* env vars. .skip markers removed in QU2.
  */
-// @slow — 25 routes × 2 tests × real HTTP = expensive. Gated to master
-// promotion PRs via DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md Q1a.
+// @slow — 25 routes × 2 tests × real HTTP = expensive.
+// @slow. Runs wherever DATANIKA_E2E_SLOW=1 is set — which is EVERY
+// `e2e-staging` run on `dev` (ci.yml sets it on the job), not only
+// promotion PRs.
+// See core#719 for how the route table is derived.
 
 type MutationRoute = {
   method: "PUT" | "DELETE" | "POST" | "PATCH";

@@ -69,8 +69,15 @@ import {
  * The line, and it is load-bearing: a spec that USED TO PASS must stay gating —
  * demoting one hides a regression. The informational tier is for specs that have
  * not yet earned in, never a bolt-hole for ones that broke. **This spec has now
- * passed. It does not go back.** Policy and procedure: `plans/qa/PLAN_QA.md`
- * §E2E tiers.
+ * passed. It does not go back.** Policy and procedure: `docs/QA_RULES.md` §10.
+ *
+ * ⚠️ There was a SECOND root cause, found 2026-08-31 (core#744), and it was in
+ * this harness rather than in the app: `runUploadAndAwait` clicked Run and then
+ * navigated to /runs 30-60ms later, inside the window where Reflex has not yet
+ * put the event on the wire and the unload handler disconnects the socket. It
+ * flaked ~50% on `dev` and held a promotion for a day. `gotoReady` could not
+ * report it, because its success condition was 600ms of SILENCE — which a dead
+ * socket satisfies faster than a live one. See `fixtures/reflex-wire.ts`.
  */
 
 const CSV_ROWS = 3;

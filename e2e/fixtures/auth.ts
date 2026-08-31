@@ -1,6 +1,7 @@
 import { test as base, expect, type Page } from "@playwright/test";
 
 import { ApiBudget } from "./api-budget";
+import { awaitReflexReady, markWire, watchReflexWire } from "./reflex-wire";
 
 /**
  * Test fixtures for Datanika E2E.
@@ -61,39 +62,37 @@ function mustEnv(name: string): string {
 }
 
 /**
- * Navigate to `path` and wait for Reflex to finish hydrating before returning.
+ * Navigate to `path` and do not return until Reflex says the page is live — or
+ * throw naming what was missing.
  *
  * Reflex drives all interactivity over the `/_event` WebSocket and only attaches
- * event handlers (e.g. a form's `on_submit`) once the initial hydration/state-
- * sync burst completes. Interacting before that either drops the event (showing
- * "Connection Error") or falls back to a native GET form submit — the root-cause
- * flake behind core#295, where the golden-path signup clicked too early and the
- * browser navigated to `/signup?email=...&password=...` instead.
+ * event handlers (e.g. a form's `on_submit`) once hydration completes. Interacting
+ * before that either drops the event (Reflex's own `processEvent`: "otherwise we
+ * throw the event into the void") or falls back to a native GET form submit — the
+ * root-cause flake behind core#295, where the golden-path signup clicked too early
+ * and the browser navigated to `/signup?email=...&password=...` instead.
  *
- * We track WebSocket frame activity and wait for the socket to go quiet (no
- * frames for `quietMs`), which reliably marks "hydration burst done, handlers
- * attached". Falls back to a best-effort return after `maxWaitMs`.
+ * ⚠️ This function USED TO BE UNABLE TO FAIL, and that is what core#744 turned
+ * out to be about. It waited for the socket to go QUIET for 600ms and then
+ * returned successfully regardless of what it had observed — so a socket that
+ * never opened produced a silent 12-second sleep, and a socket that opened and
+ * then DIED satisfied the quiet condition faster than a healthy one. Its success
+ * condition was best satisfied by the exact failure it existed to prevent, and no
+ * caller could tell the difference.
+ *
+ * It now waits on three things it reads off the wire — a new `/_event` socket for
+ * this navigation, a server frame carrying Reflex's own `is_hydrated_rx_state_`
+ * marker, and that socket still being open on return — and raises a named error
+ * when any of them is absent. See `fixtures/reflex-wire.ts`.
  */
 export async function gotoReady(page: Page, path: string): Promise<void> {
-  let lastWsActivity = 0;
-  page.on("websocket", (ws) => {
-    if (!ws.url().includes("/_event")) return;
-    const mark = () => {
-      lastWsActivity = Date.now();
-    };
-    ws.on("framereceived", mark);
-    ws.on("framesent", mark);
-  });
+  const wire = watchReflexWire(page);
+  const mark = markWire(wire);
 
   await page.goto(path);
   await page.waitForLoadState("networkidle").catch(() => {});
 
-  const quietMs = 600;
-  const deadline = Date.now() + 12_000;
-  while (Date.now() < deadline) {
-    if (lastWsActivity > 0 && Date.now() - lastWsActivity >= quietMs) break;
-    await page.waitForTimeout(100);
-  }
+  await awaitReflexReady(page, mark, `\`${path}\``);
 }
 
 /** Regex matching an authenticated landing route (root / dashboard / etc.). */

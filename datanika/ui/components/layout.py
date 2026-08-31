@@ -215,6 +215,39 @@ def verification_mail_notice() -> rx.Component:
     )
 
 
+def signed_out_panel() -> rx.Component:
+    """Shown when a mutating handler discovered the session had ended (#673).
+
+    A handler cannot navigate, so unlike the page-load path it cannot hand the
+    user to ``/login?expired=1`` with a query parameter. It clears the session
+    instead, which drops this tab into ``is_authenticated``'s false branch —
+    previously a bare spinner, and a spinner forever is indistinguishable from a
+    hang. This says what happened and offers the way back.
+    """
+    return rx.center(
+        rx.card(
+            rx.vstack(
+                # "log-out", hyphenated, matching the sidebar's proven spelling.
+                # Reflex does not raise on an unknown icon name — it warns on
+                # stderr and silently renders ``circle_help``.
+                rx.icon("log-out", size=28, color="var(--amber-9)"),
+                rx.heading(_t["auth.signed_out_title"], size="5"),
+                rx.text(_t["auth.signed_out_body"], size="2", align="center"),
+                rx.link(
+                    rx.button(_t["auth.signed_out_cta"], size="3"),
+                    href="/login?expired=1",
+                    underline="none",
+                ),
+                spacing="3",
+                align="center",
+            ),
+            padding="32px",
+            max_width="420px",
+        ),
+        height="100vh",
+    )
+
+
 def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
     return rx.cond(
         AuthState.is_authenticated,
@@ -234,8 +267,14 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             ),
             rx.toast.provider(duration=3000),
         ),
-        rx.center(
-            rx.spinner(size="3"),
-            height="100vh",
+        # Not signed in. Two very different reasons land here: the page is still
+        # hydrating (spinner), or a handler just ended the session (#673).
+        rx.cond(
+            AuthState.session_expired,
+            signed_out_panel(),
+            rx.center(
+                rx.spinner(size="3"),
+                height="100vh",
+            ),
         ),
     )

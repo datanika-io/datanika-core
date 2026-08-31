@@ -79,6 +79,45 @@ suites backwards, scoring the blind one 92% and the one that catches a real defe
 replacement is *shown red as a required artifact*. "Make the guarded thing worse" catches all three
 failure shapes; "mutate the source" catches one.
 
+### 2a. A derivation that depends on import side effects is not a derivation
+
+**(2026-08-31, Engineering finding, verified by QA.)** Several guards here derive their input set
+rather than listing it — the `/api/v1` route table (core#719), the tenant-owned model set (core#732),
+the compose services a deploy must name. Deriving is right: a hand-written list is stale the day
+after it is written. But **where the derivation reads from decides whether it can silently cover a
+subset.**
+
+`SQLAlchemy`'s `Base.registry` is populated by whatever has been *imported*. Inside a full
+`pytest tests/` run that is everything, because some other test module imported it. So a
+registry-based model set returns all 17 models in CI and a handful when the file is run alone. The
+guard in question **passed with its own import loop deleted entirely**, and standalone covered
+**13 of 17** while reporting clean. Nothing about the result said "partial".
+
+The fix is to read from something that cannot vary with import order — here, an **AST walk over
+`datanika/models/*.py`** — and then to cross-check that against the runtime registry in a test that
+does its own explicit import loop.
+
+**Both halves of that cross-check must be shown red, and they fail differently.** Measured on
+`tests/test_security/test_tenant_fk_boundary.py`:
+
+| mutation | what it models | what fires |
+|---|---|---|
+| stop recognising the bare `TenantMixin` base | derivation returns **nothing** | `assert derived` — "the AST walk has stopped working" |
+| walk `models/[a-r]*.py` instead of `*.py` | derivation returns a **subset** | the set comparison: `only in registry=['SSOConfig', 'Schedule', 'Transformation', 'Upload', 'UploadedFile']` |
+
+The second is the one worth insisting on. An emptiness assertion is cheap and everyone adds it; the
+realistic defect is *12 of 17*, which is non-empty, looks healthy, and is caught only by comparing
+against an independently-derived set.
+
+**Rules:**
+1. **Ask what populates the thing you are deriving from.** If the answer is "imports", the answer is
+   "whatever ran first".
+2. **Assert the derivation is non-empty AND that it agrees with a second, independent derivation.**
+   Neither alone is sufficient.
+3. **Run the guard in its own pytest session**, not only as part of the suite. A guard that is only
+   ever exercised alongside 4,000 other tests has never been observed in the state a bisect or a
+   `-k` run puts it in.
+
 ## 3. Negative controls are what attribute a red
 
 A red proves the test failed. It does not prove *why*. For a **permissive** defect — one where

@@ -1556,7 +1556,9 @@ class TestEgressGuardWiring:
 
     @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
     def test_rest_api_fallback_invokes_guard(self, _mock_rest, svc, _stub_egress_guard):
-        svc._rest_api_fallback("https://api.public.example/", None, [{"name": "x"}])
+        # `paginator` is keyword-only with no default (core#823) — a call site
+        # that omits it is a TypeError, which is the point.
+        svc._rest_api_fallback("https://api.public.example/", None, [{"name": "x"}], paginator=None)
         _stub_egress_guard.assert_called_once_with("https://api.public.example/")
 
     @patch("datanika.services.dlt_runner.rest_api_source", return_value="src")
@@ -1582,5 +1584,8 @@ class TestEgressGuardWiring:
             pytest.raises(EgressValidationError),
         ):
             svc._rest_api_fallback(
-                "http://169.254.169.254/latest/meta-data/", None, [{"name": "x"}]
+                "http://169.254.169.254/latest/meta-data/",
+                None,
+                [{"name": "x"}],
+                paginator=None,
             )

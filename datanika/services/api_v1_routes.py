@@ -1022,7 +1022,7 @@ def cancel_run(request, api_key, session):
             "not_cancellable",
             f"Run is already {run.status.value} and cannot be cancelled",
         )
-    cancelled = _exec_svc.cancel_run(session, run_id)
+    cancelled = _exec_svc.cancel_run(session, api_key.org_id, run_id)
     if cancelled is None:
         return _error(500, "Failed to cancel run")
     return JSONResponse(_ser_run(cancelled))

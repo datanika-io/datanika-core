@@ -446,39 +446,93 @@ class TestNoBarePrimaryKeyConnectionLookup:
 # that shipped the defect; the other two are the spellings the rest of this
 # codebase actually uses, which is why matching only `get` guards the bug rather
 # than the class.
+# Query-construction forms that resolve a tenant-owned model. `session.get` is
+# the one that shipped the defect; the other two are the spellings the rest of
+# this codebase actually uses, which is why matching only `get` guards the bug
+# rather than the class.
 _SELECT_FUNCS = {"select"}
 _QUERY_ATTRS = {"query"}
 
 
-def _names_connection(node: ast.expr) -> bool:
-    """True for `Connection` and for the qualified `models.Connection` form."""
+def _has_tenant_mixin(node: ast.ClassDef) -> bool:
+    bare = any(isinstance(b, ast.Name) and b.id == "TenantMixin" for b in node.bases)
+    qualified = any(isinstance(b, ast.Attribute) and b.attr == "TenantMixin" for b in node.bases)
+    return bare or qualified
+
+
+def _tenant_model_names() -> frozenset[str]:
+    """Every model carrying an ``org_id``, read from the source of `datanika/models/`.
+
+    **Derived, never listed.** A hand-written set is the same defect this guard
+    exists to catch, one level up: #738's first version named exactly one class
+    and stayed green on the idiom this codebase actually uses. A new tenant
+    model is covered the moment it is declared, with no edit here.
+
+    ⚠️ **Read from the source text, not from `Base.registry`, and that is not a
+    stylistic choice.** The registry is populated by whatever has been imported,
+    which inside a full pytest session is *everything*, via other test modules.
+    So a registry-based derivation that had stopped importing anything itself
+    would still return all 17 models under `pytest tests/` and return only the
+    handful reachable from `datanika/models/__init__.py` when this file is run
+    alone. Measured: a mutation that deleted the import loop entirely left this
+    guard **green**. An AST walk over the directory cannot depend on import
+    order, on `__init__.py`'s contents, or on which other test ran first.
+
+    `test_the_model_set_matches_the_mapper_registry` cross-checks this against
+    the runtime registry, so a model declared through an aliased or indirect
+    base — which the AST cannot see — still fails the build.
+    """
+    models_dir = pathlib.Path(__file__).resolve().parents[2] / "datanika" / "models"
+    names: set[str] = set()
+    for path in sorted(models_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and _has_tenant_mixin(node):
+                names.add(node.name)
+    return frozenset(names)
+
+
+def _named_model(node: ast.expr, names: frozenset[str]) -> str | None:
+    """The tenant model this expression names, bare or qualified.
+
+    Both spellings: `Run` and `models.Run` / `run.Run`. Matching only the bare
+    name would let the qualified form reintroduce the defect while this test
+    stayed green.
+    """
     if isinstance(node, ast.Name):
-        return node.id == "Connection"
+        return node.id if node.id in names else None
     if isinstance(node, ast.Attribute):
-        return node.attr == "Connection"
-    return False
+        return node.attr if node.attr in names else None
+    return None
 
 
-def _is_connection_query(node: ast.AST) -> bool:
+def _model_query(node: ast.AST, names: frozenset[str]) -> str | None:
+    """The tenant model resolved by this call, if it resolves one."""
     if not isinstance(node, ast.Call):
-        return False
+        return None
     func = node.func
     if isinstance(func, ast.Name) and func.id in _SELECT_FUNCS:
-        return any(_names_connection(a) for a in node.args)
+        for arg in node.args:
+            if (model := _named_model(arg, names)) is not None:
+                return model
+        return None
     if isinstance(func, ast.Attribute):
         if func.attr in _QUERY_ATTRS:
-            return any(_names_connection(a) for a in node.args)
+            for arg in node.args:
+                if (model := _named_model(arg, names)) is not None:
+                    return model
+            return None
         if func.attr == "get" and node.args:
-            return _names_connection(node.args[0])
-    return False
+            return _named_model(node.args[0], names)
+    return None
 
 
 def _constrains_org(stmt: ast.stmt) -> bool:
     """Does this statement mention org scoping at all?
 
-    Deliberately generous — `Connection.org_id == org_id`, `filter_by(org_id=…)`
-    and `where(Connection.org_id.in_(…))` all count. The guard's job is to force
-    the question to be asked in the statement that builds the query, not to
+    Deliberately generous — `Run.org_id == org_id`, `filter_by(org_id=…)` and
+    `where(Run.org_id.in_(…))` all count. The guard's job is to force the
+    question to be asked in the statement that builds the query, not to
     typecheck the predicate.
     """
     for node in ast.walk(stmt):
@@ -506,7 +560,39 @@ def _climb(node: ast.AST, parents: dict[ast.AST, ast.AST], kinds: tuple) -> ast.
     return None
 
 
-class TestEveryConnectionQueryIsOrgScoped:
+def _unscoped_tenant_queries(names: frozenset[str]) -> list[tuple[str, str]]:
+    """Every tenant-model query under `datanika/` that does not constrain org.
+
+    Returns `(allowlist_key, human_location)` pairs so the caller decides what
+    is sanctioned. The key is `module.py::function::Model` — **narrower than the
+    function**, so exempting a credential lookup does not also exempt some later
+    unscoped read that happens to share its function.
+    """
+    root = pathlib.Path(__file__).resolve().parents[2] / "datanika"
+    found: list[tuple[str, str]] = []
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        parents = _enclosing(tree)
+        for node in ast.walk(tree):
+            model = _model_query(node, names)
+            if model is None:
+                continue
+            stmt = _climb(node, parents, (ast.stmt,))
+            if stmt is None or _constrains_org(stmt):
+                continue
+            func = _climb(node, parents, (ast.FunctionDef, ast.AsyncFunctionDef))
+            fname = func.name if func is not None else "<module>"
+            rel = path.relative_to(root.parent).as_posix()
+            found.append(
+                (
+                    f"{path.name}::{fname}::{model}",
+                    f"{rel}:{node.lineno} ({model} in {fname})",
+                )
+            )
+    return found
+
+
+class TestEveryTenantModelQueryIsOrgScoped:
     """The same invariant as the class above, at the width of the class.
 
     `TestNoBarePrimaryKeyConnectionLookup` pins `session.get(Connection, id)` —
@@ -520,49 +606,114 @@ class TestEveryConnectionQueryIsOrgScoped:
         session.scalars(select(Connection).filter_by(id=cid))   #   uses
         session.query(Connection).filter(Connection.id == cid).first()
 
-    The first is how `get_org_connection`, `list_connections` and
-    `export_backup` are all written, so the *most likely* way this defect comes
-    back is in a form the narrower check cannot see. Hence: any statement that
-    builds a `Connection` query must constrain `org_id` in that same statement.
+    Widened from `Connection` to **every tenant-owned model** in #732. Naming
+    one class was the exact failure #738 caught in its own first version, and
+    `Connection` was never the only model resolvable by bare primary key: the
+    same scan found 13 `Run` lookups, 3 `OAuthGrant`, 2 `OAuthToken`, 2
+    `Invitation`, 2 `ApiKey`, 2 `UploadedFile` and 1 `Schedule`.
 
-    Empty allowlist on purpose. A genuinely cross-org query is a real thing to
-    want one day — a support console, a platform-wide migration — and when it
-    is, adding its `module.py::function` here is an edit to a security test that
-    someone reviews, rather than a comment nobody reads.
+    **Every allowlist entry is one of exactly two things, and that is the
+    invariant to preserve when adding one:**
+
+      1. a **credential lookup** — the query keyed on the secret is what
+         *establishes* which org the caller is, so it cannot be scoped by one;
+      2. a **deliberate platform-wide sweep** — maintenance or startup code that
+         is supposed to see every tenant.
+
+    Anything that is neither is a defect, however convenient the exemption. The
+    key is `module.py::function::Model`, so an exemption names the model it
+    excuses and a second, different unscoped read in the same function is still
+    caught.
     """
 
-    CROSS_ORG_ALLOWLIST: frozenset[str] = frozenset()
+    CROSS_ORG_ALLOWLIST: frozenset[str] = frozenset(
+        {
+            # 1. Credential lookups — keyed on the secret, which is what
+            #    establishes the org. There is no org_id to scope by yet.
+            "api_key_service.py::authenticate_api_key::ApiKey",
+            "mcp_oauth.py::exchange_code::OAuthGrant",
+            "mcp_oauth.py::refresh::OAuthToken",
+            "mcp_oauth.py::resolve_access_token::OAuthToken",
+            "invitation_service.py::accept_invitation::Invitation",
+            "invitation_service.py::get_invitation_by_token::Invitation",
+            # 2. Deliberate platform-wide sweeps — these are supposed to see
+            #    every tenant, and scoping them would break the feature.
+            "maintenance_service.py::cleanup_orphaned_archives::UploadedFile",
+            "scheduler_integration.py::sync_all::Schedule",
+        }
+    )
 
-    def test_connection_queries_constrain_org_id(self) -> None:
-        root = pathlib.Path(__file__).resolve().parents[2] / "datanika"
-        offenders: list[str] = []
-        for path in sorted(root.rglob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            parents = _enclosing(tree)
-            for node in ast.walk(tree):
-                if not _is_connection_query(node):
-                    continue
-                stmt = _climb(node, parents, (ast.stmt,))
-                if stmt is None or _constrains_org(stmt):
-                    continue
-                func = _climb(node, parents, (ast.FunctionDef, ast.AsyncFunctionDef))
-                fname = func.name if func is not None else "<module>"
-                rel = path.relative_to(root.parent).as_posix()
-                if f"{path.name}::{fname}" in self.CROSS_ORG_ALLOWLIST:
-                    continue
-                offenders.append(f"{rel}:{node.lineno} (in {fname})")
+    def test_the_model_set_matches_the_mapper_registry(self) -> None:
+        """Guard the derivation, not just what it finds.
+
+        A guard whose *input set* is quietly short reports a clean run over the
+        models it forgot — and an empty one passes the offender check below
+        vacuously, which is this project's signature defect. Cross-checked
+        against SQLAlchemy's own registry, populated by importing every module
+        under `datanika/models/` explicitly, so the two cannot agree by sharing
+        a bug.
+        """
+        import importlib
+        import pkgutil
+
+        import datanika.models as models_pkg
+        from datanika.models.base import Base, TenantMixin
+
+        pkg_path = pathlib.Path(models_pkg.__file__).parent
+        for info in pkgutil.iter_modules([str(pkg_path)]):
+            importlib.import_module(f"datanika.models.{info.name}")
+
+        registry = frozenset(
+            mapper.class_.__name__
+            for mapper in Base.registry.mappers
+            if issubclass(mapper.class_, TenantMixin)
+        )
+        derived = _tenant_model_names()
+
+        assert derived, "the source-derived model set is empty — the AST walk has stopped working"
+        assert derived == registry, (
+            "the guard's model set disagrees with the mapper registry: "
+            f"only in source={sorted(derived - registry)}, "
+            f"only in registry={sorted(registry - derived)}. A model the walk cannot see "
+            "(an aliased or indirect TenantMixin base) is a model the guard never checks."
+        )
+
+    def test_tenant_model_queries_constrain_org_id(self) -> None:
+        names = _tenant_model_names()
+        assert names, "no tenant models derived — this check would pass over nothing"
+        offenders = [
+            location
+            for key, location in _unscoped_tenant_queries(names)
+            if key not in self.CROSS_ORG_ALLOWLIST
+        ]
 
         assert offenders == [], (
-            "Connection query with no org_id constraint at "
+            "tenant-owned model resolved with no org_id constraint at "
             + ", ".join(offenders)
-            + " — every read of a Connection must be scoped to the caller's org "
-            "in the statement that builds it, because connection ids are small "
-            "sequential integers and an id that arrived in a request body is "
-            "another tenant's id until proven otherwise. Use "
-            "datanika.services.connection_service.get_org_connection(session, "
-            "org_id, conn_id). If the query is deliberately cross-org, add "
-            "'<module>.py::<function>' to CROSS_ORG_ALLOWLIST above so the "
-            "exemption is reviewed rather than assumed."
+            + " — every read of a tenant-owned row must be scoped to the caller's org in "
+            "the statement that builds it, because ids are small sequential integers and "
+            "an id that arrived from outside is another tenant's id until proven "
+            "otherwise. Use the model's org-scoped accessor "
+            "(connection_service.get_org_connection, execution_service.get_org_run, "
+            "file_upload_service.get_org_uploaded_file). If the query is deliberately "
+            "cross-org, add '<module>.py::<function>::<Model>' to CROSS_ORG_ALLOWLIST "
+            "above so the exemption is reviewed rather than assumed — and only if it is "
+            "a credential lookup or a platform-wide sweep."
+        )
+
+    def test_every_allowlist_entry_still_matches_something(self) -> None:
+        """An exemption that no longer applies is a hole waiting for a caller.
+
+        When an allowlisted call site is fixed or deleted, its entry stops
+        excusing that call and starts silently pre-excusing whatever is written
+        next in that function under that model name.
+        """
+        names = _tenant_model_names()
+        live = {key for key, _ in _unscoped_tenant_queries(names)}
+        stale = self.CROSS_ORG_ALLOWLIST - live
+        assert stale == set(), (
+            f"CROSS_ORG_ALLOWLIST entries that match nothing any more: {sorted(stale)} — "
+            "delete them. A stale exemption pre-approves code nobody has written yet."
         )
 
     def test_connection_relationship_is_not_traversed_outside_models(self) -> None:

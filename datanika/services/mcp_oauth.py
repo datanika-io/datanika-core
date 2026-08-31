@@ -442,6 +442,21 @@ class McpOAuthService:
 
         return self._issue(session, grant)
 
+    def _org_grant(self, session: Session, org_id: int, grant_id: int) -> OAuthGrant | None:
+        """Resolve a grant within an org — the single definition of ownership.
+
+        #732. A bare ``session.get(OAuthGrant, id)`` returns whichever
+        tenant's row carries that primary key. The caller always knows the
+        org by this point (it came from the token that was just verified),
+        so a mismatch is a corrupt reference and must resolve to nothing.
+        """
+        return session.execute(
+            select(OAuthGrant).where(
+                OAuthGrant.id == grant_id,
+                OAuthGrant.org_id == org_id,
+            )
+        ).scalar_one_or_none()
+
     def _verify_pkce(self, verifier: str, challenge: str) -> bool:
         if not verifier:
             return False
@@ -464,7 +479,7 @@ class McpOAuthService:
         if refresh_expires is not None and refresh_expires < _now():
             raise McpOAuthError("invalid_grant", "Refresh token has expired.")
 
-        grant = session.get(OAuthGrant, token.grant_id)
+        grant = self._org_grant(session, token.org_id, token.grant_id)
         if grant is None or grant.revoked_at is not None:
             raise McpOAuthError("invalid_grant", "The underlying grant was revoked.")
 
@@ -533,11 +548,20 @@ class McpOAuthService:
         if expires is not None and expires < _now():
             return None
 
-        grant = session.get(OAuthGrant, token.grant_id)
+        # #732: the token is resolved by hash (cross-org by necessity — it is
+        # what establishes the org), but everything after that point has an
+        # org in hand. Following these foreign keys by bare primary key means
+        # a stored cross-org reference hands out another tenant's API key.
+        grant = self._org_grant(session, token.org_id, token.grant_id)
         if grant is None or grant.revoked_at is not None or grant.deleted_at is not None:
             return None
 
-        api_key = session.get(ApiKey, grant.api_key_id)
+        api_key = session.execute(
+            select(ApiKey).where(
+                ApiKey.id == grant.api_key_id,
+                ApiKey.org_id == grant.org_id,
+            )
+        ).scalar_one_or_none()
         if api_key is None or api_key.deleted_at is not None:
             return None
         key_expiry = _aware(api_key.expires_at)

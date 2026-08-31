@@ -9,13 +9,12 @@ from sqlalchemy.orm import Session
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
-from datanika.models.run import Run
 from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService
-from datanika.services.execution_service import ExecutionService
+from datanika.services.execution_service import ExecutionService, get_org_run
 from datanika.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -103,11 +102,11 @@ def run_transformation(
 
         emit("run.before_execute", session=session, org_id=org_id, predicted_runs=1)
 
-        execution_service.start_run(session, run_id)
+        execution_service.start_run(session, org_id, run_id)
         if own_session:
             session.commit()
 
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         transformation = session.execute(
             select(Transformation).where(
                 Transformation.id == run.target_id,
@@ -164,7 +163,7 @@ def run_transformation(
         rows = result["rows_affected"]
         logs = result["logs"]
 
-        execution_service.complete_run(session, run_id, rows_loaded=rows, logs=logs)
+        execution_service.complete_run(session, org_id, run_id, rows_loaded=rows, logs=logs)
 
         try:
             _sync_catalog_after_transformation(
@@ -181,6 +180,7 @@ def run_transformation(
             session.rollback()
         execution_service.fail_run(
             session,
+            org_id,
             run_id,
             error_message=str(exc),
             logs=traceback.format_exc(),

@@ -122,7 +122,10 @@ BLOCKED_BY_DBT_1_7: dict[str, tuple[str, str]] = {
         "SUPPORTED_ADAPTERS and dlt_runner.py maps it to redshift+redshift_connector.",
     ),
     "cryptography": (
-        "46.0.5",
+        # 50.0.0, not 46.0.5 (core#843). The floor is max(fixed) over all four
+        # HIGH records below; 46.0.5 is merely the FIRST of them and clears one.
+        # Re-derived from OSV against the shipped 45.0.7: 13 records, max 50.0.0.
+        "50.0.0",
         "CVE-2026-26007 (46.0.5), GHSA-537c-gmf6-5ccf vulnerable bundled OpenSSL (48.0.1), "
         "CVE-2026-69249 (49.0.0), CVE-2026-69247 PKCS#7 Bleichenbacher oracle (50.0.0) — "
         "four HIGH against the library EncryptionService uses on customer warehouse "
@@ -139,6 +142,18 @@ BLOCKED_BY_DBT_1_7: dict[str, tuple[str, str]] = {
         "0.6.0",
         "CVE-2026-71491, CVE-2026-59893 and CVE-2026-54284 — three HIGH DoS records. "
         "dbt-core 1.7.19 declares sqlparse <0.6.0; dbt-core 1.11.14 is the first to admit it.",
+    ),
+    "urllib3": (
+        "2.7.0",
+        "CVE-2025-66418 (2.6.0) unbounded decompression chain, CVE-2025-66471 (2.6.0) "
+        "streaming-API handling of highly compressed data, CVE-2026-21441 (2.6.3) "
+        "decompression-bomb safeguards bypassed on redirects, CVE-2026-44431 (2.7.0) "
+        "sensitive headers forwarded across origins in proxied low-level redirects — "
+        "four HIGH against the 1.26.20 we ship. dbt-core 1.7.20 declares urllib3~=1.0, "
+        "so we are held on a major that is EOL; dbt-core 1.8.0 drops the declaration "
+        "entirely. Added in core#843: this was found after core#819 merged and is in "
+        "none of its inventory, because nothing we own names urllib3 — it surfaces "
+        "only when you ask why the fix will not resolve.",
     ),
     "protobuf": (
         "5.29.6",
@@ -246,4 +261,72 @@ class TestKnownUnfixableAdvisories:
             "These are recorded as blocked but the lock already satisfies "
             "them. Move them to SECURITY_FLOORS so a future `uv lock` cannot "
             "roll them back:\n  " + "\n  ".join(no_longer_blocked)
+        )
+
+
+#: A fix version named inside a justification is written in parentheses --
+#: ``"CVE-2026-26007 (46.0.5), ... CVE-2026-69247 ... (50.0.0)"``. That is the
+#: convention ``TestFloorIsTheMaximumFixVersionNamed`` below relies on, and it
+#: is what makes the tables mechanically checkable rather than merely prose.
+_PARENTHESISED = re.compile(r"\(([^)]*)\)")
+_BARE_VERSION = re.compile(r"\b\d+\.\d+(?:\.\d+)*\b")
+
+
+def _fix_versions_named_in(reason: str) -> list[str]:
+    """Fix versions a justification names, by the parenthesis convention.
+
+    Deliberately narrow. Only dotted numerals inside parentheses count, so
+    ``(CVE-2026-44244 bypasses CVE-2026-42215, ...)`` yields nothing -- a CVE id
+    carries no dot -- and a version mentioned in running prose ("dbt-core 1.7.19
+    declares sqlparse <0.6.0") is not mistaken for a fix version of *our*
+    package.
+    """
+    found: list[str] = []
+    for group in _PARENTHESISED.findall(reason):
+        found.extend(_BARE_VERSION.findall(group))
+    return found
+
+
+class TestFloorIsTheMaximumFixVersionNamed:
+    """A floor may never sit below a fix version its own justification names.
+
+    This is the one mistake this whole file exists to prevent, and it had been
+    made *inside* the file (core#843): ``cryptography`` recorded a floor of
+    46.0.5 while its own reason went on to name 48.0.1, 49.0.0 and 50.0.0.
+
+    It matters because ``BLOCKED_BY_DBT_1_7`` is not documentation -- it is the
+    hand-off. ``test_the_blocker_for_these_advisories_still_exists`` fires on the
+    day the dbt pin moves and prints ``f"{name}: needs >={need}"``, so an
+    understated floor is the number the next engineer actually applies. Taking
+    46.0.5 clears one of four HIGH records and reads as done, which is precisely
+    the PyJWT (2.12.0 vs 2.13.0) and GitPython (3.1.47 vs 3.1.58) failure the
+    module docstring warns about.
+
+    Prose cannot be trusted to agree with a number that sits beside it; only a
+    check can.
+    """
+
+    def test_no_recorded_floor_is_below_a_fix_version_it_names(self):
+        understated = []
+        for table_name, table in (
+            ("SECURITY_FLOORS", SECURITY_FLOORS),
+            ("BLOCKED_BY_DBT_1_7", BLOCKED_BY_DBT_1_7),
+        ):
+            for name, (floor, why) in sorted(table.items()):
+                named = _fix_versions_named_in(why)
+                if not named:
+                    continue
+                highest = max(named, key=Version)
+                if Version(highest) > Version(floor):
+                    understated.append(
+                        f"{table_name}[{name!r}] records {floor} but its own "
+                        f"reason names a fix at {highest} (all named: "
+                        f"{', '.join(sorted(set(named), key=Version))})"
+                    )
+        assert not understated, (
+            "A floor is below a fix version named in its own justification, so "
+            "the table understates the version needed to clear the advisories "
+            "it lists. Derive every floor as max(fixed) over ALL records "
+            "affecting the shipped version -- never one advisory's fixed "
+            "field:\n  " + "\n  ".join(understated)
         )

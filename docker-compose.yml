@@ -1,9 +1,37 @@
+# Two env filenames, both optional, and the reason is core#736.
+#
+# Compose resolves this file through two INDEPENDENT channels:
+#   * `${VAR}` interpolation, fed by the shell environment or the project `.env` file —
+#     never by `env_file:`;
+#   * `env_file:`, which populates the CONTAINER's environment and is invisible to
+#     interpolation.
+#
+# Production satisfies both by sourcing the box's `.env.docker` into the shell before
+# calling compose (`set -a && . ./.env.docker && set +a`, deploy-pointer.yml). That file is
+# deliberately never shipped — the deploy preserves the box's copy — so a fresh clone has
+# no `.env.docker` at all, and the published quickstart's `cp .env.example .env` produced
+# `env file …/.env.docker not found`, which is fatal to the whole `up`.
+#
+# ⚠️ Copying the example to `.env.docker` instead does NOT fix it. That was the obvious
+# one-word remedy and it still fails, on `required variable GRAFANA_ADMIN_PASSWORD is
+# missing a value` — because that is the interpolation channel, which `env_file:` does not
+# feed. It renders cleanly only in a shell that has already sourced the file.
+#
+# Listing both names with `required: false` lets whichever one exists win: `.env` for a
+# self-hoster (and Compose reads it for interpolation automatically, closing the second
+# channel for free), `.env.docker` on the box, listed last so it takes precedence there.
+# `required: false` needs Compose >= 2.24; the prod box runs 2.32.4, CI runners newer.
+# Guarded by tests/test_deploy/test_selfhost_quickstart.py.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: datanika-postgres
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-datanika}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
@@ -35,6 +63,20 @@ services:
     restart: unless-stopped
 
   postgres-exporter:
+    # --- `monitoring` profile (core#736) ---------------------------------------------
+    # A plain `docker compose up -d` used to start ELEVEN services, six of them this
+    # production observability stack, on a box whose owner asked for a data pipeline.
+    # It also made GRAFANA_ADMIN_PASSWORD mandatory for someone who never wanted Grafana,
+    # because Compose interpolates the whole file before starting anything.
+    #
+    # ⚠️ This does NOT change the deploy. Naming a profiled service explicitly on the
+    # command line auto-enables its profile, so deploy-pointer.yml's
+    # `up -d postgres redis postgres-exporter cadvisor node-exporter` and
+    # `up -d --force-recreate prometheus grafana blackbox` still start all six.
+    # Verified with `--dry-run` against those exact lines before shipping, not assumed.
+    # Prod's own invocation is unchanged; `--profile monitoring` is for anyone bringing
+    # the stack up by hand.
+    profiles: ["monitoring"]
     image: prometheuscommunity/postgres-exporter:latest
     container_name: datanika-postgres-exporter
     ports:
@@ -85,7 +127,11 @@ services:
       - "127.0.0.1:3000:3000"
       - "127.0.0.1:8000:8000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GRANIAN_WORKERS: "4"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
@@ -143,7 +189,11 @@ services:
       - "127.0.0.1:3010:3000"
       - "127.0.0.1:8010:8000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GRANIAN_WORKERS: "4"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
@@ -191,7 +241,11 @@ services:
       dockerfile: datanika/Dockerfile
     container_name: datanika-celery
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       # Must match app/app_b exactly — the LOAD runs here, so if the worker resolves a
       # different directory the failure surfaces at run time, not at upload time (#471).
@@ -251,7 +305,11 @@ services:
       dockerfile: datanika/Dockerfile
     container_name: datanika-beat
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     depends_on:
       postgres:
         condition: service_healthy
@@ -267,6 +325,7 @@ services:
   # --- Monitoring ---
 
   prometheus:
+    profiles: ["monitoring"]
     image: prom/prometheus:latest
     container_name: datanika-prometheus
     ports:
@@ -288,6 +347,7 @@ services:
   # Used for sitemap health checks and the SEO probe. Prometheus scrapes this
   # via the scrape configs in monitoring/prometheus.yml.
   blackbox:
+    profiles: ["monitoring"]
     image: prom/blackbox-exporter:latest
     container_name: datanika-blackbox
     ports:
@@ -299,12 +359,25 @@ services:
     restart: unless-stopped
 
   grafana:
+    # Profiled for the reason above, and for a second one: the two `../datanika-cloud`
+    # bind mounts below reach into a PRIVATE sibling repository. A self-hoster cloning
+    # only datanika-core does not have it, and Docker creates a *directory* at a missing
+    # bind-mount source — so Grafana would find directories where it expects dashboard
+    # JSON, silently. Behind the profile, a default `up -d` never creates the container
+    # and never creates those paths. Residual, tracked separately: someone who *does* run
+    # `--profile monitoring` from a core-only clone still hits them; the durable fix is a
+    # compose override the cloud edition supplies, which needs a deploy change (Infra).
+    profiles: ["monitoring"]
     image: grafana/grafana:latest
     container_name: datanika-grafana
     ports:
       - "127.0.0.1:3001:3000"
     env_file:
-      - .env.docker
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env.docker}
@@ -323,6 +396,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
+    profiles: ["monitoring"]
     image: prom/node-exporter:latest
     container_name: datanika-node-exporter
     ports:
@@ -342,6 +416,7 @@ services:
     restart: unless-stopped
 
   cadvisor:
+    profiles: ["monitoring"]
     image: gcr.io/cadvisor/cadvisor:latest
     container_name: datanika-cadvisor
     ports:

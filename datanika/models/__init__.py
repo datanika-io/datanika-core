@@ -4,11 +4,15 @@ from datanika.models.base import Base, TenantMixin, TimestampMixin
 from datanika.models.catalog_entry import CatalogEntry, CatalogEntryType
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.models.dependency import Dependency, NodeType
+from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.mcp_oauth import OAuthClient, OAuthGrant, OAuthToken
+from datanika.models.notification import Notification, NotificationType
+from datanika.models.notification_channel import ChannelType, NotificationChannel
 from datanika.models.password_reset import PasswordResetToken
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.run import Run, RunStatus
 from datanika.models.schedule import Schedule
+from datanika.models.sso_config import SSOConfig, SSOProtocol
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
 from datanika.models.uploaded_file import UploadedFile
@@ -47,4 +51,12 @@ __all__ = [
     "OAuthGrant",
     "OAuthToken",
     "PasswordResetToken",
+    "Invitation",
+    "InvitationStatus",
+    "Notification",
+    "NotificationType",
+    "NotificationChannel",
+    "ChannelType",
+    "SSOConfig",
+    "SSOProtocol",
 ]

@@ -9,6 +9,26 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
 
 
+def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
+    """Resolve a run *within* an org — the single definition of ownership.
+
+    Every read of a `Run` goes through here (#732). A bare
+    `session.get(Run, run_id)` returns whichever tenant's row happens to carry
+    that primary key, and run ids are small sequential integers.
+
+    The defect this closes was not a live gap: the `/api/v1` run routes already
+    resolved through this predicate before calling a mutator, so no
+    user-supplied id reached one unscoped. It was that the mutators below
+    *took a run_id with no org_id at all* — so a future route calling one
+    directly would have been unscoped by default rather than by mistake, and
+    nothing would have said so. `tests/test_security/test_tenant_fk_boundary.py`
+    fails the build if a tenant-owned model is resolved without an org filter
+    anywhere under `datanika/`.
+    """
+    stmt = select(Run).where(Run.id == run_id, Run.org_id == org_id)
+    return session.execute(stmt).scalar_one_or_none()
+
+
 class ExecutionService:
     def create_run(
         self,
@@ -27,8 +47,8 @@ class ExecutionService:
         session.flush()
         return run
 
-    def start_run(self, session: Session, run_id: int) -> Run | None:
-        run = session.get(Run, run_id)
+    def start_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
         run.status = RunStatus.RUNNING
@@ -39,11 +59,12 @@ class ExecutionService:
     def complete_run(
         self,
         session: Session,
+        org_id: int,
         run_id: int,
         rows_loaded: int,
         logs: str,
     ) -> Run | None:
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
         run.status = RunStatus.SUCCESS
@@ -56,11 +77,12 @@ class ExecutionService:
     def fail_run(
         self,
         session: Session,
+        org_id: int,
         run_id: int,
         error_message: str,
         logs: str,
     ) -> Run | None:
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
         run.status = RunStatus.FAILED
@@ -98,7 +120,7 @@ class ExecutionService:
         )
         return run
 
-    def append_logs(self, session: Session, run_id: int, text: str) -> Run | None:
+    def append_logs(self, session: Session, org_id: int, run_id: int, text: str) -> Run | None:
         """Add a line to a finished run's logs.
 
         For things that happen *after* the load completes and must not change
@@ -108,15 +130,15 @@ class ExecutionService:
         the run row said success, Catalog stayed empty, and only SSH could
         connect the two.
         """
-        run = session.get(Run, run_id)
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
         run.logs = f"{run.logs}\n{text}" if run.logs else text
         session.flush()
         return run
 
-    def cancel_run(self, session: Session, run_id: int) -> Run | None:
-        run = session.get(Run, run_id)
+    def cancel_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
+        run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
         if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
@@ -127,8 +149,8 @@ class ExecutionService:
         return run
 
     def get_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
-        stmt = select(Run).where(Run.id == run_id, Run.org_id == org_id)
-        return session.execute(stmt).scalar_one_or_none()
+        """The public reader. Kept as a method for its callers; one predicate."""
+        return get_org_run(session, org_id, run_id)
 
     def list_runs(
         self,

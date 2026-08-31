@@ -15,6 +15,24 @@ from datanika.models.uploaded_file import UploadedFile
 ALLOWED_EXTENSIONS = {"csv", "json", "parquet"}
 
 
+def get_org_uploaded_file(session: Session, org_id: int, file_id: int) -> UploadedFile | None:
+    """Resolve an uploaded file *within* an org — the single definition of ownership.
+
+    `run_upload` used a bare `session.get(UploadedFile, uploaded_file_id)`
+    (#732), which neither scoped the org nor filtered `deleted_at`. Both matter
+    here and for the same reason: the record names an **archive path on disk**
+    that the task then extracts and reads. A cross-org id reads another
+    tenant's uploaded data; a soft-deleted one reads an archive
+    `cleanup_orphaned_archives` may already have removed.
+    """
+    stmt = select(UploadedFile).where(
+        UploadedFile.id == file_id,
+        UploadedFile.org_id == org_id,
+        UploadedFile.deleted_at.is_(None),
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
 class FileUploadService:
     MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 

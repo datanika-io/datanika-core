@@ -56,12 +56,16 @@ and it is the reason this file is composed rather than layered.
 
 import ast
 import inspect
+import textwrap
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datanika.services.auth import AuthService
-from datanika.services.email_verification import request_email_verification
+from datanika.services.email_verification import (
+    VerificationMailResult,
+    request_email_verification,
+)
 from datanika.tasks.email_tasks import send_verification_email_task
 
 VERIFY_SECRET = "test-secret-key-mail-path-observability"
@@ -145,7 +149,7 @@ class TestTheWholePathReachesTheWire:
                 user.id, user.email, auth, smtp_host=smtp_settings.smtp_host
             )
 
-        assert queued is True
+        assert queued is VerificationMailResult.QUEUED
         raw = _sent_message(wire)
 
         assert "no-reply@datanika.io" in raw, "the From address never reached the message"
@@ -193,17 +197,12 @@ class TestTheWholePathReachesTheWire:
 class TestTheOutcomeIsObservable:
     """The defect core#700 is actually about.
 
-    Both of these describe the product core#700 asks for and are marked strict
-    xfail, so they are green on ``dev`` today and **fail the moment the fix
-    lands unless the marker is removed with it**. That is deliberate: a
-    regression test parked in a branch is a regression test nobody runs, and a
-    plain ``skip`` would let the fix ship with the coverage still switched off.
+    Both of these describe the product core#700 asks for. QA parked them as strict
+    xfails so they were green on ``dev`` and would fail the moment the fix landed unless
+    the markers came off with it — a regression test parked in a branch is one nobody
+    runs. The fix landed; the markers came off.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#700 AC2: signup discards request_email_verification's return value",
-    )
     def test_signup_does_not_discard_whether_the_mail_was_queued(self):
         """``request_email_verification`` returns a bool. Signup throws it away.
 
@@ -216,7 +215,12 @@ class TestTheOutcomeIsObservable:
         """
         from datanika.ui.state import auth_state as auth_state_module
 
-        tree = ast.parse(inspect.getsource(auth_state_module.AuthState.signup.fn))
+        # dedent first: inspect.getsource returns the method still indented, and
+        # ast.parse raises IndentationError on it. Without this the assertion below
+        # never ran — the strict xfail was being satisfied by the harness, not by the
+        # defect it names.
+        source = textwrap.dedent(inspect.getsource(auth_state_module.AuthState.signup.fn))
+        tree = ast.parse(source)
         discarded = [
             node
             for node in ast.walk(tree)
@@ -231,10 +235,6 @@ class TestTheOutcomeIsObservable:
             "product. Assign it and act on it."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#700 AC1/AC4: no state var records the verification-mail outcome",
-    )
     def test_auth_state_carries_the_verification_outcome(self):
         """Something a page can render has to hold the answer.
 
@@ -267,14 +267,6 @@ class TestTheOutcomeIsObservable:
 class TestTheDeclaredRetryPolicyIsReachable:
     """A retry policy that cannot fire is worse than none — it reads as coverage."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "core#700: send_verification_email_task declares autoretry_for=(OSError, "
-            "ConnectionError, TimeoutError) but EmailService.send catches Exception, "
-            "so no transport error ever reaches Celery and max_retries=3 is dead config"
-        ),
-    )
     def test_a_transport_error_can_reach_celerys_autoretry(self, smtp_settings):
         """Either the declared exceptions propagate, or they should not be declared.
 

@@ -98,14 +98,17 @@ class TestSignupSendsTheVerificationMail:
         mints the wrong *type* of token produces a link ``/api/verify-email``
         rejects, and the user sees "verification failed" with nothing in the logs.
         """
-        from datanika.services.email_verification import request_email_verification
+        from datanika.services.email_verification import (
+            VerificationMailResult,
+            request_email_verification,
+        )
 
         user = user_svc.register_user(db_session, "fresh@example.com", "password123", "Fresh")
 
         with patch("datanika.services.email_verification.send_verification_email_task") as task:
             sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
 
-        assert sent is True
+        assert sent is VerificationMailResult.QUEUED
         task.delay.assert_called_once()
         to, token = task.delay.call_args.args
         assert to == "fresh@example.com"
@@ -121,14 +124,17 @@ class TestSignupSendsTheVerificationMail:
         Returning False rather than raising is the point: signup treats this as
         best-effort, and an unconfigured relay is a normal deployment, not an error.
         """
-        from datanika.services.email_verification import request_email_verification
+        from datanika.services.email_verification import (
+            VerificationMailResult,
+            request_email_verification,
+        )
 
         user = user_svc.register_user(db_session, "nosmtp@example.com", "password123", "No SMTP")
 
         with patch("datanika.services.email_verification.send_verification_email_task") as task:
             sent = request_email_verification(user.id, user.email, auth, smtp_host="")
 
-        assert sent is False
+        assert sent is VerificationMailResult.NO_RELAY
         task.delay.assert_not_called()
 
     def test_a_broker_failure_does_not_escape(self, db_session, user_svc, auth):
@@ -137,7 +143,10 @@ class TestSignupSendsTheVerificationMail:
         The account is already committed by the time this runs; raising here
         would show the user "Signup failed" for an account that exists.
         """
-        from datanika.services.email_verification import request_email_verification
+        from datanika.services.email_verification import (
+            VerificationMailResult,
+            request_email_verification,
+        )
 
         user = user_svc.register_user(db_session, "broker@example.com", "password123", "Broker")
 
@@ -145,7 +154,7 @@ class TestSignupSendsTheVerificationMail:
             task.delay.side_effect = OSError("broker unreachable")
             sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
 
-        assert sent is False
+        assert sent is VerificationMailResult.FAILED
 
     def test_signup_calls_it(self):
         """The helper is only worth anything if signup actually reaches it.

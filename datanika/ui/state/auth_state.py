@@ -85,6 +85,12 @@ class AuthState(rx.State):
 
     auth_error: str = ""
     invite_email: str = ""
+    # What happened to the confirmation mail on the most recent signup (core#700).
+    # One of VerificationMailResult's values, or "" when nothing has been attempted.
+    # Until this existed a successful send and a failed one were the same event to
+    # every surface a person can see, and the only proof either way was opening an
+    # inbox by hand.
+    verification_mail_state: str = ""
 
     def clear_auth_error(self):
         self.auth_error = ""
@@ -368,7 +374,10 @@ class AuthState(rx.State):
             # Best-effort by construction: the account is already committed, so
             # a missing relay or an unreachable broker must not surface as a
             # failed signup. See services/email_verification.py.
-            request_email_verification(user_id, user_email, AuthService(settings.secret_key))
+            mail_result = request_email_verification(
+                user_id, user_email, AuthService(settings.secret_key)
+            )
+            self.verification_mail_state = mail_result.value
 
             # Now authenticate to get tokens
             with get_sync_session() as session:
@@ -441,6 +450,10 @@ class AuthState(rx.State):
         # /connections?template=<slug> instead of the default /.
         extra_events = collect_events("user.signup_completed", user_id=self.current_user.id)
         return [*extra_events, rx.redirect(self._post_auth_redirect_target())]
+
+    def dismiss_verification_notice(self):
+        """Clear the post-signup confirmation banner (core#700)."""
+        self.verification_mail_state = ""
 
     def logout(self):
         # Audit logout before clearing state

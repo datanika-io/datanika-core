@@ -1,0 +1,71 @@
+# Post-promotion issue reconciliation — core#773
+#
+# Why this exists
+# ---------------
+# `promotion-pr-refs.yml` writes `Closes #N` for the promoted commits that used a *closing*
+# keyword, and merging the promotion PR closes those. Almost every commit here writes
+# `refs #N` instead, which closes nothing — deliberately, because WORKFLOW_RULES §4 records
+# a real incident where `closes #272` on a 4-of-36 partial fix retired the whole issue.
+#
+# The result is a quieter leak of the same shape §8 already learned about: work is live in
+# production while the tracker says open. Measured on the 2026-08-31 promotion — 28 commits,
+# ~12 issues shipped, exactly 2 closing references generated; a repo-wide sweep the same
+# night found 26 open issues whose implementing commit was already an ancestor of the
+# deployed `master`.
+#
+# This does not close anything and does not lint commit messages. It labels, so that
+# "shipped but still open" becomes a query instead of an archaeology exercise:
+#
+#     gh issue list --state open --label shipped-to-prod
+#
+# Trigger
+# -------
+# `workflow_run` on the CD workflow rather than on the promotion merge, because
+# WORKFLOW_RULES §8 ties closure to "live in production", not to `master` moving. A
+# conclusion of `success` means `deploy` + `smoke` + `smoke-prod` all passed.
+#
+# ⚠️ `workflow_run` only fires for the copy of this file on the DEFAULT branch, so it takes
+# effect from the promotion *after* the one that ships it.
+name: Post-promotion issue reconciliation
+
+on:
+  workflow_run:
+    workflows: ["Deploy to pointer.gr (prod)"]
+    types: [completed]
+  workflow_dispatch: {}
+
+# Labelling issues is a mutation, so it queues rather than cancelling: WORKFLOW_RULES §2's
+# rule is that `cancel-in-progress: true` is for verdicts you can recompute, never for
+# something that changes state halfway through.
+concurrency:
+  group: reconcile-shipped-issues
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  reconcile:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'master')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: master
+          # The script walks every commit reachable from master. A shallow checkout would
+          # scan a truncated range and under-report — which is why the script fails on a
+          # zero-commit scan rather than reporting a clean run.
+          fetch-depth: 0
+
+      - name: Reconcile the tracker against what is deployed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PROD_REF: master
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: python3 .github/scripts/reconcile_shipped_issues.py

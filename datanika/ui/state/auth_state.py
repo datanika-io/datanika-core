@@ -84,6 +84,17 @@ class AuthState(rx.State):
     current_role: str = ""
 
     auth_error: str = ""
+    # Set by ``BaseState._check_role`` when a mutating handler finds the session
+    # has ended (#673). It lives here, not on ``BaseState``, on purpose: every
+    # substate gets its *own* copy of an inherited var, so a flag set on
+    # ``ApiKeyState`` is invisible to ``page_layout``. ``AuthState`` is one
+    # object, and the layout already reads it.
+    #
+    # ⚠️ Distinct from ``show_session_expired``, which reads ``?expired=1`` on
+    # ``/login`` — that is the *page-load* path (#671), where the tab navigates
+    # and can carry a query parameter. A handler cannot navigate, so it has to
+    # leave a mark on the state the layout can see.
+    session_expired: bool = False
     invite_email: str = ""
     # What happened to the confirmation mail on the most recent signup (core#700).
     # One of VerificationMailResult's values, or "" when nothing has been attempted.
@@ -588,6 +599,10 @@ class AuthState(rx.State):
         self.current_org = OrgInfo()
         self.user_orgs = []
         self.current_role = ""
+        # Cleared here so a deliberate ``logout`` never lands on the "you were
+        # signed out" panel. ``_check_role`` sets it True *after* calling this
+        # (#673), which is the one path that means it.
+        self.session_expired = False
 
     def _revalidate_session(self) -> bool:
         """Whether this session may continue — renewing the access token if needed.

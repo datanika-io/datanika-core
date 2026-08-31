@@ -31,7 +31,7 @@
 
 **Promote `datanika-cloud` before `datanika-core`. Never the other way round.**
 
-There are now **two independent** reasons, and the second one costs money.
+There are now **three independent** reasons. The second costs money; the third breaks the build.
 
 **1. Mechanical (always true).** Cloud ships *inside* core's image: `deploy-pointer.yml` checks the
 cloud repo out at a pinned `ref: master` and tars both trees to the box, which rebuilds. So a
@@ -89,8 +89,35 @@ symptom is usage numbers that are exactly 2×.
 > **Verify with the two commands above, not with the issue link.** Reported to Engineering as a
 > comment-accuracy fix; this runbook section is the control that does not depend on it.
 
+**3. Dependency resolve (true whenever a change spans both repos).** The image build runs
+`uv sync --frozen` and *then* grafts the cloud tree in with `uv pip install /cloud`, which never
+consults the lock ([core#602]). So when a core change and a cloud change are two halves of one
+dependency decision, **core `master` alone is a tree whose resolve was only ever satisfied next to a
+cloud tree that is not on the box.**
+
+⚠️ **This is the case where the `dev` merge order and the promotion order run OPPOSITE, and
+conflating them is the trap.** Recorded 2026-09-01 from the [core#825] dbt work
+([core PR #868] + [cloud PR #139]):
+
+| direction | order | why |
+|---|---|---|
+| merging into `dev` | **core first, then cloud** | cloud CI installs both into one venv, and the resolve is *unsatisfiable* until core's constraint change lands — which is why cloud's PR is correctly red until core's merges |
+| promoting to `master` | **cloud first, then core** | unchanged, and for all three reasons above |
+
+Both constraints are active at the same time on a cross-repo dependency change. Satisfying one and
+assuming the other follows is how you get a production build against a half-applied resolve.
+
+**Establish that cloud's counterpart is on cloud `master` before core's goes.** That is the normal
+order anyway — the point is that it now has a third reason, and this one fails at *build* time on the
+box rather than quietly in a billing column.
+
 **Corollary for issue closure:** a cloud fix's issues close after the **core** deploy verifies it on
 the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
+
+[core#602]: https://github.com/datanika-io/datanika-core/issues/602
+[core#825]: https://github.com/datanika-io/datanika-core/issues/825
+[core PR #868]: https://github.com/datanika-io/datanika-core/pull/868
+[cloud PR #139]: https://github.com/datanika-io/datanika-cloud/pull/139
 
 ---
 

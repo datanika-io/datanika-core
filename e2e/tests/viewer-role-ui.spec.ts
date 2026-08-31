@@ -13,8 +13,10 @@ import type { Page } from "@playwright/test";
  * Fixtures: the viewer user (`DATANIKA_E2E_VIEWER_USER_*`) + an org-A connection
  * are always seeded by datanika/scripts/e2e_seed.py. Implemented in core#305.
  */
-// @slow — UI login + navigation; gated to master promotion PRs via
-// DATANIKA_E2E_SLOW=1. See plans/qa/PLAN_QA.md §P1 and #305.
+// @slow — UI login + navigation.
+// @slow. Runs wherever DATANIKA_E2E_SLOW=1 is set — which is EVERY
+// `e2e-staging` run on `dev` (ci.yml sets it on the job), not only
+// promotion PRs. See #305.
 
 function mustEnv(name: string): string {
   const value = process.env[name];

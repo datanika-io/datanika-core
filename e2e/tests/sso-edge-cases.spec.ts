@@ -4,7 +4,7 @@ import { backendContextOptions } from "../fixtures/sso";
 /**
  * SSO edge-case and misconfiguration tests.
  *
- * Reference: PLAN_QA.md Q3.
+ * Reference: `docs/QA_RULES.md`; SSO scope is tracked as `[QA]` issues.
  *
  * These tests use direct HTTP against the backend via backendContextOptions()
  * which forwards CF Access headers (core#222 fix).

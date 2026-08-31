@@ -1,6 +1,8 @@
 # Datanika E2E Test Harness (Playwright)
 
-Owner: QA. See `plans/qa/PLAN_QA.md` → P0 — E2E Test Framework.
+Owner: QA. Rules and the binding **E2E tier policy** live in
+[`docs/QA_RULES.md`](../docs/QA_RULES.md) (§10 for tiers). Work items are GitHub issues tagged
+`[QA]` — there is no `PLAN_*.md` any more (retired 2026-08-31).
 
 This directory holds browser-level golden-path tests. Unit and integration tests live in `tests/` and are Engineering's responsibility. E2E tests here drive the real app in a real browser against a real Docker Compose stack.
 

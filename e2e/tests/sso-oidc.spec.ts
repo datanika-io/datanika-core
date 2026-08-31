@@ -4,7 +4,7 @@ import { backendContextOptions, BACKEND_URL } from "../fixtures/sso";
 /**
  * SSO OIDC flow tests against a live Authentik container.
  *
- * Reference: PLAN_QA.md Q3, SPEC_SOC2_ROADMAP.md §SSO.
+ * Reference: `docs/specs/SPEC_SOC2_ROADMAP.md` §SSO; `docs/QA_RULES.md`.
  *
  * Prerequisites:
  *   docker compose -f e2e/docker-compose.test.yml up -d

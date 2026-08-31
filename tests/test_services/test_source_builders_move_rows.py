@@ -237,19 +237,21 @@ class TestFileSourceMovesRows:
     ``csv``, ``json`` (all three shapes ``_json_chunks`` handles) and ``parquet``
     are measured here.
 
-    **``s3`` is NOT measured, and is deferred on a named blocker** rather than
-    left to look done: it needs a reachable bucket plus a key pair, which is a
-    credential this suite deliberately does not take (see the module docstring —
-    everything here must run in PR CI with no account). Covering it means either
-    a `minio` service in the compose stack or an AWS key in
-    ``plans/SECRETS_INVENTORY.md``; until one exists, ``s3``'s only assertions
-    are the mocked kwargs tests in ``test_dlt_runner.py``, which are the exact
-    kind that could not see #492.
+    ``s3`` is measured too, in ``TestS3FileSourceMovesRows`` below, against a real
+    MinIO container (core#684).
 
-    What ``s3`` *does* share with the three above is the format resolution path:
-    it carries no format in its type, so ``_resolve_file_format`` falls to the
-    glob's extension and **raises** on a bare ``*`` rather than guessing. That
-    refusal is unit-tested. The unmeasured part is the transport.
+    ⚠️ **This paragraph used to say ``s3`` was "NOT measured, deferred on a named
+    blocker" — and it kept saying that AFTER the s3 tests landed in the same
+    file.** Corrected 2026-08-31. It is worth leaving the correction visible
+    rather than silently rewriting, because a docstring asserting that a thing is
+    uncovered, sitting a few hundred lines above the tests that cover it, is the
+    same defect this module exists to catch: a claim about coverage that nobody
+    re-derived. Scope claims go stale in the direction that flatters nobody —
+    check them against the class list, not against memory.
+
+    What every file format here shares is the format resolution path: a type that
+    carries no format falls to the glob's extension and **raises** on a bare
+    ``*`` rather than guessing. That refusal is unit-tested.
     """
 
     @staticmethod

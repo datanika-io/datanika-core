@@ -29,12 +29,40 @@ seven, because each looked like health at the time:
 | An alert rule structurally unable to fire | two rules were green for weeks because their expressions could never evaluate true |
 | A green about the wrong layer | the nightly Kafka smoke listed topics with a library **the workflow installs and production does not have** — a green about connectivity, never about rows |
 | Silence read as health | zero `/_event` errors across 14 days of logs, because the socket carried ~9 connections in that window |
+| A wait whose success condition **is** absence | `gotoReady` returned when the `/_event` socket had been quiet for 600ms — so a socket that had died satisfied it *sooner* than a healthy one, and one that never opened became a silent 12-second sleep. It could not fail. |
 | A correct assertion about unreachable code | `has_permission("admin", "manage_members") is False` passes, and `has_permission` has zero production callers |
 
 **Corollary — the deferral trap.** A note once claimed a gap was covered "by the nightly connector
 smoke and the restore check". Both are API-level; neither could catch either of the two P0s that
 were then found by a person clicking through production. *Check what the named coverage actually
 exercises before accepting it as coverage.*
+
+**Corollary — a readiness gate must be able to fail, and "quiet" is not a readiness signal.**
+(core#744, 2026-08-31.) `golden-path` flaked ~50% on `dev` and held a promotion for a day. Two
+rounds of triage went to the Celery worker, because the assertion text ended *"Is the Celery worker
+running?"* — a hypothesis embedded in a failure string, and the worker was healthy and consuming
+other tasks from the same queue throughout.
+
+The actual defect was in the harness's own readiness helper. It waited for the Reflex `/_event`
+socket to go **quiet** and then returned successfully whatever it had observed. Silence is what a
+*dead* socket produces best, so its success condition was satisfied fastest by the exact failure it
+existed to prevent — and, having no failure branch, it degraded to a 12-second sleep and said
+nothing. Downstream, the run helper clicked *Run* and navigated away 30–60 ms later (measured in
+the failing traces), which is inside the window where Reflex has not yet put the event on the wire
+and the unload handler disconnects the socket. Reflex's own comment for that path:
+*"otherwise we throw the event into the void."*
+
+**Rules:**
+1. **A wait must have a failure branch, and the failure must name what was missing.** If every
+   outcome returns the same way, it is a sleep wearing a predicate's name.
+2. **Wait on a positive signal the test reads, never on the absence of one.** Here the right signal
+   was the framework's own `is_hydrated_rx_state_":true` on the wire — an open socket, an answering
+   backend, and a page that says it is mounted, rather than "nothing happened recently".
+3. **A click is not delivered when `click()` resolves.** That proves a DOM node was pressed. If the
+   next thing you do can tear the page down, first wait until the event is observably on the wire.
+4. **Split a multi-process assertion so each layer has its own message.** "No run row appeared"
+   spans the browser, the web app and the worker; one sentence naming the worker sent two people to
+   the wrong process on nights the worker was fine.
 
 ## 2. Any green you have not personally forced red is unproven
 
@@ -93,6 +121,13 @@ Use `pytest.mark.xfail(strict=True, raises=<Specific>)`.
 - A `KNOWN_VIOLATIONS`-style allowlist must be `strict` too. One entry lasted about an hour before
   the defect it named was fixed elsewhere and the suite correctly failed. **An entry there cannot
   outlive its defect** — that is the point of it.
+- **A bare `assert` in the SETUP of an `xfail(raises=AssertionError)` test is absorbed by the
+  marker**, so a broken harness reports as a satisfied expected-failure — indistinguishable from the
+  defect being present. Raise a non-`AssertionError` (a local `HarnessError`) for setup invariants,
+  so only the assertion under test can xfail. Related: when you CLEAR an xfail, mutate the fix back
+  and confirm the test goes red *for the stated reason* — one strict xfail on this project was being
+  satisfied by an `IndentationError` inside `ast.parse(inspect.getsource(...))`, visible only on
+  removing the marker.
 
 ## 6. Validate against the real consumer
 

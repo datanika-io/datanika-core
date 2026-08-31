@@ -316,6 +316,78 @@ groups:
           summary: "Off-site backup is stale (last success over 26h ago)"
           description: "The nightly pg_dump off-site backup to Aweb has not succeeded in more than 26 hours. Check /var/log/datanika-backup.log on the pointer.gr box."
 
+      # --- Restore Drill Stale (core#725 follow-on) ---
+      # A backup that has never been restored is a hypothesis. The monthly drill
+      # (`0 5 1 * *` box-local, `/opt/datanika/scripts/restore-drill.sh`) is what tests
+      # it, and until 2026-08-31 its only success signal was a `.txt` file in a directory
+      # node-exporter does not read -- so NO ALERT FOR IT COULD EXIST, and the stamp sat
+      # 30 days stale with nothing to remark on it.
+      #
+      # core#725 fixed the instrument: the drill now writes
+      # `/opt/datanika/node_textfile/datanika_restore_drill.prom`, which node-exporter's
+      # textfile collector serves. ⚠️ That made the metric SCRAPEABLE, which is not the
+      # same as WATCHED -- this rule is the second half, and without it the fix would
+      # have left a number nobody reads. Verified present in prod Prometheus 2026-08-31:
+      # `datanika_restore_drill_last_success_timestamp_seconds` = 1788138422.
+      #
+      # 35 days = 3,024,000s, not 30: the cron is monthly on the 1st, so consecutive runs
+      # are up to 31 days apart and a 30d threshold would fire on every long month.
+      #
+      # Debounce is in the QUERY, not in `for` (core#604). Both directions were measured
+      # against prod on 2026-08-31: at the real threshold the expression returns 0 series
+      # (healthy is NoData, which is why `noDataState: OK` is correct here); the identical
+      # expression with the threshold dropped to 60s returns 8 -- every sample in the
+      # window -- so `gt [3]` demanding 4 of 8 is arithmetic on a value that was actually
+      # observed rather than assumed.
+      #
+      # ⚠️ If the metric DISAPPEARS -- textfile mount broken, node-exporter recreated
+      # without it, drill never run again after a rebuild -- this expression yields no
+      # series and reads exactly like health. That hole is covered by
+      # `watchdog-restore-drill` in the Monitoring Liveness group, not by this rule.
+      - uid: restore-drill-stale
+        title: Restore Drill Stale
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time(((time() - datanika_restore_drill_last_success_timestamp_seconds) > 3024000)[2m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The monthly restore drill has not passed in over 35 days"
+          description: "datanika_restore_drill_last_success_timestamp_seconds is more than 35 days old on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). The monthly drill restores the off-site pg_dump into a throwaway database and asserts live row counts. Run /opt/datanika/scripts/restore-drill.sh on the pointer.gr box and read its output -- a stale stamp means the drill has not run OR has been failing, and those need different fixes."
+
       # --- Container Restart Loop ---
       # core#615 -- this rule was structurally unable to fire for its entire life.
       #
@@ -568,6 +640,27 @@ groups:
           description: "Prometheus failed to scrape BOTH datanika-app and datanika-app-b on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). Under blue/green exactly one colour is expected to be unscrapeable, so this fires only when neither is. Internal scrape only — for external reachability see App External Health Down (core#604)."
 
       # --- Celery Task Failures ---
+      # core#704 -- this rule had never been able to fire, for the same structural reason
+      # as core#615 and core#616, and it is the third instance of that class.
+      #
+      # `celery_tasks_total` is a Counter declared in `services/metrics.py:41`. Its
+      # `.labels(...).inc()` calls live in Celery signal handlers (`:139-166`), which run
+      # in the WORKER process. `/metrics` is a Starlette route (`:191`) served by the APP
+      # process. So the app's registry holds the metric FAMILY with no children, and
+      # `generate_latest` emits a `# TYPE celery_tasks_total counter` line and zero
+      # samples. Measured on the serving prod container 2026-08-31 -- the TYPE line is
+      # there and there is not a single sample line under it -- and confirmed one layer
+      # up by querying prod Prometheus, where `celery_tasks_total` returns 0 series.
+      #
+      # A rule matching no series produces NoData, and `noDataState: OK` renders that as
+      # healthy. So "no Celery failure alert has ever fired" carried no information at
+      # all.
+      #
+      # Repointed at the celery-exporter's event-derived counter. Names verified by
+      # running the exporter against the real staging worker on 2026-08-31 rather than
+      # read off its README: `celery_task_failed_total{name, hostname, queue_name,
+      # exception}`. `sum()` collapses `hostname`, which is the worker's container ID and
+      # therefore changes on every deploy.
       - uid: celery-task-failures
         title: High Celery Task Failure Rate
         condition: C
@@ -580,7 +673,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'rate(celery_tasks_total{state="FAILURE"}[15m]) > 0.1'
+              expr: 'sum(rate(celery_task_failed_total[15m])) > 0.1'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -613,6 +706,18 @@ groups:
           description: "More than 0.1 task failures per second over the last 15 minutes."
 
       # --- Celery Queue Depth ---
+      # ⚠️ Unlike its neighbour above, this rule DID work: `celery_queue_length` is set
+      # inside the `/metrics` handler itself (`services/metrics.py:172-186`), in the app
+      # process, from a live Redis `LLEN` at scrape time -- so it has children where
+      # `celery_tasks_total` has none. Two Celery rules sitting side by side, one dead and
+      # one live, and nothing about how they read distinguished them.
+      #
+      # Scoped to `job="celery"` (core#704) because the exporter ALSO publishes a metric
+      # of exactly this name, `celery_queue_length{queue_name="celery"}`, against the
+      # app's `celery_queue_length{queue="celery"}`. Unscoped, this rule would now match
+      # both and raise two instances for one condition. The exporter's copy is chosen
+      # deliberately over the app's: the app's is blue/green, so scoping to it would need
+      # `job=~"datanika-app(-b)?"` and would re-open the core#622 colour trap.
       - uid: celery-queue-depth
         title: Celery Queue Backlog
         condition: C
@@ -625,7 +730,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'celery_queue_length > 50'
+              expr: 'celery_queue_length{job="celery"} > 50'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -656,6 +761,90 @@ groups:
         annotations:
           summary: "Celery queue backlog: {{ $value }} tasks"
           description: "Celery queue has had more than 50 pending tasks for 10 minutes."
+
+      # --- Scheduled maintenance stopped arriving (core#704, closes core#653 AC3) ---
+      # `beat` went live 2026-08-30 as the ONLY invocation path for
+      # `datanika.run_maintenance`. Its death as a CONTAINER is covered -- `container-down`
+      # carries `beat` in its selector. Its death as a PRODUCER was not: a beat that is
+      # alive but wedged, or a worker that never picks the task up, is indistinguishable
+      # from a healthy hour in which the sweeps had nothing to do. That is core#653's own
+      # failure shape one level up, and core#653 went unnoticed for the entire life of the
+      # project.
+      #
+      # ⚠️ THREE THINGS ABOUT THIS EXPRESSION ARE LOAD-BEARING; none is stylistic.
+      #
+      # 1. `< bool 1` and NOT `< 1`. A bare `X < 1` is a FILTER: it returns X's own value
+      #    where the condition holds. `increase` of a task that has stopped firing is 0,
+      #    so the rule would hand `reduce: last` the number 0, and `threshold gt [0]`
+      #    would then be FALSE -- a rule that fires only while the system is healthy is
+      #    exactly core#504, and this file's own lint would not have caught it, because
+      #    `TestThresholdSatisfiability` only recognises the `== N` form. `bool` makes the
+      #    comparison return 1/0 instead of filtering, so `gt [0]` means what it reads as.
+      #
+      # 2. `sum()` collapses `hostname`, which is the worker's container ID. Every deploy
+      #    recreates the worker, so a per-hostname rule would compare a frozen old series
+      #    against a newborn one. Aggregated, the old series' contribution ages out of the
+      #    3h window at about the rate the new one accumulates, so an ordinary deploy does
+      #    not move this rule at all.
+      #
+      # 3. The `_created` guard is what stops it paging after an EXPORTER restart. The
+      #    exporter's counters live in memory. On restart, the child for this task is
+      #    recreated at the value of the first event that follows, and a flat series has
+      #    an `increase` of 0 -- so without the guard the rule would fire for up to an
+      #    hour after any exporter recreate, which is how a rule earns a permanent mute.
+      #    `celery_task_succeeded_created` is the exporter's own record of when it began
+      #    observing this task; `min()` takes the oldest child, and until that is older
+      #    than the window the guard yields no series and the rule is silent. It errs
+      #    toward silence during churn ON PURPOSE, and the two watchdogs in the Monitoring
+      #    Liveness group are what cover the silence: `absent(up{job="celery"})` fires if
+      #    the exporter is not scraped at all, `absent(celery_worker_up)` if no worker is
+      #    reporting. Neither has a guard.
+      #
+      # Window is 3h against an hourly schedule -- two consecutive misses, not one. A
+      # missed maintenance sweep is housekeeping, not user-facing, hence `warning`.
+      - uid: celery-maintenance-not-firing
+        title: Scheduled maintenance has stopped running
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: '(sum(increase(celery_task_succeeded_total{name="datanika.run_maintenance"}[3h])) < bool 1) and on() ((time() - min(celery_task_succeeded_created{name="datanika.run_maintenance"})) > 10800)'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "datanika.run_maintenance has not succeeded in the last 3h"
+          description: "Celery Beat schedules datanika.run_maintenance hourly and it has not completed successfully in the last 3 hours, so at least two firings have been missed. Beat may be alive but wedged -- its container being Up is not evidence it is still producing. Check `docker logs datanika-beat` for 'Sending due task hourly-maintenance' and `docker logs datanika-celery` for the matching receipt. Duration is in the query, so `for` is 0s (core#604)."
 
   - orgId: 1
     name: External Probes
@@ -1922,3 +2111,136 @@ groups:
         annotations:
           summary: "Backup freshness metric has disappeared"
           description: "The backup timestamp metric is absent, so Backup Stale cannot fire — backups could stop silently."
+      - uid: watchdog-restore-drill
+        title: "Watchdog: restore drill metric missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(datanika_restore_drill_last_success_timestamp_seconds)'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Restore drill freshness metric has disappeared"
+          description: "datanika_restore_drill_last_success_timestamp_seconds is absent, so Restore Drill Stale cannot fire. The metric is written by /opt/datanika/scripts/restore-drill.sh into /opt/datanika/node_textfile/ and served by node-exporter's textfile collector — check that the bind mount and the --collector.textfile.directory flag both survived the last deploy."
+      # --- Celery watchdogs (core#704) ---
+      # These two are why `celery-maintenance-not-firing` is allowed to stay silent while
+      # the exporter is young. That rule cannot distinguish "the task is arriving" from
+      # "nothing is reporting at all"; these can, and neither carries a guard.
+      - uid: watchdog-celery-scrape
+        title: "Watchdog: celery scrape target missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(up{job="celery"})'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The celery-exporter scrape target has disappeared"
+          description: "up{job=\"celery\"} is absent, so Prometheus is not scraping celery-exporter at all. High Celery Task Failure Rate, Celery Queue Backlog and Scheduled maintenance has stopped running are ALL blind while this is true — which is the state the whole system was in before core#704. Check `docker ps` for datanika-celery-exporter and the `celery` job in monitoring/prometheus.yml."
+      - uid: watchdog-celery-worker
+        title: "Watchdog: no Celery worker is reporting"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(celery_worker_up)'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "celery-exporter is scraped but reports no worker at all"
+          description: "celery_worker_up is absent: the exporter is running and Prometheus is scraping it, but no Celery worker has sent a heartbeat. This is the case the scrape watchdog cannot see — a live exporter talking to a broker no worker is attached to looks exactly like a quiet system. NB celery_worker_up comes from broker introspection and appears even when the worker runs without -E, so its absence means the worker itself, not the event flag."

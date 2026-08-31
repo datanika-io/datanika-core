@@ -186,10 +186,19 @@ jobs:
       # tests/test_deploy/test_deploy_service_coverage.py green — a compose service named
       # by no deploy step runs on whatever config it started with, indefinitely and
       # silently, which is what core#616 was.
-      - name: Recreate celery worker and beat
+      #
+      # `celery-exporter` (core#704) joins the same line rather than the datastore line
+      # above, and the ORDER within it matters more than it looks: the exporter reads the
+      # worker's event stream, so recreating the worker without the exporter would be
+      # harmless, but recreating the exporter without the worker after a `-E` change would
+      # leave it listening to a worker that publishes nothing — the exact state that made
+      # `celery-task-failures` a rule watching an empty metric for the life of the
+      # project. Naming both here keeps them a unit. Plain `up -d` is a config-hash
+      # recreate: a no-op unless the service's own definition changed.
+      - name: Recreate celery worker, beat and the celery exporter
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery beat'
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery beat celery-exporter'
 
       # Assert the colour that is actually SERVING is healthy — not a hardcoded container
       # name, which is what made the old check meaningless once colours alternate.
@@ -249,6 +258,12 @@ jobs:
             sleep 5
           done
           curl -sf http://127.0.0.1:9090/api/v1/status/config -o /tmp/live-promcfg.json || true
+          # Targets, for the job=celery health assertion further down (core#704). Give the
+          # freshly-recreated exporter a scrape interval or two to be discovered before
+          # reading — a target polled the instant after a reload legitimately reads
+          # "unknown", and failing a good deploy on that is its own kind of noise.
+          sleep 20
+          curl -sf http://127.0.0.1:9090/api/v1/targets -o /tmp/live-targets.json || true
           # --- rule health: can Grafana actually EVALUATE what we shipped? ---
           # Comparing expressions proves the right text reached Grafana. It does NOT
           # prove the rule works. Every probe rule sat at "invalid format of evaluation
@@ -340,6 +355,32 @@ jobs:
               print("  (classic cause: single-file bind mount pinned to a replaced inode — recreate the container)")
           else:
               print(f"prometheus scrape jobs match the repo ({len(got)} jobs)")
+
+          # --- the celery target must be UP, not merely CONFIGURED (core#704) ----------
+          # The check above compares job NAMES. A `celery` job that is configured and
+          # permanently down passes it — and a permanently-down target is
+          # indistinguishable from a quiet one in every rule that reads it, which is the
+          # whole of core#704. So assert the scrape actually succeeds.
+          #
+          # Deliberately narrow to this one job. A blanket "all targets up" assertion
+          # would be WRONG here: under blue/green exactly one of datanika-app /
+          # datanika-app-b is expected to be down at any moment, by design.
+          try:
+              act = json.load(open("/tmp/live-targets.json"))["data"]["activeTargets"]
+          except Exception as e:
+              print("could not read live prometheus targets:", e); sys.exit(1)
+          cel = [t for t in act if t["labels"].get("job") == "celery"]
+          if not cel:
+              failed = True
+              print("MISMATCH - prometheus has no ACTIVE target for job=celery")
+          elif any(t.get("health") != "up" for t in cel):
+              failed = True
+              for t in cel:
+                  print(f"celery target {t['labels'].get('instance')} health="
+                        f"{t.get('health')} lastError={t.get('lastError')!r}")
+              print("  (the exporter is not being scraped; every Celery rule is blind)")
+          else:
+              print(f"celery scrape target is up ({cel[0]['labels'].get('instance')})")
 
           sys.exit(1 if failed else 0)
           PY

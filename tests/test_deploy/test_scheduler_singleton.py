@@ -71,6 +71,31 @@ prose and whose code disagree will be trusted according to its prose and behave
 according to its code**, and a guard-the-guard suite only closes that gap for the
 cases it enumerates. Enumerate the shapes the fix is expected to take, not just
 the shapes the bug takes.
+
+⚠️ Both strict xfails below are also satisfied by DELETING the scheduler
+--------------------------------------------------------------------------
+
+Remove line 83 and ``ScheduleService``'s two calls and both flip to XPASS —
+reading as *"the fix landed"* — with nothing anywhere arming a scheduler. 5× is
+loud (duplicate ``runs`` rows, duplicated billing); 0× is silent and is found by
+the customer, because nothing alerts on a due ``Schedule`` that was never
+dispatched. ``TestTheSchedulerStartMustMoveNotVanish`` is that half, and it is a
+plain test rather than an xfail because it is green today, green after a correct
+fix, and red only if the arming disappears.
+
+Measured on the real tree rather than argued
+(``plans/qa/notes/probe-648/mutate_648_guards.py``):
+
+=========================================  =========  =============================
+state applied to ``datanika/datanika.py``  claim C    pytest
+=========================================  =========  =============================
+baseline (the defect, on ``dev``)          GREEN      17 passed, 2 xfailed
+arming MOVED to a run module + service     GREEN      2 failed (markers due out)
+arming DELETED outright                    **RED**    3 failed
+=========================================  =========  =============================
+
+The two mutated states are otherwise indistinguishable in this file — same
+xfail flips, same counts elsewhere. Claim C is the whole difference.
 """
 
 import ast
@@ -78,6 +103,7 @@ import inspect
 from pathlib import Path
 
 import pytest
+import yaml
 
 APP_MODULE = Path(__file__).resolve().parents[2] / "datanika" / "datanika.py"
 
@@ -291,3 +317,188 @@ class TestTheSchedulerIsNotArmedByImport:
             "rebuilds the whole job set from it — so the web tier should write the "
             "row and let the scheduler process reconcile. See core#648 §5."
         )
+
+
+# ---------------------------------------------------------------------------
+# The other failure direction, which nothing above can see.
+#
+# Both tests above are satisfied by DELETING the scheduler. Remove line 83 and
+# `ScheduleService`'s two calls and they flip to XPASS — "the fix landed" — with
+# nothing anywhere arming a scheduler. The feature then fails **silently and
+# completely**: a customer saves a schedule, the row is written, the UI shows it
+# active, and it never runs. There is no alert for that. `celery-maintenance-not-
+# firing` watches beat; nothing watches whether a due `Schedule` was dispatched.
+#
+# 5× is loud — it shows up as duplicate `runs` rows and duplicated billing. 0× is
+# silent, and is discovered by the customer. So the fix has to MOVE the arming,
+# and this is the half that says so.
+#
+# These are NOT xfails: they are green today, green after a correct fix, and red
+# only if the arming disappears or lands somewhere nothing runs. They therefore
+# encode no architecture — a dedicated container, a leader lock and an opt-in
+# flag all satisfy them, which is the same property the xfails above were shaped
+# for and the reason this is not written as a process-count assertion. See the
+# note at the bottom of this file for why that one is deliberately not here.
+# ---------------------------------------------------------------------------
+
+DATANIKA_PACKAGE = Path(__file__).resolve().parents[2] / "datanika"
+COMPOSE_MANIFESTS = {
+    "docker-compose.yml": Path(__file__).resolve().parents[2] / "docker-compose.yml",
+    "deploy/staging/docker-compose.yml": Path(__file__).resolve().parents[2]
+    / "deploy"
+    / "staging"
+    / "docker-compose.yml",
+}
+
+
+def _any_scheduler_arming_call(source: str) -> bool:
+    """``scheduler_integration.start()`` **anywhere** — inside a function, behind
+    a guard, at module scope.
+
+    Deliberately the complement of ``_module_level_scheduler_calls``: that one
+    asks *"does importing this arm a scheduler"*, this one asks *"does this file
+    contain the arming at all"*. Both questions are needed, and answering the
+    second with the first is how "the fix landed" and "the feature was deleted"
+    become the same reading.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "start"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == SCHEDULER_OBJECT
+        ):
+            return True
+    return False
+
+
+def _modules_that_arm_the_scheduler() -> list[Path]:
+    return sorted(
+        path
+        for path in DATANIKA_PACKAGE.rglob("*.py")
+        if "__pycache__" not in path.parts
+        and _any_scheduler_arming_call(path.read_text(encoding="utf-8"))
+    )
+
+
+def _dotted(path: Path) -> str:
+    rel = path.relative_to(DATANIKA_PACKAGE.parent).with_suffix("")
+    return ".".join(rel.parts)
+
+
+def _all_compose_commands() -> dict[str, str]:
+    """``{"<manifest>:<service>": "<command text>"}`` across every manifest."""
+    commands: dict[str, str] = {}
+    for label, manifest_path in COMPOSE_MANIFESTS.items():
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        for name, service in (manifest.get("services") or {}).items():
+            cmd = (service or {}).get("command", "")
+            text = " ".join(str(p) for p in cmd) if isinstance(cmd, list) else str(cmd)
+            commands[f"{label}:{name}"] = text
+    return commands
+
+
+class TestTheSchedulerStartMustMoveNotVanish:
+    def test_the_manifests_are_readable(self):
+        """Arming check. Every assertion below is a search over these commands,
+        and a search over an empty set is satisfied by anything."""
+        commands = _all_compose_commands()
+        assert len(commands) >= 5, (
+            f"only parsed {len(commands)} compose services across "
+            f"{sorted(COMPOSE_MANIFESTS)}; the reachability check below would be "
+            "vacuous"
+        )
+
+    def test_something_in_the_tree_still_arms_the_scheduler(self):
+        armers = _modules_that_arm_the_scheduler()
+        assert armers, (
+            "nothing under datanika/ calls scheduler_integration.start(). The two "
+            "xfail guards above are both SATISFIED by this state, so a fix that "
+            "deleted the arming instead of moving it reads as complete. Every "
+            "saved Schedule would then be written, displayed as active, and never "
+            "dispatched — and no alert covers that. See core#648."
+        )
+
+    def test_every_arming_module_is_reachable_from_a_deployment_unit(self):
+        """A ``start()`` in a module nothing runs is the same as no ``start()``.
+
+        Reachable means: it is the app module itself (imported by every service
+        whose command runs ``reflex run``), or its dotted path appears in some
+        compose service's command. That second clause is what a dedicated
+        scheduler container satisfies, and it is why this test does not have to
+        know which architecture was chosen.
+        """
+        commands = _all_compose_commands()
+        unreachable: list[str] = []
+        for module in _modules_that_arm_the_scheduler():
+            if module == APP_MODULE:
+                continue  # every `reflex run` service imports it
+            dotted = _dotted(module)
+            if not any(dotted in command for command in commands.values()):
+                unreachable.append(dotted)
+        assert not unreachable, (
+            "these modules arm the scheduler but no compose service runs them, so "
+            "no scheduled work is dispatched anywhere: " + ", ".join(unreachable) + ". "
+            "Add the service that runs it (core#648 §3 chose a dedicated "
+            "dispatch-only container), or the arming is dead code that reads as a "
+            "shipped fix."
+        )
+
+
+class TestTheMoveNotVanishGuardCanActuallyFail:
+    def test_it_finds_a_call_inside_a_function(self):
+        """The discriminating case against ``_module_level_scheduler_calls``,
+        which returns nothing for exactly this source."""
+        source = "def main():\n    scheduler_integration.start()\n"
+        assert _any_scheduler_arming_call(source)
+        assert not _module_level_scheduler_calls(source)
+
+    def test_it_finds_a_call_behind_a_role_guard(self):
+        source = "if settings.run_scheduler:\n    scheduler_integration.start()\n"
+        assert _any_scheduler_arming_call(source)
+        assert not _module_level_scheduler_calls(source)
+
+    def test_it_does_not_find_an_unrelated_start(self):
+        assert not _any_scheduler_arming_call("celery_app.start()\napp.start()\n")
+
+    def test_it_does_not_find_a_file_with_no_call(self):
+        assert not _any_scheduler_arming_call("import os\n\n\ndef f():\n    return 1\n")
+
+    def test_the_real_tree_currently_arms_it_in_exactly_one_module(self):
+        """Not an invariant — a statement of where things stand.
+
+        🔧 **The core#648 fix is expected to fail this and to update the
+        expected value in the same commit.** That is the point: the move is a
+        one-line edit here, and making it deliberate stops the arming quietly
+        appearing in a *second* module, which is this bug all over again one
+        level up. Do not delete the assertion to make it pass.
+        """
+        assert [_dotted(p) for p in _modules_that_arm_the_scheduler()] == ["datanika.datanika"], (
+            "the set of modules that arm the scheduler changed. If a fix moved "
+            "it, update the expected list. If it is now armed in two places, "
+            "that is core#648 again."
+        )
+
+
+# ---------------------------------------------------------------------------
+# ⚠️ Deliberately NOT in this file: "exactly one process arms the scheduler".
+#
+# That is the invariant the defect actually violates — 5 processes, not 5
+# services — and it is derivable from the manifests, since `instances =
+# GRANIAN_WORKERS + 1` was measured at two worker counts (prod 4 → 5, staging
+# 2 → 3). It is left out on purpose, because writing it now requires guessing
+# the shape of a fix that has not been written:
+#
+#   * dedicated container  — arming service runs 1 process   → asserts 1 ✅
+#   * opt-in flag on `app` — arming service runs 5 processes → asserts 5 ❌
+#   * Redis leader lock    — 5 processes call start(), one wins → the manifest
+#                            cannot tell, and the assertion is unwritable ❌
+#
+# Two of the three make a *correct* fix fail this test. A guard that opposes two
+# of the three candidate fixes is not coverage, it is a vote — and this file has
+# already shipped one detector whose prose and code disagreed about precisely
+# this (see the module docstring). The process-count assertion belongs in the PR
+# that implements the fix, written against the shape that was chosen. The spec
+# for it is on core#648.
+# ---------------------------------------------------------------------------

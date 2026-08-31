@@ -19,18 +19,36 @@ you're trying to roll back a bad deploy.
 
 ## Scope
 
-MVP asserts **schema equivalence** after a round-trip on the HEAD
-migration only. Data preservation and full-history round-trips are
-follow-ups. Migrations that are intentionally one-way (data-destructive)
-must mark `one_way = True` in their module globals — the test will
-skip them.
+This file asserts **schema equivalence** after a round-trip on the HEAD
+migration only, on an empty database. `test_data_preservation_roundtrip.py`
+(core#726) is the other half: the same round trip with rows in the tables,
+compared by value — because a schema comparison calls a migration clean
+when it discards and re-derives every value in a column.
+
+Full-history round-trips (every migration's `down()`) stay deferred: 36
+revisions, and the value is concentrated in the most recent few.
+
+Migrations that genuinely cannot be rolled back mark `one_way = True` **and**
+`one_way_reason = "..."` at module scope, which skips both round-trip guards.
+🚨 That marker was **documented here and implemented nowhere** from April until
+2026-09-01 — including the instruction below to "skip this test via the
+ONE_WAY_REVISIONS list", a list that never existed, aimed at someone who is
+reading this message precisely because they are checking whether a bad deploy
+can be rolled back. It is now read out of the migration module by
+`conftest.one_way_skip_reason()`.
 """
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import create_engine, inspect, text
 
-from tests.test_migrations.conftest import _run_alembic
+from tests.test_migrations.conftest import (
+    ONE_WAY_MARKER,
+    ONE_WAY_REASON_MARKER,
+    _run_alembic,
+    one_way_skip_reason,
+)
 
 # `roundtrip_db_url` is deliberately NOT imported here. It lives in
 # conftest.py and pytest discovers it automatically; importing a fixture
@@ -67,6 +85,10 @@ def _reset_db(db_url: str) -> None:
 
 def test_head_downgrade_upgrade_roundtrip(roundtrip_db_url: str) -> None:
     """Upgrade → downgrade -1 → upgrade and assert schema round-trips cleanly."""
+    skip = one_way_skip_reason()
+    if skip:
+        pytest.skip(skip)
+
     _reset_db(roundtrip_db_url)
 
     # 1. Upgrade to head
@@ -81,10 +103,13 @@ def test_head_downgrade_upgrade_roundtrip(roundtrip_db_url: str) -> None:
     r = _run_alembic(["downgrade", "-1"], roundtrip_db_url)
     assert r.returncode == 0, (
         f"`alembic downgrade -1` failed — HEAD migration's downgrade() is broken.\n"
-        f"If this migration is intentionally one-way (data-destructive), add\n"
-        f"    one_way = True\n"
-        f"at module scope in the migration file AND skip this test via the\n"
-        f"ONE_WAY_REVISIONS list in test_roundtrip.py.\n"
+        f"If this migration genuinely cannot be rolled back, declare BOTH of these\n"
+        f"at module scope in the migration file itself:\n"
+        f"    {ONE_WAY_MARKER} = True\n"
+        f'    {ONE_WAY_REASON_MARKER} = "why, in one sentence"\n'
+        f"They are read by tests/test_migrations/conftest.py and skip this test\n"
+        f"and the data-preservation round-trip. There is no list to edit — the\n"
+        f"marker travels with the migration, so it cannot drift away from it.\n"
         f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
     )
 

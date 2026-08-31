@@ -53,6 +53,19 @@ The other assertions
   reason. No static check can see it, and one that appeared to would be lying.
 * `TestThresholdSatisfiability` — core#504 shipped `gt [0]` against a series
   whose value is always `0`: unsatisfiable, silently dead for months.
+* `TestFilterThresholdAgreement` — **added 2026-08-31, core#754.** The check
+  above covers the *constant* case only (`== N`, `absent()`); a one-sided
+  comparison emits a **range**, and `_constant_value` returns `None` for it,
+  which *skips*. A bare `X < 1` returns the metric's own value, so paired with
+  this file's near-universal `gt [0]` the rule fires on the open interval
+  `(0, 1)` and **never at 0** — and `increase()` over a task that has stopped
+  arriving is exactly 0. That is a rule silent during the outage and noisy
+  either side of healthy. Found by mutation while writing
+  `celery-maintenance-not-firing` for core#704: the naive form was substituted
+  for the shipped `< bool 1` and the file still reported 196 passed, while the
+  four other mutations run the same way went correctly red. **No live rule has
+  this defect** — verified across all 30 PromQL rules, the only `<` in the set
+  being the `bool` form. This is the gate that stops the next one.
 * `TestScrapeIntervalCoupling` — `[2m:15s]` hardcodes the blackbox scrape
   interval. If `prometheus.yml` retunes that job, the sample count per window
   changes and the threshold silently means something else.
@@ -454,6 +467,193 @@ def _evaluate(kind: str | None, value: float, params: list[float]) -> bool | Non
     return None
 
 
+# --- filtering comparison vs evaluator (core#754) ---------------------------
+#
+# A bare PromQL comparison is a FILTER, not a boolean. `X < 1` returns **X's own
+# value** wherever the condition holds, so the number that reaches Grafana's
+# evaluator is bounded by the comparison rather than equal to it. The pair
+# (filter, evaluator) can therefore disagree in two ways, and both read as a
+# perfectly healthy rule everywhere else in this file:
+#
+#   unsatisfiable    no value the filter admits satisfies the evaluator.
+#                    `X > 85` paired with `lt [1]` is dead for every metric,
+#                    every range, forever. That pairing is one copy-paste away:
+#                    `lt [1]` is the evaluator the three `*-down` rules use.
+#
+#   extreme excluded the evaluator discards the *unbounded* end of the filter's
+#                    range — which is the severe end, the reason the rule was
+#                    written. `X < 1` with `gt [0]` fires on the open interval
+#                    (0, 1) and **never at 0**, and `increase()` over a task
+#                    that has stopped arriving is exactly 0. So the rule is
+#                    silent during the outage it exists to detect and noisy on
+#                    the fractional values either side of healthy.
+#
+# `X < bool 1` is the fix: `bool` collapses the filter to 1/0, and the evaluator
+# then means what it appears to mean. Exempt below for exactly that reason.
+#
+# Found by mutation while writing `celery-maintenance-not-firing` for core#704 —
+# the naive `< 1` was substituted for the shipped `< bool 1` and the whole file
+# still reported 196 passed. `_constant_value` recognises `absent(` and `== N`
+# and returns None for everything else, and a None *skips*.
+#
+# Set operators: `A and B` / `A unless B` take their VALUE from the left operand
+# — B only decides which series survive. So the range to check is the left
+# operand's, reached by descending into it. `A or B` emits a union of two
+# ranges, which this does not model, so it is skipped.
+#
+# 🚨 That descent is load-bearing, and the first version of this check did not
+# have it. It skipped any expression containing a set operator, on the reasoning
+# that a trailing comparison is not the produced value there — true, and it made
+# the check blind to *the exact rule the issue was found on*.
+# `celery-maintenance-not-firing` is `(<filter> < bool 1) and on() (<staleness>)`:
+# mutating its `< bool 1` to the naive `< 1` left the suite **green, 30 passed**,
+# while the same mutation on a rule without an `and` went correctly red. A check
+# that cannot see its own motivating defect is this project's signature failure
+# wearing a lint's clothes, and only running it against the mutated live config
+# — not against synthetics — surfaced it.
+
+_NUMBER = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+_FILTER_COMPARISON = re.compile(rf"(<=|>=|<|>)\s*(bool\s+)?({_NUMBER})\s*$")
+_SET_OPERATOR = re.compile(r"\b(?:and|or|unless)\b")
+
+_NEG = float("-inf")
+_POS = float("inf")
+
+# (low, high, low_closed, high_closed)
+Interval = tuple[float, float, bool, bool]
+
+
+def _describe(interval: Interval) -> str:
+    """`(0, +inf)` / `[93600, +inf)` — so the failure message shows the arithmetic."""
+    low, high, low_closed, high_closed = interval
+    left = "[" if low_closed and low != _NEG else "("
+    right = "]" if high_closed and high != _POS else ")"
+    low_text = "-inf" if low == _NEG else f"{low:g}"
+    high_text = "+inf" if high == _POS else f"{high:g}"
+    return f"{left}{low_text}, {high_text}{right}"
+
+
+def _contains(interval: Interval, x: float) -> bool:
+    low, high, low_closed, high_closed = interval
+    if not low <= x <= high:
+        return False
+    if x == low and not low_closed:
+        return False
+    return not (x == high and not high_closed)
+
+
+def _intersects(a: Interval, b: Interval) -> bool:
+    """Is there any value both intervals contain?"""
+    low = max(a[0], b[0])
+    high = min(a[1], b[1])
+    if low > high:
+        return False
+    if low < high:
+        return True
+    return _contains(a, low) and _contains(b, low)  # they meet at one point
+
+
+def _unwrap(expr: str) -> str:
+    """Strip parentheses that enclose the WHOLE expression, repeatedly.
+
+    `(a + b) * (c + d)` is not wrapped — the first paren closes early — so the
+    balance is walked rather than the ends compared.
+    """
+    expr = expr.strip()
+    while expr.startswith("(") and expr.endswith(")"):
+        depth = 0
+        closes_at = -1
+        for index, char in enumerate(expr):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    closes_at = index
+                    break
+        if closes_at != len(expr) - 1:
+            return expr
+        expr = expr[1:-1].strip()
+    return expr
+
+
+def _leftmost_set_operator(expr: str) -> tuple[str, str] | None:
+    """The first `and`/`or`/`unless` at paren depth 0, with everything left of it."""
+    depth = 0
+    for index, char in enumerate(expr):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0:
+            match = _SET_OPERATOR.match(expr, index)
+            if match:
+                return match.group(0), expr[:index]
+    return None
+
+
+def _produced_range(expr: str, _depth: int = 0) -> Interval | None:
+    """The range of values this expression can emit, when that is knowable.
+
+    `None` means "not a shape this understands" and the caller skips — a wrong
+    guess here reds a rule that is fine, which is how a lint gets muted.
+    """
+    if not expr or _depth > 8:
+        return None
+    expr = _unwrap(_strip_label_matchers(expr) if _depth == 0 else expr)
+    split = _leftmost_set_operator(expr)
+    if split:
+        operator, left = split
+        # `and` / `unless` emit the LEFT operand's value; `or` emits a union.
+        return None if operator == "or" else _produced_range(left, _depth + 1)
+    match = _FILTER_COMPARISON.search(expr)
+    if not match or match.group(2):  # `bool` disables the filter
+        return None
+    operator, number = match.group(1), float(match.group(3))
+    if operator == ">":
+        return (number, _POS, False, False)
+    if operator == ">=":
+        return (number, _POS, True, False)
+    if operator == "<":
+        return (_NEG, number, False, False)
+    return (_NEG, number, False, True)  # "<="
+
+
+def _evaluator_ranges(kind: str | None, params: list[float]) -> list[Interval] | None:
+    """Values for which a Grafana evaluator is true. `None` = not understood."""
+    try:
+        if kind == "gt":
+            return [(params[0], _POS, False, False)]
+        if kind == "gte":
+            return [(params[0], _POS, True, False)]
+        if kind == "lt":
+            return [(_NEG, params[0], False, False)]
+        if kind == "lte":
+            return [(_NEG, params[0], False, True)]
+        if kind == "eq":
+            return [(params[0], params[0], True, True)]
+        if kind == "ne":
+            return [(_NEG, params[0], False, False), (params[0], _POS, False, False)]
+        if kind == "within_range":
+            return [(params[0], params[1], False, False)]
+        if kind == "outside_range":
+            return [(_NEG, params[0], False, False), (params[1], _POS, False, False)]
+    except IndexError:
+        return None
+    return None
+
+
+def _reaches_tail(ranges: list[Interval], unbounded_end: float) -> bool:
+    """Does any evaluator range extend to the filter's unbounded end?
+
+    That end is the severe one: for `< N` it is -inf (the metric at its floor,
+    i.e. the counter that stopped); for `> N` it is +inf (the runaway).
+    """
+    if unbounded_end == _POS:
+        return any(high == _POS for _, high, _, _ in ranges)
+    return any(low == _NEG for low, _, _, _ in ranges)
+
+
 def _mark(kind: str, rule: Rule):
     """Attach the xfail marker for a filed-but-unfixed rule."""
     reason = KNOWN_VIOLATIONS.get((kind, rule.uid))
@@ -738,6 +938,99 @@ class TestThresholdSatisfiability:
                 f"core#504 shipped exactly this shape and it was silently dead "
                 f"for months while reading as healthy."
             )
+
+
+class TestFilterThresholdAgreement:
+    """A bare comparison is a filter — the evaluator must agree with its range.
+
+    `TestThresholdSatisfiability` above covers the *constant* case (`== N`,
+    `absent()`), where the expression can emit exactly one value. This covers
+    the one-sided case, where it emits a **range**, and the range is what the
+    evaluator has to be reconciled against. core#754.
+    """
+
+    @pytest.mark.parametrize("rule", [_mark("filter-reachable", r) for r in PROMQL_RULES])
+    def test_the_evaluator_is_reachable(self, rule: Rule):
+        produced = _produced_range(rule.expr)
+        if produced is None:
+            return
+        for evaluator in rule.thresholds:
+            kind = evaluator.get("type")
+            params = [float(p) for p in (evaluator.get("params") or [])]
+            ranges = _evaluator_ranges(kind, params)
+            if ranges is None:
+                continue
+            assert any(_intersects(produced, r) for r in ranges), (
+                f"{rule.uid} ({rule.title!r}) can never fire.\n"
+                f"    expr      : {rule.expr}\n"
+                f"    the filter emits values in {_describe(produced)} — a bare "
+                f"comparison returns the metric's OWN value where the condition "
+                f"holds, not a 1/0\n"
+                f"    evaluator : {kind} {params}, true on "
+                f"{' or '.join(_describe(r) for r in ranges)}\n"
+                f"    the two ranges do not overlap, so no sample can ever "
+                f"reach the threshold.\n\n"
+                f"Fix: use `bool` (`X {'<' if produced[0] == _NEG else '>'} bool "
+                f"N`) so the expression emits 1/0 and the evaluator means what "
+                f"it looks like, or retune the evaluator to the filter's range."
+            )
+
+    @pytest.mark.parametrize("rule", [_mark("filter-extreme", r) for r in PROMQL_RULES])
+    def test_the_severe_end_of_the_filter_still_fires(self, rule: Rule):
+        """The evaluator must not discard the open end of the filter's range.
+
+        This is core#754's own shape, and it is the one that survives every
+        other check in this file: `X < 1` with `gt [0]` *is* satisfiable — on
+        (0, 1) — so a reachability check alone passes it. It is nonetheless
+        silent at 0, and 0 is precisely what `increase()` returns for a task
+        that has stopped arriving.
+        """
+        produced = _produced_range(rule.expr)
+        if produced is None:
+            return
+        unbounded_end = _NEG if produced[0] == _NEG else _POS
+        for evaluator in rule.thresholds:
+            kind = evaluator.get("type")
+            params = [float(p) for p in (evaluator.get("params") or [])]
+            ranges = _evaluator_ranges(kind, params)
+            if ranges is None:
+                continue
+            if not any(_intersects(produced, r) for r in ranges):
+                continue  # unreachable entirely — the sibling test names that
+            severe = "the metric at its floor" if unbounded_end == _NEG else "a runaway value"
+            example = "0" if unbounded_end == _NEG else "an arbitrarily large value"
+            assert _reaches_tail(ranges, unbounded_end), (
+                f"{rule.uid} ({rule.title!r}) is silent in the severe case it "
+                f"exists to detect.\n"
+                f"    expr      : {rule.expr}\n"
+                f"    the filter emits values in {_describe(produced)}, "
+                f"unbounded towards {'-inf' if unbounded_end == _NEG else '+inf'} "
+                f"({severe})\n"
+                f"    evaluator : {kind} {params}, true on "
+                f"{' or '.join(_describe(r) for r in ranges)} — which does NOT "
+                f"reach that end\n"
+                f"    so {example} passes the filter and is then discarded by "
+                f"the threshold. The rule fires on the middle of the range and "
+                f"goes quiet as the condition gets worse.\n\n"
+                f"Fix: `bool`. `X {'<' if unbounded_end == _NEG else '>'} bool N` "
+                f"emits 1 when the condition holds and 0 when it does not, and "
+                f"`gt [0]` then reads correctly. This is what "
+                f"`celery-maintenance-not-firing` does and why."
+            )
+
+    def test_the_filter_check_is_looking_at_something(self):
+        """Anti-vacuity — `_produced_range` returning None everywhere is green.
+
+        Both tests above skip on `None`, so a regex that stops matching turns
+        this whole class into 60 passing no-ops. That is the failure mode this
+        file exists to prevent, so it is asserted rather than assumed.
+        """
+        examined = [r.uid for r in PROMQL_RULES if _produced_range(r.expr) is not None]
+        assert len(examined) >= 5, (
+            f"only {len(examined)} live rules have a top-level filtering "
+            f"comparison ({examined}); `_produced_range` is almost certainly "
+            f"parsing nothing and both checks above are vacuous."
+        )
 
 
 class TestScrapeIntervalCoupling:
@@ -1258,6 +1551,139 @@ class TestTheLintCanFail:
         """`absent()` yields 1 when the metric is missing, so `gt [0]` is right."""
         rule = _synthetic(expr='absent(up{job="datanika-app"})', threshold=("gt", [0]))
         TestThresholdSatisfiability().test_threshold_can_be_satisfied(rule)
+
+    # --- filter/threshold agreement (core#754) -----------------------------
+    #
+    # The shape that motivated the check is the FIRST one: it is satisfiable,
+    # so a reachability check alone passes it, and it is silent at exactly the
+    # value the rule was written to catch. Every case below was run against the
+    # shipping lint first and all three passed it — that measurement is the
+    # issue, and these are the tests that turn it red.
+
+    def test_filter_check_rejects_the_754_shape(self):
+        """`< 1` + `gt [0]`: fires on (0, 1), silent at 0 — a stopped counter."""
+        rule = _synthetic(
+            expr="sum(increase(celery_task_succeeded_total[3h])) < 1",
+            threshold=("gt", [0]),
+            uid="maintenance-not-firing",
+        )
+        with pytest.raises(AssertionError, match="silent in the severe case"):
+            TestFilterThresholdAgreement().test_the_severe_end_of_the_filter_still_fires(rule)
+
+    def test_filter_check_accepts_the_bool_form_that_shipped(self):
+        """`< bool 1` emits 1/0, so `gt [0]` is correct. The live rule's shape."""
+        rule = _synthetic(
+            expr="sum(increase(celery_task_succeeded_total[3h])) < bool 1",
+            threshold=("gt", [0]),
+        )
+        TestFilterThresholdAgreement().test_the_severe_end_of_the_filter_still_fires(rule)
+        TestFilterThresholdAgreement().test_the_evaluator_is_reachable(rule)
+
+    def test_filter_check_rejects_a_strictly_unsatisfiable_pair(self):
+        """`< 1` + `gt [1]`: no value below 1 is above 1, for any metric."""
+        rule = _synthetic(expr="sum(increase(x[3h])) < 1", threshold=("gt", [1]))
+        with pytest.raises(AssertionError, match="can never fire"):
+            TestFilterThresholdAgreement().test_the_evaluator_is_reachable(rule)
+
+    def test_filter_check_rejects_the_mirrored_pair(self):
+        """`> 85` + `lt [1]` — `lt [1]` is the evaluator the *-down rules use.
+
+        Not in core#754's write-up. It falls out of treating the comparison as
+        a range rather than special-casing `<`, and it is the likelier
+        copy-paste of the two: the three `*-down` rules are the templates
+        anyone reaches for.
+        """
+        rule = _synthetic(expr="node_cpu_percent > 85", threshold=("lt", [1]))
+        with pytest.raises(AssertionError, match="can never fire"):
+            TestFilterThresholdAgreement().test_the_evaluator_is_reachable(rule)
+
+    def test_filter_check_rejects_a_ceiling_that_drops_the_runaway(self):
+        """`> 85` + `lt [95]`: fires on (85, 95), silent at 100% CPU."""
+        rule = _synthetic(expr="node_cpu_percent > 85", threshold=("lt", [95]))
+        with pytest.raises(AssertionError, match="silent in the severe case"):
+            TestFilterThresholdAgreement().test_the_severe_end_of_the_filter_still_fires(rule)
+
+    def test_filter_check_accepts_every_live_shape_it_examines(self):
+        """The negative control that matters: no false positive on real rules.
+
+        A check with no false-positive control gets muted the first time it
+        reds someone else's correct config. Asserts non-empty separately, or
+        this passes by examining nothing.
+        """
+        examined = [r for r in PROMQL_RULES if _produced_range(r.expr) is not None]
+        assert examined, "no live rule exercised — this control is vacuous"
+        for rule in examined:
+            TestFilterThresholdAgreement().test_the_evaluator_is_reachable(rule)
+            TestFilterThresholdAgreement().test_the_severe_end_of_the_filter_still_fires(rule)
+
+    def test_filter_check_descends_into_the_left_operand_of_and(self):
+        """`A and B` emits A's value — so A is the operand that must be checked.
+
+        This is the live shape of `celery-maintenance-not-firing`, and the case
+        the first version of this check silently skipped: reading the trailing
+        `> 10800` would be wrong, and skipping made the check blind to the very
+        defect core#754 is about. Descending is the only reading that is both
+        correct and non-vacuous.
+        """
+        good = "(sum(increase(x[3h])) < bool 1) and on() ((time() - min(y)) > 10800)"
+        bad = "(sum(increase(x[3h])) < 1) and on() ((time() - min(y)) > 10800)"
+        assert _produced_range(good) is None  # `bool` on the left: not a filter
+        assert _produced_range(bad) == (_NEG, 1.0, False, False)  # the naive form
+        # `or` unions two ranges, which this does not model — skipped, not guessed.
+        assert _produced_range("a > 5 or b < 1") is None
+        # and the trailing comparison is never mistaken for the produced value
+        assert _produced_range("x > 5 and y < 1") == (5.0, _POS, False, False)
+
+    def test_filter_check_rejects_the_754_shape_behind_an_and(self):
+        """The mutation that proved the first implementation blind.
+
+        Live-config mutation, not a synthetic: `celery-maintenance-not-firing`
+        with `< bool 1` naively rewritten to `< 1` reported **30 passed** before
+        the descent was added.
+        """
+        rule = _synthetic(
+            expr=(
+                '(sum(increase(celery_task_succeeded_total{name="datanika.run_maintenance"}'
+                "[3h])) < 1) and on() ((time() - min(celery_task_succeeded_created)) > 10800)"
+            ),
+            threshold=("gt", [0]),
+            uid="celery-maintenance-not-firing",
+        )
+        with pytest.raises(AssertionError, match="silent in the severe case"):
+            TestFilterThresholdAgreement().test_the_severe_end_of_the_filter_still_fires(rule)
+
+    def test_unwrap_does_not_strip_parens_that_are_not_wrappers(self):
+        """`(a) * (b)` starts and ends with a paren and is not parenthesised."""
+        assert _unwrap("(a + b)") == "a + b"
+        assert _unwrap("((a + b))") == "a + b"
+        assert _unwrap("(a + b) * (c + d)") == "(a + b) * (c + d)"
+        assert _unwrap("count_over_time((x == 0)[2m:15s])") == "count_over_time((x == 0)[2m:15s])"
+        assert _leftmost_set_operator("(a and b) + c") is None  # nested, not top level
+        assert _leftmost_set_operator("a and b") == ("and", "a ")
+        assert _leftmost_set_operator("operand_count > 5") is None  # not a word boundary
+
+    def test_filter_range_arithmetic(self):
+        """The primitives, since every message above is derived from them."""
+        assert _produced_range("x < 1") == (_NEG, 1.0, False, False)
+        assert _produced_range("x <= 1") == (_NEG, 1.0, False, True)
+        assert _produced_range("x > 85") == (85.0, _POS, False, False)
+        assert _produced_range("x >= 85") == (85.0, _POS, True, False)
+        assert _produced_range("x < bool 1") is None  # `bool` is not a filter
+        assert _produced_range("x == 0") is None  # the constant case, handled above
+        assert _produced_range("count_over_time((x == 0)[2m:15s])") is None  # nested
+        # scientific notation is how `container-high-memory` writes its threshold
+        assert _produced_range('container_memory{name="a"} > 2e+9') == (2e9, _POS, False, False)
+        # label matchers must not be read as comparisons
+        assert _produced_range('up{job=~"datanika-app(-b)?"}') is None
+
+        assert _intersects((0.0, _POS, False, False), (_NEG, 1.0, False, False))  # (0,1)
+        assert not _intersects((1.0, _POS, False, False), (_NEG, 1.0, False, False))  # meet, open
+        assert _intersects((1.0, _POS, True, False), (_NEG, 1.0, False, True))  # meet, closed
+        assert not _intersects((85.0, _POS, False, False), (_NEG, 1.0, False, False))
+
+        assert _reaches_tail([(_NEG, 1.0, False, False)], _NEG)
+        assert not _reaches_tail([(0.0, _POS, False, False)], _NEG)
+        assert _reaches_tail([(0.0, _POS, False, False)], _POS)
 
     # --- subquery / scrape coupling ----------------------------------------
 

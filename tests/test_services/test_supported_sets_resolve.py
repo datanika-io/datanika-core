@@ -27,6 +27,9 @@ being registered. `make_url(f"{drivername}://").get_dialect()` loads the plugin
 and nothing else.
 """
 
+import ast
+import pathlib
+
 import dlt
 import sqlalchemy as sa
 
@@ -133,3 +136,81 @@ def _walk_destinations() -> tuple[set[str], set[str]]:
     advertised = set(DltRunnerService.SUPPORTED_DESTINATION_TYPES)
     missing = {t for t in advertised if not hasattr(dlt.destinations, t)}
     return advertised - missing, missing
+
+
+TESTS_DIR = pathlib.Path(__file__).parent.parent
+
+#: The name a `@patch("datanika.services.dlt_runner.dlt")` argument conventionally
+#: takes, so `<mock>.destinations.<x>` is the shape being looked for.
+_MOCK_NAME = "mock_dlt"
+
+
+class TestNoMockAssertsADestinationThatDoesNotExist:
+    """A ``MagicMock`` materialises whatever attribute is asked of it.
+
+    So ``@patch("datanika.services.dlt_runner.dlt")`` makes
+    ``dlt.destinations.<anything>`` exist, and a test written that way asserts
+    the connector works for **every** name — including the two dlt does not
+    ship. Not hypothetical: ``test_mysql_returns_destination`` and
+    ``test_sqlite_returns_destination`` did exactly that and **could not have
+    failed**. They passed for years, which is why core#865 was found by
+    attempting a real load rather than by the suite. The one check that would
+    have caught it was the one the mock replaced.
+
+    Derived from the test sources rather than from a list of the names we happen
+    to remember, so the next mocked destination cannot reintroduce it.
+    """
+
+    def test_the_scan_matches_the_real_idiom(self):
+        """Negative control. A regex that matches nothing reports zero offenders.
+
+        ``postgres`` is mocked this way in ``test_dlt_runner.py`` and really
+        exists, so its presence proves the scan is reading the files and the
+        pattern it claims to.
+        """
+        assert "postgres" in _mocked_destination_names(), (
+            "the scan found no `mock_dlt.destinations.postgres`, so it is not "
+            "looking at what it claims to and its silence proves nothing"
+        )
+
+    def test_every_mocked_destination_name_really_exists(self):
+        offenders = {
+            name: sorted(files)
+            for name, files in _mocked_destination_names(with_files=True).items()
+            if not hasattr(dlt.destinations, name)
+        }
+        assert offenders == {}, (
+            f"these tests mock a dlt destination that does not exist, so they assert "
+            f"a capability we do not have and cannot fail: {offenders}"
+        )
+
+
+def _mocked_destination_names(*, with_files: bool = False):
+    """Walk the AST, not the text.
+
+    ⚠️ The first version of this was a regex over the file contents, and it
+    reported an offender that was **its own docstring** — the paragraph above
+    quotes `mock_dlt.destinations.mysql` in order to explain the trap. A guard
+    that a correction *describing* the defect can trip is a guard nobody can
+    ever get to green, and the natural response is to weaken it. Same shape as
+    WORKFLOW_RULES §4's connector guides, which were corrected to deny a phrase
+    and still contained it: count the instruction, never the phrase.
+
+    `ast` sees attribute access and does not see docstrings or comments.
+    """
+    found: dict[str, set[str]] = {}
+    for path in sorted(TESTS_DIR.rglob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:  # pragma: no cover - a broken test file is its own failure
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "destinations"
+                and isinstance(node.value.value, ast.Name)
+                and node.value.value.id == _MOCK_NAME
+            ):
+                found.setdefault(node.attr, set()).add(path.name)
+    return found if with_files else set(found)

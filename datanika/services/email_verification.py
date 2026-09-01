@@ -21,7 +21,6 @@ import logging
 from enum import StrEnum
 
 from datanika.services.auth import AuthService
-from datanika.tasks.email_tasks import send_verification_email_task
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +67,21 @@ def request_email_verification(
 
     try:
         token = auth.create_email_verification_token(user_id, email)
+        # Imported here, not at module scope, for two reasons that agree.
+        #
+        # Layering: `models -> services -> tasks -> ui/state`. A service
+        # importing a Celery task module at import time inverts that.
+        #
+        # And it is the edge that closed core#832's import cycle. `celery_app`
+        # bootstraps the cloud plugin at module scope (core#772); the plugin's
+        # own body imports core's `auth_state`, which imported this module,
+        # which imported `email_tasks`, which imports `celery_app` — so
+        # `import datanika_cloud.plugin` as the FIRST import raised
+        # `cannot import name 'bootstrap_cloud' from partially initialized
+        # module`. That is the prod-verification command CLAUDE.md prescribes.
+        # Pinned by tests/test_tasks/test_cloud_plugin_import_order.py.
+        from datanika.tasks.email_tasks import send_verification_email_task
+
         send_verification_email_task.delay(email, token)
     except Exception:
         logger.exception("Failed to enqueue verification email for user %s", user_id)

@@ -26,14 +26,47 @@ that a ``role="alertdialog"`` element exists and that the destructive handler
 hangs off its *action*, not off the trigger. A test that only checked "a dialog
 component is present" would pass on a dialog whose Delete button still deleted
 on the way in.
+
+**core#851 — the remaining ten, and the change of shape that matters.** core#804
+fixed two pages of twelve, and this module policed exactly those two by name. A
+parametrize list is a hand-maintained claim about a codebase that moves: it goes
+green on a page nobody added to it, which is the whole reason ten one-click
+deletes survived a PR whose subject was one-click deletes. So the call sites are
+now **derived** — every ``<Something>State.<destructive>()`` reference under
+``datanika/ui/`` is discovered by walking the source, and each one must either be
+reached through ``rx.alert_dialog.action`` or appear in
+:data:`UNCONFIRMED_BY_DESIGN` with a reason.
+
+Three things keep that from being decorative:
+
+1. **The scan covers ``datanika/ui/``, not ``datanika/ui/pages/``.** Moving a
+   destructive control into a component (which core#851 does for the API-key
+   row, rendered on two surfaces) must not move it out of the guard's view.
+   That lexical blindness is precisely what ``_GateChecker`` in
+   ``test_rbac_ui_visibility.py`` suffers from for role gates, and it is why the
+   dialog helpers here carry their own ``rx.cond``.
+2. **Each exclusion must be earned, not asserted.** For every entry in
+   ``UNCONFIRMED_BY_DESIGN`` the guard reads the *state handler* and requires it
+   to touch no session, service or commit. The day ``remove_column_test`` starts
+   persisting, its exclusion stops being true and this goes red — rather than
+   remaining a comment somebody wrote in 2026.
+3. **The dialog is a claim the client makes; the handler check is the refusal.**
+   So the guard also requires every persisted destructive handler to call
+   ``_check_role``. That assertion was **red on `DagState.remove_dependency`**
+   when it was written — the one persisted destructive handler in the product
+   with no role check at all, which no existing test could see because
+   ``test_rbac_enforcement.py``'s ``EXPECTED_ROLES`` had no ``dag_state`` entry.
+   A guard whose first run is green has not been shown able to fail.
 """
 
 import ast
+import json
 from pathlib import Path
 
 import pytest
 import reflex as rx
 
+import datanika.i18n
 import datanika.ui
 from datanika.i18n import SUPPORTED_LOCALES, get_translations
 from datanika.ui.pages import connections as connections_page
@@ -42,6 +75,30 @@ from datanika.ui.state.connection_state import ConnectionItem
 from datanika.ui.state.upload_state import UploadItem
 
 UI_ROOT = Path(datanika.ui.__file__).parent
+STATE_ROOT = UI_ROOT / "state"
+
+#: Handler-name prefixes that denote "this takes something away".
+DESTRUCTIVE_PREFIXES = ("delete_", "remove_", "revoke_", "purge_")
+
+#: Destructive-looking call sites that deliberately have **no** confirmation.
+#: The value is the argument, not a name — an exclusion list of bare identifiers
+#: is indistinguishable from an oversight, and each of these is checked below
+#: against the handler's actual body.
+UNCONFIRMED_BY_DESIGN: dict[str, str] = {
+    "pages/pipelines.py::remove_model": (
+        "Form-local. `PipelineState.remove_model` pops an entry out of the "
+        "unsaved form's model list; nothing is persisted until Save. A "
+        "confirmation here would be noise, and worse, it would train the user "
+        "to click through confirmations — which is what makes the ones on real "
+        "deletes work."
+    ),
+    "pages/model_detail.py::remove_column_test": (
+        "Form-local, and core#851 listed this as one of the ten before "
+        "measuring it. `ModelDetailState.remove_column_test` only rebuilds "
+        "`self.columns` in state; the write happens in `save_model_detail`, "
+        "behind the page's own Save button. Same argument as `remove_model`."
+    ),
+}
 
 
 def _walk(component) -> list:
@@ -54,6 +111,76 @@ def _walk(component) -> list:
 
 def _tags(component) -> list[str]:
     return [type(c).__name__ for c in _walk(component)]
+
+
+def _ui_modules() -> list[Path]:
+    """Every UI source file — pages *and* components."""
+    return sorted(p for p in UI_ROOT.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+class _DestructiveCallVisitor(ast.NodeVisitor):
+    """Collect ``<X>State.<destructive>(...)`` calls with their enclosing calls."""
+
+    def __init__(self) -> None:
+        self.stack: list[str] = []
+        self.found: list[tuple[str, str]] = []  # (handler, enclosing-call chain)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name = ast.unparse(node.func)
+        if isinstance(node.func, ast.Attribute):
+            attr = node.func.attr
+            owner = ast.unparse(node.func.value)
+            if attr.startswith(DESTRUCTIVE_PREFIXES) and owner.endswith("State"):
+                self.found.append((attr, " < ".join(reversed(self.stack))))
+        self.stack.append(name)
+        self.generic_visit(node)
+        self.stack.pop()
+
+
+def _destructive_call_sites() -> dict[str, list[str]]:
+    """``{"pages/foo.py::delete_bar": [enclosing-call chain, ...]}`` for all of ui/."""
+    sites: dict[str, list[str]] = {}
+    for path in _ui_modules():
+        visitor = _DestructiveCallVisitor()
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8")))
+        rel = path.relative_to(UI_ROOT).as_posix()
+        for handler, context in visitor.found:
+            sites.setdefault(f"{rel}::{handler}", []).append(context)
+    return sites
+
+
+def _state_handler(handler: str) -> tuple[str, ast.AST, str]:
+    """``(state-module filename, function node, source)`` for this handler name.
+
+    The node is returned alongside the text because re-parsing a source segment
+    is a trap here: ``ast.get_source_segment`` unindents only the first line, so
+    ``ast.parse("class _S:\\n" + segment)`` raises ``IndentationError`` on every
+    method — a checker that crashes rather than one that lies, but still a
+    checker that reports nothing about the thing it was pointed at.
+    """
+    matches: list[tuple[str, ast.AST, str]] = []
+    for path in sorted(STATE_ROOT.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == handler:
+                matches.append((path.name, node, ast.get_source_segment(source, node) or ""))
+    assert len(matches) == 1, (
+        f"expected exactly one state handler named {handler!r}, found "
+        f"{[m[0] for m in matches]} — the guard resolves handlers by name"
+    )
+    return matches[0]
+
+
+def _persists(handler_source: str) -> bool:
+    """Does this handler reach the database?
+
+    Deliberately generous: any commit, any session, or any ``svc.``/``_svc.``
+    call counts. A false positive costs an unnecessary dialog; a false negative
+    lets a real delete out of the guard.
+    """
+    markers = ("session.commit()", "get_sync_session(", "svc.", "Service()")
+    return any(m in handler_source for m in markers)
 
 
 class TestTheDeleteDialogExists:
@@ -93,71 +220,213 @@ class TestTheDestructiveHandlerHangsOffTheConfirmButton:
     A dialog whose trigger still deletes is a dialog that reports the deletion
     after the fact. Read from source, because the handler binding is what the
     generated JS wires up and it is not visible in the component tag names.
+
+    core#851 turned this from a two-entry parametrize list into a sweep of
+    ``datanika/ui/``. The list could only ever be as complete as the memory of
+    whoever last edited it.
     """
 
-    @staticmethod
-    def _delete_call_context(path: Path, handler: str) -> list[str]:
-        """Names of the enclosing calls for each `State.<handler>(...)` reference."""
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        contexts: list[str] = []
+    def test_the_scan_is_not_blind(self):
+        """A derived guard that derives nothing passes everything.
 
-        class Visitor(ast.NodeVisitor):
-            def __init__(self):
-                self.stack: list[str] = []
+        Anchors first, count second — the count is the weaker check and would
+        otherwise mask which site went missing.
+        """
+        sites = _destructive_call_sites()
+        # One per site core#851 enumerated, so a change to
+        # DESTRUCTIVE_PREFIXES or to the owner-name heuristic cannot silently
+        # narrow the sweep to the subset that happens to still match.
+        for expected in (
+            "pages/connections.py::delete_connection",
+            "pages/uploads.py::delete_upload",
+            "pages/settings.py::remove_member",
+            "components/api_key_row.py::revoke_api_key",
+            "pages/settings.py::delete_channel",
+            "pages/pipelines.py::delete_pipeline",
+            "pages/schedules.py::delete_schedule",
+            "pages/transformations.py::delete_transformation",
+            "pages/dag.py::remove_dependency",
+            "pages/pipelines.py::remove_model",
+            "pages/model_detail.py::remove_column_test",
+        ):
+            assert expected in sites, f"the sweep no longer sees {expected}"
+        # Eleven, not the twelve core#851 counted: `revoke_api_key` was rendered
+        # on two surfaces from two copies of the same row markup, and core#851
+        # collapsed them into `components/api_key_row.py`. Two call sites became
+        # one because there is now one dialog, not because one stopped being
+        # watched — `/settings` still renders it, through the component.
+        assert len(sites) >= 11, (
+            f"only {len(sites)} destructive call sites found across {UI_ROOT}. "
+            "A sweep that suddenly finds fewer has probably stopped matching, "
+            "not been fixed."
+        )
 
-            def visit_Call(self, node):
-                name = ast.unparse(node.func)
-                if name.endswith(f".{handler}"):
-                    contexts.append(" < ".join(reversed(self.stack)))
-                self.stack.append(name)
-                self.generic_visit(node)
-                self.stack.pop()
+    def test_every_destructive_call_is_behind_a_confirmation(self):
+        offenders: list[str] = []
+        for site, contexts in sorted(_destructive_call_sites().items()):
+            if site in UNCONFIRMED_BY_DESIGN:
+                continue
+            for ctx in contexts:
+                if "alert_dialog.action" not in ctx:
+                    offenders.append(f"{site} is invoked from `{ctx or '<top level>'}`")
+                elif "alert_dialog.trigger" in ctx:
+                    offenders.append(f"{site} hangs off the dialog *trigger*, not its action")
+        assert not offenders, (
+            "destructive controls that mutate on the first click (core#851):\n  "
+            + "\n  ".join(offenders)
+            + "\n\nEach must hang off rx.alert_dialog.action, or be added to "
+            "UNCONFIRMED_BY_DESIGN with an argument."
+        )
 
-        Visitor().visit(tree)
-        return contexts
+    @pytest.mark.parametrize("site", sorted(UNCONFIRMED_BY_DESIGN))
+    def test_each_exclusion_still_refers_to_a_real_call_site(self, site):
+        """A stale exclusion is a hole with a reassuring comment over it."""
+        assert site in _destructive_call_sites(), (
+            f"{site} is excluded from the confirmation requirement but no longer "
+            "exists. Delete the entry rather than leaving it to cover something else."
+        )
 
-    @pytest.mark.parametrize(
-        ("filename", "handler"),
-        [
-            ("connections.py", "delete_connection"),
-            ("uploads.py", "delete_upload"),
-        ],
-    )
-    def test_delete_is_reached_only_through_the_dialog_action(self, filename, handler):
-        contexts = self._delete_call_context(UI_ROOT / "pages" / filename, handler)
-        assert contexts, f"no {handler} call site found in {filename} — guard is blind"
-        for ctx in contexts:
-            assert "alert_dialog.action" in ctx, (
-                f"{filename}: {handler} is invoked from `{ctx}`. It must hang off "
-                "rx.alert_dialog.action, or the confirmation is decorative."
-            )
-            assert "alert_dialog.trigger" not in ctx, (
-                f"{filename}: {handler} is on the dialog *trigger* — it would fire "
-                "on opening the dialog, i.e. before the user confirms."
-            )
+    @pytest.mark.parametrize("site", sorted(UNCONFIRMED_BY_DESIGN))
+    def test_each_exclusion_is_earned_by_the_handler_not_by_the_comment(self, site):
+        """The stated reason is 'form-local'. Check that it still is."""
+        handler = site.split("::", 1)[1]
+        module, _node, source = _state_handler(handler)
+        assert not _persists(source), (
+            f"{site} is excluded from the confirmation requirement on the grounds "
+            f"that it changes nothing persistent, but {module}::{handler} now "
+            "reaches the database. The exclusion has expired — give it a dialog."
+        )
+
+
+class TestTheDialogIsAClaimAndTheHandlerIsTheRefusal:
+    """core#851 — a confirmation the client renders is not authorization.
+
+    Every persisted destructive handler must refuse on its own, because the
+    dialog exists only in the browser and the API path never sees it.
+
+    ⚠️ **Written red.** ``DagState.remove_dependency`` was the single persisted
+    destructive handler with no ``_check_role`` call, so before core#851 this
+    failed naming exactly that handler. It was invisible to
+    ``test_rbac_enforcement.py`` because that module's ``EXPECTED_ROLES`` is a
+    hand-written allowlist with no ``dag_state`` key — the guard walked the
+    entries someone remembered rather than the handlers that exist.
+    """
+
+    def test_every_persisted_destructive_handler_checks_a_role(self):
+        seen: set[str] = set()
+        unguarded: list[str] = []
+        for site in sorted(_destructive_call_sites()):
+            handler = site.split("::", 1)[1]
+            if handler in seen:
+                continue
+            seen.add(handler)
+            module, _node, source = _state_handler(handler)
+            if not _persists(source):
+                continue
+            if "_check_role" not in source:
+                unguarded.append(f"{module}::{handler}")
+        assert not unguarded, (
+            "persisted destructive handlers reachable with no role check — the "
+            "confirmation dialog is a claim the client makes, this is the "
+            "refusal:\n  " + "\n  ".join(unguarded)
+        )
+
+    def test_the_check_is_the_first_thing_the_handler_does(self):
+        """A role check after the mutation is a log line, not a gate."""
+        seen: set[str] = set()
+        late: list[str] = []
+        for site in sorted(_destructive_call_sites()):
+            handler = site.split("::", 1)[1]
+            if handler in seen:
+                continue
+            seen.add(handler)
+            module, node, source = _state_handler(handler)
+            if not _persists(source):
+                continue
+            # Skip the docstring; ast.Expr is what a bare string statement is.
+            body = [s for s in node.body if not isinstance(s, ast.Expr)]
+            if "_check_role" not in ast.unparse(body[0]):
+                late.append(f"{module}::{handler}")
+        assert not late, "the role check must precede any work, not follow it:\n  " + "\n  ".join(
+            late
+        )
+
+
+#: What each dialog must name, per site. Not every row model has a ``name`` —
+#: a schedule is identified by what it triggers, a dependency by both its ends —
+#: so the pair is declared rather than assumed. ``#7`` on its own identifies
+#: nothing to a human, which is the bare-identifier defect core#805 was about.
+IDENTIFIER_FIELDS: dict[str, tuple[str, ...]] = {
+    "pages/connections.py::delete_connection": ("conn.id", "conn.name"),
+    "pages/uploads.py::delete_upload": ("u.id", "u.name"),
+    "pages/settings.py::remove_member": ("member.id", "member.email"),
+    "components/api_key_row.py::revoke_api_key": ("key.id", "key.name"),
+    "pages/settings.py::delete_channel": ("ch.id", "ch.name"),
+    "pages/pipelines.py::delete_pipeline": ("p.id", "p.name"),
+    "pages/schedules.py::delete_schedule": ("s.id", "s.target_name"),
+    "pages/transformations.py::delete_transformation": ("t.id", "t.name"),
+    "pages/dag.py::remove_dependency": ("d.id", "d.upstream_name", "d.downstream_name"),
+}
+
+
+def _dialog_body(site: str) -> str:
+    """Source between ``alert_dialog.content`` and ``alert_dialog.action``.
+
+    Scoped to the *enclosing function*, not the file: ``settings.py`` holds two
+    dialogs, and a file-wide ``str.index`` would check the first one twice and
+    the second never — a guard that reports on a control it did not read.
+    """
+    rel, handler = site.split("::", 1)
+    source = (UI_ROOT / rel).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        segment = ast.get_source_segment(source, node) or ""
+        if f".{handler}(" not in segment:
+            continue
+        start = segment.index("alert_dialog.content")
+        end = segment.index("alert_dialog.action", start)
+        return segment[start:end]
+    raise AssertionError(f"no function in {rel} contains a {handler} call")
 
 
 class TestTheDialogNamesWhatItWillDelete:
-    """core#804 AC2 — id *and* name.
+    """core#804 AC2, widened by core#851 — an id *and* something recognisable.
 
-    The id is what an automated caller aims by; the name is what a human
-    recognises. Matching on both is also the selector rule §7b now recommends.
+    The id is what an automated caller aims by; the label is what a human
+    recognises. Matching on both is also the selector rule §7b now recommends,
+    and it is what makes a mis-aimed delete impossible rather than merely
+    recoverable — the distinction that mattered when prod connections 13–17
+    went, because that loop was confirming deletions it had already aimed wrong.
     """
 
-    @pytest.mark.parametrize(
-        ("filename", "fields"),
-        [
-            ("connections.py", ("conn.id", "conn.name")),
-            ("uploads.py", ("u.id", "u.name")),
-        ],
-    )
-    def test_both_identifiers_appear_in_the_dialog_body(self, filename, fields):
-        source = (UI_ROOT / "pages" / filename).read_text(encoding="utf-8")
-        start = source.index("alert_dialog.content")
-        end = source.index("alert_dialog.action", start)
-        body = source[start:end]
-        for field in fields:
-            assert field in body, f"{filename}: dialog body never mentions {field}"
+    def test_every_confirmed_site_declares_its_identifiers(self):
+        confirmed = {s for s in _destructive_call_sites() if s not in UNCONFIRMED_BY_DESIGN}
+        assert confirmed == set(IDENTIFIER_FIELDS), (
+            "IDENTIFIER_FIELDS has drifted from the sweep.\n"
+            f"  undeclared: {sorted(confirmed - set(IDENTIFIER_FIELDS))}\n"
+            f"  stale:      {sorted(set(IDENTIFIER_FIELDS) - confirmed)}"
+        )
+
+    @pytest.mark.parametrize("site", sorted(IDENTIFIER_FIELDS))
+    def test_the_identifiers_appear_in_the_dialog_body(self, site):
+        body = _dialog_body(site)
+        for field in IDENTIFIER_FIELDS[site]:
+            assert field in body, f"{site}: dialog body never mentions {field}"
+
+    @pytest.mark.parametrize("site", sorted(IDENTIFIER_FIELDS))
+    def test_the_dialog_offers_a_way_out(self, site):
+        rel, handler = site.split("::", 1)
+        source = (UI_ROOT / rel).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        segment = next(
+            seg
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and f".{handler}(" in (seg := ast.get_source_segment(source, node) or "")
+        )
+        assert "alert_dialog.cancel" in segment, f"{site}: no way to back out"
 
 
 class TestTheDialogWarnsAboutDependents:
@@ -258,7 +527,106 @@ class TestTheNewStringsAreTranslated:
         "uploads.deleted_toast",
         "uploads.status_blocked",
         "uploads.run_blocked_reason",
+        # core#851 — the remaining eight controls.
+        "settings.remove_member_title",
+        "settings.remove_member_body",
+        "settings.remove_member_reversible",
+        "settings.remove_member_confirm",
+        "settings.member_removed_toast",
+        "api_keys.revoke_title",
+        "api_keys.revoke_body",
+        "api_keys.revoke_irreversible",
+        "api_keys.revoke_confirm",
+        "api_keys.revoked_toast",
+        "notifications.delete_title",
+        "notifications.delete_body",
+        "notifications.delete_secret",
+        "notifications.delete_confirm",
+        "notifications.deleted_toast",
+        "pipelines.delete_title",
+        "pipelines.delete_body",
+        "pipelines.delete_reversible",
+        "pipelines.delete_confirm",
+        "pipelines.deleted_toast",
+        "schedules.delete_title",
+        "schedules.delete_body",
+        "schedules.delete_reversible",
+        "schedules.delete_confirm",
+        "schedules.deleted_toast",
+        "transformations.delete_title",
+        "transformations.delete_body",
+        "transformations.delete_reversible",
+        "transformations.delete_confirm",
+        "transformations.deleted_toast",
+        "dag.delete_title",
+        "dag.delete_body",
+        "dag.delete_reversible",
+        "dag.delete_confirm",
+        "dag.deleted_toast",
     )
+
+    @staticmethod
+    def _keys_rendered_by_the_dialogs() -> set[str]:
+        """Every ``_t["..."]`` inside a function that opens a confirmation."""
+        referenced: set[str] = set()
+        for site in _destructive_call_sites():
+            if site in UNCONFIRMED_BY_DESIGN:
+                continue
+            rel, handler = site.split("::", 1)
+            source = (UI_ROOT / rel).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                if f".{handler}(" not in (ast.get_source_segment(source, node) or ""):
+                    continue
+                for sub in ast.walk(node):
+                    if (
+                        isinstance(sub, ast.Subscript)
+                        and isinstance(sub.value, ast.Name)
+                        and sub.value.id == "_t"
+                        and isinstance(sub.slice, ast.Constant)
+                    ):
+                        referenced.add(sub.slice.value)
+        return referenced
+
+    @pytest.mark.parametrize("locale", sorted(SUPPORTED_LOCALES))
+    def test_every_string_the_dialogs_render_exists_in_every_locale(self, locale):
+        """The KEYS tuple above is hand-written, which is the same claim-shaped
+        defect as a hand-written page list: it covers what someone remembered.
+
+        So derive the strings from the dialogs themselves. This deliberately
+        picks up pre-existing keys too — the trigger labels ``api_keys.revoke``
+        and ``settings.remove`` — because what matters to the user is that
+        every word on the dialog is in their language, not which release
+        introduced it.
+
+        🚨 **Reads the locale's own JSON, not ``get_translations``.** That
+        helper returns *English merged with the locale's overrides* and
+        documents itself as guaranteeing every English key is present — so
+        ``key in get_translations(loc)`` is true for every key in ``en.json``
+        and can never fail. The first version of this test used it and stayed
+        green while a key was deleted from ``sr.json``; it was a checker with
+        one possible answer, found by mutating the real locale file rather than
+        by re-reading the test. The same vacuous line sits in
+        ``test_every_key_is_present_and_not_left_in_english`` below and is
+        harmless *there* only because its second assertion — value differs from
+        English — is what actually catches a missing key, via the merge.
+        """
+        referenced = self._keys_rendered_by_the_dialogs()
+        assert len(referenced) >= 30, (
+            f"only {len(referenced)} dialog strings found — the extractor has "
+            "probably stopped matching `_t[...]`"
+        )
+        raw = json.loads(
+            (Path(datanika.i18n.__file__).parent / f"{locale}.json").read_text(encoding="utf-8")
+        )
+        for key in sorted(referenced):
+            assert key in raw, (
+                f"{locale}.json is missing {key}, rendered by a delete dialog. "
+                "It will fall back to English for that user."
+            )
+            assert raw[key].strip(), f"{locale}: {key} is blank"
 
     @pytest.mark.parametrize("locale", sorted(SUPPORTED_LOCALES))
     def test_every_key_is_present_and_not_left_in_english(self, locale):
@@ -278,7 +646,15 @@ class TestTheDialogIsAModalAlert:
     """`role="alertdialog"`, not a popover — this is what §7b now depends on."""
 
     def test_reflex_alert_dialog_is_what_is_used(self):
-        for filename in ("connections.py", "uploads.py"):
-            source = (UI_ROOT / "pages" / filename).read_text(encoding="utf-8")
-            assert "rx.alert_dialog.root(" in source, filename
+        modules = {
+            s.split("::", 1)[0] for s in _destructive_call_sites() if s not in UNCONFIRMED_BY_DESIGN
+        }
+        assert modules, "no confirmed destructive sites — the sweep found nothing"
+        for rel in sorted(modules):
+            source = (UI_ROOT / rel).read_text(encoding="utf-8")
+            assert "rx.alert_dialog.root(" in source, (
+                f"{rel} has a destructive control but no rx.alert_dialog.root — "
+                "an rx.dialog is a plain dialog, not role='alertdialog', and §7b "
+                "depends on the alert variant"
+            )
         assert hasattr(rx, "alert_dialog")

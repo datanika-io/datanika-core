@@ -74,12 +74,25 @@ class BaseState(rx.State):
             # — it sends them to ask an admin for access they already have. The
             # layout renders the translated signed-out panel off the flag.
             self.error_message = ""
+            auth.action_error = ""
             return False
 
         role = auth.current_role
         if not check_role_hierarchy(role, min_role):
             self.error_message = f"Permission denied. Requires {min_role} role or higher."
+            # ⚠️ ``self.error_message`` is the SUBSTATE's own copy, and for most
+            # callers no page renders it — 10 of the 15 state classes that
+            # assign ``error_message`` are read by nothing (#887), `uploads.py`
+            # among them. So for the majority of the 31 call sites the sentence
+            # above went to a var with no reader, and the button did nothing and
+            # said nothing (#744). ``AuthState`` is a single object that
+            # ``page_layout`` already reads, so record it there too.
+            auth.action_error = self.error_message
             return False
+        # A permitted action retires the previous refusal. Navigation clears it
+        # as well (``check_auth``), but somebody who is granted the role and
+        # retries in place must not still be looking at the "no".
+        auth.action_error = ""
         return True
 
     @staticmethod
@@ -138,3 +151,37 @@ class BaseState(rx.State):
         if isinstance(exc, ValueError):
             return str(exc)
         return fallback
+
+    async def _deleted_toast(self, key: str, fallback: str):
+        """A translated success toast for a destructive handler (core#804, core#851).
+
+        Every confirmed delete in this product removes a row and says nothing.
+        For a **soft** delete — which all of them are — a row silently vanishing
+        reads far more alarming than the operation is, and the documented
+        consequence is worse than alarm: a Reflex table can render a stale row
+        set right after a successful mutation (core#872), so "the row is still
+        there" is not evidence the delete failed, and the user's natural next
+        move is to click again.
+
+        The lookup goes through the reactive ``I18nState`` dict rather than a
+        hardcoded string, so the eight non-English locales are not silently
+        English here. ``fallback`` is only reached if the key is missing, which
+        the i18n parity test makes impossible — it exists so a missing key
+        degrades to a plain word instead of a ``KeyError`` inside a delete.
+        """
+        return rx.toast.success(
+            await self._translated(key, fallback),
+            position="top-right",
+        )
+
+    async def _translated(self, key: str, fallback: str) -> str:
+        """One translated string, read from the reactive dict (core#851, core#862).
+
+        Services raise plain English — they have no locale and no business
+        having one. Anything a *user* reads has to be translated here instead,
+        or eight of nine locales silently show English.
+        """
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        return i18n.translations.get(key, fallback)

@@ -36,7 +36,7 @@ PICKER_TYPES: list[str] = [
     "snowflake",
     "databricks",
     # File / blob
-    "s3",
+    # `s3` withdrawn — core#863; see WITHDRAWN_SOURCE_TYPES.
     "csv",
     "json",
     "parquet",
@@ -97,6 +97,15 @@ def connection_form() -> rx.Component:
                 on_change=ConnectionState.set_form_type,
                 placeholder=_t["connections.ph_type"],
                 width="100%",
+            ),
+            # `s3` is withdrawn (core#863). The picker is a *searchable* select,
+            # so someone looking for S3 types "s3" and gets nothing back — this
+            # line is the difference between that and a silently shorter list.
+            # ⚠️ Remove it in the same commit that returns `s3` to PICKER_TYPES.
+            rx.text(
+                _t["connections.s3_withdrawn"],
+                size="1",
+                color_scheme="gray",
             ),
             # Dynamic config fields (hidden when raw JSON is active)
             rx.cond(

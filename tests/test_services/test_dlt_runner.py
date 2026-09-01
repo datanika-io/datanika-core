@@ -201,13 +201,28 @@ class TestBuildDestination:
         assert call_creds["host"] == "localhost"
         assert result == "pg_dest"
 
-    @patch("datanika.services.dlt_runner.dlt")
-    def test_mysql_returns_destination(self, mock_dlt, svc):
-        mock_dlt.destinations.mysql.return_value = "mysql_dest"
-        result = svc.build_destination("mysql", {"host": "localhost"})
-        call_creds = mock_dlt.destinations.mysql.call_args[1]["credentials"]
-        assert call_creds["drivername"] == "mysql+pymysql"
-        assert result == "mysql_dest"
+    # 🚨 THESE TWO TESTS USED TO ASSERT THAT MySQL AND SQLite DESTINATIONS
+    # WORKED, AND THEY COULD NOT HAVE FAILED. `@patch(...dlt_runner.dlt)`
+    # replaces the whole module with a MagicMock, so `mock_dlt.destinations.mysql`
+    # exists because it was *asked for* — a MagicMock materialises any attribute.
+    # `build_destination` is an unconditional `getattr(dlt.destinations, type)`,
+    # so the one thing that was broken (the attribute not existing) is precisely
+    # the thing the mock supplies.
+    #
+    # That is how core#865 survived for the life of the entry: `mysql` was in
+    # the set, the set was checked, the test was green, and no row had ever
+    # landed. Same family as the MagicMock paginator detector that matched all
+    # 17 vendors — a checker with one possible answer.
+    #
+    # 🔑 **A mocked `dlt` cannot answer whether a dlt destination exists.**
+    # Only `hasattr(dlt.destinations, t)` on the REAL module can, and that check
+    # now lives — unmocked, with a control that must not resolve — in
+    # `tests/test_connector_type_contracts.py` and
+    # `tests/test_services/test_mysql_after_dbt_mysql_removal.py`.
+    def test_mysql_is_refused_as_a_destination(self, svc):
+        """core#862/core#865: withdrawn, and refused before any dlt call."""
+        with pytest.raises(DltRunnerError, match="Unsupported destination type: mysql"):
+            svc.build_destination("mysql", {"host": "localhost"})
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_mssql_returns_destination(self, mock_dlt, svc):
@@ -217,14 +232,19 @@ class TestBuildDestination:
         assert call_creds["drivername"] == "mssql+pymssql"
         assert result == "mssql_dest"
 
-    @patch("datanika.services.dlt_runner.dlt")
-    def test_sqlite_returns_destination(self, mock_dlt, svc):
-        mock_dlt.destinations.sqlite.return_value = "sqlite_dest"
-        result = svc.build_destination("sqlite", {"path": "db.sqlite"})
-        call_creds = mock_dlt.destinations.sqlite.call_args[1]["credentials"]
-        assert call_creds["drivername"] == "sqlite"
-        assert call_creds["database"] == "db.sqlite"
-        assert result == "sqlite_dest"
+    def test_sqlite_is_refused_as_a_destination(self, svc):
+        """Identical defect, identical fix — see the note above."""
+        with pytest.raises(DltRunnerError, match="Unsupported destination type: sqlite"):
+            svc.build_destination("sqlite", {"path": "db.sqlite"})
+
+    def test_the_refusal_is_not_vacuous(self, svc):
+        """Control: a type that IS supported must still build.
+
+        Without this, the two refusals above are satisfied by `build_destination`
+        being broken for everything — which is exactly the failure mode the
+        mocked tests they replace had, pointing the other way.
+        """
+        assert svc.build_destination("duckdb", {"path": "x.duckdb"}) is not None
 
     def test_unsupported_type_raises(self, svc):
         with pytest.raises(DltRunnerError, match="Unsupported destination type"):
@@ -741,19 +761,27 @@ class TestExecute:
         mock_pipeline = MagicMock()
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
-        mock_dlt.destinations.mysql.return_value = "mysql_dest"
+        mock_dlt.destinations.postgres.return_value = "pg_dest"
         mock_sql_db.return_value = "source"
 
+        # core#862: the destination was `mysql`, which is a SOURCE-only type —
+        # dlt has no mysql destination and never had one. The test passed anyway
+        # because `dlt` is mocked here, which is the whole reason core#865 went
+        # unnoticed. MySQL stays as the *source*, since that half is real.
         svc.execute(
             pipeline_id=1,
             source_type="mysql",
             source_config={"host": "src"},
-            destination_type="mysql",
+            destination_type="postgres",
             destination_config={"host": "dst"},
             dlt_config={},
         )
-        mock_dlt.destinations.mysql.assert_called_once()
+        mock_dlt.destinations.postgres.assert_called_once()
         mock_sql_db.assert_called_once()
+        # The point of the test is that source and destination are dispatched
+        # SEPARATELY. Asserting the destination factory alone would pass if the
+        # source type leaked into it, which is the confusion this guards.
+        assert mock_dlt.destinations.mysql.call_count == 0
 
     @patch("datanika.services.dlt_runner.sql_database")
     @patch("datanika.services.dlt_runner.dlt")

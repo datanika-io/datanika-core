@@ -34,14 +34,35 @@ validate_connection_name = partial(validate_name, entity_label="Connection")
 # gave existing rows a worse error, and because withdrawal is not rare: it is
 # the honest answer whenever a connector cannot work with the credentials we
 # collect. `tests/test_connector_type_contracts.py` pins both halves.
-# Empty on purpose. `google_ads` was withdrawn here and is back (core#555):
-# the developer token is a string the user pastes, exactly like a service
-# account JSON, so the gap was a missing form field rather than an external
-# gate. The set and its machinery stay — withdrawal is still the honest answer
-# whenever a connector cannot work with the credentials we collect, and
-# `tests/test_connector_type_contracts.py` pins both halves of the behaviour
-# whether or not anything is currently withdrawn.
-WITHDRAWN_SOURCE_TYPES: set[str] = set()
+# `google_ads` was withdrawn here and is back (core#555): the developer token is
+# a string the user pastes, exactly like a service account JSON, so the gap was a
+# missing form field rather than an external gate.
+#
+# `s3` is withdrawn as of core#863, and it is a DIFFERENT kind of gap — not a
+# missing form field and not a credential gate. The transport is simply absent:
+# s3fs left `uv.lock` when the dbt upgrade dropped dlt's `clickhouse` extra, so
+# `fsspec.get_filesystem_class("s3")` raises `ImportError: Install s3fs to access
+# S3`. Measured, not inferred.
+#
+# ⚠️ `gs://` and `az://` still resolve in fsspec, but do NOT turn that into
+# user-facing copy suggesting an alternative: there is no `gcs` or `azure`
+# ConnectionType — checked, 37 members, none of them an object store other than
+# this one. "Use GCS instead" would name a connector that does not exist, which
+# is a worse falsehood than the one being fixed here.
+#
+# ⚠️ TEMPORARY, and nobody has to remember to check. `TestDeferredCapability` in
+# `tests/test_security/test_dependency_advisories.py` goes red the day `uv.lock`
+# carries `google-cloud-storage >= 3.7` — the point at which dbt-bigquery's
+# `google-cloud-storage>=2.4,<3.2` ceiling has moved far enough that s3fs can
+# resolve again. It asserts the EXTERNAL condition on purpose: an assertion that
+# "s3fs is absent" would only fail once somebody had already done the work.
+#
+# ⚠️ To restore: put `s3` back into SOURCE_TYPES, CONFIG_SCHEMAS and PICKER_TYPES
+# and re-enable the four `requires_s3fs` tests. Those must pass **unmodified**
+# against MinIO — they are the only executable evidence the transport ever
+# worked, they cost four months to obtain, and hiding the picker entry is not a
+# reason to drop them.
+WITHDRAWN_SOURCE_TYPES: set[str] = {"s3"}
 
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
@@ -51,7 +72,7 @@ SOURCE_TYPES = {
     "oracle",
     "sqlite",
     "rest_api",
-    "s3",
+    # `s3` withdrawn — core#863; see WITHDRAWN_SOURCE_TYPES above.
     "csv",
     "json",
     "parquet",
@@ -79,12 +100,24 @@ SOURCE_TYPES = {
     "openapi",
 }
 
-# Types that can serve as destinations (databases + cloud warehouses)
+#: Types that can serve as destinations — i.e. that dlt can LOAD into.
+#:
+#: 🚨 ``mysql`` and ``sqlite`` were removed in core#862. They had been advertised
+#: here for the life of the constant and **neither has ever loaded a row**:
+#: ``DltRunner.build_destination`` is an unconditional
+#: ``getattr(dlt.destinations, connection_type)`` and dlt has no attribute for
+#: either, so every such upload died with ``AttributeError`` before a socket was
+#: opened (core#865, measured across all eleven — 9 resolved).
+#:
+#: Both remain fully supported **extract sources**, which is a different layer:
+#: extraction goes through SQLAlchemy and is verified against a real MySQL 8.4
+#: container moving real rows (``test_mysql_after_dbt_mysql_removal.py``).
+#: ⚠️ Do not "restore" a member here from any other list without first checking
+#: ``hasattr(dlt.destinations, x)``. This set feeds ``infer_direction``, so a
+#: wrong member also mislabels the connector's direction everywhere it renders.
 DESTINATION_TYPES = {
     "postgres",
-    "mysql",
     "mssql",
-    "sqlite",
     "bigquery",
     "snowflake",
     "redshift",
@@ -101,24 +134,36 @@ DESTINATION_TYPES = {
 #: DIFFERENT capabilities with different requirements. dlt needs a driver; dbt
 #: needs an installed **adapter**. Until core#825 these two sets were textually
 #: identical — the same eleven strings — which is why nothing had ever diverged
-#: and why nothing bound them. ``mysql`` is now in one and not the other: dlt
-#: loads into MySQL through SQLAlchemy/``pymysql``, while ``dbt-mysql`` was
-#: dropped as an abandoned package that held the whole dbt stack on 1.7.
+#: and why nothing bound them. ``databricks`` and ``synapse`` are the live
+#: example: dlt loads into both, dbt transforms in neither.
+#:
+#: ⚠️ ``mysql`` was that example until core#862 and is no longer in EITHER set.
+#: Do not read the old wording ("dlt loads into MySQL through SQLAlchemy") as a
+#: reason to restore it to ``DESTINATION_TYPES``: dlt can indeed write to MySQL
+#: via its ``sqlalchemy`` destination, but ``build_destination`` resolves by
+#: NAME — ``getattr(dlt.destinations, connection_type)`` — and there is no
+#: ``mysql`` attribute, so it raised and never loaded a row. That sentence was
+#: true of dlt and false of us, which is the most expensive kind of comment.
 #:
 #: ⚠️ Offering a transform destination dbt cannot build in is not cosmetic:
 #: ``generate_profiles_yml`` raises **after** ``run.before_execute`` has fired
 #: and after ``start_run``, so a run structurally incapable of succeeding has
 #: already consumed the tenant's quota.
 #:
-#: 🚨 **Still wrong for three of its members, deliberately.** ``sqlite``,
-#: ``databricks`` and ``synapse`` sit in ``SUPPORTED_ADAPTERS`` with **no adapter
-#: installed** (measured with ``importlib.util.find_spec``), so they survive the
-#: intersection and are still offered. Pre-existing — core#825 neither caused it
-#: nor fixes it — and tracked in **core#862**, where it lands with a save-time
-#: server-side refusal, help text and i18n across 9 locales rather than as a
-#: silent narrowing here. This change removes exactly one member, ``mysql``, so
-#: that ``dev`` is never in a state where the picker offers a destination the
-#: same commit just made impossible.
+#: ✅ **core#862 removed the last three wrong members.** ``sqlite``,
+#: ``databricks`` and ``synapse`` sat in ``SUPPORTED_ADAPTERS`` with **no adapter
+#: installed**, so they survived the intersection and were still offered; the
+#: set is now 7 and every member is importable. Measured with
+#: ``importlib.util.find_spec`` — before the fix, 7 of the 10 listed adapters
+#: resolved, which is the negative control for the guard that now enforces it.
+#:
+#: ⚠️ **The refusal is server-side, in ``PipelineService`` and
+#: ``TransformationService``, not here.** A picker filters what the browser
+#: renders; ``POST /api/v1/pipelines`` never sees it. And the failure this
+#: prevents is expensive rather than merely ugly, which is why it cannot wait
+#: for run time: ``generate_profiles_yml`` raises *after* ``run.before_execute``
+#: has fired and after ``start_run``, so the quota is already spent on a run
+#: that was structurally incapable of succeeding.
 #:
 #: Written longhand rather than computed, following ``SQL_SOURCE_TYPES`` in
 #: ``tests/test_connector_type_contracts.py``: adding a connector should force a
@@ -129,14 +174,11 @@ DESTINATION_TYPES = {
 TRANSFORM_DESTINATION_TYPES = {
     "postgres",
     "mssql",
-    "sqlite",
     "bigquery",
     "snowflake",
     "redshift",
     "clickhouse",
     "duckdb",
-    "databricks",
-    "synapse",
 }
 
 
@@ -439,6 +481,13 @@ SECRET_CONFIG_KEYS = frozenset(
         "refresh_token",
         "client_secret",
         "developer_token",
+        # ⚠️ Keep, even though `s3` left CONFIG_SCHEMAS in core#863. This set is
+        # documented as a *superset* of schema password fields, so an entry with
+        # no schema behind it now reads like tidyable dead weight. It is not:
+        # connections already stored still hold one, and only ONE direction is
+        # asserted (schema field -> this set), so removing it breaks nothing in
+        # CI while making `BackupService.export_backup` write a live AWS secret
+        # into a backup in clear text.
         "aws_secret_access_key",
         "keyfile_json",
         "service_account_json",

@@ -107,6 +107,41 @@ def test_every_readme_connector_count_matches_the_enum(readme: str) -> None:
     )
 
 
+#: Display names a withdrawn connector may still be advertised under.
+#:
+#: The count guards above check the NUMBER. That is not the same claim as the
+#: LIST beside it: when `s3` was withdrawn in core#863 the count was corrected
+#: to 35 and every count test went green while the very same sentence still
+#: read "... Salesforce, Kafka, S3, and more". A number can be right while the
+#: names next to it are wrong, and only this test can tell the difference.
+WITHDRAWN_DISPLAY_ALIASES: dict[str, tuple[str, ...]] = {
+    "s3": ("S3", "Amazon S3"),
+}
+
+
+def test_readme_never_names_a_withdrawn_connector(readme: str) -> None:
+    """A withdrawn connector must not be advertised by name either.
+
+    If the README needs to mention one deliberately — "S3 is temporarily
+    unavailable", say — widen this to the marketing list rather than deleting
+    the test, or the next withdrawal silently keeps its billing.
+    """
+    for withdrawn in sorted(WITHDRAWN_SOURCE_TYPES):
+        for alias in WITHDRAWN_DISPLAY_ALIASES.get(withdrawn, (withdrawn,)):
+            # NOTE: word boundaries are spelled as lookarounds on purpose.
+            # The first version of this line used \b ... and a heredoc ate the
+            # backslash, leaving a literal backspace in the pattern: the regex
+            # then matched nothing and the test passed while the README still
+            # advertised S3. Caught only by a negative control (core#863).
+            pattern = "(?<![A-Za-z0-9])" + re.escape(alias) + "(?![A-Za-z0-9])"
+            hit = re.search(pattern, readme)
+            assert hit is None, (
+                f"README advertises {alias!r}, but {withdrawn!r} is in "
+                f"WITHDRAWN_SOURCE_TYPES and cannot be created. Context: "
+                f"{readme[max(0, hit.start() - 60) : hit.end() + 60]!r}"
+            )
+
+
 def test_comparison_table_carries_the_count(readme: str) -> None:
     """The Airbyte/Fivetran row is the one that cost us competitively.
 

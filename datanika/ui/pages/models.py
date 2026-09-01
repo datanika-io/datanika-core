@@ -88,7 +88,15 @@ def models_page() -> rx.Component:
             rx.cond(
                 ModelState.models.length() == 0,
                 rx.callout(
-                    _t["models.no_models"],
+                    # "Run an upload to populate the catalog" is correct only
+                    # for someone who has never run one. Told to a user whose
+                    # load just went green with a row count, it sends them back
+                    # around the same loop (core#883).
+                    rx.cond(
+                        ModelState.loaded_without_catalog,
+                        _t["models.no_models_after_load"],
+                        _t["models.no_models"],
+                    ),
                     icon="info",
                 ),
                 models_table(),

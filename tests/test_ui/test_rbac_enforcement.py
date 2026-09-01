@@ -83,6 +83,22 @@ EXPECTED_ROLES = {
         "delete_channel": "admin",
         "toggle_channel_active": "admin",
     },
+    # core#851. `dag_state` was absent from this table for the life of the
+    # project, and `DagState` had **no** `_check_role` call on either mutating
+    # handler — so any viewer could add or remove a dependency edge. Nothing
+    # went red, because this table is a hand-maintained allowlist and the
+    # parametrize below only walks the entries someone remembered to write.
+    #
+    # That is the same shape as core#862 / core#865, where a set of strings
+    # asserted a capability the layer beneath did not provide. The derived
+    # counterpart — *every* persisted destructive handler must call
+    # `_check_role`, discovered by walking the source rather than by listing —
+    # lives in `test_delete_confirmation_and_blocked_uploads.py`; this entry
+    # closes the instance, that guard closes the class.
+    "dag_state": {
+        "add_dependency": "editor",
+        "remove_dependency": "admin",
+    },
 }
 
 

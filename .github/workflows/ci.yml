@@ -67,8 +67,48 @@ jobs:
       - name: Ruff format check
         run: ruff format --check datanika tests --exclude "datanika/i18n"
 
+      # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of
+      # which assert a REFUSAL — including the two shapes that read as green: no stamp on
+      # the box at all, and an EXPECTED_SHA that evaluates empty so nothing is compared
+      # with nothing. Shell, so it is outside the pytest suite; gated here because a guard
+      # nobody has watched fail is not evidence.
+      - name: Staging SHA attribution controls
+        run: bash scripts/test-staging-sha-stamp.sh
+
   test:
     runs-on: ubuntu-latest
+    # core#841. This job runs `pytest tests/`, which collects every file in
+    # tests/test_migrations/ — and the `roundtrip_db_url` fixture there needs a real
+    # Postgres. With no service container and no DATABASE_URL_SYNC_TEST it fell through
+    # to the testcontainers branch, which is flaky on a shared GHA runner: PR #838 went
+    # red with 31 errors and passed on re-run with byte-identical code.
+    #
+    # `test` is a REQUIRED check on `dev`, so that is worse than an ordinary flake. The
+    # only cheap response is to re-run, and a team that re-runs reflexively has lost the
+    # ability to tell this apart from a real break (QA_RULES §12) — now that auto-merge is
+    # armed, it is also a check that quietly stops merging things.
+    #
+    # ⚠️ The fix is to give the job the database, NOT to soften the guard. conftest.py's
+    # `_no_postgres` deliberately FAILS rather than skips: a migration guard that silently
+    # skips when its database is absent is this project's signature defect, a green
+    # indistinguishable from the one you would get had it failed. Do not turn it into a
+    # skip. ⚠️ Nor `--ignore=tests/test_migrations/`: `migration-roundtrip` names only 3 of
+    # the 14 files there, so ignoring the directory would drop the other eleven from every
+    # required check — including the two in #838's report — and nothing would say so.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
 
@@ -113,6 +153,11 @@ jobs:
         run: git fetch --no-tags --depth=1 origin master
 
       - name: Run tests
+        # core#841: point the migration fixtures at the service container above. Without
+        # this the env branch of `roundtrip_db_url` is not taken and the fixture falls
+        # through to testcontainers even though a healthy Postgres is sitting right there.
+        env:
+          DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
         run: pytest tests/ --tb=short -q
 
   # Alembic migration round-trip test (PLAN_QA.md P1). Spins up a blank
@@ -706,6 +751,18 @@ jobs:
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
+      - name: Stamp the commit staging is now running
+        # core#876. LAST step on purpose: the stamp asserts "staging is serving this
+        # commit", which is only true once the stack is up and healthy. Written after the
+        # health wait, and the writer refuses to record a stack it cannot identify, so a
+        # half-finished deploy leaves the PREVIOUS stamp standing rather than a false one —
+        # and the next verifier then correctly refuses instead of testing a stale build in
+        # the belief it is fresh.
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            "bash -s -- write ${{ github.sha }} ${{ github.run_id }} ${{ github.run_attempt }}" \
+            < datanika/scripts/staging-deploy-stamp.sh   # this job checks core out under datanika/
+
   smoke-staging:
     # core#753: this job READS the stack `deploy-staging` mutates, so it must hold the same
     # lock. `deploy-staging`'s group serialised the deploy and then RELEASED it -- while its
@@ -725,6 +782,31 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v6
+
+      # core#876. FIRST, before ~4 minutes of dependency installation: if staging is not
+      # running this run's commit there is nothing here worth measuring, and the cheapest
+      # moment to say so is now.
+      - name: Configure SSH to pointer.gr
+        env:
+          SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Assert staging is running THIS commit
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
 
       - uses: astral-sh/setup-uv@v8.0.0
         with:
@@ -764,8 +846,31 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: pytest scripts/smoke/ -v --tb=short
 
+      # core#873 audited this job. `if: failure()` WAS safe while `Run smoke probes` was
+      # the only step that could fail — job-red and probe-red were the same event.
+      #
+      # 🆕 core#876 broke that and the invariant below said exactly what to do about it.
+      # The SHA assertion added above this can fail, which skips the probes entirely; under
+      # `if: failure()` that pages "Staging smoke failed" for a run whose probes never ran —
+      # a false headline on a true problem, precisely the defect #873 removed from
+      # `e2e-staging`. So the alert is keyed on the probe's own outcome, which is what the
+      # `id:` was put there for.
+      #
+      # An attribution refusal deliberately pages NOTHING. It is a CI-hygiene event, not a
+      # production alarm: staging is fine, this run simply cannot honestly report on it. It
+      # is loud where it belongs — a red required-adjacent check and a message naming both
+      # SHAs — and paging on it would put a "staging is broken" alert in front of the
+      # founder several times a day for a scheduling artifact.
+      #
+      # 🚨 INVARIANT (unchanged, now enforced): any step that can fail is invisible to this
+      # alert unless it is folded into the condition below. Do not restore a bare
+      # `failure()` — re-read #873 first.
+      # ⚠️ `always() &&` is NOT optional here. A bare `steps.smoke.outcome == 'failure'` is
+      # implicitly `success() && …`, and `success()` is false precisely when the probe
+      # failed — so the alert would never fire again, silently. Same trap the e2e-staging
+      # classifier documents at length (core#873).
       - name: Telegram alert on failure
-        if: failure()
+        if: always() && steps.smoke.outcome == 'failure'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -866,18 +971,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Install E2E dependencies
-        working-directory: e2e
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: npx playwright install chromium --with-deps
-
+      # core#876. SSH first, then the attribution assertion, then the ~3 minutes of npm ci
+      # and browser install. Two reasons for the order, and the second is the one that
+      # matters: a refusal costs no setup time, and it RELEASES THE `staging-deploy` LOCK
+      # three minutes sooner, so the run that should be verifying staging gets there faster.
       - name: Configure SSH for seed
         env:
           SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
@@ -893,12 +990,42 @@ jobs:
           printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
+      # ⚠️ `id: attribution` is load-bearing the same way `id: gating` is — the classifier
+      # below distinguishes "the specs failed" from "this run refused to grade somebody
+      # else's build", and those two reds must never wear each other's headline.
+      - name: Assert staging is running THIS commit
+        id: attribution
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
+
       # ── TIER 1: GATING ──────────────────────────────────────────────────────
       # Proven specs. Red here holds the promotion, which is the whole point of
       # the job. Note this job is not a required check on `dev` (those are lint
       # + test), so a red is loud without blocking a merge — it blocks the
       # promotion, which is the decision that should be blocked.
+      # ⚠️ `id: gating` is load-bearing (core#873). Everything that CLAIMS an E2E
+      # failure keys on THIS step's outcome, never on the job's conclusion — the
+      # job is red for reasons that have nothing to do with the specs.
       - name: Run gating E2E specs against staging
+        id: gating
         working-directory: e2e
         run: npx playwright test --grep-invert "@informational"
 
@@ -1054,8 +1181,94 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # ── core#873: what is this job's red actually SAYING? ───────────────────
+      # The filer and the pager below used to fire on job-level `failure()`, so
+      # ANY failing step asserted a gating E2E failure. On 2026-09-01 a GitHub
+      # artifact-service timeout on `Upload Playwright report` filed against
+      # #858 and paged Telegram for a run whose every spec passed — and that run
+      # was the post-promotion verification for a 15-commit production release.
+      #
+      # The job stays red for all of these. That is deliberate (#873: losing test
+      # reports is worth knowing). What changes is what we CLAIM about the red.
+      #
+      # 🚨 TWO TRAPS, both of which turn this fix into a worse bug:
+      #
+      # 1. `if: steps.gating.outcome == 'failure'` — the spelling in #873's own
+      #    body — is WRONG and fails CLOSED. An `if:` containing none of
+      #    success()/always()/cancelled()/failure() is implicitly wrapped in
+      #    `success() && ...`. When the gating step fails the job is already
+      #    failing, so `success()` is false and the step is SKIPPED. The filer
+      #    would never fire again, on any real gating failure — silence where we
+      #    had a false alarm. Every condition below therefore leads with
+      #    `always() &&`.
+      # 2. Keying only on `== 'failure'` would go silent when the gating step
+      #    never RAN (npm ci / browser install / SSH setup died). That is not an
+      #    E2E failure, but it is not a pass either — the promotion pre-flight
+      #    gets NO verdict, and this project's recurring defect is that an
+      #    absence reads like clean. So `no_verdict` pages with its own wording
+      #    instead of being swallowed.
+      #
+      # Cancellation is excluded on purpose: the `staging-deploy` concurrency
+      # group cancels this job whenever another push lands on dev mid-run. That
+      # is normal and documented above as "neither green nor red"; paging on it
+      # would be a new false-alarm generator of exactly the kind being removed.
+      - name: Classify what this job's result means
+        id: verdict
+        if: always()
+        env:
+          GATING_OUTCOME: ${{ steps.gating.outcome }}
+          ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          # !! `cancelled()` MUST NOT appear in this `env:`, and that is not
+          # style. The status-check functions (success/failure/cancelled/always)
+          # are valid ONLY inside an `if:`. Anywhere else -- a step `env:`
+          # included -- GitHub rejects the whole FILE at template-validation
+          # time, before a single job is created.
+          #
+          # Measured on run 33451148336 (core#880): conclusion `failure`, ZERO
+          # jobs, `created_at == updated_at`, and `commits/<sha>/check-runs`
+          # returning an EMPTY LIST rather than a red one. A PR in that state
+          # displays NO checks at all -- indistinguishable from "CI has not
+          # started yet" -- so it sits BLOCKED forever while looking pending.
+          # `job.status` carries the same signal and IS allowed in a step
+          # `env:`. Guarded by tests/test_deploy/test_ci_autofiler_trigger.py.
+          # core#876: `wrong_build` is tested BEFORE `no_verdict`, and the order is the
+          # point. An attribution refusal skips the gating step, so its outcome is
+          # `skipped` and the old branching would classify it `no_verdict` — which pages
+          # "the harness did not run" for a harness that is perfectly fine. The two states
+          # need different responses: `no_verdict` means fix the harness, `wrong_build`
+          # means re-deploy this commit.
+          if [ "$JOB_STATUS" = "cancelled" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
+            STATE=cancelled
+          elif [ "$ATTRIB_OUTCOME" = "failure" ]; then
+            STATE=wrong_build
+          elif [ "$GATING_OUTCOME" = "failure" ]; then
+            STATE=gating_failed
+          elif [ "$GATING_OUTCOME" = "success" ]; then
+            if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
+          else
+            STATE=no_verdict
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "gating step outcome: $GATING_OUTCOME / job status: $JOB_STATUS / verdict: $STATE"
+          case "$STATE" in
+            gating_failed)
+              echo "::error::GATING E2E specs FAILED. This red is a real test failure and holds the promotion." ;;
+            infra_only)
+              echo "::warning::The gating E2E specs PASSED — this job is red for a NON-TEST reason (artifact upload, or a step after the specs). Do not read this as an E2E failure; no issue was filed and no alert was paged. Find the failing step before treating the promotion as blocked (core#873)." ;;
+            no_verdict)
+              echo "::error::e2e-staging produced NO E2E VERDICT — the gating step did not run (outcome=$GATING_OUTCOME). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. Fix the harness, then re-run." ;;
+            wrong_build)
+              echo "::error::e2e-staging REFUSED to run: staging was not running this commit (core#876). This is NOT an E2E failure and NOT a broken harness — the specs were never started, so this commit still has no reading. Re-run this commit's deploy, then re-run this job. Do NOT re-deploy from inside a verifier (core#753)." ;;
+            cancelled)
+              echo "::notice::Job cancelled (staging-deploy concurrency group). A cancelled verdict is neither green nor red — the next push on dev produces the reading." ;;
+            clean)
+              echo "::notice::Gating E2E specs passed and the job is green." ;;
+          esac
+
       - name: Telegram alert on failure
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'gating_failed'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -1071,8 +1284,30 @@ jobs:
             --data-urlencode "text=${TEXT}" \
             --data-urlencode "parse_mode=Markdown"
 
+      # No issue is filed for this one: a harness that never ran is not a test
+      # failure and does not belong on the `e2e-staging-failure` dedup thread,
+      # which exists to track failing SPECS. It still pages, because an absent
+      # verdict is the state most likely to be mistaken for a pass.
+      - name: Telegram alert when the E2E tier produced no verdict
+        if: always() && steps.verdict.outputs.state == 'no_verdict'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GATING_OUTCOME: ${{ steps.gating.outcome }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: NO VERDICT*\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
+            "$GATING_OUTCOME" "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
       - name: File issue on failure
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'gating_failed'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1113,7 +1348,9 @@ jobs:
             "**Message:** $FIRST_LINE" \
             "**Report:** playwright-report artifact on the run page" \
             "" \
-            "Only the GATING tier can open this — informational specs do not fail the job (core#521).")
+            "This is filed on the GATING step's own outcome, not on the job's conclusion (core#873)." \
+            "So it means the gating specs themselves went red — not that some other step failed." \
+            "Informational specs cannot open this either; they are \`continue-on-error\` (core#521).")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo ${{ github.repository }} \
               --body "Another e2e-staging failure on \`$SHORT_SHA\`: $RUN_URL"
@@ -1128,8 +1365,15 @@ jobs:
 
       # ── core#757: the same two alerts, for a run that stayed GREEN ──────────
       # These are NOT `if: failure()`. That is the entire point: the run they
-      # exist to report on concludes `success`, which is why nothing fired for
-      # de00365. They branch on the detector's own output instead.
+      # exist to report on usually concludes `success`, which is why nothing
+      # fired for de00365. They branch on the detector's own output instead.
+      #
+      # ⚠️ core#877 (QA): this alert used to open with the hardcoded sentence
+      # "The run is GREEN." It fired on `94b1ec9`, where `e2e-staging` concluded
+      # `failure`. The `if:` was right and the sentence beside it was a claim
+      # about a state the step never checked — the same defect as core#873 one
+      # step further along, and the reason the colour is now DERIVED from the
+      # `verdict` step rather than asserted. A run can be flaky and red at once.
       - name: Telegram alert on flaky gating spec
         if: always() && steps.flaky_gate.outputs.status == 'flaky'
         env:
@@ -1138,11 +1382,19 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+          VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\nThe run is GREEN. A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
+          case "$VERDICT" in
+            clean)         STATE="The run is GREEN." ;;
+            infra_only)    STATE="The gating specs PASSED; the run is red for a NON-TEST reason (core#873)." ;;
+            gating_failed) STATE="The run is RED and a gating spec ALSO retried into a pass — two findings, not one." ;;
+            cancelled)     STATE="The run was CANCELLED, so its verdict is neither green nor red." ;;
+            *)             STATE="Run state: ${VERDICT:-unknown}." ;;
+          esac
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
+            "$STATE" "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
@@ -1155,9 +1407,19 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
+          VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
+          # core#877: derive the run's colour, never assert it. This body used to
+          # open "The run is GREEN" unconditionally; a run can be flaky AND red.
+          case "$VERDICT" in
+            clean)         STATE="**The run is GREEN.**" ;;
+            infra_only)    STATE="**The gating specs PASSED. The run is red for a NON-TEST reason (core#873), not for this.**" ;;
+            gating_failed) STATE="**The run is RED on the gating tier AND a gating spec retried into a pass. Two findings, not one.**" ;;
+            cancelled)     STATE="**The run was CANCELLED** — its verdict is neither green nor red." ;;
+            *)             STATE="**Run state: ${VERDICT:-unknown}.**" ;;
+          esac
           # Same dedup CHANNEL as a red (`e2e-staging-failure`): a flaky gating
           # spec is the same event as a red one that happened to retry into a
           # green, so it belongs on the same thread rather than in a parallel one.
@@ -1174,7 +1436,7 @@ jobs:
             --limit 1 \
             --json number --jq '.[0].number // empty')
           body=$(printf '%s\n' \
-            "**The run is GREEN. This is not a red that was retried away — it is a red that Playwright reported as \`flaky\` and exited 0 on.**" \
+            "$STATE This is not a red that was retried away — it is a red that Playwright reported as \`flaky\` and exited 0 on." \
             "" \
             "**Run:** $RUN_URL" \
             "**Commit:** \`$SHORT_SHA\`" \
@@ -1289,6 +1551,19 @@ jobs:
           # setup in this file, not just the one that happened to fail.
           printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
+
+      # core#876. Before Authentik: bringing up four containers on the production box to
+      # test somebody else's build wastes ~5 minutes and leaves a teardown to get wrong.
+      - name: Assert staging is running THIS commit
+        id: attribution
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
 
       - name: Start Authentik on staging server
         env:
@@ -1420,7 +1695,14 @@ jobs:
           echo "=== Staging → Authentik reachability ==="
           ssh root@${{ secrets.POINTER_HOST }} "docker exec \$(/opt/datanika-staging/active-app.sh) curl -sI --max-time 5 http://e2e-authentik-server:9000/-/health/ready/ 2>&1 | head -3" || true
 
+      # ⚠️ `id: sso_specs` is load-bearing — same reason as `e2e-staging`'s
+      # `id: gating` (core#873). Two steps below this one run on `always()` and
+      # can fail a job whose specs all passed: the artifact upload (the exact
+      # failure that produced the false report on 2026-09-01) and the Authentik
+      # cleanup, whose `|| true` is INSIDE the remote command string, so an ssh
+      # that cannot connect still fails the step.
       - name: Run SSO specs
+        id: sso_specs
         working-directory: e2e
         env:
           CI: "true"
@@ -1435,6 +1717,27 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: npx playwright test sso-
+
+      # core#876, the half `e2e-staging` does not need. This job holds `staging-e2e-sso`,
+      # NOT `staging-deploy` — deliberately, because it owns a compose project of its own
+      # (core#765). The cost of that correct decision is that a deploy CAN land underneath
+      # it, so the assertion made before Authentik came up is stale by the time the specs
+      # finish. Re-assert: if staging was replaced mid-run, these specs graded a moving
+      # target and the verdict does not belong to this commit either way it went.
+      #
+      # `always()` on purpose — a green that is not attributable is exactly as misleading
+      # as a red one, and it is the direction nobody checks.
+      - name: Re-assert staging was still THIS commit at the end
+        id: attribution_post
+        if: always() && steps.attribution.outcome == 'success'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
 
       - name: Upload SSO Playwright report
         if: always()
@@ -1467,9 +1770,79 @@ jobs:
       # every push for a real product bug (#830) and filed a fresh issue AND paged the
       # founder each time: ten issues and ten pages for one condition. The tracker was
       # ~15% duplicate noise and the alarm had stopped carrying information.
+      # core#873, same classifier as `e2e-staging`. See the long note there for
+      # why every condition leads with `always() &&` (a bare
+      # `steps.x.outcome == 'failure'` is implicitly `success() && ...` and so
+      # fails CLOSED — it would never fire again), and why a gating step that
+      # never RAN pages under its own wording instead of being swallowed.
+      - name: Classify what this job's result means
+        id: verdict
+        if: always()
+        env:
+          SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+          ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
+          ATTRIB_POST_OUTCOME: ${{ steps.attribution_post.outcome }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          # No `cancelled()` in this `env:` -- see the e2e-staging classifier
+          # above for why it invalidates the entire workflow file at validation
+          # time and produces a run with zero jobs and zero check-runs.
+          #
+          # core#876: EITHER attribution check failing means this run cannot honestly
+          # report on this commit, whichever way the specs went. Tested before the specs
+          # so a passing suite on the wrong build is not classified `clean`.
+          if [ "$JOB_STATUS" = "cancelled" ] || [ "$SPECS_OUTCOME" = "cancelled" ]; then
+            STATE=cancelled
+          elif [ "$ATTRIB_OUTCOME" = "failure" ] || [ "$ATTRIB_POST_OUTCOME" = "failure" ]; then
+            STATE=wrong_build
+          elif [ "$SPECS_OUTCOME" = "failure" ]; then
+            STATE=specs_failed
+          elif [ "$SPECS_OUTCOME" = "success" ]; then
+            if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
+          else
+            STATE=no_verdict
+          fi
+          echo "state=$STATE" >> "$GITHUB_OUTPUT"
+          echo "SSO specs outcome: $SPECS_OUTCOME / job status: $JOB_STATUS / verdict: $STATE"
+          case "$STATE" in
+            specs_failed)
+              echo "::error::SSO E2E specs FAILED. This red is a real test failure." ;;
+            infra_only)
+              echo "::warning::The SSO specs PASSED — this job is red for a NON-TEST reason (artifact upload, or the Authentik cleanup). No issue was filed and no alert was paged. Do not read this as an SSO regression (core#873)." ;;
+            no_verdict)
+              echo "::error::e2e-sso produced NO VERDICT — the specs did not run (outcome=$SPECS_OUTCOME), most likely an Authentik bootstrap or tunnel failure. Neither a pass nor a regression." ;;
+            wrong_build)
+              echo "::error::e2e-sso cannot report on this commit: staging was not running it (pre=$ATTRIB_OUTCOME post=$ATTRIB_POST_OUTCOME, core#876). If the POST check is the failing one the specs DID run, but against a stack that changed underneath them — so a green here would not have been this commit's green either. Not an SSO regression; re-deploy this commit and re-run." ;;
+            cancelled)
+              echo "::notice::Job cancelled — neither green nor red." ;;
+            clean)
+              echo "::notice::SSO specs passed and the job is green." ;;
+          esac
+
+      # No issue is filed here: a harness that never came up is not a product
+      # bug and does not belong on the `e2e-sso-failure` dedup thread, which
+      # #830 is actively using. It pages, because an absent verdict on a job
+      # that is normally red is the easiest thing in this pipeline to misread
+      # as a fix.
+      - name: Telegram alert when the SSO tier produced no verdict
+        if: always() && steps.verdict.outputs.state == 'no_verdict'
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:7}
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *SSO E2E: NO VERDICT*\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n*Commit:* `%s`\n*Run:* %s' \
+            "$SPECS_OUTCOME" "$SHORT_SHA" "$RUN_URL")
+          curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=1201995" \
+            --data-urlencode "text=${TEXT}" \
+            --data-urlencode "parse_mode=Markdown"
+
       - name: File issue on failure
         id: file_issue
-        if: failure()
+        if: always() && steps.verdict.outputs.state == 'specs_failed'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1530,8 +1903,15 @@ jobs:
       # ⚠️ The polarity is deliberately FAIL-OPEN. If the filer step itself dies, its
       # outputs are unset, `'' != 'commented'` is true, and this still pages — losing
       # the issue must never also lose the alert.
+      #
+      # ⚠️ core#873: the `state == 'specs_failed'` conjunct is REQUIRED, not
+      # belt-and-braces. Gating the filer alone would not have fixed this step:
+      # on an artifact-upload red the filer is skipped, so `dedup` is unset,
+      # `'' != 'commented'` is true, `failure()` is true — and it pages anyway.
+      # The fail-open polarity above is preserved: if the filer DIES while the
+      # specs really failed, `dedup` is still unset and this still pages.
       - name: Telegram alert on new failure
-        if: failure() && steps.file_issue.outputs.dedup != 'commented'
+        if: always() && steps.verdict.outputs.state == 'specs_failed' && steps.file_issue.outputs.dedup != 'commented'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}

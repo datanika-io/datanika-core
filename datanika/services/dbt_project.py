@@ -24,11 +24,13 @@ class DbtProjectError(ValueError):
 _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 #: dbt adapters we will write a `profiles.yml` for.
 #:
-#: 🚨 This is NOT the same set as `dlt_runner.SUPPORTED_DESTINATION_TYPES`, and
-#: since core#825 it is not a subset of it either. `mysql` is a dlt load
-#: destination and is NOT a dbt transform target; `sqlite` is the reverse.
-#: Anything reading one of these two sets to answer a question about the other
-#: will be wrong for at least one connector.
+#: 🚨 This is NOT the same set as `dlt_runner.SUPPORTED_DESTINATION_TYPES`.
+#: Since core#862 it IS a strict subset — every installed adapter is also a
+#: loadable destination — but the two answer different questions and the subset
+#: relation is a fact about today's dependency tree, not a rule. `databricks`
+#: and `synapse` are loadable destinations with no adapter, which is precisely
+#: the gap. Anything reading one of these sets to answer a question about the
+#: other will be wrong for at least two connectors.
 #:
 #: `mysql` was removed in core#825: `dbt-mysql`'s last release is 1.7.0
 #: (2024-04-26, personal repo, pinning `dbt-core~=1.7.0`) and it held the whole
@@ -41,14 +43,21 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 #: earlier draft of this comment both claimed: `dlt.destinations` has no `mysql`
 #: attribute, so MySQL loads have always raised AttributeError (core#865).
 #:
-#: ⚠️ PRE-EXISTING and NOT fixed here (core#825 found it, did not cause it):
-#: `sqlite`, `databricks` and `synapse` are listed below with **no installed
-#: adapter**, so `generate_profiles_yml` writes a profile dbt cannot load and
-#: the failure surfaces inside a Celery task rather than at selection time.
-#: That is the same defect class this `mysql` removal fixes, but removing them
-#: withdraws advertised capability and is a product decision, not a dependency
-#: one. Tracked as core#862 together with the picker divergence above — do not
-#: quietly delete them here on your own authority.
+#: ✅ `sqlite`, `databricks` and `synapse` were REMOVED in core#862. They had
+#: been listed with **no installed adapter**, so `generate_profiles_yml` wrote a
+#: profile dbt cannot load and the failure surfaced inside a Celery task —
+#: *after* `run.before_execute` had already charged the tenant's quota for a run
+#: that could not succeed. `pyproject.toml` documented two of the three as
+#: deliberately absent while this constant advertised them: the manifest and the
+#: constant disagreed for the life of the project and nothing could notice.
+#:
+#: ⚠️ `_build_profile_output` still carries `type: databricks` and `type:
+#: synapse` branches. They are unreachable while those adapters are absent, and
+#: they are kept on purpose: a self-hoster who installs `dbt-databricks` needs
+#: only to add the string back here. **That is also the one supported way to
+#: widen this set** — install the adapter first, because
+#: `test_connector_type_contracts.py` asks `importlib.util.find_spec` and will
+#: refuse a member the environment cannot import.
 #:
 #: ⚠️ core#862 was filed BEFORE this line was written, and that ordering is the
 #: point: core#823 shipped a comment citing core#847, a number picked before the
@@ -57,14 +66,11 @@ _IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 SUPPORTED_ADAPTERS = {
     "postgres",
     "mssql",
-    "sqlite",
     "bigquery",
     "snowflake",
     "redshift",
     "clickhouse",
     "duckdb",
-    "databricks",
-    "synapse",
 }
 
 

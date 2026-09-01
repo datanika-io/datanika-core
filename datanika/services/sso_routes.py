@@ -269,15 +269,13 @@ async def sso_callback(request: Request) -> RedirectResponse:
             )
 
             # Ensure user is a member of the SSO org
+            from sqlalchemy import select as _select
+
+            from datanika.models.user import Organization as _Organization
+
             org = session.execute(
-                __import__("sqlalchemy")
-                .select(__import__("datanika.models.user", fromlist=["Organization"]).Organization)
-                .where(
-                    __import__("datanika.models.user", fromlist=["Organization"]).Organization.slug
-                    == org_slug
-                )
+                _select(_Organization).where(_Organization.slug == org_slug)
             ).scalar_one_or_none()
-            # Gross imports above — let me fix inline
         except UserServiceError:
             # Same distinction the OAuth callback draws: the link was refused
             # because the local account never proved this address, which the
@@ -286,10 +284,30 @@ async def sso_callback(request: Request) -> RedirectResponse:
             # and be auto-linked onto whatever unproven account already held it.
             logger.info("SSO link refused for org %s: local account unproven", org_slug)
             return RedirectResponse(url=_frontend("/login?link_blocked=1"), status_code=302)
-        except SamlValidationError:
+        except SamlValidationError as exc:
             # A forged / unsigned / tampered / expired / replayed assertion is
             # an attack, not a user error — reject with 401, issue no session.
-            logger.warning("SAML validation rejected the callback for org %s", org_slug)
+            #
+            # 🚨 The REASON goes in the log and nowhere else (core#830).
+            #
+            # `_saml_parse` raises this from SIX distinct places — missing
+            # response, no trust anchor, replayed request id, unparseable
+            # response, failed validation, and a validated assertion with no
+            # NameID. This line rendered all six identically, so the one signal
+            # an operator has was compatible with every hypothesis and could
+            # discriminate none of them. Two investigations reasoned from it and
+            # reached different wrong answers (core#830, core#768).
+            #
+            # This project's signature defect running backwards: not a green
+            # that proves nothing, but a red that names the layer and withholds
+            # the cause. The exception was in hand and was thrown away.
+            #
+            # ⚠️ The RESPONSE stays fixed and opaque on purpose. Telling a
+            # caller which property failed turns this endpoint into an oracle
+            # for probing an org's SAML configuration — and putting the reason
+            # in the body is the obvious way to implement this issue.
+            # `test_the_response_body_still_says_nothing` pins that.
+            logger.warning("SAML validation rejected the callback for org %s: %s", org_slug, exc)
             return Response("Unauthorized: SAML assertion failed validation.", status_code=401)
         except Exception:
             logger.exception("SSO callback failed for %s", org_slug)

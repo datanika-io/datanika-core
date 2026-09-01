@@ -376,6 +376,19 @@ class UploadState(BaseState):
         except (ValueError, IndexError):
             self.error_message = "Please select source and destination connections"
             return
+        # core#862. The picker no longer offers destinations that cannot work,
+        # so reaching here means a stale form — options loaded before the type
+        # was withdrawn, or an id set some other way. Refusing against
+        # `dest_conn_options` rather than re-deriving the rule keeps ONE
+        # definition of "offered": whatever the user could actually pick. The
+        # service refuses independently, which is what covers the API path;
+        # this exists so the message arrives in the user's own language.
+        if not any(o.startswith(f"{dst_id} ") for o in self.dest_conn_options):
+            self.error_message = await self._translated(
+                "uploads.destination_invalid", "Data cannot be loaded into this connection type"
+            )
+            return
+
         try:
             with get_sync_session() as session:
                 if self.editing_upload_id:
@@ -653,13 +666,7 @@ class UploadState(BaseState):
             )
             session.commit()
         await self.load_uploads()
-        from datanika.ui.state.i18n_state import I18nState
-
-        i18n = await self.get_state(I18nState)
-        yield rx.toast.success(
-            i18n.translations.get("uploads.deleted_toast", "Upload deleted"),
-            position="top-right",
-        )
+        yield await self._deleted_toast("uploads.deleted_toast", "Upload deleted")
 
     async def run_upload(self, upload_id: int):
         if not await self._check_role("editor"):
@@ -696,6 +703,12 @@ class UploadState(BaseState):
                         "This upload's source or destination connection was deleted. "
                         "Restore the connection to run it again."
                     )
+                    # `uploads.py` renders `error_message` nowhere (#887), so
+                    # this refusal was invisible: press Run, nothing happens,
+                    # and the sentence explaining why goes to a var no template
+                    # reads. `AuthState.action_error` is the channel the shell
+                    # renders (#744).
+                    auth_state.action_error = self.error_message
                     return
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
             self._audit(

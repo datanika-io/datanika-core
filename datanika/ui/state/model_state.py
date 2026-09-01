@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.dependency import NodeType
+from datanika.models.run import RunStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -43,6 +44,18 @@ def _pick_latest_run(*runs):
 
 class ModelState(BaseState):
     models: list[ModelItem] = []
+
+    #: True when the catalog is empty **and** this org has already completed a
+    #: load that reported rows (core#883).
+    #:
+    #: The generic empty-state copy — "Run an upload or transformation to
+    #: populate the catalog" — is correct only for a user who has never loaded
+    #: anything. After a green run with a row count it instructs the user to do
+    #: the thing they just did, which is worse than saying nothing: the absent
+    #: signal is replaced by a confident wrong one. The upload task now writes
+    #: the diagnosis onto the run (see `tasks/upload_tasks.py`), and this flag
+    #: is what points the user at it.
+    loaded_without_catalog: bool = False
 
     async def load_models(self):
         org_id = await self._get_org_id()
@@ -134,4 +147,16 @@ class ModelState(BaseState):
                     )
                 )
             self.models = items
+
+            # Only asked when the catalog is empty, which is the only case that
+            # consumes the answer — so the normal page load pays nothing.
+            # Reset unconditionally: this state object is reused across loads,
+            # and a stale True would keep the wrong copy on screen after the
+            # user fixes the destination.
+            self.loaded_without_catalog = False
+            if not items:
+                self.loaded_without_catalog = any(
+                    (r.rows_loaded or 0) > 0
+                    for r in exec_svc.list_runs(session, org_id, status=RunStatus.SUCCESS)
+                )
         self.error_message = ""

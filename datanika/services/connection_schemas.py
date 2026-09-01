@@ -378,18 +378,10 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         required=["base_url", "resources"],
     ),
     # ---- Files ----
-    "s3": _schema(
-        {
-            "bucket_url": _str("S3 bucket URL, e.g. s3://my-bucket/path/prefix/"),
-            "aws_access_key_id": _str("AWS access key ID (optional with IAM role)", sensitive=True),
-            "aws_secret_access_key": _str(
-                "AWS secret access key (optional with IAM role)", sensitive=True
-            ),
-            "region_name": _str("AWS region, e.g. us-east-1 (optional, auto-detected)"),
-            "endpoint_url": _str("S3-compatible endpoint URL (MinIO, Backblaze B2, Cloudflare R2)"),
-        },
-        required=["bucket_url"],
-    ),
+    # `s3` withdrawn — core#863. No s3fs in the lock, so the transport cannot
+    # resolve at all. Its ConnectionType member, its loader dispatch and its file
+    # classification all stay, so a connection already stored still loads and
+    # still fails with an error that explains itself. See WITHDRAWN_SOURCE_TYPES.
     "csv": _schema(
         {"path": _str("Path to CSV file or directory")},
         required=["path"],

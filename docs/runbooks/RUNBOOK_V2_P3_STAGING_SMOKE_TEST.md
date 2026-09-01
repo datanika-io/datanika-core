@@ -101,13 +101,35 @@ Verification:
 
 ## 4. Verify Grafana volume dashboard
 
-Open Grafana at `staging-app.datanika.io:3001` → "Datanika Volume Metrics" dashboard.
+Open Grafana via an SSH tunnel — it binds `127.0.0.1` only, so `staging-app.datanika.io:3001` is not
+reachable ([core#907]):
 
-- [ ] Dashboard loads without parse errors
-- [ ] Panel 1 (bytes by org): shows the test org's usage from steps 2-3
-- [ ] Panel 2 (mode split): shows both ETL and ELT data points
-- [ ] Prometheus histogram `datanika_bytes_processed_by_run` has entries (check `/metrics` endpoint)
-- [ ] Cloud counters `datanika_cloud_bytes_processed_total` incrementing on the `/metrics` endpoint
+```bash
+ssh -N -L 3001:127.0.0.1:3001 root@185.25.22.188    # then browse http://localhost:3001
+```
+
+⚠️ **There is no "Datanika Volume Metrics" dashboard.** The only provisioned dashboards are
+`Database Performance` and `Datanika Server Overview`, so the two panel checks that used to sit here
+could never have been performed. Verify the same facts from `usage_ledger` (step 2) and from the
+metrics surface below.
+
+- [ ] Volume Alerts group present, rules in `OK`/`Normal`
+- [ ] `/metrics` on staging asserts a **sample line**, not a metric name — run it on the box:
+
+  ```bash
+  ssh root@185.25.22.188
+  curl -sf http://127.0.0.1:8100/metrics > m.txt && wc -l < m.txt
+  grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
+  grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]' m.txt
+  ```
+
+  🚨 `prometheus_client` emits `# HELP`/`# TYPE` for a labelled metric with zero children, so a
+  `grep` for a bare metric name passes on a counter that has never recorded anything. `/metrics` is
+  also **not** routed through Apache on purpose (it carries per-tenant byte volumes unauthenticated),
+  so a `curl` to the public hostname returns the SPA. See `docs/ENGINEERING_RULES.md` §5.
+
+- [ ] `datanika_cloud_bytes_ledger_scrape_ok` is `1`
+- [ ] `datanika_cloud_bytes_processed_total{org_id="…"}` has at least one sample line, value > 0
 
 ## 5. Verify `check_bytes_quota` dry-run logging
 
@@ -127,7 +149,7 @@ Verification:
 - [ ] App container logs contain `"bytes quota dry-run"` (cloud#33's dry-run log line)
 - [ ] The run is NOT blocked (dry-run mode allows it through)
 - [ ] The log line includes the predicted bytes and the plan cap
-- [ ] `datanika_cloud_bytes_quota_rejected_total` counter increments on `/metrics` (with `reason=dry_run`)
+- [ ] `datanika_cloud_bytes_quota_rejected_total` — ⚠️ **cannot be asserted from `/metrics`**: it is labelled, so a healthy zero state emits no sample line, identical to the collector being broken. Confirm dry-run rejections from the app log line and `usage_ledger` instead.
 
 ## 6. Verify V2 P3 UI surfaces (from VA2)
 

@@ -64,6 +64,44 @@ and the unload handler disconnects the socket. Reflex's own comment for that pat
    spans the browser, the web app and the worker; one sentence naming the worker sent two people to
    the wrong process on nights the worker was fine.
 
+**Corollary — an empty result is three different facts wearing one face, and the reassuring one is
+the default reading.** (core#869 / core#883, 2026-09-01.) `sqlalchemy` `get_table_names(schema=X)`
+returns `[]` when `X` **does not exist**. It does not raise. Measured against real BigQuery, with a
+positive control so `[]` was not equally explained by the method being broken:
+
+```
+EXISTS, has tables    bigqueryfirstrun                 -> ['_dlt_loads', ..., 'customers', 'orders']
+DOES NOT EXIST        datanika_docs_demo               -> []
+DOES NOT EXIST        datanika_no_such_dataset_qa869   -> []
+```
+
+So *"the dataset was deleted"*, *"the dataset is empty"* and *"the load produced no tables"* are one
+signal — in the product and in your probe alike. Downstream, `CatalogService.introspect_tables`
+returns `[]`, `_sync_catalog_after_upload` writes zero entries and returns `0` **as a success value**,
+and core#494's warning lives on the `except` path only, so nothing fires.
+
+What it cost: an engineer with a correctly-armed instrument, working on the right issue, produced two
+confident hypotheses — *"the upload has not materialised yet"* and *"it wrote to a different
+dataset"* — and **neither was right**. The dataset had been deleted by that issue's own documented
+cleanup, announced two comments above the reading.
+
+**Rules:**
+1. **Any lister that answers a question about existence needs a positive control** — a case you know
+   is non-empty, run in the same probe. Without one, `[]` everywhere is equally explained by your
+   instrument being broken, and one possible answer is not a measurement.
+2. **Before explaining a measurement with a code defect, check that the thing measured still
+   exists.** Cheaper than every code hypothesis, and it is the one check neither hypothesis above
+   would ever have reached. Read the issue's own recent comments first — a teardown is usually
+   announced by the person who did it.
+3. **Two readings of "the same" thing taken at different times are not one state.** A REST
+   verification showing 19 rows and a reflection showing 0 tables straddled a deletion; read together
+   they produce a contradiction that *invites* a code explanation. Timestamp every measurement and
+   compare the timestamps before comparing the values.
+4. **When a count of zero is a legitimate success value, say so out loud somewhere.** A function that
+   returns `0` for "nothing found" and `0` for "nothing exists to find" needs the caller to
+   distinguish them — here, `rows > 0 and tables == 0` is a contradiction the caller can see and the
+   callee cannot.
+
 ## 2. Any green you have not personally forced red is unproven
 
 And its twin: **a red you have not shown can go green may be asserting something unreachable.**
@@ -261,6 +299,28 @@ credentials or imports now **fail**; skipping is opt-in* — closed a systemic h
 environment variable made an entire nightly suite skip and exit 0. **Dropping any env var should now
 only make a suite stricter, never quieter.**
 
+
+**🚨 And a skip does not skip the same way for everyone. `UV_NO_SYNC=1` makes a `skipif`-guarded
+test RUN in your worktree and SKIP in CI** — so you see coverage that does not exist. (2026-09-01,
+from core#684 / core#825.) We all export that flag so `uv run` cannot gut the venv mid-pytest; the
+same flag guarantees the venv is a **superset** of the lock and never a subset. When `s3fs` was
+dropped from `uv.lock`, `TestS3FileSourceMovesRows`'s four tests kept passing locally against a
+leftover `s3fs 2025.12.0` while CI — which installs from the lock — skipped all four, and the
+capability was absent from the shipped image entirely.
+
+**The tell is that the predicate asks about the ENVIRONMENT, not the repo:** *"is package X
+importable"*, *"is binary Y on PATH"*, *"is service Z reachable"*. Before believing a local green on
+anything dependency-gated, check what CI actually did, and read the **skip count**:
+
+```bash
+grep -c '^name = "<pkg>"' uv.lock   # 0 => CI cannot have run it, whatever your box says
+pytest <file> -q -rs                 # -rs prints skip REASONS; a bare -q hides them
+```
+
+🔑 **The structural version, which is the part worth carrying: the test that proves a capability
+works is often disabled by the same condition that breaks it.** So the suite gets quieter at exactly
+the moment it should get louder, and a deferral recorded in a marker is invisible to everyone who
+does not open that file (core#885).
 ## 12. Retries
 
 **A retry around container startup hides nothing. A retry around an assertion hides a product bug.
@@ -313,6 +373,12 @@ listing. **Read the rows back with a query.**
 
 ## 17. Process
 
+> ⚠️ **This is not the last section — §18 and §19 follow.** They were appended after this one
+> because renumbering would break the §-references in `ci.yml`, `e2e/scripts/`, and several tests.
+> The pointer is here because a heading that reads like an ending is how
+> `PLAN_HUMAN_LOCKERS.md` hid six live items below its "Completed" section: the document was not
+> wrong, it just put live content where the reader had already stopped looking.
+
 - Every QA task has a GitHub issue **in the repository it touches**; cross-repo test infrastructure
   goes in the repository holding the harness.
 - Branch `<issue>-<slug>`; PR targets `dev`; title and commits carry `[QA]`.
@@ -325,3 +391,60 @@ listing. **Read the rows back with a query.**
   stayed wrong for months afterwards.
 - **A security-sensitive finding does not go in a public issue.** This repository is public and at
   least two automated surfaces publish issue *titles*. Write it up locally and route it directly.
+
+## 18. A published target with no instrument is indistinguishable from a target being met
+
+Earned on [core#721], where `docs/slo_targets.md` carried 33 numeric commitments for four and a half
+months and `git grep` found **zero** references to it in any repository. It could not be violated and
+it could not be achieved, so it read as a commitment while committing to nothing.
+
+This is the same family as a rule that cannot fire and a check that cannot fail, but it is worth
+stating separately because it has no red state to notice. **There is nothing to see.** The five rules
+below all come from building the instrument that finally read it.
+
+### 18a. Report three states, and never let "unmeasured" render as a pass
+
+`PASS` / `FAIL` / `NO_VERDICT`. An unmeasured commitment must be counted and printed, and the
+process must not exit 0 on it. `scripts/slo_report.py` exits **1** for a missed target and **2** when
+nothing could be measured, precisely so a scheduled job cannot go green while blind — the failure
+mode of every `noDataState: OK` rule this project has shipped.
+
+### 18b. A quantile over too few samples is not a number
+
+Every measured indicator declares a `min_samples` floor, and below it the answer is `NO_VERDICT`. A
+p95 computed from three requests is a beautiful figure that means nothing; scored as a pass it is
+worse than no figure, because a pass gets acted on.
+
+### 18c. An instrument you have MEASURED to be broken must never report PASS
+
+Not "note the caveat and score it anyway". Print the number, refuse to score it, and name the issue.
+Six SLOs are in this state behind [core#895]. The reasoning: at zero traffic a broken meter is
+harmless, and the moment real traffic arrives it starts emitting *confident greens*. The transition
+is silent and there is no moment at which anyone re-examines it.
+
+### 18d. The threshold lives in exactly one file, and the checker may not restate it
+
+If the registry that runs the checks also carries its own copy of each number, the numbers can be
+relaxed to match whatever production happens to do and every check goes green without anyone editing
+a commitment. `tests/test_slo/test_slo_coverage.py` forbids threshold keys in the registry
+mechanically. **A target quietly revised to match current behaviour is the same defect as a guard
+that passes because it looks at nothing.**
+
+### 18e. A zero-valued target is satisfied by the thing never happening
+
+`Webhook handler (Paddle) — HTTP 5xx: 0` is met perfectly by an endpoint nobody calls, and at zero
+paying users nobody does. Any error-rate check must gate on a count of **successes**, not of
+failures, or the greenest line in the report is the one proving least. Related: a target written
+`< 0` is unsatisfiable by any real number, so a healthy system reports FAIL forever and people learn
+to ignore the report — use inclusive bounds.
+
+## 19. A total-count floor does not catch a missing section
+
+The SLO document parser's first column lookup silently dropped **all six** Saturation rows, and the
+total came to exactly **20** against a floor of **20**. The floor was satisfied; a sixth of the
+document had vanished.
+
+Assert the count **per section**, per file, per category — whatever the natural subdivision is. The
+same shape has now bitten this project three times: the restore drill asserting `plans >= 5` while
+`users` was empty, a row-total check that would have missed 196-vs-177 by 10%, and this one.
+**Whenever you write a floor, ask what fraction of the thing could disappear beneath it.**

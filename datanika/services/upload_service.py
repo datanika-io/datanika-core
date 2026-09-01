@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.upload import Upload, UploadStatus
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.naming import to_snake_case, validate_name
 
 VALID_WRITE_DISPOSITIONS = {"append", "replace", "merge"}
@@ -61,6 +61,21 @@ class UploadService:
         if dst is None:
             raise ValueError(
                 f"Invalid destination connection {destination_connection_id}: must exist"
+            )
+        # core#862 / core#865. Existing is not enough — the connection has to be
+        # something dlt can build a destination factory for. `mysql` and
+        # `sqlite` were advertised here for the life of the constant and never
+        # worked: `build_destination` does an unconditional
+        # `getattr(dlt.destinations, type)` and dlt has neither attribute, so
+        # the upload failed with a bare AttributeError inside a Celery task,
+        # after the run row and the quota charge already existed. Refused at
+        # save time so the user learns while they are still looking at the form,
+        # and refused HERE because `POST /api/v1/uploads` never sees the picker.
+        if dst.connection_type.value not in DESTINATION_TYPES:
+            raise ValueError(
+                f"Connection {destination_connection_id} is a "
+                f"{dst.connection_type.value} connection, which Datanika can read "
+                "from but cannot load into"
             )
 
         self.validate_upload_config(dlt_config)

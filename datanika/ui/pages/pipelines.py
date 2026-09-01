@@ -214,6 +214,17 @@ def pipeline_form() -> rx.Component:
                 placeholder=_t["pipelines.ph_destination"],
                 width="100%",
             ),
+            # core#862 — say WHY the list is short. A connection the user
+            # created, can see on /connections, and may already use as a
+            # source, vanishing from this dropdown with no explanation is the
+            # core#805 shape: the product behaving as though something is true
+            # without saying it. Withdrawing an advertised capability needs a
+            # sentence; a silently shorter list produces a bug report.
+            rx.text(
+                _t["pipelines.destination_help"],
+                size="1",
+                color="var(--gray-9)",
+            ),
             # dbt command
             rx.text(_t["pipelines.command"], size="2", weight="bold"),
             searchable_select(
@@ -286,6 +297,56 @@ def pipeline_form() -> rx.Component:
     )
 
 
+def _delete_pipeline_dialog(p) -> rx.Component:
+    """Ask before deleting a pipeline (core#851).
+
+    Self-gating on ``can_delete``: ``test_rbac_ui_visibility.py``'s
+    ``_GateChecker`` walks the module **lexically**, so a button moved into a
+    helper leaves the enclosing ``rx.cond`` behind and reads as ungated. The
+    fix is to bring the gate along rather than to teach the checker about
+    indirection — keeping that guard simple is worth more than the tidier call
+    site. Same shape as ``connections._delete_connection_dialog``.
+    """
+    return rx.cond(
+        AuthState.can_delete,
+        rx.alert_dialog.root(
+            rx.alert_dialog.trigger(
+                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+            ),
+            rx.alert_dialog.content(
+                rx.alert_dialog.title(_t["pipelines.delete_title"]),
+                rx.alert_dialog.description(_t["pipelines.delete_body"]),
+                rx.vstack(
+                    rx.card(
+                        rx.text("#", p.id, "  ", p.name, size="2", weight="bold"),
+                        rx.text(p.command, size="1", color="var(--gray-9)"),
+                    ),
+                    rx.text(_t["pipelines.delete_reversible"], size="1", color="var(--gray-9)"),
+                    spacing="3",
+                    width="100%",
+                    margin_top="12px",
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            _t["pipelines.delete_confirm"],
+                            color_scheme="red",
+                            on_click=PipelineState.delete_pipeline(p.id),
+                        ),
+                    ),
+                    spacing="3",
+                    justify="end",
+                    margin_top="16px",
+                ),
+                max_width="480px",
+            ),
+        ),
+    )
+
+
 def pipelines_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
@@ -343,15 +404,7 @@ def pipelines_table() -> rx.Component:
                                     on_click=PipelineState.run_pipeline(p.id),
                                 ),
                             ),
-                            rx.cond(
-                                AuthState.can_delete,
-                                rx.button(
-                                    _t["common.delete"],
-                                    color_scheme="red",
-                                    size="1",
-                                    on_click=PipelineState.delete_pipeline(p.id),
-                                ),
-                            ),
+                            _delete_pipeline_dialog(p),
                             spacing="2",
                         ),
                     ),

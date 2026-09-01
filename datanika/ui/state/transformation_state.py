@@ -251,6 +251,22 @@ class TransformationState(BaseState):
         user_id = auth_state.current_user.id
         svc = TransformationService()
         conn_id = self._parse_connection_id()
+        # core#862. The picker no longer offers destinations that cannot work,
+        # so reaching here means a stale form — options loaded before the type
+        # was withdrawn, or an id set some other way. Refusing against
+        # `dest_conn_options` rather than re-deriving the rule keeps ONE
+        # definition of "offered": whatever the user could actually pick. The
+        # service refuses independently, which is what covers the API path;
+        # this exists so the message arrives in the user's own language.
+        if conn_id is not None and not any(
+            o.startswith(f"{conn_id} ") for o in self.dest_conn_options
+        ):
+            self.error_message = await self._translated(
+                "transformations.destination_invalid",
+                "Transformations cannot run against this connection type",
+            )
+            return
+
         tags = self._parse_tags()
         inc_cfg = self._build_incremental_config()
         try:
@@ -502,6 +518,7 @@ class TransformationState(BaseState):
             )
             session.commit()
         await self.load_transformations()
+        yield await self._deleted_toast("transformations.deleted_toast", "Transformation deleted")
 
     async def preview_result(self, transformation_id: int):
         """Compile SQL via dbt, add LIMIT 5, execute against destination, show results."""

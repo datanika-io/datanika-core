@@ -54,7 +54,7 @@ git cat-file -p origin/master:datanika_cloud/plugin.py | grep -c '_on_once'
 git cat-file -p origin/dev:datanika_cloud/plugin.py    | grep -c '_on_once'
 ```
 
-Measured on 2026-08-31:
+Measured on 2026-08-31 — ⚠️ **and re-measured 2026-09-01, when BOTH `master` rows had changed. Run the commands; do not read the table.**
 
 | ref | `bootstrap_cloud()` call sites | `_on_once` |
 |---|---|---|
@@ -62,6 +62,21 @@ Measured on 2026-08-31:
 | core `origin/dev` | **2** (`+ tasks/celery_app.py`, core#772) | — |
 | cloud `origin/master` | — | **0** |
 | cloud `origin/dev` | — | present (cloud#129's commit) |
+
+🚨 **Re-measured 2026-09-01 and the two `master` rows are now STALE**, which is the whole
+reason this section tells you to run the commands rather than read the table:
+
+| ref | then | now (2026-09-01) |
+|---|---|---|
+| core `origin/master` — `tasks/celery_app.py` | 0 | **1** (core#772 shipped) |
+| cloud `origin/master` — `_on_once` | **0** | **present** (20 occurrences) |
+
+The 2026-08-31 15:13Z cloud promotion carried cloud#129's commit, so **reason 2 is closed**: cloud
+`master` now has the idempotence guard, and the double-subscription it describes can no longer
+happen. **Reasons 1 and 3 still stand** and are unaffected. Left in place rather than deleted
+because the mechanism is what makes reason 3 legible — and because a table that went stale
+inside twelve days is itself the argument for re-deriving.
+
 
 `datanika.hooks.on` is a bare `setdefault(...).append(...)`. The Reflex web process imports **both**
 `datanika.datanika` and `datanika.tasks.celery_app`, so on core `dev` it reaches the call twice —
@@ -115,7 +130,10 @@ box rather than quietly in a billing column.
 the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
 
 [core#602]: https://github.com/datanika-io/datanika-core/issues/602
+[core#753]: https://github.com/datanika-io/datanika-core/issues/753
 [core#825]: https://github.com/datanika-io/datanika-core/issues/825
+[core#873]: https://github.com/datanika-io/datanika-core/issues/873
+[core#876]: https://github.com/datanika-io/datanika-core/issues/876
 [core PR #868]: https://github.com/datanika-io/datanika-core/pull/868
 [cloud PR #139]: https://github.com/datanika-io/datanika-cloud/pull/139
 
@@ -154,6 +172,42 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
     --jq '.[0].databaseId' | xargs -I{} gh run view {} --repo datanika-io/datanika-core \
     --json jobs --jq '.jobs[] | select(.name|test("staging")) | "\(.name)\t\(.conclusion)"'
   ```
+
+- [ ] 🚨 **Verify the staging verdict BELONGS to the head you are promoting** ([core#876]).
+      A green `e2e-staging` can describe a different commit. The `staging-deploy` concurrency
+      group ([core#753]) serialises *access* to staging; it does **not** pin *which build* is
+      under test. When two pushes land close together, run A's `e2e-staging` starts seconds
+      after run B's `deploy-staging` finished — so it exercises B's build and reports against
+      A. The attribution comes out **crossed**, not merely shifted: B's own `e2e-staging` is
+      typically *cancelled*, so the commit actually tested gets no verdict at all. Observed
+      three times in two days, once inside a batch that was promoted.
+
+      **This is one command now. Run it; do not eyeball job windows.**
+
+  ```bash
+  python scripts/verify_e2e_attribution.py --sha "$SHA"
+  ```
+      Exit 0 means every staging verdict for that commit describes that commit's own build.
+      Exit 1 prints which job is `misattributed` (a verdict about somebody else's build),
+      `no_reading` (cancelled — neither green nor red, and the shape a promoter skims past),
+      or `absent`. **Exit 1 is not automatically "do not promote"** — it is "these greens are
+      not evidence about this commit". Get an honest reading before deciding: push an empty
+      commit, or re-run the deploy for that SHA and let the verifiers follow it.
+
+      ⚠️ **Do not fix an exit 1 by re-deploying from inside a verifier** — that puts a
+      mutation inside the window the verifiers hold, i.e. [core#753] reintroduced.
+
+      Runs *after* the in-run assertion shipped defend themselves: `smoke-staging`,
+      `e2e-staging` and `e2e-sso` each assert the deploy stamp before measuring anything and
+      refuse with `wrong_build` rather than reporting. **`wrong_build` pages nobody and files
+      no issue** — staging is healthy, that run simply could not honestly grade it — so it is
+      visible only in the job log and here. A `wrong_build` on the head is the same situation
+      as an exit 1 above, and has the same answer.
+
+- [ ] **Read the E2E result by STEP outcome, never by job conclusion** ([core#873]). The job goes
+      red for artifact-upload failures and other non-test reasons; `Run gating E2E specs against
+      staging` is the verdict. And ⚠️ **`gh run view --log` silently omits steps** — use
+      `runs/<id>/jobs` from the API.
 - [ ] Ensure no active user sessions you'd want to avoid interrupting (check Plausible real-time)
 - [ ] Verify Grafana is reachable: `ssh -i ~/.ssh/id_ed25519 -L 3001:localhost:3001 root@185.25.22.188`
 

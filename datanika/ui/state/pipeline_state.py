@@ -250,6 +250,20 @@ class PipelineState(BaseState):
             self.error_message = "Please select a destination connection"
             return
 
+        # core#862. The picker no longer offers destinations that cannot work,
+        # so reaching here means a stale form — options loaded before the type
+        # was withdrawn, or an id set some other way. Refusing against
+        # `dest_conn_options` rather than re-deriving the rule keeps ONE
+        # definition of "offered": whatever the user could actually pick. The
+        # service refuses independently, which is what covers the API path;
+        # this exists so the message arrives in the user's own language.
+        if not any(o.startswith(f"{dst_id} ") for o in self.dest_conn_options):
+            self.error_message = await self._translated(
+                "pipelines.destination_invalid",
+                "Transformations cannot run against this connection type",
+            )
+            return
+
         models = [
             {"name": m.name, "upstream": m.upstream, "downstream": m.downstream}
             for m in self.form_models
@@ -422,6 +436,7 @@ class PipelineState(BaseState):
             )
             session.commit()
         await self.load_pipelines()
+        yield await self._deleted_toast("pipelines.deleted_toast", "Pipeline deleted")
 
     async def run_pipeline(self, pipeline_id: int):
         if not await self._check_role("editor"):

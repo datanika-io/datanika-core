@@ -153,6 +153,7 @@
   "connections.extra_headers": "Encabezados adicionales (opcional, JSON)",
   "connections.ph_name": "Nombre de conexión",
   "connections.ph_type": "Tipo de conexión",
+  "connections.s3_withdrawn": "Amazon S3 no está disponible temporalmente debido a un conflicto de dependencias. No se pueden crear nuevas conexiones S3 y las existentes no se ejecutarán hasta que se corrija.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

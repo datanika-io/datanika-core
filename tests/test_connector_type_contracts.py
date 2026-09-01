@@ -15,7 +15,7 @@ These tests are the binding.
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.services.connection_service import SOURCE_TYPES, WITHDRAWN_SOURCE_TYPES
-from datanika.services.dlt_runner import SUPPORTED_SAAS_TYPES
+from datanika.services.dlt_runner import SUPPORTED_FILE_TYPES, SUPPORTED_SAAS_TYPES
 from datanika.ui.pages.connections import PICKER_TYPES
 from datanika.ui.state.connection_state import (
     FILE_SOURCE_TYPES,
@@ -115,14 +115,28 @@ def test_a_withdrawn_type_is_not_offered_anywhere():
 
 
 def test_a_withdrawn_type_still_resolves_for_stored_connections():
-    """The other half — it must keep its identity and its dispatch."""
+    """The other half — it must keep its identity and its dispatch.
+
+    ⚠️ The dispatch half was written against `SUPPORTED_SAAS_TYPES` alone, because
+    the only withdrawal that had ever happened was `google_ads`, a SaaS connector.
+    That made the mechanism quietly SaaS-shaped: withdrawing `s3` in core#863 —
+    a file/blob type, dispatched through `SUPPORTED_FILE_TYPES` — failed here with
+    "s3 lost loader dispatch" while s3's dispatch was in fact fully intact.
+
+    The invariant that was always meant is *"a withdrawn type is still dispatched
+    by some loader"*, so it is asserted against the union. Adding a third family
+    means adding its dispatch set here, and the failure message says so.
+    """
+    dispatch = SUPPORTED_SAAS_TYPES | SUPPORTED_FILE_TYPES
     for withdrawn in WITHDRAWN_SOURCE_TYPES:
         assert withdrawn in {c.value for c in ConnectionType}, (
             f"{withdrawn} lost its ConnectionType member; rows already stored would not load"
         )
-        assert withdrawn in SUPPORTED_SAAS_TYPES, (
+        assert withdrawn in dispatch, (
             f"{withdrawn} lost loader dispatch, so a stored connection fails with a generic "
-            "'Unsupported source type' instead of an error that explains itself"
+            "'Unsupported source type' instead of an error that explains itself. If it belongs "
+            "to a connector family whose dispatch set is not SUPPORTED_SAAS_TYPES or "
+            "SUPPORTED_FILE_TYPES, add that set to the union above rather than exempting it."
         )
 
 

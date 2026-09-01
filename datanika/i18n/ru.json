@@ -153,6 +153,7 @@
   "connections.extra_headers": "Доп. заголовки (необязательно, JSON)",
   "connections.ph_name": "Название подключения",
   "connections.ph_type": "Тип подключения",
+  "connections.s3_withdrawn": "Amazon S3 временно недоступен из-за конфликта зависимостей. Новые подключения S3 создать нельзя, а существующие не будут запускаться до исправления.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

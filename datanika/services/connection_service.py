@@ -34,14 +34,35 @@ validate_connection_name = partial(validate_name, entity_label="Connection")
 # gave existing rows a worse error, and because withdrawal is not rare: it is
 # the honest answer whenever a connector cannot work with the credentials we
 # collect. `tests/test_connector_type_contracts.py` pins both halves.
-# Empty on purpose. `google_ads` was withdrawn here and is back (core#555):
-# the developer token is a string the user pastes, exactly like a service
-# account JSON, so the gap was a missing form field rather than an external
-# gate. The set and its machinery stay — withdrawal is still the honest answer
-# whenever a connector cannot work with the credentials we collect, and
-# `tests/test_connector_type_contracts.py` pins both halves of the behaviour
-# whether or not anything is currently withdrawn.
-WITHDRAWN_SOURCE_TYPES: set[str] = set()
+# `google_ads` was withdrawn here and is back (core#555): the developer token is
+# a string the user pastes, exactly like a service account JSON, so the gap was a
+# missing form field rather than an external gate.
+#
+# `s3` is withdrawn as of core#863, and it is a DIFFERENT kind of gap — not a
+# missing form field and not a credential gate. The transport is simply absent:
+# s3fs left `uv.lock` when the dbt upgrade dropped dlt's `clickhouse` extra, so
+# `fsspec.get_filesystem_class("s3")` raises `ImportError: Install s3fs to access
+# S3`. Measured, not inferred.
+#
+# ⚠️ `gs://` and `az://` still resolve in fsspec, but do NOT turn that into
+# user-facing copy suggesting an alternative: there is no `gcs` or `azure`
+# ConnectionType — checked, 37 members, none of them an object store other than
+# this one. "Use GCS instead" would name a connector that does not exist, which
+# is a worse falsehood than the one being fixed here.
+#
+# ⚠️ TEMPORARY, and nobody has to remember to check. `TestDeferredCapability` in
+# `tests/test_security/test_dependency_advisories.py` goes red the day `uv.lock`
+# carries `google-cloud-storage >= 3.7` — the point at which dbt-bigquery's
+# `google-cloud-storage>=2.4,<3.2` ceiling has moved far enough that s3fs can
+# resolve again. It asserts the EXTERNAL condition on purpose: an assertion that
+# "s3fs is absent" would only fail once somebody had already done the work.
+#
+# ⚠️ To restore: put `s3` back into SOURCE_TYPES, CONFIG_SCHEMAS and PICKER_TYPES
+# and re-enable the four `requires_s3fs` tests. Those must pass **unmodified**
+# against MinIO — they are the only executable evidence the transport ever
+# worked, they cost four months to obtain, and hiding the picker entry is not a
+# reason to drop them.
+WITHDRAWN_SOURCE_TYPES: set[str] = {"s3"}
 
 # Types that can serve as sources (databases + files + rest_api + sheets)
 SOURCE_TYPES = {
@@ -51,7 +72,7 @@ SOURCE_TYPES = {
     "oracle",
     "sqlite",
     "rest_api",
-    "s3",
+    # `s3` withdrawn — core#863; see WITHDRAWN_SOURCE_TYPES above.
     "csv",
     "json",
     "parquet",
@@ -460,6 +481,13 @@ SECRET_CONFIG_KEYS = frozenset(
         "refresh_token",
         "client_secret",
         "developer_token",
+        # ⚠️ Keep, even though `s3` left CONFIG_SCHEMAS in core#863. This set is
+        # documented as a *superset* of schema password fields, so an entry with
+        # no schema behind it now reads like tidyable dead weight. It is not:
+        # connections already stored still hold one, and only ONE direction is
+        # asserted (schema field -> this set), so removing it breaks nothing in
+        # CI while making `BackupService.export_backup` write a live AWS secret
+        # into a backup in clear text.
         "aws_secret_access_key",
         "keyfile_json",
         "service_account_json",

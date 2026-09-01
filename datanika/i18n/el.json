@@ -153,6 +153,7 @@
   "connections.extra_headers": "Επιπλέον κεφαλίδες (προαιρετικό, JSON)",
   "connections.ph_name": "Όνομα σύνδεσης",
   "connections.ph_type": "Τύπος σύνδεσης",
+  "connections.s3_withdrawn": "Το Amazon S3 δεν είναι προσωρινά διαθέσιμο λόγω σύγκρουσης εξαρτήσεων. Δεν μπορούν να δημιουργηθούν νέες συνδέσεις S3 και οι υπάρχουσες δεν θα εκτελούνται μέχρι να διορθωθεί.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

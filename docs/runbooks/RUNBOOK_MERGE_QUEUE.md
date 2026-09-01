@@ -1,5 +1,28 @@
 # Runbook — the merge queue on `dev`
 
+## Status, 2026-09-01
+
+| repo | queue | note |
+|---|---|---|
+| `datanika-landing` | 🟢 **ON** — ruleset `22022738` | three PRs merged through it; proven end to end |
+| `datanika-core` | 🔴 **OFF** — enabled, then **rolled back the same hour** | blocked on [core#923] |
+| `datanika-cloud` | ⛔ never | private repo on a free org; the rulesets API answers `403` |
+
+🚨 **Do not re-enable core's queue until [core#923] is fixed AND a real PR has gone through it
+green.** `ci.yml`'s cloud checkout uses `ref: ${{ github.base_ref || github.ref_name }}`, and
+`github.base_ref` is **empty on a `merge_group` event** — so it falls through to the queue branch
+`gh-readonly-queue/dev/pr-N-<sha>`, which does not exist in `datanika-cloud`. `image-probe`, a
+**required** check, therefore fails in ~46 s and the entry is ejected with
+`reason: failed_checks`. Measured on [PR #922], run `33527341994`.
+
+⚠️ **The obvious suspect is the wrong one twice over.** It is not `image-cve` (red by design, and
+it turns out a red *non-required* check does **not** block queue entry), and it is not the token —
+the *"Check the cloud token is available"* step passes. Only the step-level outcomes name it.
+
+The rest of this runbook is written from the **landing** rollout and applies to both repos.
+
+---
+
 Covers `datanika-core` and `datanika-landing`. **`datanika-cloud` has no queue and must not
 get one**: it is private, the org is on the free plan, and GitHub answers the ruleset API
 with `403 — "Upgrade to GitHub Pro or make this repository public"`. That is a vendor spend,

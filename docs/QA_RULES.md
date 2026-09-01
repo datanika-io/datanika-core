@@ -64,6 +64,44 @@ and the unload handler disconnects the socket. Reflex's own comment for that pat
    spans the browser, the web app and the worker; one sentence naming the worker sent two people to
    the wrong process on nights the worker was fine.
 
+**Corollary — an empty result is three different facts wearing one face, and the reassuring one is
+the default reading.** (core#869 / core#883, 2026-09-01.) `sqlalchemy` `get_table_names(schema=X)`
+returns `[]` when `X` **does not exist**. It does not raise. Measured against real BigQuery, with a
+positive control so `[]` was not equally explained by the method being broken:
+
+```
+EXISTS, has tables    bigqueryfirstrun                 -> ['_dlt_loads', ..., 'customers', 'orders']
+DOES NOT EXIST        datanika_docs_demo               -> []
+DOES NOT EXIST        datanika_no_such_dataset_qa869   -> []
+```
+
+So *"the dataset was deleted"*, *"the dataset is empty"* and *"the load produced no tables"* are one
+signal — in the product and in your probe alike. Downstream, `CatalogService.introspect_tables`
+returns `[]`, `_sync_catalog_after_upload` writes zero entries and returns `0` **as a success value**,
+and core#494's warning lives on the `except` path only, so nothing fires.
+
+What it cost: an engineer with a correctly-armed instrument, working on the right issue, produced two
+confident hypotheses — *"the upload has not materialised yet"* and *"it wrote to a different
+dataset"* — and **neither was right**. The dataset had been deleted by that issue's own documented
+cleanup, announced two comments above the reading.
+
+**Rules:**
+1. **Any lister that answers a question about existence needs a positive control** — a case you know
+   is non-empty, run in the same probe. Without one, `[]` everywhere is equally explained by your
+   instrument being broken, and one possible answer is not a measurement.
+2. **Before explaining a measurement with a code defect, check that the thing measured still
+   exists.** Cheaper than every code hypothesis, and it is the one check neither hypothesis above
+   would ever have reached. Read the issue's own recent comments first — a teardown is usually
+   announced by the person who did it.
+3. **Two readings of "the same" thing taken at different times are not one state.** A REST
+   verification showing 19 rows and a reflection showing 0 tables straddled a deletion; read together
+   they produce a contradiction that *invites* a code explanation. Timestamp every measurement and
+   compare the timestamps before comparing the values.
+4. **When a count of zero is a legitimate success value, say so out loud somewhere.** A function that
+   returns `0` for "nothing found" and `0` for "nothing exists to find" needs the caller to
+   distinguish them — here, `rows > 0 and tables == 0` is a contradiction the caller can see and the
+   callee cannot.
+
 ## 2. Any green you have not personally forced red is unproven
 
 And its twin: **a red you have not shown can go green may be asserting something unreachable.**
@@ -261,6 +299,28 @@ credentials or imports now **fail**; skipping is opt-in* — closed a systemic h
 environment variable made an entire nightly suite skip and exit 0. **Dropping any env var should now
 only make a suite stricter, never quieter.**
 
+
+**🚨 And a skip does not skip the same way for everyone. `UV_NO_SYNC=1` makes a `skipif`-guarded
+test RUN in your worktree and SKIP in CI** — so you see coverage that does not exist. (2026-09-01,
+from core#684 / core#825.) We all export that flag so `uv run` cannot gut the venv mid-pytest; the
+same flag guarantees the venv is a **superset** of the lock and never a subset. When `s3fs` was
+dropped from `uv.lock`, `TestS3FileSourceMovesRows`'s four tests kept passing locally against a
+leftover `s3fs 2025.12.0` while CI — which installs from the lock — skipped all four, and the
+capability was absent from the shipped image entirely.
+
+**The tell is that the predicate asks about the ENVIRONMENT, not the repo:** *"is package X
+importable"*, *"is binary Y on PATH"*, *"is service Z reachable"*. Before believing a local green on
+anything dependency-gated, check what CI actually did, and read the **skip count**:
+
+```bash
+grep -c '^name = "<pkg>"' uv.lock   # 0 => CI cannot have run it, whatever your box says
+pytest <file> -q -rs                 # -rs prints skip REASONS; a bare -q hides them
+```
+
+🔑 **The structural version, which is the part worth carrying: the test that proves a capability
+works is often disabled by the same condition that breaks it.** So the suite gets quieter at exactly
+the moment it should get louder, and a deferral recorded in a marker is invisible to everyone who
+does not open that file (core#885).
 ## 12. Retries
 
 **A retry around container startup hides nothing. A retry around an assertion hides a product bug.

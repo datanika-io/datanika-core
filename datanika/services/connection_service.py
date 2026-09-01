@@ -113,9 +113,16 @@ DESTINATION_TYPES = {
 #: DIFFERENT capabilities with different requirements. dlt needs a driver; dbt
 #: needs an installed **adapter**. Until core#825 these two sets were textually
 #: identical — the same eleven strings — which is why nothing had ever diverged
-#: and why nothing bound them. ``mysql`` is now in one and not the other: dlt
-#: loads into MySQL through SQLAlchemy/``pymysql``, while ``dbt-mysql`` was
-#: dropped as an abandoned package that held the whole dbt stack on 1.7.
+#: and why nothing bound them. ``databricks`` and ``synapse`` are the live
+#: example: dlt loads into both, dbt transforms in neither.
+#:
+#: ⚠️ ``mysql`` was that example until core#862 and is no longer in EITHER set.
+#: Do not read the old wording ("dlt loads into MySQL through SQLAlchemy") as a
+#: reason to restore it to ``DESTINATION_TYPES``: dlt can indeed write to MySQL
+#: via its ``sqlalchemy`` destination, but ``build_destination`` resolves by
+#: NAME — ``getattr(dlt.destinations, connection_type)`` — and there is no
+#: ``mysql`` attribute, so it raised and never loaded a row. That sentence was
+#: true of dlt and false of us, which is the most expensive kind of comment.
 #:
 #: ⚠️ Offering a transform destination dbt cannot build in is not cosmetic:
 #: ``generate_profiles_yml`` raises **after** ``run.before_execute`` has fired

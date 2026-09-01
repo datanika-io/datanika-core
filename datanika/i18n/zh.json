@@ -298,6 +298,7 @@
   "dag.ph_name": "名称",
   "dag.check_timeframe": "检查时间范围",
   "models.no_models": "未找到模型。请先运行上传或转换以填充目录。",
+  "models.no_models_after_load": "未找到模型，但之前的运行已加载数据行。请打开该运行并查看其日志——它写入的目标架构可能已被删除、重命名，或在连接中配置有误。",
   "models.origin": "来源",
   "models.table_name": "表名",
   "models.schema": "模式",

@@ -298,6 +298,7 @@
   "dag.ph_name": "Nombre",
   "dag.check_timeframe": "Plazo de verificación",
   "models.no_models": "No se encontraron modelos. Ejecute una carga o transformación para llenar el catálogo.",
+  "models.no_models_after_load": "No se encontraron modelos, pero una ejecución anterior cargó filas. Abra esa ejecución y revise su registro: el esquema de destino en el que escribió puede haberse eliminado, renombrado o configurado incorrectamente en la conexión.",
   "models.origin": "Origen",
   "models.table_name": "Nombre de tabla",
   "models.schema": "Esquema",

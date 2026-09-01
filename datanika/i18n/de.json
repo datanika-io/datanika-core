@@ -298,6 +298,7 @@
   "dag.ph_name": "Name",
   "dag.check_timeframe": "Prüfzeitraum",
   "models.no_models": "Keine Modelle gefunden. Führen Sie einen Upload oder eine Transformation aus.",
+  "models.no_models_after_load": "Keine Modelle gefunden, obwohl ein früherer Lauf Zeilen geladen hat. Öffnen Sie diesen Lauf und prüfen Sie sein Protokoll — das Zielschema, in das geschrieben wurde, wurde möglicherweise gelöscht, umbenannt oder in der Verbindung falsch angegeben.",
   "models.origin": "Herkunft",
   "models.table_name": "Tabellenname",
   "models.schema": "Schema",

@@ -294,6 +294,36 @@ def run_upload(
                 "so these tables will not appear under Models/Catalog: "
                 f"{exc.__class__.__name__}: {exc}",
             )
+        else:
+            # A sync that *succeeds* and finds nothing is the other half of
+            # core#494, and it was still silent (core#883).
+            #
+            # `get_table_names(schema=<missing>)` returns `[]` rather than
+            # raising on every dialect we support, so a destination dataset
+            # that was deleted, renamed or mistyped introspects exactly like an
+            # empty one. `_sync_catalog_after_upload` then writes no entries and
+            # returns 0 *as a success value*, which nothing branches on — the
+            # run goes green with a row count, `/models` stays empty, and the
+            # `except` warning above never fires.
+            #
+            # Rows loaded with no tables found is a contradiction, and it is the
+            # one condition that needs no knowledge of WHICH of those causes
+            # applies. `rows == 0` with no tables is a legitimately empty load
+            # and stays silent, which is what keeps this from being always-on.
+            #
+            # Diagnostics only: status, `rows_loaded` and `table_count` are
+            # untouched. The load did succeed; the catalog is what is missing.
+            if rows and table_count == 0:
+                execution_service.append_logs(
+                    session,
+                    org_id,
+                    run_id,
+                    f"WARNING: the data loaded successfully ({rows} rows), but no tables "
+                    f"were found in destination schema '{dataset_name}', so nothing will "
+                    "appear under Models/Catalog. Check that the destination connection's "
+                    "dataset/schema matches where the rows were written, and that it still "
+                    "exists.",
+                )
 
         upload.status = UploadStatus.ACTIVE
         session.flush()

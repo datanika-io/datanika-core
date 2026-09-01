@@ -298,6 +298,7 @@
   "dag.ph_name": "Nom",
   "dag.check_timeframe": "Délai de vérification",
   "models.no_models": "Aucun modèle trouvé. Exécutez un chargement ou une transformation pour remplir le catalogue.",
+  "models.no_models_after_load": "Aucun modèle trouvé, alors qu'une exécution précédente a chargé des lignes. Ouvrez cette exécution et consultez son journal — le schéma de destination dans lequel elle a écrit a peut-être été supprimé, renommé ou mal configuré sur la connexion.",
   "models.origin": "Origine",
   "models.table_name": "Nom de table",
   "models.schema": "Schéma",

@@ -24,9 +24,26 @@ class TestConnectionItem:
 
 
 class TestInferDirection:
-    def test_both_for_database_types(self):
-        for t in ("postgres", "mysql", "mssql", "sqlite"):
+    # ⚠️ This class used to read `for t in ("postgres","mysql","mssql","sqlite")`
+    # under the premise *"database types are BOTH"*. That premise was FALSE and
+    # the test was green while asserting the bug core#862 removes: `mysql` and
+    # `sqlite` were offered as destinations and could never load a row, because
+    # `build_destination` resolves by NAME (`getattr(dlt.destinations, t)`) and
+    # dlt ships no attribute for either. Split by the real reason, not by
+    # "is it a database".
+    #
+    # dlt CAN write to MySQL/SQLite through its `sqlalchemy` destination — we
+    # simply never ask it to. So this is a statement about our resolution
+    # strategy, not about dlt's limits; wiring that up would be a feature, and
+    # would move these two types back up. See DESTINATION_TYPES.
+
+    def test_both_for_databases_dlt_resolves_by_name(self):
+        for t in ("postgres", "mssql"):
             assert infer_direction(t) == ConnectionDirection.BOTH
+
+    def test_source_only_for_databases_with_no_dlt_destination(self):
+        for t in ("mysql", "sqlite"):
+            assert infer_direction(t) == ConnectionDirection.SOURCE
 
     def test_source_only_for_file_and_rest(self):
         for t in ("csv", "json", "parquet", "s3", "rest_api"):

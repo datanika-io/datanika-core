@@ -1,0 +1,355 @@
+# SLO instrument registry — which instrument, if any, reads each SLO.
+#
+# `docs/slo_targets.md` names 26 commitments. This file names, for each one, the
+# thing in production that measures it. It exists because from 2026-04-14 to
+# 2026-09-01 nothing did, and a target no instrument reads is indistinguishable
+# from a target being met: it can be neither violated nor achieved.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# RULES, enforced mechanically by tests/test_slo/test_slo_coverage.py
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# 1. EVERY row in the document must appear here, and every key here must
+#    correspond to a row. Adding an SLO to the document without deciding how it
+#    is measured FAILS THE BUILD. That is the point of the file.
+#
+# 2. NO THRESHOLD NUMBER MAY APPEAR IN THIS FILE. Targets are parsed out of
+#    `docs/slo_targets.md`, which stays the single source of truth. A registry
+#    carrying its own copy could be quietly relaxed until it matched whatever
+#    production happens to do — the same defect as a guard that passes because
+#    it looks at nothing. `min_samples` is a sufficiency floor, not a target,
+#    and is the one number allowed here.
+#
+# 3. Three states, and only `measured` can yield PASS:
+#      measured    - a real query, scored against the document's number.
+#      unmeasured  - nothing in production reads it. Always NO_VERDICT.
+#      blocked_by  - wired to an instrument we have MEASURED to be defective.
+#                    The number is printed and deliberately not scored, because
+#                    a broken meter emitting confident greens is worse than no
+#                    meter at all.
+#
+# 4. `min_samples` is not decoration. A p95 over three requests is a beautiful
+#    number that means nothing; scored as a pass it is this codebase's signature
+#    defect. Below the floor the verdict is NO_VERDICT, never PASS.
+#
+# Baseline measured against production 2026-09-01: docs/slo_baseline.md
+# Tracking issue: core#721.
+
+slos:
+
+  # ───────────────────────────────── Service-level indicators ────────────────
+
+  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get:
+    status: measured
+    source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
+    queries:
+      p95: >-
+        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/meta/.*|/api/v1/connections|/api/v1/pipelines"}[30d])))
+      p99: >-
+        histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/meta/.*|/api/v1/connections|/api/v1/pipelines"}[30d])))
+    samples_query: >-
+      sum(increase(http_requests_total{
+        path=~"/api/v1/meta/.*|/api/v1/connections|/api/v1/pipelines",
+        method="GET", status=~"2.."}[30d]))
+    min_samples: 100
+    notes:
+      - "Restricted to 2xx on purpose. Unrestricted, this SLI is dominated by
+         401s and 404s from vulnerability scanners, which are fast and would
+         flatter the quantile."
+      - "/api/v1/connections and /api/v1/pipelines have received no authenticated
+         GET in the 30d window — every hit is an unauthenticated 401 probe."
+
+  service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines:
+    status: measured
+    source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
+    queries:
+      p95: >-
+        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/connections|/api/v1/pipelines", method="POST"}[30d])))
+      p99: >-
+        histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/connections|/api/v1/pipelines", method="POST"}[30d])))
+    samples_query: >-
+      sum(increase(http_requests_total{
+        path=~"/api/v1/connections|/api/v1/pipelines", method="POST",
+        status=~"2.."}[30d]))
+    min_samples: 50
+
+  service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login:
+    status: measured
+    source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
+    queries:
+      p95: >-
+        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/auth/.*"}[30d])))
+      p99: >-
+        histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/api/v1/auth/.*"}[30d])))
+    samples_query: 'sum(increase(http_requests_total{path=~"/api/v1/auth/.*"}[30d]))'
+    min_samples: 20
+    notes:
+      - "This SLI may be unreachable as written. The product's own signup and
+         login run over the Reflex `/_event` WebSocket, not over
+         /api/v1/auth/*, and the ASGI middleware skips non-HTTP scopes. No
+         request to any /api/v1/auth/* path appears in 30 days of production."
+
+  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers:
+    status: measured
+    source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
+    queries:
+      p95: >-
+        histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/llms.txt|/api/v1/agent-guide.md|/api/v1/meta/agent-tiers"}[30d])))
+      p99: >-
+        histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{
+          path=~"/llms.txt|/api/v1/agent-guide.md|/api/v1/meta/agent-tiers"}[30d])))
+    samples_query: >-
+      sum(increase(http_requests_total{
+        path=~"/llms.txt|/api/v1/agent-guide.md|/api/v1/meta/agent-tiers",
+        status=~"2.."}[30d]))
+    min_samples: 100
+    notes:
+      - "The only latency SLI with real 2xx traffic today (~331 requests/30d),
+         and it sits entirely in the histogram's bottom bucket (le=0.01). The
+         honest reading is 'under 10 ms', not the interpolated figure."
+
+  service-level-indicators-health-probes-healthz-readyz:
+    status: measured
+    source: blackbox
+    queries:
+      p95: >-
+        quantile_over_time(0.95,
+          probe_duration_seconds{instance="https://app.datanika.io/healthz"}[7d])
+      p99: >-
+        quantile_over_time(0.99,
+          probe_duration_seconds{instance="https://app.datanika.io/healthz"}[7d])
+    samples_query: >-
+      count_over_time(probe_success{instance="https://app.datanika.io/healthz"}[7d])
+    min_samples: 5000
+    notes:
+      - "Single-process exporter, 15s interval, ~40,300 samples per 7d. This is
+         the most trustworthy instrument in the file."
+      - "MISMATCH between target and instrument: the document derived 50 ms from
+         a LOCAL probe ('/healthz in ~5 ms'), but the instrument it names probes
+         https://app.datanika.io/healthz — through Cloudflare, then Apache, then
+         the app. The two measure different paths. See core#897."
+      - "/readyz is in the SLI's name and is probed by nothing. Only /healthz is
+         a blackbox target."
+
+  service-level-indicators-landing-pricing-docs-static:
+    status: measured
+    source: blackbox
+    queries:
+      p95: >-
+        quantile_over_time(0.95, probe_duration_seconds{instance="https://datanika.io/"}[7d])
+      p99: >-
+        quantile_over_time(0.99, probe_duration_seconds{instance="https://datanika.io/"}[7d])
+    samples_query: 'count_over_time(probe_success{instance="https://datanika.io/"}[7d])'
+    min_samples: 5000
+    notes:
+      - "probe_duration_seconds is TOTAL probe time, which is an over-estimate of
+         TTFB (it includes the transfer phase). A PASS is therefore sound; a FAIL
+         would need re-checking against the resolve+connect+tls+processing phases
+         before being believed."
+      - "Only `/` is probed. /pricing and /docs are named in the SLI and are
+         blackbox targets of nothing."
+
+  service-level-indicators-websocket-event-reflex-event-round-trip-for-a-state-update:
+    status: unmeasured
+    reason: >-
+      Nothing times a Reflex event round-trip. e2e/tests/reflex-wire.spec.ts
+      proves the /_event socket carries a frame and that readiness is not a
+      quiet-period heuristic, but it asserts correctness, not latency, and does
+      not record a duration. The ASGI metrics middleware returns early for
+      non-HTTP scopes, so WebSocket traffic is invisible to it by construction.
+
+  # ───────────────────────────────── Throughput ──────────────────────────────
+
+  throughput-slos-rest-api-sustained-throughput-before-p95-regression:
+    status: unmeasured
+    reason: >-
+      Requires a load generator applying sustained rps and observing where p95
+      breaks. There is no k6 (or any load harness) in the repository, and
+      production traffic is roughly 400 legitimate requests per 30 days, so the
+      figure cannot be inferred from organic load either.
+
+  throughput-slos-celery-worker-simple-pipeline-runs-duckdb-duckdb-1k-rows:
+    status: unmeasured
+    reason: >-
+      celery-exporter emits celery_task_runtime and per-state counters, but
+      nothing labels a run by kind or row count, so 'simple pipeline runs per
+      minute' cannot be separated from maintenance sweeps. 49 tasks have run in
+      the whole retention window; no throughput figure is derivable from that.
+
+  throughput-slos-celery-worker-upload-staging-runs-10k-rows-local-csv:
+    status: unmeasured
+    reason: >-
+      Same as the simple-run throughput SLO: no run-kind label, no row-count
+      label, and no sustained load has ever been applied to production.
+
+  throughput-slos-scheduler-schedule-dispatch-latency-fire-time-task-enqueue:
+    status: unmeasured
+    reason: >-
+      No metric records scheduled fire time or enqueue time. Confirmed empty in
+      production: there is no datanika_schedule_dispatch_latency_seconds series,
+      and celery-exporter observes task receipt, not the gap between the
+      schedule's due time and the enqueue.
+
+  throughput-slos-signup-first-event-user-hits-submit-first-reflex-event-round-trip:
+    status: unmeasured
+    reason: >-
+      Spans the HTTP submit and the first WebSocket round-trip. Neither half is
+      instrumented, and the second half is invisible to the ASGI middleware.
+
+  # ───────────────────────────────── Pipeline-level ──────────────────────────
+
+  pipeline-level-slos-pipeline-trigger-task-enqueued-in-celery:
+    status: unmeasured
+    reason: >-
+      No metric records the trigger-to-enqueue interval. The document itself
+      files these four as 'out of k6 scope but documented here', which is how
+      they came to be written down and never wired to anything.
+
+  pipeline-level-slos-task-enqueued-dlt-extract-started:
+    status: unmeasured
+    reason: >-
+      No metric records the enqueue-to-extract-start interval. Run rows carry
+      timestamps in Postgres but nothing derives a latency series from them.
+
+  pipeline-level-slos-dlt-extract-complete-dbt-transformation-started:
+    status: unmeasured
+    reason: >-
+      No metric records the extract-to-transform handoff.
+
+  pipeline-level-slos-end-to-end-small-pipeline-no-scheduling-delay:
+    status: unmeasured
+    reason: >-
+      No end-to-end pipeline duration series exists. celery_task_runtime covers
+      one task, not a pipeline spanning several.
+
+  # ───────────────────────────────── Error rate ──────────────────────────────
+
+  error-rate-slos-any-5xx-on-rest-api:
+    status: measured
+    source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
+    query: >-
+      sum(increase(http_requests_total{status=~"5.."}[1h]))
+      / clamp_min(sum(increase(http_requests_total[1h])), 1)
+    samples_query: 'sum(increase(http_requests_total[1h]))'
+    min_samples: 200
+    notes:
+      - "The document specifies a 1h window. At current traffic a 1h window
+         rarely holds 200 requests, so this reports NO_VERDICT most hours -
+         which is the correct answer, not a defect in the query."
+
+  error-rate-slos-webhook-handler-paddle-http-5xx:
+    status: measured
+    source: app
+    query: 'sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"5.."}[30d]))'
+    samples_query: >-
+      sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"2.."}[30d]))
+    min_samples: 1
+    notes:
+      - "🔑 The sample query counts SUCCESSFUL webhook deliveries on purpose. A
+         target of 'zero 5xx' is satisfied perfectly by an endpoint nobody ever
+         calls, and at 0 paying users nobody does. Counting 5xx alone would make
+         this the greenest line in the report while proving nothing. The only
+         requests this path has ever seen are 403s - scanners being rejected by
+         HMAC verification."
+
+  error-rate-slos-celery-task-failure-rate-excluding-user-error-exceptions:
+    status: measured
+    source: celery
+    query: >-
+      sum(increase(celery_task_failed_total[7d]))
+      / clamp_min(sum(increase(celery_task_received_total[7d])), 1)
+    samples_query: 'sum(increase(celery_task_received_total[7d]))'
+    min_samples: 20
+    notes:
+      - "celery-exporter reads the broker event stream from a single process, so
+         these counters do not have the per-process defect that core#895
+         describes for the app's HTTP metrics. Verified: resets() over 30d is 0
+         here and 121 on http_requests_total."
+      - "The SLO says 'excluding user-error exceptions' and the exporter cannot
+         make that distinction. Today every task is internal, so the two
+         populations coincide; that stops being true once user-triggered runs
+         fail in production."
+
+  error-rate-slos-landing-blackbox-probe-success-rate:
+    status: measured
+    source: blackbox
+    query: 'avg_over_time(probe_success{instance="https://datanika.io/"}[24h])'
+    samples_query: 'count_over_time(probe_success{instance="https://datanika.io/"}[24h])'
+    min_samples: 5000
+
+  # ───────────────────────────────── Saturation ──────────────────────────────
+
+  saturation-slos-app-container-cpu:
+    status: measured
+    source: cadvisor
+    query: 'max(rate(container_cpu_usage_seconds_total{name=~"datanika-app(-b)?"}[5m]))'
+    samples_query: 'count(container_cpu_usage_seconds_total{name=~"datanika-app(-b)?"})'
+    min_samples: 1
+    notes:
+      - "The (-b)? is load-bearing. core#622 was an alert rule whose selector
+         omitted it, so it watched nothing for the 719 of 720 hours that green
+         was serving."
+      - "AMBIGUOUS DENOMINATOR: rate() yields cores-used, so this is a fraction
+         of ONE core, while the box has 4 vCPU. Both readings pass by two orders
+         of magnitude today, so the ambiguity is recorded rather than resolved.
+         See core#897."
+
+  saturation-slos-celery-worker-cpu:
+    status: measured
+    source: cadvisor
+    query: 'max(rate(container_cpu_usage_seconds_total{name="datanika-celery"}[5m]))'
+    samples_query: 'count(container_cpu_usage_seconds_total{name="datanika-celery"})'
+    min_samples: 1
+
+  saturation-slos-postgres-cpu:
+    status: measured
+    source: cadvisor
+    query: 'max(rate(container_cpu_usage_seconds_total{name="datanika-postgres"}[5m]))'
+    samples_query: 'count(container_cpu_usage_seconds_total{name="datanika-postgres"})'
+    min_samples: 1
+
+  saturation-slos-postgres-connections-in-use:
+    status: unmeasured
+    reason: >-
+      The SLO's denominator is the application's SQLAlchemy pool ('pool default:
+      10'), and nothing exports that pool's occupancy. postgres-exporter offers
+      pg_stat_activity_count, which counts server-side backends from every
+      client - app, celery, beat, the exporter itself - against max_connections
+      (100). Scoring one against the other would compare 11 observed backends
+      with a pool of 10 and report 110%, or with 100 and report 11%: a 10x
+      spread depending on which number you pick. Wiring a wrong denominator
+      would produce a confident, machine-readable assertion of something untrue,
+      which is worse than the honest gap.
+
+  saturation-slos-redis-memory:
+    status: unmeasured
+    reason: >-
+      There is no redis exporter in the production compose stack (confirmed
+      against the running container list), so no redis_memory_used_bytes series
+      exists. The target is also undefined as written: prod runs maxmemory 0
+      (deliberately - evicting Reflex session keys would recreate core#646 in a
+      harder-to-find form), and 60% of unlimited is not a number.
+
+  saturation-slos-disk-free-on-opt-datanika:
+    status: measured
+    source: node
+    query: >-
+      min(node_filesystem_avail_bytes{mountpoint="/"}
+        / node_filesystem_size_bytes{mountpoint="/"})
+    samples_query: 'count(node_filesystem_size_bytes{mountpoint="/"})'
+    min_samples: 1
+    notes:
+      - "/opt/datanika is not its own filesystem; it lives on /. The mountpoint
+         selector reflects that."

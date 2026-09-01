@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "Verbindung unterbrochen — Neuverbindung läuft. Klicks werden erst gesendet, wenn sie wiederhergestellt ist.",
   "nav.dashboard": "Dashboard",
   "nav.connections": "Verbindungen",
   "nav.uploads": "Uploads",

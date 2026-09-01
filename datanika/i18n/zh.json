@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "连接已断开，正在重新连接。恢复之前，点击不会被发送。",
   "nav.dashboard": "仪表板",
   "nav.connections": "连接",
   "nav.uploads": "上传",

@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "Веза је прекинута — повезивање у току. Кликови се не шаљу док се веза не успостави.",
   "nav.dashboard": "Контролна табла",
   "nav.connections": "Конекције",
   "nav.uploads": "Отпремања",

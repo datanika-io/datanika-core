@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "Η σύνδεση χάθηκε — γίνεται επανασύνδεση. Τα κλικ δεν αποστέλλονται μέχρι να επανέλθει.",
   "nav.dashboard": "Πίνακας",
   "nav.connections": "Συνδέσεις",
   "nav.uploads": "Μεταφορτώσεις",

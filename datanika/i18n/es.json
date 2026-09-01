@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "Conexión perdida: reconectando. Los clics no se envían hasta que se restablezca.",
   "nav.dashboard": "Panel",
   "nav.connections": "Conexiones",
   "nav.uploads": "Cargas",

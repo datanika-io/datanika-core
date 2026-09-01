@@ -95,6 +95,22 @@ class AuthState(rx.State):
     # and can carry a query parameter. A handler cannot navigate, so it has to
     # leave a mark on the state the layout can see.
     session_expired: bool = False
+    # Why the most recent mutating action was refused (#744). Here for the same
+    # reason as ``session_expired`` — an inherited var is copied per substate,
+    # so a value written on ``UploadState`` is invisible to ``page_layout``.
+    #
+    # Unlike ``session_expired``, that copying **is** the defect rather than a
+    # constraint working around it: ``_check_role`` recorded the refusal in
+    # ``self.error_message``, and 10 of the 15 state classes that assign
+    # ``error_message`` are rendered by no page or component at all (#887).
+    # ``uploads.py`` is one of them, so pressing Run without the editor role
+    # created no row, raised no error and displayed nothing.
+    #
+    # ⚠️ Deliberately NOT set when the session has ended. That path already has
+    # ``signed_out_panel``, and "Permission denied. Requires editor role or
+    # higher." sends somebody who needs to sign in to go and ask an admin for
+    # access they already have (#673 AC3).
+    action_error: str = ""
     invite_email: str = ""
     # What happened to the confirmation mail on the most recent signup (core#700).
     # One of VerificationMailResult's values, or "" when nothing has been attempted.
@@ -476,6 +492,10 @@ class AuthState(rx.State):
         """Clear the post-signup confirmation banner (core#700)."""
         self.verification_mail_state = ""
 
+    def dismiss_action_error(self):
+        """Clear the refusal callout (core#744)."""
+        self.action_error = ""
+
     def logout(self):
         # Audit logout before clearing state
         try:
@@ -666,6 +686,9 @@ class AuthState(rx.State):
         # string is non-empty. It never decoded the token, so the expiry was
         # unenforced and nothing ever re-checked a session after login (#671).
         had_session = bool(self.access_token)
+        # A refusal belongs to the action that caused it, not to the next page
+        # (#744). Navigating is the user moving on, so the callout goes with them.
+        self.action_error = ""
         if not self._revalidate_session():
             self._clear_session()
             # A visitor who was never signed in is not a session that timed

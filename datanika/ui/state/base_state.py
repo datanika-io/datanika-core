@@ -74,12 +74,25 @@ class BaseState(rx.State):
             # — it sends them to ask an admin for access they already have. The
             # layout renders the translated signed-out panel off the flag.
             self.error_message = ""
+            auth.action_error = ""
             return False
 
         role = auth.current_role
         if not check_role_hierarchy(role, min_role):
             self.error_message = f"Permission denied. Requires {min_role} role or higher."
+            # ⚠️ ``self.error_message`` is the SUBSTATE's own copy, and for most
+            # callers no page renders it — 10 of the 15 state classes that
+            # assign ``error_message`` are read by nothing (#887), `uploads.py`
+            # among them. So for the majority of the 31 call sites the sentence
+            # above went to a var with no reader, and the button did nothing and
+            # said nothing (#744). ``AuthState`` is a single object that
+            # ``page_layout`` already reads, so record it there too.
+            auth.action_error = self.error_message
             return False
+        # A permitted action retires the previous refusal. Navigation clears it
+        # as well (``check_auth``), but somebody who is granted the role and
+        # retries in place must not still be looking at the "no".
+        auth.action_error = ""
         return True
 
     @staticmethod

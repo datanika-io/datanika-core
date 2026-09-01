@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "Соединение потеряно — переподключение. Нажатия не отправляются, пока оно не восстановится.",
   "nav.dashboard": "Панель",
   "nav.connections": "Подключения",
   "nav.uploads": "Загрузки",

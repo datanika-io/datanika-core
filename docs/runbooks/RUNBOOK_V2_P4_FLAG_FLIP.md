@@ -97,22 +97,66 @@ print(f'tiers={d[\"tier_count\"]}, caps={d[\"capability_count\"]}')
 
 ### 4.2 Grafana verification
 
-Open `app.datanika.io:3001` (Grafana).
+⚠️ **Grafana binds `127.0.0.1` only — `app.datanika.io:3001` is not reachable and never was.**
+Measured: `curl -m 8 https://app.datanika.io:3001/` → exit 28 (timeout), `http_code 000` ([core#907]).
+Open a tunnel from your own machine first:
+
+```bash
+ssh -N -L 3001:127.0.0.1:3001 root@185.25.22.188    # then browse http://localhost:3001
+```
 
 - [ ] Volume Alerts group: all rules in `OK` or `Normal` state (no false-fires)
-- [ ] Volume dashboard: panels rendering (may show zero data if no runs have fired post-flip — that's expected)
 - [ ] Revenue Alerts group: all rules in `OK`
 - [ ] No new `alerting` state alerts triggered by the deploy itself
 
-### 4.3 `/metrics` endpoint
+⚠️ **There is no "Volume dashboard" to check.** The only provisioned dashboards are
+`Database Performance` and `Datanika Server Overview`. Do not tick a panel check against a dashboard
+that does not exist — verify the numbers in §4.3 instead.
+
+### 4.3 `/metrics` — run it ON THE BOX, and assert a sample line
+
+🚨 **`/metrics` is deliberately NOT routed through Apache, and must stay that way.** It carries
+`org_id`-labelled per-tenant byte volumes — customer usage data — on an endpoint with no
+authentication. Prometheus already scrapes it inside the Docker network (`job="datanika-app"`), so a
+public route would add **no** monitoring capability and would publish per-customer volumes to the
+internet. `curl https://app.datanika.io/metrics` returns **the SPA** (`200`, `text/html`), so any
+check written against the public hostname measures nothing.
+
+🚨 **Assert a sample line, never a metric name.** `prometheus_client` emits `# HELP` and `# TYPE`
+for a labelled metric with **zero children**, so `grep -E "bytes_processed|bytes_quota"` returns
+non-empty for a counter that has never recorded anything — the check cannot fail. Measured in
+production on 2026-09-01: all three of these metrics were present as headers with **0 sample lines**.
+Full rule: `docs/ENGINEERING_RULES.md` §5.
 
 ```bash
-curl -sf https://app.datanika.io/metrics | grep -E "bytes_processed|bytes_quota"
+ssh root@185.25.22.188
+# Backend port follows the live colour — never hardcode it (core#622).
+BE=$(sed -n 's/^Define DATANIKA_BE \([0-9]*\).*/\1/p' /etc/apache2/conf-enabled/datanika-prod-active.conf)
+curl -sf "http://127.0.0.1:${BE}/metrics" > m.txt && wc -l < m.txt
+
+# 1. Collector health. UNLABELLED, so it ALWAYS emits a value — this is the only
+#    one of these that tells "broken" apart from "no tenants yet".
+grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
+
+# 2. Per-tenant bytes: a real sample line, not the HELP/TYPE header.
+grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]' m.txt
 ```
 
-- [ ] `datanika_bytes_processed_by_run` histogram registered
-- [ ] `datanika_cloud_bytes_processed_total` counter registered
-- [ ] `datanika_cloud_bytes_quota_rejected_total` counter registered (value = 0 post-flip, expected)
+- [ ] `datanika_cloud_bytes_ledger_scrape_ok` emits **`1`**. A `0` means the collector could not read
+      `usage_ledger`, in which case every per-org series below is missing for *that* reason rather
+      than for lack of traffic — do not read its absence as "no runs yet"
+- [ ] `datanika_cloud_bytes_processed_total{org_id="…"}` emits **at least one sample line**, value > 0
+
+⚠️ **`datanika_cloud_bytes_quota_rejected_total` cannot be verified here — do not tick it.** It is
+labelled, so a healthy zero-rejection state emits **no sample line at all**, which is byte-identical
+to the collector being broken. Verify post-flip rejections from `usage_ledger` in §4.4.
+
+⚠️ **`datanika_bytes_processed_by_run` (core histogram) is not observable on this surface**, and its
+absence here is expected rather than a finding. It is incremented in the **Celery worker** while
+`/metrics` is served by the **app** process, so the app's registry never sees it — the same shape as
+[core#704]'s `celery_tasks_total`. Tracked in [core#907] §2 / [core#895]; verify volume from
+`usage_ledger`, which is what the cloud collector reads and therefore cannot drift from the billing
+record.
 
 ### 4.4 Dry-run → live transition
 
@@ -137,7 +181,7 @@ Keep a terminal open on:
 | `500 Internal Server Error` on pipeline runs | Bug in IR builder or quota hook. Capture stack trace, proceed to §6 rollback. |
 | Grafana `volume-tenant-spike` fires | A single org processed >100 GB in 24h or >10× their 7-day mean. Informational — not a rollback trigger unless it's our test org. |
 | Revenue alert fires | Unrelated to V2 flip unless the flip somehow corrupted subscription state. Investigate separately. |
-| Zero `bytes_processed` rows after 2h | No runs have fired, OR the emission hook isn't wired. Check celery logs. |
+| Zero `bytes_processed` rows after 2h | Check `datanika_cloud_bytes_ledger_scrape_ok` FIRST (§4.3). `0` = the collector cannot read `usage_ledger`, so absence proves nothing about traffic. Only if it is `1`: no runs have fired, OR the emission hook isn't wired — then check celery logs. |
 
 - [ ] 2h watch window complete
 - [ ] No unexpected 500s

@@ -428,6 +428,35 @@ def test_control_a_deleted_slo_is_caught(real_copies):
         parse_slo_doc(doc)
 
 
+def test_cli_runs_and_an_unmeasured_slo_does_not_exit_zero():
+    """Pin the exit-code contract, which is the whole point of the tool.
+
+    Everything above tests the pieces. This tests that the thing runs, and that
+    ``--offline`` — where nothing at all was measured — exits **2**, not 0. If
+    this ever returns 0 a scheduled job goes green while measuring nothing,
+    which is the exact failure `docs/slo_targets.md` spent four months in.
+
+    ``--report-only`` is the deliberate escape hatch and must exit 0, so that the
+    two are never confused with each other.
+    """
+    from slo_report import main
+
+    assert main(["--offline"]) == 2, "an unmeasured SLO must not exit 0"
+    assert main(["--offline", "--report-only"]) == 0, "--report-only is for humans reading a table"
+
+
+def test_render_names_every_state(rows, registry, capsys):
+    """The split has to be printed. '26 SLOs' reads like coverage until you look."""
+    from slo_report import render
+
+    text = render(evaluate(rows, registry, None))
+    assert "NO_VERDICT" in text
+    assert "is not a pass" in text, "the report must say plainly that NO_VERDICT is not a pass"
+    assert "Commitments in document: 33" in text, (
+        "the report must print the total; got:\n" + text[-400:]
+    )
+
+
 def test_control_an_orphaned_registry_entry_is_caught(real_copies):
     """A registry key naming no documented SLO must be caught in its own right.
 

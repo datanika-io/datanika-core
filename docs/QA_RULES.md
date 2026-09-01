@@ -385,3 +385,60 @@ listing. **Read the rows back with a query.**
   stayed wrong for months afterwards.
 - **A security-sensitive finding does not go in a public issue.** This repository is public and at
   least two automated surfaces publish issue *titles*. Write it up locally and route it directly.
+
+## 18. A published target with no instrument is indistinguishable from a target being met
+
+Earned on [core#721], where `docs/slo_targets.md` carried 33 numeric commitments for four and a half
+months and `git grep` found **zero** references to it in any repository. It could not be violated and
+it could not be achieved, so it read as a commitment while committing to nothing.
+
+This is the same family as a rule that cannot fire and a check that cannot fail, but it is worth
+stating separately because it has no red state to notice. **There is nothing to see.** The five rules
+below all come from building the instrument that finally read it.
+
+### 18a. Report three states, and never let "unmeasured" render as a pass
+
+`PASS` / `FAIL` / `NO_VERDICT`. An unmeasured commitment must be counted and printed, and the
+process must not exit 0 on it. `scripts/slo_report.py` exits **1** for a missed target and **2** when
+nothing could be measured, precisely so a scheduled job cannot go green while blind — the failure
+mode of every `noDataState: OK` rule this project has shipped.
+
+### 18b. A quantile over too few samples is not a number
+
+Every measured indicator declares a `min_samples` floor, and below it the answer is `NO_VERDICT`. A
+p95 computed from three requests is a beautiful figure that means nothing; scored as a pass it is
+worse than no figure, because a pass gets acted on.
+
+### 18c. An instrument you have MEASURED to be broken must never report PASS
+
+Not "note the caveat and score it anyway". Print the number, refuse to score it, and name the issue.
+Six SLOs are in this state behind [core#895]. The reasoning: at zero traffic a broken meter is
+harmless, and the moment real traffic arrives it starts emitting *confident greens*. The transition
+is silent and there is no moment at which anyone re-examines it.
+
+### 18d. The threshold lives in exactly one file, and the checker may not restate it
+
+If the registry that runs the checks also carries its own copy of each number, the numbers can be
+relaxed to match whatever production happens to do and every check goes green without anyone editing
+a commitment. `tests/test_slo/test_slo_coverage.py` forbids threshold keys in the registry
+mechanically. **A target quietly revised to match current behaviour is the same defect as a guard
+that passes because it looks at nothing.**
+
+### 18e. A zero-valued target is satisfied by the thing never happening
+
+`Webhook handler (Paddle) — HTTP 5xx: 0` is met perfectly by an endpoint nobody calls, and at zero
+paying users nobody does. Any error-rate check must gate on a count of **successes**, not of
+failures, or the greenest line in the report is the one proving least. Related: a target written
+`< 0` is unsatisfiable by any real number, so a healthy system reports FAIL forever and people learn
+to ignore the report — use inclusive bounds.
+
+## 19. A total-count floor does not catch a missing section
+
+The SLO document parser's first column lookup silently dropped **all six** Saturation rows, and the
+total came to exactly **20** against a floor of **20**. The floor was satisfied; a sixth of the
+document had vanished.
+
+Assert the count **per section**, per file, per category — whatever the natural subdivision is. The
+same shape has now bitten this project three times: the restore drill asserting `plans >= 5` while
+`users` was empty, a row-total check that would have missed 196-vs-177 by 10%, and this one.
+**Whenever you write a floor, ask what fraction of the thing could disappear beneath it.**

@@ -189,6 +189,17 @@ def transformation_form() -> rx.Component:
                 placeholder=_t["transformations.ph_connection"],
                 width="100%",
             ),
+            # core#862 — say WHY the list is short. A connection the user
+            # created, can see on /connections, and may already use as a
+            # source, vanishing from this dropdown with no explanation is the
+            # core#805 shape: the product behaving as though something is true
+            # without saying it. Withdrawing an advertised capability needs a
+            # sentence; a silently shorter list produces a bug report.
+            rx.text(
+                _t["transformations.destination_help"],
+                size="1",
+                color="var(--gray-9)",
+            ),
             rx.text(_t["transformations.sql"], size="2", weight="bold"),
             rx.box(
                 rx.text_area(

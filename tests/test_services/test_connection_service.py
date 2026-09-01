@@ -742,8 +742,18 @@ class TestInferDirection:
 
     def test_both_direction_type(self):
         assert infer_direction("postgres") == ConnectionDirection.BOTH
-        assert infer_direction("mysql") == ConnectionDirection.BOTH
         assert infer_direction("clickhouse") == ConnectionDirection.BOTH
+
+    def test_mysql_and_sqlite_are_source_only(self):
+        """core#862/core#865. They were BOTH until measured.
+
+        `infer_direction` reads `DESTINATION_TYPES`, so removing a type from
+        that set changes how the connector is labelled everywhere it renders —
+        which is correct, and is the same fact the marketing site publishes.
+        dlt has no destination factory for either, so no row has ever landed.
+        """
+        assert infer_direction("mysql") == ConnectionDirection.SOURCE
+        assert infer_direction("sqlite") == ConnectionDirection.SOURCE
 
     def test_accepts_connection_type_enum(self):
         assert infer_direction(ConnectionType.POSTGRES) == ConnectionDirection.BOTH

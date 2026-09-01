@@ -169,10 +169,19 @@ class BaseState(rx.State):
         the i18n parity test makes impossible — it exists so a missing key
         degrades to a plain word instead of a ``KeyError`` inside a delete.
         """
+        return rx.toast.success(
+            await self._translated(key, fallback),
+            position="top-right",
+        )
+
+    async def _translated(self, key: str, fallback: str) -> str:
+        """One translated string, read from the reactive dict (core#851, core#862).
+
+        Services raise plain English — they have no locale and no business
+        having one. Anything a *user* reads has to be translated here instead,
+        or eight of nine locales silently show English.
+        """
         from datanika.ui.state.i18n_state import I18nState
 
         i18n = await self.get_state(I18nState)
-        return rx.toast.success(
-            i18n.translations.get(key, fallback),
-            position="top-right",
-        )
+        return i18n.translations.get(key, fallback)

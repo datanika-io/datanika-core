@@ -78,8 +78,8 @@ Sources -> dlt (extract + load into user-chosen schema)
 | **Migrations** | Alembic |
 | **Task Queue** | Celery 5.4+ with Redis 7 broker |
 | **Scheduling** | APScheduler with PostgreSQL job store |
-| **Extract & Load** | dlt with 27 source types + **9** destination types (databases, SaaS APIs, files, streams). ⚠️ `SUPPORTED_DESTINATION_TYPES` lists 11 — `mysql` and `sqlite` have no dlt destination factory ([#865](https://github.com/datanika-io/datanika-core/issues/865)) |
-| **Transform** | dbt-core 1.11 with **7** installed adapters (Postgres, MSSQL, ClickHouse, DuckDB, BigQuery, Snowflake, Redshift). `dbt-mysql` was dropped in [#825](https://github.com/datanika-io/datanika-core/issues/825). ⚠️ `SUPPORTED_ADAPTERS` still lists **10** — `sqlite`, `databricks` and `synapse` have never had an installed adapter ([#862](https://github.com/datanika-io/datanika-core/issues/862)) |
+| **Extract & Load** | dlt with 27 source types + **9** destination types (databases, SaaS APIs, files, streams). `SUPPORTED_DESTINATION_TYPES` lists exactly those 9 since [#862](https://github.com/datanika-io/datanika-core/issues/862); `mysql` and `sqlite` were withdrawn because dlt has no destination factory for either ([#865](https://github.com/datanika-io/datanika-core/issues/865)) and both remain **extract sources** |
+| **Transform** | dbt-core 1.11 with **7** installed adapters (Postgres, MSSQL, ClickHouse, DuckDB, BigQuery, Snowflake, Redshift). `dbt-mysql` was dropped in [#825](https://github.com/datanika-io/datanika-core/issues/825). `SUPPORTED_ADAPTERS` lists exactly those 7 since [#862](https://github.com/datanika-io/datanika-core/issues/862); `sqlite`, `databricks` and `synapse` had never had an installed adapter. **Databricks and Synapse remain load destinations** — the withdrawal is per-capability |
 | **Auth** | bcrypt + JWT (python-jose), Google/GitHub OAuth2, email verification |
 | **Email** | SMTP via smtplib (verification + invitations), async via Celery |
 | **Encryption** | Fernet (cryptography) |
@@ -271,6 +271,10 @@ Three instances found within one month, in three different layers:
 | [#862](https://github.com/datanika-io/datanika-core/issues/862) | `SUPPORTED_ADAPTERS` | 10 dbt targets | 7 adapters installed |
 | [#865](https://github.com/datanika-io/datanika-core/issues/865) | `SUPPORTED_DESTINATION_TYPES` | 11 dlt destinations | 9 factories exist |
 
+✅ **All three are closed, and both discriminating checks are now gating tests**
+(`tests/test_connector_type_contracts.py`). The sets were narrowed to what their layers
+actually provide rather than the checks being relaxed to fit them.
+
 **`"mysql" in SUPPORTED_DESTINATION_TYPES` is `True` and is not evidence.** It is the sentence that
 made #865 look verified for the life of the entry. Ask the layer that provides the capability:
 
@@ -282,15 +286,30 @@ importlib.util.find_spec(f"dbt.adapters.{adapter}")     # installed dbt adapter
 Two rules follow, and the second is the one that is easy to skip:
 
 1. **Derive, or guard.** A set that restates another layer's capability must either be computed from
-   that layer or be covered by a test that asks that layer directly. `SUPPORTED_DESTINATION_TYPES` is
-   currently `(SUPPORTED_SOURCE_TYPES - {"oracle"}) | {…}` — it encodes *"every SQL source is also a
-   destination"*, which is true for postgres/mssql/clickhouse/duckdb and false for mysql/sqlite.
-   Oracle was special-cased by hand; the two that needed the same treatment were missed, and the
-   comment on that line states the exact reasoning that should have excluded them.
+   that layer or be covered by a test that asks that layer directly. `SUPPORTED_DESTINATION_TYPES`
+   *used to be* `(SUPPORTED_SOURCE_TYPES - {"oracle"}) | {…}` — encoding *"every SQL source is also a
+   destination"*, true for postgres/mssql/clickhouse/duckdb and false for mysql/sqlite. Oracle was
+   special-cased by hand; the two that needed identical treatment were missed, and the comment on
+   that line stated the exact reasoning that should have excluded them.
+   🔑 **The fix was to stop deriving, not to fix the derivation** ([#862](https://github.com/datanika-io/datanika-core/issues/862)).
+   A derivation with a hand-carved subtraction is a list with extra steps: it hides which members
+   were ever checked, and it reads as principled. The set is now written longhand beside a test that
+   asks dlt.
 2. **A guard written after the fix agrees with the fix, including where the fix is wrong.** Write the
-   guard so it is **red now, on the real sets** — the checks above fail today on four connectors
-   (`mysql`, `sqlite` for dlt; `sqlite`, `databricks`, `synapse` for dbt). That red is the negative
-   control, and a guard of this shape has no other one available to it.
+   guard so it is **red before the fix, on the real sets.** Both checks above were red on four
+   connectors when they were written — measured 2026-09-01 against the core venv on `origin/dev`,
+   dlt 1.21.0:
+
+   ```
+   dlt factories   advertised 11 -> RESOLVED 9,  ABSENT: mysql, sqlite
+   dbt adapters    listed     10 -> INSTALLED 7, MISSING: databricks, sqlite, synapse
+   controls        a nonexistent destination -> False;  a nonexistent adapter -> None
+   ```
+
+   ⚠️ **That measurement is kept in past tense rather than deleted.** The red stops existing the
+   moment the fix lands, so a guard nobody can tell has ever failed is a guard nobody should trust —
+   and the *controls* are what make those four failures facts about those connectors rather than
+   facts about the probe.
 
 **The mirror, for anyone writing a guard that protects a capability from being over-corrected away:**
 an over-correction guard asserts a *positive* capability, so it is only as true as that capability.
@@ -319,9 +338,9 @@ direction the dangerous one: *"do not say unsupported"* can be checked against t
 
 > ⚠️ **This is NOT the same set as the dlt destination list above, and it is not a subset of it either.** dbt needs an *installed adapter*; dlt needs only a driver. **MySQL is not a transformation target** — `dbt-mysql` was dropped in [core#825] (its last release was 1.7.0, 2024-04-26, and it pinned the whole dbt stack to 1.7, blocking six CRITICAL/HIGH advisories; no maintained MySQL adapter exists on PyPI). MySQL is unaffected as an **extract source**, which goes through SQLAlchemy/`pymysql` and never through dbt.
 >
-> 🚨 **The dlt destination list above is itself a claim, not a fact.** `mysql` and `sqlite` appear in `SUPPORTED_DESTINATION_TYPES` but `dlt.destinations` has **no attribute for either**, so `build_destination`'s `getattr` raises and neither has ever loaded a row ([core#865], measured — 9 of the 11 advertised destinations resolve). Same shape as [core#845], where Redshift's `SOURCE_DRIVERNAME_MAP` names a SQLAlchemy dialect we do not ship. **Membership in one of these sets is not evidence the capability works**; ask the layer beneath.
+> 🚨 **The dlt destination list was itself a claim, not a fact, until [core#862].** `mysql` and `sqlite` appeared in `SUPPORTED_DESTINATION_TYPES` while `dlt.destinations` has **no attribute for either**, so `build_destination`'s `getattr` raised and neither ever loaded a row ([core#865], measured — 9 of the 11 advertised destinations resolved). Same shape as [core#845], where Redshift's `SOURCE_DRIVERNAME_MAP` names a SQLAlchemy dialect we do not ship. **Membership in one of these sets is not evidence the capability works**; ask the layer beneath — and note that `tests/test_services/test_dlt_runner.py` asserted the MySQL and SQLite destinations *worked*, green, for years, because `@patch("…dlt_runner.dlt")` replaces the module with a MagicMock that materialises whatever attribute is asked of it. **A mocked `dlt` cannot answer whether a dlt destination exists.**
 >
-> `SUPPORTED_ADAPTERS` additionally lists **sqlite, databricks and synapse, none of which has an installed adapter**, so `generate_profiles_yml()` will write a profile dbt cannot load. Pre-existing; tracked in [core#862] with Product, because removing them withdraws advertised capability.
+> `SUPPORTED_ADAPTERS` also listed **sqlite, databricks and synapse, none of which has an installed adapter**, so `generate_profiles_yml()` would write a profile dbt cannot load. Both sets were narrowed in [core#862] with a save-time refusal, help text and i18n, because a silently shorter picker withdraws advertised capability without saying so. ⚠️ **Databricks and Synapse are still load destinations** — only the dbt role was withdrawn, and flattening that to "unsupported" is the over-correction the contract tests now guard.
 
 > 🔑 This is one instance of a class. The general rule, the three occurrences to date and the two discriminating checks are under **[A set of strings is a claim, not a capability](#-a-set-of-strings-is-a-claim-not-a-capability)** in *dlt Integration* above.
 

@@ -7,7 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.transformation import Materialization, Transformation
-from datanika.services.connection_service import get_org_connection
+from datanika.services.connection_service import (
+    TRANSFORM_DESTINATION_TYPES,
+    get_org_connection,
+)
 
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
@@ -120,8 +123,23 @@ class TransformationService:
         """
         if conn_id is None:
             return
-        if get_org_connection(session, org_id, conn_id) is None:
+        conn = get_org_connection(session, org_id, conn_id)
+        if conn is None:
             raise TransformationConfigError(f"Invalid destination connection {conn_id}: must exist")
+        # core#862. Owning the connection is not enough: transformations run through dbt,
+        # which needs an installed adapter for the target. Refused HERE rather
+        # than in the picker because `POST /api/v1/transformations` bypasses every
+        # picker, and refused at SAVE time rather than at run time because
+        # `generate_profiles_yml` raises only after `run.before_execute` has
+        # fired and `start_run` has recorded a run — so a doomed run has already
+        # cost the tenant quota. Naming the type is safe once ownership is
+        # established; the message above deliberately stays vague because it is
+        # reachable by a caller who owns nothing.
+        if conn.connection_type.value not in TRANSFORM_DESTINATION_TYPES:
+            raise TransformationConfigError(
+                f"Connection {conn_id} is a {conn.connection_type.value} destination, "
+                "which has no dbt adapter and cannot be a transformation target"
+            )
 
     def delete_transformation(self, session: Session, org_id: int, transformation_id: int) -> bool:
         transformation = self.get_transformation(session, org_id, transformation_id)

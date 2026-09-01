@@ -376,6 +376,19 @@ class UploadState(BaseState):
         except (ValueError, IndexError):
             self.error_message = "Please select source and destination connections"
             return
+        # core#862. The picker no longer offers destinations that cannot work,
+        # so reaching here means a stale form — options loaded before the type
+        # was withdrawn, or an id set some other way. Refusing against
+        # `dest_conn_options` rather than re-deriving the rule keeps ONE
+        # definition of "offered": whatever the user could actually pick. The
+        # service refuses independently, which is what covers the API path;
+        # this exists so the message arrives in the user's own language.
+        if not any(o.startswith(f"{dst_id} ") for o in self.dest_conn_options):
+            self.error_message = await self._translated(
+                "uploads.destination_invalid", "Data cannot be loaded into this connection type"
+            )
+            return
+
         try:
             with get_sync_session() as session:
                 if self.editing_upload_id:

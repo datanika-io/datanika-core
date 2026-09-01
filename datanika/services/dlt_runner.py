@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import shutil
 from pathlib import PurePosixPath
 
@@ -358,6 +359,77 @@ class DltRunnerError(ValueError):
 # leak position across runs. Dicts are additionally the only thing a user can
 # express through **Use raw JSON config**, so whatever we can write here, they
 # can write too.
+#: Salesforce's REST API version, in the path of every Query API call.
+SALESFORCE_API_VERSION = "v59.0"
+
+#: Shapes the two user-influenceable values are allowed to take.
+#:
+#: ⚠️ ``api_version`` is read from ``dlt_config``, i.e. it is **user input**, and
+#: it is interpolated into a request path. Unvalidated, `../..` in it reshapes
+#: the URL — the egress guard pins the host, so this is not SSRF, but it still
+#: lets a caller aim the request at a path we did not choose. The sObject
+#: pattern backs the ``noqa: S608`` below: bandit is right that an f-string
+#: builds the SOQL, and a constant-shaped identifier is what makes it safe.
+_SALESFORCE_API_VERSION_RE = re.compile(r"^v\d+\.\d+$")
+_SOQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+#: (resource name, sObject) for the objects loaded by default (core#850).
+#:
+#: The names are unchanged from the describe-endpoint resources they replace, so
+#: the landed tables keep their names; only their contents become records.
+SALESFORCE_DEFAULT_OBJECTS: tuple[tuple[str, str], ...] = (
+    ("accounts", "Account"),
+    ("contacts", "Contact"),
+    ("opportunities", "Opportunity"),
+)
+
+
+def _salesforce_default_resources(api_version: str) -> list[dict]:
+    """Query-API resources for the default objects (core#850).
+
+    These used to be ``services/data/vXX.X/sobjects/<Name>`` — the **sObject
+    Basic Information** resource, which answers one object of field metadata
+    plus up to 20 ``recentItems`` scoped to the *calling user*. So a Salesforce
+    upload that ran successfully landed describe output, with a row count, a
+    green status and a table in the warehouse; it was simply not the data the
+    user asked for.
+
+    🚨 ``FIELDS(STANDARD)`` is not interchangeable with the other two. SOQL has
+    no ``SELECT *``, and of Salesforce's three field bundles both
+    ``FIELDS(ALL)`` and ``FIELDS(CUSTOM)`` require ``LIMIT 200`` or less — which
+    would cap every extract at 200 rows. That is core#823's silent truncation
+    arriving through the query instead of through the paginator, and it is worse
+    here because the limit would look deliberate. ``FIELDS(STANDARD)`` carries
+    no such requirement.
+
+    ⚠️ ``data_selector`` is stated rather than left to dlt's detection, for the
+    reason the paginator table above already gives: a heuristic that guesses
+    right for nine vendors and wrong for the tenth fails silently, and the
+    Query API wraps its rows in ``records`` beside ``totalSize`` and ``done``.
+    """
+    if not _SALESFORCE_API_VERSION_RE.match(api_version):
+        raise DltRunnerError(
+            f"Invalid Salesforce api_version {api_version!r}: expected a form like 'v59.0'"
+        )
+    for _name, sobject in SALESFORCE_DEFAULT_OBJECTS:
+        if not _SOQL_IDENTIFIER_RE.match(sobject):
+            raise DltRunnerError(f"Invalid Salesforce sObject name {sobject!r}")
+    return [
+        {
+            "name": name,
+            "endpoint": {
+                "path": f"services/data/{api_version}/query",
+                # noqa justified by _SOQL_IDENTIFIER_RE above, asserted for every
+                # entry immediately before this: the only interpolation is an
+                # identifier matched against ^[A-Za-z][A-Za-z0-9_]*$.
+                "params": {"q": f"SELECT FIELDS(STANDARD) FROM {sobject}"},  # noqa: S608
+                "data_selector": "records",
+            },
+        }
+        for name, sobject in SALESFORCE_DEFAULT_OBJECTS
+    ]
+
+
 SAAS_PAGINATORS: dict[str, dict] = {
     # `starting_after` carrying the last item's id. There is deliberately no
     # `has_more` stop condition — the schema rejects `has_more_path` — so the
@@ -385,6 +457,11 @@ SAAS_PAGINATORS: dict[str, dict] = {
     },
     # Both hand back an absolute next-page URL rather than a cursor to re-send.
     "zendesk": {"type": "json_link", "next_url_path": "next_page"},
+    # Salesforce's Query API hands back a next-page **path** (not an absolute
+    # URL) in `nextRecordsUrl`, e.g. `/services/data/v59.0/query/01g...-2000`.
+    # It was exempt only because its resources were describe endpoints with
+    # nothing to paginate (core#850); now that they are queries, it pages.
+    "salesforce": {"type": "json_link", "next_url_path": "nextRecordsUrl"},
     "facebook_ads": {"type": "json_link", "next_url_path": "paging.next"},
     # Asana's offset token, echoed back as `offset`.
     "asana": {"type": "cursor", "cursor_path": "next_page.offset", "cursor_param": "offset"},
@@ -418,12 +495,6 @@ SAAS_PAGINATORS: dict[str, dict] = {
 #: for these is per-resource ``endpoint.paginator`` entries, which is a larger
 #: change than this one.
 SAAS_PAGINATION_EXEMPT: dict[str, str] = {
-    "salesforce": (
-        "The default resources are `sobjects/{Name}` *describe* endpoints, which "
-        "return one metadata object each, not a record list. There is nothing to "
-        "paginate. That this connector therefore fetches no Account/Contact "
-        "records at all is a separate defect (core#850), not this one."
-    ),
     "jira": (
         "`rest/api/3/search` is offset-paginated (startAt/maxResults) while "
         "`rest/api/3/project` returns a bare unpaginated array. An offset "
@@ -1716,26 +1787,9 @@ class DltRunnerService:
                     instance_url.rstrip("/") + "/",
                     {"type": "bearer", "token": access_token},
                     dlt_config.get("resources")
-                    or [
-                        {
-                            "name": "accounts",
-                            "endpoint": {
-                                "path": "services/data/v59.0/sobjects/Account",
-                            },
-                        },
-                        {
-                            "name": "contacts",
-                            "endpoint": {
-                                "path": "services/data/v59.0/sobjects/Contact",
-                            },
-                        },
-                        {
-                            "name": "opportunities",
-                            "endpoint": {
-                                "path": "services/data/v59.0/sobjects/Opportunity",
-                            },
-                        },
-                    ],
+                    or _salesforce_default_resources(
+                        str(dlt_config.get("api_version") or SALESFORCE_API_VERSION)
+                    ),
                     paginator=paginator,
                 )
 

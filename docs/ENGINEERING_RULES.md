@@ -143,3 +143,113 @@ and it would have looked like a green merge. So:
 
 This is rule 3 wearing different clothes: there, a watch was keyed to a SHA that got rewritten; here,
 a *verdict* was keyed to one. Both times the stale answer was the reassuring one.
+
+---
+
+## 5. A metric *name* in scrape output is not evidence the metric has data
+
+**Measured 2026-09-01 ([core#907]).** `prometheus_client` emits the `# HELP` and `# TYPE` lines for a
+labelled metric with **zero children**, and no samples:
+
+```
+# HELP probe_labelled_total labelled, never incremented
+# TYPE probe_labelled_total counter
+                                     <- no sample line at all
+```
+
+So `curl -sf .../metrics | grep -E "bytes_processed"` returns **non-empty** for a counter that has
+never recorded anything. A verification step written that way cannot fail.
+
+**Why this is worse than the bug it hides.** The V2 P4 runbook gates the pricing cutover on exactly
+that grep, and `/metrics` currently falls through to the SPA (`curl -sf` succeeds on 5 KB of HTML).
+The obvious repair — add the Apache vhost entry — flips the check from **unpassable to unfailable**,
+and the second is more dangerous, because it reads as the repair having worked.
+
+**Rules:**
+1. **Assert a sample line, never a metric name.**
+   `grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]'`
+2. **An *unlabelled* metric behaves differently and is useful for exactly this** — it emits `x 0.0`,
+   so zero is distinguishable from absent. That is why a collector's health flag should be an
+   unlabelled gauge: with labels, "collector broken" and "no tenants yet" produce identical output.
+3. `CounterMetricFamily("x_total", …)` and `CounterMetricFamily("x", …)` **both** emit `x_total`.
+   Verify naming against the library before relying on it; a wrong guess publishes the series under
+   a name nothing queries, silently.
+
+## 6. A counter incremented in Celery cannot be served by the app
+
+`/metrics` is a Starlette route in the **app** process. `run.*_completed` is announced from
+`datanika/tasks/*.py` — the **Celery worker**, a different container. A `prometheus_client` counter
+is process-local, so an increment in the worker is invisible to the app's registry, permanently,
+with nothing to indicate it.
+
+This has now happened twice: `celery_tasks_total` ([core#704]) returned **0 series for the life of
+the project** and made `celery-task-failures` structurally unable to fire; [core#907] was the same
+design written into a spec for the billing surface, caught before the increment was added.
+
+🚨 **#704's remedy does not generalise, and reaching for it is the trap.** It reads the **broker
+event stream** with a dedicated exporter, which works because the thing being measured *is* task
+lifecycle — the only thing that stream carries. It carries nothing about how many bytes an org
+processed. Nor does a shared `PROMETHEUS_MULTIPROC_DIR` help: separate containers, and the worker's
+default **prefork pool runs task code in forked children**, so a metrics server inside the worker
+would serve the parent's registry — the same bug one level down.
+
+**The rule: when the value is already in durable shared state, derive the metric from that state at
+scrape time instead of accumulating it in RAM.** A collector over `usage_ledger` is correct in
+whichever process serves the scrape, cannot drift from the record it is derived from, and survives a
+restart — where a counter resets to zero, on a box that deploys many times a day.
+
+**Before adding any counter, ask which process increments it and which process serves `/metrics`.**
+If they differ, the counter is decoration.
+
+## 7. A negative control that exercises only the path you already believe in proves nothing
+
+Twice in one session, both in *our own* instruments.
+
+**[core#887].** An audit resolved "does a page render this state's `error_message`?" by matching
+receiver **names**, and reported ten unrendered classes. Four were rendered — through
+`error_or_quota_callout(state_cls)`, a shared component that renders the var for whatever class it
+is handed, so a page renders it while containing the string `error_message` zero times. The audit
+carried a stated negative control ("the five classes we know are rendered must come back rendered")
+and it **passed**, because all five are *also* rendered directly. A control that never exercises the
+indirect path agrees with the check including where the check is wrong.
+
+**[core#830].** A probe claimed to drive five distinct `SamlValidationError` raise sites. Its
+"unparseable" case used base64 of `<not-a-saml-response/>`, which python3-saml parses happily and
+rejects as `Unsupported SAML version` — the *validation-failed* branch, not the *could-not-process*
+one. Four sites, not five.
+
+🔑 **And the headline assertion passed throughout.** `test_each_refusal_logs_a_different_reason`
+checks that the reasons are **pairwise distinct**, and they were — the two validation-failed messages
+carried different library text. **A difference assertion cannot tell you *which* things differed**,
+so it was satisfied for a reason unrelated to the property it exists to check. Only a second test
+pinning each expected reason fragment caught it.
+
+**Rules:**
+1. **A control must include the shape that would break the rule, expressed the way the real code
+   expresses it** — not the shape you had in mind when you wrote the check.
+2. **Beside any "these are all different" assertion, pin *what each one is*.** Distinctness is cheap
+   to satisfy accidentally.
+3. **Ask the library, do not guess twice.** The SAML case was settled in one 20-line probe that fed
+   five candidate inputs to `OneLogin_Saml2_Auth` and printed which threw and which failed
+   validation.
+
+## 8. Two mechanical traps in mutation harnesses on this machine
+
+Every fix worth trusting here is proved by re-breaking the shipped code and watching the named test
+go red. Two things break the harness itself:
+
+1. 🚨 **`subprocess.run([".venv/Scripts/python.exe", …], cwd=ROOT)` fails with `WinError 2`.**
+   Windows `CreateProcess` resolves a **relative executable against the parent's cwd**, not against
+   `cwd=`. The message is "The system cannot find the file specified", which reads as a missing or
+   broken venv. Pass an absolute path: `str(ROOT / ".venv/Scripts/python.exe")`.
+2. **Match the file's own line endings, and assert the anchor is unique before writing.** Tracked
+   `.py` files here are `i/lf w/crlf` while `i18n/*.json` are `i/lf w/lf` — `git ls-files --eol` is
+   the only honest reading. A `\n` anchor silently matches nothing in a CRLF file, and a harness
+   that does not check reports its no-op mutation as "the test is fine". Restore in a `finally`,
+   round-trip in **binary**, and verify with `git status`, never with the harness's own equality
+   check.
+
+[core#704]: https://github.com/datanika-io/datanika-core/issues/704
+[core#830]: https://github.com/datanika-io/datanika-core/issues/830
+[core#887]: https://github.com/datanika-io/datanika-core/issues/887
+[core#907]: https://github.com/datanika-io/datanika-core/issues/907

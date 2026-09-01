@@ -115,10 +115,24 @@ dependencies = [
     # The SQLAlchemy dialect for DuckDB. dlt writes through its own driver, so
     # loads worked without this — but catalog introspection goes through
     # SQLAlchemy and raised NoSuchModuleError, leaving Models/Catalog
-    # permanently empty for every DuckDB user (core#494). Every other
-    # destination here already pairs a driver with its dialect; duckdb was the
-    # one that did not.
+    # permanently empty for every DuckDB user (core#494).
+    #
+    # ⚠️ core#494's own comment here claimed "every other destination already
+    # pairs a driver with its dialect; duckdb was the one that did not." That
+    # was FALSE when written, and the sweep stopping at one instance is why
+    # core#845 survived four more months. Redshift had the same hole, and
+    # `redshift-connector` being in the lock (pulled by `dbt-redshift`) makes
+    # the tree LOOK complete — the driver is installed, so a manifest read is
+    # clean. It registers no dialect. The check that tells them apart is
+    # `make_url(f"{drivername}://").get_dialect()`, and it now runs over every
+    # entry: tests/test_services/test_supported_sets_resolve.py.
     "duckdb-engine>=0.17,<0.18",
+    # The SQLAlchemy dialect for Redshift (core#845). Without it every
+    # `sql_database()` source over a Redshift connection raised
+    # NoSuchModuleError at `create_engine`, before any network call — so
+    # Redshift-as-a-source had never worked at all, and catalog introspection
+    # with it. The dbt direction was unaffected, which is why nothing surfaced.
+    "sqlalchemy-redshift>=1.0,<2",
     "snowflake-sqlalchemy>=1.7,<2",
     "sqlalchemy-bigquery>=1.11,<2",
     "oracledb>=4.0,<5",

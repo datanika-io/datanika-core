@@ -1046,6 +1046,7 @@ dependencies = [
     { name = "snowflake-sqlalchemy" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sqlalchemy-bigquery" },
+    { name = "sqlalchemy-redshift" },
 ]
 
 [package.optional-dependencies]
@@ -1105,6 +1106,7 @@ requires-dist = [
     { name = "snowflake-sqlalchemy", specifier = ">=1.7,<2" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
     { name = "sqlalchemy-bigquery", specifier = ">=1.11,<2" },
+    { name = "sqlalchemy-redshift", specifier = ">=1.0,<2" },
     { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.0,<5" },
 ]
 provides-extras = ["dev"]
@@ -4722,6 +4724,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7e/6a/c49932b3d9c44cab9202b1866c5b36b7f0d0455d4653fbc0af4466aeaa76/sqlalchemy_bigquery-1.16.0.tar.gz", hash = "sha256:fe937a0d1f4cf7219fcf5d4995c6718805b38d4df43e29398dec5dc7b6d1987e", size = 119632, upload-time = "2025-11-06T01:35:40.373Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c0/87/11e6de00ef7949bb8ea06b55304a1a4911c329fdf0d9882b464db240c2c5/sqlalchemy_bigquery-1.16.0-py3-none-any.whl", hash = "sha256:0fe7634cd954f3e74f5e2db6d159f9e5ee87a47fbe8d52eac3cd3bb3dadb3a77", size = 40615, upload-time = "2025-11-06T01:35:39.358Z" },
+]
+
+[[package]]
+name = "sqlalchemy-redshift"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/0d/d5e7dd863b6f7a445cd7c929373e71e71c819f95e56ab8ea3ed4776b2f69/sqlalchemy_redshift-1.0.0.tar.gz", hash = "sha256:882964d42184604ef653ab770501e942e7f9296b537d3b138551f609d1c52860", size = 56060, upload-time = "2026-04-28T00:31:25.922Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/2d/1206bc07d7333624694576366bb158a66e314755b10439d634c2ceea4484/sqlalchemy_redshift-1.0.0-py3-none-any.whl", hash = "sha256:8b3a946401148b9443eb623f84a64bb30fa99ddc873c17d6a9e70cc0e5ea8dd1", size = 39103, upload-time = "2026-04-28T00:31:24.491Z" },
 ]
 
 [[package]]

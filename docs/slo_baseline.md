@@ -39,12 +39,43 @@ violated or met by anything production measures.
 the most trustworthy instrument in the file. This SLO has been missed every day
 since it was written, and nothing has ever said so.
 
-🚨 **Do not close this by raising the number to 140 ms.** The finding is not that
-production is slow; it is that the target and its named instrument measure
-different paths. The 50 ms came from the document's own derivation — *"`/healthz`
-in ~5 ms"*, a **local** probe — while the blackbox target it names is
-`https://app.datanika.io/healthz`, which traverses Cloudflare, then Apache, then
-the app. Filed with the other document defects as [core#897].
+🚨 **Do not close this by raising the number to 140 ms**, and note that this is
+not a case of production being slow. Decomposing the probe settles it.
+
+The obvious alternative explanation was tested first and **refuted**: blackbox
+re-resolves DNS on every probe where a real client would cache it, but DNS is
+**1.8 %** of the p95.
+
+| phase | p50 | p95 |
+|---|---|---|
+| resolve | 1.5 ms | 2.5 ms |
+| connect | 7.4 ms | 18.1 ms |
+| tls | 18.8 ms | 30.9 ms |
+| **processing** | 28.6 ms | **86.8 ms** |
+| transfer | 0.3 ms | 0.4 ms |
+| sum of phases | | 138.4 ms (reconciles with the 139.2 ms total) |
+
+**`connect` + `tls` alone is 49.0 ms at p95 — the entire budget, spent before the
+request is written and before the app is reached.** blackbox opens a fresh
+connection every 15 s, so it pays full TCP + TLS setup to a Cloudflare edge each
+time. **No value of application performance brings this SLI under 50 ms.** The
+target is not missed; it is unachievable on the path its own `Measurement` column
+names.
+
+The same path at three layers, measured directly on the box:
+
+| measured at | latency |
+|---|---|
+| app directly, `127.0.0.1:8000/healthz`, 10 samples | **1.9 – 2.6 ms** |
+| through Apache + TLS on the box, no Cloudflare | **11.8 – 16.1 ms**, plus one 33.6 ms first sample (cold TLS session cache) |
+| through Cloudflare — what blackbox scores | **60.4 ms p50 / 139.2 ms p95** |
+
+The document's derivation — *"`/healthz` in ~5 ms"* — matches the first row (2 ms
+today), so 50 ms was a sane ~10x headroom **on the local path**. The
+`Measurement` column then named an instrument on a different one. The two halves
+of that row have never described the same thing, which is why **editing only the
+number would hide the defect rather than fix it — the `Measurement` column has to
+change too.** Options are on [core#897].
 
 ### PASS — 8
 

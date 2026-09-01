@@ -54,7 +54,7 @@ git cat-file -p origin/master:datanika_cloud/plugin.py | grep -c '_on_once'
 git cat-file -p origin/dev:datanika_cloud/plugin.py    | grep -c '_on_once'
 ```
 
-Measured on 2026-08-31:
+Measured on 2026-08-31 — ⚠️ **and re-measured 2026-09-01, when BOTH `master` rows had changed. Run the commands; do not read the table.**
 
 | ref | `bootstrap_cloud()` call sites | `_on_once` |
 |---|---|---|
@@ -62,6 +62,21 @@ Measured on 2026-08-31:
 | core `origin/dev` | **2** (`+ tasks/celery_app.py`, core#772) | — |
 | cloud `origin/master` | — | **0** |
 | cloud `origin/dev` | — | present (cloud#129's commit) |
+
+🚨 **Re-measured 2026-09-01 and the two `master` rows are now STALE**, which is the whole
+reason this section tells you to run the commands rather than read the table:
+
+| ref | then | now (2026-09-01) |
+|---|---|---|
+| core `origin/master` — `tasks/celery_app.py` | 0 | **1** (core#772 shipped) |
+| cloud `origin/master` — `_on_once` | **0** | **present** (20 occurrences) |
+
+The 2026-08-31 15:13Z cloud promotion carried cloud#129's commit, so **reason 2 is closed**: cloud
+`master` now has the idempotence guard, and the double-subscription it describes can no longer
+happen. **Reasons 1 and 3 still stand** and are unaffected. Left in place rather than deleted
+because the mechanism is what makes reason 3 legible — and because a table that went stale
+inside twelve days is itself the argument for re-deriving.
+
 
 `datanika.hooks.on` is a bare `setdefault(...).append(...)`. The Reflex web process imports **both**
 `datanika.datanika` and `datanika.tasks.celery_app`, so on core `dev` it reaches the call twice —
@@ -154,6 +169,36 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
     --jq '.[0].databaseId' | xargs -I{} gh run view {} --repo datanika-io/datanika-core \
     --json jobs --jq '.jobs[] | select(.name|test("staging")) | "\(.name)\t\(.conclusion)"'
   ```
+
+      🚨 **A green `e2e-staging` may belong to a DIFFERENT COMMIT. Check the window.**
+      ([core#876], observed three times in two days.) The `staging-deploy` concurrency group
+      ([core#753]) serialises *access* to staging; it does **not** pin *which build* is under
+      test. When two pushes land close together, run A's `e2e-staging` can start seconds after
+      run B's `deploy-staging` finished — so it exercises B's build and reports against A.
+      The attribution comes out **crossed**, not merely shifted: B's own `e2e-staging` is
+      typically *cancelled*, so the commit that was actually tested gets no verdict at all.
+
+      Until the SHA assertion ships, this manual check is the only defence a promoter has.
+      Confirm the head's own `deploy-staging` finished **before** its `e2e-staging` started, and
+      that **no other run's `deploy-staging` completed in between**:
+
+  ```bash
+  # every staging job on recent dev runs, ordered by when it started
+  for id in $(gh api "repos/datanika-io/datanika-core/actions/runs?branch=dev&per_page=12" \
+                -q '.workflow_runs[] | select(.path==".github/workflows/ci.yml") | .id'); do
+    sha=$(gh api "repos/datanika-io/datanika-core/actions/runs/$id" -q '.head_sha' | cut -c1-8)
+    gh api "repos/datanika-io/datanika-core/actions/runs/$id/jobs" \
+      -q '.jobs[] | select(.name|test("deploy-staging|e2e-staging|smoke-staging"))
+          | "\(.started_at) '"$sha"' \(.name) \(.conclusion) end=\(.completed_at)"'
+  done | sort
+  ```
+      ⚠️ `gh api` has **no `--arg`** — it is not jq's CLI. Interpolate through the
+      shell as above.
+
+- [ ] **Read the E2E result by STEP outcome, never by job conclusion** ([core#873]). The job goes
+      red for artifact-upload failures and other non-test reasons; `Run gating E2E specs against
+      staging` is the verdict. And ⚠️ **`gh run view --log` silently omits steps** — use
+      `runs/<id>/jobs` from the API.
 - [ ] Ensure no active user sessions you'd want to avoid interrupting (check Plausible real-time)
 - [ ] Verify Grafana is reachable: `ssh -i ~/.ssh/id_ed25519 -L 3001:localhost:3001 root@185.25.22.188`
 

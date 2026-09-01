@@ -130,7 +130,10 @@ box rather than quietly in a billing column.
 the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
 
 [core#602]: https://github.com/datanika-io/datanika-core/issues/602
+[core#753]: https://github.com/datanika-io/datanika-core/issues/753
 [core#825]: https://github.com/datanika-io/datanika-core/issues/825
+[core#873]: https://github.com/datanika-io/datanika-core/issues/873
+[core#876]: https://github.com/datanika-io/datanika-core/issues/876
 [core PR #868]: https://github.com/datanika-io/datanika-core/pull/868
 [cloud PR #139]: https://github.com/datanika-io/datanika-cloud/pull/139
 
@@ -170,30 +173,36 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
     --json jobs --jq '.jobs[] | select(.name|test("staging")) | "\(.name)\t\(.conclusion)"'
   ```
 
-      🚨 **A green `e2e-staging` may belong to a DIFFERENT COMMIT. Check the window.**
-      ([core#876], observed three times in two days.) The `staging-deploy` concurrency group
-      ([core#753]) serialises *access* to staging; it does **not** pin *which build* is under
-      test. When two pushes land close together, run A's `e2e-staging` can start seconds after
-      run B's `deploy-staging` finished — so it exercises B's build and reports against A.
-      The attribution comes out **crossed**, not merely shifted: B's own `e2e-staging` is
-      typically *cancelled*, so the commit that was actually tested gets no verdict at all.
+- [ ] 🚨 **Verify the staging verdict BELONGS to the head you are promoting** ([core#876]).
+      A green `e2e-staging` can describe a different commit. The `staging-deploy` concurrency
+      group ([core#753]) serialises *access* to staging; it does **not** pin *which build* is
+      under test. When two pushes land close together, run A's `e2e-staging` starts seconds
+      after run B's `deploy-staging` finished — so it exercises B's build and reports against
+      A. The attribution comes out **crossed**, not merely shifted: B's own `e2e-staging` is
+      typically *cancelled*, so the commit actually tested gets no verdict at all. Observed
+      three times in two days, once inside a batch that was promoted.
 
-      Until the SHA assertion ships, this manual check is the only defence a promoter has.
-      Confirm the head's own `deploy-staging` finished **before** its `e2e-staging` started, and
-      that **no other run's `deploy-staging` completed in between**:
+      **This is one command now. Run it; do not eyeball job windows.**
 
   ```bash
-  # every staging job on recent dev runs, ordered by when it started
-  for id in $(gh api "repos/datanika-io/datanika-core/actions/runs?branch=dev&per_page=12" \
-                -q '.workflow_runs[] | select(.path==".github/workflows/ci.yml") | .id'); do
-    sha=$(gh api "repos/datanika-io/datanika-core/actions/runs/$id" -q '.head_sha' | cut -c1-8)
-    gh api "repos/datanika-io/datanika-core/actions/runs/$id/jobs" \
-      -q '.jobs[] | select(.name|test("deploy-staging|e2e-staging|smoke-staging"))
-          | "\(.started_at) '"$sha"' \(.name) \(.conclusion) end=\(.completed_at)"'
-  done | sort
+  python scripts/verify_e2e_attribution.py --sha "$SHA"
   ```
-      ⚠️ `gh api` has **no `--arg`** — it is not jq's CLI. Interpolate through the
-      shell as above.
+      Exit 0 means every staging verdict for that commit describes that commit's own build.
+      Exit 1 prints which job is `misattributed` (a verdict about somebody else's build),
+      `no_reading` (cancelled — neither green nor red, and the shape a promoter skims past),
+      or `absent`. **Exit 1 is not automatically "do not promote"** — it is "these greens are
+      not evidence about this commit". Get an honest reading before deciding: push an empty
+      commit, or re-run the deploy for that SHA and let the verifiers follow it.
+
+      ⚠️ **Do not fix an exit 1 by re-deploying from inside a verifier** — that puts a
+      mutation inside the window the verifiers hold, i.e. [core#753] reintroduced.
+
+      Runs *after* the in-run assertion shipped defend themselves: `smoke-staging`,
+      `e2e-staging` and `e2e-sso` each assert the deploy stamp before measuring anything and
+      refuse with `wrong_build` rather than reporting. **`wrong_build` pages nobody and files
+      no issue** — staging is healthy, that run simply could not honestly grade it — so it is
+      visible only in the job log and here. A `wrong_build` on the head is the same situation
+      as an exit 1 above, and has the same answer.
 
 - [ ] **Read the E2E result by STEP outcome, never by job conclusion** ([core#873]). The job goes
       red for artifact-upload failures and other non-test reasons; `Run gating E2E specs against

@@ -25,8 +25,15 @@ The two invariants, and why the second one exists
    work.** If a job has an ``always()``/``failure()`` upload or cleanup between the
    tests and the alert, then job-red is strictly weaker than tests-red, and
    ``if: failure()`` claims more than it knows. Where nothing can fail after the work,
-   the two are the same event and ``failure()`` is sound — `smoke-staging` is that
-   case and is deliberately left alone.
+   the two are the same event and ``failure()`` is sound.
+
+   ⚠️ **`smoke-staging` used to be that case and no longer is (2026-09-01, core#876).**
+   It gained a SHA-attribution assertion *before* the probe, so a step that can fail now
+   runs on a path where the probe never ran at all — job-red became strictly weaker than
+   probe-red in the other direction. Its alert is step-keyed now. The lesson generalises:
+   this exemption is a property of a job's current step list, not a property of the job,
+   and it expires silently the moment anyone inserts a step. Which is why invariant 1 is
+   derived here rather than written down as a list of blessed job names.
 
 2. **A claiming step's condition must contain a status function.** This is the trap in
    core#873's own proposed fix, which read::

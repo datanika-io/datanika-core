@@ -67,6 +67,14 @@ jobs:
       - name: Ruff format check
         run: ruff format --check datanika tests --exclude "datanika/i18n"
 
+      # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of
+      # which assert a REFUSAL — including the two shapes that read as green: no stamp on
+      # the box at all, and an EXPECTED_SHA that evaluates empty so nothing is compared
+      # with nothing. Shell, so it is outside the pytest suite; gated here because a guard
+      # nobody has watched fail is not evidence.
+      - name: Staging SHA attribution controls
+        run: bash scripts/test-staging-sha-stamp.sh
+
   test:
     runs-on: ubuntu-latest
     # core#841. This job runs `pytest tests/`, which collects every file in
@@ -743,6 +751,18 @@ jobs:
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'for i in $(seq 1 40); do h=$(docker inspect --format "{{.State.Health.Status}}" $(/opt/datanika-staging/active-app.sh) 2>/dev/null); [ "$h" = healthy ] && { echo staging-healthy; exit 0; }; sleep 5; done; echo "staging NOT healthy"; docker logs --tail 40 $(/opt/datanika-staging/active-app.sh); exit 1'
 
+      - name: Stamp the commit staging is now running
+        # core#876. LAST step on purpose: the stamp asserts "staging is serving this
+        # commit", which is only true once the stack is up and healthy. Written after the
+        # health wait, and the writer refuses to record a stack it cannot identify, so a
+        # half-finished deploy leaves the PREVIOUS stamp standing rather than a false one —
+        # and the next verifier then correctly refuses instead of testing a stale build in
+        # the belief it is fresh.
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            "bash -s -- write ${{ github.sha }} ${{ github.run_id }} ${{ github.run_attempt }}" \
+            < datanika/scripts/staging-deploy-stamp.sh   # this job checks core out under datanika/
+
   smoke-staging:
     # core#753: this job READS the stack `deploy-staging` mutates, so it must hold the same
     # lock. `deploy-staging`'s group serialised the deploy and then RELEASED it -- while its
@@ -762,6 +782,31 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v6
+
+      # core#876. FIRST, before ~4 minutes of dependency installation: if staging is not
+      # running this run's commit there is nothing here worth measuring, and the cheapest
+      # moment to say so is now.
+      - name: Configure SSH to pointer.gr
+        env:
+          SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Assert staging is running THIS commit
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
 
       - uses: astral-sh/setup-uv@v8.0.0
         with:
@@ -801,19 +846,31 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: pytest scripts/smoke/ -v --tb=short
 
-      # core#873 audited this job too. `if: failure()` is SAFE here today and is
-      # deliberately left alone: `Run smoke probes` is the last step that can
-      # fail, so job-red and probe-red are currently the same event — there is no
-      # artifact upload and no cleanup after it. It files no issue either, so the
-      # blast radius of a false one is a single page, not a tracker entry.
+      # core#873 audited this job. `if: failure()` WAS safe while `Run smoke probes` was
+      # the only step that could fail — job-red and probe-red were the same event.
       #
-      # 🚨 INVARIANT: nothing may be inserted between the probe and this alert
-      # without first keying the alert on `steps.smoke.outcome` (the `id` is
-      # already there for exactly that). Add an upload or a teardown below and
-      # this job starts paging "Staging smoke failed" for runs whose probes all
-      # passed — which is precisely the defect #873 removed from `e2e-staging`.
+      # 🆕 core#876 broke that and the invariant below said exactly what to do about it.
+      # The SHA assertion added above this can fail, which skips the probes entirely; under
+      # `if: failure()` that pages "Staging smoke failed" for a run whose probes never ran —
+      # a false headline on a true problem, precisely the defect #873 removed from
+      # `e2e-staging`. So the alert is keyed on the probe's own outcome, which is what the
+      # `id:` was put there for.
+      #
+      # An attribution refusal deliberately pages NOTHING. It is a CI-hygiene event, not a
+      # production alarm: staging is fine, this run simply cannot honestly report on it. It
+      # is loud where it belongs — a red required-adjacent check and a message naming both
+      # SHAs — and paging on it would put a "staging is broken" alert in front of the
+      # founder several times a day for a scheduling artifact.
+      #
+      # 🚨 INVARIANT (unchanged, now enforced): any step that can fail is invisible to this
+      # alert unless it is folded into the condition below. Do not restore a bare
+      # `failure()` — re-read #873 first.
+      # ⚠️ `always() &&` is NOT optional here. A bare `steps.smoke.outcome == 'failure'` is
+      # implicitly `success() && …`, and `success()` is false precisely when the probe
+      # failed — so the alert would never fire again, silently. Same trap the e2e-staging
+      # classifier documents at length (core#873).
       - name: Telegram alert on failure
-        if: failure()
+        if: always() && steps.smoke.outcome == 'failure'
         env:
           COMMIT_SHA: ${{ github.sha }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
@@ -914,18 +971,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Install E2E dependencies
-        working-directory: e2e
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: npx playwright install chromium --with-deps
-
+      # core#876. SSH first, then the attribution assertion, then the ~3 minutes of npm ci
+      # and browser install. Two reasons for the order, and the second is the one that
+      # matters: a refusal costs no setup time, and it RELEASES THE `staging-deploy` LOCK
+      # three minutes sooner, so the run that should be verifying staging gets there faster.
       - name: Configure SSH for seed
         env:
           SSH_KEY: ${{ secrets.POINTER_SSH_KEY }}
@@ -940,6 +989,32 @@ jobs:
           # setup in this file, not just the one that happened to fail.
           printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
+
+      # ⚠️ `id: attribution` is load-bearing the same way `id: gating` is — the classifier
+      # below distinguishes "the specs failed" from "this run refused to grade somebody
+      # else's build", and those two reds must never wear each other's headline.
+      - name: Assert staging is running THIS commit
+        id: attribution
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install E2E dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
 
       # ── TIER 1: GATING ──────────────────────────────────────────────────────
       # Proven specs. Red here holds the promotion, which is the whole point of
@@ -1142,6 +1217,7 @@ jobs:
         if: always()
         env:
           GATING_OUTCOME: ${{ steps.gating.outcome }}
+          ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
           JOB_STATUS: ${{ job.status }}
         run: |
           # !! `cancelled()` MUST NOT appear in this `env:`, and that is not
@@ -1157,8 +1233,16 @@ jobs:
           # started yet" -- so it sits BLOCKED forever while looking pending.
           # `job.status` carries the same signal and IS allowed in a step
           # `env:`. Guarded by tests/test_deploy/test_ci_autofiler_trigger.py.
+          # core#876: `wrong_build` is tested BEFORE `no_verdict`, and the order is the
+          # point. An attribution refusal skips the gating step, so its outcome is
+          # `skipped` and the old branching would classify it `no_verdict` — which pages
+          # "the harness did not run" for a harness that is perfectly fine. The two states
+          # need different responses: `no_verdict` means fix the harness, `wrong_build`
+          # means re-deploy this commit.
           if [ "$JOB_STATUS" = "cancelled" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
+          elif [ "$ATTRIB_OUTCOME" = "failure" ]; then
+            STATE=wrong_build
           elif [ "$GATING_OUTCOME" = "failure" ]; then
             STATE=gating_failed
           elif [ "$GATING_OUTCOME" = "success" ]; then
@@ -1175,6 +1259,8 @@ jobs:
               echo "::warning::The gating E2E specs PASSED — this job is red for a NON-TEST reason (artifact upload, or a step after the specs). Do not read this as an E2E failure; no issue was filed and no alert was paged. Find the failing step before treating the promotion as blocked (core#873)." ;;
             no_verdict)
               echo "::error::e2e-staging produced NO E2E VERDICT — the gating step did not run (outcome=$GATING_OUTCOME). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. Fix the harness, then re-run." ;;
+            wrong_build)
+              echo "::error::e2e-staging REFUSED to run: staging was not running this commit (core#876). This is NOT an E2E failure and NOT a broken harness — the specs were never started, so this commit still has no reading. Re-run this commit's deploy, then re-run this job. Do NOT re-deploy from inside a verifier (core#753)." ;;
             cancelled)
               echo "::notice::Job cancelled (staging-deploy concurrency group). A cancelled verdict is neither green nor red — the next push on dev produces the reading." ;;
             clean)
@@ -1466,6 +1552,19 @@ jobs:
           printf 'Host *\n  ServerAliveInterval 30\n  ServerAliveCountMax 120\n  TCPKeepAlive yes\n' > ~/.ssh/config
           chmod 600 ~/.ssh/config
 
+      # core#876. Before Authentik: bringing up four containers on the production box to
+      # test somebody else's build wastes ~5 minutes and leaves a teardown to get wrong.
+      - name: Assert staging is running THIS commit
+        id: attribution
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
+
       - name: Start Authentik on staging server
         env:
           SSH_HOST: ${{ secrets.POINTER_HOST }}
@@ -1619,6 +1718,27 @@ jobs:
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
         run: npx playwright test sso-
 
+      # core#876, the half `e2e-staging` does not need. This job holds `staging-e2e-sso`,
+      # NOT `staging-deploy` — deliberately, because it owns a compose project of its own
+      # (core#765). The cost of that correct decision is that a deploy CAN land underneath
+      # it, so the assertion made before Authentik came up is stale by the time the specs
+      # finish. Re-assert: if staging was replaced mid-run, these specs graded a moving
+      # target and the verdict does not belong to this commit either way it went.
+      #
+      # `always()` on purpose — a green that is not attributable is exactly as misleading
+      # as a red one, and it is the direction nobody checks.
+      - name: Re-assert staging was still THIS commit at the end
+        id: attribution_post
+        if: always() && steps.attribution.outcome == 'success'
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        # SSH_KEY_PATH is deliberately NOT set here: GitHub does no shell expansion in an
+        # `env:` value, so `~/.ssh/id_rsa` would arrive as a literal tilde and `ssh -i`
+        # would fail on a path that does not exist. The script defaults to
+        # "$HOME/.ssh/id_rsa", expanded by the shell that actually runs it.
+        run: bash scripts/assert-staging-sha.sh
+
       - name: Upload SSO Playwright report
         if: always()
         uses: actions/upload-artifact@v4
@@ -1660,13 +1780,21 @@ jobs:
         if: always()
         env:
           SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+          ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
+          ATTRIB_POST_OUTCOME: ${{ steps.attribution_post.outcome }}
           JOB_STATUS: ${{ job.status }}
         run: |
           # No `cancelled()` in this `env:` -- see the e2e-staging classifier
           # above for why it invalidates the entire workflow file at validation
           # time and produces a run with zero jobs and zero check-runs.
+          #
+          # core#876: EITHER attribution check failing means this run cannot honestly
+          # report on this commit, whichever way the specs went. Tested before the specs
+          # so a passing suite on the wrong build is not classified `clean`.
           if [ "$JOB_STATUS" = "cancelled" ] || [ "$SPECS_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
+          elif [ "$ATTRIB_OUTCOME" = "failure" ] || [ "$ATTRIB_POST_OUTCOME" = "failure" ]; then
+            STATE=wrong_build
           elif [ "$SPECS_OUTCOME" = "failure" ]; then
             STATE=specs_failed
           elif [ "$SPECS_OUTCOME" = "success" ]; then
@@ -1683,6 +1811,8 @@ jobs:
               echo "::warning::The SSO specs PASSED — this job is red for a NON-TEST reason (artifact upload, or the Authentik cleanup). No issue was filed and no alert was paged. Do not read this as an SSO regression (core#873)." ;;
             no_verdict)
               echo "::error::e2e-sso produced NO VERDICT — the specs did not run (outcome=$SPECS_OUTCOME), most likely an Authentik bootstrap or tunnel failure. Neither a pass nor a regression." ;;
+            wrong_build)
+              echo "::error::e2e-sso cannot report on this commit: staging was not running it (pre=$ATTRIB_OUTCOME post=$ATTRIB_POST_OUTCOME, core#876). If the POST check is the failing one the specs DID run, but against a stack that changed underneath them — so a green here would not have been this commit's green either. Not an SSO regression; re-deploy this commit and re-run." ;;
             cancelled)
               echo "::notice::Job cancelled — neither green nor red." ;;
             clean)

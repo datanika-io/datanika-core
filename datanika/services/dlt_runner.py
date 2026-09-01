@@ -1094,8 +1094,32 @@ class DltRunnerService:
         "duckdb",
         "oracle",
     }
-    # Oracle is source-only — dlt ships no Oracle destination.
-    SUPPORTED_DESTINATION_TYPES = (SUPPORTED_SOURCE_TYPES - {"oracle"}) | {
+    #: Destinations dlt can actually build a factory for.
+    #:
+    #: 🚨 **Written longhand since core#862. It used to be**
+    #: ``(SUPPORTED_SOURCE_TYPES - {"oracle"}) | {...}``, which encodes *"every
+    #: SQL source is also a destination"*. That is true for postgres, mssql,
+    #: clickhouse and duckdb, and **false for mysql and sqlite** — dlt ships no
+    #: destination for either, so ``build_destination``'s unconditional
+    #: ``getattr(dlt.destinations, connection_type)`` raised ``AttributeError``
+    #: and neither has ever loaded a row (core#865).
+    #:
+    #: The comment on that line said *"Oracle is source-only — dlt ships no
+    #: Oracle destination"*, which is **exactly the reasoning that should have
+    #: excluded the other two**. One exception was carved by hand and the two
+    #: that needed identical treatment were missed; a derivation with a manual
+    #: subtraction is a list with extra steps, and it hides which members were
+    #: ever checked. So: no derivation, and a test that asks dlt directly.
+    #:
+    #: ⚠️ **Membership here is a claim, not a capability.** Assert
+    #: ``hasattr(dlt.destinations, t)`` on the module — never ``t in`` this set.
+    #: See ``test_connector_type_contracts.py``; measured 2026-09-01 against
+    #: dlt 1.21.0, where the pre-fix set of 11 resolved 9.
+    SUPPORTED_DESTINATION_TYPES = {
+        "postgres",
+        "mssql",
+        "clickhouse",
+        "duckdb",
         "bigquery",
         "snowflake",
         "redshift",

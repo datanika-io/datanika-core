@@ -656,5 +656,11 @@
   "dag.delete_body": "Der nachgelagerte Job wartet nicht mehr auf den vorgelagerten und läuft womöglich vor seinen Eingangsdaten.",
   "dag.delete_reversible": "Dabei schlägt nichts fehl — der nachgelagerte Job rechnet einfach mit den vorhandenen Daten.",
   "dag.delete_confirm": "Ja, Abhängigkeit entfernen",
-  "dag.deleted_toast": "Abhängigkeit entfernt. Der nachgelagerte Job wartet nicht mehr."
+  "dag.deleted_toast": "Abhängigkeit entfernt. Der nachgelagerte Job wartet nicht mehr.",
+  "uploads.destination_help": "Aufgeführt sind nur Verbindungstypen, in die Datanika laden kann. MySQL und SQLite werden als Extraktionsquellen unterstützt, als Ziel gibt es jedoch keinen Ladetreiber.",
+  "uploads.destination_invalid": "In eine Verbindung dieses Typs lässt sich nicht laden — sie wird nur als Quelle unterstützt. Wählen Sie ein aufgeführtes Ziel.",
+  "pipelines.destination_help": "Pipelines führen dbt aus, das einen Adapter für das Ziel benötigt. Databricks und Synapse können geladene Daten aufnehmen, haben aber keinen Adapter; MySQL und SQLite sind reine Extraktionsquellen.",
+  "pipelines.destination_invalid": "Transformationen laufen nicht gegen diesen Verbindungstyp — dbt hat dafür keinen Adapter. Wählen Sie ein aufgeführtes Ziel.",
+  "transformations.destination_help": "Transformationen führen dbt aus, das einen Adapter für das Ziel benötigt. Databricks und Synapse können geladene Daten aufnehmen, haben aber keinen Adapter; MySQL und SQLite sind reine Extraktionsquellen.",
+  "transformations.destination_invalid": "Transformationen laufen nicht gegen diesen Verbindungstyp — dbt hat dafür keinen Adapter. Wählen Sie ein aufgeführtes Ziel."
 }

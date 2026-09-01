@@ -656,5 +656,11 @@
   "dag.delete_body": "Nizvodni posao prestaje da čeka uzvodni i može da se pokrene pre nego što mu ulazni podaci budu spremni.",
   "dag.delete_reversible": "Ništa neće pasti — nizvodni posao će jednostavno raditi sa podacima koji zateknu.",
   "dag.delete_confirm": "Da, ukloni zavisnost",
-  "dag.deleted_toast": "Zavisnost je uklonjena. Nizvodni posao više ne čeka."
+  "dag.deleted_toast": "Zavisnost je uklonjena. Nizvodni posao više ne čeka.",
+  "uploads.destination_help": "Navedeni su samo tipovi veze u koje Datanika može da učitava. MySQL i SQLite su podržani kao izvori ekstrakcije, ali za njih ne postoji drajver za učitavanje kao odredište.",
+  "uploads.destination_invalid": "Podaci ne mogu da se učitaju u vezu ovog tipa — podržana je samo kao izvor. Izaberite neko od navedenih odredišta.",
+  "pipelines.destination_help": "Tokovi pokreću dbt, kojem je potreban adapter za odredište. Databricks i Synapse mogu da prime učitane podatke ali nemaju adapter; MySQL i SQLite su samo izvori ekstrakcije.",
+  "pipelines.destination_invalid": "Transformacije ne mogu da se izvršavaju nad vezom ovog tipa — dbt nema adapter za nju. Izaberite neko od navedenih odredišta.",
+  "transformations.destination_help": "Transformacije pokreću dbt, kojem je potreban adapter za odredište. Databricks i Synapse mogu da prime učitane podatke ali nemaju adapter; MySQL i SQLite su samo izvori ekstrakcije.",
+  "transformations.destination_invalid": "Transformacije ne mogu da se izvršavaju nad vezom ovog tipa — dbt nema adapter za nju. Izaberite neko od navedenih odredišta."
 }

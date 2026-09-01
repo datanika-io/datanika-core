@@ -16,8 +16,8 @@ role                         status          path
 extract source               **KEPT**        dlt ``sql_database``/``sql_table``
                                              → SQLAlchemy → ``pymysql``
 dbt transformation target    **GONE**        was ``dbt-mysql``; no replacement
-dlt load destination         **NEVER WORKED**  advertised; ``dlt.destinations``
-                                             has no ``mysql`` (core#865)
+dlt load destination         **WITHDRAWN**   never worked; advertised until
+                                             core#862 removed it (core#865)
 ===========================  ==============  =================================
 
 🚨 **That third row is a correction to core#825, to this file's first draft, and
@@ -53,7 +53,7 @@ from __future__ import annotations
 import pytest
 
 from datanika.services.dbt_project import SUPPORTED_ADAPTERS, DbtProjectError, DbtProjectService
-from datanika.services.dlt_runner import DltRunnerService
+from datanika.services.dlt_runner import DltRunnerError, DltRunnerService
 from tests.test_services.test_source_builders_move_rows import (
     _extract_load,
     _rows,
@@ -224,68 +224,79 @@ class TestMysqlStillMovesRowsAsASource:
 # ── What must NOT go: MySQL as a LOAD DESTINATION ───────────────────────────────
 
 
-class TestMysqlAsALoadDestinationIsAdvertisedAndBroken:
-    """🚨 MySQL as a dlt LOAD destination has NEVER worked. Found by core#825.
+class TestMysqlIsNotALoadDestinationAndIsNoLongerAdvertisedAsOne:
+    """🚨 MySQL as a dlt LOAD destination has NEVER worked. Found by core#825,
+    tracked as core#865, **withdrawn from the product in core#862**.
 
     This class was written to prove the "kept" role and instead disproved it,
-    which is the whole reason it exists rather than a set-membership assertion:
-    ``"mysql" in SUPPORTED_DESTINATION_TYPES`` is true, and it means nothing.
+    which is why it exists rather than a set-membership assertion:
+    ``"mysql" in SUPPORTED_DESTINATION_TYPES`` was true, and it meant nothing.
 
-    ``build_destination`` does ``getattr(dlt.destinations, connection_type)``.
+    ``build_destination`` did ``getattr(dlt.destinations, connection_type)``.
     **dlt has no ``mysql`` attribute** — measured against dlt 1.21.0, and equally
-    absent from the pre-change image, so core#825 neither caused this nor is it
+    absent from the pre-change image, so core#825 neither caused this nor was it
     a regression from the dbt move. dlt's generic ``sqlalchemy`` destination is
     what would serve MySQL, and nothing maps to it.
 
-    ``sqlite`` has the identical defect. Same shape as core#845, where Redshift's
+    ``sqlite`` had the identical defect. Same shape as core#845, where Redshift's
     ``SOURCE_DRIVERNAME_MAP`` named a SQLAlchemy dialect we do not ship.
 
-    Tracked in **core#865**. These tests assert the defect so that the day it is
-    fixed they go red and are rewritten into the positive form — a broken
-    capability with no failing test is one nobody is told about.
+    🔑 **These tests were written asserting the DEFECT, with the instruction that
+    the day it was fixed they should go red and be rewritten into the positive
+    form.** core#862 is that day and this is that rewrite — kept as one class
+    rather than deleted, because the history of a capability that was advertised
+    for years and never worked is the most useful thing in the file. A broken
+    capability with no failing test is one nobody is told about; a fixed one with
+    no test is one that comes back.
 
-    ⚠️ **Correction to core#825, to this PR's own commit message, and to
-    landing:** all three said MySQL "stays a load destination". Only the SOURCE
-    half of that claim survived measurement. The source half IS verified, by
+    The SOURCE half is unaffected and IS verified, by
     ``TestMysqlStillMovesRowsAsASource`` above, against a real MySQL server.
     """
 
-    def test_mysql_is_advertised_as_a_destination(self):
-        """The advertisement, which is the half that is true."""
-        assert "mysql" in DltRunnerService.SUPPORTED_DESTINATION_TYPES
+    def test_mysql_is_no_longer_advertised_as_a_destination(self):
+        """The advertisement is gone (core#862)."""
+        assert "mysql" not in DltRunnerService.SUPPORTED_DESTINATION_TYPES
 
-    def test_but_dlt_has_no_mysql_destination_so_every_load_raises(self):
-        """The reality. Needs no container — it fails before a socket is opened."""
+    def test_and_dlt_still_has_no_mysql_destination(self):
+        """The reason. Needs no container — it fails before a socket is opened.
+
+        Kept pointing at dlt rather than at our own set, because the day dlt
+        ships a MySQL destination this is the assertion that should go red and
+        tell somebody the capability can be restored. A test of our set alone
+        would stay green forever and nobody would ever look again.
+        """
         import dlt.destinations
 
         assert not hasattr(dlt.destinations, "mysql"), (
-            "dlt.destinations now HAS a `mysql` attribute, so this defect may be "
-            "fixed upstream. Re-run a real load into MySQL, and if it works, "
-            "delete this class and restore the positive test from core#825's "
-            "history (core#865)."
+            "dlt.destinations now HAS a `mysql` attribute, so the defect behind "
+            "core#865 may be fixed upstream. Run a REAL load into MySQL, and if "
+            "rows land, re-add `mysql` to SUPPORTED_DESTINATION_TYPES and to "
+            "DESTINATION_TYPES, restore the positive test, and update the "
+            "landing connector entry back to direction: both."
         )
 
         runner = DltRunnerService(pipelines_dir="unused")
-        with pytest.raises(AttributeError, match="mysql"):
+        with pytest.raises(DltRunnerError, match="Unsupported destination type: mysql"):
             runner.build_destination(
                 "mysql",
                 {"host": "h", "port": 3306, "user": "u", "password": "p", "database": "d"},
             )
 
-    def test_sqlite_has_the_identical_defect(self):
+    def test_sqlite_had_the_identical_defect_and_the_identical_fix(self):
         """Recorded here rather than filed separately — one cause, one fix."""
         import dlt.destinations
 
-        assert "sqlite" in DltRunnerService.SUPPORTED_DESTINATION_TYPES
+        assert "sqlite" not in DltRunnerService.SUPPORTED_DESTINATION_TYPES
         assert not hasattr(dlt.destinations, "sqlite")
 
-    def test_every_other_advertised_destination_really_exists(self):
-        """The discriminating control.
+    def test_every_advertised_destination_now_really_exists(self):
+        """The discriminating control, and the assertion this class exists for now.
 
-        Without this, the two assertions above are satisfied by *any* breakage in
-        how the destination surface is read — a wrong import, a renamed module,
-        a typo in the probe. Nine of eleven resolving is what makes the two
-        failures a fact about mysql and sqlite rather than about this test.
+        Before core#862 this read ``broken == ["mysql", "sqlite"]`` — the defect
+        asserted, so that fixing it would go red and force this rewrite. It did.
+        Nine of eleven resolving was what made those two failures a fact about
+        those connectors rather than about this test; ``broken == []`` over a set
+        of nine is the same control pointing the other way.
         """
         import dlt.destinations
 
@@ -294,8 +305,13 @@ class TestMysqlAsALoadDestinationIsAdvertisedAndBroken:
             for t in DltRunnerService.SUPPORTED_DESTINATION_TYPES
             if not hasattr(dlt.destinations, t)
         )
-        assert broken == ["mysql", "sqlite"], (
-            f"The set of advertised-but-absent dlt destinations changed: {broken}. "
-            "If it grew, a destination just silently stopped working; if it "
-            "shrank, one was fixed and this test needs rewriting."
+        assert broken == [], (
+            f"advertised dlt destinations with no factory: {broken}. Every load "
+            "into one of these raises AttributeError inside a Celery task, after "
+            "the run row and the quota charge already exist."
+        )
+        assert len(DltRunnerService.SUPPORTED_DESTINATION_TYPES) == 9, (
+            "the destination set changed size. Nine is what dlt 1.21.0 provides; "
+            "re-measure with `hasattr(dlt.destinations, t)` rather than adjusting "
+            "this number to match."
         )

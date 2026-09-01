@@ -120,6 +120,13 @@ _STATE_KEY_RE = re.compile(r'translations(?:\.get\(|\[)"([^"]+)"')
 # every non-English user reading the English fallback. A key-usage scanner is
 # only as wide as the idioms it knows; adding an indirection is adding an idiom.
 _TOAST_KEY_RE = re.compile(r'_deleted_toast\(\s*"([^"]+)"')
+# core#862 adds a second indirection: `BaseState._translated(key, fallback)`,
+# used for save-time refusals that must reach the user in their own language.
+# Same lesson as the line above, one release later — **a key-usage scanner is
+# only as wide as the idioms it knows, and the documented remedy for a false
+# orphan is to DELETE the key**, which would silently drop the translation in
+# all nine locales. Add the pattern when you add the helper.
+_TRANSLATED_KEY_RE = re.compile(r'_translated\(\s*"([^"]+)"')
 
 
 def _collect_keys_from_code() -> set[str]:
@@ -130,6 +137,7 @@ def _collect_keys_from_code() -> set[str]:
         keys.update(_KEY_RE.findall(text))
         keys.update(_STATE_KEY_RE.findall(text))
         keys.update(_TOAST_KEY_RE.findall(text))
+        keys.update(_TRANSLATED_KEY_RE.findall(text))
     return keys
 
 

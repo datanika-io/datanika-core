@@ -178,10 +178,36 @@ def test_mysql_specifically_is_no_longer_offered_as_a_transform_destination():
         TRANSFORM_DESTINATION_TYPES,
     )
 
-    assert "mysql" in DESTINATION_TYPES, (
-        "mysql should still be a LOAD destination — dlt loads into MySQL through "
-        "SQLAlchemy/pymysql and never through dbt. core#825 removed only the "
-        "transform capability."
+    # 🚨 This assertion used to read `"mysql" in DESTINATION_TYPES`, on the
+    # grounds that "dlt loads into MySQL through SQLAlchemy/pymysql". **That was
+    # Product's own recommendation and it was retracted the same night**
+    # (core#865): dlt has no `mysql` destination factory, `build_destination`'s
+    # unconditional getattr raises, and no MySQL load has ever moved a row.
+    #
+    # 🔑 It was an OVER-CORRECTION GUARD — written to stop the dbt-adapter
+    # removal being flattened into "MySQL is unsupported" — and the capability it
+    # protected did not exist. Its effect was therefore to pin a false claim in
+    # place and fail anyone who removed it. **An over-correction guard asserts a
+    # POSITIVE capability, so it is only as true as that capability, and it needs
+    # the same evidence as a page that says the same thing.** The identical
+    # mistake shipped on the landing side in landing#429, from the same author,
+    # in the same week.
+    #
+    # The over-correction is still worth guarding — deleting MySQL from the
+    # product is still wrong — so the replacement asserts the half that IS
+    # measured: extraction, verified in `test_mysql_after_dbt_mysql_removal.py`
+    # against a real MySQL 8.4 container moving real rows.
+    assert "mysql" in SOURCE_TYPES, (
+        "mysql must remain an EXTRACT SOURCE. That capability is real and is "
+        "measured against a live MySQL server; only the destination and "
+        "transform roles were withdrawn (core#825, core#865)."
+    )
+    assert "mysql" not in DESTINATION_TYPES, (
+        "mysql is advertised as a load destination again. dlt has no `mysql` "
+        "destination factory, so `build_destination` raises AttributeError "
+        "before a socket is opened (core#865). Check "
+        "`hasattr(dlt.destinations, ...)` before re-adding it — set membership "
+        "is a claim, not a capability."
     )
     assert "mysql" not in TRANSFORM_DESTINATION_TYPES, (
         "mysql is offered as a dbt transformation destination, but no dbt-mysql "
@@ -190,13 +216,132 @@ def test_mysql_specifically_is_no_longer_offered_as_a_transform_destination():
     )
 
 
-# ⚠️ NOT asserted here, and the omission is deliberate: `sqlite`, `databricks`
-# and `synapse` are in `TRANSFORM_DESTINATION_TYPES` with **no adapter
-# installed** (measured with `importlib.util.find_spec` — `pyproject.toml`
-# documents two of the three as deliberately absent while `_build_profile_output`
-# has purpose-built branches for them). A test asserting every offered transform
-# destination has an importable adapter goes RED on three today. It belongs in
-# **core#862** with the save-time refusal, help text and i18n that make the
-# narrowing a product change rather than a silent one — Product is shipping it
-# there with that negative control. Adding a knowingly-red test here, or
-# xfail-ing it, would only obscure which of the two changes is outstanding.
+# ── Ask the layer beneath (core#862, core#865) ───────────────────────────
+#
+# 🚨 The four sets above are hand-maintained CLAIMS about layers they do not
+# control. `"mysql" in SUPPORTED_DESTINATION_TYPES` was True for the life of the
+# entry and meant nothing. Only checks that ask dlt and dbt directly
+# discriminate, and these are the whole reason this file exists.
+#
+# 🔑 **Both were RED before core#862 landed**, measured 2026-09-01 against the
+# core venv on `origin/dev` (dlt 1.21.0). That red is the negative control, and
+# it is written down here because it stops existing once the fix lands — a guard
+# nobody can tell has ever failed is a guard nobody should trust:
+#
+#     dlt factories   advertised 11 -> RESOLVED 9,  ABSENT: mysql, sqlite
+#     dbt adapters    listed     10 -> INSTALLED 7, MISSING: databricks,
+#                                                            sqlite, synapse
+#     controls        hasattr(dlt.destinations, "notareal")     -> False
+#                     find_spec("dbt.adapters.notarealadapter") -> None
+#
+# The controls are what make those four failures facts about those connectors
+# rather than facts about the probe.
+
+
+def test_every_advertised_destination_has_a_dlt_factory():
+    """dlt is asked, not the set. This is what core#865 needed and did not have.
+
+    `build_destination` is an unconditional `getattr(dlt.destinations, type)`,
+    so a member with no factory is not degraded — it raises `AttributeError`
+    before a socket is opened, inside a Celery task, after the run row and the
+    quota charge already exist.
+    """
+    import dlt.destinations as dlt_destinations
+
+    from datanika.services.dlt_runner import DltRunnerService
+
+    # Negative control first: a set-membership check cannot fail, and this is
+    # what shows `hasattr` here discriminates at all.
+    assert not hasattr(dlt_destinations, "notarealdestination")
+
+    absent = sorted(
+        t for t in DltRunnerService.SUPPORTED_DESTINATION_TYPES if not hasattr(dlt_destinations, t)
+    )
+    assert not absent, (
+        f"advertised as dlt destinations but no factory exists: {absent}. "
+        "Every load into one of these raises AttributeError. Ask "
+        "`hasattr(dlt.destinations, t)` before adding a member."
+    )
+
+
+def test_every_supported_adapter_is_actually_installed():
+    """dbt is asked, not the set (core#862).
+
+    `pyproject.toml` documented `dbt-databricks` and `dbt-synapse` as
+    deliberately absent while `SUPPORTED_ADAPTERS` advertised them, and
+    `_build_profile_output` had purpose-built branches writing profiles dbt
+    cannot load. The manifest and the constant disagreed for the life of the
+    project, and nothing could notice.
+    """
+    import importlib.util
+
+    from datanika.services.dbt_project import SUPPORTED_ADAPTERS
+
+    # `mssql` is served by dbt-sqlserver; every other adapter matches its name.
+    module_for = {"mssql": "sqlserver"}
+
+    assert importlib.util.find_spec("dbt.adapters.notarealadapter") is None
+
+    missing = sorted(
+        a
+        for a in SUPPORTED_ADAPTERS
+        if importlib.util.find_spec(f"dbt.adapters.{module_for.get(a, a)}") is None
+    )
+    assert not missing, (
+        f"listed as dbt transform targets but no adapter is installed: {missing}. "
+        "`generate_profiles_yml` would write a profile dbt cannot load, and it "
+        "raises AFTER run.before_execute has charged the tenant's quota. Install "
+        "the adapter before widening this set."
+    )
+
+
+def test_the_ui_never_offers_a_destination_the_runner_would_refuse():
+    """`DESTINATION_TYPES` (what the pickers show) must not exceed dlt's set.
+
+    Two independent literals in two modules describing one capability. This is
+    the binding, and it is the check that would have caught core#865 at any
+    point in the years `mysql` sat in both.
+    """
+    from datanika.services.connection_service import DESTINATION_TYPES
+    from datanika.services.dlt_runner import DltRunnerService
+
+    extra = sorted(DESTINATION_TYPES - DltRunnerService.SUPPORTED_DESTINATION_TYPES)
+    assert not extra, (
+        f"the UI offers {extra} as load destinations, which `build_destination` refuses outright."
+    )
+
+
+def test_the_three_adapterless_types_are_no_longer_transform_targets():
+    """The three core#862 removed, named.
+
+    The intersection test alone would not notice them coming back together, and
+    `sqlite` is the one that has NEVER had an adapter — unlike mysql, which had
+    an abandoned one.
+    """
+    from datanika.services.connection_service import (
+        DESTINATION_TYPES,
+        TRANSFORM_DESTINATION_TYPES,
+    )
+
+    for t in ("sqlite", "databricks", "synapse"):
+        assert t not in TRANSFORM_DESTINATION_TYPES, f"{t} has no installed dbt adapter"
+
+    # Databricks and Synapse ARE loadable — the narrowing is per-capability, and
+    # flattening them to "unsupported" is the over-correction this guards.
+    for t in ("databricks", "synapse"):
+        assert t in DESTINATION_TYPES, (
+            f"{t} is a working dlt LOAD destination; only the dbt transform role "
+            "was withdrawn. Do not delete it from the product."
+        )
+
+
+def test_sqlite_keeps_the_role_it_really_has():
+    """Same shape as the mysql assertion above: guard the withdrawal AND the
+    over-correction, and assert only capabilities that were measured."""
+    from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES
+
+    assert "sqlite" in SOURCE_TYPES, "sqlite remains a valid extract source"
+    assert "sqlite" not in DESTINATION_TYPES, (
+        "dlt has no `sqlite` destination factory either (core#865) — identical "
+        "defect to mysql, one cause, one fix."
+    )

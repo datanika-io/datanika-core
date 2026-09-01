@@ -6,7 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
-from datanika.services.connection_service import get_org_connection
+from datanika.services.connection_service import (
+    TRANSFORM_DESTINATION_TYPES,
+    get_org_connection,
+)
 
 
 class PipelineConfigError(ValueError):
@@ -112,8 +115,23 @@ class PipelineService:
         from "does not exist" — telling them apart turns this into an oracle for
         probing which connection ids are live in other orgs.
         """
-        if get_org_connection(session, org_id, conn_id) is None:
+        conn = get_org_connection(session, org_id, conn_id)
+        if conn is None:
             raise PipelineConfigError(f"Invalid destination connection {conn_id}: must exist")
+        # core#862. Owning the connection is not enough: pipelines always run through dbt,
+        # which needs an installed adapter for the target. Refused HERE rather
+        # than in the picker because `POST /api/v1/pipelines` bypasses every
+        # picker, and refused at SAVE time rather than at run time because
+        # `generate_profiles_yml` raises only after `run.before_execute` has
+        # fired and `start_run` has recorded a run — so a doomed run has already
+        # cost the tenant quota. Naming the type is safe once ownership is
+        # established; the message above deliberately stays vague because it is
+        # reachable by a caller who owns nothing.
+        if conn.connection_type.value not in TRANSFORM_DESTINATION_TYPES:
+            raise PipelineConfigError(
+                f"Connection {conn_id} is a {conn.connection_type.value} destination, "
+                "which has no dbt adapter and cannot be a transformation target"
+            )
 
     @staticmethod
     def validate_models(models) -> None:

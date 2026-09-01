@@ -138,3 +138,28 @@ class BaseState(rx.State):
         if isinstance(exc, ValueError):
             return str(exc)
         return fallback
+
+    async def _deleted_toast(self, key: str, fallback: str):
+        """A translated success toast for a destructive handler (core#804, core#851).
+
+        Every confirmed delete in this product removes a row and says nothing.
+        For a **soft** delete — which all of them are — a row silently vanishing
+        reads far more alarming than the operation is, and the documented
+        consequence is worse than alarm: a Reflex table can render a stale row
+        set right after a successful mutation (core#872), so "the row is still
+        there" is not evidence the delete failed, and the user's natural next
+        move is to click again.
+
+        The lookup goes through the reactive ``I18nState`` dict rather than a
+        hardcoded string, so the eight non-English locales are not silently
+        English here. ``fallback`` is only reached if the key is missing, which
+        the i18n parity test makes impossible — it exists so a missing key
+        degrades to a plain word instead of a ``KeyError`` inside a delete.
+        """
+        from datanika.ui.state.i18n_state import I18nState
+
+        i18n = await self.get_state(I18nState)
+        return rx.toast.success(
+            i18n.translations.get(key, fallback),
+            position="top-right",
+        )

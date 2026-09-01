@@ -269,6 +269,14 @@ class DagState(BaseState):
         await self._load_node_options()
 
     async def add_dependency(self):
+        # core#851. `DagState` was the only state class in the product with no
+        # role check on either of its mutating handlers, and
+        # `test_rbac_enforcement.py`'s EXPECTED_ROLES had no `dag_state` entry,
+        # so nothing had ever looked. Editing the run graph is an editor
+        # action for the same reason saving a pipeline is; removing an edge is
+        # an admin action for the same reason deleting one is.
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         svc = self._get_service()
         up_lookup = self._name_to_id.get(self.form_upstream_type, {})
@@ -313,9 +321,14 @@ class DagState(BaseState):
         await self.load_dependencies()
 
     async def remove_dependency(self, dep_id: int):
+        # See `add_dependency`. The confirmation dialog core#851 adds to
+        # /dag is a claim the client makes; this is the refusal.
+        if not await self._check_role("admin"):
+            return
         org_id = await self._get_org_id()
         svc = self._get_service()
         with get_sync_session() as session:
             svc.remove_dependency(session, org_id, dep_id)
             session.commit()
         await self.load_dependencies()
+        yield await self._deleted_toast("dag.deleted_toast", "Dependency removed")

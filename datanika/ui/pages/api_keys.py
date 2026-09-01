@@ -2,30 +2,12 @@
 
 import reflex as rx
 
+from datanika.ui.components.api_key_row import api_key_row as _key_row
 from datanika.ui.components.layout import page_layout
-from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
+from datanika.ui.state.api_key_state import ApiKeyState
 from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
-
-
-def _key_row(key: ApiKeyItem) -> rx.Component:
-    return rx.table.row(
-        rx.table.cell(key.name),
-        rx.table.cell(key.scopes),
-        rx.table.cell(key.created_at),
-        rx.table.cell(key.last_used_at),
-        rx.table.cell(key.expires_at),
-        rx.table.cell(
-            rx.button(
-                _t["api_keys.revoke"],
-                on_click=ApiKeyState.revoke_api_key(key.id),
-                size="1",
-                color_scheme="red",
-                variant="ghost",
-            ),
-        ),
-    )
 
 
 def api_keys_page() -> rx.Component:

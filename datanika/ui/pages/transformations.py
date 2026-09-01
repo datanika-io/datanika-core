@@ -299,6 +299,68 @@ def transformation_form() -> rx.Component:
     )
 
 
+def _delete_transformation_dialog(t) -> rx.Component:
+    """Ask before deleting a transformation (core#851).
+
+    The reversibility line is the load-bearing sentence here and it is narrower
+    than it looks: deleting the transformation does **not** drop the table dbt
+    already materialised in the warehouse. Without saying so, the safe reading
+    of a red Delete on a page about building tables is that the table goes too,
+    and the user who believes that will not click — or will click and then go
+    looking for data they still have.
+
+    Self-gating on ``can_delete`` — see ``pipelines._delete_pipeline_dialog``.
+    """
+    return rx.cond(
+        AuthState.can_delete,
+        rx.alert_dialog.root(
+            rx.alert_dialog.trigger(
+                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+            ),
+            rx.alert_dialog.content(
+                rx.alert_dialog.title(_t["transformations.delete_title"]),
+                rx.alert_dialog.description(_t["transformations.delete_body"]),
+                rx.vstack(
+                    rx.card(
+                        rx.text("#", t.id, "  ", t.name, size="2", weight="bold"),
+                        rx.text(
+                            t.materialization,
+                            "  ",
+                            t.schema_name,
+                            size="1",
+                            color="var(--gray-9)",
+                        ),
+                    ),
+                    rx.text(
+                        _t["transformations.delete_reversible"],
+                        size="1",
+                        color="var(--gray-9)",
+                    ),
+                    spacing="3",
+                    width="100%",
+                    margin_top="12px",
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            _t["transformations.delete_confirm"],
+                            color_scheme="red",
+                            on_click=TransformationState.delete_transformation(t.id),
+                        ),
+                    ),
+                    spacing="3",
+                    justify="end",
+                    margin_top="16px",
+                ),
+                max_width="480px",
+            ),
+        ),
+    )
+
+
 def transformations_table() -> rx.Component:
     return rx.vstack(
         rx.table.root(
@@ -355,15 +417,7 @@ def transformations_table() -> rx.Component:
                                     variant="outline",
                                     on_click=TransformationState.preview_result(t.id),
                                 ),
-                                rx.cond(
-                                    AuthState.can_delete,
-                                    rx.button(
-                                        _t["common.delete"],
-                                        color_scheme="red",
-                                        size="1",
-                                        on_click=TransformationState.delete_transformation(t.id),
-                                    ),
-                                ),
+                                _delete_transformation_dialog(t),
                                 spacing="2",
                             ),
                         ),

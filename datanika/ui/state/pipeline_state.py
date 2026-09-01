@@ -422,6 +422,7 @@ class PipelineState(BaseState):
             )
             session.commit()
         await self.load_pipelines()
+        yield await self._deleted_toast("pipelines.deleted_toast", "Pipeline deleted")
 
     async def run_pipeline(self, pipeline_id: int):
         if not await self._check_role("editor"):

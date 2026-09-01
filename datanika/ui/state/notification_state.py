@@ -193,6 +193,10 @@ class NotificationState(BaseState):
             await self.load_channels()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to delete channel")
+            # See `ApiKeyState.revoke_api_key`: falling through to the toast
+            # would report a delete that did not happen.
+            return
+        yield await self._deleted_toast("notifications.deleted_toast", "Channel deleted")
 
     async def toggle_channel_active(self, channel_id: int):
         if not await self._check_role("admin"):

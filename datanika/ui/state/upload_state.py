@@ -690,6 +690,12 @@ class UploadState(BaseState):
                         "This upload's source or destination connection was deleted. "
                         "Restore the connection to run it again."
                     )
+                    # `uploads.py` renders `error_message` nowhere (#887), so
+                    # this refusal was invisible: press Run, nothing happens,
+                    # and the sentence explaining why goes to a var no template
+                    # reads. `AuthState.action_error` is the channel the shell
+                    # renders (#744).
+                    auth_state.action_error = self.error_message
                     return
             run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
             self._audit(

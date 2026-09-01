@@ -1,5 +1,6 @@
 {
   "app.name": "Datanika",
+  "app.connection_lost": "انقطع الاتصال — جارٍ إعادة الاتصال. لن تُرسل النقرات حتى يعود.",
   "nav.dashboard": "لوحة التحكم",
   "nav.connections": "الاتصالات",
   "nav.uploads": "التحميلات",

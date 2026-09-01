@@ -6,6 +6,25 @@ on:
   push:
     branches: [master, dev]
 
+  # All five of dev's required checks (lint, test, helm-lint, migration-roundtrip,
+  # image-probe) are jobs in this file, so a merge queue on dev depends entirely on this
+  # trigger. Without it GitHub never starts a run for a queue entry, none of the five is
+  # reported, and the entry sits until check_response_timeout_minutes expires and is
+  # ejected -- a PR that stops progressing with nothing red anywhere. That is strictly
+  # worse than the strict-mode livelock a queue exists to remove, which a human clears in
+  # seconds.
+  #
+  # Deliberately unfiltered by branch: dev is the only branch that will ever carry a queue
+  # (never master -- it needs 1 review, unsatisfiable with a single identity, so a queued
+  # promotion would wait forever looking like progress), and a wrong filter here fails in
+  # exactly the silent direction above.
+  #
+  # Verified end-to-end on datanika-landing before landing here: GitHub reads triggers from
+  # the merge-group ref's OWN tree, so the PR adding this bootstraps itself through the
+  # queue. Guarded by tests/test_deploy/test_merge_queue_triggers.py. (core#904)
+  merge_group:
+    types: [checks_requested]
+
 concurrency:
   # Per-SHA for pushes, per-ref for PRs.
   #
@@ -21,8 +40,18 @@ concurrency:
   #
   # PRs keep cancellation: superseding a PR run is exactly what you want, and no promotion
   # decision rests on it.
+  #
+  # merge_group is the third case and it needs the SAME protection as push, for the same
+  # reason one paragraph up. `github.event_name != 'push'` evaluates TRUE for a merge
+  # group, so before core#904 a queue entry's run was cancellable -- and a cancelled
+  # queue-entry run is not "recompute it", it is the merge silently not happening: nothing
+  # re-runs it, the queue waits out its timeout and ejects the PR.
+  #
+  # This is not theoretical. The merge-group ref is suffixed with the BASE sha, not the PR
+  # head (`refs/heads/gh-readonly-queue/dev/pr-N-<base>`, measured on landing), so two
+  # entries for the same PR against an unchanged base share a group key.
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: ${{ github.event_name != 'push' && github.event_name != 'merge_group' }}
 
 jobs:
   lint:

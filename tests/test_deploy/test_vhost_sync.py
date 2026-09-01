@@ -37,6 +37,8 @@ import re
 import shutil
 import stat
 import subprocess
+import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -151,7 +153,14 @@ exit 0
         _write_lf(self.fake / "configtest", str(rc) + "\n")
 
     # --- run + inspect ----------------------------------------------------------------
-    def run(self) -> subprocess.CompletedProcess[str]:
+    def run(self, script: Path | None = None) -> subprocess.CompletedProcess[str]:
+        """Run the shipped script, or an injected one.
+
+        The override exists for exactly one caller: the control that runs a script
+        *exhibiting* the pre-core#607 defect, to prove the stale-backup scenario below can
+        still go red. Everything else runs the file that ships (core#810).
+        """
+        target = script or SCRIPT
         env = dict(os.environ)
         env["VHOST_SYNC_TEST_ROOT"] = self.root.as_posix()
         # PATH is prepended *inside* bash, in POSIX form — see `_posix_path`.
@@ -159,7 +168,7 @@ exit 0
             [
                 _bash(),
                 "-c",
-                f'export PATH="{_posix_path(self.bin)}:$PATH"; exec bash "{SCRIPT.as_posix()}"',
+                f'export PATH="{_posix_path(self.bin)}:$PATH"; exec bash "{target.as_posix()}"',
             ],
             capture_output=True,
             text=True,
@@ -178,6 +187,122 @@ exit 0
 @pytest.fixture
 def box(tmp_path: Path) -> Harness:
     return Harness(tmp_path)
+
+
+# --------------------------------------------------------------------------------------
+# The stale-backup fixture (core#810). Two independent defects lived here, and the second
+# one is why the first was never noticed.
+# --------------------------------------------------------------------------------------
+
+_STALE_BODY = "# STALE backup from a previous deploy — must never be used\n"
+
+
+def _shell_tmp_dir() -> Path | None:
+    """Where the SCRIPT'S OWN SHELL resolves ``/tmp`` — which on Windows is not Python's.
+
+    Git Bash maps ``/tmp`` to ``%TEMP%`` (``D:\\Temp`` on the dev machine), while Python's
+    ``Path("/tmp")`` is ``\\tmp`` on the current drive — ``D:\\tmp``, a **different**
+    directory that also happens to exist here. So the plant was written somewhere the
+    script under test could never look: on this platform the stale-backup test was
+    **vacuous** at the same time as being **flaky**, for two unrelated reasons.
+
+    Same family as ``_posix_path`` above — a Windows path that looks right to one
+    interpreter and means something else to the other, with no error on either side. Ask the
+    shell rather than guessing; ``pwd -W`` is the Git Bash spelling and ``pwd`` covers Linux.
+    """
+    proc = subprocess.run(
+        [_bash(), "-c", "cd /tmp 2>/dev/null && { pwd -W 2>/dev/null || pwd; }"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    out = proc.stdout.strip()
+    if proc.returncode != 0 or not out:
+        return None
+    path = Path(out)
+    return path if path.is_dir() else None
+
+
+class StalePlant:
+    """A stale backup at the one path the pre-core#607 restore trusted.
+
+    The path is machine-global and fixed, and **must stay that way** — it being predictable
+    is the property under test. A per-run name cannot work: ``sync-vhosts.sh`` hardcodes the
+    two vhost names, so a renamed fixture is no longer at a path the regression would read.
+    Redirecting ``TMPDIR`` is worse: the current script allocates with ``mktemp -d``, which
+    honours it, while the old one used a literal ``/tmp``, which does not — so the test would
+    keep passing and would have stopped testing anything.
+
+    Concurrency is therefore handled in the **lifecycle** instead:
+
+    * **arm-and-verify.** A run that finds no plant at the moment the script ran was never
+      armed, and its silence is not evidence. Counting only outcomes cannot distinguish "the
+      script correctly ignored the stale backup" from "there was nothing to ignore" — those
+      two produced identical output before, which is why this was invisible rather than
+      merely annoying.
+    * **compare-and-delete.** Teardown unlinks only while the file still holds *our* token.
+      Deleting another run's plant is precisely the collision being fixed: it disarms that
+      run, which then passes vacuously.
+
+    Any run's content is a valid temptation, so a plant *overwritten* by a concurrent suite
+    still arms us. Only its **absence** disqualifies.
+    """
+
+    def __init__(self, path: Path, token: str) -> None:
+        self.path = path
+        self.token = token
+
+    @property
+    def armed(self) -> bool:
+        try:
+            return (
+                self.path.is_file() and not self.path.is_symlink() and self.path.stat().st_size > 0
+            )
+        except OSError:
+            return False
+
+    def arm(self) -> bool:
+        try:
+            _write_lf(self.path, _STALE_BODY + self.token)
+        except OSError:
+            return False
+        return self.armed
+
+    def release(self) -> None:
+        try:
+            if self.token in self.path.read_bytes().decode("utf-8"):
+                self.path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+@pytest.fixture
+def stale_plant() -> Iterator[StalePlant]:
+    tmp = _shell_tmp_dir()
+    if tmp is None:
+        pytest.skip("the script's own shell has no usable /tmp to plant a stale backup in")
+    plant = StalePlant(tmp / f"{PROD_LINK}.bak", f"# core810 {os.getpid()} {uuid.uuid4().hex}\n")
+    try:
+        yield plant
+    finally:
+        plant.release()
+
+
+def _run_armed(
+    box: Harness, plant: StalePlant, script: Path | None = None
+) -> subprocess.CompletedProcess[str] | None:
+    """Run with a stale backup verifiably present before AND after the script ran.
+
+    Returns ``None`` when three attempts were all disarmed by a concurrent suite, so the
+    caller skips rather than recording a pass no run earned.
+    """
+    for _ in range(3):
+        if not plant.arm():
+            continue
+        result = box.run(script)
+        if plant.armed:
+            return result
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -321,35 +446,89 @@ def test_configtest_failure_does_not_reload_but_restore_still_verifies(box: Harn
 # --------------------------------------------------------------------------------------
 
 
-def test_a_stale_backup_from_an_earlier_run_is_never_used(box: Harness) -> None:
+def test_a_stale_backup_from_an_earlier_run_is_never_used(
+    box: Harness, stale_plant: StalePlant
+) -> None:
     """A predictable /tmp/<name>.bak let an EARLIER deploy's backup be restored.
 
     The old restore loop was `if [ -f "/tmp/$d.bak" ]`, which trusts anything at that path.
     Here the prod vhost is already current, so THIS run must not touch it — even though a
     stale backup with different content exists where the old code would look.
+
+    See `StalePlant` for why the plant stays at a machine-global path and how two concurrent
+    suites stopped corrupting each other's fixture (core#810).
     """
     _write_lf(box.available / PROD_LINK, REPO_PROD)  # prod already current -> not synced
-    stale = Path("/tmp") / f"{PROD_LINK}.bak"
-    wrote_stale = False
-    try:
-        try:
-            _write_lf(stale, "# STALE backup from a previous deploy — must never be used\n")
-            wrote_stale = True
-        except OSError:  # pragma: no cover - no writable /tmp
-            pytest.skip("no writable /tmp to plant a stale backup in")
+    box.set_configtest(1)  # force the failure path that does the restoring
 
-        box.set_configtest(1)  # force the failure path that does the restoring
-        result = box.run()
-
-        assert result.returncode != 0
-        assert box.content(PROD_LINK) == REPO_PROD, (
-            "a stale /tmp backup was restored over a vhost this run never synced — the "
-            f"restore must only touch files it backed up itself\n{result.stdout}"
+    result = _run_armed(box, stale_plant)
+    if result is None:
+        pytest.skip(
+            "a concurrent suite removed the stale-backup plant on all 3 attempts, so this "
+            "run was never armed and its silence is not evidence (core#810)"
         )
-        assert box.content(STAGING_LINK) == LIVE_STAGING
-    finally:
-        if wrote_stale:
-            stale.unlink(missing_ok=True)
+
+    assert result.returncode != 0
+    assert box.content(PROD_LINK) == REPO_PROD, (
+        "a stale /tmp backup was restored over a vhost this run never synced — the "
+        f"restore must only touch files it backed up itself\n{result.stdout}"
+    )
+    assert box.content(STAGING_LINK) == LIVE_STAGING
+
+
+# A minimal exemplar of the PRE-core#607 restore: it trusts a predictable `/tmp/<name>.bak`
+# and puts it back over a vhost this run never synced. Deliberately NOT a reconstruction of
+# the historical file — it exists solely so the scenario above has something it can catch.
+_VULNERABLE_RESTORE = """#!/usr/bin/env bash
+set -uo pipefail
+ROOT="${VHOST_SYNC_TEST_ROOT:-}"
+ENABLED="${ROOT}/etc/apache2/sites-enabled"
+for d in zapp-datanika-io.conf zstaging-app-datanika-io.conf; do
+  if [ -f "/tmp/$d.bak" ]; then
+    t=$(readlink -f "$ENABLED/$d") && cp "/tmp/$d.bak" "$t" && echo "restored $d from /tmp"
+  fi
+done
+exit 1
+"""
+
+
+def test_the_stale_backup_scenario_can_actually_fail(
+    box: Harness, stale_plant: StalePlant, tmp_path: Path
+) -> None:
+    """The control the scenario above has never had — and it proves two things at once.
+
+    1. **The assertion discriminates.** Run a script that commits the exact defect and the
+       prod vhost comes back holding the stale content, so the scenario's assertion fails.
+       Without this, a green there is consistent with an assertion that cannot fail.
+    2. **The plant is somewhere the script can see it.** This is the half that was broken:
+       the vulnerable script reads `/tmp` *as bash resolves it*. If the plant were still
+       going to Python's `/tmp` — a different directory on Windows — this script would find
+       nothing, restore nothing, and this control would fail. So it is simultaneously the
+       regression test for `_shell_tmp_dir`.
+    """
+    _write_lf(box.available / PROD_LINK, REPO_PROD)
+    vulnerable = tmp_path / "vulnerable-sync-vhosts.sh"
+    _write_exec(vulnerable, _VULNERABLE_RESTORE)
+
+    result = _run_armed(box, stale_plant, script=vulnerable)
+    if result is None:
+        pytest.skip("a concurrent suite disarmed the plant on all 3 attempts (core#810)")
+
+    # ⚠️ Name the PROD vhost. A bare `"restored" in stdout` is satisfied by the STAGING one,
+    # and that is not hypothetical: a 21-byte `/tmp/zstaging-app-datanika-io.conf.bak` from
+    # 2026-08-29 was sitting on the dev machine and passed this assertion while prod was
+    # untouched. Exactly the fossil that made core#607's real restore a six-week no-op, one
+    # layer up — so the control was reading the wrong vhost's success as its own.
+    assert f"restored {PROD_LINK}" in result.stdout, (
+        "the vulnerable exemplar never found the stale PROD backup, so it never committed "
+        "the defect this control exists to catch. The plant is not where the script's own "
+        f"shell resolves /tmp — which is core#810's second half.\nstdout:\n{result.stdout}"
+    )
+    assert box.content(PROD_LINK) != REPO_PROD, (
+        "the vulnerable script restored nothing, so the scenario above would pass against "
+        "code that HAS the defect — its assertion cannot fail and proves nothing"
+    )
+    assert _STALE_BODY.strip() in box.content(PROD_LINK)
 
 
 def test_backup_is_a_regular_file_not_a_symlink(box: Harness) -> None:

@@ -85,7 +85,8 @@ Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset.
 
 ## Idempotency
 POST requests accept an Idempotency-Key header. Same key within 24h \
-returns the cached response.
+returns the cached response. A rejected request is not cached and \
+changes nothing, so you can correct the payload and retry the same key.
 
 ## Tenant Isolation
 API keys are scoped to an organization. All resources are filtered \
@@ -139,6 +140,12 @@ Add an `Idempotency-Key` header to POST requests. If a request with
 the same key was already processed within 24 hours, the original
 response is returned instead of creating a duplicate. Useful when
 retrying after network errors.
+
+A request we **reject** is not cached and leaves nothing behind: no
+part of it is applied, so you can correct the payload and retry under
+the same key. A `?wait=true` trigger that answers 408 or 422 *is*
+cached — the run it describes was really started, and replaying the
+answer is what stops a retry launching a second one.
 
 ```
 POST /api/v1/connections

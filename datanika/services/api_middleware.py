@@ -20,6 +20,8 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session as SASession
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -130,6 +132,69 @@ def _mark_refused(raw_key: str, retry_after: int) -> None:
             credential=RateLimitService.credential_bucket(raw_key),
             retry_after=retry_after,
         )
+
+
+# ---------------------------------------------------------------------------
+# What a non-2xx response does to the transaction (#790)
+# ---------------------------------------------------------------------------
+#
+# This decorator used to commit whenever the handler **returned** and roll back
+# only when it **raised** — and `_error(400, ...)` is a return. So a rejected
+# `PUT` kept whatever the service had already assigned above the validator that
+# rejected it: `update_transformation` and `update_pipeline` assign as they go,
+# so a 400 durably renamed the row it refused to update. QA's AST audit put the
+# exposed surface at 26 non-2xx returns across 20 of the 54 handlers.
+#
+# ⚠️ The guarantee a middleware can deliver is *"nothing since the handler's own
+# last commit"*, not *"nothing at all"*. `trigger_upload`, `trigger_pipeline`
+# and `trigger_transformation` commit mid-request so the Celery task can see the
+# run row before `.delay()`; for those three the two sentences differ, and the
+# run row is meant to survive.
+
+
+def _is_rejection(response: JSONResponse) -> bool:
+    """True when the API refused the request, so its writes must not persist.
+
+    One predicate for both handler paths on purpose — a transaction rule that
+    applies to only one of the two is not a rule. No handler answers 3xx.
+    """
+    return response.status_code >= 400
+
+
+class _HandlerCommitWatch:
+    """Records whether the handler committed durable state of its own.
+
+    Needed for the idempotency cache rather than for the rollback. The three
+    `trigger_*` handlers answer **408** (still running at the timeout) or
+    **422** (terminal, not success), which `_trigger_and_maybe_wait` documents
+    as *results about the run*, not transport rejections — and the run row they
+    describe is already committed. Dropping those from the cache because they
+    are non-2xx would start a **second warehouse run** on the caller's retry,
+    which is the duplication an `Idempotency-Key` exists to prevent.
+
+    Watching `after_commit` answers "did this handler commit?" mechanically,
+    instead of hardcoding a status list that goes stale as handlers change. A
+    target carrying no SQLAlchemy events (a test double) reports ``False``; in
+    production `session` is always a real ``Session``.
+    """
+
+    def __init__(self, session) -> None:
+        self._session = session
+        self._armed = isinstance(session, SASession)
+        self.committed = False
+
+    def _record(self, _session) -> None:
+        self.committed = True
+
+    def __enter__(self) -> _HandlerCommitWatch:
+        if self._armed:
+            event.listen(self._session, "after_commit", self._record)
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        if self._armed:
+            event.remove(self._session, "after_commit", self._record)
+        return False
 
 
 def api_endpoint(
@@ -244,15 +309,20 @@ async def _run_async_handler(
                         cached.headers[k] = v
                     return cached
 
+        watch = _HandlerCommitWatch(session)
         try:
-            response = await handler(request, api_key=api_key, session=session)
-            session.commit()
+            with watch:
+                response = await handler(request, api_key=api_key, session=session)
+            if _is_rejection(response):
+                session.rollback()
+            else:
+                session.commit()
         except Exception:
             logger.exception("API handler error")
             session.rollback()
             return _error(500, "Internal server error")
 
-        if idem_key:
+        if idem_key and (not _is_rejection(response) or watch.committed):
             cache_response(idem_key, response)
 
         for k, v in result.headers().items():
@@ -317,15 +387,20 @@ def _run_sync_handler(
                         cached.headers[k] = v
                     return cached
 
+        watch = _HandlerCommitWatch(session)
         try:
-            response = handler(request, api_key=api_key, session=session)
-            session.commit()
+            with watch:
+                response = handler(request, api_key=api_key, session=session)
+            if _is_rejection(response):
+                session.rollback()
+            else:
+                session.commit()
         except Exception:
             logger.exception("API handler error")
             session.rollback()
             return _error(500, "Internal server error")
 
-        if idem_key:
+        if idem_key and (not _is_rejection(response) or watch.committed):
             cache_response(idem_key, response)
 
         for k, v in result.headers().items():

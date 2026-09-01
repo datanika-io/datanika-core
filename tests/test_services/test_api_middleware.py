@@ -1,8 +1,12 @@
 """Tests for API middleware — auth + rate limiting integration."""
 
+import contextlib
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, select
+from sqlalchemy.orm import Session as SASession
+from sqlalchemy.pool import StaticPool
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -478,3 +482,220 @@ class TestSyncSessionExpireOnCommit:
             assert session.expire_on_commit is False
         finally:
             session.close()
+
+
+# ---------------------------------------------------------------------------
+# core#790 — a response the API rejects must not commit what the handler wrote
+# ---------------------------------------------------------------------------
+#
+# The probe table lives on its own MetaData, deliberately NOT on
+# ``Base.metadata``: adding a table there would put it in front of
+# ``PUBLIC_TABLES`` and the migration round-trip suite, which have nothing to
+# do with this. Core-level inserts give a real transaction with none of the
+# model setup.
+
+_PROBE_META = MetaData()
+_PROBE = Table(
+    "core790_probe",
+    _PROBE_META,
+    Column("id", Integer, primary_key=True),
+    Column("tag", String(64)),
+)
+
+# What the probe handlers do on their next invocation. `_probe_app` sets it.
+_probe_plan: dict = {"status": 200, "commit_midway": False}
+
+
+def _probe_body(session):
+    """Write, optionally commit, write again, then answer with a chosen status.
+
+    Row 1 is the analogue of ``update_transformation`` assigning ``name``
+    before the validator that rejects the request. Row 2 only exists when the
+    handler committed of its own accord first — the shape of ``trigger_upload``
+    and its two siblings, which commit mid-request so the Celery task can see
+    the run row before ``.delay()``.
+    """
+    session.execute(_PROBE.insert().values(id=1, tag="before-any-explicit-commit"))
+    if _probe_plan["commit_midway"]:
+        session.commit()
+        session.execute(_PROBE.insert().values(id=2, tag="after-the-handlers-own-commit"))
+    return JSONResponse({"probe": True}, status_code=_probe_plan["status"])
+
+
+@api_endpoint()
+def probe_sync_handler(request, api_key, session):
+    return _probe_body(session)
+
+
+@api_endpoint()
+async def probe_async_handler(request, api_key, session):
+    return _probe_body(session)
+
+
+@contextlib.contextmanager
+def _probe_app(fake_api_key, rate_limit_ok, *, status, commit_midway=False):
+    """A real SQLite session behind the real middleware, on both handler paths.
+
+    ⚠️ The session is deliberately **not** closed when the middleware's
+    ``with _get_session()`` block exits — the fake context manager just yields
+    it. That is what keeps an uncommitted write alive in the session after the
+    response, so ``_durable_ids``'s rollback is genuinely the discriminator
+    rather than tidying after a close that already rolled back.
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    _PROBE_META.create_all(engine)
+    session = SASession(engine, expire_on_commit=False)
+
+    @contextlib.contextmanager
+    def fake_session():
+        yield session
+
+    _probe_plan.update(status=status, commit_midway=commit_midway)
+    try:
+        with (
+            patch("datanika.services.api_middleware._api_key_svc") as mock_svc,
+            patch("datanika.services.api_middleware._rate_limit_svc") as mock_rl,
+            patch("datanika.services.api_middleware._get_session", fake_session),
+        ):
+            mock_svc.authenticate_api_key.return_value = fake_api_key
+            mock_rl.get_limit_for_org.return_value = 60
+            mock_rl.check_rate_limit.return_value = rate_limit_ok
+            app = Starlette(
+                routes=[
+                    Route("/probe-sync", probe_sync_handler, methods=["GET", "POST"]),
+                    Route("/probe-async", probe_async_handler, methods=["GET", "POST"]),
+                ]
+            )
+            yield TestClient(app), session
+    finally:
+        _probe_plan.update(status=200, commit_midway=False)
+        session.close()
+        engine.dispose()
+
+
+def _durable_ids(session) -> list[int]:
+    """The rows that survive a rollback — i.e. the ones actually committed.
+
+    A merely-dirty row in the identity map reads identically to a committed one
+    without this. core#790's first probe printed "nothing persisted" over data
+    showing the opposite for exactly that reason.
+    """
+    session.rollback()
+    session.expire_all()
+    return [row[0] for row in session.execute(select(_PROBE.c.id).order_by(_PROBE.c.id))]
+
+
+_PATHS = ["/probe-sync", "/probe-async"]
+_HEADERS = {"Authorization": "Bearer etf_validkey"}
+
+
+class TestRejectedResponseIsNotCommitted:
+    """core#790 — ``api_endpoint`` committed when a handler *returned*, and
+    ``_error(400, ...)`` is a return.
+
+    QA's AST audit put the exposed surface at 26 non-2xx returns across 20 of
+    the 54 handlers, so this is a middleware contract rather than two service
+    bugs. The two executed reproductions live in
+    ``test_api_v1_routes.py::TestRejectedUpdateIsAtomic``; these cover the
+    decision itself, on both the sync and async paths, including the case a
+    blanket rollback would break.
+    """
+
+    @pytest.mark.parametrize("path", _PATHS)
+    def test_a_2xx_still_commits_the_handlers_writes(self, fake_api_key, rate_limit_ok, path):
+        """Control. A fix that rolls back too eagerly fails here first."""
+        with _probe_app(fake_api_key, rate_limit_ok, status=200) as (client, session):
+            resp = client.get(path, headers=_HEADERS)
+            assert resp.status_code == 200
+            assert _durable_ids(session) == [1]
+
+    @pytest.mark.parametrize("path", _PATHS)
+    def test_a_rejected_response_rolls_back_the_handlers_writes(
+        self, fake_api_key, rate_limit_ok, path
+    ):
+        with _probe_app(fake_api_key, rate_limit_ok, status=400) as (client, session):
+            resp = client.get(path, headers=_HEADERS)
+            assert resp.status_code == 400
+            assert _durable_ids(session) == [], (
+                "the API rejected this request and committed the handler's writes anyway"
+            )
+
+    @pytest.mark.parametrize("path", _PATHS)
+    def test_an_explicit_commit_inside_the_handler_survives(
+        self, fake_api_key, rate_limit_ok, path
+    ):
+        """``trigger_*`` commit the run row, then may answer 408 or 422.
+
+        Those two statuses are **results** — a run that timed out or failed —
+        and the run row is meant to be durable. So the guarantee this fix can
+        deliver is *"nothing since the handler's last explicit commit"*, which
+        for 51 of the 54 handlers is the same sentence as AC1 and for these
+        three is not. Row 1 must survive; row 2, written after that commit,
+        must not.
+        """
+        with _probe_app(fake_api_key, rate_limit_ok, status=422, commit_midway=True) as (
+            client,
+            session,
+        ):
+            resp = client.get(path, headers=_HEADERS)
+            assert resp.status_code == 422
+            assert _durable_ids(session) == [1]
+
+
+class TestNonSuccessResponseCaching:
+    """core#790 item 4 — the rejection was cached under the Idempotency-Key.
+
+    ``cache_response`` stores whatever status it is handed, so a retry with the
+    same key was answered from cache without running the handler: the caller
+    could not correct their payload and re-submit under that key for the 24 h
+    TTL.
+
+    🚨 The obvious fix — cache 2xx only — introduces a **duplicate run**. The
+    three ``trigger_*`` endpoints are POSTs that create and commit a run and
+    can then answer 408/422; dropping those from the cache means a retry starts
+    a second warehouse run, which is the exact duplication an Idempotency-Key
+    exists to prevent. The discriminator is therefore *did the handler commit*,
+    not the status code alone.
+    """
+
+    def _post(self, fake_api_key, rate_limit_ok, *, status, commit_midway=False):
+        with (
+            _probe_app(fake_api_key, rate_limit_ok, status=status, commit_midway=commit_midway) as (
+                client,
+                _session,
+            ),
+            patch("datanika.services.idempotency.cache_response") as cache,
+            patch("datanika.services.idempotency.get_cached_response", return_value=None),
+        ):
+            resp = client.post(
+                "/probe-sync", headers={**_HEADERS, "Idempotency-Key": "core790-key"}
+            )
+        return resp, cache
+
+    def test_a_successful_post_is_cached(self, fake_api_key, rate_limit_ok):
+        """Control — the feature still works."""
+        resp, cache = self._post(fake_api_key, rate_limit_ok, status=201)
+        assert resp.status_code == 201
+        assert cache.call_count == 1
+
+    def test_a_rejected_post_is_not_cached(self, fake_api_key, rate_limit_ok):
+        resp, cache = self._post(fake_api_key, rate_limit_ok, status=400)
+        assert resp.status_code == 400
+        assert cache.call_count == 0, (
+            "a 400 cached under the caller's key answers their corrected retry "
+            "from cache for the whole TTL"
+        )
+
+    def test_a_non_2xx_over_a_committed_write_is_still_cached(self, fake_api_key, rate_limit_ok):
+        """The anti-regression, and the proof the commit watch actually fires.
+
+        A `cache 2xx only` implementation returns 0 here and ships a duplicate
+        run on every retried `?wait=true` trigger that timed out.
+        """
+        resp, cache = self._post(fake_api_key, rate_limit_ok, status=422, commit_midway=True)
+        assert resp.status_code == 422
+        assert cache.call_count == 1

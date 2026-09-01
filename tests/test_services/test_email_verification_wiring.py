@@ -105,7 +105,7 @@ class TestSignupSendsTheVerificationMail:
 
         user = user_svc.register_user(db_session, "fresh@example.com", "password123", "Fresh")
 
-        with patch("datanika.services.email_verification.send_verification_email_task") as task:
+        with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
             sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
 
         assert sent is VerificationMailResult.QUEUED
@@ -131,7 +131,7 @@ class TestSignupSendsTheVerificationMail:
 
         user = user_svc.register_user(db_session, "nosmtp@example.com", "password123", "No SMTP")
 
-        with patch("datanika.services.email_verification.send_verification_email_task") as task:
+        with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
             sent = request_email_verification(user.id, user.email, auth, smtp_host="")
 
         assert sent is VerificationMailResult.NO_RELAY
@@ -150,7 +150,7 @@ class TestSignupSendsTheVerificationMail:
 
         user = user_svc.register_user(db_session, "broker@example.com", "password123", "Broker")
 
-        with patch("datanika.services.email_verification.send_verification_email_task") as task:
+        with patch("datanika.tasks.email_tasks.send_verification_email_task") as task:
             task.delay.side_effect = OSError("broker unreachable")
             sent = request_email_verification(user.id, user.email, auth, smtp_host="smtp.test")
 

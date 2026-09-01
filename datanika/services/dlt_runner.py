@@ -1202,7 +1202,23 @@ class DltRunnerService:
         if connection_type not in self.SUPPORTED_DESTINATION_TYPES:
             raise DltRunnerError(f"Unsupported destination type: {connection_type}")
 
-        factory = getattr(dlt.destinations, connection_type)
+        factory = getattr(dlt.destinations, connection_type, None)
+        if factory is None:
+            # core#865. `mysql` and `sqlite` are in SUPPORTED_DESTINATION_TYPES
+            # and dlt ships no destination for either, so this used to be a bare
+            # `AttributeError: module 'dlt.destinations' has no attribute
+            # 'mysql'` raised from inside a Celery task — which reads as a dlt
+            # bug rather than as us advertising something we do not have.
+            #
+            # ⚠️ The entries stay. Withdrawing an advertised capability is a
+            # product decision (core#865, and core#862 for the SUPPORTED_ADAPTERS
+            # twin), so what changes here is only that the refusal names its
+            # cause. tests/test_services/test_supported_sets_resolve.py holds the
+            # list, asserts it only ever shrinks, and fails on a NEW one.
+            raise DltRunnerError(
+                f"Destination type '{connection_type}' is advertised but dlt ships no "
+                f"destination for it. Choose another destination for this pipeline."
+            )
         kwargs: dict = {"credentials": self._to_dlt_credentials(connection_type, config)}
 
         # ClickHouse: pass table_engine_type for cluster support

@@ -50,6 +50,27 @@ of the wrong thing**.
   real — it just recorded something other than what was claimed. **When the claim is about what a
   user sees, the renderer outranks the schema, and production outranks the renderer.**
 
+- **An exit code records the wrapper's fate, not the suite's verdict.** In one session **four**
+  background runs reported **`exit code 0`** while their own final line read `1 failed, 4697 passed`.
+  That `1` was not incidental — it was a *second, older copy* of the destination contract asserting
+  `infer_direction("mysql") == BOTH`, green for the life of the project while asserting the exact bug
+  [#862](https://github.com/datanika-io/datanika-core/issues/862) removes. The mechanism is mundane
+  and will recur: a wrapper ending `... | tail -6` reports **`tail`'s** status, and `set -uo pipefail`
+  *without* `-e` does not propagate the failure either. **Read the summary line; never the code.** A
+  run is green when you have seen the words `0 failed` — better still, when the count matches one you
+  predicted before running it.
+- **Targeted tests cannot find a contract you did not know was duplicated.** Every targeted run for
+  #862 was green; only the full suite found the second copy, because the whole defect was *a file
+  nobody thought to look in*. Before merging a change to a shared contract, grep for every assertion
+  site (`grep -rn <symbol> tests/`) **and** run the full suite once. The targeted run tells you your
+  change works; it cannot tell you what else believed the old contract.
+- **A negative probe proves only what it probed.** `hasattr(dlt.destinations, "mysql") is False` does
+  **not** mean dlt cannot write to MySQL — it means there is no destination *of that name*. dlt writes
+  to MySQL through its `sqlalchemy` destination; our `build_destination` resolves by name and so never
+  asks. #862's narrowing is therefore a statement about **our resolution strategy**, not about dlt's
+  limits, and it is one careless step from being read backwards by whoever next tries to "restore"
+  MySQL. When a probe comes back negative, write down precisely what it probed.
+
 ## 2. Count the instruction, not the phrase
 
 A document corrected to *deny* an old behaviour still *contains* the old words. The connector guides

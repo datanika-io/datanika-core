@@ -43,7 +43,14 @@ from datanika.services.dlt_runner import SOURCE_DRIVERNAME_MAP, DltRunnerService
 #: Engineering records the gap here rather than deleting the entries on its own
 #: authority. An entry that starts resolving must come out of this set in the
 #: same change, or the guard goes green over a claim nobody re-checked.
-KNOWN_UNRESOLVABLE_DESTINATIONS = {"mysql", "sqlite"}
+#: ✅ **Empty, and it got here the way the mechanism intends.** It held
+#: ``{"mysql", "sqlite"}`` when written; Product withdrew both from
+#: ``SUPPORTED_DESTINATION_TYPES`` hours later (core#862 / core#865), and
+#: ``test_the_known_gap_list_has_not_gone_stale`` went red demanding this edit
+#: rather than sitting green over a claim nobody re-checked. Leave it empty and
+#: leave the assertions: an empty set makes ``missing <= KNOWN`` mean "no
+#: advertised destination lacks a factory", which is the invariant.
+KNOWN_UNRESOLVABLE_DESTINATIONS: set[str] = set()
 
 
 class TestEverySourceDialectIsRegistered:
@@ -93,6 +100,12 @@ class TestEveryDestinationTypeHasAFactory:
         An entry that starts resolving — a dlt release, a plugin — must leave
         this set in the same change. Without this assertion the allowlist is
         green forever and stops describing anything.
+
+        ⚠️ **Vacuous while the set is empty, and that is the correct state.** It
+        constrains any future repopulation: put a name in the allowlist that
+        actually resolves and this goes red. The non-vacuous half of the pair is
+        its sibling, which with an empty set reads "every advertised destination
+        has a factory".
         """
         _, missing = _walk_destinations()
         assert missing >= KNOWN_UNRESOLVABLE_DESTINATIONS, (
@@ -141,8 +154,18 @@ def _walk_destinations() -> tuple[set[str], set[str]]:
 TESTS_DIR = pathlib.Path(__file__).parent.parent
 
 #: The name a `@patch("datanika.services.dlt_runner.dlt")` argument conventionally
-#: takes, so `<mock>.destinations.<x>` is the shape being looked for.
+#: takes, so `<mock>.destinations.<x>.<suffix>` is the shape being looked for.
 _MOCK_NAME = "mock_dlt"
+
+#: Suffixes that make the access an assertion the destination **works**.
+#:
+#: ⚠️ Naming them is the whole precision of this guard. Merely *touching*
+#: `mock_dlt.destinations.mysql` is legitimate — `test_uses_correct_source_
+#: destination_types` asserts `.call_count == 0` on it, i.e. that the source
+#: type did NOT leak into the destination, which is the opposite claim. A guard
+#: that flagged that would be red on correct code, and the natural response to a
+#: guard nobody can satisfy is to delete it.
+_ASSERTS_IT_WORKS = ("return_value", "side_effect")
 
 
 class TestNoMockAssertsADestinationThatDoesNotExist:
@@ -171,6 +194,21 @@ class TestNoMockAssertsADestinationThatDoesNotExist:
         assert "postgres" in _mocked_destination_names(), (
             "the scan found no `mock_dlt.destinations.postgres`, so it is not "
             "looking at what it claims to and its silence proves nothing"
+        )
+
+    def test_asserting_a_destination_was_not_called_is_not_flagged(self):
+        """Precision control, against real code rather than a fixture.
+
+        `test_dlt_runner.py::test_uses_correct_source_destination_types` writes
+        `assert mock_dlt.destinations.mysql.call_count == 0` — it asserts the
+        source type did **not** leak into the destination, which is the opposite
+        of claiming mysql works. `mysql` is not a real dlt destination, so a
+        guard keyed on the mere mention would be red on correct code, and the
+        natural response to a guard nobody can satisfy is to delete it.
+        """
+        assert "mysql" not in _mocked_destination_names(), (
+            "the scan flags an access that only asserts the destination was never "
+            "used, so it is red on correct code"
         )
 
     def test_every_mocked_destination_name_really_exists(self):
@@ -205,12 +243,17 @@ def _mocked_destination_names(*, with_files: bool = False):
         except SyntaxError:  # pragma: no cover - a broken test file is its own failure
             continue
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Attribute)
-                and isinstance(node.value, ast.Attribute)
-                and node.value.attr == "destinations"
-                and isinstance(node.value.value, ast.Name)
-                and node.value.value.id == _MOCK_NAME
+            # mock_dlt . destinations . <name> . <suffix>
+            if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute)):
+                continue
+            middle = node.value
+            if not (
+                isinstance(middle.value, ast.Attribute)
+                and middle.value.attr == "destinations"
+                and isinstance(middle.value.value, ast.Name)
+                and middle.value.value.id == _MOCK_NAME
             ):
-                found.setdefault(node.attr, set()).add(path.name)
+                continue
+            if node.attr in _ASSERTS_IT_WORKS or node.attr.startswith("assert_called"):
+                found.setdefault(middle.attr, set()).add(path.name)
     return found if with_files else set(found)

@@ -126,3 +126,20 @@ it to skip the suite on a branch whose content you have edited; that is what the
 
 ⚠️ `update_method` defaults to **`merge`**, which puts a merge commit on your feature branch. Pass
 `rebase` explicitly — this repo keeps feature branches linear and merges them with `--rebase`.
+
+**Corollary — after a rebase, the checks API answers for the *old* head for a few seconds.**
+Observed at `10:12:00Z` on #906: `gh pr view --json statusCheckRollup` reported all five required
+checks `SUCCESS` immediately after a server-side rebase had replaced the head. Those conclusions
+belonged to the **previous** SHA; the new one had no runs yet. `mergeStateStatus` was `UNKNOWN`, not
+`BEHIND`, so the stale-ness was not visible there either.
+
+GitHub refused the resulting merge (`add the --auto flag … or --admin`), which is the only reason it
+was safe. **An automation that passes `--admin` would have merged a tree no check had run against**,
+and it would have looked like a green merge. So:
+
+- Gate a merge on `mergeStateStatus == CLEAN` (or `UNSTABLE`) — never on the rollup alone.
+- Treat `UNKNOWN` as *pending*, never as *ready*: it means GitHub is still computing.
+- Re-read the rollup **after** confirming the head SHA is the one you expect.
+
+This is rule 3 wearing different clothes: there, a watch was keyed to a SHA that got rewritten; here,
+a *verdict* was keyed to one. Both times the stale answer was the reassuring one.

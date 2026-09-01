@@ -373,6 +373,12 @@ listing. **Read the rows back with a query.**
 
 ## 17. Process
 
+> ⚠️ **This is not the last section — §18 and §19 follow.** They were appended after this one
+> because renumbering would break the §-references in `ci.yml`, `e2e/scripts/`, and several tests.
+> The pointer is here because a heading that reads like an ending is how
+> `PLAN_HUMAN_LOCKERS.md` hid six live items below its "Completed" section: the document was not
+> wrong, it just put live content where the reader had already stopped looking.
+
 - Every QA task has a GitHub issue **in the repository it touches**; cross-repo test infrastructure
   goes in the repository holding the harness.
 - Branch `<issue>-<slug>`; PR targets `dev`; title and commits carry `[QA]`.

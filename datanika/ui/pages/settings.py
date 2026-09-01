@@ -62,6 +62,84 @@ def account_card() -> rx.Component:
                     width="100%",
                 ),
             ),
+            # core#700 AC4. The only surface anywhere that reflects
+            # `users.email_verified`. `/login?verified=1` reports the click, not
+            # the state, so a user who missed that one redirect had no way to
+            # learn their address was never confirmed.
+            #
+            # Rendered only when unverified: a green "confirmed" badge on every
+            # account forever is noise, and the actionable case is the other one.
+            rx.cond(
+                ~AccountState.email_verified,
+                rx.vstack(
+                    rx.callout(
+                        rx.vstack(
+                            rx.text(_t["account.email_unverified"], weight="medium"),
+                            rx.text(
+                                _t["account.email_unverified_help"],
+                                size="2",
+                            ),
+                            spacing="1",
+                            align="start",
+                        ),
+                        icon="mail-warning",
+                        color_scheme="amber",
+                        width="100%",
+                    ),
+                    rx.hstack(
+                        rx.button(
+                            _t["account.resend_verification"],
+                            on_click=AccountState.resend_verification,
+                            size="2",
+                            variant="outline",
+                        ),
+                        rx.text(AccountState.account_email, size="2", color="gray"),
+                        align="center",
+                        spacing="3",
+                    ),
+                    # Every outcome renders. A branch that covered only the
+                    # happy path would leave a failed resend looking exactly
+                    # like a successful one, which is core#700 itself.
+                    rx.cond(
+                        AccountState.resend_state == "queued",
+                        rx.callout(
+                            _t["account.resend_queued"],
+                            icon="circle_check",
+                            color_scheme="green",
+                            width="100%",
+                        ),
+                    ),
+                    rx.cond(
+                        AccountState.resend_state == "no_relay",
+                        rx.callout(
+                            _t["account.resend_no_relay"],
+                            icon="info",
+                            color_scheme="gray",
+                            width="100%",
+                        ),
+                    ),
+                    rx.cond(
+                        AccountState.resend_state == "failed",
+                        rx.callout(
+                            _t["account.resend_failed"],
+                            icon="triangle_alert",
+                            color_scheme="red",
+                            width="100%",
+                        ),
+                    ),
+                    rx.cond(
+                        AccountState.resend_state == "rate_limited",
+                        rx.callout(
+                            _t["account.resend_rate_limited"],
+                            icon="clock",
+                            color_scheme="amber",
+                            width="100%",
+                        ),
+                    ),
+                    spacing="2",
+                    width="100%",
+                ),
+            ),
             rx.form(
                 rx.vstack(
                     rx.text(

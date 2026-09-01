@@ -42,13 +42,23 @@ defect as a guard that passes because it looks at nothing.
 
 Usage
 -----
-Prometheus binds to 127.0.0.1 on the app box, so run it there or over a tunnel::
+Prometheus is bound to **127.0.0.1** on the app box, so this has to run there.
+It needs all three files, not just the script, so ship the trio and run in place
+— this is the exact invocation that produced ``docs/slo_baseline.md``::
 
-    ssh -i ~/.ssh/id_ed25519 root@185.25.22.188 \\
-        'python3 -' < scripts/slo_report.py            # needs the .md + .yml too
+    tar cf - scripts/slo_report.py docs/slo_targets.md docs/slo_instruments.yml \\
+      | ssh -i ~/.ssh/id_ed25519 root@185.25.22.188 \\
+          'rm -rf /tmp/slo && mkdir -p /tmp/slo && cd /tmp/slo && tar xf - \\
+           && python3 scripts/slo_report.py'
 
-    python scripts/slo_report.py --prometheus http://127.0.0.1:9090
-    python scripts/slo_report.py --offline              # registry audit, no network
+⚠️ From Git Bash on Windows use **Windows** OpenSSH
+(``/c/Windows/System32/OpenSSH/ssh.exe -i C:/Users/User/.ssh/id_ed25519``); MSYS
+``ssh`` fails ``Permission denied (publickey)`` against this key.
+
+Offline, for a registry audit with no network — every SLO comes back NO_VERDICT
+and the exit code is 2, which is the correct answer to "what did we measure?"::
+
+    python scripts/slo_report.py --offline
 """
 
 from __future__ import annotations

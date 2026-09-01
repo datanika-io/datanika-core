@@ -370,6 +370,7 @@
   "dag.ph_name": "Name",
   "dag.check_timeframe": "Check Timeframe",
   "models.no_models": "No models found. Run an upload or transformation to populate the catalog.",
+  "models.no_models_after_load": "No models found, but a previous run loaded rows. Open that run and check its log — the destination schema it wrote to may have been deleted, renamed, or set incorrectly on the connection.",
   "models.origin": "Origin",
   "models.table_name": "Table Name",
   "models.schema": "Schema",

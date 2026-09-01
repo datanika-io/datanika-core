@@ -161,6 +161,67 @@ def schedule_form() -> rx.Component:
     )
 
 
+def _delete_schedule_dialog(s) -> rx.Component:
+    """Ask before deleting a schedule (core#851).
+
+    A schedule has no name of its own, so the dialog identifies it by id plus
+    **what it triggers and when** — that is the pair a human recognises, and a
+    row reading only ``#7`` is exactly the bare-identifier defect core#805 was
+    about.
+
+    The body says the target survives. Deleting a schedule and deleting the
+    pipeline it runs are one keystroke apart in this table, and the whole
+    purpose of the dialog is to make that distinction before the click rather
+    than after it.
+
+    Self-gating on ``can_delete`` — see ``pipelines._delete_pipeline_dialog``.
+    """
+    return rx.cond(
+        AuthState.can_delete,
+        rx.alert_dialog.root(
+            rx.alert_dialog.trigger(
+                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+            ),
+            rx.alert_dialog.content(
+                rx.alert_dialog.title(_t["schedules.delete_title"]),
+                rx.alert_dialog.description(_t["schedules.delete_body"]),
+                rx.vstack(
+                    rx.card(
+                        rx.text("#", s.id, "  ", s.target_name, size="2", weight="bold"),
+                        rx.text(
+                            s.cron_expression,
+                            "  ",
+                            s.timezone,
+                            size="1",
+                            color="var(--gray-9)",
+                        ),
+                    ),
+                    rx.text(_t["schedules.delete_reversible"], size="1", color="var(--gray-9)"),
+                    spacing="3",
+                    width="100%",
+                    margin_top="12px",
+                ),
+                rx.flex(
+                    rx.alert_dialog.cancel(
+                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    ),
+                    rx.alert_dialog.action(
+                        rx.button(
+                            _t["schedules.delete_confirm"],
+                            color_scheme="red",
+                            on_click=ScheduleState.delete_schedule(s.id),
+                        ),
+                    ),
+                    spacing="3",
+                    justify="end",
+                    margin_top="16px",
+                ),
+                max_width="480px",
+            ),
+        ),
+    )
+
+
 def schedules_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
@@ -224,15 +285,7 @@ def schedules_table() -> rx.Component:
                                     on_click=ScheduleState.toggle_schedule(s.id),
                                 ),
                             ),
-                            rx.cond(
-                                AuthState.can_delete,
-                                rx.button(
-                                    _t["common.delete"],
-                                    color_scheme="red",
-                                    size="1",
-                                    on_click=ScheduleState.delete_schedule(s.id),
-                                ),
-                            ),
+                            _delete_schedule_dialog(s),
                             spacing="2",
                         ),
                     ),

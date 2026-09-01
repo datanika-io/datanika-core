@@ -237,6 +237,74 @@ def add_dependency_form() -> rx.Component:
     )
 
 
+def _remove_dependency_dialog(d) -> rx.Component:
+    """Ask before removing a dependency edge (core#851).
+
+    The consequence here is the least visible of the ten and the most
+    expensive: nothing breaks, nothing errors, and no row disappears from any
+    other page. The downstream job simply stops waiting for the upstream one
+    and starts running against whatever data happens to be there — a silently
+    wrong result rather than a failure. So the dialog names both ends of the
+    edge, since ``#12`` identifies an edge to nobody.
+
+    ⚠️ No ``AuthState`` gate here, and that is the current state of this page
+    rather than a decision: ``/dag`` renders no role gates at all today. The
+    real protection added alongside this dialog is server-side —
+    ``DagState.remove_dependency`` was the one persisted destructive handler in
+    the product with no ``_check_role`` call, so before core#851 a viewer could
+    delete an edge. A dialog would have been a claim the client makes; the
+    handler check is the refusal. Adding the *visibility* gates to this page
+    means gating its create form too, which is core#313's lane — tracked
+    separately.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                rx.icon("trash-2", size=14),
+                variant="ghost",
+                color_scheme="red",
+                size="1",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["dag.delete_title"]),
+            rx.alert_dialog.description(_t["dag.delete_body"]),
+            rx.vstack(
+                rx.card(
+                    rx.text("#", d.id, size="2", weight="bold"),
+                    rx.hstack(
+                        rx.text(d.upstream_name, size="2"),
+                        rx.icon("arrow-right", size=14),
+                        rx.text(d.downstream_name, size="2"),
+                        spacing="2",
+                        align="center",
+                    ),
+                ),
+                rx.text(_t["dag.delete_reversible"], size="1", color="var(--gray-9)"),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(
+                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["dag.delete_confirm"],
+                        color_scheme="red",
+                        on_click=DagState.remove_dependency(d.id),
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
+        ),
+    )
+
+
 def dependency_table() -> rx.Component:
     return rx.table.root(
         rx.table.header(
@@ -258,15 +326,7 @@ def dependency_table() -> rx.Component:
                     rx.table.cell(rx.icon("arrow-right", size=14)),
                     rx.table.cell(rx.text(d.downstream_name)),
                     rx.table.cell(rx.text(d.check_timeframe_display)),
-                    rx.table.cell(
-                        rx.button(
-                            rx.icon("trash-2", size=14),
-                            on_click=DagState.remove_dependency(d.id),
-                            variant="ghost",
-                            color_scheme="red",
-                            size="1",
-                        ),
-                    ),
+                    rx.table.cell(_remove_dependency_dialog(d)),
                 ),
             ),
         ),

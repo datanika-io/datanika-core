@@ -355,3 +355,4 @@ class ScheduleState(BaseState):
             )
             session.commit()
         await self.load_schedules()
+        yield await self._deleted_toast("schedules.deleted_toast", "Schedule deleted")

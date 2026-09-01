@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.config import settings
+from datanika.ui.components.api_key_row import api_key_row
 from datanika.ui.components.billing_preview_modal import billing_preview_modal
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
@@ -179,6 +180,66 @@ def org_profile_card() -> rx.Component:
     )
 
 
+def _remove_member_dialog(member: MemberItem) -> rx.Component:
+    """Ask before evicting somebody (core#851).
+
+    This is the only destructive control in the product that takes something
+    away from a **different person**, immediately, and it fired on the first
+    click. The dialog names the member by id *and* email, because the members
+    table is the one place where two rows can look alike at a glance — same
+    role, similar name — and the id is what an automated caller aims by.
+
+    ⚠️ The gate stays at the call site (``rx.cond(member.can_manage, …)``)
+    rather than moving in here, unlike the resource pages. ``can_manage`` is a
+    **per-row** value computed in ``load_settings`` from the same predicates the
+    service enforces, so it is not a page-wide ``AuthState`` var that a helper
+    could re-read; folding it in would mean passing the row's own permission
+    into a component that then re-tests it. ``settings`` is not one of the
+    ``RESOURCE_PAGES`` the lexical gate-scan in ``test_rbac_ui_visibility.py``
+    walks, so nothing is lost by leaving it outside.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                _t["settings.remove"],
+                size="1",
+                color_scheme="red",
+                variant="ghost",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["settings.remove_member_title"]),
+            rx.alert_dialog.description(_t["settings.remove_member_body"]),
+            rx.vstack(
+                rx.card(
+                    rx.text("#", member.id, "  ", member.email, size="2", weight="bold"),
+                    rx.text(member.role, size="1", color="var(--gray-9)"),
+                ),
+                rx.text(_t["settings.remove_member_reversible"], size="1", color="var(--gray-9)"),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(
+                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["settings.remove_member_confirm"],
+                        color_scheme="red",
+                        on_click=SettingsState.remove_member(member.id),
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
+        ),
+    )
+
+
 def member_row(member: MemberItem) -> rx.Component:
     """One row of the members table, rendered for what the viewer may do.
 
@@ -221,13 +282,7 @@ def member_row(member: MemberItem) -> rx.Component:
                 ),
                 rx.cond(
                     member.can_manage,
-                    rx.button(
-                        _t["settings.remove"],
-                        on_click=SettingsState.remove_member(member.id),
-                        size="1",
-                        color_scheme="red",
-                        variant="ghost",
-                    ),
+                    _remove_member_dialog(member),
                     rx.fragment(),
                 ),
             ),
@@ -485,22 +540,9 @@ def backup_restore_card() -> rx.Component:
 
 
 def _api_key_row(key: ApiKeyItem) -> rx.Component:
-    return rx.table.row(
-        rx.table.cell(key.name),
-        rx.table.cell(key.scopes),
-        rx.table.cell(key.created_at),
-        rx.table.cell(key.last_used_at),
-        rx.table.cell(key.expires_at),
-        rx.table.cell(
-            rx.button(
-                _t["api_keys.revoke"],
-                on_click=ApiKeyState.revoke_api_key(key.id),
-                size="1",
-                color_scheme="red",
-                variant="ghost",
-            ),
-        ),
-    )
+    """Delegated to the shared component so /api-keys and this card cannot
+    describe the same Revoke button differently (core#851)."""
+    return api_key_row(key)
 
 
 def api_keys_card() -> rx.Component:
@@ -578,6 +620,63 @@ def api_keys_card() -> rx.Component:
     )
 
 
+def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
+    """Ask before deleting an alerting channel (core#851).
+
+    Two consequences the bare trash icon stated neither of. Deleting the
+    channel stops the org's alerts for the events it carried — the failure this
+    hides is the *next* failed run, unnoticed. And the row holds the Slack
+    webhook URL or the Telegram bot token; those are write-only in the form and
+    are not shown again, so re-creating the channel means going back to the
+    third-party console for a value the product cannot give back.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                rx.icon("trash_2", size=14),
+                variant="ghost",
+                size="1",
+                color_scheme="red",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["notifications.delete_title"]),
+            rx.alert_dialog.description(_t["notifications.delete_body"]),
+            rx.vstack(
+                rx.card(
+                    rx.text("#", ch.id, "  ", ch.name, size="2", weight="bold"),
+                    rx.text(ch.channel_type, size="1", color="var(--gray-9)"),
+                ),
+                rx.callout(
+                    _t["notifications.delete_secret"],
+                    icon="triangle_alert",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(
+                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["notifications.delete_confirm"],
+                        color_scheme="red",
+                        on_click=NotificationState.delete_channel(ch.id),
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
+        ),
+    )
+
+
 def channel_row(ch: ChannelItem) -> rx.Component:
     return rx.table.row(
         rx.table.cell(ch.name),
@@ -600,13 +699,7 @@ def channel_row(ch: ChannelItem) -> rx.Component:
                     variant="ghost",
                     size="1",
                 ),
-                rx.button(
-                    rx.icon("trash_2", size=14),
-                    on_click=NotificationState.delete_channel(ch.id),
-                    variant="ghost",
-                    size="1",
-                    color_scheme="red",
-                ),
+                _delete_channel_dialog(ch),
                 spacing="1",
             ),
         ),

@@ -502,6 +502,7 @@ class TransformationState(BaseState):
             )
             session.commit()
         await self.load_transformations()
+        yield await self._deleted_toast("transformations.deleted_toast", "Transformation deleted")
 
     async def preview_result(self, transformation_id: int):
         """Compile SQL via dbt, add LIMIT 5, execute against destination, show results."""

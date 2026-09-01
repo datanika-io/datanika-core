@@ -653,13 +653,7 @@ class UploadState(BaseState):
             )
             session.commit()
         await self.load_uploads()
-        from datanika.ui.state.i18n_state import I18nState
-
-        i18n = await self.get_state(I18nState)
-        yield rx.toast.success(
-            i18n.translations.get("uploads.deleted_toast", "Upload deleted"),
-            position="top-right",
-        )
+        yield await self._deleted_toast("uploads.deleted_toast", "Upload deleted")
 
     async def run_upload(self, upload_id: int):
         if not await self._check_role("editor"):

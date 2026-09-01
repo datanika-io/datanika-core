@@ -360,6 +360,7 @@ class SettingsState(BaseState):
             return
         self.error_message = ""
         await self.load_settings()
+        yield await self._deleted_toast("settings.member_removed_toast", "Member removed")
 
     def set_transfer_to_email(self, value: str):
         self.transfer_to_email = value

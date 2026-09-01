@@ -111,6 +111,15 @@ _KEY_RE = re.compile(r'_t\["([^"]+)"\]')
 # `test_no_orphan_keys_in_json` is to delete the key — which silently drops the
 # translation and leaves the fallback English string for all nine locales.
 _STATE_KEY_RE = re.compile(r'translations(?:\.get\(|\[)"([^"]+)"')
+# core#851. Nine delete handlers now reach their toast string through
+# `BaseState._deleted_toast("<key>", "<fallback>")` rather than by touching
+# `translations` themselves, so `_STATE_KEY_RE` no longer sees them. Left
+# unfixed, `test_no_orphan_keys_in_json` reports every `*.deleted_toast` key as
+# unused — and the documented remedy for an orphan is to *delete the key*, which
+# would have silently dropped nine translations across nine locales and left
+# every non-English user reading the English fallback. A key-usage scanner is
+# only as wide as the idioms it knows; adding an indirection is adding an idiom.
+_TOAST_KEY_RE = re.compile(r'_deleted_toast\(\s*"([^"]+)"')
 
 
 def _collect_keys_from_code() -> set[str]:
@@ -120,6 +129,7 @@ def _collect_keys_from_code() -> set[str]:
         text = py_file.read_text(encoding="utf-8")
         keys.update(_KEY_RE.findall(text))
         keys.update(_STATE_KEY_RE.findall(text))
+        keys.update(_TOAST_KEY_RE.findall(text))
     return keys
 
 

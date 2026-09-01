@@ -1305,15 +1305,9 @@ class ConnectionState(BaseState):
         await self.load_connections()
         # Nothing told the user the delete happened beyond a row vanishing, and
         # for a *reversible* soft delete that reads far scarier than it is
-        # (core#804). Translated from the reactive dict rather than hardcoded,
-        # so the eight non-English locales are not silently English here.
-        from datanika.ui.state.i18n_state import I18nState
-
-        i18n = await self.get_state(I18nState)
-        yield rx.toast.success(
-            i18n.translations.get("connections.deleted_toast", "Connection retired"),
-            position="top-right",
-        )
+        # (core#804). core#851 moved the body to `BaseState._deleted_toast` when
+        # six more handlers needed the same three lines.
+        yield await self._deleted_toast("connections.deleted_toast", "Connection retired")
 
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""

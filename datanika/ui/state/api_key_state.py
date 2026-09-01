@@ -109,3 +109,8 @@ class ApiKeyState(BaseState):
             await self.load_api_keys()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to revoke API key")
+            # Without this the success toast below fires on the failure path
+            # too — a signal that looks identical whether or not the key was
+            # revoked, which is the defect core#851 exists to remove.
+            return
+        yield await self._deleted_toast("api_keys.revoked_toast", "API key revoked")

@@ -60,11 +60,13 @@ Three things keep that from being decorative:
 """
 
 import ast
+import json
 from pathlib import Path
 
 import pytest
 import reflex as rx
 
+import datanika.i18n
 import datanika.ui
 from datanika.i18n import SUPPORTED_LOCALES, get_translations
 from datanika.ui.pages import connections as connections_page
@@ -598,16 +600,33 @@ class TestTheNewStringsAreTranslated:
         and ``settings.remove`` — because what matters to the user is that
         every word on the dialog is in their language, not which release
         introduced it.
+
+        🚨 **Reads the locale's own JSON, not ``get_translations``.** That
+        helper returns *English merged with the locale's overrides* and
+        documents itself as guaranteeing every English key is present — so
+        ``key in get_translations(loc)`` is true for every key in ``en.json``
+        and can never fail. The first version of this test used it and stayed
+        green while a key was deleted from ``sr.json``; it was a checker with
+        one possible answer, found by mutating the real locale file rather than
+        by re-reading the test. The same vacuous line sits in
+        ``test_every_key_is_present_and_not_left_in_english`` below and is
+        harmless *there* only because its second assertion — value differs from
+        English — is what actually catches a missing key, via the merge.
         """
         referenced = self._keys_rendered_by_the_dialogs()
         assert len(referenced) >= 30, (
             f"only {len(referenced)} dialog strings found — the extractor has "
             "probably stopped matching `_t[...]`"
         )
-        t = get_translations(locale)
+        raw = json.loads(
+            (Path(datanika.i18n.__file__).parent / f"{locale}.json").read_text(encoding="utf-8")
+        )
         for key in sorted(referenced):
-            assert key in t, f"{locale} is missing {key}, rendered by a delete dialog"
-            assert t[key].strip(), f"{locale}: {key} is blank"
+            assert key in raw, (
+                f"{locale}.json is missing {key}, rendered by a delete dialog. "
+                "It will fall back to English for that user."
+            )
+            assert raw[key].strip(), f"{locale}: {key} is blank"
 
     @pytest.mark.parametrize("locale", sorted(SUPPORTED_LOCALES))
     def test_every_key_is_present_and_not_left_in_english(self, locale):

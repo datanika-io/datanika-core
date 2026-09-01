@@ -815,11 +815,13 @@ def _require(condition, message: str) -> None:
 class TestRejectedUpdateIsAtomic:
     """A request the API rejects must leave the row exactly as it was.
 
-    `api_endpoint` commits when the handler **returns** and rolls back only when
-    it **raises** — and `_error(400, ...)` is a return. The update services
-    assign as they go and validate in place, so a validator that raises part-way
-    down commits everything assigned above it. The API reports a clean 400 and
-    the earlier fields are durable.
+    core#790, fixed. `api_endpoint` used to commit whenever the handler
+    **returned** and roll back only when it **raised** — and `_error(400, ...)`
+    is a return. The update services assign as they go and validate in place, so
+    a validator raising part-way down committed everything assigned above it:
+    the API reported a clean 400 and the earlier fields were durable.
+    `api_middleware._is_rejection` now decides on the status code instead, so
+    these two are ordinary tests rather than the strict xfails they shipped as.
 
     🔑 **The rollback in `_name_in_db` is the assertion, not tidying.** Reading
     the attribute straight back proves nothing: a merely-dirty value in the
@@ -840,12 +842,6 @@ class TestRejectedUpdateIsAtomic:
         session.expire_all()
         return str(session.execute(select(model.name).where(model.id == row_id)).scalar_one())
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="core#790 — api_endpoint commits on a RETURN, so a 400 keeps the "
-        "fields assigned before the guard that rejected the request",
-    )
     def test_rejected_transformation_update_does_not_rename(
         self, client, fake_api_key, rate_limit_ok
     ):
@@ -874,11 +870,6 @@ class TestRejectedUpdateIsAtomic:
                 "the API rejected this update with 400 and committed the rename anyway"
             )
 
-    @pytest.mark.xfail(
-        strict=True,
-        raises=AssertionError,
-        reason="core#790 — same defect on the pipeline update path",
-    )
     def test_rejected_pipeline_update_does_not_rename(self, client, fake_api_key, rate_limit_ok):
         from datanika.models.pipeline import Pipeline
 

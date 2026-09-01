@@ -456,6 +456,13 @@ def backup_restore_card() -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.heading(_t["settings.backup_restore"], size="4"),
+            # Export and restore both write their failure to
+            # `BackupState.error_message`, and until core#887 nothing on this
+            # page read it — so a failed export was a button click with no
+            # visible result, on the same page where `SettingsState`'s errors
+            # do show. The success side (`restore_result`) was already
+            # rendered below, which is what made the asymmetry invisible.
+            error_or_quota_callout(BackupState),
             rx.hstack(
                 rx.button(
                     _t["settings.export_backup"],
@@ -812,6 +819,11 @@ def notifications_card() -> rx.Component:
                 width="100%",
                 align="center",
             ),
+            # Save / delete / toggle failures all land in
+            # `NotificationState.error_message`, which nothing rendered before
+            # core#887 — so a channel that failed to save looked like a channel
+            # that saved and then vanished from the table.
+            error_or_quota_callout(NotificationState),
             rx.cond(
                 NotificationState.show_form,
                 notification_form(),

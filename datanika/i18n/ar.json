@@ -153,6 +153,7 @@
   "connections.extra_headers": "ترويسات إضافية (اختياري، JSON)",
   "connections.ph_name": "اسم الاتصال",
   "connections.ph_type": "نوع الاتصال",
+  "connections.s3_withdrawn": "Amazon S3 غير متاح مؤقتًا بسبب تعارض في التبعيات. لا يمكن إنشاء اتصالات S3 جديدة، ولن تعمل الاتصالات الحالية حتى يتم الإصلاح.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

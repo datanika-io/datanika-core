@@ -153,6 +153,7 @@
   "connections.extra_headers": "Додатна заглавља (опционо, JSON)",
   "connections.ph_name": "Назив конекције",
   "connections.ph_type": "Тип конекције",
+  "connections.s3_withdrawn": "Amazon S3 je privremeno nedostupan zbog sukoba zavisnosti. Nove S3 veze se ne mogu kreirati, a postojeće neće raditi dok se ne popravi.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

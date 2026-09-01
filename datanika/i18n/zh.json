@@ -153,6 +153,7 @@
   "connections.extra_headers": "额外请求头（可选，JSON）",
   "connections.ph_name": "连接名称",
   "connections.ph_type": "连接类型",
+  "connections.s3_withdrawn": "Amazon S3 暂时不可用，上游依赖冲突正在解决。无法创建新的 S3 连接，现有连接在修复前也无法运行。",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

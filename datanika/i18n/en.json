@@ -153,6 +153,7 @@
   "connections.extra_headers": "Extra Headers (optional, JSON)",
   "connections.ph_name": "Connection name",
   "connections.ph_type": "Connection type",
+  "connections.s3_withdrawn": "Amazon S3 is temporarily unavailable while an upstream dependency conflict is resolved. New S3 connections cannot be created, and existing ones will not run until it is fixed.",
   "connections.ph_raw_json": "{\"host\": \"localhost\", \"port\": 5432}",
   "connections.ph_host": "localhost",
   "connections.ph_port": "5432",

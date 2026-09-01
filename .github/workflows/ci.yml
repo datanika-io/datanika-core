@@ -69,6 +69,38 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # core#841. This job runs `pytest tests/`, which collects every file in
+    # tests/test_migrations/ — and the `roundtrip_db_url` fixture there needs a real
+    # Postgres. With no service container and no DATABASE_URL_SYNC_TEST it fell through
+    # to the testcontainers branch, which is flaky on a shared GHA runner: PR #838 went
+    # red with 31 errors and passed on re-run with byte-identical code.
+    #
+    # `test` is a REQUIRED check on `dev`, so that is worse than an ordinary flake. The
+    # only cheap response is to re-run, and a team that re-runs reflexively has lost the
+    # ability to tell this apart from a real break (QA_RULES §12) — now that auto-merge is
+    # armed, it is also a check that quietly stops merging things.
+    #
+    # ⚠️ The fix is to give the job the database, NOT to soften the guard. conftest.py's
+    # `_no_postgres` deliberately FAILS rather than skips: a migration guard that silently
+    # skips when its database is absent is this project's signature defect, a green
+    # indistinguishable from the one you would get had it failed. Do not turn it into a
+    # skip. ⚠️ Nor `--ignore=tests/test_migrations/`: `migration-roundtrip` names only 3 of
+    # the 14 files there, so ignoring the directory would drop the other eleven from every
+    # required check — including the two in #838's report — and nothing would say so.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
 
@@ -113,6 +145,11 @@ jobs:
         run: git fetch --no-tags --depth=1 origin master
 
       - name: Run tests
+        # core#841: point the migration fixtures at the service container above. Without
+        # this the env branch of `roundtrip_db_url` is not taken and the fixture falls
+        # through to testcontainers even though a healthy Postgres is sitting right there.
+        env:
+          DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
         run: pytest tests/ --tb=short -q
 
   # Alembic migration round-trip test (PLAN_QA.md P1). Spins up a blank

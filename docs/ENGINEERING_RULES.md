@@ -249,7 +249,169 @@ go red. Two things break the harness itself:
    round-trip in **binary**, and verify with `git status`, never with the harness's own equality
    check.
 
+## 9. A guard's coverage claim is prose until something enumerates what it covers
+
+**[core#673], 2026-09-02.** `BaseState._check_role` was given session revalidation in #760, and the
+module docstring of its test file stated the claim that made one guard sufficient:
+
+> "~20 mutating handlers across 9 state modules already route through it, so one guard covers them
+> all"
+
+Every test in that file exercised the guard. **None enumerated the handlers.** Measured: of the
+public handlers in `datanika/ui/state/` that reach a `session.commit()`, **25 route through
+`_check_role` and 13 do not** — five legitimately (`login`, `signup`, `logout`, and the two password
+reset handlers), and **eight were writing to the database for sessions that had ended.**
+
+The guard was correct. The sentence about its reach was not, and the sentence is what everybody read.
+
+**Rules:**
+1. **A claim of the form "everything X routes through Y" is a test, not a comment.** Write the
+   enumeration as an assertion with an explicit, reasoned allowlist — then the exemptions are
+   re-argued when they change instead of inherited.
+2. **The allowlist needs its own staleness check.** A renamed handler leaves a dead entry behind,
+   quietly available to exempt some future handler that takes the old name.
+3. **And it needs a negative control asserting the exempt cases stay exempt.** Otherwise the cheapest
+   way to make the coverage test pass is to guard everything — which here would have broken sign-in,
+   sign-up and sign-out.
+
+🔑 **Pick a discriminator that is the thing, not a proxy for it.** A name heuristic
+(`save`/`delete`/`update`/`add`) over the same package returned 20 candidates of which **12 were
+false positives**: `existing.add(name)` on a Python set, `add_model()` appending to a form list, an
+`@rx.var` named `grants_write`. `session.commit()` returned 38 with **none**. A commit is the write;
+a verb in a method name is a guess about intent, and this codebase has already been burned by an
+over-reported count ([core#887]: ten offenders, two real).
+
+## 10. Reflex substitutes an invalid icon silently, so "the component constructs" proves nothing
+
+An unknown lucide tag does **not** raise. Reflex prints
+
+```
+Warning: Invalid icon tag: arrow_up_circle. ... Using 'circle_help' icon instead.
+```
+
+to **stdout** and renders a question mark. In a container nothing is listening, so the only signal
+this defect has ever produced goes nowhere. `quota_callout.py` shipped a help icon beside "Upgrade"
+— the callout shown at the moment of highest purchase intent — for as long as it had existed.
+
+⚠️ **Hyphens are not the rule, and assuming they are sends you the wrong way.** `triangle-alert` and
+`triangle_alert` are *both* accepted. `help-circle` is rejected while `circle_help` is accepted,
+because lucide **renamed** the icon. The rule is "the tag is a current lucide name".
+
+**Rules:**
+1. **Resolve the tag through `rx.icon(tag)` and capture stdout.** Probe the validator, never a
+   hardcoded list of valid names — a list goes wrong in the silent direction.
+2. **`redirect_stdout` is load-bearing and fragile in exactly one way**: if Reflex ever moves to
+   `warnings.warn` or a logger, the assertion goes green forever with no code change. Pair it with an
+   in-process control that asserts a *known-bad* tag still warns, so the day Reflex changes, the
+   control fails instead of the guard silently passing.
+
+## 11. Constructing a Reflex page is cheap; compiling one is not. Do not conflate them.
+
+**[core#701].** The reason the "every page constructs" guard went unbuilt for months was a belief
+that it would be slow. Measured on this tree: **58 page factories construct in 3.71 s**, zero raised,
+against a full suite of ~940 s. That is 0.4%.
+
+Full `reflex compile` (JS codegen) *is* slow. Building the component tree is a function call. The
+class it catches — an invalid prop, or a Var that cannot resolve inside `rx.foreach` — raises at
+**app startup**, which means it is otherwise found by a deploy CI has already passed.
+
+**Rule: measure the cost before declining on cost.** The estimate that kept this out of CI was never
+timed, and it was wrong by two orders of magnitude.
+
+⚠️ **Discover the factories, do not list them** — a hand-maintained list goes stale silently — and
+**assert a floor on the discovered count**, because a `parametrize` over an empty list passes as zero
+tests.
+
+## 12. Two more mechanical traps in mutation harnesses
+
+Extending rule 8, both from 2026-09-02.
+
+3. 🚨 **A defective mutation is indistinguishable from a blind control.** Proving `test_unauthenticated
+   _entry_points_are_not_guarded` could fail, I inserted `self._check_role` into `logout` — a bare
+   **attribute reference**, not a call. The extractor collects `ast.Call` nodes, so it saw nothing and
+   the test stayed **GREEN**. The available reading was "the control is blind"; the truth was "the
+   mutation guarded nothing", which is what a bare reference does. Re-run with `self._check_role("viewer")`
+   and it went red immediately.
+   **When a mutation fails to turn a test red, suspect the mutation first** — confirm the mutated
+   source actually expresses the defect (here: parse it and print the calls the extractor now sees)
+   before concluding anything about the test.
+4. **Your own harness's paths are not checked by anything.** `parents[1]` of
+   `ui/state/account_state.py` is `ui/`, not `datanika/` — an i18n assertion pointed at a directory
+   that does not exist. It surfaced only because the failure named a reason that had to be read; had
+   the keys genuinely been missing it would have looked like a legitimate red. Derive a package path
+   from the package (`pathlib.Path(datanika.ui.__file__).parent`), never by counting `parents`.
+
+## 13. Wiring up inert config is when the value starts mattering — measure it then
+
+**[core#780], 2026-09-02.** Three instances now, and they are the same defect at three stages:
+
+| stage | instance | what it looked like |
+|---|---|---|
+| **inert** | [core#772] — cloud hooks subscribed in no worker | metering never ran; `usage_ledger` had one row |
+| **inert** | [core#713] — byte columns never seeded | enforcement skipped every row while the flag read `true` |
+| 🔴 **wrong** | [core#780] — plan values never applied | Enterprise sold 20, served 5 |
+
+Stage three is the hardest to see, and this project produced it *while fixing stage one*. The fix
+wired `plans.max_parallel_runs` into the limiter. The limiter is correct. The column is wrong. **A
+correct reader over wrong data is indistinguishable from a correct system** — nothing in the product
+reports the discrepancy, exactly as before.
+
+🔴 **And I asserted the data was fine from the migration source.** Two shipped docstrings said the
+column was "seeded correctly in April and read by nothing." That was read off
+`UPDATE plans SET max_parallel_runs = 20 WHERE slug = 'enterprise-monthly'` — which had matched
+**zero rows**, because no migration creates that row and the from-scratch rebuild ran the UPDATE
+against an empty table.
+
+**Rules:**
+1. **Connecting a value to a consumer is not the end of the job. It is the moment the value starts
+   mattering — so measure what it now reads.** "The data was already correct" is a claim about a
+   database, and a migration's source is not a database.
+2. **A seeding `UPDATE ... WHERE <key> = ...` can match zero rows and succeed.** On any rebuilt
+   database, ask whether the row existed at that point in the chain. If the row is created outside
+   the migration chain — by a script, by hand, by a vendor sync — the answer is no, and every column
+   added since holds its `server_default`.
+3. **The tell is an asymmetry you can check from source**: the one row a migration *creates* is the
+   one row its later UPDATEs reach. Here `free` was right and all four paid rows were wrong.
+4. **Guard it mechanically.** `tests/test_migrations/test_plan_seed_updates_reach_real_rows.py`
+   fails when a migration configures a slug no migration creates on a column whose `server_default`
+   differs from the intent. Prose about the trap already existed in `CLAUDE.md` for [core#713] and
+   did not stop the second instance.
+
+## 14. A parser that accepts only your convention silently skips whatever does not follow it
+
+**[core#780], 2026-09-02.** `tests/test_migrations/test_migration_coverage.py` matched
+`^revision: str = "..."` — this repo's type-annotated convention. **One migration of 37**
+(`e5f6a7b8c9d0_add_max_api_keys_to_plans`) writes the bare `revision = "..."` that
+`alembic revision` emits by default.
+
+That file was invisible to **both** graph checks. It could not have been reported as a duplicate id,
+and it could not have been part of a detected two-head split — which is precisely what those two
+tests exist to catch, and what `core#393` had already cost a red CI job.
+
+🔑 **And the guard was green.** `test_exactly_one_head` passed **by luck**: the invisible migration
+happened to *be* the head, so the visible graph's only head was its parent. Adding a correctly-chained
+migration after it produced two visible heads and a red test — **the new migration looked like the
+defect, and it was the thing that exposed one.**
+
+The discriminator was asking the real consumer: `alembic heads` reported a single head throughout.
+
+**Rules:**
+1. **When a text parser feeds an assertion, assert that the parser read everything.** A count of
+   parsed items against a count of files is one line, and it converts a silent skip into a failure.
+   This is the same shape as an extractor floor, applied per-file instead of in aggregate.
+2. **Accept every spelling the generating tool produces**, not just the one your codebase happens to
+   use. Alembic emits the unannotated form; a house style that annotates does not stop that.
+3. **A newly-red guard is not automatically your diff's fault.** Ask the authoritative tool
+   (`alembic heads`, the DB, the registry) before changing your change. Here the correct response was
+   to fix the guard, and the tempting one was to re-chain a migration that was already right.
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887
 [core#907]: https://github.com/datanika-io/datanika-core/issues/907
+[core#673]: https://github.com/datanika-io/datanika-core/issues/673
+[core#701]: https://github.com/datanika-io/datanika-core/issues/701
+[core#713]: https://github.com/datanika-io/datanika-core/issues/713
+[core#772]: https://github.com/datanika-io/datanika-core/issues/772
+[core#780]: https://github.com/datanika-io/datanika-core/issues/780
+[core#928]: https://github.com/datanika-io/datanika-core/issues/928

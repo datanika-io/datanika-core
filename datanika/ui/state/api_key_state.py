@@ -84,6 +84,8 @@ class ApiKeyState(BaseState):
             await self.load_api_keys()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to create API key")
+            return
+        yield await self._saved_toast("api_keys.created_toast", "API key created")
 
     async def revoke_api_key(self, key_id: int):
         if not await self._check_role("admin"):

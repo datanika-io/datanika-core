@@ -168,6 +168,8 @@ class NotificationState(BaseState):
             await self.load_channels()
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to save notification channel")
+            return
+        yield await self._saved_toast("notifications.created_toast", "Channel saved")
 
     async def delete_channel(self, channel_id: int):
         if not await self._check_role("admin"):

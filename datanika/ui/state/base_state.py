@@ -214,6 +214,35 @@ class BaseState(rx.State):
             position="top-right",
         )
 
+    async def _saved_toast(self, key: str, fallback: str):
+        """The constructive twin of :meth:`_deleted_toast` (core#872).
+
+        Deleting was instrumented by core#804 and core#851 — ten confirmation
+        dialogs and nine success toasts. **Creating was not.** Measured on
+        production while creating a connection: the create succeeded, and there
+        was no toast, no inline confirmation, no error, the same old rows for at
+        least five seconds, and an apparently unchanged form. Every signal the
+        user had said *nothing happened*, and the move that invites is to click
+        Create again.
+
+        🚨 That stopped being cosmetic on 2026-08-31, when connection quota
+        enforcement went live. On a Free org at 4 of 5 connections an invisible
+        first create **spends the last slot**, so the *second* click is the one
+        refused — the success and the failure reach the user in the opposite
+        order from the one they perceive, and the error they read describes the
+        wrong event.
+
+        ⚠️ **This must be `yield`ed, never returned.** A plain ``async def``
+        handler sends a single state update after it returns, so a returned
+        toast never reaches the browser and nothing fails. Yielding is also what
+        makes the handler a generator, which is the actual lever here: the
+        refetch these handlers already end with was never the missing piece.
+        """
+        return rx.toast.success(
+            await self._translated(key, fallback),
+            position="top-right",
+        )
+
     async def _translated(self, key: str, fallback: str) -> str:
         """One translated string, read from the reactive dict (core#851, core#862).
 

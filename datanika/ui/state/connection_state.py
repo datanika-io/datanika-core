@@ -1272,6 +1272,10 @@ class ConnectionState(BaseState):
         except (json.JSONDecodeError, ValueError) as e:
             self.error_message = f"Invalid config: {e}"
             return
+        # Captured before `_reset_form_fields()` clears it. core#872: a create
+        # that says "saved" is acceptable; an update that says "created" is not,
+        # because it tells the user a new row exists.
+        was_edit = bool(self.editing_conn_id)
         try:
             with get_sync_session() as session:
                 if self.editing_conn_id:
@@ -1322,6 +1326,13 @@ class ConnectionState(BaseState):
         # a subsequent non-template create doesn't inherit it. #93.
         self.selected_template_slug = ""
         self._reset_form_fields()
+        # Yielded before the refetch, deliberately. The table repopulating is
+        # asynchronous and was measured lagging 5-17 seconds; the toast is the
+        # acknowledgement, the table is not (core#872 D5).
+        if was_edit:
+            yield await self._saved_toast("connections.saved_toast", "Connection saved")
+        else:
+            yield await self._saved_toast("connections.created_toast", "Connection created")
         await self.load_connections()
 
     async def edit_connection(self, conn_id: int):

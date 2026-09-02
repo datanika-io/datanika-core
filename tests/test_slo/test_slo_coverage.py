@@ -98,6 +98,12 @@ BLOCKED_BASELINE = {
     "service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login",
     "service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers",
     "error-rate-slos-any-5xx-on-rest-api",
+    # core#908. The sixth `source: app` entry, added when the guard became an
+    # invariant instead of an entry-by-entry habit. It read NO_VERDICT only
+    # because its sufficiency query counts SUCCESSFUL webhook deliveries and
+    # that count is 0 — shielded by traffic, not by a guard, and the first real
+    # Paddle webhook would have made it PASS from a defective instrument.
+    "error-rate-slos-webhook-handler-paddle-http-5xx",
 }
 
 VALID_SOURCES = {"app", "blackbox", "cadvisor", "node", "postgres", "celery"}
@@ -354,6 +360,46 @@ def test_blocked_set_matches_the_baseline_exactly(registry):
         f"  no longer blocked:    {sorted(BLOCKED_BASELINE - actual)}\n"
         "If an instrument was fixed, drop `blocked_by` from the registry AND "
         "the name from BLOCKED_BASELINE in the same PR."
+    )
+
+
+def test_every_app_sourced_slo_is_blocked_while_core_895_is_open(registry):
+    """The invariant, not the instance ([core#908]).
+
+    Every ``source: app`` SLO is computed from ``http_requests_total`` /
+    ``http_request_duration_seconds``, which [core#895] measured to be recorded
+    as roughly one Granian worker's share. `blocked_by` is what stops
+    ``scripts/slo_report.py`` scoring them.
+
+    Five of the six carried it and the sixth did not, because the guard was
+    applied entry-by-entry from memory rather than as a rule. That sixth entry
+    (`error-rate-slos-webhook-handler-paddle-http-5xx`) was not producing a wrong
+    verdict only because its sufficiency query counts **successful** webhook
+    deliveries and that count is 0 at 0 paying users — it was shielded by an
+    accident of traffic, not by a guard. The first successful Paddle webhook
+    would have flipped it to a **PASS computed from a defective instrument**, on
+    the exact day someone first reads this report for real. `docs/QA_RULES.md`
+    §18c: an instrument you have MEASURED to be broken must never report PASS.
+
+    ⚠️ **Delete this test in the same PR that fixes [core#895]**, together with
+    all six `blocked_by` keys and `BLOCKED_BASELINE`. [core#895]'s AC3 says five
+    entries; it must say six, or the fix unguards five and leaves this one
+    blocked forever — and a stuck NO_VERDICT reads as "no instrument", which is
+    the failure [core#721] existed to end.
+    """
+    app_sourced = {k for k, v in registry.items() if v.get("source") == "app"}
+    assert app_sourced, (
+        "no SLO entry has `source: app` at all. Either every one was rewired to "
+        "an exporter — in which case delete this test and the blocked_by keys — "
+        "or the registry stopped parsing, and this test is passing vacuously."
+    )
+    unguarded = sorted(k for k in app_sourced if not registry[k].get("blocked_by"))
+    assert not unguarded, (
+        f"{len(unguarded)} of {len(app_sourced)} `source: app` SLOs have no "
+        f"`blocked_by`, so slo_report.py will score them from the per-process "
+        f"HTTP counters core#895 measured as defective: {unguarded}\n"
+        'Add `blocked_by: "core#895 (per-process HTTP metrics)"` and the name to '
+        "BLOCKED_BASELINE in the same commit."
     )
 
 

@@ -438,11 +438,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x94\xa5 *PROD smoke failed* (shape regression)\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x94\xa5 <b>PROD smoke failed</b> (shape regression)\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"

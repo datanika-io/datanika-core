@@ -137,6 +137,13 @@ class AccountState(BaseState):
         self.success = False
         self.error = ""
 
+        # #673: the check below reads `current_user.id` off the state object,
+        # which a tab that never navigates keeps holding long after its session
+        # ended. Revalidate first, or a password is set for a session a
+        # previous password change was meant to end.
+        if not await self._require_live_session():
+            return
+
         auth = await self.get_state(AuthState)
         user_id = auth.current_user.id
         if not user_id:

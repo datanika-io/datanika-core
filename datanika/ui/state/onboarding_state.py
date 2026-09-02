@@ -51,6 +51,12 @@ class OnboardingState(BaseState):
     async def dismiss_checklist(self):
         from datanika.ui.state.auth_state import AuthState
 
+        # #673. Low stakes on its own — but the guard is the rule, not the
+        # blast radius, and `load_checklist` above it stays unguarded because
+        # it reads.
+        if not await self._require_live_session():
+            return
+
         auth = await self.get_state(AuthState)
         user_id = auth.current_user.id or 0
         if user_id == 0:

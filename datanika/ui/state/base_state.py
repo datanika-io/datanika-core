@@ -35,6 +35,55 @@ class BaseState(rx.State):
         auth = await self.get_state(AuthState)
         return auth.current_org.id if auth.current_org.id else 0
 
+    async def _require_live_session(self) -> bool:
+        """Whether this session may still act — the session half of ``_check_role``.
+
+        Extracted so a mutation that every member may perform can check the
+        session **without** acquiring a role gate it must not have (#673).
+        ``SettingsState.leave_org`` is the case that forces the split: its own
+        contract is that leaving is the one member-management action available
+        to every member, refused only by the service's owner-count invariant.
+        Guarding it with ``_check_role`` would have contradicted that.
+
+        The three classes of committing handler, and why a blanket decorator
+        would have been wrong for two of them:
+
+        * **role-gated mutations** — ``_check_role(min_role)``, which now calls
+          this first.
+        * **mutations every member may perform** — this method, alone:
+          ``leave_org``, ``change_password``, dismissing your own notification
+          or onboarding checklist, saving a catalog entry, receiving an upload.
+        * **unauthenticated entry points** — ``login``, ``signup``, ``logout``,
+          password reset. Neither guard. A guard on ``logout`` in particular
+          strands a user in a session they cannot end.
+
+        The common case stays free: ``_revalidate_session`` returns on a
+        signature check with **no database read**, and only an aged-out token
+        pays for a query.
+
+        ⚠️ **``_get_org_id`` is still deliberately NOT guarded** (#673 AC5) and
+        this method must not be called from it. It is on the read path and runs
+        while rendering, so revalidating there would put a session decision —
+        and, on renewal, a database write — inside template evaluation, where
+        the failure mode is a half-rendered page rather than a refused action.
+        """
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+
+        if auth._revalidate_session():
+            return True
+
+        auth._clear_session()
+        auth.session_expired = True
+        # Not an error_message: "Permission denied. Requires admin role or
+        # higher." is the wrong thing to tell somebody who needs to sign in
+        # — it sends them to ask an admin for access they already have. The
+        # layout renders the translated signed-out panel off the flag.
+        self.error_message = ""
+        auth.action_error = ""
+        return False
+
     async def _check_role(self, min_role: str) -> bool:
         """Check that the session is live **and** carries at least ``min_role``.
 
@@ -64,19 +113,10 @@ class BaseState(rx.State):
         """
         from datanika.ui.state.auth_state import AuthState
 
-        auth = await self.get_state(AuthState)
-
-        if not auth._revalidate_session():
-            auth._clear_session()
-            auth.session_expired = True
-            # Not an error_message: "Permission denied. Requires admin role or
-            # higher." is the wrong thing to tell somebody who needs to sign in
-            # — it sends them to ask an admin for access they already have. The
-            # layout renders the translated signed-out panel off the flag.
-            self.error_message = ""
-            auth.action_error = ""
+        if not await self._require_live_session():
             return False
 
+        auth = await self.get_state(AuthState)
         role = auth.current_role
         if not check_role_hierarchy(role, min_role):
             self.error_message = f"Permission denied. Requires {min_role} role or higher."

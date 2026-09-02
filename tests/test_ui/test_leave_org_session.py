@@ -63,13 +63,24 @@ class _Service:
 class _State:
     """Stand-in for SettingsState itself — only what `leave_org` may touch."""
 
-    def __init__(self, auth, service):
+    def __init__(self, auth, service, session_live=True):
         self._auth = auth
         self._service = service
         self.error_message = "stale"
+        self._session_live = session_live
 
     async def get_state(self, _cls):
         return self._auth
+
+    async def _require_live_session(self):
+        """#673. `leave_org` checks the SESSION but deliberately not the ROLE.
+
+        Every other member-management handler in ``SettingsState`` calls
+        ``_check_role("admin")``; this one must not, because leaving is the one
+        member-management action available to every member. That is the whole
+        reason ``_require_live_session`` was split out of ``_check_role``.
+        """
+        return self._session_live
 
     def _get_user_service(self):
         return self._service
@@ -81,9 +92,9 @@ class _State:
         return fallback
 
 
-async def _run(auth, service=None):
+async def _run(auth, service=None, session_live=True):
     service = service or _Service()
-    state = _State(auth, service)
+    state = _State(auth, service, session_live=session_live)
     with patch("datanika.ui.state.settings_state.get_sync_session") as sess:
         sess.return_value.__enter__.return_value = SimpleNamespace(commit=lambda: None)
         sess.return_value.__exit__.return_value = False
@@ -177,3 +188,21 @@ class TestLeavingAlsoMovesTheSession:
         assert auth.logged_out is False
         assert result is None
         assert state.error_message == "Failed to leave organization"
+
+    @pytest.mark.asyncio
+    async def test_an_ended_session_cannot_remove_the_membership(self):
+        """#673. A membership is a row, and leaving deletes it.
+
+        The handler reads the org and the actor off the state object, which a
+        tab that never navigates keeps holding after its session ends — so
+        without the guard someone's membership is removed on the authority of
+        a session that no longer exists. Asserting the service was never
+        reached, rather than that the result is ``None``, is what makes this
+        discriminating: a refusal *inside* the service returns ``None`` too.
+        """
+        auth = _Auth([1, 2], current_id=1)
+        result, _state, service = await _run(auth, session_live=False)
+        assert service.left is None, "a membership was removed for an ended session"
+        assert auth.switched_to is None
+        assert auth.logged_out is False
+        assert result is None

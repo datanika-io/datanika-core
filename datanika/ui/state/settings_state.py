@@ -420,7 +420,15 @@ class SettingsState(BaseState):
         Deliberately **not** gated on a minimum role: leaving is the one
         member-management action every member has. The last owner is refused
         by the service's owner-count invariant, not by a role check.
+
+        It does need the **session** checked, though (#673), and that is the
+        distinction ``_require_live_session`` exists for — every other
+        member-management handler in this class calls ``_check_role("admin")``,
+        and doing that here would contradict the paragraph above.
         """
+        if not await self._require_live_session():
+            return
+
         auth_state = await self.get_state(AuthState)
         svc = self._get_user_service()
         try:

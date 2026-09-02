@@ -263,8 +263,16 @@ jobs:
           # to have run it — and `migration-roundtrip` green would then assert
           # something nobody measured. The `test` job runs `pytest tests/` and
           # would pick it up, but a reader checking migration coverage looks here.
+          # core#693: test_n0_audit_jsonb_blue_green.py is named here for the same
+          # reason. It is the only thing that measures the json -> jsonb conversion's
+          # t1 tolerance — test_expand_contract.py's own docstring says type changes
+          # are "not covered, and left explicit rather than implied", and
+          # test_expand_contract_policy.py only demands a written justification. If
+          # that probe ever goes red the N₀ migration cannot ship alone, which is a
+          # verdict this job's name promises to have collected.
           pytest tests/test_migrations/test_roundtrip.py \
                  tests/test_migrations/test_data_preservation_roundtrip.py \
+                 tests/test_migrations/test_n0_audit_jsonb_blue_green.py \
                  tests/test_migrations/test_expand_contract.py -v --tb=long
 
   helm-lint:

@@ -187,7 +187,12 @@ jobs:
         # through to testcontainers even though a healthy Postgres is sitting right there.
         env:
           DATABASE_URL_SYNC_TEST: postgresql://test:test@localhost:5432/test
-        run: pytest tests/ --tb=short -q
+          # core#961 diagnostic. Set here rather than as an inline `VAR=x pytest`
+          # prefix: test_ci_postgres_services.py parses this run: block and requires
+          # tokens[0] to be `pytest`, so a prefix makes the parser skip the job and
+          # the postgres-service audit pass vacuously. The guard caught exactly that.
+          PYTHONPATH: scripts
+        run: pytest tests/ -p perf_attr --tb=short -q
 
   # Alembic migration round-trip test (PLAN_QA.md P1). Spins up a blank
   # Postgres, runs `upgrade head → downgrade -1 → upgrade head`, asserts

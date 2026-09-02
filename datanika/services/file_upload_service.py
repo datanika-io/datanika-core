@@ -15,6 +15,32 @@ from datanika.models.uploaded_file import UploadedFile
 ALLOWED_EXTENSIONS = {"csv", "json", "parquet"}
 
 
+def resolve_archive_path(archive_path: str, uploads_dir: str) -> str:
+    """Resolve a stored ``archive_path`` against *this* process's uploads directory.
+
+    Rows written before core#712 hold a path relative to the working directory of
+    the process that wrote them — normally the web tier, while every reader is a
+    different container: ``run_upload`` in the Celery worker, and the hourly
+    archive sweep in ``beat``. ``os.path.isfile`` on such a value silently answers
+    False there, and every caller in this codebase guarded on exactly that and
+    skipped. For ``cleanup_orphaned_archives`` the consequence is a storage leak
+    that reads as a clean sweep: a deleted upload's bytes are never reclaimed and
+    the counter says ``0``.
+
+    An absolute path is returned unchanged. A relative one is re-rooted under
+    ``uploads_dir`` keeping its ``archives/<name>`` tail, so an operator who has
+    set ``FILE_UPLOADS_DIR`` to the shared absolute path — which is what
+    :meth:`FileUploadService.extract_for_dlt`'s error already tells them to do —
+    makes every legacy row resolvable **without a data migration**.
+
+    When ``uploads_dir`` is itself relative this is no worse than the status quo:
+    it resolves against the reader's CWD exactly as the bare path did.
+    """
+    if os.path.isabs(archive_path):
+        return archive_path
+    return os.path.join(os.path.abspath(uploads_dir), "archives", os.path.basename(archive_path))
+
+
 def get_org_uploaded_file(session: Session, org_id: int, file_id: int) -> UploadedFile | None:
     """Resolve an uploaded file *within* an org — the single definition of ownership.
 
@@ -37,7 +63,11 @@ class FileUploadService:
     MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
 
     def __init__(self, uploads_dir: str):
-        self._uploads_dir = uploads_dir
+        # Absolute at construction, so every path derived from it is absolute too
+        # (core#712). Fixing it here rather than at the one `os.path.join` in
+        # `save_file` fixes the class: `_extracted_dir` and every future caller
+        # inherit it, and a row can never again be written CWD-relative.
+        self._uploads_dir = os.path.abspath(uploads_dir)
 
     def _archives_dir(self) -> str:
         path = os.path.join(self._uploads_dir, "archives")
@@ -99,9 +129,10 @@ class FileUploadService:
         """Extract archive to temp dir, return path to extracted directory."""
         extract_path = os.path.join(self._extracted_dir(), uploaded_file.file_hash)
         os.makedirs(extract_path, exist_ok=True)
+        archive_path = resolve_archive_path(uploaded_file.archive_path, self._uploads_dir)
 
         try:
-            with tarfile.open(uploaded_file.archive_path, "r:gz") as tar:
+            with tarfile.open(archive_path, "r:gz") as tar:
                 tar.extractall(extract_path, filter="data")
         except FileNotFoundError as exc:
             # This runs in the Celery worker; the archive was written by the web
@@ -112,7 +143,7 @@ class FileUploadService:
             # say so; the alternative (a genuinely deleted archive) is still
             # identifiable from the path.
             raise FileNotFoundError(
-                f"Uploaded file archive not found: {uploaded_file.archive_path}\n"
+                f"Uploaded file archive not found: {archive_path}\n"
                 "The web tier stored this file and this worker cannot see it, which "
                 "normally means the two do not share the uploads directory. Mount one "
                 "volume read-write on both the app and the Celery worker, and set "
@@ -143,7 +174,8 @@ class FileUploadService:
         record.deleted_at = datetime.now(UTC)
         session.flush()
 
-        if os.path.isfile(record.archive_path):
-            os.remove(record.archive_path)
+        archive_path = resolve_archive_path(record.archive_path, self._uploads_dir)
+        if os.path.isfile(archive_path):
+            os.remove(archive_path)
 
         return True

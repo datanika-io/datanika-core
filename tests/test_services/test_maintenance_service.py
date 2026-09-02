@@ -269,3 +269,84 @@ class TestDbtCleanTarget:
         svc = DbtProjectService(str(tmp_path))
         svc.ensure_project(1)
         svc.clean_target(1)  # no error, target doesn't exist
+
+
+class TestCleanupOrphanedArchivesResolvesRelativeRows:
+    """core#712 — the sweep took `uploads_dir` and never used it.
+
+    `cleanup_orphaned_archives` guards on `os.path.isfile(record.archive_path)`
+    and **skips**. Rows written with the default relative `FILE_UPLOADS_DIR`
+    resolve against the *sweeping* process's CWD, not the writing one, so from
+    `beat` the guard answers False for every one of them: nothing is removed,
+    the function returns 0, and `run_maintenance` logs a clean sweep. A deleted
+    upload's bytes stay on disk for the life of the volume.
+
+    The existing coverage above cannot see this — it stores an absolute
+    `tmp_path` and therefore only ever exercises the case that already worked.
+
+    Live since `beat` first ran on 2026-08-30; before that the sweep had never
+    executed in production at all, which is why nobody had seen it report 0.
+    """
+
+    def _relative_row(self, db_session, org, uploads, name):
+        archives = uploads / "archives"
+        archives.mkdir(parents=True, exist_ok=True)
+        archive = archives / f"{name}.tar.gz"
+        archive.write_bytes(b"fake archive")
+
+        record = UploadedFile(
+            org_id=org.id,
+            original_name=f"{name}.csv",
+            content_type="csv",
+            file_size=12,
+            file_hash=name,
+            # exactly what save_file wrote before core#712
+            archive_path=os.path.join(".", "uploaded_files", "archives", f"{name}.tar.gz"),
+            deleted_at=datetime.utcnow(),
+        )
+        db_session.add(record)
+        db_session.flush()
+        return archive
+
+    def test_removes_a_relative_row_after_the_cwd_changed(
+        self, db_session, tmp_path, monkeypatch, org
+    ):
+        uploads = tmp_path / "uploaded_files"
+        archive = self._relative_row(db_session, org, uploads, "deadbeef")
+
+        # Control first: the bytes exist, so a failure below is the sweep's and
+        # not a broken fixture.
+        assert archive.is_file()
+
+        elsewhere = tmp_path / "beat"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        removed = cleanup_orphaned_archives(db_session, str(uploads))
+
+        assert not archive.exists(), (
+            "the archive of a soft-deleted upload is still on disk — "
+            "cleanup_orphaned_archives skipped it and reported a clean sweep"
+        )
+        assert removed == 1, "a skipped file must not be counted as a healthy zero"
+
+    def test_an_active_relative_row_is_still_preserved(
+        self, db_session, tmp_path, monkeypatch, org
+    ):
+        """The negative control: resolving paths must not start deleting live data."""
+        uploads = tmp_path / "uploaded_files"
+        archive = self._relative_row(db_session, org, uploads, "stillalive")
+        record = db_session.query(UploadedFile).filter(UploadedFile.file_hash == "stillalive").one()
+        record.deleted_at = None
+        db_session.flush()
+
+        assert archive.is_file()
+
+        elsewhere = tmp_path / "beat"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        removed = cleanup_orphaned_archives(db_session, str(uploads))
+
+        assert archive.is_file(), "an upload that was never deleted must keep its bytes"
+        assert removed == 0

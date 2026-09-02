@@ -252,6 +252,7 @@ slos:
   error-rate-slos-webhook-handler-paddle-http-5xx:
     status: measured
     source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
     query: 'sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"5.."}[30d]))'
     samples_query: >-
       sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"2.."}[30d]))

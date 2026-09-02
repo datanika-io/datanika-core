@@ -76,6 +76,22 @@ jobs:
             exit 1
           fi
           mkdir -p secrets
+
+          # core#943. Register a decoded credential with the runner's mask list.
+          # Defined per step because each `run:` block is its own shell.
+          #
+          # The floor of 8 is a judgement with a cost on both sides: below it these
+          # bundles carry flags and short ids (`1`, `true`, a region), and masking a
+          # short common string redacts unrelated log text until the run is
+          # untriageable. Above it, everything in these files is credential-shaped.
+          # Real tokens are far longer than 8; nothing we hold is a 7-character
+          # secret.
+          mask_value() {
+            v=$1
+            [ "${#v}" -ge 8 ] || return 0
+            echo "::add-mask::$v"
+          }
+
           # Decode env file and export every KEY=VALUE pair into $GITHUB_ENV
           printf '%s' "$QA_CONNECTOR_CREDENTIALS" | base64 -d > /tmp/creds.env
           while IFS= read -r line; do
@@ -93,6 +109,28 @@ jobs:
             # file has the value and the secret is non-empty; only the consumer sees
             # a value wrapped in literal quote characters.
             line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
+            # 🚨 Register the DECODED value as a secret before it reaches
+            # $GITHUB_ENV (core#943). Actions masks values it has registered; it
+            # registered the *bundle* (`QA_CONNECTOR_CREDENTIALS`), and the values
+            # decoded out of it are different strings manufactured at runtime, so
+            # the mask list has never contained them. Once a value is in
+            # $GITHUB_ENV it joins the job environment and the runner prints the
+            # `env:` map in the `##[group]Run …` header of every later step — so
+            # each credential was echoed in cleartext several times per run.
+            #
+            # Nothing reported that transition: no warning, no annotation, no
+            # failed step. Same family as core#646 — a value that crosses a
+            # boundary under a new name stops being the thing being protected.
+            #
+            # ⚠️ Masking is NOT limited to the env block. It applies to all
+            # subsequent log output, which is the more valuable half: a connector
+            # that authenticates via a URL query string prints its token in any
+            # request traceback, and no amount of env hygiene catches that.
+            #
+            # ⚠️ The length floor is load-bearing, not caution. `DATANIKA_CONNECTOR_SMOKE=1`
+            # is in this bundle, and masking `1` would redact every digit 1 in the
+            # log and make it unreadable — a "safer" run nobody can triage.
+            mask_value "${line#*=}"
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/creds.env
           rm /tmp/creds.env
@@ -116,11 +154,22 @@ jobs:
             echo "::error::QA_WAVE1_CREDENTIALS secret is not set — Wave-1 SaaS probes cannot run"
             exit 1
           fi
+          # core#943 — same helper, same floor, same reason. See the step above.
+          mask_value() {
+            v=$1
+            [ "${#v}" -ge 8 ] || return 0
+            echo "::add-mask::$v"
+          }
+
           printf '%s' "$QA_WAVE1_CREDENTIALS" | base64 -d > /tmp/wave1.env
           while IFS= read -r line; do
             case "$line" in ''|\#*) continue ;; esac
             # Digits in the class — see the note on the same sed above (core#827).
             line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
+            # Mask before $GITHUB_ENV — see the long note in the step above
+            # (core#943). Both materialization steps need it: this bundle carries
+            # the Pipedrive / Freshdesk / Asana tokens.
+            mask_value "${line#*=}"
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/wave1.env
           rm /tmp/wave1.env

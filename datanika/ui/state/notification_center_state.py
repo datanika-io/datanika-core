@@ -74,6 +74,12 @@ class NotificationCenterState(BaseState):
     async def mark_read(self, notification_id: int):
         from datanika.ui.state.auth_state import AuthState
 
+        # #673. `load_notifications` / `load_unread_count` stay unguarded: they
+        # are reads, and AC5 keeps the render path free of session decisions.
+        # These three write.
+        if not await self._require_live_session():
+            return
+
         auth = await self.get_state(AuthState)
         org_id = auth.current_org.id or 0
         if org_id == 0:
@@ -87,6 +93,9 @@ class NotificationCenterState(BaseState):
 
     async def mark_all_read(self):
         from datanika.ui.state.auth_state import AuthState
+
+        if not await self._require_live_session():
+            return
 
         auth = await self.get_state(AuthState)
         org_id = auth.current_org.id or 0
@@ -102,6 +111,9 @@ class NotificationCenterState(BaseState):
 
     async def dismiss(self, notification_id: int):
         from datanika.ui.state.auth_state import AuthState
+
+        if not await self._require_live_session():
+            return
 
         auth = await self.get_state(AuthState)
         org_id = auth.current_org.id or 0

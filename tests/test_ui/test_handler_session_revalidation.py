@@ -73,10 +73,19 @@ def _auth(**overrides):
 
 
 def _caller(auth_stand_in):
-    """A stand-in substate of ``BaseState`` whose ``get_state`` yields ``auth``."""
+    """A stand-in substate of ``BaseState`` whose ``get_state`` yields ``auth``.
+
+    ``_require_live_session`` is delegated to the **real** implementation for
+    the same reason ``_auth`` delegates ``_revalidate_session``: a bare
+    ``MagicMock`` would return a truthy non-awaitable and the guard under test
+    would never run. #673 split the session half of ``_check_role`` into that
+    method so a role-free mutation can check the session without acquiring a
+    role gate, and every assertion in this file still has to reach it.
+    """
     st = MagicMock()
     st.error_message = ""
     st.get_state = AsyncMock(return_value=auth_stand_in)
+    st._require_live_session = lambda: BaseState._require_live_session(st)
     return st
 
 

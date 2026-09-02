@@ -31,7 +31,7 @@ def user(db_session, svc):
     return u
 
 
-def _state(user_id=0, org_id=0):
+def _state(user_id=0, org_id=0, *, session_live=True):
     st = MagicMock()
     for name, field in AccountState.__fields__.items():
         default = field.default_factory() if field.default_factory else field.default
@@ -44,6 +44,11 @@ def _state(user_id=0, org_id=0):
     # ``change_password`` succeeds silently, so the whole suite would pass
     # without writing anything.
     st._service = lambda: AccountState._service(st)
+    # #673. `change_password` now revalidates before reading `current_user.id`
+    # off the state object. Explicit rather than left to the MagicMock, whose
+    # truthy non-awaitable return would raise here — and whose truthiness would
+    # otherwise make `session_live=False` untestable.
+    st._require_live_session = AsyncMock(return_value=session_live)
     return st
 
 
@@ -161,6 +166,32 @@ class TestChangePasswordHandler:
             confirm="a whole new password",
         )
         assert st.success is False
+
+    @pytest.mark.asyncio
+    async def test_an_ended_session_cannot_change_the_password(self, db_session, user, svc):
+        """#673. Distinct from the test above, and that distinction is the bug.
+
+        There, ``current_user.id`` is 0 — the state object says nobody is
+        signed in. Here it is a **real** user id, because a tab that never
+        navigates keeps holding a populated state object long after its session
+        ended. Only revalidation can tell the two apart, and until #673 nothing
+        on this path did: the hash would have been rewritten for a session a
+        previous password change was meant to end.
+        """
+        before = user.password_hash
+        st = _state(user.id, 1, session_live=False)
+        await _change(
+            st,
+            db_session,
+            current_password="correct horse",
+            password="a whole new password",
+            confirm="a whole new password",
+        )
+        db_session.refresh(user)
+        assert st.success is False
+        assert user.password_hash == before, (
+            "a password was set for a session that had already ended"
+        )
 
 
 class TestOAuthOnlyAccount:

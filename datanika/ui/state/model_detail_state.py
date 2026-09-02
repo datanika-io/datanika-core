@@ -459,6 +459,11 @@ class ModelDetailState(BaseState):
     # -- Save --
 
     async def save_model_detail(self):
+        # #673. `_get_org_id` is deliberately unguarded (AC5 — it renders), so
+        # without this the org id is read off a session that may have ended.
+        if not await self._require_live_session():
+            return
+
         org_id = await self._get_org_id()
 
         try:

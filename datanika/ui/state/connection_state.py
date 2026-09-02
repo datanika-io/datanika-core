@@ -635,6 +635,12 @@ class ConnectionState(BaseState):
         """
         from datanika.services.file_upload_service import FileUploadService
 
+        # #673. This one is reached over HTTP rather than through the event
+        # pipeline — Reflex routes ``POST /_upload`` here by type hint — so no
+        # rendered page gates it and the server-side check is the only check.
+        if not await self._require_live_session():
+            return
+
         if not files:
             return
         file = files[0]

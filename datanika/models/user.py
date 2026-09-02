@@ -29,12 +29,26 @@ class User(Base, TimestampMixin):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+
+    # ⚠️ LEGACY, release N (SPEC_PII_SEPARATION §4). The three columns marked here now
+    # live in `user_pii`; they are dual-written so the previously deployed code keeps
+    # working through the blue/green swap, and are DROPPED in N+2. They became nullable
+    # in N, which is what lets N+1 stop writing them — and what lets `erase_user` NULL
+    # them during the dual-write window, without which every erasure until N+2 would
+    # delete the copy in `user_pii` and leave the original here (§0.2).
+    #
+    # 🚨 Read a person's address through `UserService.get_user_by_email`, never with a
+    # predicate on this column: that method is the one place that joins `user_pii` AND
+    # filters `deleted_at IS NULL`, and without the second half a soft-deleted user still
+    # authenticates.
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Not personal data on its own ("google"); the *subject* is, and it moved. For
+    # SAML/OIDC SSO the subject is the email address verbatim.
     oauth_provider_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # When a human last chose this password (core#623). Two jobs:
     #

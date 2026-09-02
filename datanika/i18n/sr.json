@@ -671,5 +671,16 @@
   "pipelines.destination_help": "Tokovi pokreću dbt, kojem je potreban adapter za odredište. Databricks i Synapse mogu da prime učitane podatke ali nemaju adapter; MySQL i SQLite su samo izvori ekstrakcije.",
   "pipelines.destination_invalid": "Transformacije ne mogu da se izvršavaju nad vezom ovog tipa — dbt nema adapter za nju. Izaberite neko od navedenih odredišta.",
   "transformations.destination_help": "Transformacije pokreću dbt, kojem je potreban adapter za odredište. Databricks i Synapse mogu da prime učitane podatke ali nemaju adapter; MySQL i SQLite su samo izvori ekstrakcije.",
-  "transformations.destination_invalid": "Transformacije ne mogu da se izvršavaju nad vezom ovog tipa — dbt nema adapter za nju. Izaberite neko od navedenih odredišta."
+  "transformations.destination_invalid": "Transformacije ne mogu da se izvršavaju nad vezom ovog tipa — dbt nema adapter za nju. Izaberite neko od navedenih odredišta.",
+  "account.delete_heading": "Брисање вашег налога",
+  "account.delete_body": "Ово трајно уклања ваше име, адресу е-поште и податке за пријаву. Не може се поништити.",
+  "account.delete_button": "Обриши мој налог",
+  "account.delete_confirm_heading": "Обрисати ваш налог?",
+  "account.delete_confirm_password": "Унесите лозинку за потврду",
+  "account.delete_confirm_org_name": "Упишите име организације за потврду",
+  "account.delete_what_goes": "Одмах се бришу: ваше име, адреса е-поште, подаци за пријаву, API кључеви и лична подешавања обавештења.",
+  "account.delete_what_stays": "Задржава се: евиденција о наплати, 7 година, како захтева пореско законодавство. Све што је већ уписано у складиште података на вашем сопственом налогу остаје нетакнуто — никада ништа не бришемо из вашег складишта.",
+  "account.delete_backups_note": "Резервне копије се чувају најдуже 30 дана, а затим истичу. Не мењамо резервне копије.",
+  "account.delete_last_owner": "Ви сте једини власник организације {org}. Прво пренесите власништво или обришите организацију.",
+  "account.delete_org_too": "Организација {org} нема других чланова, па ће бити обрисана заједно са вашим налогом."
 }

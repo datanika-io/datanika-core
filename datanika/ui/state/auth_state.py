@@ -70,7 +70,16 @@ class OrgInfo(BaseModel):
 
 
 def _slugify(text: str) -> str:
-    """Simple slug from text: lowercase, replace non-alnum with hyphens."""
+    """Simple slug from text: lowercase, replace non-alnum with hyphens.
+
+    🚨 **Do not use this for an organization slug.** A slug is an identifier —
+    unique-constrained, in URLs, and matched by the SSO callback — so deriving one from a
+    person's name publishes that name in a durable key that erasing ``users.full_name``
+    does not reach (core#655 D4). Org slugs are ``org-{user.id}``.
+
+    Kept because it is a general helper and the template-slug plumbing above is unrelated
+    to people's names; ``test_auth_state.py`` asserts signup no longer calls it.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "org"
 
@@ -409,10 +418,15 @@ class AuthState(rx.State):
             with get_sync_session() as session:
                 user = svc.register_user(session, email, password, full_name)
                 org_name = f"{full_name}'s Org"
-                # Suffix with user.id so two users with the same full_name
-                # don't collide on the org slug unique constraint. Mirrors
-                # the pattern in user_service.find_or_create_oauth_user. #127.
-                org_slug = f"{_slugify(full_name)}-{user.id}"
+                # 🚨 The slug is no longer derived from the person's name (core#655, D4).
+                # A slug is an *identifier*: unique-constrained, in URLs, and matched by
+                # the SSO callback (`sso_routes.py` compares `Organization.slug ==
+                # org_slug`), so a name-derived slug publishes a person's name in a
+                # durable key — measured in 5 of 5 production rows. The display `name`
+                # may stay: it is text inside the tenant, and D5 step 7's erasure sweep
+                # rewrites it. The `user.id` suffix that #127 added for uniqueness is now
+                # the whole slug, so uniqueness is if anything stronger.
+                org_slug = f"org-{user.id}"
                 org = svc.create_org(session, org_name, org_slug, user.id)
                 # Capture ids before commit expires ORM attributes
                 org_id = org.id

@@ -191,9 +191,61 @@ def declared_handler_roles() -> dict[str, dict[str, str]]:
 # Pass 2 — every control, and the gates lexically enclosing it
 # --------------------------------------------------------------------------- #
 
+#: Reflex event-handler keyword arguments.
+#:
+#: 🔑 A census fails in **two** independent places: the **predicate** (which
+#: names count) and the **matcher** (which syntax is reachable). A predicate fix
+#: reads like a complete fix, which is why this list exists alongside the
+#: handler-derived requirement above.
+#:
+#: ⚠️ ``on_click`` is not the only way a handler reaches a control. Two
+#: admin-gated controls hang off other events — ``rx.select(on_change=…)`` drives
+#: ``change_member_role``, ``rx.upload(on_drop=…)`` drives
+#: ``handle_restore_upload``. Both are correctly gated today, so neither is a
+#: bug; but a matcher that could not see them would stay green if either gate
+#: were removed, which is precisely the failure this module exists to prevent.
+#:
+#: core#851's confirmation guard has the same defect facing the other way: it
+#: matches ``ast.Call`` only, so ``on_click=SettingsState.leave_org`` — a
+#: handler taking no arguments, hence a bare ``ast.Attribute`` — is unreachable
+#: to it however its verb list is edited.
+HANDLER_KWARGS = (
+    "on_click",
+    "on_change",
+    "on_drop",
+    "on_submit",
+    "on_blur",
+    "on_key_down",
+)
+
+
+def _handler_refs(value: ast.AST) -> list[tuple[str | None, str]]:
+    """Every ``<Name>.<attr>`` reference under an event-handler argument.
+
+    Three shapes occur in this codebase and all three must be reached:
+
+    * ``State.handler(row.id)`` — an ``ast.Call`` over an ``ast.Attribute``
+    * ``State.handler`` — a bare ``ast.Attribute``; a handler taking no
+      arguments is referenced without parentheses
+    * ``lambda v: State.handler(row.id, v)`` — inside an ``ast.Lambda``
+
+    Deliberately generous: it returns every attribute reference it finds, and
+    :func:`ungated_controls` keeps only those naming a role-declaring handler.
+    Over-collection costs nothing here; under-collection is the bug.
+    """
+    out: list[tuple[str | None, str]] = []
+    for sub in ast.walk(value):
+        if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
+            owner = sub.func.value
+            out.append((owner.id if isinstance(owner, ast.Name) else None, sub.func.attr))
+        elif isinstance(sub, ast.Attribute):
+            owner = sub.value
+            out.append((owner.id if isinstance(owner, ast.Name) else None, sub.attr))
+    return out
+
 
 class _ModuleWalker(ast.NodeVisitor):
-    """Collect, per enclosing top-level function, the buttons it renders and the
+    """Collect, per enclosing top-level function, the controls it renders and the
     helpers it calls, each with the ``rx.cond`` gates active at that point."""
 
     def __init__(self, module: str) -> None:
@@ -201,7 +253,7 @@ class _ModuleWalker(ast.NodeVisitor):
         self.fn: str | None = None
         self.stack: list[set[str]] = []
         #: (module, enclosing_fn, StateName, handler, local_gates, lineno)
-        self.buttons: list[tuple] = []
+        self.controls: list[tuple] = []
         #: (callee_name, module, caller_fn, gates_at_call_site)
         self.calls: list[tuple] = []
 
@@ -214,21 +266,16 @@ class _ModuleWalker(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call) -> None:
         active: set[str] = set().union(*self.stack) if self.stack else set()
 
-        if _is_rx_call(node, "button"):
-            for kw in node.keywords:
-                if kw.arg != "on_click":
+        # Any call carrying an event-handler kwarg, not only ``rx.button``.
+        seen: set[tuple[str | None, str]] = set()
+        for kw in node.keywords:
+            if kw.arg not in HANDLER_KWARGS:
+                continue
+            for ref in _handler_refs(kw.value):
+                if ref in seen:
                     continue
-                value, state, handler = kw.value, None, None
-                if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
-                    handler = value.func.attr
-                    if isinstance(value.func.value, ast.Name):
-                        state = value.func.value.id
-                elif isinstance(value, ast.Attribute):
-                    handler = value.attr
-                    if isinstance(value.value, ast.Name):
-                        state = value.value.id
-                if handler:
-                    self.buttons.append((self.module, self.fn, state, handler, active, node.lineno))
+                seen.add(ref)
+                self.controls.append((self.module, self.fn, ref[0], ref[1], active, node.lineno))
 
         # A helper invoked directly: ``_remove_member_dialog(member)``.
         if isinstance(node.func, ast.Name):
@@ -302,7 +349,7 @@ def ungated_controls() -> list[tuple]:
 
     violations = []
     for walker in walkers:
-        for module, fn, state, handler, local, lineno in walker.buttons:
+        for module, fn, state, handler, local, lineno in walker.controls:
             owners = roles.get(handler)
             if not owners:
                 continue  # handler declares no role: nothing to enforce here
@@ -458,10 +505,10 @@ class TestDestructiveControlsGated:
         roles = declared_handler_roles()
         assert len(roles) >= 15, f"only {len(roles)} role-declaring handlers found"
 
-        controls = [b for w in _walk_ui() for b in w.buttons if b[3] in roles]
+        controls = [c for w in _walk_ui() for c in w.controls if c[3] in roles]
         assert len(controls) >= 15, f"only {len(controls)} role-declaring controls found"
 
-        modules = {w.module for w in _walk_ui() if w.buttons}
+        modules = {w.module for w in _walk_ui() if w.controls}
         assert "settings.py" in modules and "api_key_row.py" in modules, (
             f"the scan must cover pages AND components; saw {sorted(modules)}"
         )
@@ -473,7 +520,7 @@ class TestDestructiveControlsGated:
         while the ungated button sat one import away. Naming the file here keeps
         that specific blindness from returning.
         """
-        handlers = {b[3] for w in _walk_ui() if w.module == "api_key_row.py" for b in w.buttons}
+        handlers = {c[3] for w in _walk_ui() if w.module == "api_key_row.py" for c in w.controls}
         assert "revoke_api_key" in handlers
 
     def test_cancel_invitation_is_in_scope(self):
@@ -487,7 +534,7 @@ class TestDestructiveControlsGated:
         """
         roles = declared_handler_roles()
         assert roles.get("cancel_invitation", {}).get("SettingsState") == "admin"
-        sites = [b for w in _walk_ui() for b in w.buttons if b[3] == "cancel_invitation"]
+        sites = [c for w in _walk_ui() for c in w.controls if c[3] == "cancel_invitation"]
         assert sites, "cancel_invitation is rendered nowhere — did the control move?"
 
 
@@ -512,8 +559,8 @@ class TestCheckerSelfCheck:
             "def page():\n"
             "    return rx.button('x', on_click=S.delete_thing(i))\n"
         )
-        assert w.buttons[0][3] == "delete_thing"
-        assert w.buttons[0][4] == set()
+        assert w.controls[0][3] == "delete_thing"
+        assert w.controls[0][4] == set()
 
     def test_gate_is_recorded_from_an_enclosing_cond(self):
         w = self._walk(
@@ -522,7 +569,7 @@ class TestCheckerSelfCheck:
             "    return rx.cond(AuthState.can_delete,\n"
             "        rx.button('x', on_click=S.delete_thing(i)))\n"
         )
-        assert w.buttons[0][4] == {"can_delete"}
+        assert w.controls[0][4] == {"can_delete"}
 
     def test_compound_conditions_contribute_every_name(self):
         w = self._walk(
@@ -531,7 +578,7 @@ class TestCheckerSelfCheck:
             "    return rx.cond(AuthState.can_administer & S.show_form,\n"
             "        rx.button('x', on_click=S.save_channel))\n"
         )
-        assert {"can_administer", "show_form"} <= w.buttons[0][4]
+        assert {"can_administer", "show_form"} <= w.controls[0][4]
 
     def test_gates_resolve_through_a_call_site(self):
         w = self._walk(
@@ -591,6 +638,42 @@ class TestCheckerSelfCheck:
         assert "show_form" not in ROLE_GATES
         assert "show_create" not in ROLE_GATES
         assert "restore_pending" not in ROLE_GATES
+
+    def test_a_select_on_change_is_a_control(self):
+        """``rx.select(on_change=lambda v: State.change_member_role(...))``.
+
+        Admin-gated, and invisible to a matcher that knew only ``rx.button``.
+        The handler sits inside a lambda — the third of the three reference
+        shapes ``_handler_refs`` has to reach.
+        """
+        w = self._walk(
+            "import reflex as rx\n"
+            "def row(m):\n"
+            "    return rx.select(m.roles,\n"
+            "        on_change=lambda v: S.change_member_role(m.id, v))\n"
+        )
+        assert ("S", "change_member_role") in {(c[2], c[3]) for c in w.controls}
+
+    def test_an_upload_on_drop_is_a_control(self):
+        """``rx.upload(on_drop=...)`` drives the admin-gated backup restore."""
+        w = self._walk(
+            "import reflex as rx\n"
+            "def card():\n"
+            "    return rx.upload(on_drop=B.handle_restore_upload(rx.upload_files()))\n"
+        )
+        assert ("B", "handle_restore_upload") in {(c[2], c[3]) for c in w.controls}
+
+    def test_a_no_argument_handler_is_seen(self):
+        """``on_click=State.leave_org`` is a bare ``ast.Attribute``, not a Call.
+
+        This is the shape core#851's guard cannot reach, and the reason
+        ``SettingsState.leave_org`` went unfound by three separate sweeps. Named
+        here so this matcher cannot quietly regress to Call-only.
+        """
+        w = self._walk(
+            "import reflex as rx\ndef row():\n    return rx.button('leave', on_click=S.leave_org)\n"
+        )
+        assert ("S", "leave_org") in {(c[2], c[3]) for c in w.controls}
 
     def test_a_handler_with_no_check_role_is_not_required_to_be_gated(self):
         """``edit_channel`` persists nothing and declares no role.

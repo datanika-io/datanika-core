@@ -448,3 +448,53 @@ Assert the count **per section**, per file, per category — whatever the natura
 same shape has now bitten this project three times: the restore drill asserting `plans >= 5` while
 `users` was empty, a row-total check that would have missed 196-vs-177 by 10%, and this one.
 **Whenever you write a floor, ask what fraction of the thing could disappear beneath it.**
+
+## 20. Check the artifact against what it represents, not against its own plausibility
+
+Three departments hit this on the same day (2026-09-02) in three different shapes, which is what
+makes it a rule rather than three incidents:
+
+- **Engineering** retracted three findings, each *"describing a plausible artifact instead of
+  checking what it represents."*
+- **QA's own handoff file** asserted that a correction had been posted to [core#895]. It had not.
+  The grep that "confirmed" it matched *the right word in the wrong sentence* — `six` in
+  *"the six `Connection: close` reads"*.
+- **Two acceptance criteria passed against the unfixed code** ([core#895] AC2, then [core#896] AC2
+  one day later), because both were drafted from a *description* of the defect rather than from a
+  measurement of it. An AC written that way tends to describe the part that already works.
+
+The common move is that a representation was inspected and treated as the thing. The artifact is
+always the cheaper thing to look at, it is usually consistent with itself, and self-consistency is
+what makes it convincing.
+
+**Rules:**
+
+1. **A claim about an external artifact is verified against that artifact**, not against a file that
+   says it was done, and not against a grep of it. Read the hits.
+2. **Before writing an acceptance criterion, run it.** If it passes today, it is a control, not a
+   criterion — label it as one and go find the case that fails. Both ACs above are now shipped as
+   controls in the suites that replaced them, which is the honest place for them.
+3. **A number in a summary must be copied from output, never tallied by hand.** The
+   `docs/slo_baseline.md` NO_VERDICT breakdown read *14 / 6 / 3*; the measured answer is
+   **13 / 4 / 6**, wrong in all three cells. The figures had been derived by arithmetic over
+   *registry rows* and published as counts of *commitments* — 26 rows carry 33 commitments, and 4 of
+   the 6 entries flagged `blocked_by` never reach that branch because a sample floor stops them
+   first. Nothing in the report ever printed 14, 6 or 3. The fix is not care: it is making the tool
+   print the breakdown, so there is nothing left to tally.
+4. **Ask which population you are counting.** Rows and commitments, entries and verdicts, files and
+   findings — a plausible number over the wrong population is indistinguishable from a measurement,
+   and the arithmetic will check out.
+5. **Prose in a docstring or a guide is a specification the next reader acts on.** Assert it.
+   `_normalize_path`'s docstring claimed to replace *"(IDs, UUIDs)"* and handled only integers,
+   which is what would have got [core#896] closed as stale by a reader who grepped `metrics.py` and
+   found a normaliser. [core#673]'s coverage claim — *"~20 mutating handlers already route through
+   it, so one guard covers them all"* — was false by eight handlers. **Derive the claim from the
+   prose rather than hardcoding it**, so correcting the sentence is an equally valid fix; the defect
+   is the mismatch, not any particular word.
+
+**Corollary — an instruction in an issue is an artifact too.** [core#896] proposed reading
+`scope["route"]` in the ASGI middleware. Measured against the starlette this project actually runs
+(0.52.1), `"route"` is never used as a scope key anywhere in the package, so that fix reads `None`
+on every request and buckets **every** path into `<other>` — satisfying both cardinality criteria
+perfectly while blinding the two REST-API latency SLIs that select on `path`. A proposed fix is a
+hypothesis; run it against the installed version before building to it.

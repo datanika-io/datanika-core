@@ -100,6 +100,33 @@ EXPECTED_SECTION_COUNTS = {
 
 PASS, FAIL, NO_VERDICT = "PASS", "FAIL", "NO_VERDICT"
 
+# Why a commitment has no verdict. These are NOT decoration: the three-cell
+# breakdown in `docs/slo_baseline.md` was hand-tallied from *registry row* counts
+# and published as *commitment* counts, and every one of the three cells was
+# wrong — 14/6/3 against an actual 13/4/6. Twelve registry entries are
+# `unmeasured` but one of them (the WebSocket SLI) carries two commitments, and
+# six entries carry `blocked_by` but four of those never reach the blocked branch
+# because they run out of samples first. A number derived by arithmetic from a
+# count of the wrong objects reads exactly like a measurement.
+#
+# So the report classifies its own verdicts and prints the breakdown. Copy that
+# line into the baseline rather than counting anything by hand.
+NEEDS_INSTRUMENT = "no instrument exists at all"
+DEFECTIVE_INSTRUMENT = "wired to an instrument measured to be defective"
+INSUFFICIENT_SAMPLES = "instrument exists, not enough samples yet"
+NO_SERIES = "instrument exists, the metric is not being collected"
+QUERY_FAILED = "the query could not be run"
+OFFLINE = "offline mode — nothing was queried"
+
+NO_VERDICT_CLASSES = (
+    NEEDS_INSTRUMENT,
+    DEFECTIVE_INSTRUMENT,
+    INSUFFICIENT_SAMPLES,
+    NO_SERIES,
+    QUERY_FAILED,
+    OFFLINE,
+)
+
 # ---------------------------------------------------------------------------
 # Target parsing: turn the doc's prose cells into (comparator, value, unit).
 # ---------------------------------------------------------------------------
@@ -301,6 +328,7 @@ class Verdict:
     observed: str = ""
     target: str = ""
     samples: str = ""
+    reason_class: str = ""
     notes: list[str] = field(default_factory=list)
 
 
@@ -395,6 +423,7 @@ def evaluate(
                         row.subject,
                         NO_VERDICT,
                         "no registry entry — this SLO has never been assigned an instrument",
+                        reason_class=NEEDS_INSTRUMENT,
                     )
                 )
                 continue
@@ -407,6 +436,8 @@ def evaluate(
                         NO_VERDICT,
                         f"declared unmeasured: {entry.get('reason', '(no reason given)')}",
                         target=target.raw,
+                        reason_class=NEEDS_INSTRUMENT,
+                        notes=([f"NEEDS: {entry['needs']}"] if entry.get("needs") else []),
                     )
                 )
                 continue
@@ -421,6 +452,7 @@ def evaluate(
                         f"the document commits to a {target_key} target and the "
                         "registry supplies no query for it",
                         target=_fmt(target.value, target.unit),
+                        reason_class=NEEDS_INSTRUMENT,
                     )
                 )
                 continue
@@ -433,6 +465,7 @@ def evaluate(
                         NO_VERDICT,
                         "offline mode — no Prometheus queried",
                         target=_fmt(target.value, target.unit),
+                        reason_class=OFFLINE,
                     )
                 )
                 continue
@@ -444,7 +477,13 @@ def evaluate(
             sample_values, sample_err = prom.query(entry["samples_query"])
             if sample_err:
                 verdicts.append(
-                    Verdict(vid, row.subject, NO_VERDICT, f"sample query failed: {sample_err}")
+                    Verdict(
+                        vid,
+                        row.subject,
+                        NO_VERDICT,
+                        f"sample query failed: {sample_err}",
+                        reason_class=QUERY_FAILED,
+                    )
                 )
                 continue
             observed_samples = sum(sample_values) if sample_values else 0.0
@@ -458,13 +497,22 @@ def evaluate(
                         "before a quantile or ratio means anything",
                         target=_fmt(target.value, target.unit),
                         samples=f"{observed_samples:.0f}",
+                        reason_class=INSUFFICIENT_SAMPLES,
                     )
                 )
                 continue
 
             values, err = prom.query(expr)
             if err:
-                verdicts.append(Verdict(vid, row.subject, NO_VERDICT, f"query failed: {err}"))
+                verdicts.append(
+                    Verdict(
+                        vid,
+                        row.subject,
+                        NO_VERDICT,
+                        f"query failed: {err}",
+                        reason_class=QUERY_FAILED,
+                    )
+                )
                 continue
             if not values:
                 verdicts.append(
@@ -476,6 +524,7 @@ def evaluate(
                         "not being collected (or the selector matches nothing)",
                         target=_fmt(target.value, target.unit),
                         samples=f"{observed_samples:.0f}",
+                        reason_class=NO_SERIES,
                     )
                 )
                 continue
@@ -503,6 +552,7 @@ def evaluate(
                         observed=_fmt(observed, target.unit),
                         target=_fmt(target.value, target.unit),
                         samples=f"{observed_samples:.0f}",
+                        reason_class=DEFECTIVE_INSTRUMENT,
                         notes=list(entry.get("notes", [])),
                     )
                 )
@@ -548,7 +598,41 @@ def render(verdicts: list[Verdict]) -> str:
             f"NO_VERDICT is not a pass. {counts[NO_VERDICT]} of {len(verdicts)} SLOs "
             "cannot currently be violated or met by anything production measures."
         )
+        out.append(no_verdict_breakdown(verdicts))
     return "\n".join(out)
+
+
+def no_verdict_breakdown(verdicts: list[Verdict]) -> str:
+    """Why each NO_VERDICT has no verdict, counted by the report itself.
+
+    🔑 **This exists because the hand-written version was wrong in all three
+    cells.** ``docs/slo_baseline.md`` published *"no instrument 14 · defective
+    instrument 6 · insufficient samples 3"*; the measured answer is **13 · 4 ·
+    6**. The published figures had been tallied from *registry entries* — 12
+    `unmeasured` keys, 6 `blocked_by` keys — and then reported as counts of
+    *commitments*, which is a different population: the WebSocket entry carries
+    two commitments, and four of the six `blocked_by` entries never reach the
+    blocked branch because their sample floor stops them first.
+
+    The three buckets are not interchangeable, which is why the error mattered.
+    "No instrument" is engineering work; "defective instrument" is unblocked by
+    fixing one named defect; "not enough samples" is a *traffic* problem that no
+    amount of engineering resolves. Being told 6 were blocked on core#895 when 4
+    are, and 3 were waiting on traffic when 6 are, misdirects the work.
+    """
+    unresolved = [v for v in verdicts if v.state == NO_VERDICT]
+    lines = [f"\n--- why the {len(unresolved)} NO_VERDICTs have no verdict ---"]
+    for cls in NO_VERDICT_CLASSES:
+        n = sum(1 for v in unresolved if v.reason_class == cls)
+        if n:
+            lines.append(f"  {n:>3}  {cls}")
+    unclassified = [v.slo_id for v in unresolved if v.reason_class not in NO_VERDICT_CLASSES]
+    if unclassified:
+        lines.append(
+            f"  {len(unclassified):>3}  UNCLASSIFIED — a NO_VERDICT reached the report "
+            f"without a reason class, so this breakdown does not add up: {unclassified}"
+        )
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:

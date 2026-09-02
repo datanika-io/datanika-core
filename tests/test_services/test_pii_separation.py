@@ -67,12 +67,25 @@ class TestExtraction:
         assert user.email == "alice@example.com"
 
     def test_every_active_user_has_exactly_one_pii_row(self, svc, db_session):
-        """Criterion 2, expressed as the invariant rather than as a count of one run."""
-        _register(svc, db_session, "a@example.com", "A Person")
-        _register(svc, db_session, "b@example.com", "B Person")
-        users = db_session.query(User).filter(User.deleted_at.is_(None)).count()
-        pii_rows = db_session.query(UserPII).count()
-        assert users == pii_rows == 2
+        """Criterion 2 — the count check the N backfill has to satisfy.
+
+        ⚠️ Scoped to **the rows this test created**, not to the whole table. The first
+        version compared `count(users)` against `count(user_pii)` globally; it passed in
+        isolation and failed in the full run, because other files legitimately insert
+        `User` rows directly (and one in this very file does so on purpose, to reproduce
+        the t1 window). A guard whose verdict depends on what else ran is not a guard —
+        and this one's failure would have read as "the dual-write is broken".
+        """
+        created = [
+            _register(svc, db_session, "a@example.com", "A Person")[0],
+            _register(svc, db_session, "b@example.com", "B Person")[0],
+        ]
+        for user in created:
+            assert user.deleted_at is None
+            assert db_session.get(UserPII, user.id) is not None, (
+                f"user {user.id} has no user_pii row — the N backfill's count check "
+                "(criterion 2) is what this asserts, per user rather than in aggregate"
+            )
 
     def test_get_user_by_email_refuses_a_soft_deleted_user(self, svc, db_session):
         """Criterion 3 — and a join written without the `deleted_at` filter passes every

@@ -87,16 +87,24 @@ def _delete_account_dialog() -> rx.Component:
                 ),
                 rx.form(
                     rx.vstack(
-                        rx.text(
+                        # A real `<label>` bound by `html_for`, not `rx.text` — core#720:
+                        # a sibling `<p>` is not an accessible name, a screen reader
+                        # announces nothing for the input, and `page.getByLabel(...)`
+                        # cannot find it. Caught here by
+                        # `test_input_accessible_names.py`, which is the harness that
+                        # found the original eight.
+                        rx.el.label(
                             rx.cond(
                                 AccountState.has_password,
                                 _t["account.delete_confirm_password"],
                                 _t["account.delete_confirm_org_name"],
                             ),
-                            size="2",
-                            weight="medium",
+                            html_for="delete-account-confirmation",
+                            font_size="14px",
+                            font_weight="500",
                         ),
                         rx.input(
+                            id="delete-account-confirmation",
                             name="confirmation",
                             type=rx.cond(AccountState.has_password, "password", "text"),
                             custom_attrs={"autoComplete": "off"},

@@ -27,6 +27,7 @@ precise thing that cannot be checked in advance.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -77,23 +78,80 @@ def resolved(output: str) -> str | None:
     return None
 
 
-def test_the_script_exists_and_is_wired_into_both_cloud_checkouts():
-    # Anti-vacuity for everything below: a behavioural suite over a script that no
-    # workflow calls proves nothing about CI.
-    assert SCRIPT.is_file()
+def _jobs_using_the_resolver(ci: str) -> dict[str, str]:
+    """Split ci.yml into top-level jobs and keep those that call the resolver."""
+    lines = ci.split("\n")
+    starts = [
+        i for i, line in enumerate(lines) if re.fullmatch(r"  [A-Za-z0-9_-]+:", line.rstrip())
+    ]
+    jobs: dict[str, str] = {}
+    for n, i in enumerate(starts):
+        j = starts[n + 1] if n + 1 < len(starts) else len(lines)
+        body = "\n".join(lines[i:j])
+        if "resolve-cloud-ref.sh" in body:
+            jobs[lines[i].strip().rstrip(":")] = body
+    return jobs
+
+
+def test_the_resolver_is_reachable_from_where_each_job_actually_runs_it():
+    """The path must be DERIVED from the job's own checkout, never restated.
+
+    🚨 This replaces an assertion that hardcoded `run: bash .github/scripts/…` and merely
+    counted it — which is how the first version of this change shipped broken. Both jobs
+    check out core with `path: core`, so the repo is **not** at the workspace root: the step
+    exited **127** having printed nothing at all, `Checkout cloud` was skipped, and
+    `image-probe` read `failure` with no diagnostic. That looks exactly like the core#923
+    defect it was written to fix.
+
+    The old guard could not have caught it, because it was written from the same mental
+    model as the change and therefore agreed with it including where it was wrong. **A text
+    guard that restates the author's assumption tests nothing.** This one resolves the path
+    on disk instead.
+    """
     ci = CI.read_text("utf-8")
-    # ⚠️ Count the INVOCATION, not the filename. A bare `count("resolve-cloud-ref.sh")`
-    # reads 3, because the comment explaining the fix names the script too — a guard that
-    # reds on its own documentation teaches people to delete the documentation. Third
-    # instance of this shape in one session; the rule is to assert the construct, never
-    # the word.
-    assert ci.count("run: bash .github/scripts/resolve-cloud-ref.sh") == 2, (
-        "both image-probe and image-cve must resolve the cloud ref through the script"
-    )
+    jobs = _jobs_using_the_resolver(ci)
+    assert set(jobs) == {"image-probe", "image-cve"}, f"unexpected job set: {sorted(jobs)}"
+
+    for name, body in jobs.items():
+        checkout = re.search(r"- name: Checkout core \(this repo\).*?path: (\S+)", body, re.DOTALL)
+        assert checkout, f"{name}: no core checkout with an explicit path:"
+        core_path = checkout.group(1)
+
+        step = re.search(
+            r"- name: Resolve the cloud branch to pair against(.*?)(?=\n      - |\Z)",
+            body,
+            re.DOTALL,
+        )
+        assert step, f"{name}: resolve step not found"
+        block = step.group(1)
+
+        run_line = re.search(r"run: bash (\S+)", block)
+        assert run_line, f"{name}: resolve step has no `run: bash <script>`"
+        wd = re.search(r"working-directory: (\S+)", block)
+        base = wd.group(1) if wd else "."
+
+        # `path: core` puts the repo at `<workspace>/core`, so a step must run from there
+        # or name the script through it. Anything else does not exist on the runner.
+        assert base == core_path, (
+            f"{name}: the resolve step runs from {base!r} but core is checked out to "
+            f"{core_path!r} — the script does not exist there and bash exits 127"
+        )
+        # And the path it names must be real, checked against this repo on disk.
+        assert (REPO_ROOT / run_line.group(1)).is_file(), (
+            f"{name}: {run_line.group(1)} does not exist in the repository"
+        )
+
     assert ci.count("ref: ${{ steps.cloudref.outputs.ref }}") == 2
-    # The old expression must be gone from the cloud checkouts. Scoped to the `ref:` key
-    # for the same reason: the comment above the step quotes it deliberately.
+    # The old expression must be gone from the cloud checkouts. Scoped to the `ref:` key:
+    # the comment above the step quotes it deliberately, and a guard that reds on its own
+    # documentation teaches people to delete the documentation.
     assert "ref: ${{ github.base_ref || github.ref_name }}" not in ci
+
+
+def test_the_script_exists(tmp_path):
+    # Anti-vacuity for everything below: a behavioural suite over a missing script would
+    # error rather than pass, but say so plainly.
+    assert SCRIPT.is_file()
 
 
 def test_pull_request_resolves_to_the_target_branch(tmp_path):
@@ -186,3 +244,29 @@ def test_the_guard_can_fail(tmp_path):
     # Without the refusal the queue branch sails straight through — which is the bug.
     assert proc.returncode == 0
     assert QUEUE_BRANCH in (tmp_path / "out").read_text("utf-8")
+
+
+def test_the_path_guard_can_fail():
+    """Control for the new derived-path assertion: it must catch the bug that shipped.
+
+    Removing `working-directory: core` is exactly what the first version of this change
+    did, and the old counting guard stayed green through it.
+    """
+    ci = CI.read_text("utf-8")
+    anchor = "        working-directory: core\n        env:\n          MERGE_GROUP_BASE:"
+    broken = ci.replace(anchor, "        env:\n          MERGE_GROUP_BASE:")
+    assert broken != ci, "anchor did not match — the control would be inert"
+
+    jobs = _jobs_using_the_resolver(broken)
+    assert jobs, "parser found no jobs in the mutated file"
+    for name, body in jobs.items():
+        checkout = re.search(r"- name: Checkout core \(this repo\).*?path: (\S+)", body, re.DOTALL)
+        step = re.search(
+            r"- name: Resolve the cloud branch to pair against(.*?)(?=\n      - |\Z)",
+            body,
+            re.DOTALL,
+        )
+        wd = re.search(r"working-directory: (\S+)", step.group(1))
+        base = wd.group(1) if wd else "."
+        # This is the state that exited 127 in CI.
+        assert base != checkout.group(1), f"{name}: mutation did not remove the working-directory"

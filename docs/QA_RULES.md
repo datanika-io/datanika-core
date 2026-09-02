@@ -498,3 +498,62 @@ what makes it convincing.
 on every request and buckets **every** path into `<other>` — satisfying both cardinality criteria
 perfectly while blinding the two REST-API latency SLIs that select on `path`. A proposed fix is a
 hypothesis; run it against the installed version before building to it.
+
+---
+
+## 21. Before triaging a red, ask what changed about the INSTRUMENT
+
+**(2026-09-02 — the `Nightly Connector Smoke` triage.)** Three consecutive nightly reds looked like
+an escalating incident. They were **one breakage roughly ten nights old**, becoming visible for the
+first time because [core#827]'s fix stopped the job laundering pytest's exit code through a pipe to
+`tee`. Nothing broke on the day the alerts started.
+
+The decisive evidence is cheap and it is always available: **compare the failing run to the last
+GREEN one at the level of the thing being measured, not at the level of the verdict.** The last
+green run reported `12 failed, 9 passed` — the identical failure set, test for test.
+
+Two corollaries that changed the answer here:
+
+1. **Read the run's `event` and `head_branch`, not just its colour.** One of the three "reds" was a
+   `workflow_dispatch` on `dev` at the fix commit's own SHA — i.e. an engineer executing the fix's
+   acceptance criterion *"show it red before calling it fixed"*. **It was a successful verification
+   filed as an alert.** Counting it as an incident inverts its meaning.
+2. **Read the config at the commit each run used** (`git cat-file -p <sha>:.github/workflows/x.yml`),
+   never at `HEAD`. That is what separates *"failures that predate the fix"* from *"the fix does not
+   work"*, and the two call for opposite responses.
+
+🔑 **The general form: a change in a signal is not a change in the system.** When an alarm starts
+firing, the first question is whether the alarm changed, not what it is pointing at.
+
+**And the sequel is the harder half.** Once the red is correct, ask whether it can ever go green
+again. Four of these twelve failures are lapsed vendor trial accounts — nothing an engineer can fix.
+A red that repeats nightly and forever destroys the channel exactly as a green that proves nothing
+does, and it hides the nine probes that *are* live. Neither carries information. When a check's
+failure is permanent and understood, tier it — **and pin the known-bad set by name, so the job still
+goes red if the set changes in either direction.** Muting is what tiering becomes when you skip that.
+
+---
+
+## 22. A leaked credential's blast radius is what the ACCOUNT can still do
+
+**(2026-09-02, while assessing the credentials found in public Actions logs.)** I ranked a Databricks
+PAT as the most urgent rotation, reasoning from the credential *type* — a workspace token means
+clusters, jobs, data, billable compute. The founder queue had already measured that workspace
+**INACTIVE**: the token authenticates and lists catalogs, but no compute can start. The real
+exposure was metadata only, and the genuinely live credential was a different one entirely.
+
+The nightly's green Databricks probes did not contradict that finding, and reading them as
+reassurance would have been a second error: those probes only ever exercise **auth + list**, which
+is precisely the subset that still works on a dead account.
+
+**Rules:**
+
+1. **Reason from the account's measured state, not from the credential's type.** "It is a PAT" tells
+   you the maximum; only the account tells you the actual.
+2. **Check the founder/human-locked queue before assigning a severity.** The measurement that
+   corrected this was already written down in another repo's issue.
+3. **Overstating a severity spends the same credibility as understating one** — it aims a human at
+   the wrong item first. Correct it in place, publicly, rather than quietly leaving the ranking.
+4. Related and pointing the other way: *a credential existing is not the same as the service being
+   usable.* Free-trial sandboxes decay silently and **the credential keeps working while the service
+   stops** — which is why "the probe authenticates" is never evidence the connector works.

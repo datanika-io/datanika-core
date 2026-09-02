@@ -378,6 +378,13 @@ jobs:
       - name: Resolve the cloud branch to pair against
         id: cloudref
         if: steps.token.outputs.available == 'true'
+        # ⚠️ `Checkout core (this repo)` above uses `path: core`, so the repo is NOT
+        # at the workspace root and a bare `.github/scripts/...` does not exist.
+        # Measured: without this the step exits **127** having printed nothing at
+        # all, `Checkout cloud` is skipped, and `image-probe` reads `failure` with
+        # no diagnostic — which looks exactly like the core#923 defect it fixes.
+        # Same convention as the other steps in this job.
+        working-directory: core
         env:
           MERGE_GROUP_BASE: ${{ github.event.merge_group.base_ref }}
           PR_BASE: ${{ github.base_ref }}
@@ -587,6 +594,13 @@ jobs:
       - name: Resolve the cloud branch to pair against
         id: cloudref
         if: steps.token.outputs.available == 'true'
+        # ⚠️ `Checkout core (this repo)` above uses `path: core`, so the repo is NOT
+        # at the workspace root and a bare `.github/scripts/...` does not exist.
+        # Measured: without this the step exits **127** having printed nothing at
+        # all, `Checkout cloud` is skipped, and `image-probe` reads `failure` with
+        # no diagnostic — which looks exactly like the core#923 defect it fixes.
+        # Same convention as the other steps in this job.
+        working-directory: core
         env:
           MERGE_GROUP_BASE: ${{ github.event.merge_group.base_ref }}
           PR_BASE: ${{ github.base_ref }}

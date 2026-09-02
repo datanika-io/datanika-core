@@ -914,14 +914,15 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *Staging smoke failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>Staging smoke failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
   # Two tiers (core#521). GATING specs have a track record and their red holds
   # the promotion. INFORMATIONAL specs are newly written: they run, report and
@@ -1312,14 +1313,15 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *Staging E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>Staging E2E failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       # No issue is filed for this one: a harness that never ran is not a test
       # failure and does not belong on the `e2e-staging-failure` dedup thread,
@@ -1334,14 +1336,15 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GATING_OUTCOME: ${{ steps.gating.outcome }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: NO VERDICT*\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$GATING_OUTCOME" "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>Staging E2E: NO VERDICT</b>\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$GATING_OUTCOME")" "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on failure
         if: always() && steps.verdict.outputs.state == 'gating_failed'
@@ -1421,6 +1424,7 @@ jobs:
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
           VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
           case "$VERDICT" in
@@ -1430,12 +1434,12 @@ jobs:
             cancelled)     STATE="The run was CANCELLED, so its verdict is neither green nor red." ;;
             *)             STATE="Run state: ${VERDICT:-unknown}." ;;
           esac
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
-            "$STATE" "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>Staging E2E: GATING spec was FLAKY</b>\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Specs:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$STATE")" "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$FLAKY_SPECS")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on flaky gating spec
         if: always() && steps.flaky_gate.outputs.status == 'flaky'
@@ -1869,13 +1873,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *SSO E2E: NO VERDICT*\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n*Commit:* `%s`\n*Run:* %s' \
-            "$SPECS_OUTCOME" "$SHORT_SHA" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>SSO E2E: NO VERDICT</b>\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n<b>Commit:</b> <code>%s</code>\n<b>Run:</b> %s' \
+            "$(esc "$SPECS_OUTCOME")" "$(esc "$SHORT_SHA")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on failure
         id: file_issue
@@ -1956,14 +1961,15 @@ jobs:
           ISSUE: ${{ steps.file_issue.outputs.issue }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *SSO E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Issue:* #%s\n*Run:* %s\n\nFurther failures of this condition will comment on the issue instead of paging.' \
-            "$SHORT_SHA" "$FIRST_LINE" "${ISSUE:-?}" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>SSO E2E failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Issue:</b> #%s\n<b>Run:</b> %s\n\nFurther failures of this condition will comment on the issue instead of paging.' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "${ISSUE:-?}")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
   # Prod post-deploy smoke gates (smoke = URL gate, smoke-prod = pytest shape)
   # moved to .github/workflows/deploy-pointer.yml — they run after the prod deploy

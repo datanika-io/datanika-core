@@ -178,11 +178,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          TEXT=$(printf '\xf0\x9f\x94\xa5 *Nightly connector smoke failed*\n\nOne or more paid-connector sandboxes failed auth + metadata probe.\n\n*Triage*: open the run link, look for the first FAILED test. Likely causes (in order of frequency):\n- Credential rotated / expired (Stripe, HubSpot PATs rotate silently)\n- Sandbox/trial expired (Databricks 14-day trial)\n- Vendor API shape changed (rare but catches it early)\n\n*Run*: %s\n\nSee PLAN_HUMAN_LOCKERS.md §"QA test credentials" for how to reprovision.' "$RUN_URL")
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          TEXT=$(printf '\xf0\x9f\x94\xa5 <b>Nightly connector smoke failed</b>\n\nOne or more paid-connector sandboxes failed auth + metadata probe.\n\n<b>Triage</b>: open the run link, look for the first FAILED test. Likely causes (in order of frequency):\n- Credential rotated / expired (Stripe, HubSpot PATs rotate silently)\n- Sandbox/trial expired (Databricks 14-day trial)\n- Vendor API shape changed (rare but catches it early)\n\n<b>Run</b>: %s\n\nReprovisioning is tracked as human-locked issues in the PRIVATE cloud repo:\ngh issue list --repo datanika-io/datanika-cloud --label human-locked' "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
   # Oracle runs in its own job with an ephemeral XE service container, isolated
   # from the SaaS probes above so an Oracle image/boot hiccup can't mask a real
@@ -271,8 +272,9 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
-          TEXT=$(printf '\xf0\x9f\x94\xa5 *Nightly Oracle connector smoke failed*\n\nThe Oracle XE probe failed. Unlike the SaaS probes this is self-contained (ephemeral XE container), so a failure points at OUR code or the image, not a vendor.\n\n*Triage*: open the run link. Likely causes:\n- oracledb thin-driver break / version bump\n- gvenzl/oracle-xe image or service-name (XEPDB1) drift\n- connection_service._build_sa_url Oracle regression\n\n*Run*: %s' "$RUN_URL")
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          TEXT=$(printf '\xf0\x9f\x94\xa5 <b>Nightly Oracle connector smoke failed</b>\n\nThe Oracle XE probe failed. Unlike the SaaS probes this is self-contained (ephemeral XE container), so a failure points at OUR code or the image, not a vendor.\n\n<b>Triage</b>: open the run link. Likely causes:\n- oracledb thin-driver break / version bump\n- gvenzl/oracle-xe image or service-name (XEPDB1) drift\n- connection_service._build_sa_url Oracle regression\n\n<b>Run</b>: %s' "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"

@@ -268,7 +268,17 @@ def run_upload(
                 if extracted_dir and uploaded_file:
                     file_svc.cleanup_extracted(uploaded_file)
 
-        execution_service.complete_run(session, org_id, run_id, rows_loaded=rows, logs=logs)
+        # `bytes_processed` is set by whichever branch above ran (core#912). It
+        # was previously handed to the hook and to nothing else, so the number
+        # existed for the duration of this function and was then gone.
+        execution_service.complete_run(
+            session,
+            org_id,
+            run_id,
+            rows_loaded=rows,
+            logs=logs,
+            bytes_processed=bytes_processed,
+        )
 
         table_count = 1  # fallback
         try:
@@ -385,6 +395,20 @@ def run_upload(
             target_id=upload.id,
             table_count=table_count,
             bytes_processed=bytes_processed,
+            # core#910. The dimension `SPEC_GB_THROUGHPUT_METRICS` §3.1/§3.3 and
+            # `SPEC_VOLUME_METERING` §8 specify on the bytes counter, and the
+            # reason §6's panel 5 is the one Prometheus-backed panel on the
+            # Volume Metrics dashboard. It is a property of an *ingestion* run,
+            # so it is passed here and deliberately nowhere else — the model and
+            # transformation completions carry no bytes at all, and labelling
+            # them would name rows that do not exist.
+            #
+            # `.value`, not the member: `UploadMode` is a StrEnum, so the two
+            # compare equal everywhere except where the value is written to a
+            # ledger column or rendered into a Prometheus label — i.e. exactly
+            # where this one is going. `handle_bytes_processed` already ends in
+            # `**_kwargs`, so this is safe to ship ahead of the cloud half.
+            mode=upload.mode.value,
         )
 
     finally:

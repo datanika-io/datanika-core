@@ -232,6 +232,29 @@ class AuthState(rx.State):
         """
         return check_role_hierarchy(self.current_role, "admin")
 
+    @rx.var
+    def can_administer(self) -> bool:
+        """Whether the current member may manage org-level facilities (admin+).
+
+        API keys, notification channels and backup export are **not** tenant
+        resources — they are levers on the organisation itself, and every one of
+        their handlers gates on ``_check_role("admin")``, including the *create*
+        ones. ``can_edit`` (editor) is therefore too weak to gate them: an editor
+        given the API-keys create form gets a Create button that always fails,
+        which is core#658's defect exactly.
+
+        ⚠️ **Same threshold as** :attr:`can_delete`, deliberately, and this is a
+        duplicate predicate rather than an alias. They answer two different
+        questions — *may I destroy a row?* and *may I operate the organisation?*
+        — which happen to have one answer under today's role table. Aliasing
+        them would mean the next change to either has to be made by someone who
+        first notices they were ever distinct. Both are checked against
+        ``check_role_hierarchy(..., "admin")`` by
+        ``tests/test_ui/test_rbac_ui_visibility.py::TestVisibilityVars``, so a
+        drift in either direction is a test failure rather than a reading.
+        """
+        return check_role_hierarchy(self.current_role, "admin")
+
     def _get_user_service(self) -> UserService:
         auth = AuthService(settings.secret_key)
         return UserService(auth)

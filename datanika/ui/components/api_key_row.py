@@ -23,9 +23,67 @@ out of the guard's view — which is the same lexical-blindness trap that
 import reflex as rx
 
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
+
+
+def api_key_create_controls() -> rx.Component:
+    """The New / name / Create block, rendered on both API-key surfaces.
+
+    Moved here from ``pages/api_keys.py`` and ``pages/settings.py`` — where it
+    was duplicated verbatim — by core#886, for the same reason the row moved:
+    the gate it now carries has to be true in both places or in neither.
+
+    ⚠️ The caller supplies the gate (``rx.cond(AuthState.can_administer, …)``),
+    not this function. Both call sites are inside a card that also renders an
+    ungated keys table, so the gate has to select *between* subtrees at the
+    card level; a helper that gated itself would still leave the caller free to
+    render it unconditionally, which is the mistake this module exists to make
+    impossible. The derived guard in
+    ``tests/test_ui/test_rbac_ui_visibility.py`` resolves gates through call
+    sites, so it checks the callers rather than trusting this docstring.
+    """
+    return rx.vstack(
+        rx.hstack(
+            rx.spacer(),
+            rx.button(_t["api_keys.new"], on_click=ApiKeyState.toggle_create, size="2"),
+            width="100%",
+            align="center",
+        ),
+        rx.cond(
+            ApiKeyState.show_create,
+            rx.vstack(
+                rx.separator(),
+                # A neighbouring rx.text() is not a label (core#720). The two
+                # copies of this input were each unlabelled and each counted
+                # separately in the accessibility ratchet; consolidating them
+                # made it one input, so it is labelled here rather than moved
+                # from one allowance to another.
+                rx.el.label(
+                    rx.text(_t["common.name"], size="2", weight="medium"),
+                    html_for="api-key-name",
+                ),
+                rx.input(
+                    id="api-key-name",
+                    placeholder="e.g. CI/CD deploy key",
+                    value=ApiKeyState.new_key_name,
+                    on_change=ApiKeyState.set_new_key_name,
+                    width="100%",
+                ),
+                rx.button(
+                    _t["api_keys.create"],
+                    on_click=ApiKeyState.create_api_key,
+                    size="2",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+        ),
+        spacing="4",
+        width="100%",
+    )
 
 
 def revoke_api_key_dialog(key: ApiKeyItem) -> rx.Component:
@@ -84,12 +142,23 @@ def revoke_api_key_dialog(key: ApiKeyItem) -> rx.Component:
 
 
 def api_key_row(key: ApiKeyItem) -> rx.Component:
-    """The table row itself. Identical on both surfaces, by construction."""
+    """The table row itself. Identical on both surfaces, by construction.
+
+    The role gate lives **here**, not at the two call sites, for the same reason
+    the copy does: ``/api-keys`` and the Settings card render the same row, and
+    a gate duplicated across two files is a gate that can be true in one place
+    and absent in the other. ``revoke_api_key`` gates on
+    ``_check_role("admin")``, so ``can_delete`` is the matching threshold — a
+    viewer or editor sees the key's metadata (which they may read) and no
+    Revoke button (which they may not press). core#886.
+    """
     return rx.table.row(
         rx.table.cell(key.name),
         rx.table.cell(key.scopes),
         rx.table.cell(key.created_at),
         rx.table.cell(key.last_used_at),
         rx.table.cell(key.expires_at),
-        rx.table.cell(revoke_api_key_dialog(key)),
+        rx.table.cell(
+            rx.cond(AuthState.can_delete, revoke_api_key_dialog(key), rx.fragment()),
+        ),
     )

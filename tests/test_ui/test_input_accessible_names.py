@@ -72,12 +72,14 @@ KNOWN_UNLABELLED: dict[str, int] = {
     "datanika/ui/components/pipeline_mode_selector.py": 1,
     "datanika/ui/components/searchable_select.py": 1,
     "datanika/ui/components/secure_input.py": 2,
-    "datanika/ui/pages/api_keys.py": 1,
+    # api_keys.py had 1 until core#886 consolidated the duplicated create block
+    # into components/api_key_row.py and labelled it there. Row removed rather
+    # than set to 0: this dict means "files carrying known debt".
     "datanika/ui/pages/dag.py": 3,
     "datanika/ui/pages/model_detail.py": 13,
     "datanika/ui/pages/pipelines.py": 4,
     "datanika/ui/pages/schedules.py": 3,
-    "datanika/ui/pages/settings.py": 14,
+    "datanika/ui/pages/settings.py": 13,  # was 14 — same core#886 consolidation
     "datanika/ui/pages/sql_editor.py": 1,
     "datanika/ui/pages/transformations.py": 7,
     "datanika/ui/pages/uploads.py": 16,

@@ -49,10 +49,13 @@ from slo_report import (  # noqa: E402
     EXPECTED_SECTION_COUNTS,
     MAX,
     MIN,
+    NEEDS_INSTRUMENT,
     NO_VERDICT,
+    NO_VERDICT_CLASSES,
     Prometheus,
     evaluate,
     load_registry,
+    no_verdict_breakdown,
     parse_slo_doc,
     parse_target,
     registry_query,
@@ -298,6 +301,32 @@ def test_unmeasured_entries_say_why(registry):
     )
 
 
+def test_unmeasured_entries_say_what_they_would_need(registry):
+    """`reason` says why there is no verdict. `needs` says what would produce one.
+
+    They are different facts and only one of them is actionable. Without `needs`
+    the honest answer to *"which of these can we close cheaply?"* is a fresh
+    investigation every time — which is how the same twelve gaps were re-derived
+    from scratch on two consecutive days.
+
+    Writing it down also forces the distinction that matters most here: three of
+    the four pipeline-level SLOs need a **schema change** before any exporter
+    could help, and two of the throughput SLOs need **load** rather than an
+    instrument at all. "No metric records this" is true of all of them and
+    directs the work nowhere.
+    """
+    problems = [
+        slo_id
+        for slo_id, entry in registry.items()
+        if entry.get("status") == "unmeasured" and len((entry.get("needs") or "").strip()) < 40
+    ]
+    assert not problems, (
+        "These SLOs record why they are unmeasured but not what would measure "
+        "them. Add a `needs:` naming the specific missing thing — a metric, a "
+        "column, a load harness, or a decision.\n  " + "\n  ".join(problems)
+    )
+
+
 def test_app_sourced_queries_reference_metrics_we_actually_emit(registry):
     """A query against a metric core never defines returns no series, forever.
 
@@ -404,16 +433,104 @@ def test_every_app_sourced_slo_is_blocked_while_core_895_is_open(registry):
 
 
 def test_the_coverage_gap_is_visible_as_a_number(rows, registry):
-    """Print the split. '26 SLOs' reads like coverage until you look."""
-    unmeasured = sum(1 for v in registry.values() if v.get("status") == "unmeasured")
-    blocked = sum(1 for v in registry.values() if v.get("blocked_by"))
-    scoreable = len(rows) - unmeasured - blocked
-    assert unmeasured + blocked + scoreable == len(rows)
-    assert scoreable > 0, "not one SLO in the document can produce a verdict"
+    """Print the split. '26 SLOs' reads like coverage until you look.
+
+    🚨 **Counted in COMMITMENTS, not registry rows, and the difference is not
+    pedantic.** The previous version of this test counted registry entries —
+    12 `unmeasured`, 6 `blocked_by` — and subtracted them from `len(rows)`.
+    Those figures were then published in `docs/slo_baseline.md` as a breakdown
+    of the 33 *commitments*, giving *"14 no instrument · 6 defective · 3 not
+    enough samples"*. The measured answer is **13 · 4 · 6**, and all three cells
+    were wrong:
+
+    * the WebSocket entry is one row carrying **two** commitments (p95 and p99),
+      so 12 unmeasured rows are 13 unmeasured commitments;
+    * four of the six `blocked_by` entries never reach the blocked branch,
+      because `scripts/slo_report.py` checks sample sufficiency **first** and
+      they have zero samples. They are waiting on traffic, not on core#895.
+
+    The buckets are not interchangeable. "No instrument" is engineering work,
+    "defective instrument" is unblocked by fixing one named defect, and "not
+    enough samples" is a traffic problem no engineering resolves. Being told six
+    were blocked on core#895 when four are, and three were waiting on traffic
+    when six are, sends the work to the wrong place.
+    """
+    verdicts = evaluate(rows, registry, None)
+    commitments = len(verdicts)
+    no_instrument = sum(1 for v in verdicts if v.reason_class == NEEDS_INSTRUMENT)
+
+    unmeasured_rows = sum(1 for v in registry.values() if v.get("status") == "unmeasured")
+    assert no_instrument != unmeasured_rows, (
+        f"unmeasured registry rows ({unmeasured_rows}) and unmeasured commitments "
+        f"({no_instrument}) are equal, so this test can no longer detect the "
+        "confusion it exists for. If a multi-target SLO stopped being unmeasured, "
+        "say so here deliberately."
+    )
+    assert commitments > no_instrument, "not one SLO in the document has an instrument"
     print(
-        f"\nSLO instrument coverage: {len(rows)} documented — "
-        f"{scoreable} scoreable, {blocked} blocked on a defective instrument, "
-        f"{unmeasured} with no instrument at all."
+        f"\nSLO instrument coverage: {commitments} commitments across {len(rows)} "
+        f"documented SLOs — {no_instrument} have no instrument at all.\n"
+        "The defective-instrument and insufficient-samples cells CANNOT be counted "
+        "here: both depend on live sample counts, so only a production run of "
+        "scripts/slo_report.py can fill them in. Copy that run's breakdown into "
+        "docs/slo_baseline.md rather than tallying anything by hand."
+    )
+
+
+def test_every_no_verdict_carries_a_reason_class(rows, registry):
+    """No NO_VERDICT may reach the report unclassified.
+
+    The breakdown is only trustworthy if it is exhaustive. An unclassified
+    verdict would silently drop out of every bucket and make the cells sum to
+    less than the total — which is precisely the arithmetic that would go
+    unnoticed, because a reader checks the cells against each other and not
+    against the total.
+    """
+    verdicts = evaluate(rows, registry, None)
+    unclassified = [
+        (v.slo_id, v.detail[:60])
+        for v in verdicts
+        if v.state == NO_VERDICT and v.reason_class not in NO_VERDICT_CLASSES
+    ]
+    assert not unclassified, (
+        "these NO_VERDICTs have no reason class, so the breakdown does not "
+        f"account for them:\n  {unclassified}"
+    )
+
+    counted = sum(
+        sum(1 for v in verdicts if v.state == NO_VERDICT and v.reason_class == cls)
+        for cls in NO_VERDICT_CLASSES
+    )
+    assert counted == sum(1 for v in verdicts if v.state == NO_VERDICT), (
+        "the per-class counts do not sum to the NO_VERDICT total; a verdict is "
+        "being counted twice or not at all"
+    )
+
+
+def test_control_the_breakdown_discriminates(rows, registry):
+    """A classifier that returns one label for everything is not a classifier.
+
+    Offline, every commitment is NO_VERDICT — so a breakdown that put them all in
+    one bucket would still render, still sum correctly, and still say nothing.
+    Two classes must be present, and the one that is *not* an artefact of being
+    offline has to be the real one.
+    """
+    verdicts = evaluate(rows, registry, None)
+    present = {v.reason_class for v in verdicts if v.state == NO_VERDICT}
+    assert len(present) >= 2, (
+        f"every offline NO_VERDICT landed in the same bucket ({present}); the "
+        "breakdown cannot distinguish anything"
+    )
+    assert NEEDS_INSTRUMENT in present, (
+        "no commitment was classified as lacking an instrument even though the "
+        "registry declares entries `unmeasured` — the classifier is not reading "
+        "the registry"
+    )
+
+    text = no_verdict_breakdown(verdicts)
+    assert "UNCLASSIFIED" not in text, text
+    assert NEEDS_INSTRUMENT in text, (
+        "the rendered breakdown omits the class that matters most:\n" + text
     )
 
 

@@ -31,6 +31,25 @@ def signup_page() -> rx.Component:
                     width="100%",
                 ),
             ),
+            # core#639. A **bounded flag** chosen from a closed set, never the
+            # value itself — same shape as ``auth_error_reason`` on /login. The
+            # two states render the same neutral callout so the refusal carries
+            # no information about the address, and neither reads as the user
+            # having done something wrong.
+            rx.cond(
+                AuthState.signup_blocked != "",
+                rx.callout(
+                    rx.match(
+                        AuthState.signup_blocked,
+                        ("rate_limited", _t["auth.signup_rate_limited"]),
+                        ("unavailable", _t["auth.signup_unavailable"]),
+                        "",
+                    ),
+                    icon="info",
+                    color_scheme="gray",
+                    width="100%",
+                ),
+            ),
             rx.form(
                 rx.vstack(
                     rx.el.label(

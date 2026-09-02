@@ -11,11 +11,53 @@ from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.auth_redirects import AUTH_ERROR_KEYS
 from datanika.services.captcha_service import CaptchaService
+from datanika.services.client_ip import resolve_client_ip
 from datanika.services.email_verification import request_email_verification
+from datanika.services.rate_limit_service import RateLimitService
 from datanika.services.user_service import UserService, UserServiceError
 from datanika.ui.state.base_state import check_role_hierarchy, get_sync_session
 
 logger = logging.getLogger(__name__)
+
+# Bounding the /signup account-existence oracle (core#639,
+# docs/specs/SPEC_SIGNUP_ENUMERATION.md). A copy of the shipped
+# password_reset_state.py:35-51 pattern, with different numbers.
+#
+# 🚨 **A bound is not opacity.** /signup still answers "does this address have
+# an account?" — deliberately, per #128, because a form that refuses without
+# saying why is worse for the user. This makes **bulk** enumeration expensive.
+# It does nothing against a **targeted** query: "does alice@bigcorp.com have an
+# account?" is one request, and one request is under any limit worth having.
+# Only option 2 in the spec (accept the submission either way and mail the
+# address) closes that, and it stays deferred. #639 remains open after this.
+_limiter = RateLimitService()
+
+# D3. Signup is not password reset: a person signs up **once, ever**, so the
+# per-address dimension is nearly meaningless and the per-IP dimension carries
+# the weight. 10/IP matches the reset IP limit deliberately.
+#
+# ⚠️ The per-IP limit is the one that will need revisiting, and the trigger is
+# corporate NAT rather than attack volume: ten colleagues registering from one
+# office in one hour is a plausible good outcome and an indistinguishable one.
+# Do not raise it pre-emptively; let the first support ticket move it. The 10
+# is copied from a route with a different usage shape, not measured.
+_SIGNUP_IP_LIMIT = 10
+_SIGNUP_EMAIL_LIMIT = 3
+_SIGNUP_WINDOW = 3600
+
+
+def _allow(bucket: str, limit: int) -> bool:
+    """Whether ``bucket`` is under its hourly limit.
+
+    Redis failures **propagate**; the caller turns them into the generic
+    unavailable state. D4: failing closed here forfeits nothing that is not
+    already lost, because since core#646 Redis holds Reflex session state — with
+    Redis down a user who registered could not stay signed in anyway — and the
+    alternative is the limiter silently disappearing during exactly the incident
+    an attacker would pick.
+    """
+    return _limiter.check_window(bucket, limit, window_seconds=_SIGNUP_WINDOW).allowed
+
 
 # Option C auth bridge: valid template slug pattern + max length. Cold-traffic
 # visitors who click "Try this template" on a public /templates/<slug> landing
@@ -127,9 +169,34 @@ class AuthState(rx.State):
     # every surface a person can see, and the only proof either way was opening an
     # inbox by hand.
     verification_mail_state: str = ""
+    # Why /signup refused before it looked anything up (core#639). One of
+    # "rate_limited" | "unavailable", or "" when nothing refused it.
+    #
+    # A **bounded flag**, not a message, for the reason ``auth_error_reason``
+    # is one: the page renders a translated sentence chosen by this value and
+    # never the value itself. It is separate from ``auth_error`` because the
+    # refusal must be byte-identical whether or not the address has an account
+    # (SPEC_SIGNUP_ENUMERATION D5) — sharing a free-text var with the #128
+    # verbatim "Email already exists" is how that property gets lost.
+    signup_blocked: str = ""
 
     def clear_auth_error(self):
         self.auth_error = ""
+        self.signup_blocked = ""
+
+    def _client_ip(self) -> str:
+        """The caller's address, or "" when it cannot be established (core#639).
+
+        Empty means the IP bucket is **skipped**, never bucketed on a
+        placeholder. See ``services/client_ip.py``: in production every socket
+        peer is 127.0.0.1, so a limiter that trusts it locks out the whole
+        internet on the eleventh signup — and that failure cannot reproduce in
+        dev, where there is no proxy and the limiter looks like it works.
+        """
+        try:
+            return resolve_client_ip(dict(self.router.headers.raw_headers))
+        except Exception:
+            return ""
 
     def prefill_invite_email(self):
         """Pre-fill email from invite link query param."""
@@ -405,6 +472,8 @@ class AuthState(rx.State):
     def signup(self, form_data: dict):
         self.auth_error = ""
 
+        self.signup_blocked = ""
+
         captcha_token = form_data.get("captcha_token", "")
         if not CaptchaService().verify(captcha_token, "signup"):
             self.auth_error = "CAPTCHA verification failed. Please try again."
@@ -413,6 +482,32 @@ class AuthState(rx.State):
         email = form_data.get("email", "")
         password = form_data.get("password", "")
         full_name = form_data.get("full_name", "")
+
+        # core#639 D5. **Before the existence lookup, and the order is
+        # load-bearing.** `register_user` answers "does this address have an
+        # account?" verbatim (#128), so a limit checked afterwards still spends
+        # a database read on a request we have already decided to refuse, and
+        # still gives the refusal something to branch on. Both buckets set the
+        # same flag, so the refusal is byte-identical for a registered and an
+        # unregistered address — getting that wrong recreates the leak at one
+        # remove ("too many attempts" for a known address, "email already
+        # exists" for an unknown one is still an answer).
+        try:
+            client_ip = self._client_ip()
+            if client_ip and not _allow(UserService.signup_ip_bucket(client_ip), _SIGNUP_IP_LIMIT):
+                self.signup_blocked = "rate_limited"
+                return
+            if not _allow(UserService.signup_email_bucket(email), _SIGNUP_EMAIL_LIMIT):
+                self.signup_blocked = "rate_limited"
+                return
+        except Exception:
+            # D4: fail closed, and show the same generic state whatever broke.
+            # A distinct message would be a signal, and a limiter error would
+            # tell an attacker which of the two buckets they are near.
+            logger.exception("Signup rate-limit check failed; refusing the signup")
+            self.signup_blocked = "unavailable"
+            return
+
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:

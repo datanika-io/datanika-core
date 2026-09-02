@@ -1,5 +1,6 @@
 """User, Organization, and Membership management service."""
 
+import hashlib
 import logging
 import re
 import secrets
@@ -30,6 +31,34 @@ class UserServiceError(ValueError):
 class UserService:
     def __init__(self, auth_service: AuthService):
         self._auth = auth_service
+
+    # -- Rate-limit bucket naming (core#639) ---------------------------
+
+    @staticmethod
+    def signup_ip_bucket(client_ip: str) -> str:
+        """Bucket for one client address attempting to register.
+
+        Callers must pass an address they can stand behind — see
+        ``services/client_ip.py``. An empty address means *skip this bucket*,
+        never *use a placeholder*: in production every socket peer is
+        127.0.0.1, so a placeholder collapses the internet into one bucket and
+        the eleventh signup from anyone locks out everyone.
+        """
+        return f"signup:ip:{client_ip}"
+
+    @staticmethod
+    def signup_email_bucket(email: str) -> str:
+        """Bucket for one address being registered, with the address hashed.
+
+        Same reasoning as ``PasswordResetService.email_bucket``: keying on the
+        plaintext would turn the Redis keyspace into a readable list of the
+        addresses people have tried to register — an enumeration oracle
+        reachable by anyone who can read Redis, which is a much lower bar than
+        reading the database. Normalised first, or ``  Alice@Example.com  `` is
+        a fresh budget for the same account.
+        """
+        normalised = (email or "").strip().lower()
+        return f"signup:email:{hashlib.sha256(normalised.encode()).hexdigest()}"
 
     # -- User registration & auth --
 

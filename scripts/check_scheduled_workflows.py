@@ -17,8 +17,30 @@ near-daily activity, so its own schedule does not fall to the 60-day rule. A
 watchdog inside ``datanika-landing`` would have been disabled by the same rule,
 on the same day, as the workflow it was watching.
 
-The pure functions below are the part worth testing; ``main()`` is a thin shell
-around ``gh api``. See ``tests/test_deploy/test_scheduled_workflow_watchdog.py``.
+🚨 **The "thin shell" is what broke, and it broke totally (core#691, 2026-09-03).**
+This docstring used to end by saying the pure functions were the part worth
+testing and that ``main()`` was a thin shell around ``gh api``. That sentence was
+the defect. On 2026-08-31 Dependabot became active on ``datanika-core``, GitHub
+began listing a synthesised workflow at path ``dynamic/dependabot/update-graph``,
+``contents/dynamic/...`` 404'd, ``_gh`` raised, and the watchdog died on every
+run for three consecutive nights having checked **nothing**. 26 unit tests were
+green throughout, because every one of them exercises the comparator and not one
+of them exercises collection.
+
+Two consequences are designed for below and should not be undone:
+
+* Collection is filtered by :func:`is_repository_workflow`, and the counts are
+  asserted **per repo**. Core is collected first, so its four workflows made a
+  total-count guard pass while ``datanika-landing`` -- the repo the watchdog was
+  built for -- was never reached at all.
+* A crash and a finding are no longer the same signal. Both still exit non-zero,
+  because the workflow needs that, but the reporting step now files a
+  *differently titled* issue when the watchdog itself fails, so "the monitor is
+  broken" arrives in the same channel as "the thing being monitored is broken".
+  Previously it arrived only as a red tick in the Actions tab, which is
+  indistinguishable at a glance from the run that correctly filed core#691.
+
+See ``tests/test_deploy/test_scheduled_workflow_watchdog.py``.
 """
 
 from __future__ import annotations
@@ -187,7 +209,42 @@ def find_problems(
 
 
 def _gh(*args: str) -> str:
-    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+    # `encoding=` is not optional: bare `text=True` decodes with the platform
+    # locale codec, which on the Windows dev box is cp1251. The runner is UTF-8,
+    # so a mojibake bug here would be invisible in CI and would appear only in
+    # the local rehearsal path -- the one place a human checks this by hand.
+    return subprocess.run(
+        ["gh", *args], check=True, capture_output=True, text=True, encoding="utf-8"
+    ).stdout
+
+
+# GitHub's workflows API lists more than the files in `.github/workflows/`. It
+# also returns workflows it SYNTHESISES, whose `path` is not a file in the
+# repository at all:
+#
+#     dynamic/dependabot/update-graph          (appears when Dependabot is on)
+#     dynamic/pages/pages-build-deployment     (appears when Pages is on)
+#
+# `repos/<repo>/contents/dynamic/...` 404s for these, and `gh` exits 1. That
+# killed this watchdog stone dead for three nights -- see the module docstring.
+#
+# This is a WHITELIST, not a `dynamic/` blacklist, and deliberately so: GitHub
+# only ever executes workflows from `.github/workflows/`, so anything outside it
+# cannot be a workflow we own, and a prefix GitHub invents next year is handled
+# without a code change.
+#
+# 🚨 It must stay a path test and must NOT become "swallow the 404". A 404 on a
+# real `.github/workflows/*.yml` means the file we are asked to check is
+# unreadable -- a token scope, a rename, an API change -- and that has to stay
+# fatal. Turning it into "no crons found" would make this watchdog report
+# `active, all fine` for a workflow it never actually looked at, which is the
+# precise defect it exists to detect, relocated into the detector.
+WORKFLOW_DIR_PREFIX = ".github/workflows/"
+
+
+def is_repository_workflow(path: str) -> bool:
+    """True when `path` is a workflow file that lives in this git repository."""
+    return path.startswith(WORKFLOW_DIR_PREFIX)
 
 
 def _parse_crons(repo: str, path: str, ref: str) -> list[str]:
@@ -216,6 +273,11 @@ def collect(repo: str) -> list[WorkflowState]:
     workflows = json.loads(_gh("api", f"repos/{repo}/actions/workflows", "--paginate"))
     out: list[WorkflowState] = []
     for wf in workflows.get("workflows", []):
+        if not is_repository_workflow(wf["path"]):
+            # Say so out loud. A silent skip is how a real workflow would one day
+            # drop out of the watchlist without anyone noticing.
+            print(f"  (skipping {repo} :: {wf['path']} -- synthesised by GitHub, not a repo file)")
+            continue
         crons = _parse_crons(repo, wf["path"], default_branch)
         if not crons:
             continue
@@ -246,18 +308,33 @@ def main() -> int:
     args = ap.parse_args()
 
     workflows: list[WorkflowState] = []
+    # Counted PER REPO, not in total. The repos are collected in order, so a
+    # failure while collecting the first one means the later ones were never
+    # looked at -- and a total-count guard passes happily on core's four while
+    # landing, the repo this watchdog was built for, went unexamined. That is
+    # not hypothetical: it is exactly what happened on 2026-08-31..09-02.
+    per_repo: dict[str, int] = {}
     for repo in args.repos:
-        workflows.extend(collect(repo))
+        found = collect(repo)
+        per_repo[repo] = len(found)
+        workflows.extend(found)
 
-    if not workflows:
-        print(f"::error::No scheduled workflows found at all across {args.repos}.")
-        print("::error::That is itself wrong -- this watchdog is supposed to have")
-        print("::error::something to watch. Check the token can read these repos.")
+    empty = [repo for repo, n in per_repo.items() if n == 0]
+    if empty:
+        for repo in empty:
+            print(f"::error::No scheduled workflows found in {repo}.")
+        print("::error::This watchdog is supposed to have something to watch in")
+        print("::error::every repo it is given. Either the schedules were removed,")
+        print("::error::or the token cannot read that repo. Both are faults.")
+        print(f"::error::Counts this run: {per_repo}")
         return 1
 
     problems, notes = find_problems(workflows, datetime.now(UTC))
 
-    print(f"Checked {len(workflows)} scheduled workflow(s) across {len(args.repos)} repo(s):")
+    counts = ", ".join(f"{repo}={n}" for repo, n in per_repo.items())
+    print(
+        f"Checked {len(workflows)} scheduled workflow(s) across {len(args.repos)} repo(s): {counts}"
+    )
     for wf in sorted(workflows, key=lambda w: w.ref):
         last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
         print(f"  [{wf.state:>20}] {wf.ref}")

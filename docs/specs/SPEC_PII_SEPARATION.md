@@ -3,10 +3,29 @@
 **Author**: Product · **Date**: 2026-08-30 · **Status**: contract, ready for Engineering
 **Tracking**: [core#655](https://github.com/datanika-io/datanika-core/issues/655)
 **Implementation**: Engineering (core + a small cloud change). Product owns this spec and the acceptance criteria.
-**Verified against**: `origin/dev` @ `cfbb0c7` (re-verified for the 2026-08-30 night amendment; earlier sections were read at `ef76067`), `origin/main` @ the live `datanika.io/privacy` and `/trust` pages, and `plans/infra/scripts/backup-offsite.sh`.
+**Verified against**: `origin/dev` @ `11ab292` for the **2026-09-02** amendment (§0, D5 steps 1a/7, D14.4 item 3, criteria 0e / 8d / 8e / 17c / 17d / 17f); `cfbb0c7` for the 2026-08-30 night amendment; `ef76067` for the earliest sections. Plus `origin/main` @ the live `datanika.io/privacy` and `/trust` pages, and `plans/infra/scripts/backup-offsite.sh`.
+⚠️ **Nothing of this feature is implemented yet** — re-measured 2026-09-02 on `origin/dev`: `PII_PAYLOAD_KEYS` and `redact_pii_payload` have **0 occurrences** anywhere in `datanika/`, and there is no `erase_user`, `delete_user`, `delete_account`, `delete_org` or `change_email` on any surface. The spec, the executable guard (`tests/test_services/test_audit_pii_redaction.py`) and this amendment are the whole of what exists.
 **Founder architecture decision, 2026-08-30**: *"Separate PII from internal data. GDPR-sensitive info goes into separate tables with a FK to our internal IDs. Soft-delete users, hard-delete the sensitive info."* This spec implements that and nothing else; where it makes a call the decision did not cover, it is marked as a decision.
 **Founder addition, 2026-08-30 night**: *"On deletion, flush the PII properties in `audit_logs` for that user"*, and *"GDPR allows deletion in 30 days or so, so maybe it should be a procedure launched once a week on weekends that deletes preliminarily prepared users from all the PII tables."* Answered in **D12.4** (kept, re-scoped) and **D14** (the phase boundary moves; the architecture does not).
 
+> ### 🆕 Read §0 first (2026-09-02) — it fixes two steps, and both let a soft delete stand in for an erasure
+>
+> **§0 states the soft-delete / hard-delete split as one findable decision** instead of leaving it
+> implicit across D1, D5, D7 and D14.1 — and writing it down surfaced **two gaps in D5 that four
+> sessions of review had missed**. Both are now fixed in the step table: a **sole-member org is
+> soft-deleted still carrying the erased person's name** (§0.1 — `organizations.name` holds a live
+> `users.full_name` in 5 of 5 prod rows), and **erasure ships in release N while N is still
+> dual-writing the legacy columns**, so every erasure until N+2 deleted the copy and left the original
+> (§0.2). Criteria **8d** and **8e** are the tests; both are written so that *every other erasure
+> criterion passes on the broken implementation.*
+>
+> 🆕 **Two other things changed under this spec and neither is in its body's history:**
+> **[core#726] is DONE** — the value-level migration round-trip and the `one_way` marker shipped in
+> [PR #874]; criterion **0e** says what that means for this chain, and one consequence is that the
+> N migration turns an existing suite **red** until its seeder covers the four new tables.
+> **[core#895]** invalidates D14.4's proposed completion-record mechanism — a Prometheus counter
+> incremented in the Celery worker is never scraped (17c).
+>
 > ### ⚠️ Read §2c, then §2b and D12–D14, before writing the expand migration
 >
 > 🆕 **§2c (census, 2026-08-31) is the newest and it deletes a step.** *"116 of 116 populated"* was a
@@ -25,6 +44,75 @@
 > part with a deadline. **D14** moves the founder's phase boundary and shows why no `/privacy` change
 > is needed. **Release count is still four** — it is set by blue/green code overlap, not by row count
 > (§2c).
+
+---
+
+## 0. 🆕 Is this a soft delete or an erasure? Both, on different objects — and the split is the whole design
+
+*(Added 2026-09-02. The question was put to Product as *"soft-delete is our pattern, and a soft delete
+is not a GDPR erasure — decide explicitly which this is."* It is the right question, the answer was
+already implicit across D1, D5, D7 and D14.1, and being implicit is what let **two gaps** survive four
+sessions of review. Both are named below and both are now fixed in D5.)*
+
+**The decision, in one line:** *a row that identifies a **person** is hard-deleted; a row that
+identifies a **record** is soft-deleted. Nothing personal is ever soft-deleted, and nothing structural
+is ever hard-deleted.*
+
+| Object | Treatment | Why |
+|---|---|---|
+| `user_pii`, `invitation_pii`, `notification_channel_pii` rows | **HARD delete** | they *are* the personal data. D1 deliberately withholds `TimestampMixin` from these tables so a `deleted_at` cannot exist to be mistaken for erasure |
+| `api_keys`, `password_reset_tokens`, `oauth_grants`, `oauth_tokens` | **HARD delete** | live credentials. A soft-deleted API key that still authenticates is a backdoor (D5 step 2) |
+| `users` row (the integer identity) | **SOFT delete** | after N+2 it carries no personal data at all — an anonymous integer holding FK integrity for audit rows and memberships |
+| `memberships`, `organizations`, connections/pipelines/uploads/… | **SOFT delete** | records, not people. Org-scoped and person-free once D4/D5 step 7 have run |
+| `audit_logs` rows | **kept, never deleted** | append-only behavioural trail pointing at an integer. D11 is what keeps a person out of it |
+
+🚨 **The failure mode this section exists to prevent: a soft delete standing in for an erasure because
+the personal datum is sitting on the soft-deleted row.** A soft-deleted row is still a row in Postgres.
+`deleted_at` hides it from the application and from nobody else — not from `pg_dump`, not from a
+backup, not from a regulator, not from anyone with SQL access. **Two places in this spec had exactly
+that shape.** Neither was a wrong decision; both were steps that were never written down, and in both
+cases §7 criterion 10 would have caught them *after* implementation, which is the expensive end.
+
+### 0.1 · Gap A — a sole-member org is soft-deleted **carrying the erased person's name**
+
+D5 step 7 renames *"each **surviving** org"* whose `name` or `slug` still contains the erased name.
+D5 step 6 sends a sole-member org to D6, which **soft-deletes** it. So the org that is deleted
+*because* it belonged only to the erased person is the one org the rename never reaches — and by §2c's
+own measurement, **`organizations.name` holds a live `users.full_name` in 5 of 5 production rows and
+`.slug` in 5 of 5**. The erasure would leave the person's name in a row it had just "deleted".
+
+**Fix (D5 step 7, rewritten): rename *every* org the user was a member of, including the ones being
+deleted, and rename **before** the soft delete.** Renaming after is not equivalent: an
+`UPDATE … WHERE deleted_at IS NULL` — the shape every org-scoped query in this codebase uses — would
+skip it.
+
+### 0.2 · Gap B — erasure ships in release **N**, while N is still dual-writing the legacy columns
+
+This is the more serious of the two, because it is invisible for exactly as long as the expand/contract
+chain takes to finish, and §8 step 5 already predicted its shape without connecting it to `erase_user`:
+*"the legacy columns keep accumulating personal data that the erasure sweep does not clear."*
+
+Walk it. §4 puts **erasure, org deletion and email change in release N**. N's code **dual-writes**
+`users.email` / `users.full_name` / `invitations.email` alongside the new PII tables, and the legacy
+columns are not dropped until **N+2**. D5 step 1 deletes the `user_pii` row and nothing else. So an
+erasure performed at any point in N or N+1 — which is *every* erasure, until the chain finishes —
+deletes the copy and leaves the original, in the very column the data was extracted from.
+
+**Every downstream check still passes**, which is why this needs to be a step rather than a note:
+`get_user_by_email` reads through the join and returns `None`; login is structurally impossible; the
+UI shows nothing; criterion 8 (0 rows in `user_pii`) is satisfied. Only criterion 10 — a grep across
+all 26 tables — can see it, and criterion 10 runs on prod after promotion, two releases late.
+
+**Fix (D5 gains step 1a):** in N and N+1, `erase_user` **also NULLs the legacy columns** it has already
+copied — `users.email`, `users.full_name`, `users.oauth_provider_id`, `invitations.email`,
+`invitations.token`. ⚠️ **This is possible only because N drops their NOT NULL constraints** (§4), which
+that migration does for a different reason. The step is **deleted in N+2**, when the columns go.
+
+> 🔑 **The general form, worth carrying past this spec:** *an expand/contract chain has a window in
+> which the same datum exists twice, and any deletion written against the new shape silently spares the
+> old one.* The window is not an edge case — it is the whole point of the pattern, and it is where every
+> feature that deletes must be written twice. Ask of any deletion landing in an expand release: **what
+> is the second copy, and who removes it?**
 
 ---
 
@@ -446,17 +534,18 @@ it is erasing (D5) and states this consequence to whoever runs it.
 
 `UserService.erase_user(session, user_id)`, one transaction. ⚠️ **Synchronous — see D14.1**, which answers the founder's weekly-batch proposal and shows why the phase boundary sits after all eight steps below rather than before them.
 
-The eight steps:
+The **nine** steps *(was eight — step 1a added 2026-09-02, §0.2; step 7 rewritten, §0.1)*:
 
 | Step | Action | Why |
 |---|---|---|
 | 1 | **DELETE** `user_pii` row | the erasure itself |
+| 🆕 **1a** | **NULL the legacy columns** already copied into the PII tables: `users.email`, `users.full_name`, `users.oauth_provider_id`, `invitations.email`, `invitations.token`. **Live in releases N and N+1; DELETED in N+2**, when the columns are dropped | 🚨 **§0.2.** Erasure ships in **N**, which still dual-writes these. Without this step every erasure until N+2 deletes the copy and leaves the original — and criterion 8, `get_user_by_email`, login and every UI surface all still read as erased. Possible **only because N drops their NOT NULL** (§4) |
 | 2 | **DELETE** `api_keys`, `password_reset_tokens`, `oauth_grants`, `oauth_tokens` for that `user_id` | live credentials pointed at a person who no longer exists. Not soft — a soft-deleted API key that still authenticates is a backdoor |
 | 3 | **DELETE** `invitation_pii` for invitations this user sent that are still `PENDING`, and mark those invitations `REVOKED` | an invitee's address is *their* personal data, and the invitation cannot complete anyway |
 | 4 | Soft-delete `memberships` (`deleted_at`) | removes them from every member list through the existing filters |
 | 5 | `users.deleted_at = now()`, `is_active = False` | the anonymous integer identity survives for FK integrity |
 | 6 | For each org where this user was the **sole member**: D6 | |
-| 7 | For each surviving org whose `slug` or `name` still contains the erased name: rename `name` to `Organization {id}` and `slug` to `org-{id}` | D4 |
+| 7 | 🆕 **REWRITTEN.** For **every** org this user belonged to whose `slug` or `name` contains the erased name — **including the ones step 6 is about to delete** — rename `name` to `Organization {id}` and `slug` to `org-{id}`. **Order: rename first, then D6's soft delete.** | 🚨 **§0.1.** This previously read *"each **surviving** org"*, which skipped precisely the org that existed only for the erased person. §2c measured `organizations.name` carrying a live `users.full_name` in **5 of 5** prod rows and `.slug` in **5 of 5**, so the skipped case is the common one. The ordering is load-bearing too: after the soft delete, an `UPDATE … WHERE deleted_at IS NULL` — the shape every org-scoped query here uses — no longer matches the row |
 | 8 | Write **one** audit row: `action="user.erased"`, `user_id` = the erased id, `new_values` = `{}` | ⚠️ **`new_values` must not name the user.** An erasure that logs the erased email defeats itself |
 
 **`audit_logs` rows are kept, and this is deliberate.** They are append-only (`AuditLog` is the one
@@ -912,8 +1001,37 @@ therefore carry:
 2. **A distinguishable failure state**, so "ran and found nothing" and "raised and was swallowed" are
    different readings.
 3. **A durable location.** Celery's Redis result backend is ephemeral and no person or alert reads it.
-   Prometheus (already scraped, already alerted on by the 30 Grafana rules) is the cheapest surface
-   that a human and an alert can both see.
+   🚨 🆕 **CORRECTED 2026-09-02 — and the correction matters more than the original item, because the
+   mechanism this line proposed cannot work and would have looked like it did.** This read *"Prometheus
+   (already scraped, already alerted on by the 30 Grafana rules) is the cheapest surface that a human
+   and an alert can both see."* **A Prometheus counter incremented by this sweep would never be
+   scraped.** Verified in source on `origin/dev`:
+   - `services/metrics.py` builds every metric on `prometheus_client`'s **default process-local
+     `REGISTRY`** (imported at `:14`), and `/metrics` is a Starlette **`Route`** (`:200`) served by the
+     **app** process.
+   - The sweep runs in the **Celery worker**. A counter it increments lives in the worker's registry,
+     which nothing serves — **exactly the defect that left `celery-task-failures` watching an empty
+     metric for the life of the project** ([core#704]): `celery_tasks_total` is incremented by Celery
+     signals in the worker (`metrics.py:155/163/169`) and read from the app's registry.
+   - 🆕 **[core#895] is the second half**: the app's own metrics are per-process behind
+     `GRANIAN_WORKERS=4` with no `PROMETHEUS_MULTIPROC_DIR`, so even an app-side counter is one
+     worker's arbitrary share (measured: the same counter read 3, 7, 6, 7, 7, 6).
+   **So an "increment a counter" completion record is unobservable in the worker and unreliable in the
+   app**, and — this is the part that makes it worse than no record — a metric that is never served
+   returns *no series*, which under `noDataState: OK` reads as healthy. The alert in 17d would be
+   green forever.
+   **What to use instead**, in order of preference:
+   - **A durable row** the sweep writes (its own small table, or a `user.erasure_sweep` audit row with
+     counts and no values). It survives restarts, it is queryable, and it is the only option that a
+     human can read *after* the fact rather than only while a scrape window is open.
+   - **The `celery-exporter` event stream** for liveness only. It is a single process reading the
+     broker (`job=celery`, `--purge-offline-worker-metrics 0`), so it is not subject to either defect
+     above — but it can only tell you the **task ran**, never what it found. ⚠️ It requires the worker
+     to run with **`-E`**; without it the exporter still serves `celery_worker_up` and zero
+     `celery_task_*`, which is indistinguishable from "no task has run yet."
+   **Do not add a metric to `services/metrics.py` for this** until [core#895] is fixed and the worker's
+   registry is actually exported. Both are somebody else's issue and neither is a prerequisite for the
+   erasure itself (D14.1) — only for the canary.
 4. **Never a value.** Counts only — an erasure log that names what it erased defeats itself, the same
    trap D5 step 8 already guards on the `user.erased` audit row.
 
@@ -1031,6 +1149,15 @@ fails; that is deliberate.
 0a. `audit_logs.old_values` and `new_values` are `jsonb` in prod (`information_schema.columns.data_type`), and `SELECT count(*) FROM audit_logs WHERE new_values ? 'email'` **executes** — today that query is a syntax error, which is the whole point of the conversion.
 0b. An index on `audit_logs (user_id)` exists, and `EXPLAIN` on `WHERE user_id = <id>` no longer shows `Seq Scan`.
 0c. **`migration-roundtrip` proves the blue/green case**, not just the forward one: a write **and** a read issued through the *pre-migration* model definition (`mapped_column(JSON, …)`) succeed against the converted column. *(Green here is what allows N₀ to ship without a code change; red means it merges into N.)*
+
+0e. 🆕 **The data-preservation harness this chain needs ALREADY EXISTS — use it, do not commission it (2026-09-02).** [core#726] was carried in this spec's routing as an open QA gap (*"the migration round-trip asserts schema only, and this is the first migration where that is not enough"*). **Both of its scope items shipped** in [PR #874] (`dev 2ddc92b`), verified by content on `origin/dev`:
+    - **`tests/test_migrations/test_data_preservation_roundtrip.py`** — seeds one identifiable row into **every one of the 26 `PUBLIC_TABLES`** (asserted by *set equality* against `PUBLIC_TABLES`, so a table added by this spec cannot arrive uncovered and silently), then compares **every column of every row by value, keyed by primary key**, across `downgrade -1` → `upgrade head` on a real Postgres. Row loss, row appearance and value change are three distinct findings. It was shown red against a real destructive head, and the first version of that control was **rejected as too weak** because it only proved a NULL→value change.
+    - **A `one_way = True` module marker**, read by **AST** (a non-literal *raises* rather than reading as absent, because a classifier that guesses produces a *skip*, and a skip is the same colour as a pass), paired with a required `one_way_reason` that the skip line prints.
+    **Three consequences for whoever writes this chain, and they change the work rather than merely informing it:**
+    1. 🚨 **`user_pii`, `invitation_pii`, `notification_channel_pii` and `email_change_requests` are added to `PUBLIC_TABLES` in release N (criterion 1), so that suite's set-equality assertion turns RED the moment the migration lands and stays red until the seeder covers all four.** That is not a defect to work around — it is the harness demanding coverage of exactly the tables this spec creates. **Extend the seeder in the same PR as the migration.**
+    2. **N+2 is the first migration in this repo that may legitimately need `one_way`.** It drops columns whose values have moved to the PII tables, so a `downgrade` cannot restore them from anywhere. Decide deliberately: either `downgrade` re-derives the legacy columns *from* the PII tables (preferred — it makes the rollback real), or the migration declares `one_way = True` with a reason. **Do not leave it undeclared** — an undeclared destructive downgrade fails the value comparison and the failure names a column, not a decision.
+    3. **The N backfill is exactly the shape [core#726] was filed about** — *"it passes a backfill that moves zero rows; it passes a backfill that moves rows into the wrong tenant."* Criterion 2 below is the count check; the harness is the value check. Both, not either.
+    ⚠️ **`plans` is the one table whose seeding is not load-bearing** — the migrations seed the priced tiers themselves, so deleting the fixture's `plans` insert is invisible where deleting any of the other 25 is not. Recorded by QA on [core#726]; do not conclude the guard is broken on finding it.
 0d. 🆕 **CORRECTED 2026-08-31 — this cited 116, and was weak in the dangerous direction.** The table holds **117 rows**, and per §2c only **30 / 18** of them hold an *object*; the rest hold the JSON literal `null`. A criterion asserting *"all 116 payloads survive"* therefore compares mostly nulls, and **would pass while a bad `USING` clause mangled the 30 rows that actually carry anything** — the exact failure it exists to catch. **Restated:** immediately before the migration record `count(*)`, `count(*) FILTER (WHERE json_typeof(old_values) = 'object')` and the same for `new_values`; after it, all three are **unchanged** and every object-holding payload is **byte-equal as a parsed value**. The two object counts are the load-bearing half — they are the only figures a silent drop can move. *(Nothing reads this column, §2b, so no other signal exists.)*
 
 **Extraction (release N)**
@@ -1072,6 +1199,10 @@ fails; that is deliberate.
 8a. 🆕 **All of that is true the moment the request returns** — no job, no queue, no wait (D14.1). *(Query `user_pii` for that id in the same second the confirm request completes. An implementation that marks-and-defers passes criterion 8 an hour later and breaks the `/privacy` sentence, and nothing else here would notice.)*
 8b. 🆕 **The sole-owner refusal is synchronous too** (§9a(1)): the user is told at the moment they click, with both exits named. *(A deferred refusal is discovered a week later through no notification at all — see D14.1 reason 3.)*
 8c. 🆕 **The residual audit sweep runs and finds ZERO**, and reports the zero (D12.4). *(Expected value is zero because D11 + D12 already prevented it. A sweep that reports nothing and a sweep that never ran are the same reading — this criterion is about the report, not the deletion.)*
+
+8d. 🆕 **§0.2 — the legacy columns are cleared too, and this is asserted DURING the dual-write window, not after it.** Erase a user while release **N** is deployed, then read `users.email`, `users.full_name`, `users.oauth_provider_id` and any `invitations.email`/`invitations.token` for that person **directly, with SQL, not through the ORM's join**. All NULL. 🚨 **Every other erasure criterion passes on the broken implementation** — `user_pii` is empty (8), `get_user_by_email` returns `None` (3), login is impossible, no surface renders anything (14). **A test written through the application cannot see this failure; only a query against the legacy columns can.** *(And it stops being testable at all once N+2 drops them — so if this criterion is not exercised in N or N+1, it is never exercised.)*
+
+8e. 🆕 **§0.1 — a sole-member org is renamed BEFORE it is soft-deleted.** After erasing the sole member of an org, `SELECT name, slug FROM organizations WHERE id = <org>` — **without a `deleted_at IS NULL` filter**, because the row is soft-deleted and the natural query would skip it — returns `Organization {id}` and `org-{id}`, containing no part of the erased person's name. *(§2c measured `organizations.name` carrying a live `users.full_name` in 5 of 5 prod rows. An implementation that renames only surviving orgs passes criterion 11 and fails only this one and criterion 10.)*
 9. The erased address can immediately be used to register a new account, and the new account has no visibility of anything from the old one.
 10. `grep` the whole database for the erased email and full name returns **zero rows across all 26 tables** — including `organizations.name`, `organizations.slug`, `invitations.email`, `notification_channels.config` and `audit_logs.new_values`. *(This is the criterion that catches a partial implementation. Run it as a query over every text and JSON column, not over the tables you remembered.)*
 11. The last owner of a shared org is refused, and the org remains administrable afterwards.
@@ -1088,7 +1219,10 @@ fails; that is deliberate.
 17a. 🆕 **Celery Beat is demonstrably PRODUCING in production at ship time**, verified on the running system rather than from an issue's state. ⚠️ **Updated 2026-08-31**: this previously read *"[core#653] is closed and..."* with a parenthetical saying `beat` appears in neither `docker-compose.yml` nor the `Dockerfile`. [core#653] **closed 2026-08-30** and `beat` is a live service, so the gate as written is already satisfied — and, read literally, would have blocked. *(An issue's closure is not evidence that a process is running. Ask the exporter: `celery_worker_up` and the `celery_task_*` counters, scraped as `job=celery`. See D14.3 for the two ways that exporter reads healthy while measuring nothing.)*
 17b. 🆕 **The job is idempotent under double delivery.** Run it twice against the same state; the second run changes nothing and its counts are zero. *(`task_acks_late=True` means a Beat task can be redelivered after a worker crash, independently of [core#648]'s APScheduler duplication.)*
 17c. 🆕 **A completion record carries row counts**, is durable beyond Celery's Redis result backend, and **distinguishes "ran and found nothing" from "raised and was swallowed."** *(`celery_tasks_total` alone cannot: `run_maintenance_task` catches its own DB exceptions and returns zeroed counters, so the two are identical at that metric.)*
+    🚨 🆕 **AMENDED 2026-09-02 — the record is a DURABLE ROW, not a Prometheus counter, and the reason is measured (D14.4 item 3).** `services/metrics.py` uses the default process-local `REGISTRY` and `/metrics` is a route in the **app** process; this sweep runs in the **Celery worker**, whose registry nothing serves. A counter incremented here produces **no series**, and no series under `noDataState: OK` reads as **healthy**. Accepting a metric would mean shipping a canary whose failure signal is indistinguishable from success — which is the exact defect this whole section exists to avoid, arriving through the door marked "use the observability we already have."
 17d. 🆕 **An alert fires when the job has not reported within its period.** *(Without it, the first person to learn the erasure job stopped is whoever asks for their data.)*
+    ⚠️ **Its input is the durable row's timestamp, not a counter** (17c). If the alert is expressed over a metric emitted from the worker it can never fire, which is worse than no alert — it is an alert that reports health it cannot observe.
+17f. 🆕 **The completion record is shown able to report a FAILURE, not only a zero.** Force the sweep to raise mid-run; the record must distinguish that from a clean zero-row pass. *(Both the "ran and found nothing" and "raised and was swallowed" states produce the same output at every signal we have today — D14.4 item 2 states the requirement, and this is the artifact that proves it was met.)*
 17e. 🆕 **The sweep is NOT inside `run_maintenance_task`** (D14.3, third bullet).
 
 **Cross-cutting**
@@ -1155,6 +1289,10 @@ sign in at all.
 
 [core#623]: https://github.com/datanika-io/datanika-core/issues/623
 [core#648]: https://github.com/datanika-io/datanika-core/issues/648
+[core#704]: https://github.com/datanika-io/datanika-core/issues/704
+[core#726]: https://github.com/datanika-io/datanika-core/issues/726
+[core#895]: https://github.com/datanika-io/datanika-core/issues/895
+[PR #874]: https://github.com/datanika-io/datanika-core/pull/874
 [core#653]: https://github.com/datanika-io/datanika-core/issues/653
 [core#670]: https://github.com/datanika-io/datanika-core/issues/670
 [core#693]: https://github.com/datanika-io/datanika-core/issues/693

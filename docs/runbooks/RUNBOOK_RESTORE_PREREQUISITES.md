@@ -29,16 +29,33 @@ below is required to turn that dump back into Datanika, and none of it is inside
 | 9 | Application source | git (`datanika-core`, `datanika-cloud`) | GitHub + every worktree | ✅ |
 | 10 | Apache vhosts, compose, deploy scripts | git `deploy/server/` + the box | 2 | ✅ |
 | 11 | DNS / Cloudflare config | Cloudflare account; documented in root `CLAUDE.md` | 1 + docs | ✅ |
+| 12 | **Uploaded source archives** | `datanika_uploaded_files` docker volume on the app box — **24 KB, 3 files** (2026-09-03) | **1 — app box only** | ❌ **no** — the bytes exist nowhere else |
+| 13 | Per-tenant dbt projects | `datanika_dbt_projects` docker volume — 1.5 MB, `tenant_23`, `tenant_27`, `tenant_4`, `_docs_samples` | **1 — app box only** | ⚠️ regeneration path **unverified** |
 
 **Rows 2 and 3 are the whole point of this document.** Everything else can be re-created from a
 vendor, a certificate authority, or git. Those two cannot be re-created from anything.
 
+> 🚨 **Rows 12–13 added 2026-09-03 ([core#954]).** `backup-offsite.sh` captures one `pg_dump` and
+> nothing else, so these two volumes are in **no backup at all** — and the dump *references* them.
+> `uploaded_files` restores 3 rows whose `archive_path` is
+> `/app/uploaded_files/archives/<sha256>.tar.gz`, and 3 connection configs decrypt to
+> `{"uploaded_file_id": …}`. A restore therefore yields **dangling `archive_path`s** — the identical
+> broken state [core#471] fixed for image rebuilds, arriving through the restore door instead.
+> Row 13 is marked *unverified* deliberately: dbt projects may be regenerable from database state,
+> which would make it a convenience rather than a prerequisite. **Nobody has checked. Do not assume
+> in either direction.**
+
 ### Why #3 is irreplaceable
 
-`connections.credentials` is Fernet-encrypted with `CREDENTIAL_ENCRYPTION_KEY`. The ciphertext is in
-the dump; the key is not. Lose the key and every customer's warehouse credential is permanently
-undecryptable — the rows survive and are worthless. There is no derivation, no reset, no vendor to
-ask.
+**`connections.config_encrypted`** is Fernet-encrypted with `CREDENTIAL_ENCRYPTION_KEY`. The
+ciphertext is in the dump; the key is not. Lose the key and every customer's warehouse credential is
+permanently undecryptable — the rows survive and are worthless. There is no derivation, no reset, no
+vendor to ask.
+
+> ⚠️ **This document said `connections.credentials` until 2026-09-03. That column does not exist.**
+> Corrected here because an incident responder following the old text would run `\d connections`,
+> not find it, and have to guess whether the ciphertext was in the dump at all — at the worst
+> possible moment. Found by the rehearsal below refusing rather than passing vacuously.
 
 ### Why #2 exists at all, and why it is not stored with the backup
 
@@ -52,6 +69,38 @@ into *"an attacker who reaches Aweb obtains our customers' warehouse credentials
 **ciphertext and no key of any kind**, and that invariant is what the encryption is for.
 
 ---
+
+## The one command that checks all of it — `scripts/escrow_restore_rehearsal.py`
+
+**Run this from the escrow machine, not the app box.** It is the whole chain in one call, with both
+negative controls built in:
+
+```bash
+scp root@185.226.65.96:/opt/datanika-backups/<newest>.sql.gz.gpg .
+python scripts/escrow_restore_rehearsal.py \
+    --archive <newest>.sql.gz.gpg \
+    --privkey secrets/datanika-backup-privkey.asc \
+    --env     secrets/pointer-app.env.docker
+```
+
+🚨 **Why this is NOT part of `deploy/server/restore-drill.sh`, and must not be moved there.**
+The drill runs monthly *on the app box*. It decrypts with `/root/.gnupg` and would read
+`CREDENTIAL_ENCRYPTION_KEY` from that box's own `.env.docker` — **both of them inputs the disaster
+removes.** On 2026-07-14 we lost the host, its data and its backups together; a check proving the box
+can read its own backups says nothing whatsoever about that morning, and would report PASS on every
+run including the day the escrow rotted. The drill proves the *data* survives. Only this proves the
+*escrow is sufficient*, because it is the only one that touches the app box for nothing.
+
+**Last run 2026-09-03 against `datanika_2026-09-02_030001.sql.gz.gpg`: PASS, 13/13.**
+23 connection configs decrypted under the escrowed key, 0 failures, all well-formed JSON. Both
+controls live: an **empty keyring refused** the artifact, and a **different valid Fernet key
+decrypted nothing**. Without those two, "it decrypted" would only prove that gpg found *a* key
+somewhere and that Fernet round-trips.
+
+⚠️ **On Windows — where the escrow actually lives — `gpg` is the MSYS build shipped with Git, and it
+cannot start `gpg-agent` under a native `C:\…` path.** It reports that as an *import* failure, naming
+the wrong cause entirely. The script converts with `cygpath` when present; if you run the steps by
+hand instead, use a Git-Bash `mktemp -d` path rather than a Windows one.
 
 ## Verify the escrow is still valid — do this, do not assume it
 
@@ -68,9 +117,25 @@ ESC=$(grep '^CREDENTIAL_ENCRYPTION_KEY=' secrets/pointer-app.env.docker \
 [ "$BOX" = "$ESC" ] && echo MATCH || echo "*** ESCROW IS STALE ***"
 ```
 
-Last run **2026-08-31: MATCH** (`8f835af6…`). `SECRET_KEY` and `POSTGRES_PASSWORD` also matched. The
-two files differ by exactly one non-secret line (`DATANIKA_OVERAGE_CHARGE_ENABLE`), so a size
-difference between them is **not** evidence of key drift — compare the value, not the file.
+Last run **2026-09-03: MATCH** (`8f835af6…`, unchanged since 2026-08-31). The two files differ by
+exactly one non-secret line (`DATANIKA_OVERAGE_CHARGE_ENABLE`), so a size difference between them is
+**not** evidence of key drift — compare the value, not the file.
+
+🔑 **Re-derived on 2026-09-03 across the whole file, not just the three named keys**: every key
+compared by name and by SHA-256 of its value, printing neither. **39 keys live, 38 escrowed, and all
+38 shared values are byte-identical** — zero secret drift, despite the escrow copy being dated
+2026-07-17 and the live file 2026-07-24. The single absentee is `DATANIKA_OVERAGE_CHARGE_ENABLE`,
+which is [cloud#141]: **a restore from escrow comes up with overage charging OFF.** That is a
+recovery step (below), not something to fix by editing the escrow file.
+
+```bash
+# name + value-hash on both sides, then diff. Prints no secret.
+hash_env() { while IFS= read -r l; do case "$l" in \#*|"") continue;; *=*) ;; *) continue;; esac
+  printf '%s %s\n' "${l%%=*}" "$(printf '%s' "${l#*=}" | sha256sum | cut -c1-12)"; done | sort; }
+ssh root@185.25.22.188 'cat /opt/datanika/datanika/.env.docker' | hash_env > /tmp/live
+hash_env < secrets/pointer-app.env.docker > /tmp/escrow
+diff /tmp/live /tmp/escrow
+```
 
 **2. Can the escrowed backup key decrypt an off-site artifact *without the box*?**
 
@@ -102,6 +167,9 @@ downloads.
 4. **Restore `.env.docker` from `secrets/pointer-app.env.docker`.** ⚠️ This step is what makes the
    restored credentials usable. Doing it *after* users start reconnecting connections silently
    re-encrypts under a new key and the old ciphertext becomes unrecoverable.
+   ⚠️ **Then add back `DATANIKA_OVERAGE_CHARGE_ENABLE=1`** — it is the one key the escrow copy lacks
+   ([cloud#141]), so a restore that stops here comes up with overage charging **off** and bills
+   nobody, silently, with every container healthy.
 5. **Restore TLS** from `secrets/datanika-origin.{pem,key}`.
 6. `gunzip -c dump.sql.gz | psql …`
 7. **Generate a new off-site SSH key** (row 7 — the old one died with the box) and re-add it on Aweb.
@@ -168,6 +236,9 @@ Recorded honestly because a third copy that is believed and wrong is worse than 
 Until all three are answered, `secrets/` remains load-bearing: it is not a convenience copy, it is
 half of the disaster recovery plan.
 
+[core#471]: https://github.com/datanika-io/datanika-core/issues/471
 [core#675]: https://github.com/datanika-io/datanika-core/issues/675
 [core#748]: https://github.com/datanika-io/datanika-core/issues/748
+[core#954]: https://github.com/datanika-io/datanika-core/issues/954
+[cloud#141]: https://github.com/datanika-io/datanika-cloud/issues/141
 [landing#389]: https://github.com/datanika-io/datanika-landing/issues/389

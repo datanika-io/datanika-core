@@ -237,6 +237,13 @@ class AccountState(BaseState):
         login and would demand a password from someone who has none.
         """
         self.delete_error = ""
+        # core#673. A Reflex handler runs against server-side state a tab keeps holding
+        # long after its session ended, so revalidate before writing. It matters more here
+        # than anywhere else in the codebase: this is the one handler whose write cannot
+        # be undone, and `test_mutating_handlers_guard_the_session.py` caught its absence.
+        if not await self._require_live_session():
+            return None
+
         auth = await self.get_state(AuthState)
         user_id = auth.current_user.id
         if not user_id:

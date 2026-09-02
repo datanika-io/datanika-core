@@ -1151,18 +1151,33 @@ class UserService:
             counts[table_name] = _delete_by_user(session, table_name, user_id)
         counts["email_change_requests"] = _delete_by_user(session, "email_change_requests", user_id)
 
+        # Every org this person has EVER belonged to, soft-deleted memberships included.
+        # Scoping the two tenant-owned sweeps below to this set rather than exempting them
+        # in `CROSS_ORG_ALLOWLIST` — flagged by `test_tenant_fk_boundary.py`, correctly.
+        # An unbounded scan of `notification_channels` or `invitations` is not made safe by
+        # the fact that erasure is person-scoped, and the exemption is the wrong tool: this
+        # is neither a credential lookup nor a platform-wide sweep, it is one person's rows
+        # in one person's orgs. Soft-deleted memberships are included deliberately (D12.4)
+        # — an invitation sent from an org they have since left is still their data.
+        erased_org_ids = _org_ids_ever(session, user_id)
+
         # ── step 3: pending invitations this person sent ───────────────────────
         # The invitee's address is *their* personal data, sitting on a row this user
         # authored, and the invitation cannot complete anyway.
-        pending = list(
-            session.execute(
-                select(Invitation).where(
-                    Invitation.invited_by_user_id == user_id,
-                    Invitation.status == InvitationStatus.PENDING,
+        pending = (
+            list(
+                session.execute(
+                    select(Invitation).where(
+                        Invitation.org_id.in_(erased_org_ids),
+                        Invitation.invited_by_user_id == user_id,
+                        Invitation.status == InvitationStatus.PENDING,
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
+            if erased_org_ids
+            else []
         )
         for inv in pending:
             inv_pii = session.get(InvitationPII, inv.id)
@@ -1179,7 +1194,9 @@ class UserService:
 
         # ── notification channels delivering to this address (criterion 10) ────
         counts["notification_channels_cleared"] = (
-            _clear_channels_for(session, erased_email) if erased_email else 0
+            _clear_channels_for(session, erased_email, erased_org_ids)
+            if erased_email and erased_org_ids
+            else 0
         )
 
         # ── steps 4 and 5 ──────────────────────────────────────────────────────
@@ -1308,7 +1325,21 @@ def _delete_oauth_tokens_for_user(session: Session, user_id: int) -> int:
     return result.rowcount or 0
 
 
-def _clear_channels_for(session: Session, address: str) -> int:
+def _org_ids_ever(session: Session, user_id: int) -> list[int]:
+    """Every org this person has ever belonged to, **including soft-deleted memberships**.
+
+    The scope for the two tenant-owned sweeps in `erase_user`. Soft-deleted memberships
+    count: an invitation sent from an org someone has since left is still their data, and
+    D12.4 says the same about the audit sweep for the same reason.
+    """
+    return list(
+        session.execute(select(Membership.org_id).where(Membership.user_id == user_id))
+        .scalars()
+        .all()
+    )
+
+
+def _clear_channels_for(session: Session, address: str, org_ids: list[int]) -> int:
     """Stop a notification channel delivering to an erased address.
 
     Not one of D5's steps — the spec extracts ``notification_channels.config`` into a
@@ -1323,7 +1354,14 @@ def _clear_channels_for(session: Session, address: str) -> int:
     left alone — they are an org property, not personal data.
     """
     cleared = 0
-    channels = session.execute(select(NotificationChannel)).scalars().all()
+    # Scoped to the person's own orgs. `test_tenant_fk_boundary.py` flags an unscoped read
+    # of a tenant-owned model, and it is right to: erasure being person-scoped does not
+    # make a full-table scan of every tenant's notification channels acceptable.
+    channels = (
+        session.execute(select(NotificationChannel).where(NotificationChannel.org_id.in_(org_ids)))
+        .scalars()
+        .all()
+    )
     for ch in channels:
         config = ch.config if isinstance(ch.config, dict) else {}
         keys = [
@@ -1363,9 +1401,7 @@ def _sweep_audit_payloads(session: Session, user_id: int) -> int:
     alone would miss the majority case: three of the PII-writing call sites store the
     *subject's* address on a row whose `user_id` is the *actor*.
     """
-    org_ids = list(
-        session.execute(select(Membership.org_id).where(Membership.user_id == user_id)).scalars()
-    )
+    org_ids = _org_ids_ever(session, user_id)
     stmt = select(AuditLog).where(
         or_(AuditLog.user_id == user_id, AuditLog.org_id.in_(org_ids) if org_ids else false())
     )

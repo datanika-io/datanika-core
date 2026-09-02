@@ -1,14 +1,26 @@
 """User, Organization, and Membership management service."""
 
+import logging
 import re
 import secrets
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, false, func, or_, select, update
 from sqlalchemy.orm import Session
 
+from datanika.config import settings
+from datanika.models.audit_log import AuditAction, AuditLog
+from datanika.models.base import Base
+from datanika.models.invitation import Invitation, InvitationStatus
+from datanika.models.notification_channel import NotificationChannel
+from datanika.models.pii import InvitationPII, NotificationChannelPII, UserPII
 from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.services.audit_service import redact_pii_payload
 from datanika.services.auth import AuthService
+
+logger = logging.getLogger(__name__)
 
 
 class UserServiceError(ValueError):
@@ -44,6 +56,10 @@ class UserService:
             password_changed_at=datetime.now(UTC),
         )
         session.add(user)
+        session.flush()
+        # Dual-write, release N. The legacy columns above are still written because the
+        # previously deployed code reads them, and they are dropped in N+2.
+        session.add(UserPII(user_id=user.id, email=email, full_name=full_name))
         session.flush()
         return user
 
@@ -102,9 +118,67 @@ class UserService:
         }
 
     def get_user_by_email(self, session: Session, email: str) -> User | None:
+        """The one chokepoint for looking a person up by address.
+
+        Two things about this query are load-bearing (SPEC_PII_SEPARATION D2).
+
+        🚨 **``users.deleted_at IS NULL``.** Without it a soft-deleted user still
+        authenticates, which turns the whole erasure feature into a security regression.
+        There is a compensating property worth knowing: an *erased* user has no
+        ``user_pii`` row at all, so the join half returns nothing and login becomes
+        **structurally** impossible rather than policy-impossible. Belt and braces —
+        erasure also sets ``is_active = False``.
+
+        ⚠️ **The legacy ``users.email`` clause is not a fallback for old data, it is the
+        t1 window.** Release N dual-writes; under blue/green the *previously deployed*
+        container is still serving and still registering people while this code runs, and
+        it writes ``users.email`` with no ``user_pii`` row. A join-only read would leave
+        every account created during the swap unable to sign in. The clause is deleted in
+        **N+1**, when nothing writes the legacy column any more.
+
+        ``scalar_one_or_none`` is kept deliberately over ``.first()``: two rows here would
+        mean the two columns had diverged for different people, and an arbitrary pick on a
+        login lookup is a worse outcome than a loud failure.
+        """
         email = email.strip().lower()
-        stmt = select(User).where(func.lower(User.email) == email)
+        stmt = (
+            select(User)
+            .outerjoin(UserPII, UserPII.user_id == User.id)
+            .where(
+                or_(
+                    func.lower(UserPII.email) == email,
+                    func.lower(User.email) == email,  # legacy half — removed in N+1
+                ),
+                User.deleted_at.is_(None),
+            )
+        )
         return session.execute(stmt).scalar_one_or_none()
+
+    @staticmethod
+    def get_user_pii(session: Session, user_id: int) -> UserPII | None:
+        """The personal data of a user, or ``None`` once it has been erased."""
+        return session.get(UserPII, user_id)
+
+    @staticmethod
+    def _sync_user_pii(session: Session, user: User) -> UserPII:
+        """Mirror the legacy columns onto the sidecar during the dual-write window.
+
+        Creates the row when it is missing rather than assuming it exists: at t1 the
+        previously deployed code is still registering people, and those accounts arrive
+        with legacy columns and no sidecar. Deleted in **N+1**, when the legacy columns
+        stop being written and this becomes a one-way copy of nothing.
+        """
+        pii = session.get(UserPII, user.id)
+        if pii is None:
+            pii = UserPII(user_id=user.id, email=user.email, full_name=user.full_name)
+            session.add(pii)
+        if user.email is not None:
+            pii.email = user.email
+        if user.full_name is not None:
+            pii.full_name = user.full_name
+        pii.oauth_provider_id = user.oauth_provider_id
+        session.flush()
+        return pii
 
     def get_user(self, session: Session, user_id: int) -> User | None:
         stmt = select(User).where(User.id == user_id)
@@ -604,9 +678,22 @@ class UserService:
         # 1. Identity first. An empty subject is not an identity and must never
         #    be used as a lookup key, or it would match every unbound row.
         if oauth_provider_id:
-            stmt = select(User).where(
-                User.oauth_provider == oauth_provider,
-                User.oauth_provider_id == oauth_provider_id,
+            # `oauth_provider` stays on `users` — "google" is not personal data. Only the
+            # subject moves, and for SAML/OIDC SSO that subject IS the address verbatim
+            # (`sso_routes.py` passes `oauth_provider_id=email`), which is why. Dual-read
+            # for the t1 window, exactly as in `get_user_by_email`; the legacy half goes
+            # in N+1.
+            stmt = (
+                select(User)
+                .outerjoin(UserPII, UserPII.user_id == User.id)
+                .where(
+                    User.oauth_provider == oauth_provider,
+                    or_(
+                        UserPII.oauth_provider_id == oauth_provider_id,
+                        User.oauth_provider_id == oauth_provider_id,  # legacy — gone in N+1
+                    ),
+                    User.deleted_at.is_(None),
+                )
             )
             user = session.execute(stmt).scalars().first()
             if user is not None:
@@ -627,6 +714,7 @@ class UserService:
                     # Linked before the subject was recorded — bind it now
                     # rather than locking a legitimate user out.
                     user.oauth_provider_id = oauth_provider_id
+                    self._sync_user_pii(session, user)
                     session.flush()
                 elif stored_id != oauth_provider_id:
                     raise UserServiceError(
@@ -637,6 +725,7 @@ class UserService:
                 self._assert_local_account_proved_its_email(user)
                 user.oauth_provider = oauth_provider
                 user.oauth_provider_id = oauth_provider_id
+                self._sync_user_pii(session, user)
                 session.flush()
             return user, False
 
@@ -654,11 +743,27 @@ class UserService:
         )
         session.add(user)
         session.flush()
+        session.add(
+            UserPII(
+                user_id=user.id,
+                email=email,
+                full_name=user.full_name,
+                oauth_provider_id=oauth_provider_id or None,
+            )
+        )
+        session.flush()
 
-        # Create default org
-        slug = re.sub(r"[^a-z0-9]+", "-", full_name.lower()).strip("-") or "org"
+        # Create default org.
+        #
+        # 🚨 The slug is no longer derived from the person's name (D4). A slug is an
+        # *identifier*: unique-constrained, in URLs, and matched by the SSO callback
+        # (`sso_routes.py` compares `Organization.slug == org_slug`), so a name-derived
+        # slug publishes a person's name in a durable key. §2c measured this in
+        # production — `organizations.slug` contained a live `users.full_name` in **5 of
+        # 5** rows. The display `name` may stay: it is text inside the tenant, and the
+        # erasure sweep rewrites it (D5 step 7).
         org_name = f"{full_name}'s Org"
-        org = Organization(name=org_name, slug=f"{slug}-{user.id}")
+        org = Organization(name=org_name, slug=f"org-{user.id}")
         session.add(org)
         session.flush()
 
@@ -791,3 +896,496 @@ class UserService:
         ).scalar()
         if count <= 1:
             raise UserServiceError("Cannot remove or demote the last owner")
+
+    # ------------------------------------------------------------------
+    # Erasure and org deletion — SPEC_PII_SEPARATION D5/D6, core#655
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def org_scoped_core_tables() -> list[str]:
+        """Tables an org deletion must soft-delete. Derived, not listed.
+
+        ⚠️ **Soft-deleting only the `organizations` row hides nothing.**
+        `Organization.deleted_at` is read in exactly one place in the codebase
+        (`sso_service.py:81`) and written nowhere, so org-scoped queries do not filter on
+        it. Every row has to be marked individually.
+
+        🚨 **Filtered to `datanika.models.*`, and that line is load-bearing.**
+        `subscriptions`, `usage_ledger` and `charges` are org-scoped and carry a
+        `deleted_at`, so a naive walk of `Base.metadata` would soft-delete them whenever
+        the cloud plugin happens to be installed. `datanika.io/privacy` §6 promises
+        billing records are kept **7 years, as tax law requires**, and the spec's scope
+        table puts them explicitly out of erasure's reach. Selecting by the *defining
+        module* excludes them without core naming, importing or knowing about cloud.
+
+        Pinned by `test_pii_separation.py`: a derivation that silently returned fewer
+        tables would leave rows visible while every count read zero.
+        """
+        names: list[str] = []
+        for mapper in Base.registry.mappers:
+            if not mapper.class_.__module__.startswith("datanika.models"):
+                continue
+            table = mapper.local_table
+            if table is not None and "org_id" in table.c and "deleted_at" in table.c:
+                names.append(table.name)
+        return sorted(set(names))
+
+    def delete_org(
+        self, session: Session, org_id: int, *, projects_dir: str | None = None
+    ) -> dict[str, int]:
+        """Soft-delete an organization and every row that belongs to it (D6).
+
+        Three things live outside this transaction and are handled explicitly, because
+        without them an org deletion is a deletion in name only:
+
+        1. **The Paddle subscription.** Emitted as `org.before_delete`, and `emit` rather
+           than `announce` precisely because a subscriber must be able to **veto**: cloud
+           cancels the subscription and raises if the cancellation call fails, and this
+           method then never runs. Order matters — cancel, then delete; the reverse leaves
+           a subscription with no org to attribute it to. Core cannot call
+           `BillingService` directly and must not try.
+        2. **`dbt_projects/tenant_{org_id}/` on disk.** Nothing soft-deletes a directory.
+        3. **Warehouse schemas the org's pipelines created.** ⚠️ **We do not delete these,
+           deliberately** — they are the customer's data in the customer's own account,
+           under their own credentials. Silently dropping schemas in someone else's
+           warehouse is a far worse failure than leaving them, and the confirmation copy
+           says so in one line.
+        """
+        from datanika.hooks import emit
+
+        org = session.get(Organization, org_id)
+        if org is None:
+            raise UserServiceError("Organization not found")
+
+        # The veto point. Anything raised here aborts before a single row is touched.
+        emit("org.before_delete", session=session, org_id=org_id)
+
+        now = datetime.now(UTC)
+        counts: dict[str, int] = {}
+        for table_name in self.org_scoped_core_tables():
+            table = Base.metadata.tables[table_name]
+            result = session.execute(
+                update(table)
+                .where(table.c.org_id == org_id, table.c.deleted_at.is_(None))
+                .values(deleted_at=now)
+            )
+            counts[table_name] = result.rowcount or 0
+
+        counts["organizations"] = 0
+        if org.deleted_at is None:
+            org.deleted_at = now
+            counts["organizations"] = 1
+        session.flush()
+
+        counts["dbt_project_dirs"] = _remove_tenant_dbt_project(org_id, projects_dir)
+        return counts
+
+    def _classify_memberships(
+        self, session: Session, user_id: int
+    ) -> tuple[list[Membership], list[int], str | None]:
+        """``(active memberships, orgs this person is alone in, org that blocks erasure)``.
+
+        One classifier, two callers — `erase_user` and `erasure_preconditions`. The UI
+        needs the same answer *before* anything is typed, and a second copy of the rule in
+        the state layer is how the two drift into disagreeing about whether a deletion is
+        even possible.
+        """
+        memberships = list(
+            session.execute(
+                select(Membership).where(
+                    Membership.user_id == user_id, Membership.deleted_at.is_(None)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        sole_member_org_ids: list[int] = []
+        blocking_org: str | None = None
+        for m in memberships:
+            others = session.execute(
+                select(func.count())
+                .select_from(Membership)
+                .where(
+                    Membership.org_id == m.org_id,
+                    Membership.user_id != user_id,
+                    Membership.deleted_at.is_(None),
+                )
+            ).scalar()
+            if not others:
+                sole_member_org_ids.append(m.org_id)
+                continue
+            if m.role is MemberRole.OWNER and blocking_org is None:
+                owners = session.execute(
+                    select(func.count())
+                    .select_from(Membership)
+                    .where(
+                        Membership.org_id == m.org_id,
+                        Membership.role == MemberRole.OWNER,
+                        Membership.deleted_at.is_(None),
+                    )
+                ).scalar()
+                if owners <= 1:
+                    org = session.get(Organization, m.org_id)
+                    blocking_org = org.name if org else str(m.org_id)
+        return memberships, sole_member_org_ids, blocking_org
+
+    @staticmethod
+    def get_org_by_id(session: Session, org_id: int) -> Organization | None:
+        """An organization by primary key. Used by the delete-confirmation check, which
+        compares what the user typed against the org's real name."""
+        return session.get(Organization, org_id)
+
+    def erasure_preconditions(self, session: Session, user_id: int) -> dict[str, str]:
+        """What erasing this account would do, answerable **before** they confirm.
+
+        `{"sole_member_org": <name or "">, "blocking_org": <name or "">}`.
+
+        D9 requires the dialog to state the org consequence before the confirm button is
+        enabled, and §9a(1) requires the sole-owner refusal to reach the person at the
+        moment they click. Both need this answer up front, and both must get it from the
+        same code path `erase_user` will take — otherwise the dialog can promise a
+        deletion the service then refuses.
+        """
+        _, sole_ids, blocking = self._classify_memberships(session, user_id)
+        sole_name = ""
+        if sole_ids:
+            org = session.get(Organization, sole_ids[0])
+            sole_name = org.name if org else ""
+        return {"sole_member_org": sole_name, "blocking_org": blocking or ""}
+
+    def erase_user(
+        self, session: Session, user_id: int, *, projects_dir: str | None = None
+    ) -> dict[str, int]:
+        """GDPR Art. 17 erasure: hard-delete the person, soft-delete the record (D5).
+
+        §0's rule, stated once so it is findable: *a row that identifies a **person** is
+        hard-deleted; a row that identifies a **record** is soft-deleted. Nothing personal
+        is ever soft-deleted, and nothing structural is ever hard-deleted.* A soft-deleted
+        row is still a row in Postgres — `deleted_at` hides it from the application and
+        from nobody else: not from `pg_dump`, not from a backup, not from a regulator.
+
+        **Synchronous, inside the caller's transaction** — not queued (D14.1). The
+        published promise on `datanika.io/privacy` asserts a *mechanism*, not merely a
+        number: *"The 30 days is the off-site backup retention window."* That arithmetic
+        holds only if the live purge is prompt. A weekly batch makes it T+36 and a daily
+        one T+31, and both break a test-locked sentence on the marketing site.
+
+        Refuses if the user is the sole owner of a **shared** org (§9a(1)) — synchronously,
+        with both exits named, because a refusal discovered a week later through no
+        notification at all is worse than not offering the control.
+
+        Returns a count per class of work. Never a value: an erasure record that names
+        what it erased defeats itself.
+        """
+        from datanika.services.audit_service import AuditService
+
+        user = session.get(User, user_id)
+        if user is None:
+            raise UserServiceError("User not found")
+
+        memberships, sole_member_org_ids, blocking_org = self._classify_memberships(
+            session, user_id
+        )
+
+        # ── §9a(1): refuse BEFORE touching anything ────────────────────────────
+        if blocking_org is not None:
+            raise UserServiceError(
+                f"You are the only owner of {blocking_org}. "
+                "Transfer ownership or delete the organization first."
+            )
+
+        pii = self.get_user_pii(session, user_id)
+        erased_email = (pii.email if pii else None) or user.email
+        erased_name = (pii.full_name if pii else None) or user.full_name
+        counts: dict[str, int] = {}
+
+        # ── step 7, rewritten (§0.1) ───────────────────────────────────────────
+        # Rename EVERY org this person belonged to, including the ones step 6 is about to
+        # delete, and rename BEFORE the soft delete. The org that existed only for the
+        # erased person is precisely the one a "surviving orgs" sweep never reaches — and
+        # after a soft delete an `UPDATE ... WHERE deleted_at IS NULL`, the shape every
+        # org-scoped query here uses, no longer matches the row at all.
+        renamed = 0
+        for m in memberships:
+            org = session.get(Organization, m.org_id)
+            if org is None:
+                continue
+            if _contains_name(org.name, erased_name) or _contains_name(org.slug, erased_name):
+                org.name = f"Organization {org.id}"
+                org.slug = f"org-{org.id}"
+                renamed += 1
+        session.flush()
+        counts["organizations_renamed"] = renamed
+
+        # ── step 1: the erasure itself ─────────────────────────────────────────
+        counts["user_pii"] = 0
+        if pii is not None:
+            session.delete(pii)
+            counts["user_pii"] = 1
+
+        # ── step 1a (§0.2) ─────────────────────────────────────────────────────
+        # NULL the legacy columns this release still dual-writes. Without this, every
+        # erasure until N+2 deletes the copy and leaves the original — while criterion 8,
+        # `get_user_by_email`, login and every UI surface still read as erased, so nothing
+        # short of a raw query over the legacy columns can see the failure. Possible only
+        # because release N drops these NOT NULLs.
+        # 🚨 DELETE THIS BLOCK IN N+2, when the columns go.
+        user.email = None
+        user.full_name = None
+        user.oauth_provider_id = None
+
+        # ── step 2: credentials, hard-deleted ──────────────────────────────────
+        #
+        # Not soft: an API key that still authenticates for a person who no longer exists
+        # is a backdoor, and `deleted_at` is not read by the auth path.
+        #
+        # ⚠️ Order and shape are both constrained by foreign keys, and getting either
+        # wrong fails loudly only at the second table:
+        #   * `oauth_tokens` has **no `user_id`** — it reaches the person through
+        #     `grant_id -> oauth_grants.user_id`, so it cannot be deleted by the same
+        #     predicate as the others;
+        #   * `oauth_grants.api_key_id` references `api_keys`, so the grants must go
+        #     before the keys.
+        counts["oauth_tokens"] = _delete_oauth_tokens_for_user(session, user_id)
+        for table_name in ("oauth_grants", "api_keys", "password_reset_tokens"):
+            counts[table_name] = _delete_by_user(session, table_name, user_id)
+        counts["email_change_requests"] = _delete_by_user(session, "email_change_requests", user_id)
+
+        # ── step 3: pending invitations this person sent ───────────────────────
+        # The invitee's address is *their* personal data, sitting on a row this user
+        # authored, and the invitation cannot complete anyway.
+        pending = list(
+            session.execute(
+                select(Invitation).where(
+                    Invitation.invited_by_user_id == user_id,
+                    Invitation.status == InvitationStatus.PENDING,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for inv in pending:
+            inv_pii = session.get(InvitationPII, inv.id)
+            if inv_pii is not None:
+                session.delete(inv_pii)
+            # D5 step 3 says mark them REVOKED. `InvitationStatus` has no such member, and
+            # adding one is an enum expand/contract of its own that does not belong inside
+            # a privacy release. CANCELLED is what `cancel_invitation` already writes and
+            # what the UI already renders. Raised on core#655.
+            inv.status = InvitationStatus.CANCELLED
+            inv.email = None
+            inv.token = None
+        counts["invitations_revoked"] = len(pending)
+
+        # ── notification channels delivering to this address (criterion 10) ────
+        counts["notification_channels_cleared"] = (
+            _clear_channels_for(session, erased_email) if erased_email else 0
+        )
+
+        # ── steps 4 and 5 ──────────────────────────────────────────────────────
+        now = datetime.now(UTC)
+        for m in memberships:
+            m.deleted_at = now
+        counts["memberships"] = len(memberships)
+        user.deleted_at = now
+        user.is_active = False
+        session.flush()
+
+        # ── step 6: orgs that existed only for this person ─────────────────────
+        for org_id in sole_member_org_ids:
+            self.delete_org(session, org_id, projects_dir=projects_dir)
+        counts["organizations_deleted"] = len(sole_member_org_ids)
+
+        # ── D12.4 item 2: the residual audit sweep (a canary) ──────────────────
+        counts["audit_payloads_redacted"] = _sweep_audit_payloads(session, user_id)
+
+        # ── step 8: one audit row, naming nobody ───────────────────────────────
+        #
+        # D5 says `action="user.erased"`. `AuditAction` has no such member, and adding one
+        # is a t1 hazard rather than a typo: the column is `Enum(AuditAction,
+        # native_enum=False)`, so the previously deployed code raises `LookupError` when
+        # it *reads* a value it does not know — and the audit page lists rows for a whole
+        # org, so a single erasure row would break that page for every reader on the old
+        # container mid-swap. DELETE + `resource_type="user"` records the same fact inside
+        # the existing enum. Raised on core#655.
+        if memberships:
+            AuditService().log_action(
+                session,
+                memberships[0].org_id,
+                user_id,
+                AuditAction.DELETE,
+                "user",
+                resource_id=user_id,
+                new_values={},
+            )
+        session.flush()
+
+        # Counts only, never a value — the same trap D5 step 8 guards on the audit row.
+        logger.info(
+            "Erased user id=%s: %s",
+            user_id,
+            ", ".join(f"{k}={v}" for k, v in sorted(counts.items())),
+        )
+        return counts
+
+
+# ---------------------------------------------------------------------------
+# Erasure and org deletion — SPEC_PII_SEPARATION D5/D6, core#655
+#
+# Everything below is deliberately dialect-portable. The service suite runs on
+# SQLite (`Base.metadata.create_all`) while production is Postgres, so a jsonb
+# operator here would not be "a Postgres optimisation" — it would be code that
+# no test in this repo can execute.
+# ---------------------------------------------------------------------------
+
+
+def _contains_name(haystack: str | None, name: str | None) -> bool:
+    """Does an org name or slug still carry a person's name?
+
+    Matched case-insensitively, and also against the slugified form, because
+    ``organizations.slug`` held ``lower(replace(full_name, ' ', '-'))`` in 5 of 5
+    production rows. Checking only the literal name would leave the slug — which is the
+    unique, URL-bearing half — untouched.
+    """
+    if not haystack or not name:
+        return False
+    hay = haystack.lower()
+    needle = name.strip().lower()
+    if not needle:
+        return False
+    slugged = re.sub(r"[^a-z0-9]+", "-", needle).strip("-")
+    return needle in hay or bool(slugged) and slugged in hay
+
+
+def _remove_tenant_dbt_project(org_id: int, projects_dir: str | None) -> int:
+    """Delete ``dbt_projects/tenant_{org_id}/``. Returns how many directories went.
+
+    D6 item 1: this lives outside the database and **nothing soft-deletes a directory**.
+    Failure is logged and not raised — a leftover directory is a tidiness problem, while
+    aborting here would leave the database half-deleted, which is worse. The count is
+    returned so a caller can tell "removed" from "was not there".
+    """
+    root = Path(projects_dir or settings.dbt_projects_dir)
+    path = root / f"tenant_{org_id}"
+    if not path.is_dir():
+        return 0
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        logger.exception("Could not remove dbt project directory for org %s", org_id)
+        return 0
+    return 1
+
+
+def _delete_by_user(session: Session, table_name: str, user_id: int) -> int:
+    """Hard-delete every row of ``table_name`` belonging to a user.
+
+    Addressed through ``Base.metadata`` rather than a formatted string: five unrelated
+    models want the same statement, and building it from the metadata means there is no
+    SQL text to get wrong and nothing for a table name to be interpolated into.
+    """
+    table = Base.metadata.tables[table_name]
+    result = session.execute(delete(table).where(table.c.user_id == user_id))
+    return result.rowcount or 0
+
+
+def _delete_oauth_tokens_for_user(session: Session, user_id: int) -> int:
+    """Hard-delete MCP access/refresh tokens belonging to a person.
+
+    ``oauth_tokens`` carries ``org_id`` and ``grant_id`` and **no ``user_id``** — the only
+    route to the person is through the grant. A `_delete_by_user` call for this table
+    raises ``AttributeError: user_id`` rather than deleting nothing, which is the good
+    outcome; the bad one would have been a table that happened to have a `user_id` column
+    meaning something else.
+    """
+    tokens = Base.metadata.tables["oauth_tokens"]
+    grants = Base.metadata.tables["oauth_grants"]
+    result = session.execute(
+        delete(tokens).where(
+            tokens.c.grant_id.in_(select(grants.c.id).where(grants.c.user_id == user_id))
+        )
+    )
+    return result.rowcount or 0
+
+
+def _clear_channels_for(session: Session, address: str) -> int:
+    """Stop a notification channel delivering to an erased address.
+
+    Not one of D5's steps — the spec extracts ``notification_channels.config`` into a
+    sidecar (§2 row 6) and its §4 contract release drops five *columns*, saying nothing
+    about the JSON. So without this the address survives the entire four-release chain
+    and only criterion 10 could ever see it, on production, two releases late. Raised on
+    core#655.
+
+    The channel is **deactivated**, not silently left with no recipient: a channel that
+    has lost its delivery address should fail loudly rather than quietly stop alerting.
+    Secrets in the same JSON column (the Slack webhook URL, the Telegram bot token) are
+    left alone — they are an org property, not personal data.
+    """
+    cleared = 0
+    channels = session.execute(select(NotificationChannel)).scalars().all()
+    for ch in channels:
+        config = ch.config if isinstance(ch.config, dict) else {}
+        keys = [
+            k for k in ("email", "chat_id") if str(config.get(k, "")).lower() == address.lower()
+        ]
+        pii = session.get(NotificationChannelPII, ch.id)
+        matches_pii = pii is not None and (pii.recipient or "").lower() == address.lower()
+        if not keys and not matches_pii:
+            continue
+        if pii is not None:
+            session.delete(pii)
+        if keys:
+            ch.config = {k: v for k, v in config.items() if k not in keys}
+        ch.is_active = False
+        cleared += 1
+    if cleared:
+        session.flush()
+    return cleared
+
+
+def _sweep_audit_payloads(session: Session, user_id: int) -> int:
+    """D12.4 item 2 — the residual sweep. A **canary**, not a cleanup.
+
+    After D11 (call sites store internal ids) and D12 (redaction at the chokepoint) this
+    must find **zero**. If it ever redacts something, one of those two failed and the
+    count is the only thing that will say so — which is why it returns a count rather
+    than quietly repairing.
+
+    🚨 **A clean run is not evidence, and that is why the count is reported rather than
+    inferred from silence.** "Finds zero" is also what this returns before the feature
+    exists at all. Its acceptance evidence is a run against a deliberately planted
+    PII-bearing row (§2c criterion 2), which is what
+    `test_pii_separation.py::test_the_residual_sweep_finds_a_planted_row` does.
+
+    Scope is every row in every org this person has ever belonged to — **including
+    soft-deleted memberships** — plus rows they authored. `WHERE user_id = <erased>`
+    alone would miss the majority case: three of the PII-writing call sites store the
+    *subject's* address on a row whose `user_id` is the *actor*.
+    """
+    org_ids = list(
+        session.execute(select(Membership.org_id).where(Membership.user_id == user_id)).scalars()
+    )
+    stmt = select(AuditLog).where(
+        or_(AuditLog.user_id == user_id, AuditLog.org_id.in_(org_ids) if org_ids else false())
+    )
+    redacted = 0
+    for row in session.execute(stmt).scalars():
+        for field in ("old_values", "new_values"):
+            payload = getattr(row, field)
+            if not isinstance(payload, dict):
+                continue
+            cleaned = redact_pii_payload(payload)
+            if cleaned != payload:
+                setattr(row, field, cleaned)
+                redacted += 1
+    if redacted:
+        session.flush()
+        logger.warning(
+            "Residual audit sweep redacted %s payload(s) during erasure of user id=%s. "
+            "This should be zero: D11 and the log_action redactor are supposed to make "
+            "it impossible for a payload to carry personal data at all.",
+            redacted,
+            user_id,
+        )
+    return redacted

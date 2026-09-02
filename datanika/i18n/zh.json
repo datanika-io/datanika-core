@@ -671,5 +671,16 @@
   "pipelines.destination_help": "流水线通过 dbt 运行，而 dbt 需要目标端的适配器。Databricks 和 Synapse 可以接收已加载的数据，但没有适配器；MySQL 和 SQLite 仅可作为抽取源。",
   "pipelines.destination_invalid": "转换无法在该类型的连接上运行——dbt 没有对应的适配器。请从列表中选择一个目标。",
   "transformations.destination_help": "转换通过 dbt 运行，而 dbt 需要目标端的适配器。Databricks 和 Synapse 可以接收已加载的数据，但没有适配器；MySQL 和 SQLite 仅可作为抽取源。",
-  "transformations.destination_invalid": "转换无法在该类型的连接上运行——dbt 没有对应的适配器。请从列表中选择一个目标。"
+  "transformations.destination_invalid": "转换无法在该类型的连接上运行——dbt 没有对应的适配器。请从列表中选择一个目标。",
+  "account.delete_heading": "删除你的账户",
+  "account.delete_body": "这将永久删除你的姓名、电子邮件地址和登录凭据。此操作无法撤销。",
+  "account.delete_button": "删除我的账户",
+  "account.delete_confirm_heading": "删除你的账户？",
+  "account.delete_confirm_password": "输入你的密码以确认",
+  "account.delete_confirm_org_name": "输入组织名称以确认",
+  "account.delete_what_goes": "立即删除：你的姓名、电子邮件地址、登录凭据、API 密钥和个人通知设置。",
+  "account.delete_what_stays": "保留：账单记录，保留 7 年，这是税法的要求。已写入你自己账户中数据仓库的任何内容都不受影响——我们绝不会从你的数据仓库中删除数据。",
+  "account.delete_backups_note": "备份最多保留 30 天，随后过期。我们不会修改备份。",
+  "account.delete_last_owner": "你是 {org} 的唯一所有者。请先转移所有权或删除该组织。",
+  "account.delete_org_too": "{org} 没有其他成员，因此它将随你的账户一并删除。"
 }

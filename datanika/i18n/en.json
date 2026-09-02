@@ -671,5 +671,16 @@
   "pipelines.destination_help": "Pipelines run dbt, which needs an adapter for the target. Databricks and Synapse can receive loaded data but have no adapter; MySQL and SQLite are extract sources only.",
   "pipelines.destination_invalid": "Transformations cannot run against this connection type — dbt has no adapter for it. Pick one of the listed destinations.",
   "transformations.destination_help": "Transformations run dbt, which needs an adapter for the target. Databricks and Synapse can receive loaded data but have no adapter; MySQL and SQLite are extract sources only.",
-  "transformations.destination_invalid": "Transformations cannot run against this connection type — dbt has no adapter for it. Pick one of the listed destinations."
+  "transformations.destination_invalid": "Transformations cannot run against this connection type — dbt has no adapter for it. Pick one of the listed destinations.",
+  "account.delete_heading": "Delete your account",
+  "account.delete_body": "This removes your name, email address and sign-in details permanently. It cannot be undone.",
+  "account.delete_button": "Delete my account",
+  "account.delete_confirm_heading": "Delete your account?",
+  "account.delete_confirm_password": "Enter your password to confirm",
+  "account.delete_confirm_org_name": "Type the organization name to confirm",
+  "account.delete_what_goes": "Deleted immediately: your name, email address, sign-in details, API keys and personal notification settings.",
+  "account.delete_what_stays": "Kept: billing records, for 7 years, as tax law requires. Anything already written to a data warehouse in your own account is untouched — we never delete from your warehouse.",
+  "account.delete_backups_note": "Backups are kept for up to 30 days, then expire. We do not edit backups.",
+  "account.delete_last_owner": "You are the only owner of {org}. Transfer ownership or delete the organization first.",
+  "account.delete_org_too": "{org} has no other members, so it will be deleted with your account."
 }

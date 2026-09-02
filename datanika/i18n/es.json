@@ -671,5 +671,16 @@
   "pipelines.destination_help": "Las canalizaciones ejecutan dbt, que necesita un adaptador para el destino. Databricks y Synapse pueden recibir datos cargados pero no tienen adaptador; MySQL y SQLite son solo orígenes de extracción.",
   "pipelines.destination_invalid": "Las transformaciones no pueden ejecutarse contra este tipo de conexión: dbt no tiene un adaptador para él. Elija uno de los destinos listados.",
   "transformations.destination_help": "Las transformaciones ejecutan dbt, que necesita un adaptador para el destino. Databricks y Synapse pueden recibir datos cargados pero no tienen adaptador; MySQL y SQLite son solo orígenes de extracción.",
-  "transformations.destination_invalid": "Las transformaciones no pueden ejecutarse contra este tipo de conexión: dbt no tiene un adaptador para él. Elija uno de los destinos listados."
+  "transformations.destination_invalid": "Las transformaciones no pueden ejecutarse contra este tipo de conexión: dbt no tiene un adaptador para él. Elija uno de los destinos listados.",
+  "account.delete_heading": "Eliminar tu cuenta",
+  "account.delete_body": "Esto elimina de forma permanente tu nombre, tu dirección de correo y tus datos de inicio de sesión. No se puede deshacer.",
+  "account.delete_button": "Eliminar mi cuenta",
+  "account.delete_confirm_heading": "¿Eliminar tu cuenta?",
+  "account.delete_confirm_password": "Introduce tu contraseña para confirmar",
+  "account.delete_confirm_org_name": "Escribe el nombre de la organización para confirmar",
+  "account.delete_what_goes": "Se eliminan de inmediato: tu nombre, tu dirección de correo, tus datos de inicio de sesión, tus claves de API y tus ajustes personales de notificaciones.",
+  "account.delete_what_stays": "Se conservan: los registros de facturación, durante 7 años, como exige la legislación fiscal. Todo lo que ya se haya escrito en un almacén de datos de tu propia cuenta queda intacto — nunca eliminamos nada de tu almacén.",
+  "account.delete_backups_note": "Las copias de seguridad se guardan hasta 30 días y después caducan. No editamos las copias de seguridad.",
+  "account.delete_last_owner": "Eres el único propietario de {org}. Transfiere la propiedad o elimina la organización primero.",
+  "account.delete_org_too": "{org} no tiene otros miembros, así que se eliminará junto con tu cuenta."
 }

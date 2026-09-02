@@ -1,16 +1,35 @@
 """InvitationService — create, accept, cancel, and list org invitations."""
 
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from datanika.models.invitation import Invitation, InvitationStatus
-from datanika.models.user import MemberRole, Membership, User
+from datanika.models.pii import InvitationPII
+from datanika.models.user import MemberRole, Membership
 from datanika.services.auth import AuthService
 
 logger = logging.getLogger(__name__)
+
+
+def hash_invitation_token(raw: str) -> str:
+    """SHA-256 hex of the value in the emailed link (D3).
+
+    Same construction as ``PasswordResetService._hash`` and ``OAuthGrant.code_hash``, and
+    it must stay byte-identical to the migration's
+    ``encode(sha256(convert_to(token, 'UTF8')), 'hex')`` or the backfilled rows become
+    unfindable. SHA-256 rather than bcrypt because the token already carries plenty of
+    entropy — there is nothing to stretch — and the lookup has to be an indexed equality.
+
+    ``invitations`` previously stored its JWT **verbatim**, in a database whose nightly
+    ``pg_dump`` ships off-box and is kept 30 days, and that JWT's payload contains
+    ``{"email": <invitee>}``. ``models/password_reset.py`` documents why not to do that,
+    in this same repo, and names this table as the counter-example.
+    """
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class InvitationService:
@@ -36,16 +55,16 @@ class InvitationService:
         """
         from datanika.services.user_service import UserService
 
-        UserService(self._auth)._assert_may_manage(
-            session, org_id, invited_by_user_id, granted_role=role
-        )
+        user_svc = UserService(self._auth)
+        user_svc._assert_may_manage(session, org_id, invited_by_user_id, granted_role=role)
 
         email = email.strip().lower()
 
-        # Check if already a member
-        existing_user = session.execute(
-            select(User).where(User.email == email)
-        ).scalar_one_or_none()
+        # Check if already a member. Routed through `get_user_by_email` rather than a
+        # second copy of the predicate: that method is the one place that joins `user_pii`
+        # and filters `deleted_at IS NULL`, and the local copy this replaced was also
+        # case-SENSITIVE, which the chokepoint is not.
+        existing_user = user_svc.get_user_by_email(session, email)
         if existing_user:
             existing_membership = session.execute(
                 select(Membership).where(
@@ -77,19 +96,23 @@ class InvitationService:
             email=email,
             role=role,
             invited_by_user_id=invited_by_user_id,
+            # Dual-write, release N. `token` is still written because the previously
+            # deployed code looks invitations up by equality on it and the column is NOT
+            # NULL until this release's migration widens it; it is dropped in N+2.
             token=token,
+            token_hash=hash_invitation_token(token),
             status=InvitationStatus.PENDING,
             expires_at=datetime.now(UTC) + timedelta(days=expires_days),
         )
         session.add(invitation)
         session.flush()
+        session.add(InvitationPII(invitation_id=invitation.id, email=email))
+        session.flush()
         return invitation
 
     def accept_invitation(self, session: Session, token: str) -> Membership | None:
         """Accept an invitation by token.  Returns the new Membership or None."""
-        invitation = session.execute(
-            select(Invitation).where(Invitation.token == token)
-        ).scalar_one_or_none()
+        invitation = self.get_invitation_by_token(session, token)
 
         if invitation is None:
             return None
@@ -114,10 +137,15 @@ class InvitationService:
             )
             return None
 
-        # Find the user by email
-        user = session.execute(
-            select(User).where(User.email == invitation.email)
-        ).scalar_one_or_none()
+        # Find the user by email. Read the invitee's address from the sidecar, falling
+        # back to the legacy column for rows the t1 window created (removed in N+1).
+        from datanika.services.user_service import UserService as _UserService
+
+        pii = session.get(InvitationPII, invitation.id)
+        invited_email = pii.email if pii is not None else invitation.email
+        if not invited_email:
+            return None
+        user = _UserService(self._auth).get_user_by_email(session, invited_email)
         if user is None:
             return None  # User must register first
 
@@ -161,7 +189,19 @@ class InvitationService:
         )
 
     def get_invitation_by_token(self, session: Session, token: str) -> Invitation | None:
-        """Look up an invitation by its token."""
+        """Look up an invitation by the value in the emailed link.
+
+        Matched on the **hash** (D3). The legacy plaintext clause is the t1 window, not a
+        convenience: at the blue/green swap the previously deployed code is still creating
+        invitations, and those rows carry a ``token`` and no ``token_hash``. Rows that
+        predate this release were hashed by the migration's backfill, so they match the
+        first clause. The legacy clause is deleted in **N+1**.
+        """
         return session.execute(
-            select(Invitation).where(Invitation.token == token)
+            select(Invitation).where(
+                or_(
+                    Invitation.token_hash == hash_invitation_token(token),
+                    Invitation.token == token,  # legacy — removed in N+1
+                )
+            )
         ).scalar_one_or_none()

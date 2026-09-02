@@ -18,6 +18,141 @@ from datanika.ui.state.settings_state import InvitationItem, MemberItem, Setting
 _t = I18nState.translations
 
 
+def _delete_account_dialog() -> rx.Component:
+    """The typed-confirmation dialog for account erasure (SPEC_PII_SEPARATION D9).
+
+    ``rx.alert_dialog``, not ``rx.dialog``: it renders a real ``role="alertdialog"``, and
+    WORKFLOW_RULES §7b applies to the implementation as well as to anyone driving it — the
+    destructive handler sits on the dialog's **action**, never on its trigger, so nothing
+    destructive is reachable without the dialog open. This is the pattern core#804
+    established for `/connections` and `/uploads`.
+
+    **The confirmation is typed, not a second button**, and which text is required depends
+    on ``has_password`` — core#623's discriminator (``password_changed_at IS NULL``),
+    never ``oauth_provider``, which is backfilled onto password accounts on first social
+    login and would demand a password from someone who has never had one.
+
+    Everything the dialog must state before the confirm button is reachable: what is
+    deleted, what is **kept** (billing records, 7 years, by law), that warehouse schemas in
+    the customer's own account are untouched, that backups age out within 30 days, and that
+    it cannot be undone.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                _t["account.delete_button"],
+                size="2",
+                color_scheme="red",
+                variant="soft",
+                on_click=AccountState.load_delete_preconditions,
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["account.delete_confirm_heading"]),
+            rx.alert_dialog.description(_t["account.delete_body"]),
+            rx.vstack(
+                rx.text(_t["account.delete_what_goes"], size="2"),
+                rx.text(_t["account.delete_what_stays"], size="2", color="var(--gray-11)"),
+                rx.text(_t["account.delete_backups_note"], size="1", color="var(--gray-9)"),
+                # The org consequence, stated BEFORE the confirm control is used. D9
+                # requires the choice to be put to the user rather than discovered.
+                rx.cond(
+                    AccountState.sole_member_org != "",
+                    rx.callout(
+                        _t["account.delete_org_too"],
+                        icon="triangle_alert",
+                        color_scheme="amber",
+                        width="100%",
+                    ),
+                ),
+                # §9a(1): the refusal, up front, naming both exits. Refusing a sole
+                # owner's request with no route out is worse than the current state.
+                rx.cond(
+                    AccountState.blocking_org != "",
+                    rx.callout(
+                        _t["account.delete_last_owner"],
+                        icon="octagon_alert",
+                        color_scheme="red",
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AccountState.delete_error != "",
+                    rx.callout(
+                        AccountState.delete_error,
+                        icon="triangle_alert",
+                        color_scheme="red",
+                        width="100%",
+                    ),
+                ),
+                rx.form(
+                    rx.vstack(
+                        rx.text(
+                            rx.cond(
+                                AccountState.has_password,
+                                _t["account.delete_confirm_password"],
+                                _t["account.delete_confirm_org_name"],
+                            ),
+                            size="2",
+                            weight="medium",
+                        ),
+                        rx.input(
+                            name="confirmation",
+                            type=rx.cond(AccountState.has_password, "password", "text"),
+                            custom_attrs={"autoComplete": "off"},
+                            width="100%",
+                        ),
+                        rx.flex(
+                            rx.alert_dialog.cancel(
+                                rx.button(
+                                    _t["common.cancel"],
+                                    variant="soft",
+                                    color_scheme="gray",
+                                    type="button",
+                                ),
+                            ),
+                            rx.button(
+                                _t["account.delete_button"],
+                                color_scheme="red",
+                                type="submit",
+                                # Disabled while a sole-owner refusal stands: the service
+                                # would refuse anyway, and offering a control that cannot
+                                # succeed is what §9a(1) calls worse than not offering one.
+                                disabled=AccountState.blocking_org != "",
+                            ),
+                            spacing="3",
+                            justify="end",
+                            margin_top="16px",
+                        ),
+                        spacing="3",
+                        width="100%",
+                    ),
+                    on_submit=AccountState.delete_account,
+                    reset_on_submit=True,
+                    width="100%",
+                ),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            max_width="520px",
+        ),
+    )
+
+
+def delete_account_section() -> rx.Component:
+    """The only destructive control on /settings, visually separated (D9)."""
+    return rx.vstack(
+        rx.divider(),
+        rx.heading(_t["account.delete_heading"], size="3", color_scheme="red"),
+        rx.text(_t["account.delete_body"], size="2", color="gray"),
+        _delete_account_dialog(),
+        spacing="2",
+        width="100%",
+        margin_top="8px",
+    )
+
+
 def account_card() -> rx.Component:
     """Change (or first set) your own password — core#623, Part A.
 
@@ -218,6 +353,7 @@ def account_card() -> rx.Component:
                 is_external=True,
                 color_scheme="violet",
             ),
+            delete_account_section(),
             spacing="4",
             width="100%",
         ),

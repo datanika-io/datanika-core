@@ -190,7 +190,6 @@ def test_a_table_shaped_guard_passes_vacuously_today(svc, db_session, org, user)
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_the_derived_key_set_is_exposed_and_exact():
     """§7 criterion 1aa — cardinality and contents pinned.
 
@@ -210,7 +209,6 @@ def test_the_derived_key_set_is_exposed_and_exact():
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_a_pii_key_is_replaced_with_the_marker(svc, db_session, org, user):
     """§7 criterion 1ab, first half. Input is constructed, never sampled."""
     keys = _pii_payload_keys() or EXPECTED_PII_PAYLOAD_KEYS
@@ -227,7 +225,6 @@ def test_a_pii_key_is_replaced_with_the_marker(svc, db_session, org, user):
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_non_pii_keys_survive_byte_identical(svc, db_session, org, user):
     """§7 criterion 1ab, second half — the load-bearing one.
 
@@ -258,7 +255,6 @@ def test_non_pii_keys_survive_byte_identical(svc, db_session, org, user):
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_redaction_reaches_nested_payloads(svc, db_session, org, user):
     """D12.5 — the redactor recurses into nested dicts and lists.
 
@@ -279,7 +275,6 @@ def test_redaction_reaches_nested_payloads(svc, db_session, org, user):
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_the_redactor_never_raises_and_the_row_is_still_written(svc, db_session, org, user):
     """§7 criterion 1ac.
 
@@ -314,7 +309,6 @@ def test_the_redactor_never_raises_and_the_row_is_still_written(svc, db_session,
     )
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=_MARKER_REASON)
 def test_negative_control_a_no_op_redactor_fails_this_guard(
     svc, db_session, org, user, monkeypatch
 ):

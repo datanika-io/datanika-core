@@ -7,6 +7,7 @@ import httpx
 from sqlalchemy import select
 
 from datanika.models.notification_channel import ChannelType, NotificationChannel
+from datanika.models.pii import NotificationChannelPII
 
 logger = logging.getLogger(__name__)
 VALID_EVENTS = frozenset(
@@ -58,7 +59,40 @@ class NotificationService:
         )
         session.add(ch)
         session.flush()
+        self._sync_channel_pii(session, ch)
         return ch
+
+    @staticmethod
+    def _sync_channel_pii(session, ch) -> None:
+        """Mirror the delivery address into ``notification_channel_pii`` (release N).
+
+        ``config`` mixes a **personal datum** with **secrets** in one JSON column — the
+        recipient sits beside the Slack webhook URL and the Telegram bot token. Only the
+        recipient moves: secrets are an org property, not personal data, and folding them
+        in would imply that erasure must decrypt them, which it must not.
+
+        Dual-write. ``config`` keeps its copy through N because the previously deployed
+        code reads ``channel.config["email"]`` directly.
+
+        ⚠️ Unlike the other two sidecars, **the spec's §4 contract release never removes
+        this copy** — it drops five *columns* and says nothing about the JSON, so without a
+        data step in N+1/N+2 the address stays in ``config`` after the chain finishes.
+        Raised on core#655; recorded here because this is where the second copy is made.
+        """
+        recipient = None
+        if isinstance(ch.config, dict):
+            recipient = ch.config.get("email") or ch.config.get("chat_id")
+        existing = session.get(NotificationChannelPII, ch.id)
+        if not recipient:
+            if existing is not None:
+                session.delete(existing)
+                session.flush()
+            return
+        if existing is None:
+            session.add(NotificationChannelPII(channel_id=ch.id, recipient=recipient))
+        else:
+            existing.recipient = recipient
+        session.flush()
 
     def _get_channel(self, session, channel_id, org_id):
         stmt = select(NotificationChannel).where(
@@ -97,6 +131,7 @@ class NotificationService:
         if "is_active" in kwargs:
             ch.is_active = kwargs["is_active"]
         session.flush()
+        self._sync_channel_pii(session, ch)
         return ch
 
     def delete_channel(self, session, channel_id, org_id):

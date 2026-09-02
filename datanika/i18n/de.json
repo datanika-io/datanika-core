@@ -671,5 +671,16 @@
   "pipelines.destination_help": "Pipelines führen dbt aus, das einen Adapter für das Ziel benötigt. Databricks und Synapse können geladene Daten aufnehmen, haben aber keinen Adapter; MySQL und SQLite sind reine Extraktionsquellen.",
   "pipelines.destination_invalid": "Transformationen laufen nicht gegen diesen Verbindungstyp — dbt hat dafür keinen Adapter. Wählen Sie ein aufgeführtes Ziel.",
   "transformations.destination_help": "Transformationen führen dbt aus, das einen Adapter für das Ziel benötigt. Databricks und Synapse können geladene Daten aufnehmen, haben aber keinen Adapter; MySQL und SQLite sind reine Extraktionsquellen.",
-  "transformations.destination_invalid": "Transformationen laufen nicht gegen diesen Verbindungstyp — dbt hat dafür keinen Adapter. Wählen Sie ein aufgeführtes Ziel."
+  "transformations.destination_invalid": "Transformationen laufen nicht gegen diesen Verbindungstyp — dbt hat dafür keinen Adapter. Wählen Sie ein aufgeführtes Ziel.",
+  "account.delete_heading": "Ihr Konto löschen",
+  "account.delete_body": "Dies entfernt Ihren Namen, Ihre E-Mail-Adresse und Ihre Anmeldedaten dauerhaft. Es lässt sich nicht rückgängig machen.",
+  "account.delete_button": "Mein Konto löschen",
+  "account.delete_confirm_heading": "Ihr Konto löschen?",
+  "account.delete_confirm_password": "Geben Sie zur Bestätigung Ihr Passwort ein",
+  "account.delete_confirm_org_name": "Geben Sie zur Bestätigung den Namen der Organisation ein",
+  "account.delete_what_goes": "Wird sofort gelöscht: Ihr Name, Ihre E-Mail-Adresse, Ihre Anmeldedaten, Ihre API-Schlüssel und Ihre persönlichen Benachrichtigungseinstellungen.",
+  "account.delete_what_stays": "Wird aufbewahrt: Abrechnungsunterlagen, 7 Jahre lang, wie es das Steuerrecht verlangt. Was bereits in ein Data Warehouse in Ihrem eigenen Konto geschrieben wurde, bleibt unberührt — wir löschen niemals etwas aus Ihrem Warehouse.",
+  "account.delete_backups_note": "Backups werden bis zu 30 Tage aufbewahrt und laufen dann ab. Wir bearbeiten keine Backups.",
+  "account.delete_last_owner": "Sie sind der einzige Eigentümer von {org}. Übertragen Sie zuerst das Eigentum oder löschen Sie die Organisation.",
+  "account.delete_org_too": "{org} hat keine weiteren Mitglieder und wird daher zusammen mit Ihrem Konto gelöscht."
 }

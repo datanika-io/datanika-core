@@ -50,6 +50,8 @@
   "auth.signed_out_cta": "Iniciar sesión",
   "auth.back_to_sign_in": "Volver al inicio de sesión",
   "auth.reset_unavailable": "El restablecimiento de contraseña por correo no está disponible en esta instancia: no hay servidor de correo configurado. Contacta con tu administrador.",
+  "auth.signup_rate_limited": "Demasiados intentos de registro desde esta red. Inténtalo de nuevo dentro de una hora.",
+  "auth.signup_unavailable": "El registro no está disponible temporalmente. Inténtalo de nuevo en un momento.",
   "auth.social_link_blocked": "Esta dirección de correo aún no está confirmada",
   "auth.social_link_blocked_help": "Ya existe una cuenta con esta dirección y no podemos vincularla a un inicio de sesión social hasta que la dirección esté confirmada. Inicia sesión con tu contraseña o usa «¿Olvidaste tu contraseña?» para confirmarla.",
   "auth.social_link_blocked_help_no_email": "Ya existe una cuenta con esta dirección. Inicia sesión con tu contraseña — esta instancia no tiene servidor de correo, así que las direcciones no se pueden confirmar por correo electrónico.",

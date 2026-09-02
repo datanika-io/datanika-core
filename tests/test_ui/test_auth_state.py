@@ -251,12 +251,16 @@ class TestSignupExceptionHandling:
 
         state = SimpleNamespace(
             auth_error="",
+            # core#639 — signup consults a rate limiter before the lookup.
+            signup_blocked="",
+            _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
 
         with (
             patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
             patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+            patch("datanika.ui.state.auth_state._allow", return_value=True),
         ):
             mock_captcha_cls.return_value.verify.return_value = True
             mock_session.return_value.__enter__.return_value = MagicMock()
@@ -289,12 +293,16 @@ class TestSignupExceptionHandling:
 
         state = SimpleNamespace(
             auth_error="",
+            # core#639 — signup consults a rate limiter before the lookup.
+            signup_blocked="",
+            _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
 
         with (
             patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
             patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+            patch("datanika.ui.state.auth_state._allow", return_value=True),
             caplog.at_level(logging.ERROR, logger="datanika.ui.state.auth_state"),
         ):
             mock_captcha_cls.return_value.verify.return_value = True

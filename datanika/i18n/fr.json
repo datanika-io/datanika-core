@@ -50,6 +50,8 @@
   "auth.signed_out_cta": "Se connecter",
   "auth.back_to_sign_in": "Retour à la connexion",
   "auth.reset_unavailable": "La réinitialisation du mot de passe par e-mail n'est pas disponible sur cette instance — aucun serveur de messagerie n'est configuré. Contactez votre administrateur.",
+  "auth.signup_rate_limited": "Trop de tentatives d'inscription depuis ce réseau. Réessayez dans une heure.",
+  "auth.signup_unavailable": "L'inscription est temporairement indisponible. Réessayez dans un instant.",
   "auth.social_link_blocked": "Cette adresse e-mail n'a pas encore été confirmée",
   "auth.social_link_blocked_help": "Un compte existe déjà pour cette adresse et nous ne pouvons pas le lier à une connexion sociale tant que l'adresse n'est pas confirmée. Connectez-vous avec votre mot de passe ou utilisez « Mot de passe oublié » pour la confirmer.",
   "auth.social_link_blocked_help_no_email": "Un compte existe déjà pour cette adresse. Connectez-vous plutôt avec votre mot de passe — cette instance n'a pas de serveur de messagerie, les adresses ne peuvent donc pas être confirmées par e-mail.",

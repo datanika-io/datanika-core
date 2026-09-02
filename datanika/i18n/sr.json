@@ -50,6 +50,8 @@
   "auth.signed_out_cta": "Prijavi se",
   "auth.back_to_sign_in": "Nazad na prijavu",
   "auth.reset_unavailable": "Resetovanje lozinke imejlom nije dostupno na ovoj instanci — mejl server nije podešen. Obratite se administratoru.",
+  "auth.signup_rate_limited": "Previše pokušaja registracije sa ove mreže. Pokušajte ponovo za sat vremena.",
+  "auth.signup_unavailable": "Registracija trenutno nije dostupna. Pokušajte ponovo uskoro.",
   "auth.social_link_blocked": "Ова имејл адреса још није потврђена",
   "auth.social_link_blocked_help": "Налог са овом адресом већ постоји и не можемо га повезати са пријавом преко друштвене мреже док адреса не буде потврђена. Пријавите се лозинком или употребите „Заборављена лозинка“ да бисте је потврдили.",
   "auth.social_link_blocked_help_no_email": "Налог са овом адресом већ постоји. Пријавите се лозинком — ова инстанца нема сервер за пошту, па се адресе не могу потврдити имејлом.",

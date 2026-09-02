@@ -82,11 +82,45 @@ jobs:
           # If it is missing the script failed for some other reason (a token
           # problem, an API change), which is still a real failure -- say so
           # rather than filing an empty issue.
+          #
+          # 🚨 This branch used to `exit 1` after four `::error::` lines and
+          # nothing else. Both outcomes -- "a cron has stopped" and "I could not
+          # run" -- then produced one identical signal: a red scheduled run.
+          # The first is *designed* to be red (filing an issue ends in `exit 1`),
+          # so a broken watchdog is camouflaged by its own success case. It sat
+          # broken for three nights that way (core#691): a crash on 08-31 looked
+          # exactly like the correct detection on 08-30.
+          #
+          # So the watchdog now reports its own failure through the SAME channel
+          # it reports findings through, under a DIFFERENT title, so the two are
+          # one glance apart in the issue list rather than one log-dive apart.
           if [ ! -f problems.md ]; then
             echo "::error::The watchdog exited non-zero but wrote no problems.md."
             echo "::error::That means it failed to RUN, not that it found a fault."
             echo "::error::Check the step above -- most likely the token cannot"
             echo "::error::read one of the repos, or the workflows API changed."
+
+            broken=$(gh issue list --state open \
+              --search "in:title Scheduled workflow watchdog is failing to run" \
+              --json number --jq '.[0].number // empty')
+
+            {
+              printf 'The watchdog ran and could not complete a check, so **nothing was verified '
+              printf 'this run** -- this is not a report that a cron has stopped.\n\n'
+              printf 'Run: %s/%s/actions/runs/%s\n\n' \
+                "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+              printf 'While this issue is open, the absence of a "Scheduled workflow stopped '
+              printf 'firing" issue means nothing: the detector is down, not the crons proven up.\n'
+            } > /tmp/broken.md
+
+            if [ -n "$broken" ]; then
+              echo "Watchdog breakage already tracked in #$broken; adding this run."
+              gh issue comment "$broken" --body-file /tmp/broken.md
+            else
+              gh issue create \
+                --title "Scheduled workflow watchdog is failing to run" \
+                --body-file /tmp/broken.md
+            fi
             exit 1
           fi
 

@@ -15,7 +15,7 @@ These tests are the binding.
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.services.connection_service import SOURCE_TYPES, WITHDRAWN_SOURCE_TYPES
-from datanika.services.dlt_runner import SUPPORTED_FILE_TYPES, SUPPORTED_SAAS_TYPES
+from datanika.services.dlt_runner import SUPPORTED_SAAS_TYPES
 from datanika.ui.pages.connections import PICKER_TYPES
 from datanika.ui.state.connection_state import (
     FILE_SOURCE_TYPES,
@@ -23,6 +23,11 @@ from datanika.ui.state.connection_state import (
     SAAS_DEFAULT_ENDPOINTS,
     SAAS_SOURCE_TYPES,
 )
+
+# Derived from `DltRunnerService.build_source`'s own dispatch chain (core#885).
+# Imported rather than restated so that this file and the fsspec guard cannot
+# drift into disagreeing about what "dispatched" means.
+from tests.test_services.test_advertised_sources_resolve import dispatch_families
 
 # The source types that really are SQL databases — the only ones for which the
 # upload form's Load Mode / Write Disposition / Source schema / Table names
@@ -123,20 +128,30 @@ def test_a_withdrawn_type_still_resolves_for_stored_connections():
     a file/blob type, dispatched through `SUPPORTED_FILE_TYPES` — failed here with
     "s3 lost loader dispatch" while s3's dispatch was in fact fully intact.
 
+    🚨 **The first repair added `SUPPORTED_FILE_TYPES` to a hand-written union, and
+    that is the same defect with one more instance in it** (core#885). Two of the
+    eight families `build_source` dispatches were named; withdrawing a `mongodb`,
+    `kafka`, `rest_api`, `openapi`, `google_sheets` or SQL connector would have
+    failed here for the identical wrong reason, and the docstring's own remedy —
+    *"adding a third family means adding its dispatch set here"* — is an
+    instruction to keep paying that cost forever.
+
     The invariant that was always meant is *"a withdrawn type is still dispatched
-    by some loader"*, so it is asserted against the union. Adding a third family
-    means adding its dispatch set here, and the failure message says so.
+    by some loader"*. It is now asserted against the families read out of
+    `build_source`'s own dispatch chain, so a family added tomorrow is covered the
+    day it is written. A generic mechanism with one instance is a special case
+    wearing a general name; this is the derivation that stops it being one.
     """
-    dispatch = SUPPORTED_SAAS_TYPES | SUPPORTED_FILE_TYPES
+    dispatch: set[str] = set().union(*dispatch_families().values())
     for withdrawn in WITHDRAWN_SOURCE_TYPES:
         assert withdrawn in {c.value for c in ConnectionType}, (
             f"{withdrawn} lost its ConnectionType member; rows already stored would not load"
         )
         assert withdrawn in dispatch, (
             f"{withdrawn} lost loader dispatch, so a stored connection fails with a generic "
-            "'Unsupported source type' instead of an error that explains itself. If it belongs "
-            "to a connector family whose dispatch set is not SUPPORTED_SAAS_TYPES or "
-            "SUPPORTED_FILE_TYPES, add that set to the union above rather than exempting it."
+            "'Unsupported source type' instead of an error that explains itself. The families "
+            "are derived from DltRunnerService.build_source, so this means no branch there "
+            "runs it — not that a set is missing from a list."
         )
 
 

@@ -259,6 +259,7 @@ class ScheduleState(BaseState):
             self._set_error(e, "Failed to save schedule")
             return
         self._reset_form()
+        yield await self._saved_toast("schedules.created_toast", "Schedule saved")
         await self.load_schedules()
 
     async def edit_schedule(self, schedule_id: int):

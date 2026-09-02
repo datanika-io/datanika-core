@@ -318,6 +318,7 @@ class DagState(BaseState):
         self.form_check_timeframe_value = ""
         self.form_check_timeframe_unit = "minutes"
         self.error_message = ""
+        yield await self._saved_toast("dag.created_toast", "Dependency added")
         await self.load_dependencies()
 
     async def remove_dependency(self, dep_id: int):

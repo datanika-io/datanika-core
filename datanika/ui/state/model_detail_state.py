@@ -572,3 +572,4 @@ class ModelDetailState(BaseState):
 
             session.commit()
         self.error_message = ""
+        yield await self._saved_toast("models.saved_toast", "Model saved")

@@ -327,6 +327,7 @@ class TransformationState(BaseState):
             self.error_message = self._safe_error(e, "Failed to save transformation")
             return
         self._reset_form()
+        yield await self._saved_toast("transformations.created_toast", "Transformation saved")
         await self.load_transformations()
 
     def _find_conn_option(self, connection_id: int | None) -> str:

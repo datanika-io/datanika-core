@@ -225,6 +225,11 @@ class SettingsState(BaseState):
         else:
             # No SMTP — fall back to direct add (user must already exist)
             await self._add_existing_user(auth_state)
+        # Both helpers record their own failure in `error_message` rather than
+        # raising, so the toast is conditional on there not being one - a success
+        # toast beside a visible error is worse than neither (core#872 AC9).
+        if not self.error_message:
+            yield await self._saved_toast("settings.member_added_toast", "Member added")
 
     async def _send_invitation(self, auth_state):
         try:

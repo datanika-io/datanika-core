@@ -25,6 +25,10 @@ class TestUploadRunDispatchesCeleryTask:
 
         # Mock _check_role to return True
         state._check_role = AsyncMock(return_value=True)
+        # core#872 — the handler now yields a translated toast. A bare
+        # MagicMock attribute is not awaitable, and `await` on one raises
+        # inside the handler rather than reporting anything about dispatch.
+        state._saved_toast = AsyncMock(return_value=None)
 
         # Mock get_state(AuthState) to return a fake auth state
         mock_auth = MagicMock()

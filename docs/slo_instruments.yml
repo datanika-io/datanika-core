@@ -61,6 +61,15 @@ slos:
          flatter the quantile."
       - "/api/v1/connections and /api/v1/pipelines have received no authenticated
          GET in the 30d window — every hit is an unauthenticated 401 probe."
+      - "🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9).
+         /api/v1/meta/agent-tiers matches this selector AND that one, carries
+         316 of the 30d requests, and is scored here against 200 ms p95 while
+         the Agent API row scores the same endpoint against 150 ms. Since the
+         two named non-meta endpoints have no authenticated 2xx at all, this
+         SLI is today measured almost entirely on an endpoint belonging to
+         another SLI. Harmless while both are blocked on core#895; the moment
+         that lands, one endpoint's regression appears as two, against two
+         budgets, and neither number means what its row says."
 
   service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines:
     status: measured
@@ -93,10 +102,26 @@ slos:
     samples_query: 'sum(increase(http_requests_total{path=~"/api/v1/auth/.*"}[30d]))'
     min_samples: 20
     notes:
-      - "This SLI may be unreachable as written. The product's own signup and
-         login run over the Reflex `/_event` WebSocket, not over
-         /api/v1/auth/*, and the ASGI middleware skips non-HTTP scopes. No
-         request to any /api/v1/auth/* path appears in 30 days of production."
+      - "🚨 NOT 'may be' unreachable - MEASURED unreachable, 2026-09-02. There is
+         no /api/v1/auth/* route anywhere in the application. The whole
+         /api/v1 route table is connections, uploads, pipelines,
+         transformations, schedules, runs, catalog, notifications, meta/* and
+         agent-guide.md; the only auth route is /api/auth/login/{provider}
+         (OAuth, no `v1`), and the product's own signup and login are Reflex
+         state handlers (AuthState.login / AuthState.signup) reached over the
+         `/_event` WebSocket, which the ASGI middleware skips by construction."
+      - "⚠️ CONSEQUENCE, and it is the reason this note is emphatic: these two
+         commitments report NO_VERDICT as 'only 0 samples, need >= 20', which is
+         the one reason that reads as 'be patient, we have no users yet'. No
+         number of real users will ever put a sample here. It is a document
+         defect (core#897) wearing an insufficient-samples costume.
+         Deliberately NOT reclassified to `unmeasured` here: whether this SLI
+         stands, is restated against the WebSocket surface, or is deleted is the
+         document's call, and this file records observations rather than
+         choosing an interpretation."
+      - "The same document's k6 scenario 2 (`signup_flow.js`) is written against
+         /api/v1/auth/signup. Built as written it would 404 every request and
+         report an excellent p95."
 
   service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers:
     status: measured
@@ -168,6 +193,11 @@ slos:
       quiet-period heuristic, but it asserts correctness, not latency, and does
       not record a duration. The ASGI metrics middleware returns early for
       non-HTTP scopes, so WebSocket traffic is invisible to it by construction.
+    needs: >-
+      A duration observed inside the Reflex event path (Engineering, core app).
+      No exporter can supply this: the round-trip begins and ends inside a
+      WebSocket frame, which the ASGI HTTP middleware never sees. Two
+      commitments hang on this one instrument - p95 and p99.
 
   # ───────────────────────────────── Throughput ──────────────────────────────
 
@@ -178,20 +208,43 @@ slos:
       breaks. There is no k6 (or any load harness) in the repository, and
       production traffic is roughly 400 legitimate requests per 30 days, so the
       figure cannot be inferred from organic load either.
+    needs: >-
+      A load generator (k6, core#721) run against STAGING. Not production:
+      core#895 and core#896 mean prod would mismeasure itself and every
+      synthetic path would add permanent time series. This is a CAPACITY target
+      - 'throughput before p95 regression' - answerable only by applying load
+      until p95 moves. Scoring it against organic traffic would answer a
+      different question, and answer it wrongly.
 
   throughput-slos-celery-worker-simple-pipeline-runs-duckdb-duckdb-1k-rows:
     status: unmeasured
     reason: >-
-      celery-exporter emits celery_task_runtime and per-state counters, but
-      nothing labels a run by kind or row count, so 'simple pipeline runs per
-      minute' cannot be separated from maintenance sweeps. 49 tasks have run in
-      the whole retention window; no throughput figure is derivable from that.
+      celery-exporter labels by task NAME, which is a usable proxy for run kind
+      - but the pipeline task has never run in production at all. Measured
+      2026-09-02, celery_task_received_total names exactly four tasks:
+      datanika.run_maintenance (51), datanika.billing_tick (45),
+      datanika.run_upload (9), datanika.send_quota_warning_email (1). There is
+      no datanika.run_pipeline series to aggregate.
+    needs: >-
+      Sustained load on the pipeline path (core#721's harness), and a row-count
+      dimension for the '~1k rows' qualifier. This is a CAPACITY claim, not an
+      observed rate: scoring runs/min against organic traffic yields ~0 and a
+      confident FAIL meaning 'nobody used the product' rather than 'the system
+      is too slow' - a red naming the wrong layer, which is worse than
+      NO_VERDICT.
 
   throughput-slos-celery-worker-upload-staging-runs-10k-rows-local-csv:
     status: unmeasured
     reason: >-
-      Same as the simple-run throughput SLO: no run-kind label, no row-count
-      label, and no sustained load has ever been applied to production.
+      Unlike the simple-run SLO the kind dimension DOES exist here:
+      celery_task_runtime{name="datanika.run_upload"} carries 9 observations
+      over 30 days. What is missing is sustained load - 9 runs in a month is not
+      a rate - and the '~10k rows, local CSV' qualifier has no dimension at all.
+      (This entry previously read 'no run-kind label'. That was true of the
+      pipeline SLO above and not of this one.)
+    needs: >-
+      Sustained load, and a row-count dimension. Same capacity-versus-observed
+      caveat as the simple-run SLO: an organic rate is not this number.
 
   throughput-slos-scheduler-schedule-dispatch-latency-fire-time-task-enqueue:
     status: unmeasured
@@ -200,38 +253,73 @@ slos:
       production: there is no datanika_schedule_dispatch_latency_seconds series,
       and celery-exporter observes task receipt, not the gap between the
       schedule's due time and the enqueue.
+    needs: >-
+      TWO things, and the second is the one that gets forgotten. (1) A histogram
+      observed where a schedule fires, recording due-time -> enqueue-time
+      (Engineering). (2) An armed schedule: production has schedules_armed=0 and
+      apscheduler_jobs=0 (core#648), so even a correct instrument would report
+      NO_VERDICT for want of samples.
 
   throughput-slos-signup-first-event-user-hits-submit-first-reflex-event-round-trip:
     status: unmeasured
     reason: >-
       Spans the HTTP submit and the first WebSocket round-trip. Neither half is
       instrumented, and the second half is invisible to the ASGI middleware.
+    needs: >-
+      The WebSocket instrument above, plus a span joining the two halves.
+      Blocked on the same missing thing; do not count it as independent work.
 
   # ───────────────────────────────── Pipeline-level ──────────────────────────
 
   pipeline-level-slos-pipeline-trigger-task-enqueued-in-celery:
     status: unmeasured
     reason: >-
-      No metric records the trigger-to-enqueue interval. The document itself
-      files these four as 'out of k6 scope but documented here', which is how
-      they came to be written down and never wired to anything.
+      No metric records the trigger-to-enqueue interval, and - measured against
+      datanika/models/run.py - no COLUMN does either. Run carries created_at
+      (TimestampMixin), started_at and finished_at; there is no enqueue
+      timestamp anywhere, so this interval is not derivable at any layer today.
+      The document files these four as 'out of k6 scope but documented here',
+      which is how they came to be written down and wired to nothing.
+    needs: >-
+      A schema change BEFORE any instrument is possible (Engineering): a column
+      or a metric recording the moment the task is handed to the broker. An
+      exporter alone cannot supply this - there is nothing to export.
 
   pipeline-level-slos-task-enqueued-dlt-extract-started:
     status: unmeasured
     reason: >-
-      No metric records the enqueue-to-extract-start interval. Run rows carry
-      timestamps in Postgres but nothing derives a latency series from them.
+      No metric records the enqueue-to-extract-start interval, and the enqueue
+      moment is not recorded either (see the trigger SLO above). created_at ->
+      started_at is the nearest available pair and it CONFLATES this SLO with
+      that one, so wiring it would produce a confident number for a different
+      interval.
+    needs: >-
+      The same missing enqueue timestamp. Once it exists, this and the trigger
+      SLO become two halves of one recorded span instead of one blurred figure.
 
   pipeline-level-slos-dlt-extract-complete-dbt-transformation-started:
     status: unmeasured
     reason: >-
-      No metric records the extract-to-transform handoff.
+      No metric records the extract-to-transform handoff, and the two sides are
+      separate runs rows: Run is keyed by (target_type, target_id) with no
+      parent-run link, so an extract row and the transform row that followed it
+      cannot be identified as a pair.
+    needs: >-
+      A link between related runs (Engineering, schema), then a derived series.
+      Without the link a query would be pairing rows by guesswork.
 
   pipeline-level-slos-end-to-end-small-pipeline-no-scheduling-delay:
     status: unmeasured
     reason: >-
       No end-to-end pipeline duration series exists. celery_task_runtime covers
-      one task, not a pipeline spanning several.
+      one task, not a pipeline spanning several. Unlike the three SLOs above the
+      SCHEMA is already sufficient: Run.created_at -> Run.finished_at is the
+      end-to-end duration; what is missing is a series and the samples.
+    needs: >-
+      An exported series derived from Run.created_at -> finished_at (a
+      postgres-exporter custom query would do it; Infra owns that config), AND
+      traffic - production has 17 runs in its entire history, below any
+      sufficiency floor worth setting. The cheapest of the four pipeline SLOs.
 
   # ───────────────────────────────── Error rate ──────────────────────────────
 
@@ -252,6 +340,7 @@ slos:
   error-rate-slos-webhook-handler-paddle-http-5xx:
     status: measured
     source: app
+    blocked_by: "core#895 (per-process HTTP metrics)"
     query: 'sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"5.."}[30d]))'
     samples_query: >-
       sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"2.."}[30d]))
@@ -332,15 +421,34 @@ slos:
       spread depending on which number you pick. Wiring a wrong denominator
       would produce a confident, machine-readable assertion of something untrue,
       which is worse than the honest gap.
+    needs: >-
+      EITHER the app exports its own pool occupancy (SQLAlchemy pool
+      checkedout()/size(); Engineering), which makes the SLO mean what it says,
+      OR the document restates the target against a denominator that IS
+      exported - pg_settings_max_connections is present and reads 100. The
+      second is a change to the commitment, so it is core#897's call and not an
+      instrument decision.
 
   saturation-slos-redis-memory:
     status: unmeasured
     reason: >-
-      There is no redis exporter in the production compose stack (confirmed
-      against the running container list), so no redis_memory_used_bytes series
-      exists. The target is also undefined as written: prod runs maxmemory 0
-      (deliberately - evicting Reflex session keys would recreate core#646 in a
-      harder-to-find form), and 60% of unlimited is not a number.
+      Undefined THREE independent ways, all measured 2026-09-02. (1) No redis
+      exporter in the production compose stack: zero of Prometheus's 1,048
+      metric names match 'redis'. (2) Prod runs maxmemory 0 - deliberately,
+      because evicting Reflex session keys would recreate core#646 in a
+      harder-to-find form - and 60% of unlimited is not a number. (3) The
+      container has no memory limit either:
+      container_spec_memory_limit_bytes{name="datanika-redis"} = 0. cadvisor
+      DOES export the numerator
+      (container_memory_usage_bytes{name="datanika-redis"} = 5.35 MB), so this
+      is not a missing measurement - there is no denominator anywhere in the
+      system.
+    needs: >-
+      A denominator, which is a decision rather than an instrument. Per core#897
+      a commitment that cannot be defined should be REMOVED from the document
+      rather than wired to the nearest available number: instrumenting it
+      against host memory or a container limit would answer a question nobody
+      committed to.
 
   saturation-slos-disk-free-on-opt-datanika:
     status: measured

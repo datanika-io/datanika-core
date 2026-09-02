@@ -3,12 +3,13 @@
 import reflex as rx
 
 from datanika.config import settings
-from datanika.ui.components.api_key_row import api_key_row
+from datanika.ui.components.api_key_row import api_key_create_controls, api_key_row
 from datanika.ui.components.billing_preview_modal import billing_preview_modal
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.account_state import AccountState
 from datanika.ui.state.api_key_state import ApiKeyItem, ApiKeyState
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.backup_state import BackupState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.notification_state import ChannelItem, NotificationState
@@ -224,32 +225,65 @@ def account_card() -> rx.Component:
     )
 
 
+def _org_profile_form() -> rx.Component:
+    """The editable org profile. Owner-only — ``update_org`` gates on
+    ``_check_role("owner")`` (core#886)."""
+    return rx.vstack(
+        rx.text(_t["common.name"], size="2", weight="medium"),
+        rx.input(
+            value=SettingsState.edit_org_name,
+            on_change=SettingsState.set_edit_org_name,
+            width="100%",
+        ),
+        rx.text(_t["settings.slug"], size="2", weight="medium"),
+        rx.input(
+            value=SettingsState.edit_org_slug,
+            on_change=SettingsState.set_edit_org_slug,
+            width="100%",
+        ),
+        rx.text(_t["settings.default_dbt_schema"], size="2", weight="medium"),
+        rx.input(
+            value=SettingsState.edit_default_dbt_schema,
+            on_change=SettingsState.set_edit_default_dbt_schema,
+            width="100%",
+        ),
+        rx.button(_t["common.save"], on_click=SettingsState.update_org, size="2"),
+        spacing="3",
+        width="100%",
+    )
+
+
+def _org_profile_readonly() -> rx.Component:
+    """What a non-owner sees instead.
+
+    ⚠️ Deliberately not ``rx.fragment()``. Every one of these three values is
+    something an editor legitimately needs — ``default_dbt_schema`` in
+    particular is where their transformations land — so hiding the card would
+    trade a control that refuses for information that is missing, which is a
+    worse bug than the one core#886 is fixing. The gate removes the *inputs*
+    and the Save button, not the facts.
+    """
+    return rx.vstack(
+        rx.text(_t["common.name"], size="2", weight="medium"),
+        rx.text(SettingsState.org_name, size="2"),
+        rx.text(_t["settings.slug"], size="2", weight="medium"),
+        rx.text(SettingsState.org_slug, size="2"),
+        rx.text(_t["settings.default_dbt_schema"], size="2", weight="medium"),
+        rx.text(SettingsState.edit_default_dbt_schema, size="2"),
+        spacing="3",
+        width="100%",
+        align="start",
+    )
+
+
 def org_profile_card() -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.heading(_t["settings.org_profile"], size="4"),
-            rx.vstack(
-                rx.text(_t["common.name"], size="2", weight="medium"),
-                rx.input(
-                    value=SettingsState.edit_org_name,
-                    on_change=SettingsState.set_edit_org_name,
-                    width="100%",
-                ),
-                rx.text(_t["settings.slug"], size="2", weight="medium"),
-                rx.input(
-                    value=SettingsState.edit_org_slug,
-                    on_change=SettingsState.set_edit_org_slug,
-                    width="100%",
-                ),
-                rx.text(_t["settings.default_dbt_schema"], size="2", weight="medium"),
-                rx.input(
-                    value=SettingsState.edit_default_dbt_schema,
-                    on_change=SettingsState.set_edit_default_dbt_schema,
-                    width="100%",
-                ),
-                rx.button(_t["common.save"], on_click=SettingsState.update_org, size="2"),
-                spacing="3",
-                width="100%",
+            rx.cond(
+                SettingsState.is_owner,
+                _org_profile_form(),
+                _org_profile_readonly(),
             ),
             spacing="4",
             width="100%",
@@ -405,17 +439,34 @@ def transfer_ownership_card() -> rx.Component:
 
 
 def _invitation_row(inv: InvitationItem) -> rx.Component:
+    """One pending invitation.
+
+    ⚠️ ``cancel_invitation`` gates on ``_check_role("admin")`` and this button
+    had no gate, sitting between two controls on this very card that do —
+    ``add_member_by_email`` above it under ``can_manage_members`` and
+    ``remove_member`` beside it under ``member.can_manage``. It survived
+    core#658's sweep and core#851's because both derived their lists from
+    destructive *verbs* (``delete|revoke|remove|purge``) and this handler is
+    spelled ``cancel_``. ``can_manage_members`` is the matching gate rather
+    than a new one: it is ``bool(assignable_roles(current_role))``, true for
+    exactly admin and owner, which is the threshold the handler enforces.
+    core#886.
+    """
     return rx.table.row(
         rx.table.cell(inv.email),
         rx.table.cell(inv.role),
         rx.table.cell(inv.created_at),
         rx.table.cell(
-            rx.button(
-                _t["common.cancel"],
-                on_click=SettingsState.cancel_invitation(inv.id),
-                size="1",
-                color_scheme="red",
-                variant="ghost",
+            rx.cond(
+                SettingsState.can_manage_members,
+                rx.button(
+                    _t["common.cancel"],
+                    on_click=SettingsState.cancel_invitation(inv.id),
+                    size="1",
+                    color_scheme="red",
+                    variant="ghost",
+                ),
+                rx.fragment(),
             ),
         ),
     )
@@ -631,39 +682,24 @@ def _api_key_row(key: ApiKeyItem) -> rx.Component:
 
 
 def api_keys_card() -> rx.Component:
-    """API keys management card for Settings page."""
+    """API keys management card for Settings page.
+
+    The create block is delegated to the same helper ``/api-keys`` uses, behind
+    the same ``can_administer`` gate, so the two surfaces cannot end up with the
+    control on one and not the other (core#886). The keys *table* stays
+    ungated — listing your org's keys and their last-used dates is a read.
+    """
     return rx.card(
         rx.vstack(
             rx.hstack(
                 rx.heading(_t["api_keys.title"], size="4"),
-                rx.spacer(),
-                rx.button(
-                    _t["api_keys.new"],
-                    on_click=ApiKeyState.toggle_create,
-                    size="2",
-                ),
                 width="100%",
                 align="center",
             ),
             rx.cond(
-                ApiKeyState.show_create,
-                rx.vstack(
-                    rx.separator(),
-                    rx.text(_t["common.name"], size="2", weight="medium"),
-                    rx.input(
-                        placeholder="e.g. CI/CD deploy key",
-                        value=ApiKeyState.new_key_name,
-                        on_change=ApiKeyState.set_new_key_name,
-                        width="100%",
-                    ),
-                    rx.button(
-                        _t["api_keys.create"],
-                        on_click=ApiKeyState.create_api_key,
-                        size="2",
-                    ),
-                    spacing="3",
-                    width="100%",
-                ),
+                AuthState.can_administer,
+                api_key_create_controls(),
+                rx.fragment(),
             ),
             rx.cond(
                 ApiKeyState.new_key_raw != "",
@@ -762,6 +798,34 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
     )
 
 
+def _channel_actions(ch: ChannelItem) -> rx.Component:
+    """Toggle / edit / delete for one alerting channel — admin only.
+
+    ``toggle_channel_active``, ``save_channel`` and ``delete_channel`` all gate
+    on ``_check_role("admin")``. ``edit_channel`` does not, because it persists
+    nothing — it copies the row into the form — but it is gated here anyway:
+    the only thing it leads to is a Save that would refuse, so leaving it
+    visible would hand a non-admin a form they can fill in and not submit.
+    core#886.
+    """
+    return rx.hstack(
+        rx.button(
+            rx.icon("power", size=14),
+            on_click=NotificationState.toggle_channel_active(ch.id),
+            variant="ghost",
+            size="1",
+        ),
+        rx.button(
+            rx.icon("pencil", size=14),
+            on_click=NotificationState.edit_channel(ch.id),
+            variant="ghost",
+            size="1",
+        ),
+        _delete_channel_dialog(ch),
+        spacing="1",
+    )
+
+
 def channel_row(ch: ChannelItem) -> rx.Component:
     return rx.table.row(
         rx.table.cell(ch.name),
@@ -771,22 +835,7 @@ def channel_row(ch: ChannelItem) -> rx.Component:
             rx.cond(ch.is_active, rx.badge("On", color_scheme="green"), rx.badge("Off")),
         ),
         rx.table.cell(
-            rx.hstack(
-                rx.button(
-                    rx.icon("power", size=14),
-                    on_click=NotificationState.toggle_channel_active(ch.id),
-                    variant="ghost",
-                    size="1",
-                ),
-                rx.button(
-                    rx.icon("pencil", size=14),
-                    on_click=NotificationState.edit_channel(ch.id),
-                    variant="ghost",
-                    size="1",
-                ),
-                _delete_channel_dialog(ch),
-                spacing="1",
-            ),
+            rx.cond(AuthState.can_administer, _channel_actions(ch), rx.fragment()),
         ),
     )
 
@@ -884,15 +933,25 @@ def notification_form() -> rx.Component:
 
 
 def notifications_card() -> rx.Component:
+    """Alerting channels, rendered for what the viewer may actually do.
+
+    The channel *list* stays visible to everyone — knowing where run failures
+    are announced is something an editor needs. Add / edit / toggle / delete
+    are admin (core#886).
+    """
     return rx.card(
         rx.vstack(
             rx.hstack(
                 rx.heading(_t["notifications.title"], size="4"),
                 rx.spacer(),
-                rx.button(
-                    _t["notifications.add"],
-                    on_click=NotificationState.toggle_form,
-                    size="2",
+                rx.cond(
+                    AuthState.can_administer,
+                    rx.button(
+                        _t["notifications.add"],
+                        on_click=NotificationState.toggle_form,
+                        size="2",
+                    ),
+                    rx.fragment(),
                 ),
                 width="100%",
                 align="center",
@@ -903,7 +962,7 @@ def notifications_card() -> rx.Component:
             # that saved and then vanished from the table.
             error_or_quota_callout(NotificationState),
             rx.cond(
-                NotificationState.show_form,
+                AuthState.can_administer & NotificationState.show_form,
                 notification_form(),
             ),
             rx.cond(
@@ -951,7 +1010,12 @@ def settings_page() -> rx.Component:
             members_card(),
             notifications_card(),
             api_keys_card(),
-            backup_restore_card(),
+            # Both of this card's entry points — `export_backup` and
+            # `handle_restore_upload` — gate on `_check_role("admin")`, and
+            # unlike the org profile there is nothing here to read: the card is
+            # two operations and a hint. So the whole card is gated, not its
+            # controls (core#886).
+            rx.cond(AuthState.can_administer, backup_restore_card(), rx.fragment()),
             spacing="6",
             width="100%",
         ),

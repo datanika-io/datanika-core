@@ -6,6 +6,25 @@ on:
   push:
     branches: [master, dev]
 
+  # All five of dev's required checks (lint, test, helm-lint, migration-roundtrip,
+  # image-probe) are jobs in this file, so a merge queue on dev depends entirely on this
+  # trigger. Without it GitHub never starts a run for a queue entry, none of the five is
+  # reported, and the entry sits until check_response_timeout_minutes expires and is
+  # ejected -- a PR that stops progressing with nothing red anywhere. That is strictly
+  # worse than the strict-mode livelock a queue exists to remove, which a human clears in
+  # seconds.
+  #
+  # Deliberately unfiltered by branch: dev is the only branch that will ever carry a queue
+  # (never master -- it needs 1 review, unsatisfiable with a single identity, so a queued
+  # promotion would wait forever looking like progress), and a wrong filter here fails in
+  # exactly the silent direction above.
+  #
+  # Verified end-to-end on datanika-landing before landing here: GitHub reads triggers from
+  # the merge-group ref's OWN tree, so the PR adding this bootstraps itself through the
+  # queue. Guarded by tests/test_deploy/test_merge_queue_triggers.py. (core#904)
+  merge_group:
+    types: [checks_requested]
+
 concurrency:
   # Per-SHA for pushes, per-ref for PRs.
   #
@@ -21,8 +40,18 @@ concurrency:
   #
   # PRs keep cancellation: superseding a PR run is exactly what you want, and no promotion
   # decision rests on it.
+  #
+  # merge_group is the third case and it needs the SAME protection as push, for the same
+  # reason one paragraph up. `github.event_name != 'push'` evaluates TRUE for a merge
+  # group, so before core#904 a queue entry's run was cancellable -- and a cancelled
+  # queue-entry run is not "recompute it", it is the merge silently not happening: nothing
+  # re-runs it, the queue waits out its timeout and ejects the PR.
+  #
+  # This is not theoretical. The merge-group ref is suffixed with the BASE sha, not the PR
+  # head (`refs/heads/gh-readonly-queue/dev/pr-N-<base>`, measured on landing), so two
+  # entries for the same PR against an unchanged base share a group key.
   group: ci-${{ github.event_name == 'push' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: ${{ github.event_name != 'push' && github.event_name != 'merge_group' }}
 
 jobs:
   lint:
@@ -234,8 +263,16 @@ jobs:
           # to have run it — and `migration-roundtrip` green would then assert
           # something nobody measured. The `test` job runs `pytest tests/` and
           # would pick it up, but a reader checking migration coverage looks here.
+          # core#693: test_n0_audit_jsonb_blue_green.py is named here for the same
+          # reason. It is the only thing that measures the json -> jsonb conversion's
+          # t1 tolerance — test_expand_contract.py's own docstring says type changes
+          # are "not covered, and left explicit rather than implied", and
+          # test_expand_contract_policy.py only demands a written justification. If
+          # that probe ever goes red the N₀ migration cannot ship alone, which is a
+          # verdict this job's name promises to have collected.
           pytest tests/test_migrations/test_roundtrip.py \
                  tests/test_migrations/test_data_preservation_roundtrip.py \
+                 tests/test_migrations/test_n0_audit_jsonb_blue_green.py \
                  tests/test_migrations/test_expand_contract.py -v --tb=long
 
   helm-lint:
@@ -877,14 +914,15 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *Staging smoke failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>Staging smoke failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
   # Two tiers (core#521). GATING specs have a track record and their red holds
   # the promotion. INFORMATIONAL specs are newly written: they run, report and
@@ -1275,14 +1313,15 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *Staging E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>Staging E2E failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       # No issue is filed for this one: a harness that never ran is not a test
       # failure and does not belong on the `e2e-staging-failure` dedup thread,
@@ -1297,14 +1336,15 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           GATING_OUTCOME: ${{ steps.gating.outcome }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: NO VERDICT*\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n*Commit:* `%s`\n*Message:* %s\n*Run:* %s' \
-            "$GATING_OUTCOME" "$SHORT_SHA" "$FIRST_LINE" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>Staging E2E: NO VERDICT</b>\n\nThe gating step did not run (outcome: %s), so this run says nothing about the specs either way. The promotion pre-flight has nothing to read.\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$GATING_OUTCOME")" "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on failure
         if: always() && steps.verdict.outputs.state == 'gating_failed'
@@ -1384,6 +1424,7 @@ jobs:
           FLAKY_SPECS: ${{ steps.flaky_gate.outputs.specs }}
           VERDICT: ${{ steps.verdict.outputs.state }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
           case "$VERDICT" in
@@ -1393,12 +1434,12 @@ jobs:
             cancelled)     STATE="The run was CANCELLED, so its verdict is neither green nor red." ;;
             *)             STATE="Run state: ${VERDICT:-unknown}." ;;
           esac
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *Staging E2E: GATING spec was FLAKY*\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n*Commit:* `%s`\n*Message:* %s\n*Specs:* %s\n*Run:* %s' \
-            "$STATE" "$SHORT_SHA" "$FIRST_LINE" "$FLAKY_SPECS" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>Staging E2E: GATING spec was FLAKY</b>\n\n%s A gating spec failed and passed on retry, which hides an intermittent product bug (QA_RULES §12).\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Specs:</b> %s\n<b>Run:</b> %s' \
+            "$(esc "$STATE")" "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "$FLAKY_SPECS")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on flaky gating spec
         if: always() && steps.flaky_gate.outputs.status == 'flaky'
@@ -1832,13 +1873,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
-          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f *SSO E2E: NO VERDICT*\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n*Commit:* `%s`\n*Run:* %s' \
-            "$SPECS_OUTCOME" "$SHORT_SHA" "$RUN_URL")
+          TEXT=$(printf '\xe2\x9a\xa0\xef\xb8\x8f <b>SSO E2E: NO VERDICT</b>\n\nThe SSO specs did not run (outcome: %s) — the IdP or the tunnel most likely never came up. This run says nothing about SSO either way; in particular it is NOT evidence that #830 is fixed.\n\n<b>Commit:</b> <code>%s</code>\n<b>Run:</b> %s' \
+            "$(esc "$SPECS_OUTCOME")" "$(esc "$SHORT_SHA")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
       - name: File issue on failure
         id: file_issue
@@ -1919,14 +1961,15 @@ jobs:
           ISSUE: ${{ steps.file_issue.outputs.issue }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
+          esc() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
           SHORT_SHA=${COMMIT_SHA:0:7}
           FIRST_LINE=$(printf '%s\n' "$COMMIT_MSG" | head -1)
-          TEXT=$(printf '\xf0\x9f\x9a\xa8 *SSO E2E failed*\n\n*Commit:* `%s`\n*Message:* %s\n*Issue:* #%s\n*Run:* %s\n\nFurther failures of this condition will comment on the issue instead of paging.' \
-            "$SHORT_SHA" "$FIRST_LINE" "${ISSUE:-?}" "$RUN_URL")
+          TEXT=$(printf '\xf0\x9f\x9a\xa8 <b>SSO E2E failed</b>\n\n<b>Commit:</b> <code>%s</code>\n<b>Message:</b> %s\n<b>Issue:</b> #%s\n<b>Run:</b> %s\n\nFurther failures of this condition will comment on the issue instead of paging.' \
+            "$(esc "$SHORT_SHA")" "$(esc "$FIRST_LINE")" "$(esc "${ISSUE:-?}")" "$(esc "$RUN_URL")")
           curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=1201995" \
             --data-urlencode "text=${TEXT}" \
-            --data-urlencode "parse_mode=Markdown"
+            --data-urlencode "parse_mode=HTML"
 
   # Prod post-deploy smoke gates (smoke = URL gate, smoke-prod = pytest shape)
   # moved to .github/workflows/deploy-pointer.yml — they run after the prod deploy

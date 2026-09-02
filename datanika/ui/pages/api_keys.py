@@ -2,15 +2,28 @@
 
 import reflex as rx
 
+from datanika.ui.components.api_key_row import api_key_create_controls
 from datanika.ui.components.api_key_row import api_key_row as _key_row
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.api_key_state import ApiKeyState
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
 
 
 def api_keys_page() -> rx.Component:
+    """API keys, rendered for what the viewer may actually do.
+
+    ``create_api_key`` and ``revoke_api_key`` both gate on
+    ``_check_role("admin")``, so the gate here is ``can_administer`` and not
+    ``can_edit``: an editor handed the create form gets a Create button that
+    always refuses, which is core#658's defect. ``toggle_create`` carries no
+    role check of its own — it only flips a client-side flag — which is why the
+    gate wraps the whole block rather than the mutating button alone. Hiding
+    Create while leaving New visible would replace a control that fails with a
+    control that opens onto nothing. core#886.
+    """
     return page_layout(
         rx.vstack(
             rx.cond(
@@ -27,34 +40,13 @@ def api_keys_page() -> rx.Component:
                 rx.vstack(
                     rx.hstack(
                         rx.heading(_t["api_keys.title"], size="4"),
-                        rx.spacer(),
-                        rx.button(
-                            _t["api_keys.new"],
-                            on_click=ApiKeyState.toggle_create,
-                            size="2",
-                        ),
                         width="100%",
                         align="center",
                     ),
                     rx.cond(
-                        ApiKeyState.show_create,
-                        rx.vstack(
-                            rx.separator(),
-                            rx.text(_t["common.name"], size="2", weight="medium"),
-                            rx.input(
-                                placeholder="e.g. CI/CD deploy key",
-                                value=ApiKeyState.new_key_name,
-                                on_change=ApiKeyState.set_new_key_name,
-                                width="100%",
-                            ),
-                            rx.button(
-                                _t["api_keys.create"],
-                                on_click=ApiKeyState.create_api_key,
-                                size="2",
-                            ),
-                            spacing="3",
-                            width="100%",
-                        ),
+                        AuthState.can_administer,
+                        api_key_create_controls(),
+                        rx.fragment(),
                     ),
                     rx.cond(
                         ApiKeyState.new_key_raw != "",

@@ -87,6 +87,11 @@ def _caller(auth_stand_in):
     st = MagicMock()
     st.error_message = ""
     st.get_state = AsyncMock(return_value=auth_stand_in)
+    # #673 split the session half of `_check_role` into `_require_live_session`
+    # so a role-free mutation can check the session without acquiring a role
+    # gate. Delegate to the real implementation — a bare MagicMock returns a
+    # truthy non-awaitable, and these tests turn on what the guard does.
+    st._require_live_session = lambda: BaseState._require_live_session(st)
     return st
 
 

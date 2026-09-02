@@ -100,16 +100,101 @@ re-checking against the phase breakdown before being believed.
 
 ### NO_VERDICT — 23
 
-| why | count |
-|---|---|
-| no instrument exists at all | 14 |
-| wired to an instrument measured to be **defective** ([core#895]) | 6 |
-| instrument exists, **insufficient samples** | 3 |
+🚨 **Corrected 2026-09-02. This table previously read 14 / 6 / 3 and every one of
+the three cells was wrong.** The numbers had been tallied from *registry entries*
+— 12 with `status: unmeasured`, 6 carrying `blocked_by` — and then published as a
+breakdown of the 33 *commitments*, which is a different population. Nothing in
+the report ever said 14, 6 or 3; the figures were arithmetic performed on a count
+of the wrong objects, and they read exactly like a measurement.
 
-The 14 with no instrument: the Reflex event round-trip (p95 + p99), all four
-pipeline-level SLOs, all four throughput SLOs plus signup-to-first-event,
-Postgres pool occupancy, and Redis memory. Reasons per SLO are in
-`docs/slo_instruments.yml` — each was checked against production, not assumed.
+`scripts/slo_report.py` now classifies its own verdicts and prints the breakdown,
+so this table is **copied from output** rather than counted by hand:
+
+```
+--- why the 23 NO_VERDICTs have no verdict ---
+   13  no instrument exists at all
+    4  wired to an instrument measured to be defective
+    6  instrument exists, not enough samples yet
+```
+
+| why | count | was published as |
+|---|---|---|
+| no instrument exists at all | **13** | 14 |
+| wired to an instrument measured to be **defective** ([core#895]) | **4** | 6 |
+| instrument exists, **insufficient samples** | **6** | 3 |
+
+Cross-checked independently by counting the report's own detail strings
+(`declared unmeasured` 13 · `instrument known defective` 4 · `only N samples` 6).
+
+**Why the two errors happened, since the mechanism is the reusable part:**
+
+- **13, not 14.** Twelve registry entries are `unmeasured`, but the WebSocket SLI
+  is one entry carrying **two** commitments (p95 and p99). Rows are not
+  commitments. The document has 26 rows and 33 commitments, and this table is
+  about the 33.
+- **4, not 6.** Six entries carry `blocked_by`, but `scripts/slo_report.py`
+  checks **sample sufficiency first** — so four of the six (REST-API write p95
+  and p99, Auth p95 and p99, plus the any-5xx and Paddle-webhook error-rate SLOs)
+  never reach the blocked branch at all. They have zero samples. Only REST-API
+  read and Agent API have enough traffic to produce a number worth refusing to
+  score.
+
+🔑 **The buckets are not interchangeable, which is why this mattered rather than
+being a rounding quibble.** "No instrument" is engineering work. "Defective
+instrument" is unblocked by fixing one named defect ([core#895]). "Not enough
+samples" is a **traffic** problem that no amount of engineering resolves — at 0
+paying users it resolves itself on the first real customer and not before. Being
+told that six were blocked on core#895 when four are, and that three were waiting
+on traffic when six are, sends the work to the wrong place. The waiting-on-traffic
+bucket is **twice the size** it was reported as.
+
+⚠️ And two of those six are not really waiting for traffic either. The Auth SLI
+(`/api/v1/auth/signup`, `/api/v1/auth/login`) is **structurally unreachable**: the
+product's own signup and login run over the Reflex `/_event` WebSocket, and the
+ASGI metrics middleware returns early for non-HTTP scopes. No amount of real
+customers puts a sample in that bucket. It is a [core#897] document defect wearing
+an insufficient-samples costume.
+
+The 13 with no instrument: the Reflex event round-trip (p95 **and** p99 — two
+commitments, one missing instrument), all four pipeline-level SLOs, all five
+throughput SLOs, Postgres pool occupancy, and Redis memory. Each now carries a
+`needs:` in `docs/slo_instruments.yml` naming the specific missing thing, and
+`tests/test_slo/test_slo_coverage.py` fails if one is added without it.
+
+**None of the 13 is instrumentable from what production exports today** — checked
+against the full metric inventory on 2026-09-02, 1,048 names, not assumed:
+
+| SLO | what it actually needs |
+|---|---|
+| WebSocket round-trip (×2), signup→first event | a duration observed **inside the Reflex event path**. No exporter can reach it; the round-trip lives entirely in a WebSocket frame |
+| REST sustained throughput, both Celery throughput SLOs | **load**, not an instrument. These are capacity claims; scoring them against organic traffic yields ~0 and a confident FAIL meaning *"nobody used the product"* |
+| Scheduler dispatch latency | a metric **and** an armed schedule — prod has `schedules_armed=0` ([core#648]) |
+| Pipeline trigger→enqueue, enqueue→extract, extract→transform | a **schema change** first. `Run` carries `created_at`, `started_at`, `finished_at` — no enqueue timestamp and no parent-run link, so three of these four intervals are not derivable at any layer |
+| Pipeline end-to-end | the cheapest of the four: `Run.created_at → finished_at` already suffices. Needs an exported series and traffic (17 runs, ever) |
+| Postgres pool occupancy | the app to export its own pool, or a [core#897] decision to restate against `pg_settings_max_connections` (present, reads 100) |
+| Redis memory | **a denominator, which does not exist anywhere.** See below |
+
+🚨 **Redis memory is undefined three independent ways, one of them new.**
+(1) No redis exporter — zero of the 1,048 metric names match `redis`.
+(2) Prod runs `maxmemory 0`, deliberately, and 60 % of unlimited is not a number.
+(3) **The container has no memory limit either**:
+`container_spec_memory_limit_bytes{name="datanika-redis"}` = **0**. cadvisor does
+export the numerator (`container_memory_usage_bytes{name="datanika-redis"}` =
+5.35 MB), so this is not a missing measurement — there is nothing to divide by.
+Per [core#897], a commitment that cannot be defined should be **removed** from the
+document, not wired to the nearest available number.
+
+**One registry reason was also wrong and is corrected.** The upload-throughput SLO
+said *"no run-kind label"*; celery-exporter labels by task **name**, and
+`celery_task_runtime{name="datanika.run_upload"}` carries 9 observations over 30
+days. The kind dimension exists for that SLO — sustained load is what is missing.
+It does not exist for the *pipeline* SLO, and for a stronger reason than a missing
+label: `celery_task_received_total` names exactly four tasks in production —
+`datanika.run_maintenance` (51), `datanika.billing_tick` (45),
+`datanika.run_upload` (9), `datanika.send_quota_warning_email` (1). There is no
+`datanika.run_pipeline` series at all.
+
+[core#648]: https://github.com/datanika-io/datanika-core/issues/648
 
 ## What the traffic actually is
 

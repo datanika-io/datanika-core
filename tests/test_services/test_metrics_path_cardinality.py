@@ -521,6 +521,50 @@ _KIND_DEMONSTRATORS: dict[str, tuple[str, str]] = {
 _PARENTHETICAL_RE = re.compile(r"\(([^)]*)\)")
 
 
+# Words that NAME a kind of identifier. Deliberately a superset of
+# _KIND_DEMONSTRATORS: a claim about a kind we cannot demonstrate must raise
+# rather than be dropped.
+#
+# ⚠️ The first version of the scanner returned only tokens already present in
+# _KIND_DEMONSTRATORS, which made the "unrecognised claim" guard below **dead
+# code** — a guard that cannot fire, in a file about guards that cannot fire. The
+# two lists have to be different for that check to mean anything: this one is
+# what counts as a claim, the other is what we can prove.
+_IDENTIFIER_WORDS = frozenset(
+    {
+        "id",
+        "ids",
+        "identifier",
+        "identifiers",
+        "integer",
+        "integers",
+        "numeric",
+        "uuid",
+        "uuids",
+        "guid",
+        "guids",
+        "ulid",
+        "ulids",
+        "cuid",
+        "cuids",
+        "nanoid",
+        "nanoids",
+        "slug",
+        "slugs",
+        "hash",
+        "hashes",
+        "token",
+        "tokens",
+        "key",
+        "keys",
+        "pk",
+        "pks",
+        "primary key",
+        "primary keys",
+    }
+)
+
+
 def claimed_identifier_kinds(text: str | None) -> list[str]:
     """The identifier kinds a piece of prose promises to replace.
 
@@ -528,6 +572,11 @@ def claimed_identifier_kinds(text: str | None) -> list[str]:
     the module currently says. Rewording to drop a false claim is a legitimate
     fix and this has to follow it there — **the defect is the mismatch, not any
     particular word**.
+
+    Only *identifier* words are returned. The module docstring also contains
+    ``(count, latency)``, which is a parenthetical and not a claim about path
+    normalisation; matching every parenthetical would make this raise on prose
+    that promises nothing.
     """
     if not text:
         return []
@@ -535,12 +584,7 @@ def claimed_identifier_kinds(text: str | None) -> list[str]:
     for group in _PARENTHETICAL_RE.findall(text):
         for token in re.split(r"[,/]| and | or ", group):
             token = token.strip().strip(".").lower()
-            if (
-                token in _KIND_DEMONSTRATORS
-                or token in {"uuid", "ulid", "slug", "hash"}
-                or token
-                and token.rstrip("s") in _KIND_DEMONSTRATORS
-            ):
+            if token in _IDENTIFIER_WORDS:
                 kinds.append(token)
     return list(dict.fromkeys(kinds))
 
@@ -558,6 +602,24 @@ def test_control_the_claim_scanner_can_find_a_claim() -> None:
     assert found == ["ids", "uuids"], (
         f"the claim scanner returned {found} for a sentence that plainly names IDs "
         "and UUIDs. A scanner that finds nothing makes the assertion below vacuous."
+    )
+
+    # A parenthetical that promises nothing about path normalisation. The module
+    # docstring contains exactly this one, and matching it would make the
+    # assertion below raise on prose that makes no claim.
+    assert claimed_identifier_kinds("HTTP request metrics (count, latency) via middleware") == []
+
+    # 🔑 The branch that matters: a kind we can RECOGNISE but cannot DEMONSTRATE.
+    # This is what makes `unknown` in the test below reachable at all. Without it,
+    # the scanner's own filter would drop such a claim and the HarnessError could
+    # never fire — a guard that cannot fire, inside a file about guards that
+    # cannot fire.
+    unprovable = claimed_identifier_kinds("Replace dynamic segments (IDs, GUIDs).")
+    assert unprovable == ["ids", "guids"], unprovable
+    assert "guids" not in _KIND_DEMONSTRATORS, (
+        "a demonstrator was added for 'guids', so this control no longer proves "
+        "the unrecognised-claim branch is reachable. Pick another word that this "
+        "file can name but cannot prove."
     )
 
 

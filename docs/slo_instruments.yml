@@ -61,6 +61,15 @@ slos:
          flatter the quantile."
       - "/api/v1/connections and /api/v1/pipelines have received no authenticated
          GET in the 30d window — every hit is an unauthenticated 401 probe."
+      - "🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9).
+         /api/v1/meta/agent-tiers matches this selector AND that one, carries
+         316 of the 30d requests, and is scored here against 200 ms p95 while
+         the Agent API row scores the same endpoint against 150 ms. Since the
+         two named non-meta endpoints have no authenticated 2xx at all, this
+         SLI is today measured almost entirely on an endpoint belonging to
+         another SLI. Harmless while both are blocked on core#895; the moment
+         that lands, one endpoint's regression appears as two, against two
+         budgets, and neither number means what its row says."
 
   service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines:
     status: measured
@@ -93,10 +102,26 @@ slos:
     samples_query: 'sum(increase(http_requests_total{path=~"/api/v1/auth/.*"}[30d]))'
     min_samples: 20
     notes:
-      - "This SLI may be unreachable as written. The product's own signup and
-         login run over the Reflex `/_event` WebSocket, not over
-         /api/v1/auth/*, and the ASGI middleware skips non-HTTP scopes. No
-         request to any /api/v1/auth/* path appears in 30 days of production."
+      - "🚨 NOT 'may be' unreachable - MEASURED unreachable, 2026-09-02. There is
+         no /api/v1/auth/* route anywhere in the application. The whole
+         /api/v1 route table is connections, uploads, pipelines,
+         transformations, schedules, runs, catalog, notifications, meta/* and
+         agent-guide.md; the only auth route is /api/auth/login/{provider}
+         (OAuth, no `v1`), and the product's own signup and login are Reflex
+         state handlers (AuthState.login / AuthState.signup) reached over the
+         `/_event` WebSocket, which the ASGI middleware skips by construction."
+      - "⚠️ CONSEQUENCE, and it is the reason this note is emphatic: these two
+         commitments report NO_VERDICT as 'only 0 samples, need >= 20', which is
+         the one reason that reads as 'be patient, we have no users yet'. No
+         number of real users will ever put a sample here. It is a document
+         defect (core#897) wearing an insufficient-samples costume.
+         Deliberately NOT reclassified to `unmeasured` here: whether this SLI
+         stands, is restated against the WebSocket surface, or is deleted is the
+         document's call, and this file records observations rather than
+         choosing an interpretation."
+      - "The same document's k6 scenario 2 (`signup_flow.js`) is written against
+         /api/v1/auth/signup. Built as written it would 404 every request and
+         report an excellent p95."
 
   service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers:
     status: measured

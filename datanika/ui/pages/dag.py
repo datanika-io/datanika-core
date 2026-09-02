@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -247,15 +248,12 @@ def _remove_dependency_dialog(d) -> rx.Component:
     wrong result rather than a failure. So the dialog names both ends of the
     edge, since ``#12`` identifies an edge to nobody.
 
-    ⚠️ No ``AuthState`` gate here, and that is the current state of this page
-    rather than a decision: ``/dag`` renders no role gates at all today. The
-    real protection added alongside this dialog is server-side —
-    ``DagState.remove_dependency`` was the one persisted destructive handler in
-    the product with no ``_check_role`` call, so before core#851 a viewer could
-    delete an edge. A dialog would have been a claim the client makes; the
-    handler check is the refusal. Adding the *visibility* gates to this page
-    means gating its create form too, which is core#313's lane — tracked
-    separately.
+    The gate lives at the **call site** in :func:`dependency_table`
+    (``rx.cond(AuthState.can_delete, …)``), not in here, because the same
+    ``rx.cond`` also has to remove the surrounding table cell — a dialog helper
+    that gated only itself would leave an empty Actions column for a viewer.
+    ``remove_dependency`` gates on ``_check_role("admin")``, so ``can_delete``
+    is the matching threshold (core#886).
     """
     return rx.alert_dialog.root(
         rx.alert_dialog.trigger(
@@ -326,7 +324,13 @@ def dependency_table() -> rx.Component:
                     rx.table.cell(rx.icon("arrow-right", size=14)),
                     rx.table.cell(rx.text(d.downstream_name)),
                     rx.table.cell(rx.text(d.check_timeframe_display)),
-                    rx.table.cell(_remove_dependency_dialog(d)),
+                    rx.table.cell(
+                        rx.cond(
+                            AuthState.can_delete,
+                            _remove_dependency_dialog(d),
+                            rx.fragment(),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -335,9 +339,16 @@ def dependency_table() -> rx.Component:
 
 
 def dag_page() -> rx.Component:
+    """The dependency graph, rendered for what the viewer may actually do.
+
+    ``add_dependency`` gates on ``_check_role("editor")`` and
+    ``remove_dependency`` on ``"admin"`` (core#851), so a viewer previously saw
+    a whole add-edge form and a Remove button on every row, all of which
+    silently refused. core#886.
+    """
     return page_layout(
         rx.vstack(
-            add_dependency_form(),
+            rx.cond(AuthState.can_edit, add_dependency_form(), rx.fragment()),
             dependency_table(),
             spacing="6",
             width="100%",

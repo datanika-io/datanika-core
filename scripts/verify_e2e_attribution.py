@@ -182,7 +182,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sha", help="commit to check (default: the branch head)")
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--branch", default="dev")
-    ap.add_argument("--pages", type=int, default=15, help="how many recent runs to scan")
+    # 100 is the API maximum for `per_page` and costs the same one request as 15
+    # did (core#918). The old default of 15 covered roughly TWO HOURS of `dev`
+    # wall-clock at this repo's cadence — five departments pushing every 10-15
+    # minutes, more than one run per push — so any commit you deliberately waited
+    # on before promoting had already fallen out of the window. It refused on
+    # well-formed input at the highest-stakes moment in the workflow, which is how
+    # `#876`'s own warning comes true: "a verifier that always refuses is a
+    # verifier somebody deletes".
+    ap.add_argument("--pages", type=int, default=100, help="how many recent runs to scan")
     args = ap.parse_args(argv)
 
     sha = args.sha
@@ -191,10 +199,34 @@ def main(argv: list[str] | None = None) -> int:
         sha = ref["object"]["sha"]  # type: ignore[index]
 
     jobs = collect(args.repo, args.branch, args.pages)
-    if not any(j.head_sha == sha for j in jobs):
-        print(f"::error::no staging jobs found for {sha[:8]} in the last {args.pages} runs.")
-        print("Widen --pages, or CI has not run on that commit — which is NOT a pass.")
+
+    # ⚠️ The API returns the FULL 40-character head_sha, so an exact comparison
+    # refuses every short SHA — and refuses it with the window message above,
+    # naming a cause that has nothing to do with what happened. A promoter who
+    # pastes `db83fc24` off a git log is told CI has not run on that commit,
+    # "which is NOT a pass". Resolving the prefix to the full SHA once, here, also
+    # fixes `classify()`, which compares the same way at two more sites.
+    matched = {j.head_sha for j in jobs if j.head_sha == sha or j.head_sha.startswith(sha)}
+    if len(matched) > 1:
+        print(
+            f"::error::{sha} is ambiguous — it prefixes {len(matched)} commits: "
+            f"{', '.join(sorted(s[:12] for s in matched))}. Pass more characters."
+        )
         return 1
+    if not matched:
+        # Two different facts, deliberately worded apart (core#918). Only the
+        # second is an attribution finding; the first is a search that did not
+        # reach far enough, and leading with `::error::` for it trains people to
+        # distrust the tool.
+        print(
+            f"::warning::no staging jobs found for {sha[:8]} in the last {args.pages} runs "
+            f"on `{args.branch}`."
+        )
+        print("This is a WINDOW result, not an attribution failure: the scan did not reach this")
+        print("commit. Either widen --pages, or CI genuinely has not run on it — and neither")
+        print("of those is a pass.")
+        return 1
+    sha = matched.pop()
 
     result = classify(jobs, sha)
     print(f"staging attribution for {sha[:8]} on {args.branch}\n")

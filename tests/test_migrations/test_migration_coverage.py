@@ -149,12 +149,41 @@ class TestRevisionGraph:
     milliseconds instead.
     """
 
+    def test_every_migration_declares_a_parseable_revision(self):
+        """The assertion that makes the two below mean anything (core#780).
+
+        🔴 **Both checks below used to require the type annotation** —
+        ``^revision: str = "..."`` — and exactly one migration
+        (``e5f6a7b8c9d0_add_max_api_keys_to_plans``) writes the bare
+        ``revision = "..."`` that ``alembic revision`` also emits. That file was
+        **invisible to both**, and the failure mode was silence: it could not
+        have been reported as a duplicate id, and it could not have been part of
+        a detected two-head split.
+
+        ``test_exactly_one_head`` passed anyway, **by luck** — the invisible
+        migration happened to *be* the head, so the visible graph's only head
+        was its parent. Adding a correctly-chained migration after it produced
+        two visible heads and exposed the whole thing, while `alembic heads`
+        (the real consumer) reported one head throughout.
+
+        So the regexes are widened below, and this test is the thing that stops
+        the next unparseable form being skipped instead of reported.
+        """
+        unparsed = [
+            path.name for path, source in _read_migration_sources() if not _revision_id(source)
+        ]
+        assert not unparsed, (
+            f"these migrations declare no revision id this parser can read: {unparsed}. "
+            "They are silently excluded from the uniqueness and single-head checks below, "
+            "which is worse than either check failing."
+        )
+
     def test_revision_ids_are_unique(self):
         seen: dict[str, list[str]] = {}
         for path, source in _read_migration_sources():
-            match = re.search(r'^revision: str = "([^"]+)"', source, re.MULTILINE)
-            if match:
-                seen.setdefault(match.group(1), []).append(path.name)
+            rev = _revision_id(source)
+            if rev:
+                seen.setdefault(rev, []).append(path.name)
 
         duplicates = {rev: files for rev, files in seen.items() if len(files) > 1}
         assert not duplicates, (
@@ -166,18 +195,39 @@ class TestRevisionGraph:
         revisions: set[str] = set()
         parents: set[str] = set()
         for _path, source in _read_migration_sources():
-            rev = re.search(r'^revision: str = "([^"]+)"', source, re.MULTILINE)
-            down = re.search(r'^down_revision: str \| None = "([^"]+)"', source, re.MULTILINE)
+            rev = _revision_id(source)
+            down = _down_revision_id(source)
             if rev:
-                revisions.add(rev.group(1))
+                revisions.add(rev)
             if down:
-                parents.add(down.group(1))
+                parents.add(down)
 
         heads = revisions - parents
         assert len(heads) == 1, (
             f"Expected exactly one migration head, found {sorted(heads)}. "
             f"A new migration must set down_revision to the current head."
         )
+
+
+#: Both spellings alembic itself produces. The annotated form is this repo's
+#: convention; the bare form is what `alembic revision` emits by default, and one
+#: migration uses it. A parser that accepts only the convention silently skips
+#: whatever does not follow it (core#780).
+_REVISION_RE = re.compile(r'^revision(?:\s*:\s*str)?\s*=\s*"([^"]+)"', re.MULTILINE)
+_DOWN_REVISION_RE = re.compile(
+    r'^down_revision(?:\s*:\s*str\s*\|\s*None)?\s*=\s*"([^"]+)"', re.MULTILINE
+)
+
+
+def _revision_id(source: str) -> str | None:
+    m = _REVISION_RE.search(source)
+    return m.group(1) if m else None
+
+
+def _down_revision_id(source: str) -> str | None:
+    """``None`` for the base migration, which legitimately has no parent."""
+    m = _DOWN_REVISION_RE.search(source)
+    return m.group(1) if m else None
 
 
 def _read_migration_sources() -> list[tuple[Path, str]]:

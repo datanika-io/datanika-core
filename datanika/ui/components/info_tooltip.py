@@ -31,7 +31,14 @@ _KEYS_FOR_SCANNER = (
 
 def info_tooltip(i18n_key: str) -> rx.Component:
     return rx.tooltip(
-        rx.icon("help-circle", size=14, color="var(--slate-8)", cursor="help"),
+        # `help-circle` was lucide's OLD name for this glyph; the current one is
+        # `circle_help`. Reflex does not raise on an unknown tag — it prints
+        # "Invalid icon tag" to stdout, where nothing is listening in a
+        # container, and substitutes a different icon (core#701). Here the
+        # substitute happened to be `circle_help` itself, so every tooltip
+        # rendered correctly by luck of the substitution target. The next bad
+        # tag will not be a rename, and it will look exactly as healthy.
+        rx.icon("circle_help", size=14, color="var(--slate-8)", cursor="help"),
         content=_t[i18n_key],
         side="right",
         max_width="320px",

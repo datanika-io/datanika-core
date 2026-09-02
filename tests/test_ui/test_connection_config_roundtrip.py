@@ -70,7 +70,10 @@ _DROPPED_ON_SAVE: dict[str, set[str]] = {
     "google_sheets": {"spreadsheet_id"},
     "jira": {"api_token", "server_url"},
     "json": {"path"},
-    "mongodb": {"auth_source"},  # core#638, the field that started this; leaves with core#626
+    # `mongodb` left this ledger with core#626 — `auth_source` now has a form
+    # input and a line in both serialisers, and `tls`/`srv` arrived with lines in
+    # both from the start. `test_the_ledger_does_not_outlive_the_defects` is what
+    # forced the deletion: leaving the entry here after the fix fails, naming it.
     "parquet": {"path"},
     "rest_api": {"auth_password", "auth_token", "auth_type", "auth_user"},
     "salesforce": {"client_id", "client_secret", "password", "security_token", "username"},

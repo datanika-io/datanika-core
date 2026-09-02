@@ -921,8 +921,21 @@ class ConnectionService:
 
         uri = build_connection_uri(config)
 
+        # core#626 D8. A DNS seed list adds a DNS round trip before any
+        # connection is attempted, then TLS adds a handshake, against a cluster
+        # that may be on another continent. On this box that budget is not
+        # obviously safe: a dead provider resolver cost 7.9-9.5 s per lookup
+        # until 2026-08-29, and a cold `api.paddle.com` lookup measured 20.1 s.
+        #
+        # Raised only for SRV, not unconditionally, so an ordinary unreachable
+        # host still reports in five seconds. A timeout against a *working*
+        # cluster surfaces as "connection failed — check your credentials",
+        # which sends the user to re-check credentials that were always
+        # correct — the worst failure mode a setup flow can have.
+        timeout_ms = 10000 if config.get("srv") else 5000
+
         try:
-            client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+            client = MongoClient(uri, serverSelectionTimeoutMS=timeout_ms)
             client.server_info()
             client.close()
             return True, "Connected successfully"

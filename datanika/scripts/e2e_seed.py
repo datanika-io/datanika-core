@@ -52,6 +52,13 @@ from datanika.models.invitation import Invitation
 from datanika.models.mcp_oauth import OAuthGrant, OAuthToken
 from datanika.models.notification import Notification
 from datanika.models.notification_channel import NotificationChannel
+from datanika.models.password_reset import PasswordResetToken
+from datanika.models.pii import (
+    EmailChangeRequest,
+    InvitationPII,
+    NotificationChannelPII,
+    UserPII,
+)
 from datanika.models.pipeline import DbtCommand, Pipeline
 from datanika.models.run import Run
 from datanika.models.schedule import Schedule
@@ -237,12 +244,28 @@ def _tear_down_fixture(session: Session) -> None:
         session.execute(AuditLog.__table__.delete().where(AuditLog.org_id.in_(org_ids)))
         session.execute(Run.__table__.delete().where(Run.org_id.in_(org_ids)))
         session.execute(Notification.__table__.delete().where(Notification.org_id.in_(org_ids)))
+        # The `*_pii` children are keyed by their parent's id, not by org_id, so
+        # each is reached through a subquery on the parent (#951).
+        session.execute(
+            NotificationChannelPII.__table__.delete().where(
+                NotificationChannelPII.channel_id.in_(
+                    select(NotificationChannel.id).where(NotificationChannel.org_id.in_(org_ids))
+                )
+            )
+        )
         session.execute(
             NotificationChannel.__table__.delete().where(NotificationChannel.org_id.in_(org_ids))
         )
         session.execute(CatalogEntry.__table__.delete().where(CatalogEntry.org_id.in_(org_ids)))
         session.execute(Dependency.__table__.delete().where(Dependency.org_id.in_(org_ids)))
         session.execute(UploadedFile.__table__.delete().where(UploadedFile.org_id.in_(org_ids)))
+        session.execute(
+            InvitationPII.__table__.delete().where(
+                InvitationPII.invitation_id.in_(
+                    select(Invitation.id).where(Invitation.org_id.in_(org_ids))
+                )
+            )
+        )
         session.execute(Invitation.__table__.delete().where(Invitation.org_id.in_(org_ids)))
         session.execute(SSOConfig.__table__.delete().where(SSOConfig.org_id.in_(org_ids)))
         session.execute(Schedule.__table__.delete().where(Schedule.org_id.in_(org_ids)))
@@ -267,6 +290,18 @@ def _tear_down_fixture(session: Session) -> None:
         _delete_oauth_chain(session, select(ApiKey.id).where(ApiKey.user_id.in_(user_ids)))
         session.execute(ApiKey.__table__.delete().where(ApiKey.user_id.in_(user_ids)))
         session.execute(Membership.__table__.delete().where(Membership.user_id.in_(user_ids)))
+        # Everything keyed to the user, ahead of the user itself (#951). `user_pii`
+        # is the one that actually wedged staging: the expand migration backfills
+        # it from every existing `users` row, so leftover fixture users acquire a
+        # child the moment it runs. `password_reset_tokens` is the same shape and
+        # predates the PII work -- it has simply never been exercised here.
+        session.execute(UserPII.__table__.delete().where(UserPII.user_id.in_(user_ids)))
+        session.execute(
+            EmailChangeRequest.__table__.delete().where(EmailChangeRequest.user_id.in_(user_ids))
+        )
+        session.execute(
+            PasswordResetToken.__table__.delete().where(PasswordResetToken.user_id.in_(user_ids))
+        )
         session.execute(User.__table__.delete().where(User.id.in_(user_ids)))
     session.flush()
 

@@ -808,7 +808,20 @@ def kafka_fields() -> rx.Component:
 
 
 def mongodb_fields() -> rx.Component:
-    """Fields for mongodb (host/port/user/pass/database — no schema)."""
+    """Fields for mongodb (host/port/user/pass/database/auth_source + TLS, SRV).
+
+    **The first dependent field in the connection form** (core#626 D2). The only
+    conditional rendering that existed before was type→field-group, the raw-JSON
+    toggle, and one checkbox→callout. Keep it to exactly this — hide Port,
+    disable TLS, show one callout — rather than growing a dependent-field
+    framework for two controls.
+
+    ⚠️ TLS uses its own ``form_mongodb_tls`` and deliberately **not**
+    ``form_secure``, which is ClickHouse's *Use HTTPS (TLS)*. Sharing a var
+    because the labels rhyme means a user who ticks it on ClickHouse and then
+    switches the dropdown to MongoDB arrives with TLS silently pre-checked —
+    against a server without TLS, a connection failure with no visible cause.
+    """
     return rx.vstack(
         rx.text(_t["connections.host"], size="2", weight="bold"),
         config_input(
@@ -818,12 +831,21 @@ def mongodb_fields() -> rx.Component:
             on_change=ConnectionState.set_form_host,
             required=True,
         ),
-        rx.text(_t["connections.port"], size="2", weight="bold"),
-        config_input(
-            "port",
-            placeholder=_t["connections.ph_port"],
-            value=ConnectionState.form_port,
-            on_change=ConnectionState.set_form_port,
+        # A DNS seed list connection takes no port, so the field is not merely
+        # ignored — it is not collected. `_build_config` drops it too; a hidden
+        # field that still writes its value is how a stale port reaches a URI
+        # the spec forbids it in.
+        rx.cond(
+            ~ConnectionState.form_mongodb_srv,
+            rx.fragment(
+                rx.text(_t["connections.port"], size="2", weight="bold"),
+                config_input(
+                    "port",
+                    placeholder=_t["connections.ph_port"],
+                    value=ConnectionState.form_port,
+                    on_change=ConnectionState.set_form_port,
+                ),
+            ),
         ),
         rx.text(_t["connections.user"], size="2", weight="bold"),
         config_input(
@@ -847,6 +869,44 @@ def mongodb_fields() -> rx.Component:
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
             required=True,
+        ),
+        # core#625 added `auth_source` to CONFIG_SCHEMAS with a test whose
+        # docstring reads "a setting with no surface is the core#499 mistake".
+        # It had no surface: reachable only through the raw-JSON escape hatch,
+        # and it did not survive a structured-form save (core#638).
+        rx.text(_t["connections.auth_source"], size="2", weight="bold"),
+        config_input(
+            "auth_source",
+            placeholder="admin",
+            value=ConnectionState.form_auth_source,
+            on_change=ConnectionState.set_form_auth_source,
+        ),
+        rx.text(_t["connections.auth_source_hint"], size="1", color="gray"),
+        rx.flex(
+            rx.checkbox(
+                _t["connections.mongodb_srv"],
+                checked=ConnectionState.form_mongodb_srv,
+                on_change=ConnectionState.set_form_mongodb_srv,
+            ),
+            spacing="2",
+            align="center",
+        ),
+        rx.flex(
+            rx.checkbox(
+                _t["connections.mongodb_tls"],
+                # Checked and non-interactive under SRV. Letting a user
+                # construct a combination the driver overrides anyway is a
+                # control that lies about its effect, which is worse than none.
+                checked=ConnectionState.form_mongodb_tls | ConnectionState.form_mongodb_srv,
+                on_change=ConnectionState.set_form_mongodb_tls,
+                disabled=ConnectionState.form_mongodb_srv,
+            ),
+            spacing="2",
+            align="center",
+        ),
+        rx.cond(
+            ConnectionState.form_mongodb_srv,
+            rx.callout(_t["connections.mongodb_srv_hint"], icon="info", size="1"),
         ),
         spacing="2",
         width="100%",

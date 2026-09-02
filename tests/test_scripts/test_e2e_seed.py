@@ -623,3 +623,111 @@ class TestTeardownWithOAuthGrants:
         seed(session=session)
 
         assert session.execute(select(OAuthGrant)).scalars().first() is None
+
+
+class TestTeardownWithPIIChildren:
+    """Regression: PII separation release N wedged e2e-staging for six runs (#951).
+
+    #655 added four tables whose FKs point into the teardown set, and the expand
+    migration ``e7f2a9c4b1d8`` **backfills** ``user_pii`` from every existing
+    ``users`` row. Leftover fixture users therefore acquired a child the moment
+    it ran on staging, and every subsequent ``_tear_down_fixture`` died on
+
+        ForeignKeyViolation: update or delete on table "users" violates foreign
+        key constraint "user_pii_user_id_fkey" on table "user_pii"
+
+    in ``globalSetup`` -- so zero specs ran, and the run reported an opaque
+    setup failure rather than a test failure. Not self-healing.
+
+    This is the same shape as #415 one class up. That one was fixed with a test
+    for its own FK pair, which is why it could not see this one; the general
+    case is pinned by ``test_e2e_seed_teardown_fk_drift.py``. These tests cover
+    the branch that actually fired, against enforced foreign keys.
+    """
+
+    @pytest.fixture
+    def fk_enforced(self):
+        """Own engine with ``PRAGMA foreign_keys`` on -- see the class above.
+
+        Without it SQLite ignores foreign keys and every assertion here would
+        pass against the unfixed teardown.
+        """
+        from sqlalchemy import create_engine, event
+        from sqlalchemy.orm import Session as SaSession
+
+        from datanika.models.base import Base
+
+        engine = create_engine("sqlite:///:memory:")
+
+        @event.listens_for(engine, "connect")
+        def _enable_fk(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(engine)
+        session = SaSession(bind=engine)
+        assert session.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    @staticmethod
+    def _fixture_user(session):
+        return session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
+
+    def test_teardown_succeeds_when_the_migration_backfilled_user_pii(self, fk_enforced):
+        """The exact staging failure: a backfilled user_pii row blocks the delete."""
+        from datanika.models.pii import UserPII
+
+        session = fk_enforced
+        seed(session=session)
+        user = self._fixture_user(session)
+        # Precisely what the expand migration's backfill INSERT produces.
+        session.add(UserPII(user_id=user.id, email=user.email, full_name=user.full_name))
+        session.flush()
+
+        seed(session=session)
+
+        assert session.execute(select(UserPII)).scalars().first() is None
+
+    def test_teardown_clears_a_pending_email_change(self, fk_enforced):
+        from datanika.models.pii import EmailChangeRequest
+
+        session = fk_enforced
+        seed(session=session)
+        user = self._fixture_user(session)
+        session.add(
+            EmailChangeRequest(
+                user_id=user.id,
+                token_hash="e" * 64,
+                expires_at=datetime.now(UTC),
+            )
+        )
+        session.flush()
+
+        seed(session=session)
+
+        assert session.execute(select(EmailChangeRequest)).scalars().first() is None
+
+    def test_teardown_clears_a_password_reset_token(self, fk_enforced):
+        """Pre-dates #655 and had simply never been exercised -- same wedge."""
+        from datanika.models.password_reset import PasswordResetToken
+
+        session = fk_enforced
+        seed(session=session)
+        user = self._fixture_user(session)
+        session.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash="p" * 64,
+                expires_at=datetime.now(UTC),
+            )
+        )
+        session.flush()
+
+        seed(session=session)
+
+        assert session.execute(select(PasswordResetToken)).scalars().first() is None

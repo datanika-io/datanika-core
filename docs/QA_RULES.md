@@ -557,3 +557,50 @@ is precisely the subset that still works on a dead account.
 4. Related and pointing the other way: *a credential existing is not the same as the service being
    usable.* Free-trial sandboxes decay silently and **the credential keeps working while the service
    stops** — which is why "the probe authenticates" is never evidence the connector works.
+
+## 23. A per-pair regression test does not generalize; derive the guard from metadata
+
+Twice now, a hand-maintained ordered list of table deletes in
+`datanika/scripts/e2e_seed.py::_tear_down_fixture` has drifted from the schema and
+**permanently wedged `e2e-staging`**:
+
+| | added | wedged by |
+|---|---|---|
+| [core#415] | Remote-MCP P2 added `oauth_grants.api_key_id -> api_keys.id` | one completed OAuth consent |
+| [core#951] | PII separation N (#655) added four tables | the migration's own `user_pii` backfill |
+
+The response to #415 was a behavioural test for **that FK pair**. It was a good test and
+it still passes — and it could not see #951, because a per-pair test only ever covers the
+pair somebody already debugged. Writing a second per-pair test for `user_pii` would have
+bought exactly the same non-coverage a third time.
+
+**The guard has to be derived from the thing that actually changes.** Here that is
+SQLAlchemy metadata: for every table the teardown deletes, ask the metadata which tables
+carry an FK into it, and assert each is deleted earlier. A new table is then covered the
+moment it is mapped, and nobody has to remember a list.
+`tests/test_scripts/test_e2e_seed_teardown_fk_drift.py`. Same shape as §21's route-drift
+census and the connector-parity script — three findings from the same move.
+
+🚨 **Build the control into the guard.** A derived guard has a failure mode a hand-written
+one does not: if the extractor silently returns nothing, the invariant holds *vacuously*
+and the suite is green while the guard sees nothing at all. So the drift guard ships with
+three controls that fail loudly instead — the parser found ≥20 deletes; it still follows
+`_delete_oauth_chain` (those tables appear nowhere else); and no parsed name failed to map
+to a table. Without them, deleting one line of the parser turns the guard into a
+decoration that reports PASS forever. Cf. §18c.
+
+⚠️ **This class of break is invisible at run level and at spec level.** It kills
+`globalSetup`, so **zero specs run**: no Playwright tally, `INFORMATIONAL_RESULT=unknown`,
+and the step exits in ~6 s against a 2.4 min green. Meanwhile `deploy-staging`,
+`smoke-staging`, `Assert staging is running THIS commit` and all five required checks stay
+green, so the run-level `failure` is indistinguishable from the standing `image-cve` +
+`e2e-sso` reds. **Read per job, then per step, then per spec — and treat a missing tally as
+louder than a failing test, not quieter.**
+
+⚠️ **Fix every dependent the guard names, not the one in the traceback.** #951's stack named
+`user_pii`; the guard named five. Fixing only `user_pii` would have surfaced
+`email_change_requests` on the very next run, and `password_reset_tokens` — a latent gap
+that predated the PII work and had simply never been exercised — on some later one.
+
+[core#415]: https://github.com/datanika-io/datanika-core/issues/415
+[core#951]: https://github.com/datanika-io/datanika-core/issues/951

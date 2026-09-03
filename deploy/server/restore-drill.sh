@@ -32,11 +32,39 @@
 # It additionally FAILS if any plaintext dump is found off-site, so a silent
 # revert to unencrypted backups becomes a loud monthly failure rather than a
 # quiet reappearance of core#675.
+#
+# ── Volume artifacts (core#970, 2026-09-03) ──────────────────────────────────
+# The drill now also pulls, decrypts, member-counts and extracts both volume
+# tarballs, and cross-checks the uploads volume against the restored dump. See
+# the block after the table comparison.
+#
+# 🚨 A REAL RESTORE MUST LAND ARCHIVES AT THEIR ORIGINAL ABSOLUTE PATH.
+# `uploaded_files.archive_path` holds an ABSOLUTE path on production
+# (`/app/uploaded_files/archives/<sha256>.tar.gz`), and
+# `UploadService.resolve_archive_path` early-returns on an absolute path — it
+# does no rebasing. So restoring the dump and unpacking the tarball somewhere
+# else yields a database whose every row points at a file that is not there,
+# with no error until a user asks for a download.
+#
+# The two supported recoveries are therefore:
+#   1. extract the archive into a volume mounted at /app/uploaded_files in the
+#      restored container — which is what the backup's `tar czf … -C "${MP}" .`
+#      shape is designed for; or
+#   2. rewrite the column, deliberately, as part of the restore.
+# Do not improvise a third. This drill exercises (1) by construction: it compares
+# `basename(archive_path)`, so it proves the BYTES survived, and it deliberately
+# does not prove the path would resolve — that is a property of how you restore,
+# not of the backup. Stated here because the runbook describes the dangling paths
+# without saying which of the two you must pick.
 
 set -euo pipefail
 
 REMOTE=root@185.226.65.96
-REMOTE_DIR=/opt/datanika-backups
+# Overridable for the same reason GNUPGHOME below is (core#970): the negative
+# controls for the volume assertions need a directory holding a DELIBERATELY
+# broken artifact, and pointing them at the real off-site backups to prove a
+# check works is not a trade anyone should make. Cron leaves it unset.
+REMOTE_DIR="${REMOTE_DIR:-/opt/datanika-backups}"
 SSH_KEY=/root/.ssh/aweb_backup
 SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
 WORK=/tmp/restore-drill.$$
@@ -155,7 +183,123 @@ if [ -n "${MISSING}" ]; then
     exit 1
 fi
 
-echo "[$(date)] RESTORE DRILL PASS (${LIVE_POPULATED} populated tables all present, ${RESTORED_ROWS} rows, decrypted off-site copy, ${ELAPSED}s)"
+# ── Volume artifacts (core#970) ──────────────────────────────────────────────
+# backup-offsite.sh ships two encrypted volume tarballs beside the dump. Until
+# core#970 this drill touched neither, so the dump was proven monthly and the
+# user data it REFERENCES was proven never. The tarballs have creation-time proof
+# — each ciphertext is round-tripped through `gpg --decrypt | cmp` before it ships
+# — but that proves the bytes were good on this box at 03:00. It says nothing
+# about whether the copy sitting on Aweb 29 days later still decrypts, which is
+# the exact failure this drill was built for after core#725.
+VOLUMES="datanika_uploaded_files datanika_dbt_projects"
+BACKUP_METRICS="${TEXTFILE_DIR}/datanika_backup.prom"
+
+echo "[$(date)] checking no plaintext volume archives remain off-site..."
+PLAIN_TARS=$(ssh ${SSH_OPTS} "${REMOTE}" "ls -1 ${REMOTE_DIR}/*.tar.gz 2>/dev/null | wc -l")
+if [ "${PLAIN_TARS}" != 0 ]; then
+    echo "[$(date)] RESTORE DRILL FAIL — ${PLAIN_TARS} UNENCRYPTED volume archive(s) off-site."
+    echo "  '*.tar.gz' and '*.tar.gz.gpg' are disjoint globs, so this counts plaintext only."
+    exit 1
+fi
+
+VOL_DRILL_METRICS=""
+for VOL in ${VOLUMES}; do
+    LATEST_V=$(ssh ${SSH_OPTS} "${REMOTE}" "ls -t ${REMOTE_DIR}/${VOL}_*.tar.gz.gpg 2>/dev/null | head -1")
+    if [ -z "${LATEST_V}" ]; then
+        echo "[$(date)] RESTORE DRILL FAIL — no off-site archive for ${VOL}."
+        echo "  backup-offsite.sh ships one nightly; its absence means the volume half of the"
+        echo "  backup is not arriving, which no dump-only check can see."
+        exit 1
+    fi
+    rsync -az -e "ssh ${SSH_OPTS}" "${REMOTE}:${LATEST_V}" "${WORK}/"
+    VENC="${WORK}/$(basename "${LATEST_V}")"
+    VTAR="${WORK}/$(basename "${LATEST_V}" .gpg)"
+
+    # Same reasoning as the dump: no fallback to plaintext. A fallback would mask
+    # exactly the condition being tested.
+    if ! gpg --batch --quiet --yes --decrypt "${VENC}" > "${VTAR}" 2>"${WORK}/gpg-${VOL}.log"; then
+        echo "[$(date)] RESTORE DRILL FAIL — could not decrypt ${VENC}"
+        echo "  The off-site copy of ${VOL} is unreadable with the key on this box."
+        tail -10 "${WORK}/gpg-${VOL}.log" || true
+        exit 1
+    fi
+
+    # Regular-file members, compared against what the BACKUP recorded — not
+    # against a constant, and not against anything derived from this same archive.
+    # `grep -c` exits 1 on zero matches, which `set -e` would turn into an abort
+    # that reads like a transfer failure, so capture it the same way the backup
+    # script does.
+    if ! MEMBERS=$(tar tvzf "${VTAR}" 2>/dev/null | grep -c '^-'); then
+        MEMBERS=0
+    fi
+    EXPECTED=$(sed -n "s/^datanika_backup_last_files_count{volume=\"${VOL}\"} //p" \
+        "${BACKUP_METRICS}" 2>/dev/null | tail -1)
+    if [ -z "${EXPECTED}" ]; then
+        echo "[$(date)] RESTORE DRILL FAIL — no datanika_backup_last_files_count for ${VOL}"
+        echo "  in ${BACKUP_METRICS}. Refusing a verdict: with no recorded expectation there is"
+        echo "  nothing to compare the archive against, and 'the tar extracts' is satisfied by"
+        echo "  a tar containing no files at all. That is core#725's plans>=5, one layer down."
+        exit 1
+    fi
+    if [ "${MEMBERS}" != "${EXPECTED}" ]; then
+        echo "[$(date)] RESTORE DRILL FAIL — ${VOL}: archive holds ${MEMBERS} regular files,"
+        echo "  the backup recorded ${EXPECTED}."
+        echo "  archive:   $(basename "${LATEST_V}")"
+        echo "  metric written: $(sed -n 's/^datanika_backup_last_success_timestamp_seconds //p' "${BACKUP_METRICS}" 2>/dev/null | tail -1)"
+        echo "  If the archive is OLDER than that timestamp the off-site copy is stale (the"
+        echo "  rsync is failing); if they are the same run, files were lost between tar and"
+        echo "  transfer. The two call for opposite responses."
+        exit 1
+    fi
+
+    mkdir -p "${WORK}/x/${VOL}"
+    tar xzf "${VTAR}" -C "${WORK}/x/${VOL}"
+    echo "[$(date)] ${VOL}: decrypted, ${MEMBERS} files, extracted"
+    VOL_DRILL_METRICS="${VOL_DRILL_METRICS}datanika_restore_drill_volume_files{volume=\"${VOL}\"} ${MEMBERS}
+"
+done
+
+# ⚠️ THE assertion, and the one that is NOT satisfied by "the tar extracts".
+# A tar truncated after a directory header still extracts, still exits 0, and
+# still contains a directory — core#725 all over again. So cross-check the two
+# artifacts against each other: every non-deleted uploaded_files row in the
+# RESTORED dump must have its bytes in the extracted tree. Neither artifact can
+# fake that alone.
+UPX="${WORK}/x/datanika_uploaded_files"
+docker exec "${CONTAINER}" psql -U datanika -d datanika -At \
+    -c "select archive_path from uploaded_files where deleted_at is null and archive_path <> ''" \
+    </dev/null > "${WORK}/upload_paths.txt"
+
+# `done < file`, never `... | while read`: a pipeline runs the loop in a subshell
+# and the counters below would not survive it — the loop would report 0 checked
+# and 0 missing, which is a clean pass from a check that measured nothing.
+UP_CHECKED=0
+UP_MISSING=""
+while IFS= read -r P; do
+    [ -n "${P}" ] || continue
+    UP_CHECKED=$((UP_CHECKED + 1))
+    if [ -z "$(find "${UPX}" -type f -name "$(basename "${P}")" -print -quit 2>/dev/null)" ]; then
+        UP_MISSING="${UP_MISSING} $(basename "${P}")"
+    fi
+done < "${WORK}/upload_paths.txt"
+
+if [ "${UP_CHECKED}" -lt 1 ]; then
+    echo "[$(date)] RESTORE DRILL FAIL — 0 uploaded_files rows examined."
+    echo "  Refusing a verdict rather than reporting a pass: a cross-check over an empty row"
+    echo "  set succeeds against any tree, including an empty one. If production genuinely"
+    echo "  has no uploads this needs a deliberate decision, not a silent green."
+    exit 1
+fi
+if [ -n "${UP_MISSING}" ]; then
+    echo "[$(date)] RESTORE DRILL FAIL — uploaded_files rows whose bytes are NOT in the"
+    echo "  off-site archive (${UP_CHECKED} checked):${UP_MISSING}"
+    echo "  The dump restored and the archive extracted; they do not agree. A restore from"
+    echo "  these two artifacts would produce rows pointing at files that do not exist."
+    exit 1
+fi
+echo "[$(date)] uploaded_files cross-check: ${UP_CHECKED} row(s), 0 missing"
+
+echo "[$(date)] RESTORE DRILL PASS (${LIVE_POPULATED} populated tables all present, ${RESTORED_ROWS} rows, decrypted off-site copy, ${UP_CHECKED} upload(s) cross-checked, ${ELAPSED}s)"
 
 # Freshness metric. Must land in TEXTFILE_DIR as *.prom or node-exporter never
 # sees it: the first version wrote a .txt into /opt/datanika/monitoring, which is
@@ -176,6 +320,15 @@ TMP="${TEXTFILE_DIR}/datanika_restore_drill.prom.$$"
     echo "# HELP datanika_restore_drill_decrypted_offsite Whether the last passing drill decrypted a GPG off-site artifact"
     echo "# TYPE datanika_restore_drill_decrypted_offsite gauge"
     echo "datanika_restore_drill_decrypted_offsite 1"
+    # core#970. Per-volume, because the freshness timestamp above is written on
+    # the same successful run and would stay green through a volume that had
+    # silently stopped being captured.
+    echo "# HELP datanika_restore_drill_volume_files Regular files in the last restored per-volume archive"
+    echo "# TYPE datanika_restore_drill_volume_files gauge"
+    printf '%s' "${VOL_DRILL_METRICS}"
+    echo "# HELP datanika_restore_drill_uploads_verified Non-deleted uploaded_files rows whose bytes were found in the restored archive"
+    echo "# TYPE datanika_restore_drill_uploads_verified gauge"
+    echo "datanika_restore_drill_uploads_verified ${UP_CHECKED}"
 } > "${TMP}"
 mv "${TMP}" "${TEXTFILE_DIR}/datanika_restore_drill.prom"
 date -u +%Y-%m-%dT%H:%M:%SZ > "${STAMP_FILE}"

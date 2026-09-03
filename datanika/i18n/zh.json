@@ -126,6 +126,7 @@
   "common.actions": "操作",
   "common.id": "ID",
   "common.name": "名称",
+  "common.loading": "加载中…",
   "common.type": "类型",
   "common.status": "状态",
   "common.all": "全部",

@@ -45,6 +45,18 @@ def _pick_latest_run(*runs):
 class ModelState(BaseState):
     models: list[ModelItem] = []
 
+    #: False until ``load_models`` has answered once (core#872).
+    #:
+    #: ⚠️ This is the flag ``loaded_without_catalog`` below silently depended on.
+    #: That one distinguishes two *honest* empties from each other; it cannot
+    #: distinguish either from a table that has not loaded — and before this
+    #: flag existed, `/models` rendered its "no models yet" callout on the very
+    #: first paint, telling a user who has data, in words, that they have none.
+    #: One production poll stayed empty for 30 s and that one was a **real**
+    #: emptiness (core#869), which is the whole problem: until the not-yet-loaded
+    #: case is separable, an honest empty cannot be read as honest.
+    models_loaded: bool = False
+
     #: True when the catalog is empty **and** this org has already completed a
     #: load that reported rows (core#883).
     #:
@@ -159,4 +171,7 @@ class ModelState(BaseState):
                     (r.rows_loaded or 0) > 0
                     for r in exec_svc.list_runs(session, org_id, status=RunStatus.SUCCESS)
                 )
+        # Set AFTER both the rows and the empty-state diagnosis, so no render can
+        # catch the flag True beside a half-computed answer.
+        self.models_loaded = True
         self.error_message = ""

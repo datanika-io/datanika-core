@@ -126,6 +126,7 @@
   "common.actions": "Акције",
   "common.id": "ИД",
   "common.name": "Назив",
+  "common.loading": "Учитавање…",
   "common.type": "Тип",
   "common.status": "Статус",
   "common.all": "Све",

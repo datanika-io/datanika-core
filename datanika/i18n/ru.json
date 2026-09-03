@@ -126,6 +126,7 @@
   "common.actions": "Действия",
   "common.id": "ID",
   "common.name": "Название",
+  "common.loading": "Загрузка…",
   "common.type": "Тип",
   "common.status": "Статус",
   "common.all": "Все",

@@ -1,5 +1,6 @@
 """TDD tests for DbtProjectService — dbt project scaffolding & execution."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -898,17 +899,88 @@ class TestWriteSnapshot:
 # run_snapshot (Step 30)
 # ---------------------------------------------------------------------------
 class TestRunSnapshot:
+    """core#864, second half.
+
+    🚨 **The test that used to live here could not fail.** It was::
+
+        mock_result.result = [MagicMock(adapter_response=MagicMock(rows_affected=5))]
+
+    A ``MagicMock`` materialises whatever attribute is asked of it, so
+    ``hasattr(resp, "rows_affected")`` was true **by construction** — the mock
+    supplied the exact thing that was missing. Meanwhile the real
+    ``adapter_response`` is a **dict** (measured against a live dbt run and pinned
+    by ``test_dbt_result_contract.py::test_adapter_response_is_a_mapping_not_an_object``),
+    so ``run_snapshot``'s object-only branch was dead and every snapshot reported
+    ``rows_affected: 0``.
+
+    Never mock the module whose surface is the claim. These tests use the real
+    shapes and mock only the vendor runner.
+    """
+
     @patch("datanika.services.dbt_project.dbtRunner")
-    def test_success_returns_results(self, mock_runner_cls, svc):
+    def test_rows_affected_counts_the_real_dict_shape(self, mock_runner_cls, svc):
+        """The live shape. This is the test that goes red against the old code."""
         svc.ensure_project(1)
         mock_result = MagicMock()
         mock_result.success = True
-        mock_result.result = [MagicMock(adapter_response=MagicMock(rows_affected=5))]
+        # A real dict — what dbt actually returns. Not a mock of one.
+        mock_result.result = [
+            SimpleNamespace(adapter_response={"_message": "OK", "rows_affected": 5})
+        ]
         mock_runner_cls.return_value.invoke.return_value = mock_result
 
         result = svc.run_snapshot(1, "snap")
         assert result["success"] is True
-        assert result["rows_affected"] == 5
+        assert result["rows_affected"] == 5, (
+            "run_snapshot read adapter_response with hasattr(), which is False for a "
+            "dict, so the branch was dead and rows_affected was always 0 (core#864)."
+        )
+
+    @patch("datanika.services.dbt_project.dbtRunner")
+    def test_rows_affected_sums_across_nodes(self, mock_runner_cls, svc):
+        """A single node cannot distinguish 'summed' from 'took the last one'."""
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [
+            SimpleNamespace(adapter_response={"rows_affected": 5}),
+            SimpleNamespace(adapter_response={"rows_affected": 7}),
+        ]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        assert svc.run_snapshot(1, "snap")["rows_affected"] == 12
+
+    @patch("datanika.services.dbt_project.dbtRunner")
+    def test_rows_affected_still_counts_the_object_shape(self, mock_runner_cls, svc):
+        """Dual support is deliberate, so the object form keeps its own test.
+
+        ``_sum_rows_affected`` has always handled both; if dbt ever returns an
+        object again, the contract test above goes red and this one stays green,
+        which is how the two are told apart.
+        """
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [SimpleNamespace(adapter_response=SimpleNamespace(rows_affected=3))]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        assert svc.run_snapshot(1, "snap")["rows_affected"] == 3
+
+    @patch("datanika.services.dbt_project.dbtRunner")
+    def test_a_node_with_no_adapter_response_contributes_nothing(self, mock_runner_cls, svc):
+        """The other direction: counting everything is as wrong as counting nothing."""
+        svc.ensure_project(1)
+        mock_result = MagicMock()
+        mock_result.success = True
+        mock_result.result = [
+            SimpleNamespace(adapter_response=None),
+            SimpleNamespace(adapter_response={"_message": "OK"}),
+            SimpleNamespace(adapter_response={"rows_affected": None}),
+            SimpleNamespace(adapter_response={"rows_affected": 4}),
+        ]
+        mock_runner_cls.return_value.invoke.return_value = mock_result
+
+        assert svc.run_snapshot(1, "snap")["rows_affected"] == 4
 
     @patch("datanika.services.dbt_project.dbtRunner")
     def test_invokes_dbt_snapshot_command(self, mock_runner_cls, svc):

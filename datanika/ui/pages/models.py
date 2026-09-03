@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.table_loading import table_loading
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.model_state import ModelState
 
@@ -85,21 +86,29 @@ def models_table() -> rx.Component:
 def models_page() -> rx.Component:
     return page_layout(
         rx.vstack(
+            # core#872: the emptiness question is only worth ASKING once the
+            # answer has arrived. Before this outer cond, `models == []` on the
+            # first paint took the empty branch and told a user who has data, in
+            # words, that they have none — for 5-17 seconds, and once for 30.
             rx.cond(
-                ModelState.models.length() == 0,
-                rx.callout(
-                    # "Run an upload to populate the catalog" is correct only
-                    # for someone who has never run one. Told to a user whose
-                    # load just went green with a row count, it sends them back
-                    # around the same loop (core#883).
-                    rx.cond(
-                        ModelState.loaded_without_catalog,
-                        _t["models.no_models_after_load"],
-                        _t["models.no_models"],
+                ModelState.models_loaded,
+                rx.cond(
+                    ModelState.models.length() == 0,
+                    rx.callout(
+                        # "Run an upload to populate the catalog" is correct only
+                        # for someone who has never run one. Told to a user whose
+                        # load just went green with a row count, it sends them back
+                        # around the same loop (core#883).
+                        rx.cond(
+                            ModelState.loaded_without_catalog,
+                            _t["models.no_models_after_load"],
+                            _t["models.no_models"],
+                        ),
+                        icon="info",
                     ),
-                    icon="info",
+                    models_table(),
                 ),
-                models_table(),
+                table_loading(),
             ),
             spacing="6",
             width="100%",

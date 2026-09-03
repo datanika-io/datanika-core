@@ -27,10 +27,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.oauth_service import OAuthService, github_provider
 from datanika.services.user_service import UserService, UserServiceError
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -57,15 +58,14 @@ def unproven_local_account(db_session, auth):
     nothing. ``register_user``'s real caller creates an org, so this is also the
     accurate shape of a squatted row.
     """
-    u = User(
+    u = make_user(
+        db_session,
         email="victim@company.com",
         password_hash=auth.hash_password("attacker-chosen-password"),
         full_name="Not The Victim",
         email_verified=False,
         password_changed_at=datetime.now(UTC),
     )
-    db_session.add(u)
-    db_session.flush()
     org = Organization(name="Squatted Org", slug=f"squatted-{u.id}")
     db_session.add(org)
     db_session.flush()
@@ -130,15 +130,14 @@ class TestAutoLinkRequiresBothSides:
         Auto-linking a verified provider email onto a verified password account
         remains a deliberate product decision (SPEC_SIGNUP_SOCIAL_AUTH.md).
         """
-        u = User(
+        u = make_user(
+            db_session,
             email="proven@company.com",
             password_hash=auth.hash_password("their-own-password"),
             full_name="Proven",
             email_verified=True,
             password_changed_at=datetime.now(UTC),
         )
-        db_session.add(u)
-        db_session.flush()
 
         linked, is_new = user_svc.find_or_create_oauth_user(
             db_session,
@@ -161,15 +160,14 @@ class TestAutoLinkRequiresBothSides:
         link can grant is access to someone who has already proven the address.
         Refusing here would break rows the product creates on purpose.
         """
-        u = User(
+        u = make_user(
+            db_session,
             email="nopassword@company.com",
             password_hash=auth.hash_password("machine-generated"),
             full_name="No Password",
             email_verified=False,
             password_changed_at=None,
         )
-        db_session.add(u)
-        db_session.flush()
 
         linked, is_new = user_svc.find_or_create_oauth_user(
             db_session,
@@ -190,7 +188,8 @@ class TestAutoLinkRequiresBothSides:
         keep working, verified or not — otherwise every user who linked a
         provider before this change is locked out of social login.
         """
-        u = User(
+        u = make_user(
+            db_session,
             email="alreadylinked@company.com",
             password_hash=auth.hash_password("x"),
             full_name="Already Linked",
@@ -199,8 +198,6 @@ class TestAutoLinkRequiresBothSides:
             oauth_provider="google",
             oauth_provider_id="linked-subject",
         )
-        db_session.add(u)
-        db_session.flush()
 
         found, is_new = user_svc.find_or_create_oauth_user(
             db_session,

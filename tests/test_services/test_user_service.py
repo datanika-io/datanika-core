@@ -5,6 +5,7 @@ import pytest
 from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService, UserServiceError
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -35,14 +36,12 @@ def other_org(db_session):
 
 @pytest.fixture
 def user(db_session, auth):
-    u = User(
+    return make_user(
+        db_session,
         email="existing@example.com",
         password_hash=auth.hash_password("password123"),
         full_name="Existing User",
     )
-    db_session.add(u)
-    db_session.flush()
-    return u
 
 
 @pytest.fixture
@@ -64,9 +63,9 @@ def org_owner(db_session, org):
     actor is now required and fails closed when omitted, so every test that
     manages a member has to say who is doing it.
     """
-    u = User(email="org-owner@example.com", password_hash="hash", full_name="Org Owner")
-    db_session.add(u)
-    db_session.flush()
+    u = make_user(
+        db_session, email="org-owner@example.com", password_hash="hash", full_name="Org Owner"
+    )
     db_session.add(Membership(user_id=u.id, org_id=org.id, role=MemberRole.OWNER))
     db_session.flush()
     return u
@@ -259,9 +258,9 @@ class TestGetUserOrgs:
         # Add a second owner so we can remove the first. Ownership is no
         # longer grantable through add_member (core#658 R1) — it is reached
         # only through add_owner / transfer_ownership.
-        other = User(email="keeper@example.com", password_hash="hash", full_name="Keeper")
-        db_session.add(other)
-        db_session.flush()
+        other = make_user(
+            db_session, email="keeper@example.com", password_hash="hash", full_name="Keeper"
+        )
         svc.add_member(db_session, org.id, other.id, MemberRole.ADMIN, actor_user_id=user.id)
         svc.add_owner(db_session, org.id, other.id, actor_user_id=user.id)
         # Get the original membership and soft-delete it
@@ -302,9 +301,7 @@ class TestUpdateOrg:
         only through the UI and was not a property of the system. The service
         is the one that moved.
         """
-        admin = User(email="renamer@example.com", password_hash="h", full_name="A")
-        db_session.add(admin)
-        db_session.flush()
+        admin = make_user(db_session, email="renamer@example.com", password_hash="h", full_name="A")
         db_session.add(Membership(user_id=admin.id, org_id=org.id, role=MemberRole.ADMIN))
         db_session.flush()
         with pytest.raises(UserServiceError, match="[Oo]wner"):
@@ -390,13 +387,9 @@ class TestRemoveMember:
 
     def test_allows_removing_non_owner(self, svc, db_session, user_with_org, org):
         # Add a second user as editor
-        other = User(
-            email="other@example.com",
-            password_hash="hash",
-            full_name="Other",
+        other = make_user(
+            db_session, email="other@example.com", password_hash="hash", full_name="Other"
         )
-        db_session.add(other)
-        db_session.flush()
         m = svc.add_member(
             db_session, org.id, other.id, MemberRole.EDITOR, actor_user_id=user_with_org.id
         )
@@ -467,13 +460,9 @@ class TestChangeRole:
             )
 
     def test_allows_when_multiple_owners(self, svc, db_session, user_with_org, org):
-        other = User(
-            email="other2@example.com",
-            password_hash="hash",
-            full_name="Other",
+        other = make_user(
+            db_session, email="other2@example.com", password_hash="hash", full_name="Other"
         )
-        db_session.add(other)
-        db_session.flush()
         # Ownership is no longer grantable through add_member (core#658 R1);
         # a second owner is reached through add_owner, owner-only.
         svc.add_member(

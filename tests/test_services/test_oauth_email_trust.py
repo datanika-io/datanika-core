@@ -21,7 +21,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from datanika.models.user import User
 from datanika.services.auth import AuthService
 from datanika.services.oauth_service import (
     OAuthError,
@@ -30,6 +29,7 @@ from datanika.services.oauth_service import (
     google_provider,
 )
 from datanika.services.user_service import UserService, UserServiceError
+from tests.factories import make_user
 
 # ---------------------------------------------------------------------------
 # Fakes for the provider HTTP surface
@@ -263,14 +263,13 @@ class TestGoogleEmailVerifiedClaim:
 @pytest.fixture
 def password_user(db_session, auth):
     """An ordinary email+password account that never opted into social login."""
-    u = User(
+    u = make_user(
+        db_session,
         email="victim@company.com",
         password_hash=auth.hash_password("password123"),
         full_name="Victim",
         email_verified=True,
     )
-    db_session.add(u)
-    db_session.flush()
     return u
 
 
@@ -367,7 +366,8 @@ class TestFindOrCreateOAuthUserTrust:
 
     def test_legacy_row_without_subject_is_bound_late(self, user_svc, db_session, auth):
         """Rows linked before the subject was recorded must not lock the user out."""
-        u = User(
+        u = make_user(
+            db_session,
             email="legacy@example.com",
             password_hash=auth.hash_password("x"),
             full_name="Legacy",
@@ -375,8 +375,6 @@ class TestFindOrCreateOAuthUserTrust:
             oauth_provider="google",
             oauth_provider_id=None,
         )
-        db_session.add(u)
-        db_session.flush()
 
         found, is_new = user_svc.find_or_create_oauth_user(
             db_session, "legacy@example.com", "Legacy", "google", "sub-late", email_verified=True
@@ -387,7 +385,8 @@ class TestFindOrCreateOAuthUserTrust:
 
     def test_empty_subject_does_not_match_everyone(self, user_svc, db_session, auth):
         """An empty provider_id must never be used as a lookup key."""
-        u = User(
+        u = make_user(
+            db_session,
             email="blank@example.com",
             password_hash=auth.hash_password("x"),
             full_name="Blank",
@@ -395,8 +394,6 @@ class TestFindOrCreateOAuthUserTrust:
             oauth_provider="google",
             oauth_provider_id="",
         )
-        db_session.add(u)
-        db_session.flush()
 
         found, _ = user_svc.find_or_create_oauth_user(
             db_session, "someone-else@example.com", "Other", "google", "", email_verified=True

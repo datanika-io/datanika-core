@@ -5,10 +5,11 @@ import uuid
 import pytest
 
 from datanika.models.invitation import InvitationStatus
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService
 from datanika.services.user_service import UserService
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -36,14 +37,13 @@ def org(db_session):
 
 @pytest.fixture
 def owner(db_session, org):
-    u = User(
+    u = make_user(
+        db_session,
         email=f"owner-{uuid.uuid4().hex[:6]}@test.com",
         password_hash="hashed",
         full_name="Owner",
         email_verified=True,
     )
-    db_session.add(u)
-    db_session.flush()
     m = Membership(user_id=u.id, org_id=org.id, role=MemberRole.OWNER)
     db_session.add(m)
     db_session.flush()

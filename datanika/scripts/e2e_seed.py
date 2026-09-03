@@ -306,31 +306,58 @@ def _tear_down_fixture(session: Session) -> None:
     session.flush()
 
 
+def _add_user(session: Session, *, email: str, password_hash: str, full_name: str) -> User:
+    """Create a fixture user **and** its ``user_pii`` sidecar. Both, always.
+
+    ``SPEC_PII_SEPARATION.md`` §8a.2, Step A. Release N dual-writes: every path that
+    creates a person through ``UserService`` writes the legacy columns *and* the sidecar,
+    and the expand migration backfilled every pre-existing row. A fixture that writes only
+    the legacy columns therefore produces a row **the dual-write invariant says cannot
+    exist**.
+
+    That is survivable today only because ``get_user_by_email`` still carries a legacy
+    ``or_`` half. N+1 deletes it, and from that moment a sidecar-less user is invisible to
+    every lookup by address while their ``Membership`` row is untouched — which is how
+    ``create_invitation``'s already-a-member guard comes to fail open (§8a.4 Kind 3,
+    core#1010).
+
+    🚨 Deliberately **not** implemented by calling ``UserService._sync_user_pii``: core#939
+    item 3 deletes that method in N+1, so a fixture built on it breaks at exactly the
+    release this helper exists to protect.
+    """
+    user = User(
+        email=email,
+        password_hash=password_hash,
+        full_name=full_name,
+        is_active=True,
+        email_verified=True,
+    )
+    session.add(user)
+    session.flush()
+    session.add(UserPII(user_id=user.id, email=email, full_name=full_name))
+    session.flush()
+    return user
+
+
 def _build_fixture(session: Session) -> SeedResult:
     auth = AuthService(settings.secret_key)
     encryption = EncryptionService(settings.credential_encryption_key)
     connection_service = ConnectionService(encryption)
 
     # --- Org A: primary tenant (owner + viewer + one connection) ---
-    user = User(
+    user = _add_user(
+        session,
         email=FIXTURE_USER_EMAIL,
         password_hash=auth.hash_password(FIXTURE_USER_PASSWORD),
         full_name=FIXTURE_USER_NAME,
-        is_active=True,
-        email_verified=True,
     )
-    session.add(user)
-    session.flush()
 
-    viewer_user = User(
+    viewer_user = _add_user(
+        session,
         email=FIXTURE_VIEWER_USER_EMAIL,
         password_hash=auth.hash_password(FIXTURE_VIEWER_USER_PASSWORD),
         full_name=FIXTURE_VIEWER_USER_NAME,
-        is_active=True,
-        email_verified=True,
     )
-    session.add(viewer_user)
-    session.flush()
 
     org = Organization(name=FIXTURE_ORG_NAME, slug=FIXTURE_ORG_SLUG)
     session.add(org)
@@ -351,15 +378,12 @@ def _build_fixture(session: Session) -> SeedResult:
     session.flush()
 
     # --- Org B: second tenant with one of every resource type ---
-    org_b_user = User(
+    org_b_user = _add_user(
+        session,
         email=FIXTURE_ORG_B_USER_EMAIL,
         password_hash=auth.hash_password(FIXTURE_ORG_B_USER_PASSWORD),
         full_name=FIXTURE_ORG_B_USER_NAME,
-        is_active=True,
-        email_verified=True,
     )
-    session.add(org_b_user)
-    session.flush()
 
     org_b = Organization(name=FIXTURE_ORG_B_NAME, slug=FIXTURE_ORG_B_SLUG)
     session.add(org_b)

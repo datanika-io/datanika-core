@@ -77,6 +77,41 @@ def test_seed_creates_fixture_on_empty_db(db_session):
     assert connections[0].connection_type == ConnectionType.DUCKDB
 
 
+def test_every_seeded_user_has_a_matching_pii_sidecar(db_session):
+    """Step A — ``SPEC_PII_SEPARATION.md`` §8a.2, core#1009.
+
+    Release N dual-writes: `UserService.register_user` writes the legacy columns *and*
+    the sidecar, and the expand migration backfilled every pre-existing row. So in
+    production **every user has a `user_pii` row**, and `get_user_by_email`'s legacy
+    `or_` half is a blue/green window, not a fallback for missing sidecars.
+
+    This seed bypassed the service and wrote only the legacy columns, producing three
+    rows the invariant says cannot exist. It is survivable under N — which is precisely
+    why nobody noticed — and it stops being survivable at N+1, where the legacy half is
+    deleted and a sidecar-less user becomes invisible to every lookup by address while
+    their `Membership` row is untouched.
+
+    🔑 Asserting the **content** and not merely the row's existence is the point: a
+    sidecar holding a different address is worse than a missing one, because every
+    lookup succeeds and returns the wrong person.
+    """
+    from datanika.models.pii import UserPII
+
+    seed(session=db_session)
+
+    users = list(db_session.execute(select(User)).scalars())
+    # Anti-vacuity: an empty or shrunken fixture would satisfy every assertion below.
+    assert len(users) == 3, f"precondition: the fixture is three users, got {len(users)}"
+
+    missing = [u.email for u in users if db_session.get(UserPII, u.id) is None]
+    assert missing == [], f"seeded users with no user_pii row: {missing}"
+
+    for u in users:
+        pii = db_session.get(UserPII, u.id)
+        assert pii.email == u.email, f"sidecar address diverges for user {u.id}"
+        assert pii.full_name == u.full_name, f"sidecar name diverges for user {u.id}"
+
+
 def test_seed_is_idempotent(db_session):
     """Running twice must leave the same row counts — not duplicate the fixture."""
     first = seed(session=db_session)
@@ -679,19 +714,47 @@ class TestTeardownWithPIIChildren:
         return session.execute(select(User).where(User.email == FIXTURE_USER_EMAIL)).scalar_one()
 
     def test_teardown_succeeds_when_the_migration_backfilled_user_pii(self, fk_enforced):
-        """The exact staging failure: a backfilled user_pii row blocks the delete."""
+        """The exact staging failure: a backfilled user_pii row blocks the delete.
+
+        ⚠️ **The setup changed with Step A (core#1009) and the test got stronger.**
+        It used to `seed()`, then hand-insert the row the expand migration's backfill
+        would have produced. The seed now writes that row itself (`_add_user`), so the
+        hand-insert would collide on `user_pii`'s PK — and, more to the point, the
+        condition no longer has to be simulated. **The seed produces it.**
+
+        So the precondition is asserted rather than manufactured, which is what makes
+        this a regression test for the real path instead of for a reconstruction of it.
+        """
         from datanika.models.pii import UserPII
 
         session = fk_enforced
         seed(session=session)
         user = self._fixture_user(session)
-        # Precisely what the expand migration's backfill INSERT produces.
-        session.add(UserPII(user_id=user.id, email=user.email, full_name=user.full_name))
-        session.flush()
+        # Not added here any more — asserted. This is exactly the row the expand
+        # migration's backfill INSERT produces, and now also exactly what the seed writes.
+        assert session.get(UserPII, user.id) is not None, (
+            "precondition: the seeded user carries a user_pii row"
+        )
 
         seed(session=session)
 
-        assert session.execute(select(UserPII)).scalars().first() is None
+        # 🚨 Reaching this line at all IS the regression assertion: with foreign keys
+        # enforced, the second seed's teardown must not die on `user_pii_user_id_fkey`.
+        #
+        # ⚠️ The old final assertion was `select(UserPII).first() is None` — zero rows
+        # left anywhere. Under the pre-Step-A seed that passed for a reason having
+        # nothing to do with the teardown: the REBUILD created no sidecar either, so
+        # *"the orphan was deleted"* and *"the seed never makes one"* were the same
+        # observation. It could not have distinguished a working teardown from a
+        # teardown that deleted nothing.
+        #
+        # The honest invariant is that no sidecar is ORPHANED, and it is strictly
+        # stronger — it also catches a teardown that leaves a row pointing at a user id
+        # the rebuild happens to reuse, which SQLite readily does.
+        pii_ids = {p.user_id for p in session.execute(select(UserPII)).scalars()}
+        user_ids = {u.id for u in session.execute(select(User)).scalars()}
+        assert pii_ids - user_ids == set(), f"orphaned user_pii rows: {pii_ids - user_ids}"
+        assert pii_ids == user_ids, "every rebuilt user should carry a sidecar"
 
     def test_teardown_clears_a_pending_email_change(self, fk_enforced):
         from datanika.models.pii import EmailChangeRequest

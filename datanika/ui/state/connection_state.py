@@ -12,6 +12,7 @@ from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     ConnectionService,
     ConnectionVerdict,
+    LocalPathNotAllowedError,
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
@@ -38,6 +39,12 @@ _VERDICT_KEYS = {
     "file_unopenable": "connections.test_file_unopenable",
     "file_in_memory": "connections.test_file_in_memory",
     "driver_unavailable": "connections.test_driver_unavailable",
+}
+
+#: Refusal `reason` → i18n key. Same split and the same two reasons as
+#: `_VERDICT_KEYS` above: the service raises English, the UI translates.
+_ERROR_KEYS = {
+    "local_path_not_allowed": "connections.local_path_not_allowed",
 }
 
 # SaaS source types that use endpoint/resource selection (not SQL mode).
@@ -1342,6 +1349,15 @@ class ConnectionState(BaseState):
                         new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
                 session.commit()
+        except LocalPathNotAllowedError as e:
+            # Translated rather than surfaced verbatim (D6). `_set_error` passes
+            # a ValueError's message straight through, which would have shipped
+            # this sentence to nine locales in English — the defect D6 names,
+            # reintroduced by the change that closes it.
+            self.error_message = await self._translated(_ERROR_KEYS[e.reason], str(e))
+            self.is_quota_error = False
+            self.quota_metric = ""
+            return
         except Exception as e:
             self._set_error(e, "Failed to save connection")
             return

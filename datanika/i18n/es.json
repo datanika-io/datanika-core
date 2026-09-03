@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "No se puede abrir «{arg}»: comprueba que sea un archivo de base de datos y que se pueda leer.",
   "connections.test_file_in_memory": "Conectado — base de datos en memoria. No se escribe nada en el disco.",
   "connections.test_driver_unavailable": "El controlador {arg} no está disponible en esta compilación.",
+  "connections.local_path_not_allowed": "Las rutas de archivos locales no están disponibles en esta instalación. Sube el archivo o apunta esta conexión a una base de datos.",
   "connections.use_raw_json": "Usar JSON sin formato",
   "connections.upload_file": "Subir archivo",
   "connections.or_enter_path": "O introduzca la ruta del archivo",

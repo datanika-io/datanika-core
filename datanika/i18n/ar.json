@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "تعذّر فتح «{arg}» — تحقّق من أنه ملف قاعدة بيانات وأنه قابل للقراءة.",
   "connections.test_file_in_memory": "تم الاتصال — قاعدة بيانات في الذاكرة. لا يُكتب أي شيء على القرص.",
   "connections.test_driver_unavailable": "مشغّل {arg} غير متوفّر في هذه النسخة.",
+  "connections.local_path_not_allowed": "مسارات الملفات المحلية غير متاحة في هذا النشر. ارفع الملف بدلًا من ذلك، أو وجّه هذا الاتصال إلى قاعدة بيانات.",
   "connections.use_raw_json": "استخدام تكوين JSON خام",
   "connections.upload_file": "رفع ملف",
   "connections.or_enter_path": "أو أدخل مسار الملف",

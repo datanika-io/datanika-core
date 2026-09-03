@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "无法打开“{arg}”——请确认它是数据库文件且可读。",
   "connections.test_file_in_memory": "已连接——内存数据库。不会向磁盘写入任何内容。",
   "connections.test_driver_unavailable": "此版本中没有可用的 {arg} 驱动程序。",
+  "connections.local_path_not_allowed": "此部署不支持本地文件路径。请改为上传文件，或将此连接指向数据库。",
   "connections.use_raw_json": "使用原始 JSON 配置",
   "connections.upload_file": "上传文件",
   "connections.or_enter_path": "或输入文件路径",

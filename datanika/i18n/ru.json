@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "Не удалось открыть «{arg}» — проверьте, что это файл базы данных и что он доступен для чтения.",
   "connections.test_file_in_memory": "Подключено — база данных в памяти. На диск ничего не записывается.",
   "connections.test_driver_unavailable": "Драйвер {arg} недоступен в этой сборке.",
+  "connections.local_path_not_allowed": "Локальные пути к файлам недоступны в этой инсталляции. Загрузите файл или укажите в подключении базу данных.",
   "connections.use_raw_json": "Использовать JSON",
   "connections.upload_file": "Загрузить файл",
   "connections.or_enter_path": "Или укажите путь к файлу",

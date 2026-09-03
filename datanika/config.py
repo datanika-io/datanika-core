@@ -46,9 +46,12 @@ class Settings(BaseSettings):
     file_uploads_dir: str = "./uploaded_files"
 
     # Maintenance
+    # ⚠️ No run-retention setting here, deliberately (core#1000). Run history is retained
+    # for as long as the organization exists — the sentence `datanika.io/privacy` and
+    # `/trust` publish. A retention knob nobody sets is how the unenforced 90-day sweep
+    # came to exist; adding one back is a landing-page change first.
     maintenance_dlt_max_age_hours: int = 24
     maintenance_dbt_max_age_hours: int = 48
-    maintenance_run_retention_days: int = 90
 
     # Email / SMTP (disabled when smtp_host is empty)
     smtp_host: str = ""

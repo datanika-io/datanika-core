@@ -315,11 +315,17 @@ The prod measurement and the model agree exactly, in both directions. That is wo
 it is not the usual outcome in this codebase, and it means the rest of this section can be reasoned
 from the model.
 
-⚠️ **Nothing purges `audit_logs`.** `run_maintenance_task` purges runs
-(`maintenance_run_retention_days = 90`), orphaned dlt dirs, dbt targets, archives and spent reset
-tokens. **Audit rows are in none of those sweeps**, and `AuditLog` is the one model with no
-`deleted_at`. The table grows without bound, by design. This is what turns "expensive later" from a
-hypothetical into a schedule (D13).
+⚠️ **Nothing purges `audit_logs`.** `run_maintenance_task` sweeps orphaned dlt dirs, dbt targets,
+archives and spent reset tokens. **Audit rows are in none of those sweeps**, and `AuditLog` is the
+one model with no `deleted_at`. The table grows without bound, by design. This is what turns
+"expensive later" from a hypothetical into a schedule (D13).
+
+⚠️ **Corrected 2026-09-03 (core#1000): this paragraph used to cite a run purge at
+`maintenance_run_retention_days = 90` as the contrast case.** That sweep existed, ran hourly from
+2026-08-30, and **enforced nothing** — it wrote `Run.deleted_at` and no reader anywhere filtered on
+it. It has been removed by founder decision, so *run* history now also grows without bound, matching
+the retention `datanika.io/privacy` and `/trust` publish. The contrast that survives is narrower and
+still holds: `AuditLog` alone has no `deleted_at` at all, so it cannot even be marked.
 
 ### 🆕 The finding that changes the decision: **nothing reads the payload**
 

@@ -1,9 +1,16 @@
-"""TDD tests for maintenance service — cleanup orphaned files, old runs, stale artifacts."""
+"""TDD tests for maintenance service — cleanup orphaned files and stale artifacts.
+
+``TestPurgeOldRuns`` used to live here and is gone with the function it covered (core#1000).
+Its three tests asserted the returned *count* only; none of them asserted that a purged run
+stopped being visible, which is why a sweep that enforced nothing stayed green for months.
+The replacement is behavioural and lives where the behaviour is:
+``tests/test_tasks/test_maintenance_tasks.py::TestRunHistoryIsNeverPurged``.
+"""
 
 import os
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 
@@ -14,7 +21,6 @@ from datanika.services.maintenance_service import (
     cleanup_dbt_targets,
     cleanup_orphaned_archives,
     cleanup_orphaned_dlt_dirs,
-    purge_old_runs,
 )
 
 
@@ -134,54 +140,21 @@ class TestCleanupDbtTargets:
         assert tenant_dir.exists()
 
 
-class TestPurgeOldRuns:
-    def test_purges_old_completed_runs(self, db_session, org):
-        old_run = Run(
-            org_id=org.id,
-            target_type="upload",
-            target_id=1,
-            status=RunStatus.SUCCESS,
+class TestNoRunPurgeSurvives:
+    def test_the_service_exposes_no_run_purge(self):
+        """core#1000. A cheap static companion to the behavioural guard in test_tasks/.
+
+        Deliberately *not* the only guard: a name check is satisfied by re-adding the sweep
+        under a different name, which is why the real one drives the task and reads the row.
+        """
+        import datanika.services.maintenance_service as svc
+
+        purgers = [n for n in dir(svc) if "purge" in n or "retention" in n]
+        assert purgers == [], (
+            f"a run-retention sweep is back in maintenance_service: {purgers}. "
+            "Run history is published as retained for as long as the organization exists "
+            "(datanika.io/privacy, /trust) — see the module docstring before adding one."
         )
-        db_session.add(old_run)
-        db_session.flush()
-        # Manually set created_at to 100 days ago
-        old_run.created_at = datetime.utcnow() - timedelta(days=100)
-        db_session.flush()
-
-        count = purge_old_runs(db_session, retention_days=90)
-        assert count == 1
-        db_session.refresh(old_run)
-        assert old_run.deleted_at is not None
-
-    def test_preserves_recent_runs(self, db_session, org):
-        recent_run = Run(
-            org_id=org.id,
-            target_type="upload",
-            target_id=1,
-            status=RunStatus.SUCCESS,
-        )
-        db_session.add(recent_run)
-        db_session.flush()
-
-        count = purge_old_runs(db_session, retention_days=90)
-        assert count == 0
-        db_session.refresh(recent_run)
-        assert recent_run.deleted_at is None
-
-    def test_preserves_running_old_runs(self, db_session, org):
-        running_run = Run(
-            org_id=org.id,
-            target_type="upload",
-            target_id=1,
-            status=RunStatus.RUNNING,
-        )
-        db_session.add(running_run)
-        db_session.flush()
-        running_run.created_at = datetime.utcnow() - timedelta(days=100)
-        db_session.flush()
-
-        count = purge_old_runs(db_session, retention_days=90)
-        assert count == 0  # Running runs are never purged
 
 
 class TestCleanupOrphanedArchives:

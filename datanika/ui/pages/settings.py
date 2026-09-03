@@ -149,7 +149,15 @@ def _delete_account_dialog() -> rx.Component:
 
 
 def delete_account_section() -> rx.Component:
-    """The only destructive control on /settings, visually separated (D9)."""
+    """Account erasure, visually separated from everything above it (D9).
+
+    ⚠️ This used to say *"the only destructive control on /settings"*, which was
+    wrong when written and got wronger: the page also renders ``remove_member``,
+    ``delete_channel``, ``revoke_api_key``, ``cancel_invitation`` and
+    ``leave_org``. It is the only **irreversible** one — that is the claim worth
+    making, and the reason it sits behind a typed confirmation rather than a
+    second button.
+    """
     return rx.vstack(
         rx.divider(),
         rx.heading(_t["account.delete_heading"], size="3", color_scheme="red"),

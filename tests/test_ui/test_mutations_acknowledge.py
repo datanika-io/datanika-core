@@ -40,6 +40,13 @@ So this is a **two-list ratchet**, and the derived half is the equality:
 ⚠️ Deciding that the other 20 owe the user an acknowledgement is a **Product**
 call, not an Engineering one. This file records the split; it does not settle it.
 
+🆕 **Five of those 20 are now settled — SPEC_MUTATION_FEEDBACK §7 (D7a–D7e).**
+Four moved into ``ACKNOWLEDGES``; ``leave_org`` stays in
+``ACKNOWLEDGED_ELSEWHERE`` with an argument rather than the placeholder that
+said it was *"arguably a defect"*. Two of the five also gained a confirmation
+dialog and two deliberately did not — the reasons are in the spec, not restated
+here.
+
 ## Classify by behaviour, never by name
 
 Both directions of the naming heuristic are wrong here, which §2a established by

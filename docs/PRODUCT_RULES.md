@@ -112,6 +112,30 @@ destructive. The long-form incident is `plans/WORKFLOW_RULES.md` §7b; these are
 5. **Do not submit forms you are only photographing.** An Active schedule fires nightly runs into live
    alerting.
 
+### 3a. The app's own quirks, measured on production
+
+🆕 **Moved here 2026-09-03 from `plans/product/current_state.md`, where it had survived several
+sessions by luck.** That file is *rewritten from scratch* every session by standing rule, `plans/` is
+private, and these are facts about the product — so a handoff file was the one place they could not
+safely live. Same placement rule that put the rest of this document here.
+
+- **The production session expires ~5 minutes after login** (`ACCESS_TOKEN_TTL_MINUTES = 10` with
+  revalidation). Plan a capture run around it; do not read a mid-run redirect to `/login` as a bug.
+- **Connection-form state bleeds across a connector-type change.** Switch the type and fields from
+  the previous type can persist. Re-read what is actually in the inputs before trusting a form.
+- **The Connection type dropdown's options are plain `<p>` elements**, not `<option>`s — so
+  `selectOption` does not work and role-based selection finds nothing.
+- **The endpoint picker ships with every box ticked.** A SaaS connection created without touching it
+  selects everything, which is not what a screenshot should imply and not what a first run should do.
+- **BigQuery stores the service account under `keyfile_json`**, not under any of the names the form
+  labels suggest.
+- **`browser_snapshot` prints input values**, so it is not a safe way to inspect a form holding a
+  credential — see §4. **The OS clipboard is the working channel** for filling one without printing
+  it; `browser_run_code_unsafe` is a bare JS VM with no `require`, `import`, `process` or `fetch`,
+  so it cannot read a file.
+- **When two orgs share a destination database, the upload name is a shared resource.** Two tenants
+  can collide on it, and nothing in the UI says so.
+
 ## 4. The capture gate: refuse to shoot when a credential field is non-empty
 
 **A screenshot capture step must read every input's `.value` and abort if any credential field is

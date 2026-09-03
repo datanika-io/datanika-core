@@ -794,3 +794,8 @@ issue. **When a job classifies badly, diff it against its siblings before design
 [core#1008]: https://github.com/datanika-io/datanika-core/issues/1008
 [core#1026]: https://github.com/datanika-io/datanika-core/issues/1026
 [core#1029]: https://github.com/datanika-io/datanika-core/issues/1029
+[core#673]: https://github.com/datanika-io/datanika-core/issues/673
+[core#721]: https://github.com/datanika-io/datanika-core/issues/721
+[core#827]: https://github.com/datanika-io/datanika-core/issues/827
+[core#895]: https://github.com/datanika-io/datanika-core/issues/895
+[core#896]: https://github.com/datanika-io/datanika-core/issues/896

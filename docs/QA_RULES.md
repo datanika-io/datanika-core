@@ -604,3 +604,63 @@ that predated the PII work and had simply never been exercised — on some later
 
 [core#415]: https://github.com/datanika-io/datanika-core/issues/415
 [core#951]: https://github.com/datanika-io/datanika-core/issues/951
+
+## 24. Ask what the predicate READS, not how many files it opens
+
+A guard's breadth is the reassuring number, and the defect is usually in its depth.
+
+[core#943]'s masking guard was already **class-wide within this repo** — it globs every file
+under `.github/workflows/`, not just the one that leaked. It still had a syntax-shaped
+blind spot: it read only `step["env"]`. So **hoisting a secret from step level to job or
+workflow level — the ordinary refactor, and the obvious move the instant two steps need the
+same value — evaded the guard entirely while leaking identically.** Shown one probe at a
+time against the shipped guard, with the injectable-`workflow_dir` plumbing held constant in
+both arms so the red attributes to the predicate and not to the harness:
+
+| probe | ORIGINAL | PATCHED | want |
+|---|---|---|---|
+| real tree only (arming baseline) | GREEN | GREEN | GREEN |
+| secret in **step** `env:`, unmasked | RED | RED | RED |
+| secret in **job** `env:`, unmasked | 🔴 **GREEN** | RED | RED |
+| secret in **workflow** `env:`, unmasked | 🔴 **GREEN** | RED | RED |
+| job secret, **unrelated** env write | GREEN | GREEN | GREEN |
+| secret in job `env:`, correctly masked | GREEN | GREEN | GREEN |
+
+The two rows that are green in **both** arms are the false-positive controls, and they are
+the point: without them a guard that had simply been made to go red more often would score
+identically on this table. Cf. §3.
+
+**So when you write or review a guard, enumerate the shapes the thing it forbids can take,
+and test the ones you did NOT just fix.** *"It scans every file"* answers a different
+question from *"what does it look at inside each one?"*
+
+🚨 **A guard has to be class-wide across REPOSITORIES, not merely across files.** A
+cross-repo sweep found `datanika-cloud`'s own materializer **already masking, citing
+[cloud#91]** — so the organisation knew this failure mode *before this repo acquired the
+bug*, and the knowledge did not transfer. A per-repo guard would have been satisfied by
+cloud and blind to core, which is the arrangement that produced an S1 live for ~89 days on a
+public repo.
+
+**When you fix something in one repo, sweep the others for the same shape in the same
+session.** The sweep is minutes; the knowledge does not travel on its own. Record the result
+either way — the same sweep found `datanika-landing` writes no secret to `$GITHUB_ENV` at
+all, and *"checked, not applicable"* is worth as much as a fix, because it stops the next
+person re-deriving it.
+
+### 24a. A guard that reads raw text can be satisfied by a COMMENT
+
+Same family, found the same way — by mutating the real artifact rather than a fixture.
+
+Two assertions of the form `assert '-k "not oracle"' in step` stayed **GREEN** against a
+workflow whose `pytest` line had been stripped of `-k`, because the flag is also *described*
+in the comment above it. The guard was checking that we still **talk about** the fix, not
+that we do it. Its own test suite passed throughout; only the mutation exposed it.
+
+Strip comment lines before asserting on a command — in a `run:` block a line whose first
+non-space character is `#` is a comment by definition, so nothing is lost — and keep a
+control asserting the stripper still lets a real command through. Otherwise the next person
+"fixes" a false positive by narrowing the stripper until the guard matches nothing.
+`tests/test_deploy/test_nightly_smoke_tiers.py`.
+
+[core#943]: https://github.com/datanika-io/datanika-core/issues/943
+[cloud#91]: https://github.com/datanika-io/datanika-cloud/issues/91

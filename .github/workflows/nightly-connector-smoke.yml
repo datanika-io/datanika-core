@@ -63,115 +63,107 @@ jobs:
             "google-analytics-data>=0.18" \
             "kafka-python>=2.1"
 
-      - name: Materialize connector credentials
+      # 🚨 core#983 — the credential BUNDLE is gone, and with it every
+      # `$GITHUB_ENV` write in this job that carried a secret.
+      #
+      # What was here: two steps that base64-decoded an aggregate env file and
+      # appended each `KEY=VALUE` to `$GITHUB_ENV`. GitHub masks strings it has
+      # been *given* — it knew the blob and redacted exactly that — so every
+      # value decoded out of it was a string the runner had never seen and was
+      # printed in the `##[group]Run …` header of every later step. This repo is
+      # PUBLIC; 53 downloadable Actions logs carried live vendor PATs in
+      # cleartext, oldest 2026-06-05 (core#943).
+      #
+      # core#943 patched that with an `::add-mask::` loop, and the patch works
+      # (measured in production 2026-09-03: 0 unmasked tokens after, 1 before).
+      # But it is a patch around a design that defeats masking by construction:
+      # the loop has to decide, at runtime, which manufactured strings deserve
+      # protection. Registering each credential individually removes the
+      # decision — **GitHub masks it natively and our code has no opportunity
+      # to get it wrong.** The `::add-mask::` loop is deleted in the same commit
+      # that introduces native masking, so there is never a window with neither.
+      #
+      # ⚠️ Secret vs variable is decided by TODAY'S EXPOSURE, not by whether the
+      # value looks like a credential (core#983). A naive credentials-vs-config
+      # split would have made currently-masked values newly visible in a public
+      # log — `DATABRICKS_HOST`, `SHOPIFY_SHOP_DOMAIN` and `FRESHDESK_DOMAIN`
+      # are account identifiers that cloud#153 lists as exposed precisely
+      # because they name the accounts the credentials open. **The rule is: no
+      # exposure regression in either direction.** Masked today ⇒ secret.
+      # Visible today ⇒ variable, which also keeps the short constants readable
+      # rather than redacting an 8-character string across the whole log.
+      #
+      # ⚠️ The two `*_CREDENTIALS_FILE` variables are PATHS, not credentials —
+      # both are `secrets/qa-bigquery-sa.json`, a literal already present in
+      # this file's source on a public repo. Variables, at zero exposure cost.
+      #
+      # ⚠️ Naming each key means adding a credential requires editing this file.
+      # That is the point: it puts the credential surface in a reviewable diff.
+      # `tests/test_deploy/test_nightly_smoke_env_parity.py` makes the omission
+      # fail at PR time instead of twenty-four hours later in a red nightly.
+      #
+      # There is deliberately NO separate credential-gate step. The suite's own
+      # `_require_env` already fails loudly and names every empty variable
+      # (`tests/test_connector_smoke/conftest.py`); a second hand-maintained
+      # list of the same names in a `run:` block is a second source of truth,
+      # and it would rot.
+
+      - name: Write the BigQuery / GA4 service-account key to a file
         env:
-          # Aggregate base64'd env file — set in GitHub secrets from
-          # secrets/qa-connectors.env on the dev host. Rotate bundle
-          # whenever any individual cred rotates.
-          QA_CONNECTOR_CREDENTIALS: ${{ secrets.QA_CONNECTOR_CREDENTIALS }}
+          # The one credential that never leaked, because it goes to a FILE and
+          # has never passed through `$GITHUB_ENV` (cloud#153 confirms it).
+          # Multi-line JSON, so it stays its own secret rather than joining the
+          # `env:` block below.
           QA_BIGQUERY_SA_JSON: ${{ secrets.QA_BIGQUERY_SA_JSON }}
         run: |
-          if [ -z "$QA_CONNECTOR_CREDENTIALS" ]; then
-            echo "::error::QA_CONNECTOR_CREDENTIALS secret is not set — nothing to test"
+          # ⚠️ This used to be `if [ -n "$QA_BIGQUERY_SA_JSON" ]` — i.e. an
+          # absent secret wrote no file and the step still exited 0. Assert the
+          # positive artifact instead: the file exists and is non-empty JSON.
+          if [ -z "$QA_BIGQUERY_SA_JSON" ]; then
+            echo "::error::QA_BIGQUERY_SA_JSON is empty — the BigQuery and GA4 probes cannot authenticate. Check the secret is set on the 'production' environment."
             exit 1
           fi
           mkdir -p secrets
-          # Decode env file and export every KEY=VALUE pair into $GITHUB_ENV
-          printf '%s' "$QA_CONNECTOR_CREDENTIALS" | base64 -d > /tmp/creds.env
-          while IFS= read -r line; do
-            # Skip comments + blanks
-            case "$line" in ''|\#*) continue ;; esac
-            # Strip surrounding double-quotes from value — $GITHUB_ENV
-            # parser treats quotes as literal chars (unlike bash/python-dotenv).
-            # Without this, httpx rejects URLs like ""https://..."" (core#270).
-            #
-            # ⚠️ The character class MUST carry digits (core#827). It was `[A-Z_]+`,
-            # which does not match a name like `GA4_PROPERTY_ID` or `S3_BUCKET`, so
-            # those lines fell through unchanged and reached $GITHUB_ENV with their
-            # quotes still attached — i.e. core#270's bug, re-created for every
-            # variable whose name contains a digit. Invisible from both ends: the
-            # file has the value and the secret is non-empty; only the consumer sees
-            # a value wrapped in literal quote characters.
-            line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
-            #
-            # 🚨 core#943 — REGISTER THE DECODED VALUE BEFORE IT REACHES $GITHUB_ENV.
-            # The runner masks strings it has been *given*: it knows
-            # QA_CONNECTOR_CREDENTIALS (the base64 blob) and redacts exactly that.
-            # Every value decoded out of it is a different string it has never seen,
-            # so it is never masked — and $GITHUB_ENV puts it in the job environment,
-            # which the runner prints in the `##[group]Run …` header of every later
-            # step. This repo is PUBLIC. Measured before the fix: 53 downloadable
-            # Actions logs carried a live vendor PAT in cleartext, oldest 2026-06-05.
-            # The tell that it is a masking gap rather than masking being off: one
-            # log line shows `QA_WAVE1_CREDENTIALS: ***` beside an unmasked value
-            # decoded from that same bundle.
-            #
-            # ⚠️ Masking is NOT free, which is why this is not `mask everything`.
-            # `::add-mask::` redacts every occurrence of the string in the log, so
-            # masking a short or ordinary value destroys readability: the project
-            # name is 8 characters and appears in nearly every path, and masking
-            # `1521` or `SASL_SSL` would redact them project-wide for no benefit.
-            # Hence: mask on a credential-shaped NAME, or on a value long enough
-            # that it cannot be an ordinary token — never on a bare short value.
-            name=${line%%=*}
-            value=${line#*=}
-            mask=0
-            case "$name" in
-              *TOKEN*|*KEY*|*SECRET*|*PASSWORD*|*CREDENTIAL*) mask=1 ;;
-            esac
-            if [ "${#value}" -ge 16 ]; then mask=1; fi
-            if [ "$mask" = 1 ] && [ "${#value}" -ge 8 ]; then
-              echo "::add-mask::$value"
-            fi
-            echo "$line" >> "$GITHUB_ENV"
-          done < /tmp/creds.env
-          rm /tmp/creds.env
-
-          # BigQuery service-account JSON is a separate secret (multi-line
-          # JSON doesn't fit cleanly in the aggregate env file).
-          if [ -n "$QA_BIGQUERY_SA_JSON" ]; then
-            printf '%s' "$QA_BIGQUERY_SA_JSON" > secrets/qa-bigquery-sa.json
-            chmod 600 secrets/qa-bigquery-sa.json
-          fi
-
-      - name: Materialize Wave-1 connector credentials
-        env:
-          # Second aggregate base64'd env file — the SaaS Wave-1 trio
-          # (Pipedrive / Freshdesk / Asana). Kept separate from
-          # QA_CONNECTOR_CREDENTIALS so the two cred sets can rotate
-          # independently. Built from secrets/{pipedrive,freshdesk,asana}.env.
-          QA_WAVE1_CREDENTIALS: ${{ secrets.QA_WAVE1_CREDENTIALS }}
-        run: |
-          if [ -z "$QA_WAVE1_CREDENTIALS" ]; then
-            echo "::error::QA_WAVE1_CREDENTIALS secret is not set — Wave-1 SaaS probes cannot run"
-            exit 1
-          fi
-          printf '%s' "$QA_WAVE1_CREDENTIALS" | base64 -d > /tmp/wave1.env
-          while IFS= read -r line; do
-            case "$line" in ''|\#*) continue ;; esac
-            # Digits in the class — see the note on the same sed above (core#827).
-            line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
-            # Mask before writing — see the long note on the same block above
-            # (core#943). This bundle carries the Pipedrive / Freshdesk / Asana
-            # PATs; the Asana one was live and publicly logged for ~89 days.
-            name=${line%%=*}
-            value=${line#*=}
-            mask=0
-            case "$name" in
-              *TOKEN*|*KEY*|*SECRET*|*PASSWORD*|*CREDENTIAL*) mask=1 ;;
-            esac
-            if [ "${#value}" -ge 16 ]; then mask=1; fi
-            if [ "$mask" = 1 ] && [ "${#value}" -ge 8 ]; then
-              echo "::add-mask::$value"
-            fi
-            echo "$line" >> "$GITHUB_ENV"
-          done < /tmp/wave1.env
-          rm /tmp/wave1.env
+          printf '%s' "$QA_BIGQUERY_SA_JSON" > secrets/qa-bigquery-sa.json
+          chmod 600 secrets/qa-bigquery-sa.json
+          [ -s secrets/qa-bigquery-sa.json ] || { echo "::error::secrets/qa-bigquery-sa.json is empty after write"; exit 1; }
+          # Shape, not content — never print the key. `type` is the only field
+          # asserted, so a truncated or base64-wrapped secret fails here rather
+          # than inside a vendor client three steps later.
+          python -c "import json,sys; d=json.load(open('secrets/qa-bigquery-sa.json')); sys.exit(0 if d.get('type')=='service_account' else 1)" \
+            || { echo "::error::secrets/qa-bigquery-sa.json is not a service_account key"; exit 1; }
 
       - name: Run connector smoke tests
         id: smoke
         env:
           DATANIKA_CONNECTOR_SMOKE: "1"
+
+          # ── Credentials — masked natively by GitHub, one secret per value ──
+          # Every name below is masked in today's logs and stays masked.
+          ASANA_ACCESS_TOKEN: ${{ secrets.ASANA_ACCESS_TOKEN }}
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          FRESHDESK_API_KEY: ${{ secrets.FRESHDESK_API_KEY }}
+          FRESHDESK_DOMAIN: ${{ secrets.FRESHDESK_DOMAIN }}
+          HUBSPOT_ACCESS_TOKEN: ${{ secrets.HUBSPOT_ACCESS_TOKEN }}
+          KAFKA_BOOTSTRAP_SERVERS: ${{ secrets.KAFKA_BOOTSTRAP_SERVERS }}
+          KAFKA_SASL_PASSWORD: ${{ secrets.KAFKA_SASL_PASSWORD }}
+          PIPEDRIVE_API_TOKEN: ${{ secrets.PIPEDRIVE_API_TOKEN }}
+          SHOPIFY_ACCESS_TOKEN: ${{ secrets.SHOPIFY_ACCESS_TOKEN }}
+          SHOPIFY_SHOP_DOMAIN: ${{ secrets.SHOPIFY_SHOP_DOMAIN }}
+          STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
+
+          # ── Configuration — visible in today's logs, deliberately kept so ──
+          # Masking these would redact ordinary strings project-wide for no
+          # benefit: `GA4_PROPERTY_ID` is 9 characters and a shop domain
+          # fragment appears in half the assertion messages.
+          BIGQUERY_CREDENTIALS_FILE: ${{ vars.BIGQUERY_CREDENTIALS_FILE }}
+          BIGQUERY_PROJECT_ID: ${{ vars.BIGQUERY_PROJECT_ID }}
+          GA4_CREDENTIALS_FILE: ${{ vars.GA4_CREDENTIALS_FILE }}
+          GA4_PROPERTY_ID: ${{ vars.GA4_PROPERTY_ID }}
+          KAFKA_SASL_USERNAME: ${{ vars.KAFKA_SASL_USERNAME }}
+          KAFKA_TOPIC: ${{ vars.KAFKA_TOPIC }}
+          SHOPIFY_API_VERSION: ${{ vars.SHOPIFY_API_VERSION }}
         # A skipped probe is worse than a failing one: it reports green while
         # testing nothing. Missing creds and un-importable client libs now FAIL
         # rather than skip (tests/test_connector_smoke/conftest.py), so a healthy
@@ -275,7 +267,7 @@ jobs:
           # tests/test_deploy/test_nightly_smoke_tiers.py runs the real grep
           # against a real tier line, in both directions.
           if [ "${n_skipped:-1}" != "0" ] || grep -qE '^=+.* [0-9]+ skipped' /tmp/smoke.log; then
-            echo "::error::Smoke probes were SKIPPED (reporter says skipped=${n_skipped:-?}) — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
+            echo "::error::Smoke probes were SKIPPED (reporter says skipped=${n_skipped:-?}) — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential named in this step's env: block resolves — since core#983 there is no credential bundle; each value is its own secret or variable, and an unregistered one renders as the empty string, which conftest reports as a missing env var."
             exit 1
           fi
 

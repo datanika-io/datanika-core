@@ -132,6 +132,7 @@ from starlette.routing import Mount, Route
 
 from datanika.services import metrics as metrics_module
 from datanika.services.metrics import (
+    UNMATCHED_PATH_LABEL,
     PrometheusMiddleware,
     http_request_duration_seconds,
     http_requests_total,
@@ -285,6 +286,37 @@ ROUTES = [
 # whole claim is that the label value comes from the ROUTE TABLE and never from
 # the request, so the table's size is the bound.
 DISTINCT_ROUTE_TEMPLATES = 8
+
+
+def _literal_collision_paths() -> list[str]:
+    """One path per (single-string-parameter route) x (literal segment of that same route).
+
+    core#1020. The ceiling test's **predicate** was always right; its **corpus** was
+    ``tenant-0…29`` / ``provider-0…29`` — every value invented, and not one equal to a
+    literal of its own route. The attack was never in the sample, so a guard that would
+    have fired for free stayed green.
+
+    Derived from ``ROUTES`` rather than listed, per core#1020 AC2: a route added tomorrow
+    is covered with no edit here, which is the whole property that makes a ceiling worth
+    keeping. A hardcoded list of ten paths would close today's instance and nothing else.
+
+    Only ``str`` parameters qualify — an ``int`` convertor cannot take a word, so all 34
+    ``/api/v1/*`` parameters in production are immune and would generate 404s here rather
+    than collisions.
+    """
+    paths: list[str] = []
+    for route in ROUTES:
+        template = getattr(route, "path", "")
+        segments = [s for s in template.split("/") if s]
+        params = [s for s in segments if s.startswith("{") and s.endswith("}")]
+        literals = [s for s in segments if not s.startswith("{")]
+        if len(params) != 1:
+            continue
+        declaration = params[0][1:-1]
+        if ":" in declaration and not declaration.endswith(":str"):
+            continue
+        paths.extend(template.replace(params[0], literal) for literal in literals)
+    return paths
 
 
 async def _drive(paths: Iterable[str], *, method: str = "GET") -> None:
@@ -569,6 +601,51 @@ async def test_mounted_subapp_tails_are_bounded() -> None:
     )
 
 
+async def test_a_value_equal_to_its_own_routes_literal_never_rotates_the_template() -> None:
+    """core#1020 AC1/AC3, named rather than counted.
+
+    ``_redact_path_params`` walked left to right and replaced the **first** segment equal
+    to a parameter's value. When that value equals a literal appearing *earlier in the same
+    route*, the literal was redacted and the parameter's own segment emitted verbatim —
+    minting ``/api/auth/sso/:org_slug/login`` and three more rotations of the same
+    template, all caller-chosen and unauthenticated.
+
+    ⚠️ **This asserts something narrower than core#1020's AC1, deliberately, and the
+    difference is the fix that was chosen.** AC1 asks for *"the same label as any other
+    value for that route"*, which requires knowing which segment the router matched. We do
+    not know: Starlette 0.52.1 leaves ``scope["route"]`` unset (see ``_normalize_path``),
+    so the position is recovered by searching for the value, and **no fixed search
+    direction is universally correct**. Leftmost mislabels this case; rightmost mislabels
+    ``/api/v1/orgs/{org_id}/members`` with ``org_id=members``, the case the shipped
+    docstring is about. So the fix refuses to guess: an ambiguous placement returns
+    ``<other>``, which is the honest answer rather than a confident wrong one. Exact
+    recovery needs an endpoint → template index and is filed separately.
+
+    What must hold, and does:
+      * no rotated template is ever produced — that is the defect;
+      * the value lands in the already-bounded set;
+      * a value that is *not* a literal still gets the route's own label (the control,
+        without which a fix that sends everything to ``<other>`` would pass here).
+    """
+    ordinary = await _label_for("/api/auth/sso/login/acme")
+    if ordinary != "/api/auth/sso/login/:org_slug":
+        raise HarnessError(
+            f"an ordinary slug produced {ordinary!r}, not the route's template. The "
+            "collision assertion below would be measuring something else."
+        )
+
+    for path in ("/api/auth/sso/login/login", "/api/auth/sso/login/sso", "/api/auth/sso/login/api"):
+        label = await _label_for(path)
+        assert label != ordinary.replace("login/:org_slug", ":org_slug/login"), (
+            f"{path} produced the rotated template {label!r} — a second, caller-chosen "
+            "series for a route that already has one, and a template that is not a route."
+        )
+        assert label in {ordinary, UNMATCHED_PATH_LABEL}, (
+            f"{path} produced {label!r}, which is neither the route's own template nor "
+            f"the bounded {UNMATCHED_PATH_LABEL!r} bucket."
+        )
+
+
 async def test_the_producible_label_set_is_bounded_by_the_route_table() -> None:
     """core#896 AC3, expressed where pytest can assert it: a checked-in ceiling.
 
@@ -585,6 +662,7 @@ async def test_the_producible_label_set_is_bounded_by_the_route_table() -> None:
     case-by-case tests above cannot, because they each name a shape somebody
     already thought of.
     """
+    collisions = _literal_collision_paths()
     corpus = (
         list(SCANNER_PATHS)
         + [f"/api/auth/sso/login/tenant-{n}" for n in range(30)]
@@ -593,11 +671,19 @@ async def test_the_producible_label_set_is_bounded_by_the_route_table() -> None:
         + [f"/api/v1/pipelines/{n}" for n in range(30)]
         + [f"/api/v1/connections/{UUID_A[:-1]}{c}" for c in "0123456789abcdef"]
         + [f"/api/v1/runs/{ULID_A[:-1]}{c}" for c in "0123456789ABCDEF"]
+        # core#1020: the shape the corpus never contained.
+        + collisions
     )
     if len(corpus) < 200:
         raise HarnessError(
             f"the corpus holds {len(corpus)} paths; a ceiling asserted over a "
             "handful of requests is satisfied by arithmetic rather than by the fix"
+        )
+    if "/api/auth/sso/login/login" not in collisions:
+        raise HarnessError(
+            f"the derived collision corpus is {collisions!r}; it does not contain the "
+            "path core#1020 was filed on, so the ceiling is not being asked the "
+            "question that motivated it"
         )
 
     landed = {await _label_for(path) for path in corpus}

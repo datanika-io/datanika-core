@@ -234,6 +234,86 @@ def drill_has_no_plaintext_fallback(text: str) -> bool:
     return "exit 1" in match.group(1)
 
 
+def drill_exercises_both_volume_artifacts(text: str) -> bool:
+    """core#970 — the drill must pull and decrypt the volume tarballs too.
+
+    Before this, the dump was proven monthly and the user data it references was
+    proven never: the tarballs' only proof was the creation-time round-trip on
+    the box at 03:00, which says nothing about the copy sitting on Aweb 29 days
+    later.
+
+    ⚠️ Asserted on the executable line — the ``VOLUMES=`` assignment and a decrypt
+    of ``${VENC}`` — never on the prose. ``archives_the_referenced_volumes`` in
+    this same file first read ``"datanika_dbt_projects" in text``, which the
+    comment block *explaining* the volume satisfied, so removing it from the real
+    list left the check green.
+    """
+    assigns = re.search(r'^VOLUMES="datanika_uploaded_files datanika_dbt_projects"$', text, re.M)
+    decrypts = re.search(r'gpg [^\n]*--decrypt "\$\{VENC\}"', text)
+    return bool(assigns) and bool(decrypts)
+
+
+def drill_volume_count_comes_from_the_backups_own_record(text: str) -> bool:
+    """The member count must be compared against ``datanika_backup_last_files_count``.
+
+    Not against a constant, and not against anything derived from the same
+    archive. A constant rots the moment the volume grows; a self-derived figure
+    is satisfied by any tar, including one holding nothing.
+    """
+    reads_metric = "datanika_backup_last_files_count" in text and "BACKUP_METRICS" in text
+    compares = re.search(r'if \[ "\$\{MEMBERS\}" != "\$\{EXPECTED\}" \]', text)
+    refuses_without_it = re.search(r'if \[ -z "\$\{EXPECTED\}" \]', text)
+    return bool(reads_metric and compares and refuses_without_it)
+
+
+def drill_cross_checks_uploads_against_the_dump(text: str) -> bool:
+    """The assertion that "the tar extracts" cannot satisfy.
+
+    A tar truncated after a directory header still extracts, still exits 0 and
+    still contains a directory — core#725 one layer down. Only comparing the
+    restored ``uploaded_files`` rows against the extracted tree ties the two
+    artifacts together, and neither can fake that alone.
+    """
+    queries = "from uploaded_files where deleted_at is null" in text
+    looks_up = re.search(r'find "\$\{UPX\}" -type f -name "\$\(basename "\$\{P\}"\)"', text)
+    fails = bool(re.search(r'if \[ -n "\$\{UP_MISSING\}" \]', text))
+    return bool(queries and looks_up and fails)
+
+
+def drill_refuses_a_vacuous_upload_check(text: str) -> bool:
+    """0 rows examined must FAIL, not pass.
+
+    core#725's whole lesson: a check over an empty row set succeeds against any
+    tree, including an empty one, and reads exactly like a clean result. The
+    surrounding script already uses this shape for ``LIVE_POPULATED``.
+    """
+    match = re.search(r'if \[ "\$\{UP_CHECKED\}" -lt 1 \]; then\n(.*?)\nfi', text, re.S)
+    return bool(match) and "exit 1" in match.group(1)
+
+
+def drill_fails_on_offsite_plaintext_tarballs(text: str) -> bool:
+    """Mirrors ``drill_fails_on_offsite_plaintext`` for the volume archives.
+
+    ``*.sql.gz`` does not match ``*.tar.gz``, so the dump's plaintext sweep is
+    blind to a volume archive that stopped being encrypted.
+    """
+    match = re.search(r'if \[ "\$\{PLAIN_TARS\}" != 0 \]', text)
+    return bool(match) and "*.tar.gz " in text.replace("*.tar.gz.gpg", "")
+
+
+def drill_documents_the_absolute_path_constraint(text: str) -> bool:
+    """The one thing a restorer must know that the artifacts cannot tell them.
+
+    ``resolve_archive_path`` early-returns on an absolute path and every
+    production row is absolute, so a restore that lands the bytes anywhere other
+    than ``/app/uploaded_files`` produces a database whose rows all point at
+    files that are not there — with no error until a user asks for a download.
+    This drill proves the BYTES survive and deliberately does not prove the path
+    resolves, so the constraint has to be written down beside it.
+    """
+    return "resolve_archive_path" in text and "/app/uploaded_files/archives/" in text
+
+
 PREDICATES = {
     "ships_only_ciphertext": (ships_only_ciphertext, "backup"),
     "size_gate_measures_plaintext": (size_gate_measures_plaintext, "backup"),
@@ -253,6 +333,24 @@ PREDICATES = {
     "drill_reads_ciphertext": (drill_reads_ciphertext, "drill"),
     "drill_fails_on_offsite_plaintext": (drill_fails_on_offsite_plaintext, "drill"),
     "drill_has_no_plaintext_fallback": (drill_has_no_plaintext_fallback, "drill"),
+    "drill_exercises_both_volume_artifacts": (drill_exercises_both_volume_artifacts, "drill"),
+    "drill_volume_count_comes_from_the_backups_own_record": (
+        drill_volume_count_comes_from_the_backups_own_record,
+        "drill",
+    ),
+    "drill_cross_checks_uploads_against_the_dump": (
+        drill_cross_checks_uploads_against_the_dump,
+        "drill",
+    ),
+    "drill_refuses_a_vacuous_upload_check": (drill_refuses_a_vacuous_upload_check, "drill"),
+    "drill_fails_on_offsite_plaintext_tarballs": (
+        drill_fails_on_offsite_plaintext_tarballs,
+        "drill",
+    ),
+    "drill_documents_the_absolute_path_constraint": (
+        drill_documents_the_absolute_path_constraint,
+        "drill",
+    ),
 }
 
 _ABORT_ECHO_TAIL = 'is the failure this change exists to end."'
@@ -296,6 +394,34 @@ MUTATIONS = {
     "drill_has_no_plaintext_fallback": (
         'tail -10 "${WORK}/gpg.log" || true\n    exit 1',
         'tail -10 "${WORK}/gpg.log" || true',
+    ),
+    # core#970. Each removes exactly the property its predicate asserts, and each
+    # is the realistic regression rather than a straw one: the volume list losing
+    # a member, the count losing its independent expectation, the cross-check
+    # losing its lookup, the vacuity guard losing its `exit 1`.
+    "drill_exercises_both_volume_artifacts": (
+        'VOLUMES="datanika_uploaded_files datanika_dbt_projects"',
+        'VOLUMES="datanika_uploaded_files"',
+    ),
+    "drill_volume_count_comes_from_the_backups_own_record": (
+        'if [ "${MEMBERS}" != "${EXPECTED}" ]',
+        'if [ "${MEMBERS}" -lt 0 ]',
+    ),
+    "drill_cross_checks_uploads_against_the_dump": (
+        'find "${UPX}" -type f -name "$(basename "${P}")" -print -quit',
+        'echo "${UPX}"',
+    ),
+    "drill_refuses_a_vacuous_upload_check": (
+        '    exit 1\nfi\nif [ -n "${UP_MISSING}" ]',
+        'fi\nif [ -n "${UP_MISSING}" ]',
+    ),
+    "drill_fails_on_offsite_plaintext_tarballs": (
+        'if [ "${PLAIN_TARS}" != 0 ]',
+        'if [ "${PLAIN_TARS}" = 999 ]',
+    ),
+    "drill_documents_the_absolute_path_constraint": (
+        "resolve_archive_path",
+        "resolve_thing",
     ),
 }
 
@@ -384,6 +510,75 @@ class TestRestoreDrillInvariants:
     def test_drill_is_the_thing_that_exercises_decryption(self, drill_text):
         """If the drill stopped decrypting, encryption would be unverified for 30 d."""
         assert "--decrypt" in drill_text and "RESTORE DRILL FAIL" in drill_text
+
+
+class TestTheDrillExercisesTheVolumeArtifacts:
+    """core#970 — user data was proven at creation and never again.
+
+    core#954 added two encrypted volume tarballs beside the dump. Their only
+    proof was the creation-time round-trip on the box at 03:00, which says
+    nothing about the copy sitting on Aweb 29 days later — the exact failure this
+    drill was built for after core#725.
+    """
+
+    def test_both_volume_artifacts_are_pulled_and_decrypted(self, drill_text):
+        assert drill_exercises_both_volume_artifacts(drill_text)
+
+    def test_the_member_count_is_compared_against_the_backups_own_record(self, drill_text):
+        assert drill_volume_count_comes_from_the_backups_own_record(drill_text)
+
+    def test_uploads_are_cross_checked_against_the_restored_dump(self, drill_text):
+        """The assertion "the tar extracts" cannot satisfy.
+
+        A tar truncated after a directory header extracts cleanly, exits 0 and
+        contains a directory. Only tying the restored rows to the extracted tree
+        distinguishes that from a good archive, and neither artifact can fake it
+        alone.
+        """
+        assert drill_cross_checks_uploads_against_the_dump(drill_text)
+
+    def test_a_zero_row_cross_check_fails_rather_than_passing(self, drill_text):
+        assert drill_refuses_a_vacuous_upload_check(drill_text)
+
+    def test_plaintext_volume_archives_off_site_are_refused(self, drill_text):
+        """`*.sql.gz` does not match `*.tar.gz`, so the dump's sweep is blind to these."""
+        assert drill_fails_on_offsite_plaintext_tarballs(drill_text)
+
+    def test_the_absolute_path_constraint_is_written_down(self, drill_text):
+        assert drill_documents_the_absolute_path_constraint(drill_text)
+
+    def test_remote_dir_is_overridable_so_the_controls_are_testable(self, drill_text):
+        """Same argument as `GNUPGHOME` in the backup script, one file over.
+
+        The negative controls for these assertions need a directory holding a
+        DELIBERATELY broken artifact. With `REMOTE_DIR` hardcoded the only way to
+        exercise them is to put a corrupt archive in the real off-site backup
+        directory, which is not a trade worth making to prove a check works.
+
+        The default is unchanged, so cron behaves identically.
+        """
+        assert 'REMOTE_DIR="${REMOTE_DIR:-/opt/datanika-backups}"' in drill_text, (
+            "REMOTE_DIR is hardcoded again — the volume negative controls can then only "
+            "be run against the live off-site backups"
+        )
+
+    def test_the_two_plaintext_sweeps_are_genuinely_distinct(self, drill_text):
+        """Discrimination, not two assertions that could share one implementation.
+
+        The dump sweep and the tarball sweep must be separate globs against
+        separate counters. If one were deleted the other would still match its own
+        pattern, and a single combined check would go on passing — which is how a
+        plaintext volume archive could sit off-site for a month beside a correctly
+        encrypted dump.
+        """
+        assert "PLAINTEXT_COUNT" in drill_text and "PLAIN_TARS" in drill_text
+        without_tar_sweep = drill_text.replace('if [ "${PLAIN_TARS}" != 0 ]', "if false")
+        assert without_tar_sweep != drill_text, "mutation target not found — stale mutation"
+        assert drill_fails_on_offsite_plaintext(without_tar_sweep) is True, (
+            "removing the tarball sweep broke the DUMP sweep's predicate too, so the two "
+            "are not independent and one check is standing in for both"
+        )
+        assert drill_fails_on_offsite_plaintext_tarballs(without_tar_sweep) is False
 
 
 class TestPublicKeyIsCommittedAndIsNotPrivate:

@@ -340,10 +340,13 @@ def _org_with_an_ancient_completed_run(db_session):
 class TestRunHistoryIsNeverPurged:
     """core#1000, founder decision 2026-09-03 (option B): the pages are right, the sweep was wrong.
 
-    ``purge_old_runs`` soft-deleted completed runs older than 90 days, and **nothing read
-    ``Run.deleted_at``**: ``ExecutionService.list_runs`` carries no such predicate and this
-    codebase has no global soft-delete filter. So the sweep hid nothing, removed nothing and
-    logged a success count hourly from 2026-08-30, when beat first ran (core#653).
+    ``purge_old_runs`` soft-deleted completed runs older than 90 days and **no reader could
+    observe the mark**: ``ExecutionService.list_runs``, ``get_org_run`` and
+    ``dependency_check`` all carry no ``deleted_at`` predicate, and this codebase has no
+    global soft-delete filter. (``cleanup_orphaned_dlt_dirs`` does read ``Run.deleted_at``,
+    but only over RUNNING/PENDING runs, which the purge never marked.) So the sweep hid
+    nothing, removed nothing and logged a success count hourly from 2026-08-30, when beat
+    first ran (core#653).
 
     The retention we publish is *"for as long as the organization exists"* —
     ``datanika-landing/src/pages/privacy.astro`` and ``trust.astro``. Until now the only

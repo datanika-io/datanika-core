@@ -78,7 +78,7 @@ RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
 # `*.dist-info/METADATA` or `*.egg-info/PKG-INFO` -- and trivy's python
 # analyzer reads those as INSTALLED PACKAGES.
 #
-# Measured on the `image-cve` run for `dev 89e7e2b`: **51 of 308** scanned
+# Measured on the `image-cve` run for `dev 89e7e2b`: **51 of 306** scanned
 # targets were cache paths, and **6 of the 11 HIGH findings** came from
 # packages the application cannot import. lxml is the clearest instance -- the
 # venv ships 6.1.2 (floored in pyproject.toml for CVE-2026-41066) while the

@@ -1336,7 +1336,29 @@ class ConnectionState(BaseState):
         await self.load_connections()
 
     async def edit_connection(self, conn_id: int):
-        """Load a saved connection into the form for editing."""
+        """Load a saved connection into the form for editing.
+
+        🚨 **This decrypts a stored credential and puts it in public state**, so
+        it is a privileged read and not a neutral one (core#972). It calls
+        ``get_connection_config``, which decrypts, and hands the result to
+        ``_populate_form_from_config``, which writes it into ``form_password``,
+        ``form_aws_secret_access_key``, ``form_service_account_json``,
+        ``form_client_secret`` and ``form_refresh_token`` — all public Reflex
+        state vars, all serialized to the caller's browser.
+
+        The Edit button is wrapped in ``rx.cond(AuthState.can_edit, ...)``, which
+        is a **render** condition. A Reflex event handler is dispatched by name
+        over the websocket and does not care which buttons were drawn, so before
+        this gate any authenticated member — a viewer included — could retrieve
+        the org's warehouse credentials by sending the event.
+
+        ``editor`` rather than ``admin`` deliberately: it is what ``can_edit``
+        resolves to and what ``save_connection`` already requires, so the gate
+        matches the UI's own claim about who may edit rather than inventing a
+        new boundary.
+        """
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
@@ -1350,7 +1372,15 @@ class ConnectionState(BaseState):
         self.editing_conn_id = conn_id
 
     async def copy_connection(self, conn_id: int):
-        """Load a saved connection into the form as a new copy."""
+        """Load a saved connection into the form as a new copy.
+
+        Same privileged read as ``edit_connection`` — it decrypts the config and
+        populates the same form fields — so it carries the same gate (core#972).
+        Copying is if anything the more attractive route for an attacker: it
+        yields the credentials without any expectation of writing them back.
+        """
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)

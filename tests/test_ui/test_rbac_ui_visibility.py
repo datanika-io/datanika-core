@@ -676,10 +676,46 @@ class TestCheckerSelfCheck:
         assert ("S", "leave_org") in {(c[2], c[3]) for c in w.controls}
 
     def test_a_handler_with_no_check_role_is_not_required_to_be_gated(self):
-        """``edit_channel`` persists nothing and declares no role.
+        """``leave_org`` declares no role, and that is its documented contract.
 
         The guard must not invent requirements — over-reach would push people to
         add gates that do not correspond to any refusal, and the next reader
         could not tell which gates were load-bearing.
+
+        🚨 **This control used to name ``edit_channel``, on the reasoning that it
+        "persists nothing".** core#972 retired that reasoning: ``edit_channel``
+        hands the caller the stored Slack webhook URL and Telegram bot token, so
+        **reading** is the privileged act and persistence is beside the point. It
+        now declares ``admin`` and this assertion went red — correctly, and that
+        is worth recording rather than quietly repointing, because the red was
+        the *fix* arriving, not a regression.
+
+        ``leave_org`` is a better example precisely because its ungatedness is
+        argued rather than incidental: ``SPEC_ORG_ROLES`` makes leaving the one
+        member-management action available to every member, refused only by the
+        service's owner-count invariant, so a role gate here would contradict
+        the contract. It checks the *session* (``_require_live_session``) and
+        deliberately not the role.
+
+        ⚠️ **A negative control names something; that something can change under
+        it.** The two assertions below pin the premise, so this cannot decay into
+        a test that passes because it names a handler nobody has any more.
         """
-        assert "edit_channel" not in declared_handler_roles()
+        roles = declared_handler_roles()
+        assert "leave_org" not in roles, (
+            "SettingsState.leave_org acquired a _check_role gate. If that is "
+            "deliberate, SPEC_ORG_ROLES and this control both need rewriting — "
+            "leaving is documented as the one action every member may perform."
+        )
+        # Premise 1: the handler still exists, so the assertion is about something.
+        from datanika.ui.state.settings_state import SettingsState
+
+        assert hasattr(SettingsState, "leave_org")
+        # Premise 2: the extractor is capable of finding a declared role at all,
+        # or "not in roles" is satisfied by a broken walk over an empty dict.
+        assert roles, "declared_handler_roles() found nothing; the control is vacuous"
+        assert "edit_channel" in roles, (
+            "edit_channel no longer declares a role. core#972 gave it one because it "
+            "returns the stored bot token to the caller; if it has lost the gate, the "
+            "credential is reachable again."
+        )

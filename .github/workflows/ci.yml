@@ -711,6 +711,21 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+          # Waivers for findings we have decided not to fix YET, each with a
+          # reason and an `expired_at` (core#836). ⚠️ The path is relative to
+          # the RUNNER WORKSPACE, not to the repo: `Checkout core (this repo)`
+          # uses `path: core`, so the file is at `core/.trivyignore.yaml`. A
+          # bare `.trivyignore.yaml` resolves to nothing, and trivy treats a
+          # missing ignore file as "nothing to ignore" — no warning, no error,
+          # job simply stays red, which looks identical to the waivers never
+          # having been decided.
+          #
+          # 🚨 Only this step gets it. The canary above must stay UNFILTERED:
+          # it is the one thing standing between "the gate is green" and "trivy
+          # did not run", so a waiver that could reach it could disarm every
+          # other result in this job. `tests/test_deploy/test_image_cve_signal.py`
+          # asserts both halves — that the gate has it and the canary does not.
+          trivyignores: core/.trivyignore.yaml
 
       - name: Record what this job actually evaluated
         if: always()

@@ -82,6 +82,16 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "1.3.12",
         "CVE-2026-41205 (1.3.11) and CVE-2026-44307 (1.3.12) TemplateLookup path traversal",
     ),
+    "msgpack": (
+        "1.2.1",
+        "GHSA-6v7p-g79w-8964 out-of-bounds read / crash on Unpacker reuse. Surfaced by "
+        "image-cve on the built image (core#835 triage), reached via mashumaro under dbt. "
+        "mashumaro asks for msgpack>=0.5.6 with no ceiling, so the floor resolved in one "
+        "pass and moved nothing else -- worth recording, because kombu declares "
+        "msgpack==1.1.2 and it LOOKS like a blocking pin. It is not: that pin lives under "
+        "kombu's optional `msgpack` extra, which this tree does not enable, so it never "
+        "enters the resolution. Check whether a pin is behind an extra before believing it.",
+    ),
     "pyasn1": (
         "0.6.4",
         "CVE-2026-30922 (0.6.3) unbounded recursion, then three more DoS records fixed in 0.6.4",
@@ -200,6 +210,50 @@ BLOCKED_BY_S3FS_CONFLICT: dict[str, tuple[str, str]] = {
     ),
 }
 
+#: advisory -> (the version that fixes it, what holds us below it).
+#:
+#: `thrift` is the one finding `image-cve` reports that we can neither fix nor
+#: dismiss (core#835 triage, core#819). Recorded here rather than only in
+#: `.trivyignore.yaml` so the deferral has a MECHANICAL re-check: the waiver in
+#: that file expires on a date, which is a reminder; this fails the moment the
+#: blocker actually lifts, which is the thing worth knowing.
+BLOCKED_BY_DATABRICKS_THRIFT_CEILING: dict[str, tuple[str, str]] = {
+    "thrift": (
+        "0.24.0",
+        "CVE-2026-41608 (DoS via deeply nested structures) and CVE-2026-43871 (DoS via "
+        "infinite loop), both HIGH, both fixed in 0.24.0. `databricks-sql-connector` "
+        "4.2.5 declares `thrift (>=0.16.0,<0.21.0)` -- a ceiling BELOW the fix, so a "
+        "floor here does not produce a fixed tree, it makes the resolve FAIL. Nothing "
+        "we can do in this repo. Exposure is narrow: we are a Thrift *client* of a "
+        "Databricks endpoint an org configured for itself, and both records are parser "
+        "denial-of-service rather than disclosure or bypass.",
+    ),
+}
+
+
+def _declared_ceiling(distribution: str, package: str) -> str | None:
+    """The upper bound ``distribution`` declares on ``package``, read from its
+    installed metadata.
+
+    🔑 Read from the DISTRIBUTION, not restated from this file. A recorded
+    ceiling is a fact about a third party that changes without us, and a table
+    asserting a number we typed once would keep passing forever after the
+    blocker lifted -- which is the failure mode every deferral table in this
+    file exists to avoid.
+    """
+    import importlib.metadata as md
+
+    try:
+        requires = md.requires(distribution) or []
+    except md.PackageNotFoundError:
+        return None
+    for spec in requires:
+        if re.match(rf"^\s*{re.escape(package)}\b", spec, re.IGNORECASE):
+            upper = re.search(r"<\s*=?\s*(\d+(?:\.\d+)*)", spec)
+            return upper.group(1) if upper else ""
+    return None
+
+
 #: The mechanical re-check trigger for ``BLOCKED_BY_S3FS_CONFLICT``.
 #:
 #: dbt-bigquery's ``google-cloud-storage<3.2`` ceiling is the live blocker, and
@@ -218,6 +272,55 @@ _S3FS_RECHECK_GCS_VERSION = "3.7.0"
 def _declared_runtime_specs() -> list[str]:
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     return list(data["project"]["dependencies"])
+
+
+class TestThriftDeferralStillHolds:
+    """Fail the day `thrift` becomes fixable, not the day someone remembers.
+
+    ⚠️ This is deliberately NOT "assert thrift is still 0.20.0". That is a
+    tautology over our own lock: it would fire only after somebody had already
+    done the work, which is the one moment a reminder is useless. Same reasoning
+    as ``_S3FS_RECHECK_GCS_VERSION`` above.
+    """
+
+    def test_the_ceiling_that_blocks_the_fix_is_still_there(self):
+        fix_version, why = BLOCKED_BY_DATABRICKS_THRIFT_CEILING["thrift"]
+        ceiling = _declared_ceiling("databricks-sql-connector", "thrift")
+
+        assert ceiling is not None, (
+            "databricks-sql-connector no longer declares a thrift dependency (or is "
+            "not installed). If the dependency is gone, thrift may be gone too — "
+            "delete this table and the matching .trivyignore.yaml entries, and say "
+            "so. If it is merely not installed, this guard is now vacuous."
+        )
+        assert ceiling and Version(ceiling) <= Version(fix_version), (
+            f"databricks-sql-connector now admits thrift < {ceiling}, which reaches "
+            f"the {fix_version} that fixes CVE-2026-41608 and CVE-2026-43871.\n"
+            f"The deferral is over: floor thrift in pyproject.toml, move it into "
+            f"SECURITY_FLOORS, and DELETE both thrift entries from "
+            f".trivyignore.yaml — a waiver left behind after its reason expires is "
+            f"worse than no waiver, because it silently suppresses a finding "
+            f"nobody has re-assessed.\n{why}"
+        )
+
+    def test_the_waiver_file_still_carries_both_thrift_records(self):
+        """The two halves must not drift apart.
+
+        This table says "we cannot fix it"; `.trivyignore.yaml` is what stops
+        `image-cve` going red over it. Deleting one and keeping the other gives
+        either a permanent unexplained red or a silent suppression — and both
+        read as fine.
+        """
+        import yaml
+
+        doc = yaml.safe_load((_ROOT / ".trivyignore.yaml").read_text(encoding="utf-8"))
+        waived = {v["id"] for v in doc["vulnerabilities"]}
+
+        assert {"CVE-2026-41608", "CVE-2026-43871"} <= waived, (
+            "thrift is recorded here as unfixable but is no longer waived in "
+            f".trivyignore.yaml, so image-cve is red for a finding this repo has "
+            f"already decided it cannot act on. Waived: {sorted(waived)}"
+        )
 
 
 class TestLockedTreeClearsKnownAdvisories:

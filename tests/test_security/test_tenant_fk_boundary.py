@@ -37,11 +37,14 @@ from datanika.models.connection import Connection, ConnectionDirection, Connecti
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import DbtCommand, Pipeline
 from datanika.models.run import RunStatus
+from datanika.models.transformation import Transformation
 from datanika.models.upload import Upload
 from datanika.models.user import Organization
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
+from datanika.services.transformation_service import TransformationService
+from datanika.services.upload_service import UploadService
 from tests.test_security.test_tenant_jwt_boundary import (
     BEARER_A,
     ORG_A_ID,
@@ -66,11 +69,16 @@ def client(app: Starlette) -> TestClient:
 
 @pytest.fixture
 def env():
-    # `_boundary_env` also yields the A-owned ids it seeds (core#719). This
-    # file brings its own via `_own_connection`, so they are discarded here —
-    # but the unpack has to match, and it is the pre-push that said so.
-    with _boundary_env() as (session, b_ids, _a_ids):
-        yield session, b_ids
+    """(session, b_ids, a_ids).
+
+    The A-owned ids were discarded here until core#719 item 2. The acceptance
+    controls need a *legitimate* row of the same shape as the attack — an upload
+    create with the org's own source AND destination connection, a
+    transformation update pointing at its own connection — and building those
+    ad hoc per test is how two of them ended up asserting nothing.
+    """
+    with _boundary_env() as (session, b_ids, a_ids):
+        yield session, b_ids, a_ids
 
 
 def _auth_a() -> dict[str, str]:
@@ -101,7 +109,7 @@ class TestCreateRejectsForeignConnection:
     """Org A submits org B's connection id in a create/update body."""
 
     def test_pipeline_create_rejects_org_b_connection(self, client, env) -> None:
-        _session, b_ids = env
+        _session, b_ids, _a_ids = env
         resp = client.post(
             "/api/v1/pipelines",
             headers=_auth_a(),
@@ -116,7 +124,7 @@ class TestCreateRejectsForeignConnection:
         )
 
     def test_pipeline_update_rejects_org_b_connection(self, client, env) -> None:
-        session, b_ids = env
+        session, b_ids, _a_ids = env
         own = _own_connection(session)
         created = client.post(
             "/api/v1/pipelines",
@@ -142,7 +150,7 @@ class TestCreateRejectsForeignConnection:
         )
 
     def test_transformation_create_rejects_org_b_connection(self, client, env) -> None:
-        _session, b_ids = env
+        _session, b_ids, _a_ids = env
         resp = client.post(
             "/api/v1/transformations",
             headers=_auth_a(),
@@ -157,25 +165,171 @@ class TestCreateRejectsForeignConnection:
             f"{b_ids['connection']}; body={resp.text}"
         )
 
-    def test_upload_create_rejects_org_b_connection(self, client, env) -> None:
-        """CONTROL — uploads already validated before this fix.
+    # 🚨 `test_upload_create_rejects_org_b_connection` USED TO LIVE HERE AND COULD
+    # NOT FAIL (core#719 item 2, 2026-09-03).
+    #
+    # It posted `"name": "a-upload-pointing-at-b"` with B's id in *both* connection
+    # fields and asserted only `status_code != 201`. `validate_upload_name` rejects
+    # hyphens, so the handler returned 400 before `create_upload` ever looked a
+    # connection up. Measured: the identical request with the org's OWN source and
+    # destination connections was **also** 400. The assertion was satisfied by the
+    # name validator whatever the connection check did — and the docstring said it
+    # was the case that "attributes a red run to the defect".
+    #
+    # Two things replace it, and both are strictly stronger:
+    #   * one test per field, so "source is checked" and "destination is checked"
+    #     are distinguishable — the old single case sent B's id for both and could
+    #     not tell which (or whether either) was enforced;
+    #   * `test_upload_create_accepts_own_connections`, which asserts 201 on the
+    #     legitimate request and is what makes any red here attributable.
+    # Names below are valid (alphanumeric + spaces), so the request reaches the
+    # connection lookup.
 
-        Kept because it is what attributes a red run to the defect rather than
-        to a harness that never reached a handler.
-        """
-        _session, b_ids = env
+    def test_upload_create_rejects_org_b_source_connection(self, client, env) -> None:
+        _session, b_ids, a_ids = env
         resp = client.post(
             "/api/v1/uploads",
             headers=_auth_a(),
             json={
-                "name": "a-upload-pointing-at-b",
+                "name": "upload foreign source",
                 "source_connection_id": b_ids["connection"],
-                "destination_connection_id": b_ids["connection"],
+                "destination_connection_id": a_ids["connection_dest"],
             },
         )
         assert resp.status_code != 201, (
-            f"org A created an upload bound to org B's connection; body={resp.text}"
+            f"org A created an upload reading from org B's connection "
+            f"{b_ids['connection']}; body={resp.text}"
         )
+
+    def test_upload_create_rejects_org_b_destination_connection(self, client, env) -> None:
+        _session, b_ids, a_ids = env
+        resp = client.post(
+            "/api/v1/uploads",
+            headers=_auth_a(),
+            json={
+                "name": "upload foreign destination",
+                "source_connection_id": a_ids["connection_src"],
+                "destination_connection_id": b_ids["connection_dest"],
+            },
+        )
+        assert resp.status_code != 201, (
+            f"org A created an upload writing into org B's connection "
+            f"{b_ids['connection_dest']}; body={resp.text}"
+        )
+
+    def test_transformation_update_rejects_org_b_connection(self, client, env) -> None:
+        """The update half, which had a test for pipelines and not for models."""
+        session, b_ids, a_ids = env
+        tid = a_ids["transformation"]
+        resp = client.put(
+            f"/api/v1/transformations/{tid}",
+            headers=_auth_a(),
+            json={"destination_connection_id": b_ids["connection_dest"]},
+        )
+        assert resp.status_code not in (200, 201), (
+            f"org A repointed its own transformation at org B's connection "
+            f"{b_ids['connection_dest']}; body={resp.text}"
+        )
+        stored = session.get(Transformation, tid)
+        session.refresh(stored)
+        assert stored.destination_connection_id == a_ids["connection_dest"], (
+            "update persisted a cross-org destination even though it reported failure"
+        )
+
+
+class TestScheduleTargetIsOrgScoped:
+    """`POST /api/v1/schedules` takes `target_type` + `target_id` in the body.
+
+    A schedule is the one body-carried reference that does not point at a
+    `Connection`: it names an Upload, Transformation or Pipeline. Nothing tested
+    it before core#719 item 2 — the census found the reference, not a defect.
+    The behaviour is correct (`ScheduleService.validate_target` resolves through
+    the org-scoped accessor for each type and fails closed on an unknown type),
+    and it is now pinned so that stays true.
+
+    Scheduling another org's pipeline would run their work on our clock and
+    attribute the run — and every quota charge — to us.
+    """
+
+    def test_schedule_create_rejects_org_b_target(self, client, env) -> None:
+        _session, b_ids, _a_ids = env
+        for target_type, key in (("upload", "upload"), ("pipeline", "pipeline")):
+            resp = client.post(
+                "/api/v1/schedules",
+                headers=_auth_a(),
+                json={
+                    "target_type": target_type,
+                    "target_id": b_ids[key],
+                    "cron_expression": "0 1 * * *",
+                },
+            )
+            assert resp.status_code != 201, (
+                f"org A scheduled org B's {target_type} {b_ids[key]}; body={resp.text}"
+            )
+
+    def test_schedule_create_accepts_own_target(self, client, env) -> None:
+        """NEGATIVE CONTROL — without it, 'refuses everything' passes above."""
+        _session, _b_ids, a_ids = env
+        resp = client.post(
+            "/api/v1/schedules",
+            headers=_auth_a(),
+            json={
+                "target_type": "pipeline",
+                "target_id": a_ids["pipeline"],
+                "cron_expression": "0 1 * * *",
+            },
+        )
+        assert resp.status_code == 201, (
+            f"scheduling the org's own pipeline {a_ids['pipeline']} was refused; body={resp.text}"
+        )
+
+    def test_an_unroutable_target_type_is_refused_at_the_route(self, client, env) -> None:
+        """`NodeType` has three members; anything else must not become a schedule.
+
+        ⚠️ This pins the ROUTE's `NodeType(...)` coercion, not `validate_target`'s
+        `else`. It was first written as a test of the latter and it is not one:
+        `"connection"` is rejected before the service is ever called, so the
+        service-level branch is unreachable from here. That branch is pinned
+        directly by `test_validate_target_fails_closed_on_an_unroutable_type`
+        below — measured, after a mutation to the `else` left this test green.
+        """
+        _session, _b_ids, _a_ids = env
+        resp = client.post(
+            "/api/v1/schedules",
+            headers=_auth_a(),
+            json={
+                "target_type": "connection",
+                "target_id": 1,
+                "cron_expression": "0 1 * * *",
+            },
+        )
+        assert resp.status_code != 201, (
+            f"a schedule was created for a target type nothing validates; body={resp.text}"
+        )
+
+    def test_validate_target_fails_closed_on_an_unroutable_type(self, env) -> None:
+        """Defence in depth: unreachable through the API today, and that changes.
+
+        `validate_target` dispatches on three `NodeType` members and falls to
+        `target = None` otherwise, which raises. A fourth member added tomorrow —
+        or any caller that does not go through the route's enum coercion —
+        reaches that branch, and it must refuse rather than fall through.
+        """
+        from datanika.services.schedule_service import ScheduleService
+
+        session, _b_ids, _a_ids = env
+        svc = ScheduleService(UploadService(None), TransformationService())
+        with pytest.raises(Exception):  # noqa: B017 — see below
+            svc.validate_target(session, ORG_A_ID, "not-a-node-type", 1)
+
+        # ⚠️ Deliberately `Exception`, not `ScheduleConfigError`. Measured: the
+        # `else` branch sets `target = None` and the error message it then builds
+        # does `target_type.value`, which raises **AttributeError** on anything
+        # that is not a NodeType. It still refuses — nothing is created, which is
+        # the property that matters — but the exception type is wrong. Pinning
+        # `ScheduleConfigError` here would fail today and pinning `AttributeError`
+        # would lock in the wart, so this pins REFUSAL. The exception type is
+        # noted on core#719 for Engineering rather than changed from QA's lane.
 
 
 class TestCreateStillAcceptsOwnConnection:
@@ -186,7 +340,7 @@ class TestCreateStillAcceptsOwnConnection:
     """
 
     def test_pipeline_create_accepts_own_connection(self, client, env) -> None:
-        session, _b_ids = env
+        session, _b_ids, _a_ids = env
         own = _own_connection(session)
         resp = client.post(
             "/api/v1/pipelines",
@@ -199,7 +353,7 @@ class TestCreateStillAcceptsOwnConnection:
         )
 
     def test_transformation_create_accepts_own_connection(self, client, env) -> None:
-        session, _b_ids = env
+        session, _b_ids, _a_ids = env
         own = _own_connection(session)
         resp = client.post(
             "/api/v1/transformations",
@@ -217,7 +371,7 @@ class TestCreateStillAcceptsOwnConnection:
 
     def test_transformation_create_accepts_no_connection(self, client, env) -> None:
         """`destination_connection_id` is optional on transformations."""
-        _session, _b_ids = env
+        _session, _b_ids, _a_ids = env
         resp = client.post(
             "/api/v1/transformations",
             headers=_auth_a(),
@@ -226,6 +380,68 @@ class TestCreateStillAcceptsOwnConnection:
         assert resp.status_code == 201, (
             f"the fix broke transformation creation with no destination "
             f"connection at all; body={resp.text}"
+        )
+
+    def test_upload_create_accepts_own_connections(self, client, env) -> None:
+        """🔑 The control the old upload test did not have.
+
+        Its absence is why `test_upload_create_rejects_org_b_connection` could
+        sit in the gating suite unable to fail: nothing anywhere asserted that a
+        *legitimate* upload create returns 201, so a blanket 400 looked identical
+        to a working boundary. This assertion is what makes the two refusal
+        tests above mean something.
+        """
+        _session, _b_ids, a_ids = env
+        resp = client.post(
+            "/api/v1/uploads",
+            headers=_auth_a(),
+            json={
+                "name": "upload all own",
+                "source_connection_id": a_ids["connection_src"],
+                "destination_connection_id": a_ids["connection_dest"],
+            },
+        )
+        assert resp.status_code == 201, (
+            f"ordinary upload creation against the org's own connections "
+            f"({a_ids['connection_src']} -> {a_ids['connection_dest']}) was refused; "
+            f"body={resp.text}"
+        )
+
+    def test_pipeline_update_accepts_own_connection(self, client, env) -> None:
+        """The update half of the pipeline control."""
+        session, _b_ids, a_ids = env
+        own = _own_connection(session)
+        resp = client.put(
+            f"/api/v1/pipelines/{a_ids['pipeline']}",
+            headers=_auth_a(),
+            json={"destination_connection_id": own},
+        )
+        assert resp.status_code == 200, (
+            f"repointing the org's own pipeline at its own connection {own} was "
+            f"refused; body={resp.text}"
+        )
+        stored = session.get(Pipeline, a_ids["pipeline"])
+        session.refresh(stored)
+        assert stored.destination_connection_id == own, (
+            "the update reported success and did not persist"
+        )
+
+    def test_transformation_update_accepts_own_connection(self, client, env) -> None:
+        session, _b_ids, a_ids = env
+        own = _own_connection(session)
+        resp = client.put(
+            f"/api/v1/transformations/{a_ids['transformation']}",
+            headers=_auth_a(),
+            json={"destination_connection_id": own},
+        )
+        assert resp.status_code == 200, (
+            f"repointing the org's own transformation at its own connection {own} "
+            f"was refused; body={resp.text}"
+        )
+        stored = session.get(Transformation, a_ids["transformation"])
+        session.refresh(stored)
+        assert stored.destination_connection_id == own, (
+            "the update reported success and did not persist"
         )
 
 

@@ -314,6 +314,66 @@ class TestConsentAndToken:
         assert r.status_code == 400
         assert r.json()["error"] == "unsupported_grant_type"
 
+    async def test_consent_takes_the_org_from_the_token_not_the_body(
+        self, app, wired, db_session, jwt, org, user
+    ):
+        """The body carries `client_id`; it must not be able to carry the org.
+
+        `/api/oauth/consent` mints a **real API key** for whatever org the grant
+        names, so a body-supplied `org_id` would be a one-request path to a
+        working credential for someone else's tenant. The handler takes the org
+        from the signed access token and says so in a comment — this pins the
+        behaviour, because a comment is not a control.
+
+        Pinned by `tests/test_security/test_body_carried_reference_census.py`
+        (core#719 item 2), which requires every body-carried reference to name a
+        test. `client_id` is the reference here; the assertion is that the org
+        beside it is *not* one.
+        """
+        from datanika.models.api_key import ApiKey
+        from datanika.models.mcp_oauth import OAuthGrant
+
+        victim = Organization(name="Victim", slug="victim-oauth-routes")
+        db_session.add(victim)
+        db_session.flush()
+        assert victim.id != org.id
+
+        _verifier, challenge = _pkce()
+        with patch("datanika.services.mcp_oauth_routes.settings.secret_key", _SECRET):
+            async with await _client(app) as c:
+                reg = await c.post(
+                    "/oauth/register",
+                    json={"client_name": "Claude.ai", "redirect_uris": [_REDIRECT]},
+                )
+                client_id = reg.json()["client_id"]
+                r = await c.post(
+                    "/api/oauth/consent",
+                    headers={"Authorization": f"Bearer {jwt}"},
+                    json={
+                        "client_id": client_id,
+                        "redirect_uri": _REDIRECT,
+                        "code_challenge": challenge,
+                        "code_challenge_method": "S256",
+                        # The poison: a body claiming a different tenant.
+                        "org_id": victim.id,
+                        "user_id": 999999,
+                    },
+                )
+
+        assert r.status_code == 200, r.text
+        grants = db_session.query(OAuthGrant).all()
+        assert len(grants) == 1, f"expected exactly one grant, got {len(grants)}"
+        grant = grants[0]
+        assert grant.org_id == org.id, (
+            f"the grant was recorded against org {grant.org_id} (the request BODY's "
+            f"{victim.id}) instead of the signed token's {org.id}"
+        )
+        key = db_session.get(ApiKey, grant.api_key_id)
+        assert key is not None and key.org_id == org.id, (
+            f"consent minted an API key for org {key and key.org_id} from a body-supplied "
+            f"org_id; the token said {org.id}"
+        )
+
 
 class TestResourceServerAcceptsIssuedTokens:
     """The `/mcp` side of P2: discovery pointer + OAuth tokens as credentials."""

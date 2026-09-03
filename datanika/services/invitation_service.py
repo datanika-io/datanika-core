@@ -4,12 +4,12 @@ import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from datanika.models.invitation import Invitation, InvitationStatus
-from datanika.models.pii import InvitationPII
-from datanika.models.user import MemberRole, Membership
+from datanika.models.pii import InvitationPII, UserPII
+from datanika.models.user import MemberRole, Membership, User
 from datanika.services.auth import AuthService
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,58 @@ class InvitationService:
     def __init__(self, auth: AuthService):
         self._auth = auth
 
+    @staticmethod
+    def _has_active_membership(session: Session, org_id: int, email: str) -> bool:
+        """Whether this address already holds an active membership in this org.
+
+        🚨 **Asked from ``Membership``, on purpose (core#1010).** This used to be
+        ``get_user_by_email`` followed by a membership query *inside*
+        ``if existing_user:``, which answers a different question — *"can I
+        resolve this address to a live ``User`` row, and if so, is it a
+        member?"* — and when the resolution failed the guard was not answered
+        ``no``, it was **skipped**. Starting from the membership table means an
+        unresolvable address and a non-member produce the same correct answer,
+        and no third, ambiguous case can silently produce the wrong one.
+
+        Two ways that resolution fails while the ``Membership`` row is intact:
+
+        * ``get_user_by_email`` filters ``users.deleted_at IS NULL``. That is
+          right for **login** and is not this question, so it is not borrowed
+          here.
+        * At **N+1** the lookup becomes a ``user_pii`` join only, and a user
+          created during the release-N dual-write window has ``users.email`` set
+          with no sidecar row (``SPEC_PII_SEPARATION.md`` §8a.4 Kind 3). Hence
+          the ``or_`` below, which matches the chokepoint's own predicate.
+
+        ⚠️ **The legacy clause below and the one in
+        ``UserService.get_user_by_email`` are retired together at N+1.** They are
+        deliberately not shared: a single definition would mean the mutation that
+        arms this guard's regression test also disarms the guard, so the defect
+        would become untestable. ``test_refuses_when_the_identity_lookup_returns_none``
+        goes red if one is deleted without the other.
+
+        ⚠️ **Do not make this fail closed.** Refusing addresses we cannot resolve
+        refuses every invitation to a new user, which is the feature. The failure
+        direction was never the defect.
+        """
+        return (
+            session.execute(
+                select(Membership.id)
+                .join(User, User.id == Membership.user_id)
+                .outerjoin(UserPII, UserPII.user_id == User.id)
+                .where(
+                    Membership.org_id == org_id,
+                    Membership.deleted_at.is_(None),
+                    or_(
+                        func.lower(UserPII.email) == email,
+                        func.lower(User.email) == email,  # legacy half — removed in N+1
+                    ),
+                )
+                .limit(1)
+            ).first()
+            is not None
+        )
+
     def create_invitation(
         self,
         session: Session,
@@ -60,21 +112,9 @@ class InvitationService:
 
         email = email.strip().lower()
 
-        # Check if already a member. Routed through `get_user_by_email` rather than a
-        # second copy of the predicate: that method is the one place that joins `user_pii`
-        # and filters `deleted_at IS NULL`, and the local copy this replaced was also
-        # case-SENSITIVE, which the chokepoint is not.
-        existing_user = user_svc.get_user_by_email(session, email)
-        if existing_user:
-            existing_membership = session.execute(
-                select(Membership).where(
-                    Membership.user_id == existing_user.id,
-                    Membership.org_id == org_id,
-                    Membership.deleted_at.is_(None),
-                )
-            ).scalar_one_or_none()
-            if existing_membership:
-                raise ValueError(f"{email} is already a member of this organization")
+        # Check if already a member (core#1010).
+        if self._has_active_membership(session, org_id, email):
+            raise ValueError(f"{email} is already a member of this organization")
 
         # Check for existing pending invitation
         existing_inv = session.execute(

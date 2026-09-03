@@ -225,12 +225,33 @@ only people the feature was ever for, and so no existing local deployment breaks
 - When false, a `bucket_url`/`path` that resolves to a local filesystem location is refused at
   **connection create/save**, not merely at test time. Refusal at test time is not enough: the run
   reads the stored config, and Test Connection is optional.
-- The refusal is a **helpful** message, not a validation error — it must name the two things that do
-  work: *"Local file paths aren't available on Datanika Cloud. Upload the file, or point this
-  connection at S3 or a database."* Both routes exist today and the upload route is already the
-  primary one in the form (`uploaded_file_id`).
-- `s3://` and other remote schemes are unaffected — the test explicitly excludes them, because a
-  bucket URL means the same thing in both containers.
+- The refusal is a **helpful** message, not a validation error — it must name a route that **works**:
+  *"Local file paths aren't available on this deployment. Upload the file instead, or point this
+  connection at a database."* The upload route is already the primary one in the form
+  (`uploaded_file_id`).
+
+  > 🚨 **CORRECTED 2026-09-03. This bullet used to read *"…available on Datanika Cloud. Upload the
+  > file, or point this connection at S3 or a database"*, and both halves were wrong.** Engineering
+  > shipped the corrected sentence (`connection_service.py:338`, i18n key
+  > `connections.local_path_not_allowed`); this is the spec catching up to it, recorded rather than
+  > silently overwritten so it is not "restored".
+  >
+  > 1. 🚨 **`s3` is WITHDRAWN** — [core#863]. `ConnectionType.S3` survives for existing rows, but it
+  >    is not in `PICKER_TYPES`, and `connections.py:101` deliberately renders a
+  >    `connections.s3_withdrawn` notice for anyone who *searches* the picker for "s3". So the old
+  >    copy refused a user and then pointed them at the one route the very next screen also refuses.
+  >    🔑 **A refusal that names routes which work is good copy; naming a route that does not work is
+  >    worse than naming none** — the reader has already been told "no" once, and the second no is
+  >    the one that makes them leave.
+  > 2. ⚠️ **"Datanika Cloud" contradicted this decision's own reasoning** — see the note directly
+  >    below on why this is a *setting* and not an edition check. A self-hoster who sets the flag
+  >    would have been told their deployment is Datanika Cloud.
+  >
+  > ⚠️ **Restore the S3 half only in the same change that returns `s3` to `PICKER_TYPES`** — the same
+  > coupling `connections.py:104` already states for the withdrawal notice.
+- `s3://` and other remote schemes are unaffected **by the local-path test** — it explicitly excludes
+  them, because a bucket URL means the same thing in both containers. ⚠️ That is a statement about
+  *this check*, not about the connector being available; see the correction above.
 
 ⚠️ **Why the setting rather than a hardcoded edition check.** `DATANIKA_EDITION=cloud` gates billing,
 and a self-hoster running the cloud plugin is a shape we support. The property that matters is *"is
@@ -330,4 +351,5 @@ extending its scope.
 [core#985]: https://github.com/datanika-io/datanika-core/issues/985
 [core#978]: https://github.com/datanika-io/datanika-core/issues/978
 [core#979]: https://github.com/datanika-io/datanika-core/issues/979
+[core#863]: https://github.com/datanika-io/datanika-core/issues/863
 [landing#459]: https://github.com/datanika-io/datanika-landing/issues/459

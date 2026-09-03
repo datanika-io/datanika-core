@@ -421,3 +421,43 @@ def test_no_locale_names_a_withdrawn_connector():
         assert "S3" not in text and "s3://" not in text, (
             f"{locale}.json's refusal names S3, which cannot be created today: {text!r}"
         )
+
+
+def test_the_upload_route_still_works_under_the_ban(db_session, svc, org, forbid):
+    """🔑 The control for the route the refusal *recommends*.
+
+    A refusal that also blocked the alternative it names would be worse than no
+    refusal — the user would be told to do the one thing that is also refused,
+    with no way forward at all.
+
+    The upload route carries `uploaded_file_id` and no `bucket_url`, so the
+    predicate never sees a location. Asserting it rather than reasoning about it,
+    because "the check only looks at three keys" is a property of today's
+    implementation and this is the thing that must not break when a fourth key
+    is added.
+    """
+    conn = svc.create_connection(
+        db_session,
+        org.id,
+        "uploaded csv",
+        ConnectionType.CSV,
+        {"uploaded_file_id": 7, "file_name": "customers.csv"},
+    )
+    assert conn.id
+
+
+def test_an_empty_location_is_not_refused(db_session, svc, org, forbid):
+    """The form leaves `bucket_url` as `""` when the upload route is used.
+
+    An empty string is not a path, and refusing it would block the upload route
+    through the back door — the same failure as above, arriving by a different
+    edge case.
+    """
+    conn = svc.create_connection(
+        db_session,
+        org.id,
+        "empty location",
+        ConnectionType.CSV,
+        {"bucket_url": "", "uploaded_file_id": 9},
+    )
+    assert conn.id

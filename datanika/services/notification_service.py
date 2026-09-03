@@ -107,6 +107,21 @@ class NotificationService:
         )
         return session.execute(stmt).scalar_one_or_none()
 
+    def get_channel(self, session, channel_id, org_id):
+        """Fetch one channel, org-scoped, **including its credential config**.
+
+        The public seam ``NotificationState.edit_channel`` needs (core#972). The
+        edit form used to populate itself from ``self.channels``, which meant the
+        webhook URL and bot token had to be in a public Reflex state var — and
+        that var is serialized to every member, because the channel list is
+        deliberately member-visible (core#886).
+
+        🚨 **Only call this behind a role check.** It returns the row whole; the
+        caller is responsible for deciding whether this caller may see a
+        credential. ``list_channels`` is the unprivileged read.
+        """
+        return self._get_channel(session, channel_id, org_id)
+
     def list_channels(self, session, org_id):
         stmt = (
             select(NotificationChannel)

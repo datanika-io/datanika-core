@@ -1165,12 +1165,24 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
 def _channel_actions(ch: ChannelItem) -> rx.Component:
     """Toggle / edit / delete for one alerting channel — admin only.
 
-    ``toggle_channel_active``, ``save_channel`` and ``delete_channel`` all gate
-    on ``_check_role("admin")``. ``edit_channel`` does not, because it persists
-    nothing — it copies the row into the form — but it is gated here anyway:
-    the only thing it leads to is a Save that would refuse, so leaving it
-    visible would hand a non-admin a form they can fill in and not submit.
-    core#886.
+    ``toggle_channel_active``, ``save_channel``, ``delete_channel`` **and
+    ``edit_channel``** all gate on ``_check_role("admin")``.
+
+    🚨 This docstring used to say ``edit_channel`` did not gate "because it
+    persists nothing — it copies the row into the form", and that hiding the
+    button was enough since "the only thing it leads to is a Save that would
+    refuse". Both halves were wrong, and the same reasoning had left
+    ``ConnectionState.edit_connection`` open (core#972):
+
+    * **Reading the secret is the harm.** ``edit_channel`` returns the stored
+      webhook URL or bot token to the caller; whether it then writes anything is
+      beside the point.
+    * **Hiding a button is not a gate.** A Reflex event handler is dispatched by
+      **name** over the websocket. Which buttons were rendered has no bearing on
+      which events can be sent, which is exactly why the three mutating handlers
+      here check the role in the handler rather than trusting this ``rx.cond``.
+
+    core#886 for the member-visible list, core#972 for the gate.
     """
     return rx.hstack(
         rx.button(

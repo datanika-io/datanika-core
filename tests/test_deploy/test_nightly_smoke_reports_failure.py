@@ -46,6 +46,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 def _run_sed(expr: str, line: str) -> str:
@@ -133,10 +134,117 @@ class TestPytestExitCodeSurvives:
         )
 
 
-class TestCredentialNamesWithDigits:
-    """core#827 — the quote-stripping sed dropped every name containing a digit."""
+class TestNoShellSideCredentialParsing:
+    """core#827 + core#983 — was 'the quote-stripping sed must handle digits'.
+
+    core#827's defect was real: the sed used ``[A-Z_]+``, so a name like
+    ``GA4_PROPERTY_ID`` fell through unchanged and reached ``$GITHUB_ENV`` with its
+    quote characters attached — core#270's bug, recreated for every digit-bearing
+    name, and invisible from both ends because the file has the value and the
+    secret is non-empty.
+
+    🚨 **core#983 deleted the sed, along with the whole shell-side parsing layer.**
+    Credentials are now individual secrets and variables, which GitHub injects into
+    the process environment verbatim — there is no dotenv text to quote, unquote or
+    misparse. The class therefore flips from *"the parser must handle digits"* to
+    *"there must be no parser"*, which is the stronger statement and, unlike the
+    old one, is non-vacuous today.
+
+    ``test_the_sed_in_the_workflow_actually_strips_a_digit_bearing_name`` was
+    removed rather than relaxed: it extracted the live expression and executed it,
+    so with no expression to extract it could only be made to pass by asserting
+    nothing. ``_run_sed`` and the control below are kept — the control is
+    self-contained, it is the record that the defect was real, and it is what keeps
+    the harness itself honest if a parser ever comes back.
+    """
+
+    def test_the_workflow_does_no_shell_side_credential_parsing(self, workflow_text: str) -> None:
+        """The core#983 invariant, stated positively so it can actually fail.
+
+        A bundle decoded in a ``run:`` block is a value the runner has never been
+        given, so it is unmasked by construction and every downstream step prints
+        it (core#943, 53 public logs). Registering each credential removes the
+        possibility rather than patching it.
+
+        🚨 **Asserted over the PARSED steps, never over the file text.** The first
+        version of this test searched ``workflow_text`` for ``base64 -d`` and
+        ``QA_CONNECTOR_CREDENTIALS`` and was failed by the comment block in the
+        workflow *explaining that the bundle had been removed*. An absence
+        assertion over a document is satisfied — and defeated — by the document
+        describing the absence. It is the same defect as asserting on the prose
+        rather than on the executable line, arriving from the other direction, and
+        it cost three iterations in one session before it was named.
+        """
+        offenders = self._offenders(yaml.safe_load(workflow_text))
+        assert not offenders, (
+            f"the nightly parses credentials in shell again: {offenders}. Values decoded "
+            "at runtime are strings the runner has never seen, so GitHub cannot mask them "
+            "and every later step's `##[group]Run` header prints them — on a PUBLIC repo. "
+            "Register each credential as its own secret or variable instead (core#983); "
+            "if a bundle is genuinely unavoidable, it needs the ::add-mask:: loop back, "
+            "and tests/test_deploy/test_workflow_secret_masking.py is what enforces that."
+        )
+
+    def test_the_no_parsing_check_can_actually_fail(self, workflow_text: str) -> None:
+        """Negative control — the assertion above is over an empty list today.
+
+        Without this, a parse that silently yielded no steps would read exactly
+        like a workflow that does no shell-side parsing. Re-injects the pre-fix
+        decode into a copy of the real document and confirms it is caught.
+
+        ⚠️ Asserted as a **delta** against the same document's own baseline, not as
+        an absolute count of 2. An absolute count is correct only while the
+        workflow is clean — so the moment somebody actually reintroduces a bundle,
+        the control that exists to detect that would itself fail, with a message
+        about its own arithmetic rather than about the leak. A control must not
+        misreport in precisely the state it was written for.
+        """
+        baseline = self._offenders(yaml.safe_load(workflow_text))
+
+        data = yaml.safe_load(workflow_text)
+        steps = data["jobs"]["smoke"]["steps"]
+        assert len(steps) >= 5, f"only {len(steps)} steps parsed out of the smoke job"
+        steps.append(
+            {
+                "name": "Materialize connector credentials",
+                "env": {"QA_CONNECTOR_CREDENTIALS": "${{ secrets.QA_CONNECTOR_CREDENTIALS }}"},
+                "run": 'printf %s "$QA_CONNECTOR_CREDENTIALS" | base64 -d > /tmp/c.env\n',
+            }
+        )
+        mutated = self._offenders(data)
+        assert len(mutated) - len(baseline) == 2, (
+            "Re-injecting the pre-fix materializer was not detected on both the run "
+            f"block and the env binding, so the check above cannot fire. baseline="
+            f"{baseline} mutated={mutated}"
+        )
+
+    @staticmethod
+    def _offenders(data: dict) -> list[str]:
+        """Shell-side credential parsing, per step. Shared by the check and its control."""
+        out: list[str] = []
+        for job_id, job in (data.get("jobs") or {}).items():
+            for i, step in enumerate(job.get("steps") or []):
+                if not isinstance(step, dict):
+                    continue
+                where = f"{job_id}/{step.get('name') or i}"
+                run = str(step.get("run") or "")
+                for marker in ("base64 -d", "base64 --decode"):
+                    if marker in run:
+                        out.append(f"{where}: run contains {marker!r}")
+                env = step.get("env") or {}
+                if isinstance(env, dict):
+                    for key, value in env.items():
+                        if "CREDENTIALS" in str(key).upper() and "secrets." in str(value):
+                            out.append(f"{where}: env binds a credential bundle {key!r}")
+        return out
 
     def test_no_sed_uses_a_digitless_character_class(self, workflow_text: str) -> None:
+        """Forward guard. Passes vacuously today — deliberately, and it is cheap.
+
+        There is no quote-stripping sed to check, and that is the point of the test
+        above. This one costs nothing and is the thing that fires if a parser
+        returns carrying core#827's exact defect.
+        """
         offenders = re.findall(r"sed -E 's/\^\(\[A-Z_\]\+\)=", workflow_text)
         assert not offenders, (
             f"{len(offenders)} quote-stripping sed(s) use [A-Z_]+, which does not match "
@@ -144,25 +252,6 @@ class TestCredentialNamesWithDigits:
             "lines fall through unchanged and reach $GITHUB_ENV with their quotes "
             "attached — core#270's bug, re-created for every digit-bearing name."
         )
-
-    def test_the_sed_in_the_workflow_actually_strips_a_digit_bearing_name(
-        self, workflow_text: str
-    ) -> None:
-        """Run the real expression, extracted from the workflow, against real input.
-
-        Asserting on the regex *text* would pass for any expression that merely
-        contains `A-Z0-9`. This executes it.
-        """
-        exprs = [e for e in re.findall(r"sed -E '([^']+)'", workflow_text) if e.startswith("s/^(")]
-        assert exprs, "no quote-stripping sed found in the workflow — has it been renamed?"
-
-        for expr in exprs:
-            for name in ("GA4_PROPERTY_ID", "S3_BUCKET", "HUBSPOT_ACCESS_TOKEN"):
-                got = _run_sed(expr, f'{name}="value1"\n')
-                assert got == f"{name}=value1", (
-                    f"sed -E '{expr}' failed to strip quotes from {name}: got {got!r}. "
-                    "A digit in the variable name is enough to defeat a [A-Z_]+ class."
-                )
 
     def test_the_control_shows_the_old_expression_failing(self) -> None:
         """Negative control: the pre-fix expression must FAIL this same check.

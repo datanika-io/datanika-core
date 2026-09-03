@@ -29,7 +29,12 @@ SAML_SP_ENTITY_ID="datanika"
 
 FIXTURE_FILE="$(dirname "$0")/../.sso-fixture.json"
 
-log() { echo "[bootstrap-authentik] $*"; }
+# >&2 is load-bearing. stdout is this script's DATA channel: `api` echoes
+# response bodies there and nearly every call is captured with `$(...)`. A
+# log line on stdout is therefore indistinguishable from an API response —
+# which is how a failed POST came to be returned as the created object, and
+# how the 400 body that explained it was destroyed instead of printed.
+log() { echo "[bootstrap-authentik] $*" >&2; }
 py() { python3 -c "$1"; }
 
 # --- 1. Wait for API ---
@@ -96,8 +101,10 @@ api() {
 ensure_object() {
   local path="$1" ident="$2" body="$3"
   local created existing pk
-  created=$(api POST "$path" -d "$body" 2>/dev/null || true)
-  if [ -n "$created" ]; then
+  # Test the EXIT CODE, not just non-emptiness. `|| true` discarded the one
+  # signal that says whether the POST worked, leaving `-n` to decide — and
+  # `-n` was satisfied by the error message itself.
+  if created=$(api POST "$path" -d "$body" 2>/dev/null) && [ -n "$created" ]; then
     echo "$created"
     return 0
   fi
@@ -118,6 +125,9 @@ else:
 ")
   if [ -z "$existing" ]; then
     log "FATAL: ${path} ${ident} could neither be created nor found."
+    log "Re-running the POST so its refusal is visible (it is suppressed"
+    log "above, where an existing object makes a failed POST expected):"
+    api POST "$path" -d "$body" > /dev/null || true
     return 1
   fi
   pk=$(echo "$existing" | py "import json,sys; print(json.load(sys.stdin)['pk'])")

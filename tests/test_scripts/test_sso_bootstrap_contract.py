@@ -1,7 +1,7 @@
 """The SSO fixture's contract with the SP (core#830, core#768).
 
 ``e2e-sso`` has been red on **every** run since it was re-enabled on 2026-08-31,
-and unmeasured since 2026-07-17 before that. Five defects, all in the fixture and
+and unmeasured since 2026-07-17 before that. Six defects, all in the fixture and
 none in the application, and they fire in a fixed order so each masks the next:
 
 ===  ==========================================  ============================================
@@ -13,7 +13,15 @@ none in the application, and they fire in a fixed order so each masks the next:
      ``<saml:AttributeStatement/>``
  4   fixture writes no ``idp_cert``              ``SAML IdP certificate not configured``
  5   NameID is an opaque hash, not an email      a user provisioned with a 64-hex "address"
+ 6   ``log`` writes to stdout, so a failed     ``JSONDecodeError`` at char 1, hiding
+     POST is returned as the created object    the HTTP 400 that actually happened
 ===  ==========================================  ============================================
+
+Defect 6 is the reason 1-5 could not be *observed* being fixed: it made the
+bootstrap abort with a json traceback before any of them was exercised, and it
+discarded the API's own explanation on the way. ``TestAFailedCallIsNotMistaken
+ForSuccess`` executes the real helper against a stubbed API and is the most
+load-bearing thing in this file.
 
 Defects 1-3 are demonstrated against the real captured staging payload in
 ``tests/test_services/test_sso_saml_binding.py``. This file guards the *fixture*
@@ -39,6 +47,8 @@ flip." So the tests below are ordered by how much they actually prove:
 
 import importlib.util
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -360,4 +370,228 @@ class TestTheSamlProviderBody:
         assert re.findall(r"\S*sso/binding/redirect/\S*", was_the_defect), (
             "the pattern no longer matches the literal line this test exists to "
             "catch, so it would pass against the original defect"
+        )
+
+
+# --------------------------------------------------------------------------
+# Defect 6: the helper reports success when every call failed (core#830).
+# --------------------------------------------------------------------------
+
+_BASH = shutil.which("bash")
+
+
+def _bash_block(name: str) -> str:
+    """Pull a multi-line function definition out of the REAL script.
+
+    Extraction rather than transcription is the whole point: a copy of the
+    function in this file would keep passing after the script changed, which is
+    the failure mode ``_source_outside_the_helper`` already exists to avoid.
+    """
+    m = re.search(rf"^{re.escape(name)}\(\) \{{\n.*?^\}}$", _bootstrap_source(), re.M | re.S)
+    assert m, f"could not find `{name}()` in {_BOOTSTRAP.name} — this guard reads nothing"
+    return m.group(0)
+
+
+def _log_block() -> str:
+    m = re.search(r"^log\(\) \{.*\}$", _bootstrap_source(), re.M)
+    assert m, f"could not find `log()` in {_BOOTSTRAP.name} — this guard reads nothing"
+    return m.group(0)
+
+
+def _run_bash(script: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [_BASH, "-c", script],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(
+    _BASH is None, reason="bash not on PATH (CI runs ubuntu; dev boxes have Git Bash)"
+)
+class TestAFailedCallIsNotMistakenForSuccess:
+    """``log`` must not write to stdout, because stdout is the data channel.
+
+    ``ensure_object`` captures ``api``'s output: ``created=$(api POST ... )``.
+    ``api`` reports an HTTP >= 400 by calling ``log``, and ``log`` used ``echo``
+    — i.e. **stdout**. So a failed POST returned two lines of log text *as the
+    created object*. Three consequences, in increasing order of severity:
+
+    1. ``2>/dev/null`` on that POST suppressed nothing, since nothing was ever
+       written to stderr.
+    2. ``[ -n "$created" ]`` was satisfied **by the error message**, so the
+       helper echoed log text and returned 0 — reporting success for a call that
+       failed.
+    3. The PATCH fallback therefore became unreachable on exactly the path it
+       was written for. The comment above ``ensure_object`` explains that a
+       swallowed POST made "every edit to a creation body inert where it
+       mattered"; the replacement reintroduced that, one channel lower down.
+
+    Downstream this surfaced as ``JSONDecodeError: Expecting value: line 1
+    column 2 (char 1)`` — ``json.load`` consuming the ``[`` of
+    ``[bootstrap-authentik] ERROR: ...``. The API's own explanation of the 400
+    was captured into a shell variable and never printed, so the one diagnostic
+    that would have named the real cause was destroyed by the same bug.
+
+    These tests execute the real functions with a stubbed ``api``; no authentik,
+    no network, no python3.
+    """
+
+    _STUB = (
+        'api() { log "ERROR: API $1 $2 -> HTTP 400"; '
+        'log "Response: {\\"detail\\":\\"stub refusal\\"}"; return 1; }\n'
+        # `py` would only be reached on the fallback path; stub it so the test
+        # needs no interpreter and no valid JSON.
+        "py() { cat >/dev/null; printf ''; }\n"
+    )
+
+    def test_the_extraction_really_got_the_helper(self):
+        """Negative control: every assertion below is vacuous on an empty block."""
+        block = _bash_block("ensure_object")
+        assert "PATCHing it to match" in block, (
+            "the extracted block is not ensure_object's real body, so the "
+            "behavioural tests below are running something else"
+        )
+        assert "log(" in _log_block()
+
+    def test_log_does_not_write_to_stdout(self):
+        script = _log_block() + '\nout=$(log "hello")\nprintf "OUT:[%s]" "$out"\n'
+        result = _run_bash(script)
+        assert result.stdout == "OUT:[]", (
+            "`log` writes to stdout, so every `$(...)` capture in this script "
+            "can swallow a log line as if it were data. It must redirect to "
+            f"stderr (`>&2`). Captured: {result.stdout!r}"
+        )
+
+    def test_a_failing_post_does_not_return_zero(self):
+        script = (
+            "set -uo pipefail\n"
+            + _log_block()
+            + "\n"
+            + _bash_block("ensure_object")
+            + "\n"
+            + self._STUB
+            + "if out=$(ensure_object /providers/saml/ datanika-saml-e2e '{}'); "
+            "then rc=0; else rc=$?; fi\n"
+            'printf "RC:%s\n" "$rc"\n'
+        )
+        result = _run_bash(script)
+        assert "RC:0" not in result.stdout, (
+            "ensure_object reported SUCCESS while every API call failed. A "
+            "caller then treats the error text as the created object, and the "
+            "PATCH fallback never runs. stdout was: "
+            f"{result.stdout!r}"
+        )
+
+    def test_a_failing_post_does_not_emit_log_text_as_the_object(self):
+        script = (
+            "set -uo pipefail\n"
+            + _log_block()
+            + "\n"
+            + _bash_block("ensure_object")
+            + "\n"
+            + self._STUB
+            + "out=$(ensure_object /providers/saml/ datanika-saml-e2e '{}') || true\n"
+            'printf "OUT:[%s]" "$out"\n'
+        )
+        result = _run_bash(script)
+        assert "[bootstrap-authentik]" not in result.stdout, (
+            "ensure_object returned LOG TEXT on stdout as if it were the API "
+            "object. The caller pipes this into `json.load`, which fails at "
+            "char 1 on the leading '[' — a crash whose message names json, not "
+            f"the HTTP error that actually happened. stdout was: {result.stdout!r}"
+        )
+
+    def test_a_successful_post_is_still_returned_verbatim(self):
+        """The happy path must survive the fix.
+
+        Guarding only the failure path would let a stricter success test ("must
+        return non-zero") pass by breaking creation entirely.
+        """
+        script = (
+            "set -uo pipefail\n"
+            + _log_block()
+            + "\n"
+            + _bash_block("ensure_object")
+            + "\n"
+            + 'api() { printf \'{"pk": 7, "name": "datanika-saml-e2e"}\'; return 0; }\n'
+            "py() { cat >/dev/null; printf ''; }\n"
+            "if out=$(ensure_object /providers/saml/ datanika-saml-e2e '{}'); "
+            "then rc=0; else rc=$?; fi\n"
+            'printf "RC:%s OUT:%s" "$rc" "$out"\n'
+        )
+        result = _run_bash(script)
+        assert result.stdout == 'RC:0 OUT:{"pk": 7, "name": "datanika-saml-e2e"}', (
+            f"a successful POST must be echoed unchanged and report 0; got {result.stdout!r}"
+        )
+
+    def test_the_patch_fallback_is_now_reachable(self):
+        """The point of the fix, stated as a test.
+
+        Before it, a failing POST short-circuited with `return 0` and the PATCH
+        below was dead code on the only box the suite runs against.
+        """
+        script = (
+            "set -uo pipefail\n" + _log_block() + "\n" + _bash_block("ensure_object") + "\n"
+            # POST fails; GET returns a collection; PATCH succeeds.
+            'api() { case "$1 $2" in\n'
+            '  "POST /providers/saml/") log "ERROR: API POST -> HTTP 400"; return 1 ;;\n'
+            '  "GET /providers/saml/?search=datanika-saml-e2e") printf \'{"results":[]}\' ;;\n'
+            '  "PATCH /providers/saml/9/") printf \'{"pk": 9, "patched": true}\' ;;\n'
+            # No silent default: an unmatched call means the stub drifted from
+            # the script, and returning 0 with no output would read as a pass.
+            '  *) echo "STUB-MISS: $1 $2" >&2; return 99 ;;\n'
+            "esac; }\n"
+            # `py` runs twice with DIFFERENT scripts: once to pick the matching
+            # object out of the collection, once to read its `pk`. One answer for
+            # both makes `pk` the whole object and the PATCH URL nonsense.
+            'py() { cat >/dev/null; case "$1" in '
+            "*\"['pk']\"*) printf '9' ;; *) printf '{\"pk\": 9}' ;; esac; }\n"
+            "if out=$(ensure_object /providers/saml/ datanika-saml-e2e '{}'); "
+            "then rc=0; else rc=$?; fi\n"
+            'printf "RC:%s OUT:%s" "$rc" "$out"\n'
+        )
+        result = _run_bash(script)
+        assert result.stdout == 'RC:0 OUT:{"pk": 9, "patched": true}', (
+            "a failed POST must fall through to the PATCH and return the "
+            f"PATCHed object; got {result.stdout!r}"
+        )
+        assert "PATCHing it to match" in result.stderr, (
+            "the PATCH branch did not announce itself on stderr, so the "
+            "fallback may not have run at all"
+        )
+
+    def test_a_failed_call_that_still_printed_is_not_success(self):
+        """The exit code is the verdict; stdout being non-empty is not.
+
+        Redirecting ``log`` to stderr fixes today's bug on its own — with it,
+        a failed ``api`` writes nothing to stdout, so ``[ -n "$created" ]``
+        happens to be false. That coincidence is the whole problem: the helper
+        would be reading the *right* answer off the *wrong* signal, and stays
+        correct only for as long as no failure path ever writes to stdout.
+
+        ``api`` echoing an error body, a curl progress line, or a partial
+        response would each restore the original defect silently. This pins the
+        contract instead of the coincidence, and is the only test here sensitive
+        to the ``if created=$(...)`` exit-code check rather than to the channel.
+        """
+        script = (
+            "set -uo pipefail\n" + _log_block() + "\n" + _bash_block("ensure_object") + "\n"
+            # Fails, but writes a plausible error body to STDOUT as it goes.
+            'api() { case "$1" in\n'
+            '  POST) printf \'{"detail":"invalid field"}\'; return 1 ;;\n'
+            '  *) echo "STUB-MISS: $1 $2" >&2; return 99 ;;\n'
+            "esac; }\n"
+            "py() { cat >/dev/null; printf ''; }\n"
+            "if out=$(ensure_object /providers/saml/ datanika-saml-e2e '{}'); "
+            "then rc=0; else rc=$?; fi\n"
+            'printf "RC:%s OUT:%s" "$rc" "$out"\n'
+        )
+        result = _run_bash(script)
+        assert not result.stdout.startswith("RC:0"), (
+            "a POST that returned non-zero was treated as success because it "
+            "happened to print something. The helper must test the exit code, "
+            f"not whether the channel is empty. Got: {result.stdout!r}"
         )

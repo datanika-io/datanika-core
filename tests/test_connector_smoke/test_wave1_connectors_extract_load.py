@@ -42,6 +42,7 @@ from __future__ import annotations
 import contextlib
 
 import duckdb
+import httpx
 
 from datanika.services.dlt_runner import DltRunnerService
 
@@ -120,9 +121,46 @@ def test_pipedrive_extract_load_assert(require_env, tmp_path):
 
 
 def test_freshdesk_extract_load_assert(require_env, tmp_path):
-    """Extract Freshdesk ``agents`` → DuckDB → assert rows + ``id`` column landed."""
+    """Extract Freshdesk ``agents`` → DuckDB → assert rows + ``id`` column landed.
+
+    🚨 **Account liveness is asserted first, and that is not ceremony.** Measured
+    2026-09-03 against our suspended QA tenant — one credential, one minute:
+
+    ===========================  ==========================================
+    ``GET /api/v2/agents/me``    403 ``account_suspended``
+    ``GET /api/v2/tickets``      403 ``account_suspended``
+    ``GET /api/v2/agents``       **200**, real rows
+    ===========================  ==========================================
+
+    So this probe — the strongest Freshdesk signal we have, a full round-trip
+    through the real connector — was **green on a dead account** for as long as
+    the account had been dead, because ``agents`` is the one endpoint Freshdesk
+    keeps serving to a suspended tenant. Its sibling ``test_freshdesk_auth_and_
+    current_agent`` was red the whole time, on the same credential.
+
+    A probe must *observe* the thing it certifies. Extracting a resource that
+    survives suspension certifies nothing about the account, so the liveness
+    check reads ``tickets`` — the resource this connector exists to move, and
+    one the vendor does refuse when the account is gone. It asserts the status
+    code only, never a row count, so a freshly-provisioned empty helpdesk still
+    passes. core#944.
+    """
     env = require_env("FRESHDESK_API_KEY", "FRESHDESK_DOMAIN")
     subdomain = env["FRESHDESK_DOMAIN"].strip().removesuffix(".freshdesk.com")
+
+    live = httpx.get(
+        f"https://{subdomain}.freshdesk.com/api/v2/tickets",
+        auth=(env["FRESHDESK_API_KEY"], "X"),
+        timeout=15.0,
+    )
+    assert live.status_code == 200, (
+        f"Freshdesk account is not usable: /api/v2/tickets returned "
+        f"{live.status_code}: {live.text[:200]}. Asserted BEFORE the extract on "
+        f"purpose — /api/v2/agents keeps returning 200 on a suspended tenant, so "
+        f"extracting `agents` would report this connector healthy while every "
+        f"ticket endpoint is refused (core#944)."
+    )
+
     db_path, dataset, rows = _saas_extract_load(
         "freshdesk",
         {"api_key": env["FRESHDESK_API_KEY"], "domain": subdomain},

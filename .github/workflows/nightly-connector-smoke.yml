@@ -202,16 +202,80 @@ jobs:
         # worth having, and the skip guard is the more specific diagnosis.
         run: |
           set -o pipefail
+
+          # 🚨 core#944 Class C — the Oracle probes do not belong in THIS job.
+          # `oracle-smoke` below runs them against a live Oracle XE service
+          # container and passes. This job has no Oracle credentials, so running
+          # them here produced two failures reading `Missing env vars: ORACLE_*`
+          # every night — a test-selection defect wearing a connector's clothes.
+          # `-k "not oracle"` is the exact complement of `oracle-smoke`'s `-k oracle`.
+          #
+          # ⚠️ A DESELECT PRODUCES NO `skipped` LINE, so the skip alarm below is
+          # structurally blind to it. A `-k` expression that matched more than
+          # intended — a rename, a typo, a fifth Oracle-named test — would shrink
+          # this job silently while every signal stayed green. That is the exact
+          # shape of the bug this job keeps being bitten by, so the count is
+          # asserted. `tests/test_deploy/test_nightly_smoke_tiers.py` independently
+          # derives this number from the test sources, so the two cannot drift.
+          EXPECT_DESELECTED=2
+
           rc=0
-          pytest tests/test_connector_smoke/ -v --tb=short -rs | tee /tmp/smoke.log || rc=$?
+          pytest tests/test_connector_smoke/ -v --tb=short -rs -k "not oracle" | tee /tmp/smoke.log || rc=$?
+
+          # ⚠️ Do NOT parse pytest's English summary line for the tier counts.
+          # Measured on pytest 9.0.2: a strict XPASS is reported as `failed` and
+          # the summary contains NO `xpassed` token at all, so a grep for it has
+          # one possible answer. `tests/test_connector_smoke/conftest.py` reads the
+          # reporter directly and emits this line from the pin itself — one source
+          # of truth, and a POSITIVE artifact whose absence is itself a failure.
+          TIER=$(grep -m1 '^\[tier\] pinned=' /tmp/smoke.log || true)
+          if [ -z "$TIER" ]; then
+            echo "::error::The [tier] summary line is ABSENT from the pytest output. It is emitted by pytest_terminal_summary in tests/test_connector_smoke/conftest.py whenever DATANIKA_CONNECTOR_SMOKE=1, so its absence means the gate was off, the conftest was not loaded, or the hook stopped firing — none of which is a clean run. Nothing below this point can be trusted without it."
+            exit 1
+          fi
+          field() { printf '%s' "$TIER" | sed -n "s/.*[^a-z_]$1=\([0-9][0-9]*\).*/\1/p"; }
+          n_pinned=$(field pinned); n_xfailed=$(field xfailed)
+          n_stale=$(field stale_pins); n_unexpected=$(field unexpected_failure)
+          n_notrun=$(field not_run); n_gpassed=$(field gating_passed)
+          n_gfailed=$(field gating_failed); n_desel=$(field deselected)
+          n_skipped=$(field skipped)
+
+          # Print the tier split. "15 passed" reads like full coverage until you
+          # look at what is NOT in that number.
+          {
+            echo "### Nightly connector smoke — tier split"
+            echo ""
+            echo "| tier | count | fails the job? |"
+            echo "|---|---|---|"
+            echo "| gating — live accounts | ${n_gpassed} passed / ${n_gfailed} failed | **yes** |"
+            echo "| awaiting provisioning — cloud#160 | ${n_xfailed} of ${n_pinned} pinned | no |"
+            echo "| stale pin — the account is BACK | ${n_stale} | **yes** |"
+            echo "| unexpected failure behind a pin | ${n_unexpected} | **yes** |"
+            echo "| pin covers nothing | ${n_notrun} | **yes** |"
+            echo "| covered by the \`oracle-smoke\` job | ${n_desel} deselected | n/a |"
+            echo "| skipped — must be 0 | ${n_skipped} | **yes** |"
+            echo ""
+            echo "\`$TIER\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::$TIER"
+
+          if [ "${n_desel:-x}" != "$EXPECT_DESELECTED" ]; then
+            echo "::error::Expected exactly $EXPECT_DESELECTED probe(s) deselected by -k 'not oracle', got '${n_desel:-<unparsed>}'. A deselect emits no 'skipped' line, so nothing else in this job can see it — this assertion is the only thing standing between a mis-scoped -k expression and a silently shrunken nightly. If an Oracle probe was legitimately added or removed, update EXPECT_DESELECTED here; tests/test_deploy/test_nightly_smoke_tiers.py derives the same number from the test sources and will fail until both agree."
+            exit 1
+          fi
 
           if grep -qE '[0-9]+ skipped' /tmp/smoke.log; then
             echo "::error::Smoke probes were SKIPPED — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
             exit 1
           fi
 
+          if [ "${n_stale:-1}" != "0" ] || [ "${n_notrun:-1}" != "0" ]; then
+            echo "::error::The awaiting-provisioning pin no longer describes reality: stale_pins=${n_stale} not_run=${n_notrun}. A stale pin means a vendor account we recorded as dead is alive again — delete its entry from AWAITING_PROVISIONING in tests/test_connector_smoke/conftest.py and close the matching item on cloud#160. A pin covering nothing means it names a probe that did not run. Do NOT silence either: a pin that can only ever be satisfied is muting, not tiering. See the [tier] detail lines above for the names."
+            exit 1
+          fi
+
           if [ "$rc" -ne 0 ]; then
-            echo "::error::Connector smoke probes FAILED (pytest exit $rc). Open the log above and find the first FAILED test — this step no longer launders pytest's exit code through the pipe to tee (core#827)."
+            echo "::error::Connector smoke probes FAILED (pytest exit $rc). Open the log above and find the first FAILED test — this step no longer launders pytest's exit code through the pipe to tee (core#827). A failure here is a LIVE connector breaking; probes on known-dead accounts are xfailed and cannot reach this line."
             exit "$rc"
           fi
 

@@ -24,6 +24,7 @@ from datanika.services.mcp_oauth import (
     McpOAuthService,
     read_only_scopes,
 )
+from tests.factories import make_user
 
 _REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 
@@ -57,10 +58,12 @@ def org(db_session) -> Organization:
 
 @pytest.fixture
 def user(db_session) -> User:
-    row = User(email="oauth@example.com", password_hash="hashed", full_name="OAuth User")
-    db_session.add(row)
-    db_session.flush()
-    return row
+    return make_user(
+        db_session,
+        email="oauth@example.com",
+        full_name="OAuth User",
+        password_hash="hashed",
+    )
 
 
 @pytest.fixture

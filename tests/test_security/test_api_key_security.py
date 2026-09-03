@@ -4,8 +4,9 @@ import uuid
 
 import pytest
 
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -23,9 +24,12 @@ def org(db_session):
 
 @pytest.fixture
 def user(db_session):
-    u = User(email=f"keysec-{uuid.uuid4().hex[:6]}@test.com", password_hash="h", full_name="K")
-    db_session.add(u)
-    db_session.flush()
+    u = make_user(
+        db_session,
+        email=f"keysec-{uuid.uuid4().hex[:6]}@test.com",
+        full_name="K",
+        password_hash="h",
+    )
     return u
 
 

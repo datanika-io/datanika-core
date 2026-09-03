@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from datanika.models.base import Base
+from tests.factories import make_user
 
 
 # ---------------------------------------------------------------------------
@@ -84,15 +85,12 @@ class TestUser:
         assert cols["email"].unique
 
     def test_create_user(self, db_session):
-        from datanika.models.user import User
-
-        user = User(
+        user = make_user(
+            db_session,
             email="alice@example.com",
-            password_hash="hashed_pw",
             full_name="Alice Smith",
+            password_hash="hashed_pw",
         )
-        db_session.add(user)
-        db_session.flush()
 
         assert isinstance(user.id, int)
         assert user.email == "alice@example.com"
@@ -131,12 +129,12 @@ class TestMembership:
         }
 
     def test_create_membership(self, db_session):
-        from datanika.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization
 
         org = Organization(name="Acme", slug="acme")
-        user = User(email="bob@example.com", password_hash="h", full_name="Bob")
-        db_session.add_all([org, user])
+        db_session.add(org)
         db_session.flush()
+        user = make_user(db_session, email="bob@example.com", full_name="Bob", password_hash="h")
 
         membership = Membership(user_id=user.id, org_id=org.id, role=MemberRole.ADMIN)
         db_session.add(membership)
@@ -814,12 +812,14 @@ class TestUploadedFile:
 # ===========================================================================
 class TestRelationships:
     def test_user_memberships_relationship(self, db_session):
-        from datanika.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization
 
         org = Organization(name="Acme", slug="acme-rel")
-        user = User(email="rel@example.com", password_hash="h", full_name="Rel Test")
-        db_session.add_all([org, user])
+        db_session.add(org)
         db_session.flush()
+        user = make_user(
+            db_session, email="rel@example.com", full_name="Rel Test", password_hash="h"
+        )
 
         m = Membership(user_id=user.id, org_id=org.id, role=MemberRole.OWNER)
         db_session.add(m)
@@ -830,12 +830,14 @@ class TestRelationships:
         assert user.memberships[0].org_id == org.id
 
     def test_org_memberships_relationship(self, db_session):
-        from datanika.models.user import MemberRole, Membership, Organization, User
+        from datanika.models.user import MemberRole, Membership, Organization
 
         org = Organization(name="Acme", slug="acme-rel2")
-        user = User(email="rel2@example.com", password_hash="h", full_name="Rel Test2")
-        db_session.add_all([org, user])
+        db_session.add(org)
         db_session.flush()
+        user = make_user(
+            db_session, email="rel2@example.com", full_name="Rel Test2", password_hash="h"
+        )
 
         m = Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER)
         db_session.add(m)

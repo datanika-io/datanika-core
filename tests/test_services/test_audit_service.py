@@ -3,8 +3,9 @@
 import pytest
 
 from datanika.models.audit_log import AuditAction, AuditLog
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.audit_service import AuditService
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -22,13 +23,12 @@ def org(db_session):
 
 @pytest.fixture
 def user(db_session):
-    user = User(
+    user = make_user(
+        db_session,
         email="audit-user@example.com",
-        password_hash="hashed",
         full_name="Audit User",
+        password_hash="hashed",
     )
-    db_session.add(user)
-    db_session.flush()
     return user
 
 
@@ -123,13 +123,12 @@ class TestListLogs:
         assert result[0].resource_type == "pipeline"
 
     def test_filter_by_user(self, svc, db_session, org, user):
-        other_user = User(
+        other_user = make_user(
+            db_session,
             email="other-audit@example.com",
-            password_hash="h",
             full_name="Other",
+            password_hash="h",
         )
-        db_session.add(other_user)
-        db_session.flush()
         svc.log_action(db_session, org.id, user.id, AuditAction.CREATE, "pipeline")
         svc.log_action(db_session, org.id, other_user.id, AuditAction.CREATE, "pipeline")
         result = svc.list_logs(db_session, org.id, user_id=user.id)

@@ -11,7 +11,7 @@ from datanika.models.connection import Connection, ConnectionDirection, Connecti
 from datanika.models.dependency import NodeType
 from datanika.models.pipeline import DbtCommand, Pipeline
 from datanika.models.transformation import Materialization, Transformation
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -20,6 +20,7 @@ from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.services.user_service import UserService
+from tests.factories import make_user
 
 
 @pytest.fixture(autouse=True)
@@ -495,23 +496,21 @@ class TestMembershipBeforeCreateHook:
         db_session.add(org)
         db_session.flush()
 
-        user = User(
+        user = make_user(
+            db_session,
             email=f"user-{uuid.uuid4().hex[:6]}@example.com",
-            password_hash=auth.hash_password("password123"),
             full_name="Test User",
+            password_hash=auth.hash_password("password123"),
         )
-        db_session.add(user)
-        db_session.flush()
 
         # core#658: add_member is authenticated now and fails closed, so
         # the org needs an owner to do the adding.
-        owner = User(
+        owner = make_user(
+            db_session,
             email=f"owner-{uuid.uuid4().hex[:6]}@example.com",
-            password_hash=auth.hash_password("password123"),
             full_name="Owner",
+            password_hash=auth.hash_password("password123"),
         )
-        db_session.add(owner)
-        db_session.flush()
         db_session.add(Membership(user_id=owner.id, org_id=org.id, role=MemberRole.OWNER))
         db_session.flush()
 

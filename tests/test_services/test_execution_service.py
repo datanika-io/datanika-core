@@ -1,5 +1,7 @@
 """TDD tests for execution service (run lifecycle management)."""
 
+from datetime import datetime
+
 import pytest
 from cryptography.fernet import Fernet
 
@@ -211,3 +213,31 @@ class TestListRuns:
         svc.create_run(db_session, other_org.id, NodeType.UPLOAD, 1)
         result = svc.list_runs(db_session, org.id)
         assert len(result) == 1
+
+    def test_a_run_already_carrying_deleted_at_is_still_listed(self, svc, db_session, org, upload):
+        """core#1000: run history is retained *"for as long as the organization exists"*.
+
+        Between 2026-08-30 and core#1000 the hourly ``purge_old_runs`` sweep wrote
+        ``Run.deleted_at`` on every completed run past 90 days, so **production rows carry
+        that mark**. The sweep is gone; the marks are not, and they are inert only because
+        nothing reads the column.
+
+        Adding ``Run.deleted_at.is_(None)`` here is the obvious tidy-up — five sibling
+        services do exactly that — and it would retire those already-marked rows from the UI
+        the day it shipped, falsifying the retention sentence on
+        ``datanika.io/privacy`` and ``/trust`` with nothing in the diff naming a legal page.
+        This is the red that stops it. If run retention is ever genuinely adopted, the
+        landing pages change in the same batch and this test changes with them.
+
+        Green before and after core#1000 — a durable guard, not a regression test.
+        """
+        run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
+        run.deleted_at = datetime.utcnow()
+        db_session.flush()
+
+        result = svc.list_runs(db_session, org.id)
+
+        assert [r.id for r in result] == [run.id], (
+            "list_runs dropped a run carrying deleted_at; run history is published as "
+            "retained for as long as the organization exists"
+        )

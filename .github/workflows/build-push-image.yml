@@ -13,10 +13,16 @@ name: Build & push image
 #   push to master → :latest and :<short-sha>
 #   push v* tag    → :v0.x.y and :<short-sha>   (pinnable release image)
 #
-# The v* tag build exists so self-hosters can pin a release instead of tracking
-# :latest — see plans/infra/SPEC_RELEASE_VERSIONING.md. `v*` is disjoint from
-# release-mcp.yml's `mcp-v*` trigger (globs anchor at the start), so tagging the
+# The v* tag build was added so self-hosters could pin a release instead of tracking
+# :latest — see docs/specs/SPEC_RELEASE_VERSIONING.md (the old plans/infra/ path in
+# this comment has not existed since the 2026-08-31 consolidation). `v*` is disjoint
+# from release-mcp.yml's `mcp-v*` trigger (globs anchor at the start), so tagging the
 # platform never publishes the MCP sub-package.
+#
+# 🚨 core#1014 — NOBODY OUTSIDE THE ORG CAN PULL WHAT THIS PUSHES, and that is correct
+# for now. The package is private, and it must stay private while this build grafts the
+# closed-source datanika-cloud tree into the image. Making it public is not a settings
+# fix, it is a publication. A core-only public image is the open decision on #1014.
 
 on:
   push:

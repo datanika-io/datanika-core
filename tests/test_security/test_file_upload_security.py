@@ -1,6 +1,7 @@
 """Security tests — file upload MIME type validation, double extensions, zip bombs."""
 
 import base64
+import unicodedata
 
 import pytest
 
@@ -94,11 +95,27 @@ class TestFilenameInjection:
         with pytest.raises(ValueError, match="Unsupported file type"):
             svc.save_file(None, 1, "data\x00.exe", b"malware")
 
-    def test_unicode_normalization_attack(self, svc, db_session, org):
-        """Unicode confusable characters in filename — should not bypass filters."""
-        # Fullwidth .csv extension
+    def test_a_confusable_separator_is_not_folded_into_an_extension(self, svc, db_session, org):
+        """Unicode confusable characters in filename must not bypass the filter.
+
+        Renamed from ``test_unicode_normalization_attack``, which claimed more
+        than it tested: its single payload exercised the no-extension branch,
+        not normalisation, in either direction.
+        """
+        # Fullwidth full stop: contains no ASCII ".", so this takes the
+        # NO-EXTENSION branch of _infer_content_type and is a duplicate of
+        # test_no_extension_rejected. Kept, but it is not the interesting case.
         with pytest.raises(ValueError, match="Unsupported file type"):
             svc.save_file(None, 1, "data\uff0eexe", b"MZ")
+
+        # The permissive case, which is the one that matters and was missing.
+        # This name NFKC-folds to "data.csv". It must still be refused, because
+        # the extension is compared raw and never folded. If someone adds a
+        # unicodedata.normalize() ahead of the split -- the obvious "fix" for
+        # the assertion above -- this is what starts passing.
+        assert unicodedata.normalize("NFKC", "data\uff0e\uff43\uff53\uff56") == "data.csv"
+        with pytest.raises(ValueError, match="Unsupported file type"):
+            svc.save_file(None, 1, "data\uff0e\uff43\uff53\uff56", b"MZ")
 
     def test_very_long_filename(self, svc, db_session, org):
         """Extremely long filenames should not crash."""

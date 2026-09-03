@@ -1,4 +1,9 @@
-"""Celery tasks for scheduled maintenance — cleanup orphaned files, old runs."""
+"""Celery tasks for scheduled maintenance — cleanup orphaned files and stale artifacts.
+
+⚠️ **This sweep does not touch run history, and must not (core#1000).** See the module
+docstring of ``datanika.services.maintenance_service`` for the decision and its published
+consequences.
+"""
 
 import logging
 
@@ -15,22 +20,26 @@ class MaintenanceError(RuntimeError):
 
     Before core#709 this path returned a dict instead, and Celery recorded ``SUCCESS``.
     The dict's key count was the only thing that differed — and it did not differ
-    reliably: measured against the old code, a failure returned 3 keys, 4 keys, or, when
-    ``session.commit()`` was what threw, a full **5**, indistinguishable from a clean run.
-    A commit failure is the position that matters most, because every sweep below buffers
-    its DELETEs until then.
+    reliably: measured against the code of the day, a failure returned 3 keys, 4 keys, or,
+    when ``session.commit()`` was what threw, a full **5**, indistinguishable from a clean
+    run. A commit failure is the position that matters most, because every sweep below
+    buffers its DELETEs until then. (Those counts are of the five sweeps that existed then;
+    core#1000 removed the run purge, so a clean run reports **four**. The argument does not
+    depend on the number — do not re-derive it from today's code.)
     """
 
 
 @celery_app.task(name="datanika.run_maintenance")
 def run_maintenance_task() -> dict:
-    """Hourly maintenance: clean orphaned dlt dirs, dbt artifacts, old runs, archives."""
+    """Hourly maintenance: clean orphaned dlt dirs, dbt artifacts, archives, spent tokens.
+
+    ⚠️ Deliberately does **not** purge run history — core#1000. See the module docstring.
+    """
     from datanika.config import settings
     from datanika.services.maintenance_service import (
         cleanup_dbt_targets,
         cleanup_orphaned_archives,
         cleanup_orphaned_dlt_dirs,
-        purge_old_runs,
     )
     from datanika.ui.state.base_state import get_sync_session
 
@@ -47,9 +56,6 @@ def run_maintenance_task() -> dict:
                 settings.dlt_pipelines_dir,
                 settings.maintenance_dlt_max_age_hours,
                 session=session,
-            )
-            results["purged_runs"] = purge_old_runs(
-                session, settings.maintenance_run_retention_days
             )
             results["orphaned_archives"] = cleanup_orphaned_archives(
                 session, settings.file_uploads_dir
@@ -68,8 +74,8 @@ def run_maintenance_task() -> dict:
         # healthy no-op, so Celery recorded SUCCESS and no observer could tell the two apart.
         #
         # The two zeroed counters that used to be assigned here are deliberately gone: a
-        # sweep that never ran is not a sweep that found nothing, and `purged_runs: 0` read
-        # as the latter. `results` now holds exactly the sweeps that did complete.
+        # sweep that never ran is not a sweep that found nothing, and a `0` read as the
+        # latter. `results` now holds exactly the sweeps that did complete.
         logger.exception(
             "Maintenance FAILED: database cleanup did not complete. Sweeps that finished first: %s",
             results,

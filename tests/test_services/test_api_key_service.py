@@ -5,8 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from datanika.models.api_key import ApiKey
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -24,13 +25,12 @@ def org(db_session):
 
 @pytest.fixture
 def user(db_session):
-    user = User(
+    user = make_user(
+        db_session,
         email="user@example.com",
-        password_hash="hashed",
         full_name="Test User",
+        password_hash="hashed",
     )
-    db_session.add(user)
-    db_session.flush()
     return user
 
 

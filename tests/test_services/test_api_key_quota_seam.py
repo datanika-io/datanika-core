@@ -23,8 +23,9 @@ import pytest
 
 from datanika import hooks
 from datanika.models.api_key import ApiKey
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -42,9 +43,7 @@ def org_and_user(db_session):
     org = Organization(name="Seam", slug="api-key-seam")
     db_session.add(org)
     db_session.flush()
-    user = User(email="seam@example.com", password_hash="h", full_name="Seam")
-    db_session.add(user)
-    db_session.flush()
+    user = make_user(db_session, email="seam@example.com", full_name="Seam", password_hash="h")
     return org, user
 
 

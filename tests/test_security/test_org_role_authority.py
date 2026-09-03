@@ -34,7 +34,7 @@ import pathlib
 
 import pytest
 
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import (
     AuthService,
     assignable_roles,
@@ -43,6 +43,7 @@ from datanika.services.auth import (
 )
 from datanika.services.invitation_service import InvitationService
 from datanika.services.user_service import UserService, UserServiceError
+from tests.factories import make_invitation, make_user
 
 
 @pytest.fixture
@@ -64,9 +65,7 @@ def org(db_session) -> Organization:
 
 
 def _member(db_session, org, email, role) -> Membership:
-    u = User(email=email, password_hash="h", full_name=email.split("@")[0])
-    db_session.add(u)
-    db_session.flush()
+    u = make_user(db_session, email=email, full_name=email.split("@")[0], password_hash="h")
     m = Membership(user_id=u.id, org_id=org.id, role=role)
     db_session.add(m)
     db_session.flush()
@@ -182,9 +181,7 @@ class TestTheServiceRefusesWithoutAnActor:
 
     @pytest.mark.parametrize("role", [MemberRole.VIEWER, MemberRole.ADMIN])
     def test_add_member_without_an_actor_is_refused(self, svc, db_session, org, owner, role):
-        stranger = User(email="s@roles.test", password_hash="h", full_name="S")
-        db_session.add(stranger)
-        db_session.flush()
+        stranger = make_user(db_session, email="s@roles.test", full_name="S", password_hash="h")
         with pytest.raises(UserServiceError, match="acting user"):
             svc.add_member(db_session, org.id, stranger.id, role)
 
@@ -199,9 +196,9 @@ class TestTheServiceRefusesWithoutAnActor:
         assert _live(db_session, viewer.id) is not None
 
     def test_a_non_member_cannot_manage_members(self, svc, db_session, org, owner, viewer):
-        outsider = User(email="outsider@roles.test", password_hash="h", full_name="O")
-        db_session.add(outsider)
-        db_session.flush()
+        outsider = make_user(
+            db_session, email="outsider@roles.test", full_name="O", password_hash="h"
+        )
         with pytest.raises(UserServiceError, match="not a member"):
             svc.remove_member(db_session, org.id, viewer.id, actor_user_id=outsider.id)
         assert _live(db_session, viewer.id) is not None
@@ -228,9 +225,7 @@ class TestTheNegativeControl:
         assert _owner_count(db_session, org.id) == 1
 
     def test_an_admin_can_still_invite_an_editor(self, svc, db_session, org, owner, admin):
-        newcomer = User(email="new@roles.test", password_hash="h", full_name="N")
-        db_session.add(newcomer)
-        db_session.flush()
+        newcomer = make_user(db_session, email="new@roles.test", full_name="N", password_hash="h")
         m = svc.add_member(
             db_session, org.id, newcomer.id, MemberRole.EDITOR, actor_user_id=admin.user_id
         )
@@ -314,9 +309,9 @@ class TestTransferOwnership:
 
     def test_the_successor_must_already_be_a_member(self, svc, db_session, org, owner):
         """AC12. An email field here would rebuild the invite-as-owner path."""
-        stranger = User(email="stranger@roles.test", password_hash="h", full_name="S")
-        db_session.add(stranger)
-        db_session.flush()
+        stranger = make_user(
+            db_session, email="stranger@roles.test", full_name="S", password_hash="h"
+        )
         with pytest.raises(UserServiceError, match="member"):
             svc.transfer_ownership(db_session, org.id, stranger.id, actor_user_id=owner.user_id)
         assert _owner_count(db_session, org.id) == 1
@@ -377,9 +372,9 @@ class TestLeaveOrg:
         assert _owner_count(db_session, org.id) == 1
 
     def test_a_non_member_cannot_leave(self, svc, db_session, org, owner):
-        stranger = User(email="nobody@roles.test", password_hash="h", full_name="N")
-        db_session.add(stranger)
-        db_session.flush()
+        stranger = make_user(
+            db_session, email="nobody@roles.test", full_name="N", password_hash="h"
+        )
         with pytest.raises(UserServiceError, match="not a member"):
             svc.leave_org(db_session, org.id, actor_user_id=stranger.id)
 
@@ -429,27 +424,31 @@ class TestInvitationsCannotGrantOwnership:
         — must not become an owner membership on accept. A fix that only
         changed the invite-role select leaves this open.
         """
-        from datetime import UTC, datetime, timedelta
+        invitee = make_user(
+            db_session, email="invitee@roles.test", full_name="I", password_hash="h"
+        )
 
-        from datanika.models.invitation import Invitation, InvitationStatus
-
-        invitee = User(email="invitee@roles.test", password_hash="h", full_name="I")
-        db_session.add(invitee)
-        db_session.flush()
-
-        # Constructed directly: the service refuses to create one of these now,
-        # which is exactly why accept needs its own guard.
-        stale = Invitation(
+        # Constructed directly rather than through `create_invitation`: the service
+        # refuses to create one of these now, which is exactly why accept needs its own
+        # guard. It goes through `make_invitation` so the row is *findable* — see below.
+        stale = make_invitation(
+            db_session,
             org_id=org.id,
             email="invitee@roles.test",
             role=MemberRole.OWNER,
             invited_by_user_id=owner.user_id,
             token="stale-owner-invitation-token",
-            status=InvitationStatus.PENDING,
-            expires_at=datetime.now(UTC) + timedelta(days=7),
         )
-        db_session.add(stale)
-        db_session.flush()
+
+        # 🚨 Preconditions, and they are the point of this pair of lines rather than
+        # ceremony. `accept_invitation` returns `None` for THREE different reasons —
+        # invitation not found, invitee not found, role guard refused — and only the
+        # third is what this test exists to assert. Before core#1009 the row carried
+        # `token` and no `token_hash`, and the user carried `users.email` and no
+        # sidecar; under the core#939 N+1 mutation both lookups miss, the assertion
+        # below passes on the *first* reason, and nothing goes red. Measured.
+        assert inv.get_invitation_by_token(db_session, stale.token) is not None
+        assert UserService(auth).get_user_by_email(db_session, "invitee@roles.test") is not None
 
         assert inv.accept_invitation(db_session, stale.token) is None
         assert _owner_count(db_session, org.id) == 1

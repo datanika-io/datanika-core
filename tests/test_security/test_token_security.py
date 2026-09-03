@@ -82,24 +82,53 @@ class TestJWTManipulation:
     """Advanced JWT attack vectors."""
 
     def test_none_algorithm_attack(self, auth):
-        """Attacker tries 'none' algorithm to bypass signature verification."""
+        """Attacker tries 'none' algorithm to bypass signature verification.
+
+        The claims are encoded as NUMERIC POSIX timestamps, which is what an
+        attacker sends and what RFC 7519 requires of ``exp``/``iat``.
+
+        This is load-bearing, not tidiness. The original spelling built the body
+        with ``json.dumps(payload, default=str)`` over ``datetime`` objects, so
+        ``iat`` reached the decoder as the string ``'2026-09-03 20:00:31+00:00'``
+        and python-jose refused it with ``JWTClaimsError: Issued At claim (iat)
+        must be an integer`` **before ever looking at the algorithm or the
+        signature**. Measured: with ``options={"verify_signature": False}`` the
+        malformed token is *still* refused, while this numeric one decodes — so
+        the assertion was pinned to the fixture's own serialisation bug and the
+        test passed with signature verification switched off entirely.
+        """
+        import base64
+        import json
+
+        now = datetime.now(UTC)
         payload = {
             "user_id": 1,
             "org_id": 1,
             "type": "access",
-            "exp": datetime.now(UTC) + timedelta(hours=1),
-            "iat": datetime.now(UTC),
+            "exp": int((now + timedelta(hours=1)).timestamp()),
+            "iat": int(now.timestamp()),
         }
-        # Manually craft with alg=none
-        import base64
-        import json
-
+        # Manually craft with alg=none and an empty signature segment.
         hdr_bytes = json.dumps({"alg": "none", "typ": "JWT"}).encode()
         header = base64.urlsafe_b64encode(hdr_bytes).rstrip(b"=")
-        body_bytes = json.dumps(payload, default=str).encode()
-        body = base64.urlsafe_b64encode(body_bytes).rstrip(b"=")
+        body = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=")
         fake_token = f"{header.decode()}.{body.decode()}."
         assert auth.decode_token(fake_token, expected_type="access") is None
+
+    def test_a_genuinely_signed_token_still_decodes(self, auth):
+        """Acceptance control for this class.
+
+        Every other assertion here is of the form *"a tampered token decodes to
+        None"*, and ``None`` is what a decoder returns for any reason at all --
+        including one that has stopped working. This is the paired positive case
+        that attributes those reds to signature verification rather than to the
+        decoder being broken.
+        """
+        token = auth.create_access_token(user_id=1, org_id=1)
+        payload = auth.decode_token(token, expected_type="access")
+        assert payload is not None
+        assert payload["user_id"] == 1
+        assert payload["org_id"] == 1
 
     def test_modified_user_id_invalidates_signature(self, auth):
         """Changing user_id in the payload should fail signature check."""
@@ -159,13 +188,27 @@ class TestAccountEnumeration:
         assert type(r1) is type(r2)
 
     def test_inactive_user_returns_none(self, db_session, svc, org):
-        """Deactivated accounts also return None, not a specific error."""
+        """Deactivated accounts also return None, not a specific error.
+
+        The password below is the CORRECT one. It used to be ``"pass123"`` while
+        the account was registered with ``"inactive user password"`` -- so
+        ``authenticate`` refused at ``verify_password`` and never reached the
+        ``not user.is_active`` clause three lines above it that this test is
+        named for. Measured: deleting that clause from
+        ``UserService.authenticate`` left the whole security suite at 424 passed,
+        0 red. Deactivation was the one thing in this file nothing tested.
+        """
+        password = "inactive user password"
         email = f"inactive-{uuid.uuid4().hex[:6]}@test.com"
-        user = svc.register_user(db_session, email, "inactive user password", "Inactive")
+        user = svc.register_user(db_session, email, password, "Inactive")
         membership = Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER)
         db_session.add(membership)
         db_session.flush()
+
+        # Control: while the account is active, that password authenticates.
+        # Without this, the assertion below is equally satisfied by a typo.
+        assert svc.authenticate(db_session, email, password) is not None
+
         user.is_active = False
         db_session.flush()
-        result = svc.authenticate(db_session, email, "pass123")
-        assert result is None
+        assert svc.authenticate(db_session, email, password) is None

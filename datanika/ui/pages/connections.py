@@ -158,7 +158,15 @@ def connection_form() -> rx.Component:
                         _t["common.save_changes"],
                         _t["connections.create"],
                     ),
+                    # core#872 AC3. `loading` shows a spinner without swapping
+                    # the label, so this needs no new locale key; `disabled`
+                    # stops the click being offered. Neither is the guard —
+                    # `save_connection` refuses re-entry server-side, because
+                    # whether this frame beats a fast second click is a question
+                    # about a running stack rather than about our code.
                     on_click=ConnectionState.save_connection,
+                    disabled=ConnectionState.is_saving,
+                    loading=ConnectionState.is_saving,
                 ),
                 rx.button(
                     _t["connections.test"],

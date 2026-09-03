@@ -1,13 +1,28 @@
-"""Maintenance service — cleanup orphaned files, old runs, stale artifacts."""
+"""Maintenance service — cleanup orphaned files and stale artifacts.
+
+⚠️ **There is deliberately no run-retention sweep here (core#1000).** ``purge_old_runs``
+soft-deleted completed runs past 90 days, and **no reader could observe the mark**: this
+codebase has no global soft-delete filter, and neither ``ExecutionService.list_runs`` /
+``get_org_run`` nor ``dependency_check`` carries a ``deleted_at`` predicate. The one place
+that does read ``Run.deleted_at`` is ``cleanup_orphaned_dlt_dirs`` below, and it selects
+RUNNING/PENDING runs while the purge only ever marked SUCCESS/FAILED/CANCELLED — so the two
+never intersected. The sweep therefore hid nothing and removed nothing, while logging a purge
+count hourly from 2026-08-30 (core#653) — retention that read as enforced and was not.
+
+Founder decision, 2026-09-03: **the published pages are right and the sweep was wrong.**
+``datanika.io/privacy`` and ``/trust`` state that run history, run logs and configuration
+metadata are retained *"for as long as the organization exists"*. Re-introducing a
+time-based purge — here or anywhere — is a change to those pages first and to this file
+second. Guarded by ``tests/test_tasks/test_maintenance_tasks.py::TestRunHistoryIsNeverPurged``.
+"""
 
 import logging
 import os
 import shutil
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from datanika.models.run import Run, RunStatus
@@ -96,31 +111,6 @@ def cleanup_dbt_targets(projects_dir: str, max_age_hours: int = 48) -> int:
             removed += 1
 
     return removed
-
-
-def purge_old_runs(session: Session, retention_days: int = 90) -> int:
-    """Soft-delete Run records older than retention_days.
-
-    Only deletes completed/failed runs, not running ones.
-    Returns count of purged records.
-    """
-    # Use naive UTC datetime for SQLite compatibility in tests
-    now = datetime.utcnow()
-    cutoff = now - timedelta(days=retention_days)
-
-    result = session.execute(
-        update(Run)
-        .where(
-            Run.deleted_at.is_(None),
-            Run.created_at < cutoff,
-            Run.status.in_([RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.CANCELLED]),
-        )
-        .values(deleted_at=now)
-    )
-    count = result.rowcount
-    if count:
-        logger.info("Purged %d old run records (older than %d days)", count, retention_days)
-    return count
 
 
 def cleanup_orphaned_archives(session: Session, uploads_dir: str) -> int:

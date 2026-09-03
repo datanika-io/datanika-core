@@ -34,6 +34,7 @@ from datanika.services.mcp_oauth import (
     read_only_scopes,
     write_scopes,
 )
+from tests.factories import make_user
 
 _REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 _TEST_FERNET_KEY = base64.urlsafe_b64encode(b"0" * 32).decode()
@@ -64,10 +65,7 @@ def org(db_session) -> Organization:
 
 @pytest.fixture
 def user(db_session) -> User:
-    row = User(email="p3@example.com", password_hash="h", full_name="P3 User")
-    db_session.add(row)
-    db_session.flush()
-    return row
+    return make_user(db_session, email="p3@example.com", full_name="P3 User", password_hash="h")
 
 
 @pytest.fixture

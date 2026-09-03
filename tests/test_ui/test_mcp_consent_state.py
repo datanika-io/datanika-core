@@ -36,11 +36,12 @@ from starlette.applications import Starlette
 
 import datanika.ui.state.mcp_consent_state as consent_module
 from datanika.models.mcp_oauth import OAuthGrant
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.auth import AuthService
 from datanika.services.mcp_oauth import McpOAuthService
 from datanika.services.mcp_oauth_routes import mcp_oauth_routes
 from datanika.ui.state.mcp_consent_state import McpConsentState, consent_url
+from tests.factories import make_user
 
 _REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 _SECRET = "test-secret-key"
@@ -566,9 +567,11 @@ def registered(backend) -> dict:
 @pytest.fixture
 def session_jwt(backend) -> str:
     org = Organization(name="Acme", slug="acme-consent-screen")
-    user = User(email="consent@example.com", password_hash="h", full_name="Consent User")
-    backend.add_all([org, user])
+    backend.add(org)
     backend.flush()
+    user = make_user(
+        backend, email="consent@example.com", full_name="Consent User", password_hash="h"
+    )
     return AuthService(_SECRET).create_access_token(user_id=user.id, org_id=org.id)
 
 

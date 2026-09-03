@@ -133,7 +133,9 @@ celery:
 ## turning it off means the maintenance sweeps below never run at all.
 ##
 ## What stops running if you disable it: cleanup_dbt_targets, cleanup_orphaned_dlt_dirs,
-## cleanup_orphaned_archives, purge_old_runs, PasswordResetService.purge_expired.
+## cleanup_orphaned_archives, PasswordResetService.purge_expired.
+##
+## None of them touch run history: run retention is deliberately unbounded (core#1000).
 beat:
   enabled: true
   command:

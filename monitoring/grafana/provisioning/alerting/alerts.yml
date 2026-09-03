@@ -2367,3 +2367,139 @@ groups:
         annotations:
           summary: "celery-exporter is scraped but reports no worker at all"
           description: "celery_worker_up is absent: the exporter is running and Prometheus is scraping it, but no Celery worker has sent a heartbeat. This is the case the scrape watchdog cannot see — a live exporter talking to a broker no worker is attached to looks exactly like a quiet system. NB celery_worker_up comes from broker introspection and appears even when the worker runs without -E, so its absence means the worker itself, not the event flag."
+      # ── Watchdog: the prod-settings exporter itself ──────────────────────────
+      # `Production Setting Violation` (group: Production Configuration) is a
+      # FILTERING expression, so when its input metric disappears it yields no
+      # series and — under `noDataState: OK`, which every rule here uses — reads
+      # exactly like a compliant production box. That is the same hole
+      # `watchdog-restore-drill` exists for, and this is the same answer.
+      #
+      # The metric comes from a cron on the box (`*/5`,
+      # /opt/datanika/scripts/export-prod-settings.sh) writing a `.prom` file
+      # into node-exporter's textfile directory. Every link in that chain can
+      # break silently: the cron can be dropped by a crontab rewrite, the
+      # textfile mount can be lost on a node-exporter recreate, the script can be
+      # left behind by a rebuild (deploy/server/ is applied by NO workflow,
+      # core#747). None of those makes anything red on its own.
+      #
+      # absent() inverts the polarity: it returns a series precisely WHEN the
+      # metric is missing.
+      - uid: watchdog-prod-settings
+        title: Watchdog Prod Settings Exporter Gone
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time((absent(datanika_prod_settings_scrape_success))[5m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [8]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The production settings exporter has stopped reporting"
+          description: "datanika_prod_settings_scrape_success is absent for more than 8 of the last 20 samples. While this is true, Production Setting Violation CANNOT fire — a missing filtering metric reads as health. Check the */5 cron and /opt/datanika/scripts/export-prod-settings.sh on the pointer.gr box, and that node-exporter still has /opt/datanika/node_textfile mounted at /textfile."
+
+  - orgId: 1
+    name: Production Configuration
+    folder: Datanika
+    interval: 1m
+    rules:
+      # ── Why this group exists ───────────────────────────────────────────────
+      # The box's `.env.docker` is PRESERVED by the deploy, not shipped by it.
+      # It is in no tarball, no diff and no review. Two billing flags
+      # (DATANIKA_BYTES_QUOTA_ENFORCE, DATANIKA_OVERAGE_CHARGE_ENABLE) were live
+      # in production for five weeks while every handoff file in the org asserted
+      # they were off, because their code defaults are False and that file
+      # overrides both (cloud#117). **A setting CD preserves is a setting nothing
+      # reviews.**
+      #
+      # core#969 / core#985 added a third such setting whose default is UNSAFE
+      # for a shared deployment: `DATANIKA_ALLOW_LOCAL_FILE_PATHS` defaults to
+      # True, and production must run it False or a tenant can name a path on the
+      # host filesystem as a connection source. The code shipped; the setting is
+      # Infra's, and it lives only in that unreviewed file.
+      #
+      # The exporter reads the value from EACH CONTAINER'S OWN INTERPRETER, never
+      # from the env var — core#646 is the precedent, where REDIS_URL was set,
+      # looked correct, and was a name Reflex never read.
+      #
+      # ⚠️ `absent` is graded as a VIOLATION, not skipped. An older image without
+      # the attribute is not a compliant one; treating a missing setting as its
+      # required value is `noDataState: OK` wearing a different hat.
+      #
+      # Debounce is in the QUERY, not in `for` (core#604). The exporter refreshes
+      # every 5 minutes and node-exporter serves the same file until it does, so
+      # a 5m window at the 15s scrape interval is 20 samples; `gt [8]` demands the
+      # condition survive roughly two minutes rather than one bad scrape.
+      - uid: prod-setting-violation
+        title: Production Setting Violation
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time((datanika_prod_setting_violation > 0)[5m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [8]
+              refId: C
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "A required production setting does not resolve to its required value"
+          description: "datanika_prod_setting_violation is 1 for the labelled container and setting. The label `require` carries the value production must resolve to and `setting` names the attribute; state=absent means the deployed image has no such setting, which is graded as a violation on purpose. Fix it in /opt/datanika/datanika/.env.docker on the pointer.gr box (that file is preserved by the deploy, not shipped by it), then recreate the affected containers — env_file is read at container creation, so an edit alone changes nothing. Verify with the container's own interpreter, never with the env var."

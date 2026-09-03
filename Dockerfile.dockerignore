@@ -1,0 +1,35 @@
+# Ignore file for `Dockerfile`, deliberately NOT named `.dockerignore`.
+#
+# core#1014. Neither of this project's two build paths has its context root at
+# this directory, so a plain `.dockerignore` here is read by nobody:
+#
+#   GHA  (.github/workflows/build-push-image.yml)
+#        context root = build-context/, this checkout = build-context/datanika/
+#   box  (docker-compose.yml: `context: ..`)
+#        context root = the monorepo root, which is outside every git repo and
+#        therefore cannot hold a committed file at all
+#
+# BuildKit reads `<dockerfile>.dockerignore` next to the Dockerfile in preference
+# to the context root's, and the Dockerfile is inside this checkout on BOTH paths.
+# So this one file covers both. Measured on buildx 0.30 (`docker build`) and on
+# Compose v2 (`docker compose build`), each with the ignore file renamed away as a
+# negative control.
+#
+# 🚨 Patterns are matched against paths RELATIVE TO THE CONTEXT ROOT, which is a
+# level above this file. A bare `.git` matches only `<context>/.git` and would NOT
+# match `datanika-cloud/.git`. Every pattern here must stay recursive (`**/`).
+# That is not tidiness: the image grafts the PRIVATE datanika-cloud tree at
+# /cloud/, so an un-ignored `.git` publishes that repository's whole history the
+# moment the package's visibility changes.
+
+**/.git
+**/.venv
+**/.claude
+**/.ruff_cache
+**/.pytest_cache
+**/__pycache__
+**/*.pyc
+**/htmlcov
+**/.env
+**/.env.docker
+**/*.egg-info

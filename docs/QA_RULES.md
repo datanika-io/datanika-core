@@ -664,3 +664,138 @@ control asserting the stripper still lets a real command through. Otherwise the 
 
 [core#943]: https://github.com/datanika-io/datanika-core/issues/943
 [cloud#91]: https://github.com/datanika-io/datanika-cloud/issues/91
+
+## 25. A refusal-shaped assertion measures whichever validator runs FIRST
+
+**(2026-09-03, the gating-suite discrimination sweep — [core#1026].)** Four findings in one pass,
+and they are the same defect wearing four costumes. In each, a test asserted that something was
+*refused*, the refusal happened, the test was green — and the mechanism it was named for never ran.
+
+| test | what it claimed | what actually refused |
+|---|---|---|
+| `test_upload_create_rejects_org_b_connection` ([core#719]) | a cross-tenant boundary | `validate_upload_name` — the payload's hyphen |
+| `TestFileUploadPathTraversal`'s two traversal tests | a path-traversal defence | the **extension allowlist** — `.env` is not an allowed type |
+| `test_inactive_user_returns_none` | `not user.is_active` | `verify_password`, three lines later — the test used the **wrong password** |
+| `test_none_algorithm_attack` | signature verification | its **own fixture**: `json.dumps(default=str)` sent `iat` as a string and jose refused the claim first |
+
+**The discriminator is always one request, and it is cheap: send the same shape with data the
+unrelated validator accepts, and check it SUCCEEDS.** For the traversal pair that is
+`"../../evil.csv"` — same traversal, allowed extension. It is **accepted**, which settles it in one
+line. **Every `assert <refused>` needs a paired `assert <accepted>`.**
+
+Note the fourth row especially: the refusing validator does not have to be in the product. A fixture
+that constructs a *malformed* attack has built a test that passes for a reason the attacker would
+never reproduce.
+
+### 25a. Rank before you sweep
+
+Auditing everything costs ten times as much and finds the same things. Two cheap static signals cut
+339 test functions in `tests/test_security/` to a shortlist that produced all six findings:
+
+1. **refusal-only** — every assertion in the body is `raises` / non-2xx / `is None` / `not in` /
+   `== 0` / `is False`. A refusal can be produced by anything that runs earlier.
+2. **no acceptance control anywhere in the enclosing class** — nothing attributes the red.
+
+149 of 339 were refusal-only. The intersection with signal 2 is where every confirmed instance sat.
+`plans/qa/notes/sweep-1026/triage_refusal_only.py`.
+
+### 25b. Disable ONE mechanism per mutation, and declare the GREEN set too
+
+A mutation that reds a whole file attributes nothing to any individual test. Removing the org scope
+from `get_org_connection` reds 19 tests — excellent as a *positive control* that the suite reaches
+that boundary, useless as evidence about any one of them.
+
+And declare what must stay **green**: a mutation that reddens its own control is measuring its own
+breakage, not the guard. Both halves are in `plans/qa/notes/sweep-1026/arm_sweep_fixes.py`, which is
+the arming artifact for that PR rather than a description of one.
+
+### 25c. Ask where the defence actually lives before believing the test named after it
+
+`FileUploadService.save_file` contains **no path handling whatsoever**. The upload path's only
+traversal defence is `filter="data"` on `tar.extractall` in `extract_for_dlt`, one call away and in
+a different process. Removing it left `tests/test_security` at **424 passed, 0 red** — the class
+named `TestFileUploadPathTraversal` could not see the removal of the one thing that stops an escape.
+
+A test named for a mechanism is a claim about where that mechanism is. Check the claim.
+
+## 26. An absence assertion resolves on its FIRST poll
+
+**(2026-09-03, [core#1008].)** `expect(locator).toHaveCount(0)` — and `toBeHidden()`,
+`.not.toBeVisible()` — is satisfied immediately by a page that has not rendered yet. Placed before
+the load it is about, it cannot distinguish *"the control is correctly absent"* from *"the table has
+not arrived"*.
+
+This is not a flake and it does not depend on how fast staging is: there is **no** timing window in
+which such an assertion catches a broken gate. Measured against a page that renders the controls
+1.2 s after hydration — a viewer gate that has broken:
+
+| gate | order | verdict |
+|---|---|---|
+| BROKEN | absence first | **PASS** |
+| BROKEN | positive artifact, then absence | FAIL |
+| GOOD | absence first | PASS |
+| GOOD | positive artifact, then absence | PASS |
+
+The bottom two rows are the false-positive control; without them an order that merely failed more
+often would score identically on the top two.
+`e2e/scripts/probe-1008-absence-ordering.mjs`.
+
+**Rule: wait for the artifact that would be present had the thing happened, then assert the
+absence.** It is §1's *"wait on a positive signal"* applied to assertions rather than to waits, and
+it bites hardest on security specs, because least-privilege assertions are assertions about absence.
+
+Guarded class-wide by `tests/test_deploy/test_e2e_absence_assertion_ordering.py`, which derives the
+rule from `e2e/tests/*.spec.ts` rather than from the one spec somebody already debugged (cf. §23).
+The `// absence-ok: <reason>` opt-out exists because some absences *are* ready at hydration —
+`rx.cond(AuthState.can_edit, ...)` renders with the page — and the reason is required so the opt-out
+is a sentence somebody writes rather than a pragma somebody pastes.
+
+## 27. Two tests flaking in one file is a fact about the FILE
+
+**(2026-09-03, [core#927].)** `template-prefill.spec.ts` flaked at 2 of 18 `dev` pushes in two
+different tests, which invites a search for a shared cause *inside the feature* — the `?template=`
+param, the prefill state, the Plausible hook. It was none of those.
+
+The shared property was structural: it is the **only** spec in the suite that uses the
+`loggedInPage` fixture, and it was the only gating spec that then navigated with a bare `page.goto`
+instead of `gotoReady`. One flake was in the spec body (a `click()` waiting out the whole 60 s
+timeout for a locator a bare `goto` had not waited for); the other was **in the fixture**, at
+`auth.ts`, where the login `toHaveURL` used Playwright's default while `signUp` retries that exact
+case and `loginAsViewer` allows 15 s. The asymmetry between the three login paths was accidental,
+not reasoned.
+
+**Rules:**
+
+1. **Read the traceback's FILE, not just the failing test's name.** One of these two failures was
+   not in the spec at all, and triaging it as a template-prefill problem would have found nothing.
+2. **Ask what this file does that its siblings do not** — `grep -c` across the suite answers it in
+   one command, and here it named both the fixture and the navigation helper.
+3. **The discriminator against "the environment was down" is usually free and already in the log:**
+   the *other* test in the same file passed, against the same deploy, minutes apart. An unhealthy box
+   fails both.
+
+## 28. A job can misclassify its own failure, and say so confidently
+
+**(2026-09-03, [core#1029].)** `e2e-staging` printed `verdict: gating_failed` and alerted *"the
+gating specs themselves went red — not that some other step failed"* on a run where `globalSetup`
+died on a seed FK violation and **zero specs executed**. There was no Playwright tally anywhere in
+the log, and `detect_flaky_gating.py` had printed `GATING_FLAKY_STATUS=no-evidence` two steps
+earlier. The classifier branched on the step's exit status and never read the tally.
+
+A red that says the wrong thing is worse than a red that says nothing, because it is *actionable in
+the wrong direction*: it aims a responder at twelve specs when the answer is a teardown-order drift.
+
+The correct behaviour already existed **one job over** in the same workflow — `e2e-sso` distinguishes
+*no verdict* from *specs went red*, fires the no-verdict alert and declines to file a spec-failure
+issue. **When a job classifies badly, diff it against its siblings before designing anything.**
+
+[core#719]: https://github.com/datanika-io/datanika-core/issues/719
+[core#927]: https://github.com/datanika-io/datanika-core/issues/927
+[core#1008]: https://github.com/datanika-io/datanika-core/issues/1008
+[core#1026]: https://github.com/datanika-io/datanika-core/issues/1026
+[core#1029]: https://github.com/datanika-io/datanika-core/issues/1029
+[core#673]: https://github.com/datanika-io/datanika-core/issues/673
+[core#721]: https://github.com/datanika-io/datanika-core/issues/721
+[core#827]: https://github.com/datanika-io/datanika-core/issues/827
+[core#895]: https://github.com/datanika-io/datanika-core/issues/895
+[core#896]: https://github.com/datanika-io/datanika-core/issues/896

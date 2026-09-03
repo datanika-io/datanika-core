@@ -112,6 +112,30 @@ destructive. The long-form incident is `plans/WORKFLOW_RULES.md` §7b; these are
 5. **Do not submit forms you are only photographing.** An Active schedule fires nightly runs into live
    alerting.
 
+### 3a. The app's own quirks, measured on production
+
+🆕 **Moved here 2026-09-03 from `plans/product/current_state.md`, where it had survived several
+sessions by luck.** That file is *rewritten from scratch* every session by standing rule, `plans/` is
+private, and these are facts about the product — so a handoff file was the one place they could not
+safely live. Same placement rule that put the rest of this document here.
+
+- **The production session expires ~5 minutes after login** (`ACCESS_TOKEN_TTL_MINUTES = 10` with
+  revalidation). Plan a capture run around it; do not read a mid-run redirect to `/login` as a bug.
+- **Connection-form state bleeds across a connector-type change.** Switch the type and fields from
+  the previous type can persist. Re-read what is actually in the inputs before trusting a form.
+- **The Connection type dropdown's options are plain `<p>` elements**, not `<option>`s — so
+  `selectOption` does not work and role-based selection finds nothing.
+- **The endpoint picker ships with every box ticked.** A SaaS connection created without touching it
+  selects everything, which is not what a screenshot should imply and not what a first run should do.
+- **BigQuery stores the service account under `keyfile_json`**, not under any of the names the form
+  labels suggest.
+- **`browser_snapshot` prints input values**, so it is not a safe way to inspect a form holding a
+  credential — see §4. **The OS clipboard is the working channel** for filling one without printing
+  it; `browser_run_code_unsafe` is a bare JS VM with no `require`, `import`, `process` or `fetch`,
+  so it cannot read a file.
+- **When two orgs share a destination database, the upload name is a shared resource.** Two tenants
+  can collide on it, and nothing in the UI says so.
+
 ## 4. The capture gate: refuse to shoot when a credential field is non-empty
 
 **A screenshot capture step must read every input's `.value` and abort if any credential field is
@@ -339,3 +363,111 @@ a load-bearing shape and you were arguing it away. Here, the guard has no opinio
 supplying one. The discriminator is unchanged: **would this make a real defect invisible?** Excluding
 `change_member_role` from the dialog census makes nothing invisible — it is still in the *toast*
 census, and the ratchet fails on any new handler that is in neither.
+
+## 13. A number you write down invalidates itself. Remove it, derive it, or date it.
+
+Product writes more prose than any other department — specs, handoffs, connector guides, issue
+bodies — and prose is where measurements go to become false. **The failure is not that the number
+was wrong when written. It is that a stale number reads exactly like a measured one**, so it is
+believed harder than a vague sentence would have been.
+
+Four instances, all inside two weeks, all in documents this department owns:
+
+- **A handoff stating its own length.** `plans/product/current_state.md` at `48b68d3` read
+  *"**269 lines** — past §11's ~200 rot threshold"*. Every subsequent edit to the file falsified it,
+  including the ones made in the same session. The next revision replaced it with *"well past the
+  ~200-line threshold"* — the same information, minus the part that decays.
+- **`SPEC_PII_SEPARATION` §8a.8's "the markers live in 7 files".** It went to **8** the moment
+  [core#1009] added two explanatory `N+1` mentions to `e2e_seed.py` — **invalidated by the work the
+  section governs.** Replaced with the command: `git grep -c "N+1" -- datanika/`.
+- **[core#735]'s "external issues opened, ever: 0 — 85 by `Timev`, 15 by `github-actions`, nobody
+  else."** 85 + 15 = **100** = one page of `per_page=100`, called without `--paginate`. The true
+  figures are **973 / 48 / 1**, and the missing `1` is the repo's only external contributor. The
+  count was not stale; it was **truncated at birth**, and it read as a total because a truncating
+  API call and a real measurement produce the same shape of output.
+- **The pricing table in `CLAUDE.md`**, which drifted twice in a single day and now carries an
+  instruction to read it off the database instead.
+
+### The rule
+
+> **If a number will change without anyone editing the sentence that states it, do not state it.**
+> Write the command that produces it. If the number is genuinely load-bearing, state it **with the
+> date it was measured** and the command beside it, so the next reader can tell "still true" from
+> "true in August".
+
+Three practical forms:
+
+1. **Prefer the derivation to the digit.** `git grep -c X -- <path>` in the text beats `7`. It costs
+   the reader one command and it can never be stale.
+2. **Park a retired figure inside a blockquote.** The contradiction greps in the pre-signoff check
+   (`grep -v '^\s*>'`) then separate *"the file still asserts the old number"* from *"the file
+   quotes the old number while explaining it was wrong"* — which is rule 2's *count the instruction,
+   not the phrase* arriving in your own handoff.
+3. **When you do quote a number, quote what produced it too.** *"973 / 48 / 1, from
+   `gh api ... --paginate -q '.[].user.login' | sort | uniq -c`"* survives review; `973` does not.
+   ⚠️ And pin the flags: `--paginate` is the difference between a census and a first page.
+
+### The sharper half, because it is not really about staleness
+
+**A number that invalidates itself is a special case of a signal whose failure mode is silent and
+flattering.** Rule 1 says *ask what your evidence records.* This says the same thing about your own
+past writing: **a figure you wrote is evidence of a measurement you can no longer see.** Treat it as
+a claim, not a fact — including, and especially, when you are the one who wrote it.
+
+The [core#735] instance is the one to remember, because two independent readers were satisfied by it:
+the number was plausible, the parenthetical *"(85 by `Timev`, 15 by `github-actions`, nobody else)"*
+made it look itemised rather than summarised, and the false clause was the only one that mattered —
+it was the clause the deferral decision was evaluated against.
+
+## 14. A checklist derived from annotations enumerates what someone remembered to annotate
+
+Product writes the specs other departments are held to, so Product writes the **gates**. The
+cheapest gate to write is a grep over markers somebody left in the source — `git grep -n "N+1"`,
+`grep -rn TODO`, a `# DEPRECATED` sweep. It is also the one that fails in the most flattering way,
+because **its entire content is the set of places a person thought to mark.**
+
+Three failures of the same gate, in one release plan ([core#939] / `SPEC_PII_SEPARATION` §8a), each
+found by a different instrument and each invisible to the other two:
+
+| # | what the marker grep could not see | what found it |
+|---|---|---|
+| 1 | `email_routes.py:74` issues its **own** `select(User).where(User.email == …)` — a second identity lookup by address, carrying no marker at all | a sweep for the **column being retired**, not for the note about it |
+| 2 | `accept_invitation:141`'s legacy fallback — marked, but absent from the hand-written eight-item list | the marker grep (this is the case *for* keeping it) |
+| 3 | the gate's own pass condition is **unreachable**: 17 markers in 8 files, only 8 of them deletion sites; the rest are a migration's account of what it did and a column's note on why it is nullable | counting the markers and asking which ones survive |
+
+**Three lessons, and they point in different directions — which is the point:**
+
+1. **Sweep for the thing being retired, not for the note about it.**
+   ```bash
+   git grep -n "User\.email\|Invitation\.email\|\.oauth_provider_id" -- datanika/
+   ```
+   Every hit that is not the new write is a candidate. That sweep found a production caller after a
+   marker grep, an eight-item list, and an 18-failure mutation run had **all three** missed it —
+   three independent instruments agreeing, and all blind to the same site.
+
+2. **Keep the hand-written list *and* the mechanical sweep.** They fail in opposite directions: a
+   list omits what nobody thought of, a grep omits what nobody marked. Here each covered the other's
+   gap exactly once.
+
+3. 🚨 **A gate that cannot go green is a gate that gets waived — and waiving it costs you lesson 2.**
+   Check, before shipping any grep-shaped criterion, that its pass condition is *reachable*. If
+   permanent prose can match the token, the token is wrong: give the checklist a token that only ever
+   appears on a line being deleted (`N+1-DELETE`), and leave prose free to discuss the release by
+   name.
+
+### The failure this composes with
+
+A red count from a mutation run is the natural companion to a marker sweep, and it has its own blind
+spot: **an uncovered path contributes zero reds however broken it is.** `accept_invite` had no
+behavioural test, so it was worth zero failures while being the thing users would hit first.
+
+> **A red count measures the tests, not the damage.** Any gate phrased as *"the suite is green"* is
+> satisfied by an untested defect shipping.
+
+⚠️ **And a test can go *vacuous* rather than red**, which is worse because it consumes the evidence
+without producing a signal. `test_accepting_a_stored_owner_invitation_creates_no_owner` asserts
+`accept_invitation(...) is None`; that call returns `None` for three different reasons and only one
+is the test's subject. Under the release's mutation the *first* reason fired, the assertion passed,
+and the run was green. **Where a function returns a bare `None`, `False` or `[]` for several
+reasons, ask which one your assertion is currently passing on** — and assert the precondition at the
+site, so the test states what it needs instead of inheriting it from a fixture.

@@ -60,6 +60,22 @@ COPY datanika/ .
 # Copy cloud edition plugin source
 COPY datanika-cloud/ /cloud/
 
+# core#1014 - the two COPYs above are unfiltered unless an ignore file applies, and
+# the repo's own `.dockerignore` applies to NEITHER build path (see the header of
+# `Dockerfile.dockerignore`, which is the file that does). Assert the outcome here
+# rather than trusting that file to be read: a published image carrying /cloud/.git
+# publishes the PRIVATE datanika-cloud repository's entire history the moment the
+# GHCR package's visibility changes. The deploy tarball uses --exclude-vcs, so this
+# cannot fire on the box; it fires on a GHA build that lost its ignore file.
+RUN set -e; \
+    for d in /app/.git /cloud/.git; do \
+      if [ -e "$d" ]; then \
+        echo "FATAL: $d is in the image - the build context carries VCS history (core#1014)"; \
+        exit 1; \
+      fi; \
+    done; \
+    echo "build context VCS check: /app/.git and /cloud/.git both absent"
+
 # Reflex needs to initialize on first run (recreates .venv)
 RUN uv run reflex init
 

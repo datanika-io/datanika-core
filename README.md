@@ -66,9 +66,17 @@ public API contract.
 deployed to our hosted app and moves several times a day.
 
 ```bash
-git checkout v0.1.0                                    # source
-docker pull ghcr.io/datanika-io/datanika-core:v0.1.0   # image (:latest follows master)
+git checkout v0.1.0            # source
+docker compose up -d --build   # build the image from that source
 ```
+
+> ⚠️ **There is no publicly pullable image yet.** `ghcr.io/datanika-io/datanika-core`
+> exists but is **private**, so `docker pull` on any tag answers `denied` for everyone
+> outside the org — this README told you otherwise until 2026-09-03. It stays private on
+> purpose: the image grafts in our closed-source cloud plugin, so publishing it as built
+> today would publish that too. A core-only public image is tracked in
+> [#1014](https://github.com/datanika-io/datanika-core/issues/1014). **Pin the source tag
+> and build**; that path is exercised by CI.
 
 Every version's notes are on the [Releases page](https://github.com/datanika-io/datanika-core/releases).
 Security advisories cite the first patched release (e.g. `Patched: v0.1.0`), so a pinned

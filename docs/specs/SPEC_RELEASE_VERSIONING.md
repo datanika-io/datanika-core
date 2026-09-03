@@ -25,7 +25,7 @@
 
 1. **Distribution gates.** `awesome-selfhosted-data` starts its 4-month eligibility clock at *first tagged release* — so ours has **never started**. Directories broadly treat "has releases" as the *is this real?* signal.
 2. **Actionable security advisories.** The SAML GHSA had to say "update to `master` @ `6e28d6b` or later" — a self-hoster can't tell if they're affected. `Affected: < v0.1.0 · Patched: v0.1.0` is instantly legible.
-3. **Self-hosters get something pinnable.** Today the honest answer to "what version are you running?" is a git SHA — painful for support and upgrade decisions the moment we have adopters.
+3. **Self-hosters get something pinnable.** ⚠️ *Partly delivered — the **tag** is pinnable, the **image** is not; see the Docker bullet below and [#1014].* Today the honest answer to "what version are you running?" is a git SHA — painful for support and upgrade decisions the moment we have adopters.
 4. **A recurring marketing artifact.** Release notes → blog/social → the "project is alive" signal that drives OSS adoption. Feeds the existing blog-announcement rule with a natural rhythm.
 
 ## Rules
@@ -36,7 +36,13 @@
 - **Cadence: on meaningful accumulation, not the calendar.** A forced monthly tag with nothing in it is worse than no tag.
 - **NOT one tag per `dev→master` promotion.** Raised and rejected 2026-07-21: promotions are far more frequent than releases — **six** happened in a single evening — so tagging each would emit `v0.1.1`…`v0.1.6` in one night, and every `v*` tag fires *two* workflows (GitHub Release + a pinnable GHCR image). That is calendar-cadence by another name: it decouples the tag from "meaningful accumulation" and re-couples it to deploy frequency. A promotion is a deploy; a release is a label you choose to put on one.
 - **Release notes: generated from merged PR titles.** Our `[Dept] … (closes #N)` convention makes this nearly free.
-- **Docker images tagged `:v0.x.y` alongside `:latest`**, so self-hosters can pin.
+- **Docker images tagged `:v0.x.y` alongside `:latest`.** 🔴 **This does NOT yet give
+  self-hosters something to pin, and this bullet claimed it did from 2026-07-21 to
+  2026-09-03.** The GHCR package is **private** — measured, with a positive control on a
+  known-public package — so every tag answers `denied` to an anonymous pull. It cannot
+  simply be flipped public: the image grafts the closed-source `datanika-cloud` tree at
+  `/cloud/`. Until a **core-only** image exists ([#1014]), the pinnable artifact is the
+  **source tag**, and the README says so.
 
 ## Explicitly out of scope
 
@@ -71,3 +77,5 @@ Also: any automated path must be idempotent (skip a SHA that is already tagged) 
 ## Follow-on
 
 Once `v0.1.0` exists, the **SAML GHSA can cite `Patched: v0.1.0`** instead of commit `6e28d6b` — worth updating the drafted advisory before it's published (`plans/security/GHSA_DRAFT_saml_auth_bypass.md`).
+
+[#1014]: https://github.com/datanika-io/datanika-core/issues/1014

@@ -1,3 +1,16 @@
+# 🚨 core#1014 - THIS FILE IS READ BY NO BUILD PATH IN THIS PROJECT.
+#
+# Docker reads `.dockerignore` from the CONTEXT ROOT. Neither build path roots its
+# context here: the GHA build (.github/workflows/build-push-image.yml) uses
+# `build-context/` one level up, and the compose build uses the monorepo root. A
+# `docker build .` from this directory cannot work either - the Dockerfile's first
+# COPY is `datanika/pyproject.toml`, which does not exist relative to this root.
+#
+# The file that IS honoured is `Dockerfile.dockerignore` beside the Dockerfile.
+# Edit that one. This file is kept only so the name is not free for someone to
+# recreate with the same false assumption; its patterns are deliberately identical
+# in intent, and deliberately not load-bearing.
+
 .venv
 .git
 .claude

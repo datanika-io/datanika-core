@@ -315,18 +315,57 @@ _REAL_WORKFLOWS_PAYLOAD = {
             "state": "active",
             "created_at": "2026-08-31T00:00:00Z",
         },
+        # core#982 -- a REAL `.github/workflows/` path whose file is on no branch.
+        # GitHub keeps the record after the branch that carried it is deleted.
+        # Observed live on 2026-09-03: `importtime-probe.yml`, listed `active`,
+        # ABSENT from `git ls-tree` on both `master` and `dev`, from a throwaway
+        # branch pushed and deleted the same session. It passes core#952's
+        # whitelist and 404s anyway, which killed the run before any repo was
+        # checked. Ordering is load-bearing here too: it sits after every healthy
+        # workflow, so the crash it caused looked like a complete run.
+        {
+            "id": 5,
+            "name": "importtime probe",
+            "path": ".github/workflows/importtime-probe.yml",
+            "state": "active",
+            "created_at": "2026-09-02T00:00:00Z",
+        },
     ]
 }
 
+# What the default branch actually contains. `importtime-probe.yml` is absent,
+# which is the whole point -- the record exists and the file does not.
+_DEFAULT_BRANCH_FILES = [
+    ".github/workflows/ci.yml",
+    ".github/workflows/nightly-connector-smoke.yml",
+    ".github/workflows/scheduled-workflow-watchdog.yml",
+]
 
-def _fake_gh(*, missing: set[str] = frozenset()):
+
+def _fake_gh(
+    *,
+    missing: set[str] = frozenset(),
+    listing: list[str] | None = None,
+    schedule_runs: dict[str, list] | None = None,
+):
     """A stand-in for `gh api` that 404s exactly like the real one.
 
     `missing` names `contents/` paths that do not exist; requesting one raises
     the same exception `subprocess.run(check=True)` raises, because that is what
     the real failure was.
+
+    `listing` is what the default branch's `.github/workflows` directory contains
+    (core#982). It is deliberately a SEPARATE input from `missing`: the two model
+    different faults, and keeping them independent is what lets
+    `test_a_404_on_a_real_workflow_file_is_still_fatal` keep its meaning — a file
+    the listing says is present but which cannot be read is an anomaly, not an
+    orphaned record.
+
+    `schedule_runs` overrides the per-workflow-id schedule history; the default is
+    one recent run for every workflow.
     """
     calls: list[str] = []
+    files = _DEFAULT_BRANCH_FILES if listing is None else listing
 
     def fake(*args: str) -> str:
         endpoint = args[1] if len(args) > 1 else ""
@@ -335,13 +374,25 @@ def _fake_gh(*, missing: set[str] = frozenset()):
             return "master\n"
         if endpoint.endswith("/actions/workflows"):
             return json.dumps(_REAL_WORKFLOWS_PAYLOAD)
+        if "/contents/.github/workflows?" in endpoint:
+            return "\n".join(files) + ("\n" if files else "")
         if "/contents/" in endpoint:
             path = endpoint.split("/contents/", 1)[1].split("?", 1)[0]
-            if path in missing:
+            # 🚨 A path absent from the listing ALSO 404s, because that is what
+            # the real API does — the file is on no branch. Modelling the two
+            # independently would make the core#982 control VACUOUS: removing the
+            # fix would let `_parse_crons` happily return contents for a file that
+            # does not exist, so the test could not reproduce the crash it exists
+            # for. `missing` stays a separate input for the *other* fault: a file
+            # the listing says is present that still cannot be read.
+            if path in missing or (path.startswith(wd.WORKFLOW_DIR_PREFIX) and path not in files):
                 raise subprocess.CalledProcessError(1, ["gh", *args])
             body = "on:\n  schedule:\n    - cron: '0 6 * * *'\n"
             return base64.b64encode(body.encode()).decode()
         if "/runs?event=schedule" in endpoint:
+            wf_id = endpoint.split("/workflows/", 1)[1].split("/", 1)[0]
+            if schedule_runs is not None and wf_id in schedule_runs:
+                return json.dumps({"workflow_runs": schedule_runs[wf_id]})
             return json.dumps({"workflow_runs": [{"created_at": "2026-09-02T06:10:00Z"}]})
         raise AssertionError(f"unexpected gh call: {endpoint}")
 
@@ -370,7 +421,7 @@ class TestCollectionSurvivesTheRealWorkflowList:
         """The whole bug, end to end. Before the fix this raised."""
         monkeypatch.setattr(wd, "_gh", _fake_gh(missing={"dynamic/dependabot/update-graph"}))
         found = wd.collect("datanika-io/datanika-core")
-        assert [w.path for w in found] == [
+        assert [w.path for w in found if w.crons] == [
             ".github/workflows/ci.yml",
             ".github/workflows/nightly-connector-smoke.yml",
             ".github/workflows/scheduled-workflow-watchdog.yml",
@@ -392,12 +443,143 @@ class TestCollectionSurvivesTheRealWorkflowList:
         If this ever passes-by-skipping, the watchdog will report a workflow as
         `active, all fine` having never read it -- the exact silent-success
         defect core#628 exists to detect, moved inside the detector.
+
+        ⚠️ core#982 kept this intact on purpose. The file is present in the
+        default branch listing and still 404s on read, which is an anomaly (a
+        token scope, a race, an API change) and not an orphaned record. Only the
+        listing decides "orphan"; the read failure keeps its original meaning.
         """
         monkeypatch.setattr(
             wd, "_gh", _fake_gh(missing={".github/workflows/nightly-connector-smoke.yml"})
         )
         with pytest.raises(subprocess.CalledProcessError):
             wd.collect("datanika-io/datanika-core")
+
+
+class TestAWorkflowRecordWhoseFileIsOnNoBranch:
+    """core#982 -- the third state, and the fifth night it would have cost.
+
+    Two hours after core#952's fix reached `master`, a live rehearsal died on
+    `importtime-probe.yml`: a workflow RECORD GitHub kept after the throwaway
+    branch carrying its file was deleted. Its path is under `.github/workflows/`,
+    so core#952's whitelist passes it -- correctly, because that whitelist
+    discriminates on *synthesised vs repository*, and this is a repository path.
+    The discriminator here is different: the file is simply not on the default
+    branch.
+
+    Believed as "core#952's fix does not work", this is a wasted session. It is a
+    new instance of the same class, and the fix has to be a third state rather
+    than a swallowed 404.
+
+    ⚠️ The live half of the control is already measured -- the crash above was
+    observed against the real repositories on 2026-09-03, not predicted. What
+    needs proving here is that the code now handles it, which is what these
+    exercise, through the real `collect()` and the real `find_problems()`.
+    """
+
+    NOW = datetime(2026, 9, 3, 12, 0, tzinfo=UTC)
+    ORPHAN = ".github/workflows/importtime-probe.yml"
+
+    def _collect(self, monkeypatch, schedule_runs=None):
+        monkeypatch.setattr(
+            wd,
+            "_gh",
+            _fake_gh(missing={"dynamic/dependabot/update-graph"}, schedule_runs=schedule_runs),
+        )
+        return wd.collect("datanika-io/datanika-core")
+
+    def test_collection_completes_instead_of_crashing(self, monkeypatch):
+        """Before the fix this raised CalledProcessError and checked nothing."""
+        found = self._collect(monkeypatch, schedule_runs={"5": []})
+        assert self.ORPHAN in [w.path for w in found], (
+            "the orphaned record must be collected and reported, not skipped -- a "
+            "silent skip is how a schedule that stopped firing disappears"
+        )
+
+    def test_it_is_never_counted_as_a_scheduled_workflow(self, monkeypatch):
+        """It has no crons, so it must not vouch for the repo being watched.
+
+        `main()` counts `w.crons` rather than `len(found)` for exactly this: a
+        repo whose workflow files had all vanished would otherwise satisfy the
+        per-repo emptiness guard with a page of findings about workflows that
+        nothing is running.
+        """
+        found = self._collect(monkeypatch, schedule_runs={"5": []})
+        orphan = next(w for w in found if w.path == self.ORPHAN)
+        assert orphan.file_missing is True
+        assert orphan.crons == []
+        assert len([w for w in found if w.crons]) == 3
+
+    def test_a_record_that_never_fired_is_a_note_naming_both_readings(self, monkeypatch):
+        """Litter or a stopped schedule -- the API cannot tell, so do not guess."""
+        found = self._collect(monkeypatch, schedule_runs={"5": []})
+        problems, notes = wd.find_problems(found, self.NOW)
+        assert not problems, f"an unfired orphan must not fail the run: {problems}"
+        hit = [n for n in notes if self.ORPHAN in n]
+        assert len(hit) == 1, f"expected exactly one note about the orphan, got {notes}"
+        assert "(a)" in hit[0] and "(b)" in hit[0], (
+            "the note must carry BOTH readings. Auto-classifying is worse than a "
+            "noisy line, because reading (b) is the fault this watchdog exists for."
+        )
+
+    def test_a_record_that_did_fire_is_a_problem(self, monkeypatch):
+        """The discriminator, and the half that earns the feature.
+
+        A workflow that has run on a `schedule` event and whose file is now gone
+        from the default branch is a schedule that has stopped. That is not
+        litter, and it is precisely core#628's fault class arriving by a new
+        route.
+        """
+        found = self._collect(monkeypatch)  # default: every workflow has a run
+        problems, _notes = wd.find_problems(found, self.NOW)
+        hit = [p for p in problems if self.ORPHAN in p]
+        assert len(hit) == 1, f"expected the fired orphan to be a problem, got {problems}"
+        assert "schedule that has stopped" in hit[0]
+
+    def test_the_two_branches_disagree_on_the_same_record(self, monkeypatch):
+        """Discrimination, not just two passing assertions.
+
+        Both tests above could pass against a check that always returns whatever
+        it was handed. This pins that the SAME workflow lands in different
+        buckets purely on its schedule history.
+        """
+        never = self._collect(monkeypatch, schedule_runs={"5": []})
+        fired = self._collect(monkeypatch)
+        p_never, n_never = wd.find_problems(never, self.NOW)
+        p_fired, n_fired = wd.find_problems(fired, self.NOW)
+        assert not [p for p in p_never if self.ORPHAN in p]
+        assert [n for n in n_never if self.ORPHAN in n]
+        assert [p for p in p_fired if self.ORPHAN in p]
+        assert not [n for n in n_fired if self.ORPHAN in n]
+
+    def test_an_unreadable_workflow_directory_refuses_a_verdict(self, monkeypatch):
+        """Anti-vacuity on the new call.
+
+        An empty listing makes EVERY workflow look file-missing. That would turn
+        one unreadable directory into a page of confident findings about healthy
+        workflows -- a check whose own breakage produces the alarming answer,
+        which is as useless as one that produces the reassuring one.
+        """
+        monkeypatch.setattr(
+            wd, "_gh", _fake_gh(missing={"dynamic/dependabot/update-graph"}, listing=[])
+        )
+        with pytest.raises(RuntimeError, match="lists no files"):
+            wd.collect("datanika-io/datanika-core")
+
+    def test_the_listing_is_read_once_per_repo(self, monkeypatch):
+        """One extra API call, not one per workflow."""
+        fake = _fake_gh(missing={"dynamic/dependabot/update-graph"}, schedule_runs={"5": []})
+        monkeypatch.setattr(wd, "_gh", fake)
+        wd.collect("datanika-io/datanika-core")
+        listings = [c for c in fake.calls if "/contents/.github/workflows?" in c]
+        assert len(listings) == 1, f"expected one directory listing, got {listings}"
+
+    def test_the_orphans_file_is_never_requested(self, monkeypatch):
+        """Skipped by construction. Asking and catching would hide a real 404."""
+        fake = _fake_gh(missing={"dynamic/dependabot/update-graph"}, schedule_runs={"5": []})
+        monkeypatch.setattr(wd, "_gh", fake)
+        wd.collect("datanika-io/datanika-core")
+        assert not [c for c in fake.calls if "importtime-probe.yml" in c and "/contents/" in c]
 
 
 class TestEmptinessIsCountedPerRepo:

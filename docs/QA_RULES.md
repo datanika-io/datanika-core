@@ -498,3 +498,109 @@ what makes it convincing.
 on every request and buckets **every** path into `<other>` — satisfying both cardinality criteria
 perfectly while blinding the two REST-API latency SLIs that select on `path`. A proposed fix is a
 hypothesis; run it against the installed version before building to it.
+
+---
+
+## 21. Before triaging a red, ask what changed about the INSTRUMENT
+
+**(2026-09-02 — the `Nightly Connector Smoke` triage.)** Three consecutive nightly reds looked like
+an escalating incident. They were **one breakage roughly ten nights old**, becoming visible for the
+first time because [core#827]'s fix stopped the job laundering pytest's exit code through a pipe to
+`tee`. Nothing broke on the day the alerts started.
+
+The decisive evidence is cheap and it is always available: **compare the failing run to the last
+GREEN one at the level of the thing being measured, not at the level of the verdict.** The last
+green run reported `12 failed, 9 passed` — the identical failure set, test for test.
+
+Two corollaries that changed the answer here:
+
+1. **Read the run's `event` and `head_branch`, not just its colour.** One of the three "reds" was a
+   `workflow_dispatch` on `dev` at the fix commit's own SHA — i.e. an engineer executing the fix's
+   acceptance criterion *"show it red before calling it fixed"*. **It was a successful verification
+   filed as an alert.** Counting it as an incident inverts its meaning.
+2. **Read the config at the commit each run used** (`git cat-file -p <sha>:.github/workflows/x.yml`),
+   never at `HEAD`. That is what separates *"failures that predate the fix"* from *"the fix does not
+   work"*, and the two call for opposite responses.
+
+🔑 **The general form: a change in a signal is not a change in the system.** When an alarm starts
+firing, the first question is whether the alarm changed, not what it is pointing at.
+
+**And the sequel is the harder half.** Once the red is correct, ask whether it can ever go green
+again. Four of these twelve failures are lapsed vendor trial accounts — nothing an engineer can fix.
+A red that repeats nightly and forever destroys the channel exactly as a green that proves nothing
+does, and it hides the nine probes that *are* live. Neither carries information. When a check's
+failure is permanent and understood, tier it — **and pin the known-bad set by name, so the job still
+goes red if the set changes in either direction.** Muting is what tiering becomes when you skip that.
+
+---
+
+## 22. A leaked credential's blast radius is what the ACCOUNT can still do
+
+**(2026-09-02, while assessing the credentials found in public Actions logs.)** I ranked a Databricks
+PAT as the most urgent rotation, reasoning from the credential *type* — a workspace token means
+clusters, jobs, data, billable compute. The founder queue had already measured that workspace
+**INACTIVE**: the token authenticates and lists catalogs, but no compute can start. The real
+exposure was metadata only, and the genuinely live credential was a different one entirely.
+
+The nightly's green Databricks probes did not contradict that finding, and reading them as
+reassurance would have been a second error: those probes only ever exercise **auth + list**, which
+is precisely the subset that still works on a dead account.
+
+**Rules:**
+
+1. **Reason from the account's measured state, not from the credential's type.** "It is a PAT" tells
+   you the maximum; only the account tells you the actual.
+2. **Check the founder/human-locked queue before assigning a severity.** The measurement that
+   corrected this was already written down in another repo's issue.
+3. **Overstating a severity spends the same credibility as understating one** — it aims a human at
+   the wrong item first. Correct it in place, publicly, rather than quietly leaving the ranking.
+4. Related and pointing the other way: *a credential existing is not the same as the service being
+   usable.* Free-trial sandboxes decay silently and **the credential keeps working while the service
+   stops** — which is why "the probe authenticates" is never evidence the connector works.
+
+## 23. A per-pair regression test does not generalize; derive the guard from metadata
+
+Twice now, a hand-maintained ordered list of table deletes in
+`datanika/scripts/e2e_seed.py::_tear_down_fixture` has drifted from the schema and
+**permanently wedged `e2e-staging`**:
+
+| | added | wedged by |
+|---|---|---|
+| [core#415] | Remote-MCP P2 added `oauth_grants.api_key_id -> api_keys.id` | one completed OAuth consent |
+| [core#951] | PII separation N (#655) added four tables | the migration's own `user_pii` backfill |
+
+The response to #415 was a behavioural test for **that FK pair**. It was a good test and
+it still passes — and it could not see #951, because a per-pair test only ever covers the
+pair somebody already debugged. Writing a second per-pair test for `user_pii` would have
+bought exactly the same non-coverage a third time.
+
+**The guard has to be derived from the thing that actually changes.** Here that is
+SQLAlchemy metadata: for every table the teardown deletes, ask the metadata which tables
+carry an FK into it, and assert each is deleted earlier. A new table is then covered the
+moment it is mapped, and nobody has to remember a list.
+`tests/test_scripts/test_e2e_seed_teardown_fk_drift.py`. Same shape as §21's route-drift
+census and the connector-parity script — three findings from the same move.
+
+🚨 **Build the control into the guard.** A derived guard has a failure mode a hand-written
+one does not: if the extractor silently returns nothing, the invariant holds *vacuously*
+and the suite is green while the guard sees nothing at all. So the drift guard ships with
+three controls that fail loudly instead — the parser found ≥20 deletes; it still follows
+`_delete_oauth_chain` (those tables appear nowhere else); and no parsed name failed to map
+to a table. Without them, deleting one line of the parser turns the guard into a
+decoration that reports PASS forever. Cf. §18c.
+
+⚠️ **This class of break is invisible at run level and at spec level.** It kills
+`globalSetup`, so **zero specs run**: no Playwright tally, `INFORMATIONAL_RESULT=unknown`,
+and the step exits in ~6 s against a 2.4 min green. Meanwhile `deploy-staging`,
+`smoke-staging`, `Assert staging is running THIS commit` and all five required checks stay
+green, so the run-level `failure` is indistinguishable from the standing `image-cve` +
+`e2e-sso` reds. **Read per job, then per step, then per spec — and treat a missing tally as
+louder than a failing test, not quieter.**
+
+⚠️ **Fix every dependent the guard names, not the one in the traceback.** #951's stack named
+`user_pii`; the guard named five. Fixing only `user_pii` would have surfaced
+`email_change_requests` on the very next run, and `password_reset_tokens` — a latent gap
+that predated the PII work and had simply never been exercised — on some later one.
+
+[core#415]: https://github.com/datanika-io/datanika-core/issues/415
+[core#951]: https://github.com/datanika-io/datanika-core/issues/951

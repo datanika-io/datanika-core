@@ -634,7 +634,12 @@ class TestEveryTenantModelQueryIsOrgScoped:
             "mcp_oauth.py::exchange_code::OAuthGrant",
             "mcp_oauth.py::refresh::OAuthToken",
             "mcp_oauth.py::resolve_access_token::OAuthToken",
-            "invitation_service.py::accept_invitation::Invitation",
+            # `accept_invitation::Invitation` was here and is gone: core#655 routed it
+            # through `get_invitation_by_token` (the token is now matched on its hash), so
+            # there is one exempted cross-org lookup where there were two. Removed because
+            # the guard demanded it — a stale exemption pre-approves code nobody has
+            # written yet, which is the same failure as a hand-maintained allowlist
+            # anywhere else in this repo.
             "invitation_service.py::get_invitation_by_token::Invitation",
             # 2. Deliberate platform-wide sweeps — these are supposed to see
             #    every tenant, and scoping them would break the feature.

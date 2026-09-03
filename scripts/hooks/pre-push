@@ -133,10 +133,28 @@ else
   GATE_OUT="RUN: gate script missing at $GATE"
 fi
 
+# --- SCOPE: tests/test_deploy only (founder decision 2026-09-03, #964) ------------------
+# The full suite measured 1105.95s here against 79.89s for tests/test_deploy -- ~17 minutes
+# per push. The founder took this decision with the tradeoff known: a broken push now fails
+# on CI ~9 minutes later instead of locally. That is acceptable because `dev` carries five
+# required checks and strict=true, so a broken PR cannot merge.
+#
+# REVISIT if a merge queue lands on core (#904/#923): an unproven push entering a queue is a
+# different risk -- the queue tests it, but an ejection costs a full cycle.
+#
+# NOTE the guards: `set -e` is active, so these must be `if` statements. A bare
+# `[ cond ] && VAR=1` returns non-zero when the condition is false and would abort the hook
+# -- silently skipping every check below it.
+PYTEST_SCOPE="${DATANIKA_PREPUSH_SCOPE:-tests/test_deploy}"
+if [ "${DATANIKA_PREPUSH_FULL:-0}" = "1" ]; then
+  PYTEST_SCOPE="tests"
+fi
+RAN_FULL=0
+
 if [ "$RUN_TESTS" != "1" ]; then
   echo "pre-push: pytest SKIPPED — $GATE_OUT"
 else
-echo "pre-push: pytest — $GATE_OUT"
+echo "pre-push: pytest ($PYTEST_SCOPE) — $GATE_OUT"
 # UV_NO_SYNC=1 is NOT optional on Windows. test_head_downgrade_upgrade_roundtrip shells
 # out to `uv run alembic`, which tries to replace native extensions (sqlalchemy's
 # cyextension, cryptography, ...) while this pytest process still holds the files open.
@@ -148,8 +166,11 @@ echo "pre-push: pytest — $GATE_OUT"
 # four reinstalls — and the stated lesson was that a fix living only in prose gets
 # rediscovered the expensive way. It was still only in prose: the hook never set it.
 # Setting it here means nobody has to know.
-UV_NO_SYNC=1 "$PY" -m pytest tests/ -x -q --tb=short
+UV_NO_SYNC=1 "$PY" -m pytest "$PYTEST_SCOPE" -x -q --tb=short
 RAN_TESTS=1
+if [ "$PYTEST_SCOPE" = "tests" ]; then
+  RAN_FULL=1
+fi
 fi
 
 # Helm lint — only if chart files were modified in the push range
@@ -177,11 +198,16 @@ if command -v helm >/dev/null 2>&1 && [ -d "$REPO_ROOT/deploy/helm" ]; then
 fi
 
 # Record that this venv satisfied the current lockfile (#557).
-# Gated on the suite having ACTUALLY RUN. The stamp's whole justification is "if the suite
-# passes, this venv is adequate for the current lockfile by definition" — which is exactly
-# what a skipped suite fails to establish. Stamping after a skip would mark an unproven venv
-# as proven and suppress the staleness warning on the next real run.
-if [ "$RAN_TESTS" = "1" ] && [ -f uv.lock ] && [ -d .venv ]; then
+# Gated on the FULL suite having run (#964), not merely on some suite having run. The stamp's
+# whole justification is "if the suite passes, this venv is adequate for the current lockfile
+# by definition" — and tests/test_deploy/ does not import the dependency graph, so it
+# establishes no such thing. Stamping after a narrowed run would mark an unproven venv as
+# proven and suppress the one pointer at the gutted-venv symptom that cost QA, and then
+# Growth, four reinstalls each.
+#
+# Consequence, stated plainly so nobody files it as a bug: after a uv.lock change the NOTE
+# above persists until someone runs a full suite (DATANIKA_PREPUSH_FULL=1). That is correct.
+if [ "$RAN_FULL" = "1" ] && [ -f uv.lock ] && [ -d .venv ]; then
   sha256sum uv.lock 2>/dev/null | cut -d" " -f1 > "$LOCK_STAMP" || true
 fi
 

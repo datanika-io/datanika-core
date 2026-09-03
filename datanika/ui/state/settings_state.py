@@ -187,8 +187,15 @@ class SettingsState(BaseState):
                     "update",
                     "org",
                     resource_id=auth_state.current_org.id,
-                    old_values={"name": self.org_name, "slug": self.org_slug},
-                    new_values={"name": self.edit_org_name, "slug": self.edit_org_slug},
+                    # D11. This is the site a key-name rule cannot reach (D12.1): the key
+                    # is `name`, and the redactor cannot tell `{"name": "My Postgres"}` on
+                    # 25 label-carrying call sites from `{"name": "Anna's Org"}` here. The
+                    # discriminator is `(resource_type, key)`, so it is fixed at the call
+                    # site or not at all — which is why D12 needs BOTH mechanisms.
+                    # §2c measured `organizations.name` carrying a live `users.full_name`
+                    # in 5 of 5 production rows.
+                    old_values={"org_id": auth_state.current_org.id},
+                    new_values={"org_id": auth_state.current_org.id},
                 )
                 session.commit()
         except Exception as e:
@@ -218,6 +225,11 @@ class SettingsState(BaseState):
         else:
             # No SMTP — fall back to direct add (user must already exist)
             await self._add_existing_user(auth_state)
+        # Both helpers record their own failure in `error_message` rather than
+        # raising, so the toast is conditional on there not being one - a success
+        # toast beside a visible error is worse than neither (core#872 AC9).
+        if not self.error_message:
+            yield await self._saved_toast("settings.member_added_toast", "Member added")
 
     async def _send_invitation(self, auth_state):
         try:
@@ -236,13 +248,18 @@ class SettingsState(BaseState):
                     MemberRole(self.invite_role),
                     auth_state.current_user.id,
                 )
+                # D11: the audit payload carries the internal id, not the address. The
+                # address stays resolvable through `invitation_pii` while that row
+                # exists and stops resolving once it is erased — so erasure sweeps
+                # nothing here, and the security trail stays complete.
                 self._audit(
                     session,
                     auth_state.current_org.id,
                     auth_state.current_user.id,
                     "create",
                     "member",
-                    new_values={"email": self.invite_email, "role": self.invite_role},
+                    resource_id=invitation.id,
+                    new_values={"invitation_id": invitation.id, "role": self.invite_role},
                 )
                 session.commit()
 
@@ -269,20 +286,23 @@ class SettingsState(BaseState):
                     return
                 from datanika.models.user import MemberRole
 
-                svc.add_member(
+                membership = svc.add_member(
                     session,
                     auth_state.current_org.id,
                     user.id,
                     MemberRole(self.invite_role),
                     actor_user_id=auth_state.current_user.id,
                 )
+                # D11. This is one of the two sites §2a flags as having no `resource_id`
+                # to substitute — `add_member` already returns the Membership, so it does.
                 self._audit(
                     session,
                     auth_state.current_org.id,
                     auth_state.current_user.id,
                     "create",
                     "member",
-                    new_values={"email": self.invite_email, "role": self.invite_role},
+                    resource_id=membership.id,
+                    new_values={"membership_id": membership.id, "role": self.invite_role},
                 )
                 session.commit()
         except Exception as e:
@@ -334,10 +354,16 @@ class SettingsState(BaseState):
         svc = self._get_user_service()
         try:
             with get_sync_session() as session:
-                # Capture member info for audit before removal
+                # Capture member info for audit before removal. D11: the id, not the
+                # address — this is one of the three sites that stored a *third party's*
+                # address on a row whose `user_id` is the actor, which is exactly why a
+                # `WHERE user_id = <erased>` scrub could never have been the primary
+                # erasure mechanism (D12.4).
                 member_info = next((m for m in self.members if m.id == membership_id), None)
                 old_values = (
-                    {"email": member_info.email, "role": member_info.role} if member_info else {}
+                    {"membership_id": membership_id, "role": member_info.role}
+                    if member_info
+                    else {"membership_id": membership_id}
                 )
                 svc.remove_member(
                     session,
@@ -444,7 +470,13 @@ class SettingsState(BaseState):
                     auth_state.current_user.id,
                     "delete",
                     "member",
-                    old_values={"email": auth_state.current_user.email},
+                    # 🚨 D11 — and this call site is in NEITHER §2a's table NOR D11's list
+                    # of five. It is the purest instance of the defect (the payload was
+                    # nothing but an address) on the one handler a departing member
+                    # reaches by themselves. Found by the derived guard in
+                    # tests/test_services/test_audit_payload_call_sites.py, which is the
+                    # argument for deriving the check rather than enumerating the sites.
+                    old_values={"user_id": auth_state.current_user.id},
                 )
                 session.commit()
         except Exception as e:
@@ -482,7 +514,12 @@ class SettingsState(BaseState):
                 inv_info = next(
                     (i for i in self.pending_invitations if i.id == invitation_id), None
                 )
-                old_values = {"email": inv_info.email, "role": inv_info.role} if inv_info else {}
+                # D11: the invitation id, not the invitee's address.
+                old_values = (
+                    {"invitation_id": invitation_id, "role": inv_info.role}
+                    if inv_info
+                    else {"invitation_id": invitation_id}
+                )
                 inv_svc.cancel_invitation(session, auth_state.current_org.id, invitation_id)
                 self._audit(
                     session,

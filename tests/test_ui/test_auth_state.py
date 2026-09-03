@@ -119,50 +119,61 @@ class TestAuthStateFormFields:
         )
 
     def test_signup_org_slug_includes_user_id_suffix(self):
-        """Regression for #127: two users with the same full_name must
-        produce distinct org slugs. The password-signup path used to
-        call ``_slugify(full_name)`` with no suffix, so a second user
-        named ``John Smith`` hit ``Slug already exists`` on create_org
-        (then swallowed into the generic toast per #128). The fix
-        mirrors ``user_service.find_or_create_oauth_user:308`` which
-        suffixes with ``{user.id}`` — making the slug globally unique
-        by construction (user ids are autoincrement).
+        """Regression for #127: two users with the same full_name must produce
+        distinct org slugs.
+
+        ⚠️ **Rewritten for core#655 D4.** This used to pin the literal source
+        ``f"{_slugify(full_name)}-{user.id}"``. That construction is now forbidden —
+        a slug is an *identifier* (unique-constrained, in URLs, matched by the SSO
+        callback), so deriving it from a person's name publishes that name in a
+        durable key; §2c measured `organizations.slug` carrying a live
+        `users.full_name` in **5 of 5** production rows. The slug is now
+        ``org-{user.id}``.
+
+        #127's invariant is unchanged and if anything stronger — the id *is* the
+        slug now, rather than a suffix on a name-derived stem. So the test asserts
+        the invariant (distinct per user, no part of the name) instead of the
+        spelling, which is what it should have done the first time: a source-regex
+        assertion cannot distinguish "the strategy changed" from "the strategy
+        moved".
         """
         import inspect
-        import re
 
         import datanika.ui.state.auth_state as auth_state_module
 
         source = inspect.getsource(auth_state_module.AuthState.signup.fn)
 
-        # The slug construction must reference both _slugify(full_name)
-        # and user.id on the same line. A loose substring check would
-        # pass on any future refactor that moves them apart.
-        pattern = re.compile(r"org_slug\s*=\s*f[\"'][^\"']*\{_slugify\(full_name\)\}-\{user\.id\}")
-        assert pattern.search(source), (
-            "Expected signup() to build org_slug as "
-            '`f"{_slugify(full_name)}-{user.id}"` — #127 regression. '
-            "Without the user.id suffix two users with the same full_name "
-            "collide on the organizations.slug unique constraint and the "
-            "second signup fails."
+        assert 'f"org-{user.id}"' in source, (
+            'Expected signup() to build org_slug as `f"org-{user.id}"` (core#655 D4). '
+            "The user.id keeps #127's uniqueness guarantee; dropping it lets two users "
+            "with the same name collide on the organizations.slug unique constraint."
+        )
+        assert "_slugify(full_name)" not in source, (
+            "signup() is deriving the org slug from the user's full name again. That "
+            "publishes a person's name in a unique, URL-bearing key that the SSO "
+            "callback matches on — core#655 D4, and it is not undone by erasing "
+            "`users.full_name`."
         )
 
     def test_signup_slug_pattern_matches_oauth_path(self):
-        """Both signup paths must use the same uniqueness strategy —
-        otherwise, password-signup and OAuth-signup diverge and the next
-        refactor picks whichever is in sight. #127.
+        """Both signup paths must use the same uniqueness strategy — otherwise
+        password-signup and OAuth-signup diverge and the next refactor picks
+        whichever is in sight. #127, and now core#655 D4 as well: a name-derived
+        slug on *either* path is enough to leak the name.
         """
         import inspect
 
         from datanika.services import user_service
 
         oauth_source = inspect.getsource(user_service.UserService.find_or_create_oauth_user)
-        # The OAuth path builds: slug=f"{slug}-{user.id}"
-        assert 'f"{slug}-{user.id}"' in oauth_source, (
-            "find_or_create_oauth_user no longer uses the "
-            'f"{slug}-{user.id}" pattern — if you changed the OAuth '
-            "uniqueness strategy, update password-signup in auth_state.py "
-            "to match, and update #127."
+        assert 'f"org-{user.id}"' in oauth_source, (
+            'find_or_create_oauth_user no longer uses the `f"org-{user.id}"` pattern — '
+            "if you changed the OAuth uniqueness strategy, update password-signup in "
+            "auth_state.py to match, and update #127 / core#655 D4."
+        )
+        assert "slugify" not in oauth_source.lower(), (
+            "the OAuth signup path is deriving the org slug from the user's name again "
+            "(core#655 D4)"
         )
 
 
@@ -240,12 +251,16 @@ class TestSignupExceptionHandling:
 
         state = SimpleNamespace(
             auth_error="",
+            # core#639 — signup consults a rate limiter before the lookup.
+            signup_blocked="",
+            _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
 
         with (
             patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
             patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+            patch("datanika.ui.state.auth_state._allow", return_value=True),
         ):
             mock_captcha_cls.return_value.verify.return_value = True
             mock_session.return_value.__enter__.return_value = MagicMock()
@@ -278,12 +293,16 @@ class TestSignupExceptionHandling:
 
         state = SimpleNamespace(
             auth_error="",
+            # core#639 — signup consults a rate limiter before the lookup.
+            signup_blocked="",
+            _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
 
         with (
             patch("datanika.ui.state.auth_state.CaptchaService") as mock_captcha_cls,
             patch("datanika.ui.state.auth_state.get_sync_session") as mock_session,
+            patch("datanika.ui.state.auth_state._allow", return_value=True),
             caplog.at_level(logging.ERROR, logger="datanika.ui.state.auth_state"),
         ):
             mock_captcha_cls.return_value.verify.return_value = True

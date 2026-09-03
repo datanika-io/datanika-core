@@ -70,6 +70,7 @@ database.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import datetime, timedelta
@@ -97,17 +98,32 @@ from tests.test_migrations.conftest import (
 # a sibling differs because `_ts` never repeats.
 _BASE = datetime(2025, 3, 4, 5, 6, 7)
 
+#: Shared by the `notification_channels.config` payload and the `notification_channel_pii`
+#: sidecar, because release N's backfill derives the second from the first and a fixture
+#: that spelled them differently would report a correct reconstruction as data loss.
+_CHANNEL_RECIPIENT = "ops-preservation@qa.example.com"
+
+#: The raw invitation token. Its SHA-256 is seeded alongside it — see the `invitations` row.
+_INVITE_TOKEN = "qa-preservation-invite-token"
+
 
 def _ts(n: int) -> str:
     """The n-th distinguishable timestamp. Distinct for every n."""
     return (_BASE + timedelta(days=n, minutes=n, seconds=n)).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _insert(conn, table: str, **cols: Any) -> int:
+def _insert(conn, table: str, *, _pk: str = "id", **cols: Any) -> int:
+    """Insert one row and return its primary key.
+
+    ``_pk`` exists for the ``*_pii`` sidecars, whose primary key **is** their foreign key
+    (``user_pii.user_id``, not ``user_pii.id``) — a shared PK/FK is what makes the 1:1
+    relationship unforgeable, so there is no surrogate ``id`` to return. Underscored so it
+    cannot collide with a real column name in ``**cols``.
+    """
     keys = ", ".join(cols)
     binds = ", ".join(f":{k}" for k in cols)
     return conn.execute(
-        text(f"INSERT INTO {table} ({keys}) VALUES ({binds}) RETURNING id"), cols
+        text(f"INSERT INTO {table} ({keys}) VALUES ({binds}) RETURNING {_pk}"), cols
     ).scalar_one()
 
 
@@ -314,8 +330,17 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         resource_id=run,
         old_values=json.dumps({"email": "preservation@qa.example.com"}),
         new_values=json.dumps({"email": "preservation2@qa.example.com"}),
-        # PII inside audit rows — core#655's design does not reach these two
-        # JSON columns, which is exactly why they are seeded with addresses.
+        # ⚠️ CORRECTED. This comment used to read "core#655's design does not reach these
+        # two JSON columns", which was already false when written — SPEC_PII_SEPARATION
+        # §2a/D11 decided it the same evening, and Product flagged the sentence as
+        # circulating stale. The design DOES reach them, from two directions: the five
+        # (six) call sites now store internal ids, and `audit_service.redact_pii_payload`
+        # replaces any PII-keyed value at the chokepoint.
+        #
+        # The addresses are still seeded here, and now for a better reason: this fixture
+        # writes raw SQL, so it bypasses the redactor entirely, which is exactly what a
+        # migration must survive. Nothing in the application can put these values here any
+        # more; the round trip still has to carry them if they are present.
         ip_address="203.0.113.42",
         org_id=org,
         created_at=_ts(next(n)),
@@ -354,7 +379,13 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         email="invited-preservation@qa.example.com",
         role="editor",
         invited_by_user_id=user,
-        token="qa-preservation-invite-token",
+        token=_INVITE_TOKEN,
+        # Release N dual-writes both, so seeding only `token` would let the re-upgrade's
+        # `WHERE token_hash IS NULL` backfill turn a NULL into a value and read as data
+        # loss. Computed rather than pasted, so it stays correct if the token changes —
+        # and it is the assertion that the migration's
+        # `encode(sha256(convert_to(token,'UTF8')),'hex')` agrees with Python's hashlib.
+        token_hash=hashlib.sha256(_INVITE_TOKEN.encode("utf-8")).hexdigest(),
         status="pending",
         expires_at=_ts(next(n)),
         created_at=_ts(next(n)),
@@ -378,7 +409,12 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         "notification_channels",
         name="QA preservation channel",
         channel_type="email",
-        config=json.dumps({"to": "ops-preservation@qa.example.com"}),
+        # `email`, not `to`: that is the key `notification_state._build_config` writes and
+        # `notification_service.notify` reads, and it is what release N's backfill into
+        # `notification_channel_pii` selects. The old fixture value matched neither, so
+        # the sidecar's row would have vanished on a round trip for a reason that had
+        # nothing to do with the migration.
+        config=json.dumps({"email": _CHANNEL_RECIPIENT}),
         events=json.dumps(["run_failed"]),
         is_active=True,
         org_id=org,
@@ -443,6 +479,55 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         user_id=user,
         token_hash="0" * 64,
         expires_at=_ts(next(n)),
+        created_at=_ts(next(n)),
+        updated_at=_ts(next(n)),
+    )
+    # ── the PII sidecars (core#655 release N) ──────────────────────────────────
+    #
+    # These carry the values the erasure feature has to be able to delete, so a
+    # round-trip that silently dropped one is exactly the failure that matters.
+    #
+    # ⚠️ Seeded **identical** to the legacy columns they mirror, and that is deliberate
+    # rather than lazy: release N dual-writes, so "identical" is what production looks
+    # like, and the re-upgrade's backfill legitimately reconstructs these three from the
+    # legacy columns. Seeding them differently would guarantee a red for a reconstruction
+    # that is correct. The two fields that genuinely have **no** legacy source —
+    # `pending_email` here and every row of `email_change_requests` below — are what the
+    # migration's rollback stashes exist for, and they are the half of this fixture that
+    # can actually fail.
+    #
+    # The PK is the FK on all three sidecars, hence `_pk=`.
+    ids["user_pii"] = _insert(
+        conn,
+        "user_pii",
+        _pk="user_id",
+        user_id=user,
+        email="preservation@qa.example.com",
+        full_name="Preservation Probe",
+        oauth_provider_id="g-preservation-1",
+        pending_email="pii-pending@qa.example.com",
+    )
+    ids["invitation_pii"] = _insert(
+        conn,
+        "invitation_pii",
+        _pk="invitation_id",
+        invitation_id=ids["invitations"],
+        email="invited-preservation@qa.example.com",
+    )
+    ids["notification_channel_pii"] = _insert(
+        conn,
+        "notification_channel_pii",
+        _pk="channel_id",
+        channel_id=ids["notification_channels"],
+        recipient=_CHANNEL_RECIPIENT,
+    )
+    ids["email_change_requests"] = _insert(
+        conn,
+        "email_change_requests",
+        user_id=user,
+        token_hash="1" * 64,
+        expires_at=_ts(next(n)),
+        used_at=_ts(next(n)),
         created_at=_ts(next(n)),
         updated_at=_ts(next(n)),
     )

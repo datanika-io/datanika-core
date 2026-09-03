@@ -50,6 +50,12 @@ services:
     env_file:
       - .env.docker
     environment:
+      # core#785 — see the full note on `app` in the prod docker-compose.yml.
+      # `uv run` re-syncs the venv from uv.lock at container start, and the grafted
+      # `datanika-cloud` / `datanika-mcp` packages are not in the lock. Staging must
+      # carry it too, or staging stops being a rehearsal of prod in exactly the
+      # dimension this pins.
+      UV_NO_SYNC: "1"
       FILE_UPLOADS_DIR: /app/uploaded_files
       GRANIAN_WORKERS: "2"
       # See docker-compose.yml: Reflex reads REFLEX_REDIS_URL, not REDIS_URL. Without
@@ -91,6 +97,12 @@ services:
     env_file:
       - .env.docker
     environment:
+      # core#785 — see the full note on `app` in the prod docker-compose.yml.
+      # `uv run` re-syncs the venv from uv.lock at container start, and the grafted
+      # `datanika-cloud` / `datanika-mcp` packages are not in the lock. Staging must
+      # carry it too, or staging stops being a rehearsal of prod in exactly the
+      # dimension this pins.
+      UV_NO_SYNC: "1"
       FILE_UPLOADS_DIR: /app/uploaded_files
       GRANIAN_WORKERS: "2"
       # See docker-compose.yml: Reflex reads REFLEX_REDIS_URL, not REDIS_URL. Without
@@ -129,6 +141,10 @@ services:
       redis:
         condition: service_healthy
     environment:
+      # core#785 — see the prod docker-compose.yml. The metering and quota hooks
+      # all fire in the worker process (core#772), so this is where a silently
+      # pruned `datanika_cloud` would cost the most and show the least.
+      UV_NO_SYNC: "1"
       FILE_UPLOADS_DIR: /app/uploaded_files
     volumes:
       - staging_dbt:/app/dbt_projects
@@ -169,6 +185,9 @@ services:
     container_name: datanika-staging-beat
     env_file:
       - .env.docker
+    environment:
+      # core#785 — see the prod docker-compose.yml.
+      UV_NO_SYNC: "1"
     depends_on:
       postgres:
         condition: service_healthy

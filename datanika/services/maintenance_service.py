@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from datanika.models.run import Run, RunStatus
 from datanika.models.uploaded_file import UploadedFile
+from datanika.services.file_upload_service import resolve_archive_path
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,16 @@ def cleanup_orphaned_archives(session: Session, uploads_dir: str) -> int:
     """Remove archive files for soft-deleted UploadedFile records.
 
     Returns count of removed files.
+
+    ``uploads_dir`` was accepted and never read until core#712. That mattered:
+    rows written with the default relative ``FILE_UPLOADS_DIR`` name a location
+    relative to the *web tier's* working directory, while this sweep runs in
+    ``beat``. ``os.path.isfile`` answered False for every one of them, the loop
+    skipped, and the function returned ``0`` — indistinguishable from a volume
+    with nothing to reclaim. A deleted upload's bytes stayed on disk for the life
+    of the volume, on a box whose disk pressure has its own prune script.
+    Resolving against ``uploads_dir`` fixes the existing rows in place, so no
+    data migration is needed.
     """
     deleted_files = (
         session.execute(select(UploadedFile).where(UploadedFile.deleted_at.is_not(None)))
@@ -135,9 +146,12 @@ def cleanup_orphaned_archives(session: Session, uploads_dir: str) -> int:
 
     removed = 0
     for record in deleted_files:
-        if record.archive_path and os.path.isfile(record.archive_path):
-            os.remove(record.archive_path)
-            logger.info("Removed orphaned archive: %s", record.archive_path)
+        if not record.archive_path:
+            continue
+        archive_path = resolve_archive_path(record.archive_path, uploads_dir)
+        if os.path.isfile(archive_path):
+            os.remove(archive_path)
+            logger.info("Removed orphaned archive: %s", archive_path)
             removed += 1
 
     return removed

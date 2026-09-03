@@ -1,0 +1,122 @@
+# Trivy waivers for `image-cve` (core#836, core#819).
+#
+# 🚨 A WAIVER IS NOT A FIX AND MUST NOT READ LIKE ONE. Everything here is a
+# CRITICAL/HIGH finding with a fix available that we are deliberately NOT taking
+# yet. The point of the file is that an unwaivable permanent red and a waived one
+# look different to a reader: a red on `image-cve` should mean "a NEW, actionable
+# finding", not "the usual two".
+#
+# 🚨 EVERY ENTRY NEEDS A `statement` AND AN `expired_at`. A waiver with no expiry
+# is a decision nobody revisits — the shape that let two alert rules sit green for
+# weeks while structurally unable to fire. On `expired_at` trivy stops honouring
+# the entry and the job goes red again on its own, which is the only review date
+# that reviews itself. `tests/test_deploy/test_image_cve_signal.py` refuses an
+# entry missing either field, and refuses any id not listed there.
+#
+# ⚠️ THE CANARY DOES NOT READ THIS FILE, deliberately. It scans the same image at
+# every severity including unfixed and must be seen to FAIL before the gate's
+# green means anything. A waiver that could reach the canary could disarm the one
+# check that proves the scanner works. The guard asserts only the gate step is
+# given `trivyignores`.
+#
+# ⚠️ `paths` is globbed on the version so a bump within the waived range stays
+# covered, while the same CVE id reported against some OTHER package or path is
+# NOT waived. A bare id would waive it everywhere.
+
+vulnerabilities:
+  - id: CVE-2026-48818
+    paths:
+      - "app/.venv/lib/python3.12/site-packages/starlette-*.dist-info/METADATA"
+    statement: >-
+      starlette SSRF / NTLM credential theft via UNC paths in StaticFiles.
+      REACHABLE: Reflex mounts StaticFiles(directory=get_upload_dir()) at
+      /_upload (reflex/app.py:708) and our Apache vhost routes /_upload to the
+      backend, so the vulnerable component is in the production request path.
+      ACCEPTED because the exploit is Windows-specific — it turns on the OS
+      resolving a UNC path (\\host\share) and emitting NTLM credentials — and
+      production is Ubuntu 22.04, where a backslash is an ordinary filename
+      character. That is a mitigation, not an absence, so this expires rather
+      than being deleted. Fix requires starlette >= 1.1.0; see core#836.
+    expired_at: 2026-12-01
+
+  - id: CVE-2026-54283
+    paths:
+      - "app/.venv/lib/python3.12/site-packages/starlette-*.dist-info/METADATA"
+    statement: >-
+      starlette request.form() limits (max_files / max_fields / max_part_size)
+      are silently ignored. REACHABLE and unauthenticated: request.form() is
+      called at sso_routes.py:466 (/api/auth/sso/callback) and
+      mcp_oauth_routes.py:65, and Reflex's own /_upload handler parses multipart
+      on the same starlette. Impact is memory exhaustion from an oversized or
+      many-part body, not disclosure or bypass. ACCEPTED at 0 paying users,
+      behind the API rate limiter and a 401 on both named endpoints. Fix
+      requires starlette >= 1.3.1; see core#836.
+    expired_at: 2026-12-01
+
+# 🚨 WHY NOT JUST BUMP STARLETTE — and the reason core#836 gives is WRONG.
+#
+# That issue says starlette is "pinned by Reflex 0.8.x, so 0.52.1 -> 1.x is not a
+# bump we can make". Re-derived from the installed distributions rather than from
+# memory: NOTHING declares an upper bound on starlette anywhere in this tree.
+#
+#     reflex                   starlette>=0.47.0
+#     mcp                      starlette>=0.27
+#     sse-starlette            starlette>=0.49.1
+#     google-cloud-aiplatform  starlette>=0.17.1  (extras only)
+#
+# So the resolver would take starlette 1.3.1 today, without complaint. The bump
+# is not BLOCKED — it is UNVALIDATED, which is a different problem with a
+# different remedy. starlette is the ASGI foundation the entire backend runs on,
+# Reflex 0.8.26 is what production runs, and 0.52 -> 1.x is a major.
+#
+# This project has two precedents for exactly that resolve going wrong silently:
+# core#602, where `mcp` resolved to 2.x, FastMCP was renamed, /mcp was never
+# mounted and every deploy failed its post-swap assertion; and core#470, where CI
+# tested Reflex 0.9.x while production ran 0.8.26. Both were invisible in the
+# manifest and expensive at the far end.
+#
+# So the bump is real work with its own verification — not a line item inside a
+# CVE sweep — and it stays on core#836 with the corrected reason. What is written
+# down here is why we are not doing it TODAY, not a claim that we cannot.
+
+  - id: CVE-2026-41608
+    paths:
+      - "app/.venv/lib/python3.12/site-packages/thrift-*.dist-info/METADATA"
+    statement: >-
+      Apache Thrift Python bindings, DoS. NOT ACTIONABLE: the fix is thrift
+      0.24.0 and databricks-sql-connector declares thrift (>=0.16.0,<0.21.0) —
+      a ceiling BELOW the fix, so flooring thrift makes the resolve fail rather
+      than producing a fixed tree. This is a table-driven deferral, not a
+      judgement: tests/test_security/test_dependency_advisories.py fails the day
+      that ceiling lifts. Exposure is narrow — we are a Thrift CLIENT of a
+      Databricks endpoint the org configured, and both records are parser DoS.
+      See core#819.
+    expired_at: 2026-12-01
+
+  - id: CVE-2026-43871
+    paths:
+      - "app/.venv/lib/python3.12/site-packages/thrift-*.dist-info/METADATA"
+    statement: >-
+      Apache Thrift, DoS via infinite loop. Same blocker and same reasoning as
+      CVE-2026-41608 above: fixed in 0.24.0, capped below it by
+      databricks-sql-connector's thrift<0.21.0. Waived together because they are
+      one decision about one pin, not two. See core#819.
+    expired_at: 2026-12-01
+
+# ✅ NOT waived, because they are actionable and were fixed instead:
+#   msgpack GHSA-6v7p-g79w-8964 -> floored to 1.2.1 in pyproject.toml.
+#     mashumaro asks for msgpack>=0.5.6 with no ceiling, so the floor resolves.
+#     (kombu declares msgpack==1.1.2, but only under its `msgpack` extra, which
+#     is not active in this tree — worth knowing before assuming a pin blocks.)
+#   lxml CVE-2026-41066, jaraco.context CVE-2026-23949, wheel CVE-2026-24049 ->
+#     these were NEVER IN THE IMAGE'S VENV. They were read out of uv's download
+#     cache, which a single-stage build was shipping (core#835). lxml was
+#     already floored to 6.1.0 and the venv ships 6.1.2; the scanner was
+#     reporting the 6.0.2 sdist the build resolved through. jaraco.context and
+#     wheel are setuptools' vendored copies inside a cache entry and were never
+#     importable at all. Fixed by clearing the cache in the Dockerfile, not by a
+#     waiver — a waiver would have hidden a real finding behind a false one.
+
+misconfigurations: []
+secrets: []
+licenses: []

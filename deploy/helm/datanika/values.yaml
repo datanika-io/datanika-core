@@ -34,6 +34,13 @@ env:
   ## working directory — so a shared volume alone is not enough if the two tiers
   ## ever start from different directories (core#529).
   FILE_UPLOADS_DIR: /app/uploaded_files
+  ## `uv run` re-syncs the venv from uv.lock before running. The image installs
+  ## `datanika-cloud` and `datanika-mcp` with `uv pip install` AFTER
+  ## `uv sync --frozen`, so neither is in the lock and a sync is free to remove
+  ## them — at pod start, after every build-time check has passed (core#785).
+  ## The app, celery and beat commands below all begin `uv run`, so all three
+  ## need this; it reaches them through the env Secret via envFrom.
+  UV_NO_SYNC: "1"
   ## Optional extras — anything else the app reads from .env.docker. Keys listed
   ## here become literal Secret entries. Values left empty will be emitted as
   ## empty strings; users should populate them before running in a real env.

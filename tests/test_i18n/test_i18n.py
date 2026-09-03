@@ -127,6 +127,18 @@ _TOAST_KEY_RE = re.compile(r'_deleted_toast\(\s*"([^"]+)"')
 # orphan is to DELETE the key**, which would silently drop the translation in
 # all nine locales. Add the pattern when you add the helper.
 _TRANSLATED_KEY_RE = re.compile(r'_translated\(\s*"([^"]+)"')
+# core#872 adds the constructive twin, `BaseState._saved_toast`. Third instance
+# of the lesson two comments above, and the first two were written by people who
+# had just been bitten by it: **adding an indirection is adding an idiom.** All
+# thirteen new keys read as orphans until this line existed, and the documented
+# remedy for a false orphan is to DELETE the key — which would have dropped the
+# translation in all nine locales while every check stayed green.
+#
+# ⚠️ The pattern captures ONE literal per call, so a call site that picks its key
+# with a ternary hides the second branch from this scanner. The two handlers that
+# do both create and update therefore use explicit if/else branches rather than
+# `"a" if edit else "b"` — readable, and visible to the tooling.
+_SAVED_TOAST_KEY_RE = re.compile(r'_saved_toast\(\s*"([^"]+)"')
 
 
 def _collect_keys_from_code() -> set[str]:
@@ -138,6 +150,7 @@ def _collect_keys_from_code() -> set[str]:
         keys.update(_STATE_KEY_RE.findall(text))
         keys.update(_TOAST_KEY_RE.findall(text))
         keys.update(_TRANSLATED_KEY_RE.findall(text))
+        keys.update(_SAVED_TOAST_KEY_RE.findall(text))
     return keys
 
 

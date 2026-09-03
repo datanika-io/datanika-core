@@ -93,6 +93,36 @@ jobs:
             # file has the value and the secret is non-empty; only the consumer sees
             # a value wrapped in literal quote characters.
             line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
+            #
+            # 🚨 core#943 — REGISTER THE DECODED VALUE BEFORE IT REACHES $GITHUB_ENV.
+            # The runner masks strings it has been *given*: it knows
+            # QA_CONNECTOR_CREDENTIALS (the base64 blob) and redacts exactly that.
+            # Every value decoded out of it is a different string it has never seen,
+            # so it is never masked — and $GITHUB_ENV puts it in the job environment,
+            # which the runner prints in the `##[group]Run …` header of every later
+            # step. This repo is PUBLIC. Measured before the fix: 53 downloadable
+            # Actions logs carried a live vendor PAT in cleartext, oldest 2026-06-05.
+            # The tell that it is a masking gap rather than masking being off: one
+            # log line shows `QA_WAVE1_CREDENTIALS: ***` beside an unmasked value
+            # decoded from that same bundle.
+            #
+            # ⚠️ Masking is NOT free, which is why this is not `mask everything`.
+            # `::add-mask::` redacts every occurrence of the string in the log, so
+            # masking a short or ordinary value destroys readability: the project
+            # name is 8 characters and appears in nearly every path, and masking
+            # `1521` or `SASL_SSL` would redact them project-wide for no benefit.
+            # Hence: mask on a credential-shaped NAME, or on a value long enough
+            # that it cannot be an ordinary token — never on a bare short value.
+            name=${line%%=*}
+            value=${line#*=}
+            mask=0
+            case "$name" in
+              *TOKEN*|*KEY*|*SECRET*|*PASSWORD*|*CREDENTIAL*) mask=1 ;;
+            esac
+            if [ "${#value}" -ge 16 ]; then mask=1; fi
+            if [ "$mask" = 1 ] && [ "${#value}" -ge 8 ]; then
+              echo "::add-mask::$value"
+            fi
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/creds.env
           rm /tmp/creds.env
@@ -121,6 +151,19 @@ jobs:
             case "$line" in ''|\#*) continue ;; esac
             # Digits in the class — see the note on the same sed above (core#827).
             line=$(echo "$line" | sed -E 's/^([A-Z_][A-Z0-9_]*)="(.*)"$/\1=\2/')
+            # Mask before writing — see the long note on the same block above
+            # (core#943). This bundle carries the Pipedrive / Freshdesk / Asana
+            # PATs; the Asana one was live and publicly logged for ~89 days.
+            name=${line%%=*}
+            value=${line#*=}
+            mask=0
+            case "$name" in
+              *TOKEN*|*KEY*|*SECRET*|*PASSWORD*|*CREDENTIAL*) mask=1 ;;
+            esac
+            if [ "${#value}" -ge 16 ]; then mask=1; fi
+            if [ "$mask" = 1 ] && [ "${#value}" -ge 8 ]; then
+              echo "::add-mask::$value"
+            fi
             echo "$line" >> "$GITHUB_ENV"
           done < /tmp/wave1.env
           rm /tmp/wave1.env

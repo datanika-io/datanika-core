@@ -50,6 +50,14 @@ from datanika.ui.state.upload_state import UploadState
 
 setup_logging(debug=_settings.debug)
 
+# One line stating whether the CAPTCHA actually checks anything (core#639 D6).
+# It has never checked anything in production and nothing said so; a fallback
+# that silently admits everything is this project's signature defect — a green
+# that proves nothing — so it gets an operator-readable line at startup.
+from datanika.services.captcha_service import log_captcha_status  # noqa: E402
+
+log_captcha_status()
+
 # Two-phase plugin init (issue #99):
 #
 # Phase 1 — ``bootstrap_cloud()`` runs BEFORE ``rx.App(...)``. It

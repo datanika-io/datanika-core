@@ -333,6 +333,20 @@ CONFIG_SCHEMAS: dict[str, dict] = {
                 "Authentication database (default: admin — where MongoDB users "
                 "are normally created; set to the database name if yours is not)"
             ),
+            # core#626. Two keys rather than one: self-hosted `requireTLS` on an
+            # ordinary host needs TLS without SRV, and that is a common
+            # deployment. SRV forces TLS on because the `mongodb+srv` scheme
+            # defaults to it — that is the URI specification, not our choice.
+            "srv": _bool(
+                "Use a DNS seed list (mongodb+srv). Required for MongoDB Atlas. "
+                "Forces TLS on and takes no port — the SRV records supply the ports"
+            ),
+            "tls": _bool(
+                "Connect over TLS. Required by Atlas, DocumentDB, Cosmos DB's Mongo API "
+                "and any deployment running net.tls.mode: requireTLS. Custom CA "
+                "certificates are not supported yet, so self-signed certificates fail "
+                "verification"
+            ),
         },
         required=["host", "database"],
     ),

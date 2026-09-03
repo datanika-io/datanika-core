@@ -134,6 +134,23 @@ services:
         required: false
     environment:
       GRANIAN_WORKERS: "4"
+      # 🚨 core#785. `uv run` RE-SYNCS the venv from uv.lock before running the
+      # command, and the Dockerfile grafts `datanika-cloud` and `datanika-mcp` in
+      # with `uv pip install` AFTER `uv sync --frozen` — neither consults the lock.
+      # So the shipped venv holds packages the lockfile does not know about, and
+      # making the venv match the lock is precisely what a sync is for. They
+      # survive today only because uv currently chooses not to prune them.
+      #
+      # If uv ever does, the cloud plugin and the /mcp surface disappear at
+      # CONTAINER START, with every signal green: the box's build already
+      # succeeded; the build-time import assertion (#612) validated the IMAGE and
+      # ran earlier; and cloud degrades silently by design, because
+      # `DATANIKA_EDITION` gates it rather than failing loudly.
+      #
+      # The image is built and asserted at build time. Re-deriving it at boot buys
+      # nothing and risks everything. Guarded by tests/test_deploy/test_uv_no_sync.py,
+      # which finds the services by what their command RUNS, never by name.
+      UV_NO_SYNC: "1"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
       # Without it, `StateManager.create()` falls to StateManagerDisk and
       # `TokenManager.create()` to LocalTokenManager, both of which are PER PROCESS -
@@ -196,6 +213,13 @@ services:
         required: false
     environment:
       GRANIAN_WORKERS: "4"
+      # core#785 — the full account is on `app` above. Short version: `uv run`
+      # re-syncs from uv.lock, the grafted cloud/mcp packages are not IN the lock,
+      # and their survival is uv's current choice rather than our guarantee.
+      # app_b needs it as much as app: it is the colour production serves half the
+      # time, and a blue/green swap onto a colour with no cloud plugin is exactly
+      # the failure that would read as a clean deploy.
+      UV_NO_SYNC: "1"
       # Reflex reads REFLEX_REDIS_URL, NOT REDIS_URL (its config prefix is "REFLEX_").
       # Without it, `StateManager.create()` falls to StateManagerDisk and
       # `TokenManager.create()` to LocalTokenManager, both of which are PER PROCESS -
@@ -247,6 +271,12 @@ services:
       - path: .env.docker
         required: false
     environment:
+      # core#785 — see `app`. The worker is where this bites hardest: every cloud
+      # metering hook and every run-quota check fires in THIS process (core#772),
+      # and if `datanika_cloud` stopped importing here, billing would go quiet
+      # while the container stayed `Up` and healthy. That exact state already ran
+      # undetected in production once.
+      UV_NO_SYNC: "1"
       # Must match app/app_b exactly — the LOAD runs here, so if the worker resolves a
       # different directory the failure surfaces at run time, not at upload time (#471).
       FILE_UPLOADS_DIR: /app/uploaded_files
@@ -372,6 +402,11 @@ services:
         required: false
       - path: .env.docker
         required: false
+    environment:
+      # core#785 — see `app`. beat is the only producer of `billing.hourly_tick`
+      # and `run_maintenance`; a venv rewritten under it at start would take both
+      # out while the container still reads `Up`.
+      UV_NO_SYNC: "1"
     depends_on:
       postgres:
         condition: service_healthy

@@ -61,14 +61,35 @@ def build_connection_uri(config: dict) -> str:
     user = config.get("user") or ""
     password = config.get("password") or ""
 
-    if not user:
+    # core#626. Both default False and are read with `.get(..., False)`, so a
+    # connection stored before this existed has neither key and produces a
+    # byte-identical URI. That is a requirement, not a side effect: turning TLS
+    # on for a server that does not offer it converts a working connection into
+    # a failing one without the user touching anything.
+    srv = bool(config.get("srv", False))
+
+    # SRV implies TLS, and that is the MongoDB URI specification rather than our
+    # invention — the `mongodb+srv` scheme defaults `tls=true` and pymongo
+    # honours it. It is still written out explicitly below: relying on a driver
+    # default that a future pymongo could change is how a security property
+    # becomes an accident.
+    tls = bool(config.get("tls", False)) or srv
+
+    scheme = "mongodb+srv" if srv else "mongodb"
+    # `mongodb+srv://host:27017/` is invalid — the SRV records supply the ports.
+    authority = host if srv else f"{host}:{port}"
+
+    params: dict[str, str] = {}
+    if user:
         # An unauthenticated mongod rejects nothing, so sending an authSource
         # it will ignore would be noise.
-        return f"mongodb://{host}:{port}/{database}"
+        params["authSource"] = config.get("auth_source") or DEFAULT_AUTH_SOURCE
+    if tls:
+        params["tls"] = "true"
 
-    auth_source = config.get("auth_source") or DEFAULT_AUTH_SOURCE
-    query = urlencode({"authSource": auth_source})
-    return f"mongodb://{quote_plus(user)}:{quote_plus(password)}@{host}:{port}/{database}?{query}"
+    credentials = f"{quote_plus(user)}:{quote_plus(password)}@" if user else ""
+    query = f"?{urlencode(params)}" if params else ""
+    return f"{scheme}://{credentials}{authority}/{database}{query}"
 
 
 def _normalize_bson_types(value: Any) -> Any:

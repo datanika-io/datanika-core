@@ -63,7 +63,15 @@ class ExecutionService:
         run_id: int,
         rows_loaded: int,
         logs: str,
+        bytes_processed: int | None = None,
     ) -> Run | None:
+        """Finish a run.
+
+        ``bytes_processed`` is optional because only *ingestion* runs have one
+        (core#912). A dbt model run and a transformation run read no source and
+        produce no byte count, so their rows stay NULL — which is the honest
+        value, and distinguishable from a measured zero.
+        """
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
@@ -71,6 +79,8 @@ class ExecutionService:
         run.finished_at = datetime.now(UTC)
         run.rows_loaded = rows_loaded
         run.logs = logs
+        if bytes_processed is not None:
+            run.bytes_processed = bytes_processed
         session.flush()
         return run
 

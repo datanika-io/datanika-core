@@ -325,6 +325,7 @@ class PipelineState(BaseState):
             self._set_error(e, "Failed to save pipeline")
             return
         self._reset_form()
+        yield await self._saved_toast("pipelines.created_toast", "Pipeline saved")
         await self.load_pipelines()
 
     def _reset_form(self):
@@ -475,7 +476,9 @@ class PipelineState(BaseState):
             run_id = run.id
         run_pipeline_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
-        yield rx.toast("Run triggered", position="top-right")
+        # core#872 D6. This was a hardcoded English string that bypassed the
+        # I18nState lookup entirely, so eight of nine locales showed English.
+        yield await self._saved_toast("common.run_triggered_toast", "Run triggered")
         if template_slug:
             # Inline Plausible event — ``window.plausible`` is guarded so
             # open-source self-hosted installs without the tracker loaded

@@ -71,6 +71,41 @@ RUN uv pip install --constraint /tmp/lock-constraints.txt /cloud
 # Optional at runtime (the mount is guarded), but present in prod. Remote-MCP P1.
 RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
 
+# Drop uv's DOWNLOAD CACHE from the image (core#835).
+#
+# This build is single-stage, so `/root/.cache/uv` ships. It holds unpacked
+# `archive-v0/` trees and `sdists-v9/` sources, each carrying a real
+# `*.dist-info/METADATA` or `*.egg-info/PKG-INFO` -- and trivy's python
+# analyzer reads those as INSTALLED PACKAGES.
+#
+# Measured on the `image-cve` run for `dev 89e7e2b`: **51 of 306** scanned
+# targets were cache paths, and **6 of the 11 HIGH findings** came from
+# packages the application cannot import. lxml is the clearest instance -- the
+# venv ships 6.1.2 (floored in pyproject.toml for CVE-2026-41066) while the
+# cache still holds the 6.0.2 sdist the build resolved through, so the scanner
+# reported a CVE we had already fixed. `jaraco.context` and `wheel` are worse:
+# setuptools' VENDORED copies, inside a cache entry, never importable at all.
+#
+# That is not merely noise. A scanner reporting six findings nobody can act on
+# is how a red check stops being read, and this job has been red on every push
+# for weeks.
+#
+# ⚠️ AFTER every uv command, deliberately. `uv run reflex init` re-syncs from
+# the lock, so a clean placed earlier is undone and the build goes cold for
+# nothing. `test_image_cve_signal.py` asserts the ordering, not just the line.
+#
+# ⚠️ `uv cache clean`, not `rm -rf`: uv honours UV_CACHE_DIR, and a hardcoded
+# path silently stops cleaning anything the day that is set -- a command that
+# exits 0 having cleaned the wrong directory.
+#
+# The venv is unaffected: `uv sync` hardlinks into it, so removing the cache's
+# link leaves the data alive under the venv's. That is a claim, and the /mcp
+# import assertion immediately below is its control -- which is why the clean
+# goes ABOVE it. If cleaning ever did gut the venv, the BUILD fails, before
+# anything reaches a registry.
+RUN uv cache clean && \
+    /app/.venv/bin/python -c "import pathlib, sys; p = pathlib.Path('/root/.cache/uv'); n = sum(1 for _ in p.rglob('*')) if p.exists() else 0; sys.exit(f'uv cache still in the image: {n} paths under {p}') if n else print('uv cache absent from the image')"
+
 # Assert the artifact works, in the artifact (core#602).
 #
 # `datanika.py` mounts /mcp inside `except ImportError:` that logs a warning and

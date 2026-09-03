@@ -365,6 +365,9 @@ class UploadState(BaseState):
         org_id = auth_state.current_org.id
         user_id = auth_state.current_user.id
         upload_svc, _ = self._get_services()
+        # Captured before `_reset_form()` clears it. core#872: a create that
+        # says "saved" is acceptable; an update that says "created" is not.
+        was_edit = bool(self.editing_upload_id)
         try:
             config = self._build_config()
         except (json.JSONDecodeError, ValueError) as e:
@@ -443,6 +446,10 @@ class UploadState(BaseState):
             self._set_error(e, "Failed to save upload")
             return
         self._reset_form()
+        if was_edit:
+            yield await self._saved_toast("uploads.saved_toast", "Upload saved")
+        else:
+            yield await self._saved_toast("uploads.created_toast", "Upload created")
         await self.load_uploads()
 
     def _reset_form(self):
@@ -733,7 +740,9 @@ class UploadState(BaseState):
             run_id = run.id
         run_upload_task.delay(run_id=run_id, org_id=org_id)
         self.error_message = ""
-        yield rx.toast("Run triggered", position="top-right")
+        # core#872 D6. This was a hardcoded English string that bypassed the
+        # I18nState lookup entirely, so eight of nine locales showed English.
+        yield await self._saved_toast("common.run_triggered_toast", "Run triggered")
         if template_slug:
             import json
 

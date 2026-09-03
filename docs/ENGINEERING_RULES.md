@@ -405,6 +405,90 @@ The discriminator was asking the real consumer: `alembic heads` reported a singl
    (`alembic heads`, the DB, the registry) before changing your change. Here the correct response was
    to fix the guard, and the tempting one was to re-chain a migration that was already right.
 
+
+## 15. Asserting a flag is `False` proves nothing unless your test made it `True`
+
+**[core#626], 2026-09-03.** `test_clickhouse_secure_does_not_carry_into_mongodb` asserted
+`stub.form_mongodb_tls is False` after a type switch. It never set that var to `True`. So the
+assertion compared a default against itself, and **deleting the reset lines from `set_form_type`
+left the test green** — found only because the negative control for that criterion was run against
+the real file and came back **blind**.
+
+It reads exactly like a test of the carry-over bug. It is a test of a constant.
+
+**Rules:**
+1. **Every "was it reset / cleared / disabled?" assertion needs the test to have put the thing in the
+   opposite state first.** Otherwise it is a "for all" over a value that was never in the failing
+   state, and no mutation of the code under test can reach it.
+2. **Keep such a line if it is a genuine control — but label it as one.** Here `form_mongodb_tls`
+   *must* stay `False` because D5.1 gave the two connectors separate vars, so it is worth asserting;
+   it is simply not the assertion the test's name promises. The load-bearing one was `form_secure`,
+   which the test did set.
+3. **This is only detectable by mutation, not by review.** The test passes, reads correctly, and its
+   name describes the right behaviour. Run the control.
+
+Same family as the guards in this repo that could only ever return one answer — but arriving from a
+new direction: here the *check* is fine and the *fixture* never armed it.
+
+## 16. A guard's invariant outranks a spec's incidental wording — say so, don't quietly pick one
+
+**[core#626], 2026-09-03.** `SPEC_MONGODB_TLS_SRV` D2 says that under a DNS seed list no port is
+written "into the URI **or the config**". Implementing the second half made
+`test_connection_config_roundtrip.py` fail on `mongodb: ['port']` — the ratchet from [core#638],
+whose invariant is *every key declared in `CONFIG_SCHEMAS` survives a structured-form save*.
+
+Three responses were available and two were wrong:
+
+| response | why it fails |
+|---|---|
+| add `mongodb: {"port"}` to `_DROPPED_ON_SAVE` | the ledger is pre-existing debt tracked by [core#662]. A new entry converts a ratchet into a permanent exemption, and asserts something false — `port` is not dropped in the ordinary case |
+| add `mongodb` to `_UNPROBEABLE` | stops probing the connector entirely, losing the coverage of `auth_source`/`tls`/`srv` that the same change just bought |
+| **keep the port in the config, keep it out of the URI** | ✅ |
+
+The spec's *purpose* — no port in an SRV URI — is met structurally by `build_connection_uri`
+composing the authority as `host` alone when `srv` is set. The config clause bought nothing and cost
+two things: the guard's invariant, and a port the user typed (tick SRV, save, untick: gone), which is
+the same silent-loss shape [core#638] exists to catch.
+
+**Rules:**
+1. **When a spec clause collides with a shipped guard, work out what the clause is *for*.** If the
+   purpose is satisfied elsewhere and more robustly, implement the purpose.
+2. **Record the deviation on the issue and in the code**, with the reasoning. A deviation nobody
+   wrote down is indistinguishable from an implementation error, and the next reader "fixes" it back.
+3. **Never widen a ratchet to fit your change.** A ledger that only ever grows is a list of things
+   nobody will ever fix.
+
+## 17. Adding an indirection is adding an idiom — teach the key scanner in the same commit
+
+**[core#872], 2026-09-03.** `tests/test_i18n/test_i18n.py` derives "which translation keys does the
+code use?" from three regexes: `_t["..."]`, `_deleted_toast("...")`, `_translated("...")`. Adding
+`BaseState._saved_toast` made **all thirteen new keys read as orphans**, and
+`test_no_orphan_keys_in_json` says so — while the documented remedy for a false orphan is to
+**delete the key**, which would have dropped the translation in all nine locales with every check
+green.
+
+🔑 **The file had already been bitten twice and said so in a comment**, once for `_deleted_toast` and
+once for `_translated`: *"a key-usage scanner is only as wide as the idioms it knows... Add the
+pattern when you add the helper."* This was the third instance. A warning written in the place it
+will be read is worth more than one written where it was learned.
+
+**A second, narrower trap in the same scanner:** the pattern captures **one** literal per call, so
+
+```python
+yield await self._saved_toast("x.saved" if editing else "x.created", ...)   # second key invisible
+```
+
+hides the `else` branch. Two call sites needed create/update discrimination and now use explicit
+`if`/`else` branches instead — more lines, and visible to the tooling.
+
+**Rules:**
+1. **A new helper that takes a translation key is a scanner change.** Same commit, or the keys are
+   orphans and the fix-as-documented destroys them.
+2. **Do not compute a scanned literal.** Ternaries, f-strings and locals are all invisible to a
+   regex-based key scanner; branch instead.
+3. **When you get bitten by a derivation's blind spot, write the warning next to the derivation.**
+
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887
@@ -415,3 +499,7 @@ The discriminator was asking the real consumer: `alembic heads` reported a singl
 [core#772]: https://github.com/datanika-io/datanika-core/issues/772
 [core#780]: https://github.com/datanika-io/datanika-core/issues/780
 [core#928]: https://github.com/datanika-io/datanika-core/issues/928
+[core#872]: https://github.com/datanika-io/datanika-core/issues/872
+[core#626]: https://github.com/datanika-io/datanika-core/issues/626
+[core#662]: https://github.com/datanika-io/datanika-core/issues/662
+[core#638]: https://github.com/datanika-io/datanika-core/issues/638

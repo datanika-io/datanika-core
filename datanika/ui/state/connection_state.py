@@ -341,6 +341,18 @@ class ConnectionState(BaseState):
     # Oracle — connect by SID instead of service name (legacy single-instance)
     form_oracle_use_sid: bool = False
 
+    # MongoDB transport options (core#626).
+    #
+    # ⚠️ `form_mongodb_tls` is deliberately NOT `form_secure`. That one is
+    # ClickHouse's "Use HTTPS (TLS)", and HTTPS is wrong for the MongoDB wire
+    # protocol anyway. Sharing one var across two connectors because the labels
+    # rhyme means a mid-form type switch carries the tick across.
+    form_mongodb_tls: bool = False
+    form_mongodb_srv: bool = False
+    # Where the MongoDB user was created. Blank means `admin`, which is where
+    # Atlas and every managed provider put them (core#550).
+    form_auth_source: str = ""
+
     # Databricks
     form_http_path: str = ""
     form_token: str = ""
@@ -455,6 +467,25 @@ class ConnectionState(BaseState):
     def set_form_type(self, value: str):
         self.form_type = value
         self.form_port = _DEFAULT_PORTS.get(value, "")
+        # core#626 D5. This reset the port default and the test verdict and
+        # **not** the booleans, so `form_secure`, `form_cluster_replication` and
+        # `form_oracle_use_sid` all survived a mid-form type switch — a
+        # pre-existing bug with no reporter, because the two connectors that
+        # could collide were rarely switched between.
+        #
+        # Adding MongoDB's TLS checkbox is what makes it reachable: tick
+        # ClickHouse's "Use HTTPS (TLS)", switch the dropdown to MongoDB, and
+        # you would arrive with TLS silently pre-checked. Against a server
+        # without TLS that is a connection failure with no visible cause, from
+        # a control the user never touched.
+        #
+        # Reset every boolean rather than the new pair: a per-field list is one
+        # more thing to forget the next time somebody adds a checkbox.
+        self.form_cluster_replication = False
+        self.form_secure = False
+        self.form_oracle_use_sid = False
+        self.form_mongodb_tls = False
+        self.form_mongodb_srv = False
         self._clear_test_verdict()
 
     def set_form_config(self, value: str):
@@ -549,6 +580,15 @@ class ConnectionState(BaseState):
 
     def set_form_oracle_use_sid(self, value: bool):
         self._set_config_field("form_oracle_use_sid", value)
+
+    def set_form_mongodb_tls(self, value: bool):
+        self._set_config_field("form_mongodb_tls", value)
+
+    def set_form_mongodb_srv(self, value: bool):
+        self._set_config_field("form_mongodb_srv", value)
+
+    def set_form_auth_source(self, value: str):
+        self._set_config_field("form_auth_source", value)
 
     def set_form_http_path(self, value: str):
         self._set_config_field("form_http_path", value)
@@ -771,6 +811,18 @@ class ConnectionState(BaseState):
         elif t == "mongodb":
             if self.form_host:
                 config["host"] = self.form_host
+            # ⚠️ The port IS still stored under SRV, and the spec says not to.
+            # Deviation recorded on core#626. `mongodb+srv://h:27017/` is invalid
+            # per the URI spec, but that is enforced where it belongs —
+            # `build_connection_uri` composes the authority as `host` alone when
+            # `srv` is set, so a stored port structurally cannot reach the URI.
+            #
+            # Dropping it here instead would do two bad things. It breaks
+            # `test_connection_config_roundtrip.py`'s invariant that every
+            # declared schema key survives a save — the guard core#638 exists to
+            # hold — and it silently destroys a port the user typed, which is
+            # the same shape of loss that guard was written about. Keeping it
+            # means unticking SRV restores the port the user had.
             if self.form_port:
                 config["port"] = int(self.form_port)
             if self.form_user:
@@ -779,6 +831,19 @@ class ConnectionState(BaseState):
                 config["password"] = self.form_password
             if self.form_database:
                 config["database"] = self.form_database
+            # core#638 — every new key needs a line in **both** serialisers.
+            # A key present in one and absent from the other is silently dropped
+            # on the next structured-form save, which is exactly what happened
+            # to `auth_source`: set it via raw JSON, reopen the connection in the
+            # form, click Save, and it reverts to `admin` on the next run.
+            if self.form_auth_source:
+                config["auth_source"] = self.form_auth_source
+            # Written unconditionally rather than only when true, so unticking
+            # a box persists as False instead of dropping the key and falling
+            # back to the default. `build_connection_uri` reads both with
+            # `.get(..., False)`, so an older config without them is unaffected.
+            config["tls"] = self.form_mongodb_tls or self.form_mongodb_srv
+            config["srv"] = self.form_mongodb_srv
 
         elif t == "databricks":
             if self.form_host:
@@ -956,6 +1021,9 @@ class ConnectionState(BaseState):
         self.form_cluster_replication = False
         self.form_secure = False
         self.form_oracle_use_sid = False
+        self.form_mongodb_tls = False
+        self.form_mongodb_srv = False
+        self.form_auth_source = ""
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -1022,6 +1090,9 @@ class ConnectionState(BaseState):
         self.form_cluster_replication = False
         self.form_secure = False
         self.form_oracle_use_sid = False
+        self.form_mongodb_tls = False
+        self.form_mongodb_srv = False
+        self.form_auth_source = ""
         self.form_http_path = ""
         self.form_token = ""
         self.form_catalog = ""
@@ -1091,6 +1162,9 @@ class ConnectionState(BaseState):
             self.form_user = config.get("user", "")
             self.form_password = config.get("password", "")
             self.form_database = config.get("database", "")
+            self.form_auth_source = config.get("auth_source", "")
+            self.form_mongodb_srv = config.get("srv", False)
+            self.form_mongodb_tls = config.get("tls", False)
         elif conn_type == "databricks":
             self.form_host = config.get("host", "")
             self.form_http_path = config.get("http_path", "")
@@ -1198,6 +1272,10 @@ class ConnectionState(BaseState):
         except (json.JSONDecodeError, ValueError) as e:
             self.error_message = f"Invalid config: {e}"
             return
+        # Captured before `_reset_form_fields()` clears it. core#872: a create
+        # that says "saved" is acceptable; an update that says "created" is not,
+        # because it tells the user a new row exists.
+        was_edit = bool(self.editing_conn_id)
         try:
             with get_sync_session() as session:
                 if self.editing_conn_id:
@@ -1248,6 +1326,13 @@ class ConnectionState(BaseState):
         # a subsequent non-template create doesn't inherit it. #93.
         self.selected_template_slug = ""
         self._reset_form_fields()
+        # Yielded before the refetch, deliberately. The table repopulating is
+        # asynchronous and was measured lagging 5-17 seconds; the toast is the
+        # acknowledgement, the table is not (core#872 D5).
+        if was_edit:
+            yield await self._saved_toast("connections.saved_toast", "Connection saved")
+        else:
+            yield await self._saved_toast("connections.created_toast", "Connection created")
         await self.load_connections()
 
     async def edit_connection(self, conn_id: int):

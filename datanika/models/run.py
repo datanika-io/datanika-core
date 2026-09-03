@@ -37,4 +37,19 @@ class Run(Base, TenantMixin, TimestampMixin):
     # insert with ``NumericValueOutOfRange``. See core#283 — same class
     # as the usage_ledger.quantity widening in core#272.
     rows_loaded: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # core#912. Core computes this on every upload — from dlt's `LoadInfo` on the
+    # ETL path, from `StreamStats.bytes_out` on the ELT one — hands it to a hook
+    # and keeps no record, so `Run` could answer "how many rows" and never "how
+    # large". That made `datanika_bytes_processed_by_run` underivable: the value
+    # is known in the Celery worker, `/metrics` is served by the app, and core
+    # must never import cloud to read `usage_ledger`.
+    #
+    # `BigInteger` for core#283's reason one line up, only sooner: 2 GiB in a
+    # single load is unremarkable, and int32 would raise
+    # `NumericValueOutOfRange` on insert *after* the data had already moved.
+    #
+    # NULL means "not measured" — a run predating this column, or one whose
+    # LoadInfo carried no file sizes. Writing 0 there would erase that
+    # distinction and put a fake floor in every distribution built on it.
+    bytes_processed: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

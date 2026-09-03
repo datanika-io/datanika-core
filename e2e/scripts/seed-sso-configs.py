@@ -29,6 +29,38 @@ from sqlalchemy import select  # noqa: E402
 FIXTURE_PATH = Path(__file__).parent.parent / ".sso-fixture.json"
 
 
+def saml_config(fixture: dict) -> dict:
+    """The SAML config dict handed to ``SSOService.create_sso_config``.
+
+    🚨 ``idp_cert`` is the trust anchor and was MISSING here (core#768, core#830
+    defect 4). ``create_sso_config`` reads ``config.get("idp_cert", "")``, so its
+    absence seeded an empty ``saml_idp_cert`` and every assertion was refused
+    with "SAML IdP certificate not configured" — the second of six raise sites.
+    Nothing noticed, because the *binding* defect refuses one step earlier and
+    that refusal has never been reached.
+
+    Extracted from ``main()`` as a pure function so the contract can be asserted
+    without a database: ``tests/test_scripts/test_sso_bootstrap_contract.py``.
+    An inline dict inside ``main()`` is only testable by running the seeder
+    against a real Postgres, which is why this defect had no unit-level guard.
+    """
+    saml = fixture["saml"]
+    cert = (saml.get("idp_cert") or "").strip()
+    if not cert:
+        raise ValueError(
+            "fixture carries no saml.idp_cert. Seeding an SSO config without a "
+            "trust anchor makes every assertion unverifiable, so the SP refuses "
+            "all of them (core#768). Re-run bootstrap-authentik.sh."
+        )
+    return {
+        "idp_metadata_url": saml["idp_metadata_url"],
+        "idp_entity_id": saml["idp_entity_id"],
+        "idp_sso_url": saml["idp_sso_url"],
+        "idp_cert": cert,
+        "sp_entity_id": saml["sp_entity_id"],
+    }
+
+
 def main():
     if not FIXTURE_PATH.exists():
         print(f"ERROR: {FIXTURE_PATH} not found. Run bootstrap-authentik.sh first.")
@@ -50,12 +82,7 @@ def main():
 
         # --- SAML org ---
         saml_org = _ensure_org(s, "E2E Fixture SAML", "e2e-fixture-saml")
-        _ensure_sso(s, svc, saml_org.id, "saml", "Authentik SAML", {
-            "idp_metadata_url": fixture["saml"]["idp_metadata_url"],
-            "idp_entity_id": fixture["saml"]["idp_entity_id"],
-            "idp_sso_url": fixture["saml"]["idp_sso_url"],
-            "sp_entity_id": fixture["saml"]["sp_entity_id"],
-        })
+        _ensure_sso(s, svc, saml_org.id, "saml", "Authentik SAML", saml_config(fixture))
         print(f"SAML: org_id={saml_org.id} slug=e2e-fixture-saml")
 
         s.commit()

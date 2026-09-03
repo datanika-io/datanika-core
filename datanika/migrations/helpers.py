@@ -34,6 +34,12 @@ PUBLIC_TABLES: set[str] = {
     "oauth_grants",
     "oauth_tokens",
     "password_reset_tokens",
+    # PII sidecars (core#655, SPEC_PII_SEPARATION D1). Person-scoped like `users`, so
+    # public rather than tenant — an address belongs to a person, not to an org.
+    "user_pii",
+    "invitation_pii",
+    "notification_channel_pii",
+    "email_change_requests",
 }
 
 # Tables managed by Alembic but not belonging to either category

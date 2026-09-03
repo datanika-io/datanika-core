@@ -45,6 +45,8 @@ from __future__ import annotations
 import ast
 import importlib.util
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -357,6 +359,64 @@ class TestTheStepStillChecksItself:
             "The step no longer fails when the [tier] line is missing. An absence is not "
             "evidence that nothing was wrong — it is what a run with the gate off, or with "
             "the conftest unloaded, also looks like."
+        )
+
+    def test_the_skip_pattern_cannot_be_tripped_by_the_tier_line(self, smoke_step: str) -> None:
+        """Regression: the tier line tripped the skip alarm on its first real run.
+
+        Measured on run `33741831511`. The step's skip guard was an unanchored
+        ``grep -qE '[0-9]+ skipped'`` over the whole pytest log — and the tier line
+        this change adds contains ``deselected=2 skipped=0``, i.e. a digit, a
+        space, then the word. So a completely green run
+        (``14 passed, 2 deselected, 5 xfailed``, reporter reporting ``skipped=0``)
+        failed with *"Smoke probes were SKIPPED"*.
+
+        Neither half was unreasonable on its own. That is what makes it worth a
+        test: **a new diagnostic line collided with an old detector's loose
+        pattern, and the detector's verdict read like a real outage.**
+
+        This runs the workflow's OWN pattern with a real ``grep -E``, in both
+        directions — asserting only that it does not match is half a test, since a
+        pattern that matches nothing would also pass.
+        """
+        grep = shutil.which("grep")
+        if grep is None:  # pragma: no cover - CI always has it
+            pytest.skip("grep not available")
+
+        m = re.search(r"grep -qE '([^']+)' /tmp/smoke\.log", smoke_step)
+        assert m, "no skip grep found in the smoke step — has the guard been removed?"
+        pattern = m.group(1)
+
+        tier_line = (
+            "[tier] pinned=5 xfailed=5 stale_pins=0 unexpected_failure=0 not_run=0 "
+            "gating_passed=14 gating_failed=0 deselected=2 skipped=0"
+        )
+        real_summary_with_skips = "===== 3 passed, 2 skipped, 1 xfailed in 1.23s ====="
+
+        def matches(text: str) -> bool:
+            return (
+                subprocess.run(
+                    [grep, "-qE", pattern], input=text + "\n", capture_output=True, text=True
+                ).returncode
+                == 0
+            )
+
+        assert not matches(tier_line), (
+            f"The skip pattern {pattern!r} matches the tier line. A green run will fail "
+            "claiming probes were skipped, which reads exactly like a real outage."
+        )
+        assert matches(real_summary_with_skips), (
+            f"The skip pattern {pattern!r} does NOT match a pytest summary line that "
+            "genuinely reports skips. Narrowing it to dodge the tier line has disarmed "
+            "it — that is a worse bug than the one it fixed, and it is silent."
+        )
+
+    def test_the_skip_verdict_also_reads_the_reporters_own_count(self, smoke_step: str) -> None:
+        """Prose is the fallback; the reporter's count is the verdict."""
+        assert "n_skipped" in smoke_step, (
+            "The step no longer reads skipped= from the tier line. Grepping pytest's "
+            "English is what produced the collision above; the reporter's own count is "
+            "the same fact without a parser between it and the truth."
         )
 
     def test_the_stale_pin_verdict_is_acted_on(self, smoke_step: str) -> None:

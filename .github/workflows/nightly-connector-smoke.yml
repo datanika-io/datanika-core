@@ -264,8 +264,18 @@ jobs:
             exit 1
           fi
 
-          if grep -qE '[0-9]+ skipped' /tmp/smoke.log; then
-            echo "::error::Smoke probes were SKIPPED — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
+          # 🚨 The skip check reads the reporter's own count first, and its grep
+          # is ANCHORED TO THE SUMMARY LINE. The unanchored `[0-9]+ skipped` this
+          # used to be also matched the tier line's own `deselected=2 skipped=0`
+          # — a digit, a space, then the word — so the very first run carrying a
+          # tier line failed with "probes were SKIPPED" while the reporter said
+          # skipped=0. Measured on run 33741831511. Both halves were individually
+          # reasonable: a new diagnostic line collided with an old detector's
+          # loose pattern, and the detector's verdict looked like a real outage.
+          # tests/test_deploy/test_nightly_smoke_tiers.py runs the real grep
+          # against a real tier line, in both directions.
+          if [ "${n_skipped:-1}" != "0" ] || grep -qE '^=+.* [0-9]+ skipped' /tmp/smoke.log; then
+            echo "::error::Smoke probes were SKIPPED (reporter says skipped=${n_skipped:-?}) — a skipped probe reports green while testing nothing. Check that DATANIKA_CONNECTOR_SMOKE=1 is still set on this step and that every credential is present in QA_CONNECTOR_CREDENTIALS."
             exit 1
           fi
 

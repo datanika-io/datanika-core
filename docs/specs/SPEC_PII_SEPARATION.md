@@ -1237,7 +1237,7 @@ fails; that is deliberate.
 2. **Erasure + org deletion**, same release, **synchronous** (D14.1). This is what closes the launch blocker and makes `datanika.io/privacy` §6 true — and D14.2 shows that the *synchronous* version is the only one that leaves that sentence true.
 3. **Email change**, same release if it fits, next otherwise. It is the smaller build and the one a real user hits first, but it does not block launch.
 4. 🆕 **The founder's scheduled job ships LAST and separately** (D14.3). ✅ **Its prerequisite is met** — [core#653] closed 2026-08-30 and beat is live in production; verify it is *producing* at ship time rather than re-reading the issue. It is the D12.4 canary plus its completion record — not the erasure. Nothing above waits for it, which is deliberate: **no compliance obligation in this spec may depend on a scheduler that has never fired.**
-5. **N+1** and **N+2** are bookkeeping releases and should be scheduled deliberately, not left to drift. A half-finished expand/contract is worse than either end of it: the legacy columns keep accumulating personal data that the erasure sweep does not clear.
+5. **N+1** and **N+2** are bookkeeping releases and should be scheduled deliberately, not left to drift. A half-finished expand/contract is worse than either end of it: the legacy columns keep accumulating personal data that the erasure sweep does not clear. 🆕 **They are now tracked as [core#939], and §8a below is their sequencing contract — read it before writing either PR.**
 
 **Steps 0-3 are blocked on nothing.** No new credential, no Infra change, no vhost change. The
 cross-repo pieces are D6's subscription cancellation, which lands with
@@ -1249,6 +1249,166 @@ because it is the least urgent, not because it is gated. ⚠️ It was kept out 
 originally so nothing above inherited the block; that separation is still right, for the
 different reason that **no compliance obligation here may depend on a scheduler**, however
 healthy it looks on the day it ships.
+
+## 8a. 🆕 N+1 / N+2 sequencing contract — measured 2026-09-03. Read before writing either PR.
+
+Tracked as **[core#939]**, which promoted §8 step 5 out of a bullet *because that is the shape that
+drifts*. This section is the ordering that bullet asks for. It does not restate #939 — #939 lists
+*what* changes in each release; this says **what has to be true first, what will go red, and how to
+tell the three kinds of red apart.**
+
+### 8a.1 · The block has lifted — release N is in production
+
+§2c sets the N/N+1 boundary by **blue/green code overlap**, so N had to reach production before N+1
+could be written. It has: promoted 2026-09-03 08:39Z. ✅ Verified **by content on `origin/master`,
+not by SHA** (a rebase-merge makes `--contains` lie) — `datanika/models/pii.py` and
+`UserService.erase_user` are both present there, and so is `e7f2a9c4b1d8`.
+
+**N+1 is therefore unblocked and may be written now.** Nothing below is a reason to defer it; it is
+the order in which to do it.
+
+### 8a.2 · 🚨 The precondition N+1 rests on, which this spec never stated
+
+N+1 deletes the legacy half of two `or_` reads. That is only safe if **every path that creates a
+user writes the `user_pii` sidecar.** The spec assumed this because the *service* dual-writes —
+`register_user` adds the `UserPII` row directly, `find_or_create_oauth_user` calls `_sync_user_pii`,
+and the expand migration backfilled every pre-existing row.
+
+**Three paths bypass the service and create a user with legacy columns and no sidecar:**
+
+| path | what it does |
+|---|---|
+| `datanika/scripts/e2e_seed.py::_build_fixture` | constructs `User(email=…, full_name=…)` at **three** sites (org A owner, org A viewer, org B owner) and never touches `UserPII` |
+| 15 test modules | construct `User(email=…)` by hand in fixtures |
+| `tests/…/test_pii_separation.py::test_the_legacy_column_is_still_readable_during_the_dual_write_window` | constructs one **deliberately**, and asserts the legacy clause finds it |
+
+🔑 **This is not a production defect and should not be filed as one.** In production every user has a
+sidecar. It is a defect in the *fixtures*, and it matters because the fixtures are the gate: the
+pre-push hook and CI are what stand between N+1 and `dev`.
+
+⚠️ **The seed's shape is wrong under N already**, not only under N+1 — it produces users the
+dual-write invariant says cannot exist. It is survivable this release, which is exactly why nobody
+noticed.
+
+### 8a.3 · What N+1 breaks — measured, not predicted
+
+Both legacy clauses were deleted locally exactly as #939 items 1 and 2 specify, and eight identity-
+touching suites were run. **18 failures across 5 files.** That is a *targeted subset*, so treat 18 as
+a floor, not a total.
+
+```
+tests/test_services/test_user_service.py               8   (Authenticate ×4, GetUserByEmail ×2, FindOrCreateOAuthUser ×2)
+tests/test_services/test_oauth_autolink_local_trust.py 6
+tests/test_services/test_oauth_email_trust.py          2
+tests/test_services/test_pii_separation.py             1
+tests/test_services/test_invitation_service.py         1
+```
+
+The probe was armed against vacuity first: the run refuses to start unless the legacy-clause comments
+are gone from `user_service.py`, so a mutation that silently failed to apply cannot report green.
+
+### 8a.4 · 🚨 The three kinds of red, and why two of them look like the third
+
+**This is the load-bearing part of this section.** All 18 arrive as ordinary assertion failures in
+files the N+1 diff never touches. Read them wrong and you revert N+1.
+
+**Kind 1 — the correct red. Delete the test, do not fix it.**
+`test_pii_separation.py::TestExtraction::test_the_legacy_column_is_still_readable_during_the_dual_write_window`
+exists to assert the clause N+1 removes. It is the t1-window guard; the t1 window closed at the N
+deploy. It must be **deleted in the N+1 PR**, and its docstring's argument moved into the N+1 commit
+message — the record of *why the clause existed* is what stops someone re-adding it in six months.
+🚨 An implementer who "fixes" this test has reverted the release.
+
+**Kind 2 — the fixture red. Fix the fixture, never the query.** The other 16 are tests whose fixtures
+build a user by hand. The behaviour under test is fine; the fixture is producing a shape §8a.2 says
+cannot exist. The remedy is to give the fixture a sidecar (or route it through `UserService`), not to
+restore the clause.
+
+**Kind 3 — the one that is not a test problem at all.**
+`test_invitation_service.py::TestCreateInvitation::test_already_member_rejected` fails with
+**`DID NOT RAISE`**, not with a lookup error. `create_invitation` checks membership *through*
+`get_user_by_email`; when that returns `None` the whole guard is skipped and the invitation is
+created. **The guard fails open.** It is the only one of the 18 where the symptom is a security-
+shaped behaviour rather than a broken assertion, and it is the one a reader skims past because
+`DID NOT RAISE` reads like a flaky expectation.
+
+### 8a.5 · What `None` means after N+1 — and it now means two things
+
+Before N+1, `get_user_by_email` returning `None` means *"no such person."* After N+1 it means *"no
+such person **or** this person has no sidecar row."* **Those are indistinguishable at the call site**,
+and the eight callers do not agree on what to do about it:
+
+| caller | behaviour on `None` | how it reads to a user |
+|---|---|---|
+| `invitation_service.create_invitation:67` | skips the already-a-member guard | **fails open** — duplicate invitation. Measured above |
+| `invitation_service.accept_invitation:148` | `return None  # User must register first` | 🚨 **an unescapable loop** — they *have* registered, and the row below shows registering again fails on a UNIQUE. Told to do the one thing that cannot succeed |
+| `user_service.register_user:74` | proceeds to create | duplicate registration hits the `user_pii.email` UNIQUE → an **IntegrityError**, not *"Email already exists"* |
+| `password_reset_service.request_reset:82` | returns `None`, deliberately opaque | the reset mail simply never arrives, and the opacity is by design (anti-enumeration), so **nothing anywhere reports it** |
+| `scripts/erase_user.py:65` | prints *"No matching active account."* | 🚨 **a GDPR erasure request that cannot be executed**, refused for a reason the operator cannot see |
+| `user_service.authenticate:102` / `authenticate_for_org:133` | returns `None` | login fails with the ordinary wrong-password message |
+| `ui/state/settings_state.py:307` | as `create_invitation` | same fail-open, from the Settings surface |
+
+🔑 **This is why §8a.2's precondition is a precondition and not a cleanup task.** The failure of the
+invariant is not loud anywhere. Five of the seven callers degrade silently, one of them into a
+refused erasure — the exact obligation this whole spec exists to satisfy.
+
+**Contract:** N+1 may not merge while any user-creation path in the repo bypasses the sidecar. That
+is a stronger statement than *"fix the seed"*, and it is the one to hold.
+
+### 8a.6 · Ship order
+
+**Step A — lands NOW, under N, in its own PR. Not part of N+1.**
+Give the three `_build_fixture` sites a `UserPII` row (or route them through `UserService`), and give
+the ~15 test fixtures the same. It is correct under N on its own terms — it removes rows that violate
+the dual-write invariant — so it carries no N+1 risk and needs no coordination with the release.
+Doing it separately means **the N+1 PR's diff is only the deletions**, and every red it produces is
+about N+1 rather than about fixtures.
+
+⚠️ QA offered to take this on [core#951] (they are already in `e2e_seed.py`). Either owner is fine;
+what is not fine is it riding *inside* the N+1 PR, where a fixture fix and a behaviour change become
+one indistinguishable diff.
+
+**Step B — N+1.** #939 items 1–7, plus: delete the Kind-1 test, and keep `erase_user` step 1a
+(#939 item 8 — it NULLs columns that still exist).
+**Gate:** `git grep -n "N+1" -- datanika/` returns nothing, *and* the full suite is green with no
+fixture edits in the diff.
+
+**Step C — N+2.** Migration only. See §8a.7 first — its blast radius is not N+1's.
+
+### 8a.7 · ⚠️ N+2's blast radius is different, larger, and nobody has counted it
+
+N+1 tolerates a hand-built `User(email=…)` — the column still exists, it is merely unread. **N+2
+drops the column, so every one of those constructions becomes a `TypeError`.** Same for
+`full_name`, `oauth_provider_id`, `invitations.email` and `invitations.token`.
+
+Measured on `origin/dev`: **15 test modules** construct `User(...)` with `email=`, plus three sites in
+`e2e_seed.py` and one `Invitation(token=…)` in `tests/test_security/test_org_role_authority.py:447`.
+Step A above closes the N+1 half of this; **the N+2 half is a separate sweep and should be scoped
+before N+2 is scheduled**, not discovered during it.
+
+✅ The good news is the direction of failure: N+2 fails **loudly** at import/construction time, which
+is the opposite of N+1. It is work, not risk.
+
+### 8a.8 · 🚨 Why acceptance criterion 1 cannot see any of this
+
+#939's criterion 1 is *"`git grep -n "N+1"` over `datanika/` returns nothing after the N+1 PR — the
+comments are the checklist."* That is a good criterion and it is **not** a completeness check.
+
+The markers live in **7 files** — two migrations, two models, three services. Not one of them is a
+test, and `tests/` is not even in the grep's path. So the checklist is satisfied in full while all 18
+failures above are still live, and while the seed still produces sidecar-less users.
+
+🔑 **The general form, and it is the same defect this project keeps paying for:** *a checklist
+derived from the annotations someone remembered to write cannot enumerate the places nobody
+annotated.* Criterion 1 proves the **deletions** are complete. It says nothing about the
+**consequences**. Keep it, and add: the full suite green, with no fixture change in the N+1 diff.
+
+✅ **And credit where it is due — criterion 1 already caught something #939's own item list missed.**
+`invitation_service.accept_invitation` reads the invitee's address as
+`pii.email if pii is not None else invitation.email` (`:141`), a legacy fallback marked
+`(removed in N+1)`. **It is not any of #939's eight items.** The grep finds it; the enumeration does
+not. That is the argument for keeping *both* — a hand-written list and a mechanical sweep fail in
+opposite directions, and here each one covers the other's gap.
 
 ## 9. Filed separately by this spec
 
@@ -1304,4 +1464,8 @@ sign in at all.
 [core#655]: https://github.com/datanika-io/datanika-core/issues/655
 [core#659]: https://github.com/datanika-io/datanika-core/issues/659
 [core#658]: https://github.com/datanika-io/datanika-core/issues/658
+[core#709]: https://github.com/datanika-io/datanika-core/issues/709
+[core#809]: https://github.com/datanika-io/datanika-core/issues/809
+[core#939]: https://github.com/datanika-io/datanika-core/issues/939
+[core#951]: https://github.com/datanika-io/datanika-core/issues/951
 [landing#343]: https://github.com/datanika-io/datanika-landing/issues/343

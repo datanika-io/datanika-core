@@ -126,6 +126,7 @@
   "common.actions": "Actions",
   "common.id": "ID",
   "common.name": "Nom",
+  "common.loading": "Chargement…",
   "common.type": "Type",
   "common.status": "Statut",
   "common.all": "Tous",

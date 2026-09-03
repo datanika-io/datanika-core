@@ -126,6 +126,7 @@
   "common.actions": "Aktionen",
   "common.id": "ID",
   "common.name": "Name",
+  "common.loading": "Wird geladen…",
   "common.type": "Typ",
   "common.status": "Status",
   "common.all": "Alle",

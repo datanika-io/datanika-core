@@ -126,6 +126,7 @@
   "common.actions": "الإجراءات",
   "common.id": "المعرّف",
   "common.name": "الاسم",
+  "common.loading": "جارٍ التحميل…",
   "common.type": "النوع",
   "common.status": "الحالة",
   "common.all": "الكل",

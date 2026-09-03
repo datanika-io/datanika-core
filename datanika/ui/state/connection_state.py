@@ -300,6 +300,20 @@ class ConnectionItem(BaseModel):
 
 class ConnectionState(BaseState):
     connections: list[ConnectionItem] = []
+
+    #: False until ``load_connections`` has answered once (core#872).
+    #:
+    #: ``connections == []`` is two different facts — "this org has none" and
+    #: "the websocket has not delivered them yet" — and on production the second
+    #: lasted 5–17 seconds while rendering pixel-identically to the first. A user
+    #: who has just created a connection reads that as *"nothing happened"*, and
+    #: the recovery action they reach for is **repeating the mutation**. Since
+    #: connection-quota enforcement went live that second click is the one that
+    #: gets refused, with the first having silently succeeded.
+    #:
+    #: Must default to False: defaulting to True would claim the data had
+    #: arrived on exactly the render the user waits through.
+    connections_loaded: bool = False
     form_name: str = ""
     # "" so the type picker shows its placeholder and forces a deliberate
     # choice, rather than silently defaulting to postgres (core#593).
@@ -1280,6 +1294,9 @@ class ConnectionState(BaseState):
                     )
                 )
             self.connections = items
+        # Set AFTER the rows land, so a render that catches the flag can never
+        # find it True beside a list that has not been assigned yet.
+        self.connections_loaded = True
         self.error_message = ""
 
     async def save_connection(self):

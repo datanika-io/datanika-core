@@ -49,6 +49,17 @@ WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 SECRET_REF = re.compile(r"\$\{\{\s*secrets\.", re.IGNORECASE)
 GITHUB_ENV_WRITE = re.compile(r">>\s*\"?\$(\{)?GITHUB_ENV")
 ADD_MASK = "::add-mask::"
+SECRET_DEREF = "\\$\\{?%s\\b"
+
+
+def _env_map(obj) -> dict:
+    env = obj.get("env") or {}
+    return env if isinstance(env, dict) else {}
+
+
+def _secret_bound_names(env: dict) -> set:
+    """Variable names bound to a ``${{ secrets.* }}`` expression."""
+    return {str(k) for k, v in env.items() if SECRET_REF.search(str(v))}
 
 
 def _steps(workflow: Path):
@@ -56,9 +67,11 @@ def _steps(workflow: Path):
     data = yaml.safe_load(workflow.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         return
+    wf_secrets = _secret_bound_names(_env_map(data))
     for job_id, job in (data.get("jobs") or {}).items():
         if not isinstance(job, dict):
             continue
+        inherited = wf_secrets | _secret_bound_names(_env_map(job))
         for i, step in enumerate(job.get("steps") or []):
             if not isinstance(step, dict):
                 continue
@@ -68,18 +81,40 @@ def _steps(workflow: Path):
                 env_text = "\n".join(f"{k}={v}" for k, v in env.items())
             else:
                 env_text = str(env)
-            yield job_id, i, step.get("name") or f"step[{i}]", env_text, str(run)
+            yield job_id, i, step.get("name") or f"step[{i}]", env_text, str(run), inherited
 
 
-def _materializers():
-    """Steps that take a repository secret AND write to ``$GITHUB_ENV``.
+def _materializers(workflow_dir: Path | None = None):
+    """Steps that write to ``$GITHUB_ENV`` with a secret IN SCOPE.
 
-    This is the exact shape in which a *registered* secret becomes an *unregistered* one.
+    In scope means either the secret sits in the step's own ``env:``, or the
+    ``run:`` dereferences a variable bound to a secret at **job** or **workflow**
+    level.
+
+    The second half is the core#943 follow-up. The original predicate read only
+    ``step["env"]``, so hoisting the secret one level up -- the ordinary refactor
+    when two steps need the same value -- left the predicate's scope while the
+    leak was byte-identical. Measured before this widened: a job-level and a
+    workflow-level probe each passed 7/7 against an unmasked ``$GITHUB_ENV``
+    write, while the step-level probe was correctly caught.
+
+    It is name-based rather than 'any secret anywhere in the job' deliberately: a
+    job may hold a secret for one step while an unrelated step writes a
+    non-secret to ``$GITHUB_ENV``. Flagging that would push the guard back toward
+    'anything touching env', which the permissive control below exists to stop.
+
+    ``workflow_dir`` is injectable so the probes can scan a synthetic tree; it
+    defaults to this repository's real workflows.
     """
+    directory = WORKFLOW_DIR if workflow_dir is None else workflow_dir
     out = []
-    for wf in sorted(WORKFLOW_DIR.glob("*.yml")) + sorted(WORKFLOW_DIR.glob("*.yaml")):
-        for job_id, idx, name, env_text, run in _steps(wf):
-            if SECRET_REF.search(env_text) and GITHUB_ENV_WRITE.search(run):
+    for wf in sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml")):
+        for job_id, idx, name, env_text, run, inherited in _steps(wf):
+            if not GITHUB_ENV_WRITE.search(run):
+                continue
+            direct = bool(SECRET_REF.search(env_text))
+            via_inherited = any(re.search(SECRET_DEREF % re.escape(n), run) for n in inherited)
+            if direct or via_inherited:
                 out.append((wf.name, job_id, idx, name, run))
     return out
 
@@ -151,7 +186,9 @@ class TestSecretsWrittenToGithubEnvAreMasked:
             pytest.skip("oracle-connector-smoke.yml not present")
 
         writes_env = [
-            name for _job, _i, name, _env, run in _steps(oracle) if GITHUB_ENV_WRITE.search(run)
+            name
+            for _job, _i, name, _env, run, _inh in _steps(oracle)
+            if GITHUB_ENV_WRITE.search(run)
         ]
         assert writes_env, (
             "oracle-connector-smoke.yml no longer writes to $GITHUB_ENV, so this control "
@@ -205,3 +242,119 @@ class TestTheGuardCanFail:
         assert not SECRET_REF.search("DATANIKA_CONNECTOR_SMOKE=1")
         assert not SECRET_REF.search("ORACLE_HOST=localhost")
         assert not SECRET_REF.search("TOKEN=${{ github.token }}")
+
+
+_JOB_LEVEL_UNMASKED = """
+name: probe
+on: {workflow_dispatch: {}}
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    env: {BUNDLE: "${{ secrets.SOME_BUNDLE }}"}
+    steps:
+      - name: Materialize
+        run: |
+          printf '%s' "$BUNDLE" | base64 -d > /tmp/c.env
+          while IFS= read -r l; do echo "$l" >> "$GITHUB_ENV"; done < /tmp/c.env
+"""
+
+_WORKFLOW_LEVEL_UNMASKED = """
+name: probe
+on: {workflow_dispatch: {}}
+env: {BUNDLE: "${{ secrets.SOME_BUNDLE }}"}
+jobs:
+  leak:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Materialize
+        run: |
+          printf '%s' "$BUNDLE" | base64 -d > /tmp/c.env
+          while IFS= read -r l; do echo "$l" >> "$GITHUB_ENV"; done < /tmp/c.env
+"""
+
+_JOB_SECRET_UNRELATED_WRITE = """
+name: probe
+on: {workflow_dispatch: {}}
+jobs:
+  fine:
+    runs-on: ubuntu-latest
+    env: {BUNDLE: "${{ secrets.SOME_BUNDLE }}"}
+    steps:
+      - name: Write a constant
+        run: echo "ORACLE_PORT=1521" >> "$GITHUB_ENV"
+      - name: Use the secret without touching the env file
+        run: printf '%s' "$BUNDLE" | md5sum
+"""
+
+_JOB_LEVEL_MASKED = """
+name: probe
+on: {workflow_dispatch: {}}
+jobs:
+  ok:
+    runs-on: ubuntu-latest
+    env: {BUNDLE: "${{ secrets.SOME_BUNDLE }}"}
+    steps:
+      - name: Materialize
+        run: |
+          printf '%s' "$BUNDLE" | base64 -d > /tmp/c.env
+          while IFS= read -r l; do
+            v=${l#*=}
+            echo "::add-mask::$v"
+            echo "$l" >> "$GITHUB_ENV"
+          done < /tmp/c.env
+"""
+
+
+def _scan(tmp_path: Path, yaml_text: str):
+    """Run the real predicate over a synthetic one-workflow tree."""
+    d = tmp_path / ".github" / "workflows"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "probe.yml").write_text(yaml_text, encoding="utf-8")
+    return _materializers(d)
+
+
+class TestSecretsInheritedFromJobOrWorkflowLevel:
+    """core#943 follow-up: the leak is the same wherever the secret is declared.
+
+    These four shapes were run against the pre-fix predicate first. The two
+    unmasked hoisted shapes passed -- i.e. the guard covered its own instance and
+    not its kind, which is the defect class this repository keeps rediscovering.
+    """
+
+    def test_a_job_level_secret_written_unmasked_is_caught(self, tmp_path: Path) -> None:
+        found = _scan(tmp_path, _JOB_LEVEL_UNMASKED)
+        assert [n for _wf, _j, _i, n, _r in found] == ["Materialize"], (
+            "A secret declared in the JOB's env: and decoded into $GITHUB_ENV without "
+            "masking was not flagged. This is byte-identical in effect to the step-level "
+            "shape core#943 fixed; only the declaration site moved."
+        )
+
+    def test_a_workflow_level_secret_written_unmasked_is_caught(self, tmp_path: Path) -> None:
+        found = _scan(tmp_path, _WORKFLOW_LEVEL_UNMASKED)
+        assert [n for _wf, _j, _i, n, _r in found] == ["Materialize"], (
+            "A secret declared in the WORKFLOW's top-level env: and decoded into "
+            "$GITHUB_ENV without masking was not flagged."
+        )
+
+    def test_a_job_secret_unrelated_to_the_env_write_is_not_flagged(self, tmp_path: Path) -> None:
+        """Permissive control for the widening — the half most likely to be skipped.
+
+        A job may legitimately hold a secret for one step while a different step
+        writes a non-secret constant to $GITHUB_ENV. Flagging that would recreate
+        'mask everything', which is worse than the bug.
+        """
+        assert _scan(tmp_path, _JOB_SECRET_UNRELATED_WRITE) == [], (
+            "The widened predicate flagged a step that writes a hardcoded constant to "
+            "$GITHUB_ENV merely because its job holds an unrelated secret. It has "
+            "widened from 'a secret becomes unregistered' to 'any env write in a job "
+            "that has a secret'."
+        )
+
+    def test_a_correctly_masked_job_level_secret_is_flagged_but_satisfies_the_rule(
+        self, tmp_path: Path
+    ) -> None:
+        """It is still a materializer — it just masks first, so the rule is met."""
+        found = _scan(tmp_path, _JOB_LEVEL_MASKED)
+        assert [n for _wf, _j, _i, n, _r in found] == ["Materialize"]
+        offenders = [n for _wf, _j, _i, n, run in found if ADD_MASK not in run]
+        assert not offenders, "a correctly masked hoisted secret must not be an offender"

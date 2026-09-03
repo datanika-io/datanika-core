@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 import httpx
 from sqlalchemy import select
 
-from datanika.models.notification_channel import ChannelType, NotificationChannel
+from datanika.models.notification_channel import (
+    MAX_LAST_ERROR,
+    ChannelType,
+    DeliveryStatus,
+    NotificationChannel,
+)
 from datanika.models.pii import NotificationChannelPII
 
 logger = logging.getLogger(__name__)
@@ -142,39 +147,125 @@ class NotificationService:
         session.flush()
         return True
 
-    def notify(self, session, org_id, event_type, payload, *, email_service=None):
-        """Dispatch notification to all active channels subscribed to event_type."""
+    # ------------------------------------------------------------------
+    # Delivery record (core#652)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _redact(text, channel) -> str:
+        """Strip every secret this channel holds out of an error string.
+
+        ``httpx`` puts the request URL in the message of every ``HTTPStatusError``
+        it raises, and the Telegram URL embeds the bot token — so the naive
+        ``str(exc)`` is a credential. Redaction works off ``config``'s own values
+        rather than a URL pattern: the config *is* the list of secrets, so a new
+        channel type gets this for free instead of needing a new regex.
+        """
+        out = str(text)
+        config = channel.config if isinstance(channel.config, dict) else {}
+        # Longest first. If a short config value is a substring of a longer one
+        # (a Telegram `chat_id` inside its own bot token, say), replacing the
+        # short one first breaks up the long one so its own pass no longer
+        # matches — leaving most of the longer secret sitting in the column.
+        for value in sorted((v for v in config.values() if v), key=lambda v: -len(str(v))):
+            out = out.replace(str(value), "[redacted]")
+        if len(out) > MAX_LAST_ERROR:
+            out = out[: MAX_LAST_ERROR - 3] + "..."
+        return out
+
+    def _record_delivery(self, session, channel, status, error=None) -> None:
+        """Write the outcome of one attempt. **The only writer of these columns.**
+
+        Never raises: an observability write that can break the thing it observes
+        is worse than no observability. A failure here is logged and dropped, and
+        the delivery itself has already happened either way.
+        """
+        try:
+            channel.last_attempt_at = datetime.now(UTC)
+            channel.last_status = str(status)
+            channel.last_error = self._redact(error, channel) if error else None
+            session.flush()
+        except Exception:
+            logger.exception("Could not record delivery state for channel %s", channel.id)
+
+    def notify(self, session, org_id, event_type, payload):
+        """Dispatch to every active channel subscribed to ``event_type``.
+
+        ⚠️ There is deliberately **no** ``email_service`` parameter. One existed,
+        keyword-only and defaulted to ``None``, and no caller anywhere ever passed
+        it — so ``_dispatch_email`` returned at its first guard on every org, in
+        every edition, for the life of the feature. A parameter no caller passes
+        is not a seam, it is a defect that compiles, and wiring it would have left
+        the same defect one new caller away. Email goes through the Celery task
+        instead (core#652 D1).
+
+        The ``except`` below still catches, because one dead webhook must not
+        silence a healthy Slack channel — but it now **records** before moving on,
+        which is the difference between resilience and a swallow.
+        """
         for ch in self.list_channels(session, org_id):
             if not ch.is_active:
                 continue
             if event_type not in ch.events:
                 continue
             try:
-                self._dispatch(ch, event_type, payload, email_service=email_service)
-            except Exception:
+                status, detail = self._dispatch(ch, event_type, payload)
+                # ⚠️ A `None` status means "the outcome is not mine to record" —
+                # the email path hands the row to the Celery task, which knows
+                # whether the message actually left. Recording here anyway
+                # overwrites the task's verdict with a placeholder, and in eager
+                # execution it does so *after* the task has already written the
+                # truth. Silently stamping `str(None)` over `success` is how an
+                # observability column starts lying.
+                if status is not None:
+                    self._record_delivery(session, ch, status, detail)
+            except Exception as exc:
                 logger.exception(
                     "Failed to dispatch %s notification via channel %s (id=%s)",
                     event_type,
                     ch.name,
                     ch.id,
                 )
+                self._record_delivery(
+                    session, ch, DeliveryStatus.FAILED, f"{type(exc).__name__}: {exc}"
+                )
 
-    def _dispatch(self, channel, event_type, payload, *, email_service=None):
+    def _dispatch(self, channel, event_type, payload):
+        """Return ``(status, detail)``. Raising is also allowed — ``notify``
+        records that as a failure with the exception as the detail."""
         if channel.channel_type == ChannelType.EMAIL:
-            self._dispatch_email(channel, event_type, payload, email_service)
-        elif channel.channel_type == ChannelType.SLACK:
-            self._dispatch_slack(channel, event_type, payload)
-        elif channel.channel_type == ChannelType.TELEGRAM:
-            self._dispatch_telegram(channel, event_type, payload)
-        elif channel.channel_type == ChannelType.WEBHOOK:
-            self._dispatch_webhook(channel, event_type, payload)
+            return self._dispatch_email(channel, event_type, payload)
+        if channel.channel_type == ChannelType.SLACK:
+            return self._dispatch_slack(channel, event_type, payload)
+        if channel.channel_type == ChannelType.TELEGRAM:
+            return self._dispatch_telegram(channel, event_type, payload)
+        if channel.channel_type == ChannelType.WEBHOOK:
+            return self._dispatch_webhook(channel, event_type, payload)
+        return DeliveryStatus.SKIPPED, f"unknown channel type {channel.channel_type!r}"
 
-    def _dispatch_email(self, channel, event_type, payload, email_service):
-        if email_service is None or not email_service.is_enabled():
-            logger.warning(
-                "Email service disabled; skipping notification for channel %s", channel.id
+    def _dispatch_email(self, channel, event_type, payload):
+        """Hand the message to the mail task, synchronously enough to report.
+
+        Dispatch runs inside the run-completion hook, which runs inside the
+        worker's task: a blocking SMTP round trip there delays the task that is
+        reporting a *finished* run, and a transient relay failure would have no
+        retry. ``send_channel_notification_email_task`` carries ``autoretry_for``
+        and writes the terminal outcome back to this row itself, so what this
+        method reports is only the part it can actually know.
+        """
+        from datanika.config import settings
+
+        if not settings.smtp_host:
+            # ⚠️ Not "email service disabled" — that phrasing named a cause that
+            # was never the one that fired and sent every reader to inspect a
+            # working relay. This branch means exactly one thing: no SMTP relay
+            # is configured on this deployment.
+            logger.info(
+                "No SMTP relay configured; skipping email notification for channel %s",
+                channel.id,
             )
-            return
+            return DeliveryStatus.SKIPPED, "SMTP is not configured on this deployment"
+
         to = channel.config["email"]
         if event_type == "quota_warning":
             subject, body = _build_quota_warning_email(payload)
@@ -186,7 +277,13 @@ class NotificationService:
             error = payload.get("error_message") or payload.get("error", "")
             subject = f"Datanika run {status} (run #{run_id})"
             body = _build_email_html(event_type, run_id, status, error)
-        email_service.send(to, subject, body)
+
+        from datanika.tasks.email_tasks import send_channel_notification_email_task
+
+        send_channel_notification_email_task.delay(channel.id, channel.org_id, to, subject, body)
+        # The task owns the terminal status. Returning None leaves the row for it
+        # to write rather than stamping a "success" that only means "enqueued".
+        return None, None
 
     def _dispatch_slack(self, channel, event_type, payload):
         webhook_url = channel.config["webhook_url"]
@@ -202,7 +299,7 @@ class NotificationService:
             text = f"{icon} *Datanika run {status}* (run #{run_id})"
             if error:
                 text += "\n> " + error
-        httpx.post(webhook_url, json={"text": text}, timeout=10)
+        return _post(webhook_url, {"text": text})
 
     def _dispatch_telegram(self, channel, event_type, payload):
         token = channel.config["token"]
@@ -220,12 +317,35 @@ class NotificationService:
             if error:
                 text += "\n" + error
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        httpx.post(url, json={"chat_id": chat_id, "text": text}, timeout=10)
+        return _post(url, {"chat_id": chat_id, "text": text})
 
     def _dispatch_webhook(self, channel, event_type, payload):
         url = channel.config["url"]
         body = {"event": event_type, **payload}
-        httpx.post(url, json=body, timeout=10)
+        return _post(url, body)
+
+
+def _post(url, json_body):
+    """POST and **judge the response**.
+
+    There was no ``raise_for_status()`` anywhere in this module, so a 401 from
+    Slack, a 404 webhook and a revoked Telegram token each returned a response
+    object and the code carried on as though delivered. Checking the status here
+    rather than at each call site is what stops the fourth channel type from
+    forgetting.
+    """
+    response = httpx.post(url, json=json_body, timeout=10)
+    status_code = getattr(response, "status_code", None)
+    # ⚠️ `isinstance(..., int)`, not a truthiness or `is not None` check. A real
+    # httpx response always carries an int, but several existing tests patch
+    # `httpx.post` with a bare MagicMock, whose auto-created `.status_code`
+    # answers comparisons with `NotImplemented` — so `status_code >= 400` raises
+    # `TypeError`, which `notify` would then dutifully record as a delivery
+    # failure. Unmeasurable is not the same as failed, and a status we cannot
+    # read is not evidence of anything.
+    if isinstance(status_code, int) and status_code >= 400:
+        return DeliveryStatus.FAILED, f"endpoint returned HTTP {status_code}"
+    return DeliveryStatus.SUCCESS, None
 
 
 def _build_quota_warning_email(payload):

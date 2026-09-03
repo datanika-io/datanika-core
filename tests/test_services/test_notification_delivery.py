@@ -35,6 +35,12 @@ from datanika.services.notification_service import NotificationService
 WEBHOOK_SECRET = "s3cr3t-tok3n-do-not-leak"
 
 
+def _unwrap(func):
+    """Reflex wraps a state method in an ``EventHandler``; ``inspect`` needs the
+    plain function underneath. Same unwrap the neighbouring signup tests use."""
+    return getattr(func, "fn", func)
+
+
 def _code_only(func) -> str:
     """Source of ``func`` with comments and docstrings removed.
 
@@ -52,7 +58,7 @@ def _code_only(func) -> str:
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_unwrap(func))))
     for node in ast.walk(tree):
         body = getattr(node, "body", None)
         if not isinstance(body, list) or not body:
@@ -73,7 +79,7 @@ def _badge_string_literals(func) -> list[str]:
     import inspect
     import textwrap
 
-    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_unwrap(func))))
     found = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -599,3 +605,86 @@ class TestAnUnreadableStatusIsNotAFailure:
 
         db_session.refresh(webhook_channel)
         assert webhook_channel.last_status == "failed"
+
+
+def _call_keywords(func, call_name: str) -> set[str]:
+    """Keyword argument names passed to `call_name(...)` inside `func`."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_unwrap(func))))
+    names = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        found = target.attr if isinstance(target, ast.Attribute) else getattr(target, "id", "")
+        if found == call_name:
+            names.update(kw.arg for kw in node.keywords if kw.arg)
+    return names
+
+
+class TestAC5TheColumnActuallyReachesTheRow:
+    """AC5 — a failed webhook shows in the **UI**, not just in the database.
+
+    `NotificationState.load_channels` is the only bridge between the column and
+    the badge, and it had **no test of any kind**. Without this, deleting
+    `last_status=ch.last_status or ""` from the mapping leaves every other test in
+    this module green while the badge silently renders "never delivered" for a
+    channel that has been failing for a week — the exact shape of the original
+    defect, one layer up.
+
+    Structural because `load_channels` is an async Reflex handler needing a live
+    `AuthState`; the mapping it performs is a single expression and is what is at
+    risk here.
+    """
+
+    def test_the_loader_maps_the_delivery_columns(self):
+        from datanika.ui.state.notification_state import NotificationState
+
+        mapped = _call_keywords(NotificationState.load_channels, "ChannelItem")
+        for field in ("last_status", "last_error", "last_attempt_at"):
+            assert field in mapped, (
+                f"load_channels does not pass {field} to ChannelItem — the badge "
+                "cannot render a value the loader never carries"
+            )
+
+    def test_the_keyword_extractor_can_actually_see_a_keyword(self):
+        """Negative control: an extractor returning nothing would pass nothing."""
+        from datanika.ui.state.notification_state import NotificationState
+
+        mapped = _call_keywords(NotificationState.load_channels, "ChannelItem")
+        assert {"id", "name", "is_active"} <= mapped, (
+            "the extractor cannot see the pre-existing keywords either, so the "
+            "assertions above prove nothing"
+        )
+        assert _call_keywords(NotificationState.load_channels, "NoSuchCall") == set()
+
+
+class TestAC8NoSecretReachesANewPlace:
+    """AC8 — nothing here logs an address, bot token or webhook URL anywhere new."""
+
+    def test_the_email_dispatch_logs_only_the_channel_id(self):
+        """`channel.config["email"]` is a personal datum; the log line that
+        replaced "Email service disabled" must not carry it."""
+        from datanika.services.notification_service import NotificationService
+
+        source = _code_only(NotificationService._dispatch_email)
+        logged = [line for line in source.splitlines() if "logger." in line]
+        assert logged, "the extractor found no logging call at all"
+        joined = " ".join(logged)
+        for forbidden in ("to,", "to)", "config[", "subject", "body"):
+            assert forbidden not in joined, (
+                f"the skip/branch log line passes {forbidden!r} — a recipient "
+                "address or message body must not reach the log"
+            )
+
+    def test_the_delivery_record_logs_only_the_channel_id(self):
+        from datanika.services.notification_service import NotificationService
+
+        source = _code_only(NotificationService._record_delivery)
+        assert "channel.id" in source
+        assert "channel.config" not in source, (
+            "the failure path of the recorder must not widen into the config"
+        )

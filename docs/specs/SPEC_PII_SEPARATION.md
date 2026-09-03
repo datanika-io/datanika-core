@@ -1407,10 +1407,29 @@ deletions**, and every red it produces is about N+1 rather than about fixtures.
 what is not fine is it riding *inside* the N+1 PR, where a fixture fix and a behaviour change become
 one indistinguishable diff.
 
+> ✅ **STEP A IS COMPLETE — [core#1009], 2026-09-03.** Every construction site in the repo now routes
+> through `tests/factories.py` (`make_user`, `make_invitation`), and **one** deliberate exception
+> remains: `test_pii_separation.py:112`, the Kind-1 t1-window guard N+1 deletes.
+>
+> 🔑 **The residual is held by a SOURCE guard, not by the suite being green.**
+> `tests/test_pii_fixture_invariant.py` walks the test tree's AST and fails on any bare
+> `User(...)` / `Invitation(...)`, with an allowlist that must state a reason per file and that fails
+> when an entry's path no longer exists. It exists because of the measurement in §8a.10: the 28 sites
+> it now holds closed produced **zero reds** under the N+1 mutation, so *"the suite is green under
+> N+1"* would have licensed every one of them. **A sidecar-less fixture only misbehaves when
+> something looks it up by address; a runtime check is green for every fixture nothing queries.**
+> Shown able to fail by mutating the real tree in four directions — a reverted site, a gutted
+> factory, a blinded scanner, a stale allowlist entry.
+>
+> ⚠️ **`make_invitation` is not symmetry.** `Invitation(email=…, token=…)` with no `token_hash` is
+> invisible to `get_invitation_by_token` after #939 item 6, and §8a.10 records the test that went
+> **vacuous rather than red** because of it.
+
 **Step B — N+1.** #939 items 1–7, plus: delete the Kind-1 test, and keep `erase_user` step 1a
 (#939 item 8 — it NULLs columns that still exist).
-**Gate:** `git grep -n "N+1" -- datanika/` returns nothing, *and* the full suite is green with no
-fixture edits in the diff.
+**Gate:** the full suite is green with no fixture edits in the diff, *and* every **deletion** marker
+is gone. ⚠️ **The gate is no longer `git grep -n "N+1" -- datanika/` returns nothing** — measured, that
+can never be zero; see §8a.10.
 
 **Step C — N+2.** Migration only. See §8a.7 first — its blast radius is not N+1's.
 
@@ -1441,9 +1460,19 @@ release each one dies at. **Scope the reads before scheduling N+2, not only the 
 #939's criterion 1 is *"`git grep -n "N+1"` over `datanika/` returns nothing after the N+1 PR — the
 comments are the checklist."* That is a good criterion and it is **not** a completeness check.
 
-The markers live in **7 files** — two migrations, two models, three services. Not one of them is a
-test, and `tests/` is not even in the grep's path. So the checklist is satisfied in full while all 18
-failures above are still live, and while the seed still produces sidecar-less users.
+The markers live across a handful of migrations, models and services. Not one of them is a test, and
+`tests/` is not even in the grep's path. So the checklist is satisfied in full while all 18 failures
+above are still live, and while the seed still produces sidecar-less users.
+
+> ⚠️ **This paragraph used to say "7 files", and a file count is the wrong instrument here** — it
+> moved to 8 the moment [core#1009] added two explanatory mentions to `e2e_seed.py`, i.e. it was
+> invalidated by the very work this section governs. *A number that invalidates itself on the next
+> edit will eventually be wrong while reading as measured.* Derive it when you need it:
+> `git grep -c "N+1" -- datanika/`.
+>
+> 🚨 **And the sharper correction is in §8a.10: criterion 1's pass condition is UNREACHABLE.** Most
+> of those markers are permanent prose — a migration's account of what it did, a model column's note
+> on why it is nullable — and they survive N+1 by design. Read §8a.10 before running the gate.
 
 🔑 **The general form, and it is the same defect this project keeps paying for:** *a checklist
 derived from the annotations someone remembered to write cannot enumerate the places nobody
@@ -1554,6 +1583,75 @@ Every hit that is not the sidecar write is a candidate. That sweep is what found
 marker grep, the eight-item list and an 18-failure test run had all missed it — three independent
 instruments agreeing, and all three blind to the same site.
 
+### 8a.10 · 🚨 The N+1 instrument was narrower than N+1, and the gate that checks it cannot go green
+
+**Measured 2026-09-03 while finishing Step A ([core#1009]). Two independent defects in how this
+release is *verified*, and both bias toward "ready".**
+
+#### 1. §8a.3's mutation deletes two of the four read-side clauses
+
+That run mutated **#939 items 1 and 2** — the two `or_` halves in `user_service.py` — and reported
+**18 failures**. N+1 also deletes:
+
+| | |
+|---|---|
+| **item 6** | `invitation_service.get_invitation_by_token` — the `Invitation.token == token` half |
+| *(unnumbered)* | `accept_invitation:141`'s `else invitation.email` fallback, marked but absent from #939's item list — §8a.8 credits criterion 1 with finding it |
+
+**So 18 was never the release's blast radius; it was two-thirds of the mutation's.** Widened and
+re-run over all 20 identity-touching suites: **1 failed, 481 passed** after Step A, the survivor being
+§8a.4's Kind 1. Before Step A's second half the same widened mutation gave 1 / 474 — *the 28 remaining
+fixture sites produced **zero** reds.*
+
+🔑 **A probe narrower than the release under-reports, and its count is then quoted as a total.** The
+probe is now on disk — `scripts/n1_mutation_probe.py`, sharing `mutation_probe.py`'s sentinel contract
+(pristine bytes written before any mutation; `--restore` recovers with no surviving process, proven by
+killing a real run with `TerminateProcess`). **Run it rather than rebuilding it from §8a.3's
+description**, which is how the narrow version would be recreated.
+
+#### 2. 🚨 A test that goes VACUOUS instead of red, and nothing anywhere reports it
+
+`test_org_role_authority.py::test_accepting_a_stored_owner_invitation_creates_no_owner` asserts
+`accept_invitation(...) is None` for a hand-built OWNER invitation. `accept_invitation` returns `None`
+for **three** different reasons — invitation not found, invitee not found, role guard refused — and
+only the third is what the test exists to prove.
+
+Its `Invitation` carried `token` and no `token_hash`; its invitee carried `users.email` and no
+sidecar. **Under the widened mutation both lookups miss, the assertion passes on the *first* reason,
+and the run is green.** Measured: adding `assert get_invitation_by_token(...) is not None` turns it
+red under the mutation, and green again once the row is built through `make_invitation`.
+
+🔑 **This is §8a.9's rule arriving at a test rather than at a caller**, and it is the same shape as
+the seeded-`user_pii` green [core#1009] corrected: *a test whose branches are indistinguishable stays
+green through the change that breaks it.* **Both preconditions are now asserted at the site**, so the
+test states what it needs instead of inheriting it from a fixture.
+
+⚠️ **The generalisation for the N+1 PR: a red count measures the tests, and a green count does not
+even measure that.** Anywhere a service returns a bare `None` for several reasons, ask which one your
+assertion is currently passing on.
+
+#### 3. Criterion 1 can never return zero — do not waive it, narrow it
+
+`git grep -n "N+1" -- datanika/` returns **17 lines in 8 files** today. Only 8 are deletion sites.
+The rest are permanent prose that N+1 does not remove and must not:
+
+- both migrations' rationale (`c9d3e5f7a1b2`, `e7f2a9c4b1d8`) — an account of what a shipped migration
+  did, which cannot be edited without falsifying the record;
+- `models/user.py` and `models/invitation.py`'s notes on why the legacy columns are nullable — the
+  columns survive N+1 and are dropped in **N+2**;
+- `notification_service.py:84`, describing a data step that is still outstanding *after* N+1;
+- `scripts/e2e_seed.py` ×2, explaining why the Step A helper writes a sidecar.
+
+**A gate that cannot go green is a gate that gets waived**, and §8a.8 shows waiving this one is
+expensive — it is the instrument that caught a site the eight-item list missed.
+
+> **Fix: give the checklist its own token.** Mark each line N+1 deletes with a literal
+> `N+1-DELETE`, leave prose free to say "N+1", and the criterion becomes
+> `git grep -c "N+1-DELETE" -- datanika/` **returns 0**, which is both reachable and discriminating.
+> Applying the markers belongs to the N+1 PR — it is an edit to the exact lines that PR removes, so
+> doing it separately would put a Product commit inside Engineering's deletion diff for no gain.
+> Posted on [core#939].
+
 ## 9. Filed separately by this spec
 
 - **`services/client_ip.py` is wired to nothing.** `AuditService.log_action` accepts `ip_address` and no caller passes it, so `audit_logs.ip_address` has been NULL for the life of the product while the UI renders a column for it. That is a feature (capture the client IP for the security trail), not an erasure fix, and folding it in here would let a new data-collection behaviour ride into production inside a privacy change. ⚠️ **Corrected — §2a/D11: `audit_log_pii` is NOT created by this spec.** Building a sidecar for a column that has never held a value protects nothing; it lands with [core#670] instead, when there is data to protect.
@@ -1613,3 +1711,4 @@ sign in at all.
 [core#939]: https://github.com/datanika-io/datanika-core/issues/939
 [core#951]: https://github.com/datanika-io/datanika-core/issues/951
 [landing#343]: https://github.com/datanika-io/datanika-landing/issues/343
+[core#1009]: https://github.com/datanika-io/datanika-core/issues/1009

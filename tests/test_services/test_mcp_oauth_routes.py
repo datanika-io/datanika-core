@@ -22,6 +22,7 @@ from datanika.models.user import Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.mcp_oauth import MCP_RESOURCE_PATH, McpOAuthService
 from datanika.services.mcp_oauth_routes import mcp_oauth_routes
+from tests.factories import make_user
 
 # datanika-mcp is not installed in the test venv; the resource-server test
 # below needs its transport, so make the package importable first.
@@ -81,10 +82,9 @@ def org(db_session) -> Organization:
 
 @pytest.fixture
 def user(db_session) -> User:
-    row = User(email="routes@example.com", password_hash="h", full_name="Routes User")
-    db_session.add(row)
-    db_session.flush()
-    return row
+    return make_user(
+        db_session, email="routes@example.com", full_name="Routes User", password_hash="h"
+    )
 
 
 @pytest.fixture

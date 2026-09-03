@@ -26,12 +26,16 @@ module exists to protect.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.orm import Session
 
-from datanika.models.pii import UserPII
-from datanika.models.user import User
+from datanika.models.invitation import Invitation, InvitationStatus
+from datanika.models.pii import InvitationPII, UserPII
+from datanika.models.user import MemberRole, User
+from datanika.services.invitation_service import hash_invitation_token
 
-__all__ = ["make_user"]
+__all__ = ["make_invitation", "make_user"]
 
 
 def make_user(
@@ -65,3 +69,55 @@ def make_user(
     )
     session.flush()
     return user
+
+
+def make_invitation(
+    session: Session,
+    *,
+    org_id: int,
+    email: str,
+    role: MemberRole,
+    invited_by_user_id: int,
+    token: str,
+    status: InvitationStatus = InvitationStatus.PENDING,
+    expires_days: int = 7,
+) -> Invitation:
+    """Create an ``Invitation`` the way ``create_invitation`` does — sidecar and hash.
+
+    **Why this is not optional, and why it is a separate hazard from ``make_user``.**
+    ``get_invitation_by_token`` matches on ``token_hash`` first and falls back to the
+    plaintext ``token`` column; core#939 item 6 deletes that fallback in N+1. A
+    hand-built ``Invitation(token=…)`` with no ``token_hash`` is therefore **invisible to
+    every lookup after N+1** — and the way that surfaces is the reason this helper exists:
+
+    🚨 ``test_org_role_authority.py::test_accepting_a_stored_owner_invitation_creates_no_owner``
+    asserts ``accept_invitation(...) is None``. Under N+1 that assertion **still passes**,
+    because the invitation is not found *at all* — so a test written to prove the
+    owner-role guard refuses a stale grant would instead prove nothing, and **nothing
+    would go red**. Measured: adding the precondition
+    ``assert get_invitation_by_token(...) is not None`` turns it red under the N+1
+    mutation and green again once the row is built here.
+
+    🔑 That is the same shape as the seeded-``user_pii`` green core#1009 already
+    corrected: *a test whose two branches are indistinguishable stays green through the
+    change that breaks it.* ``make_user`` alone does not fix it — the user being
+    resolvable is necessary, and the invitation being resolvable is the other half.
+
+    ``token`` is still written because release N dual-writes it; N+2 drops the column,
+    at which point this helper is the one place that changes.
+    """
+    invitation = Invitation(
+        org_id=org_id,
+        email=email,
+        role=role,
+        invited_by_user_id=invited_by_user_id,
+        token=token,
+        token_hash=hash_invitation_token(token),
+        status=status,
+        expires_at=datetime.now(UTC) + timedelta(days=expires_days),
+    )
+    session.add(invitation)
+    session.flush()
+    session.add(InvitationPII(invitation_id=invitation.id, email=email))
+    session.flush()
+    return invitation

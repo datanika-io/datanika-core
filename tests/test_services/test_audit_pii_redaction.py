@@ -62,9 +62,10 @@ contract (D12.2, D12.5):
 import pytest
 
 from datanika.models.audit_log import AuditAction, AuditLog
-from datanika.models.user import Organization, User
+from datanika.models.user import Organization
 from datanika.services.audit_service import AuditService
 from datanika.services.backup_service import REDACTED
+from tests.factories import make_user
 
 # D12.2: derived from the ``*_pii`` tables, plus the one hand-added key with a
 # stated expiry. This literal is the ASSERTION, never the source — an empty
@@ -96,13 +97,12 @@ def org(db_session):
 
 @pytest.fixture
 def user(db_session):
-    user = User(
+    user = make_user(
+        db_session,
         email="redaction-user@example.com",
-        password_hash="hashed",
         full_name="Redaction User",
+        password_hash="hashed",
     )
-    db_session.add(user)
-    db_session.flush()
     return user
 
 

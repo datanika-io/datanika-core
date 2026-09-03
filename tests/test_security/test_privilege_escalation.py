@@ -70,9 +70,10 @@ import inspect
 
 import pytest
 
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService
+from tests.factories import make_user
 
 # Keyword names a fix might use to carry the caller's identity into the service.
 _ACTOR_KWARGS = (
@@ -141,9 +142,7 @@ def org(db_session) -> Organization:
 
 
 def _member(db_session, org, email, role) -> Membership:
-    u = User(email=email, password_hash="h", full_name=email.split("@")[0])
-    db_session.add(u)
-    db_session.flush()
+    u = make_user(db_session, email=email, full_name=email.split("@")[0], password_hash="h")
     m = Membership(user_id=u.id, org_id=org.id, role=role)
     db_session.add(m)
     db_session.flush()
@@ -324,9 +323,9 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
     def test_an_admin_cannot_invite_a_new_member_as_owner(
         self, svc, db_session, org, founder, attacker
     ):
-        stooge = User(email="stooge@example.com", password_hash="h", full_name="Stooge")
-        db_session.add(stooge)
-        db_session.flush()
+        stooge = make_user(
+            db_session, email="stooge@example.com", full_name="Stooge", password_hash="h"
+        )
         _attempt(svc.add_member, attacker, db_session, org.id, stooge.id, MemberRole.OWNER)
         assert stooge.id not in _owner_user_ids(db_session, org.id)
 
@@ -340,9 +339,9 @@ class TestTheInvitePathIsShorterThanTheReportedOne:
         admin throughout, so any fix that only watches for self-promotion misses
         this entirely.
         """
-        stooge = User(email="stooge2@example.com", password_hash="h", full_name="Stooge2")
-        db_session.add(stooge)
-        db_session.flush()
+        stooge = make_user(
+            db_session, email="stooge2@example.com", full_name="Stooge2", password_hash="h"
+        )
         _attempt(svc.add_member, attacker, db_session, org.id, stooge.id, MemberRole.OWNER)
         _attempt(svc.remove_member, attacker, db_session, org.id, founder.id)
 

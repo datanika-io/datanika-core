@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from datanika.models.api_key import ApiKey
 from datanika.models.connection import Connection, ConnectionType
 from datanika.models.mcp_oauth import OAuthGrant, OAuthToken
+from datanika.models.pii import UserPII
 from datanika.models.pipeline import Pipeline
 from datanika.models.schedule import Schedule
 from datanika.models.transformation import Transformation
@@ -31,6 +32,7 @@ from datanika.scripts.e2e_seed import (
     seed,
 )
 from datanika.services.auth import AuthService
+from tests.factories import make_user
 
 _VALID_FERNET_KEY = "NS7W71uT0X-FxSq_mwJfthZzc3hIatYjQHM3MhDnQX8="
 
@@ -175,13 +177,26 @@ def test_seed_tears_down_drifted_fixture(db_session):
 
 
 def test_seed_does_not_touch_non_fixture_data(db_session):
-    """Seeding must leave unrelated rows alone."""
-    other_user = User(
+    """Seeding must leave unrelated rows alone — including their PII sidecars.
+
+    ⚠️ **The sidecar half is not decoration, and it could not be asserted before
+    core#1009.** The teardown deletes `user_pii` scoped to the ids it resolved from
+    `fixture_user_emails` (`e2e_seed.py:298`). Until this fixture wrote a sidecar there
+    was **no non-fixture `user_pii` row in the database at all**, so a teardown that
+    deleted the table unscoped would have passed this test unchanged — the same shape as
+    the orphan assertion core#1009 replaced, where *"the teardown deleted the orphan"*
+    and *"the seed never makes one"* were one observation.
+
+    Verified red: widening the delete to
+    `UserPII.__table__.delete()` fails only the sidecar assertion below, and only since
+    the fixture gained one.
+    """
+    other_user = make_user(
+        db_session,
         email="real_user@example.com",
-        password_hash="x" * 60,
         full_name="Real User",
+        password_hash="x" * 60,
     )
-    db_session.add(other_user)
     other_org = Organization(name="Real Org", slug="real-org")
     db_session.add(other_org)
     db_session.flush()
@@ -194,6 +209,9 @@ def test_seed_does_not_touch_non_fixture_data(db_session):
             select(User).where(User.email == "real_user@example.com")
         ).scalar_one_or_none()
         is not None
+    )
+    assert db_session.get(UserPII, other_user.id) is not None, (
+        "the seed's teardown deleted a non-fixture user's PII sidecar"
     )
     assert (
         db_session.execute(

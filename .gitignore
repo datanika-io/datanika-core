@@ -237,3 +237,9 @@ problems.md
 # where a killed run's recovery data lives — do not delete it while a probe is
 # in flight; run `python scripts/mutation_probe.py --restore` first.
 .mutation-probe-state/
+
+# scripts/n1_mutation_probe.py, same contract, its own sentinel so the two cannot
+# recover each other's files. Unlike the probe above it runs on a DIRTY tree by
+# design (SPEC_PII_SEPARATION §8a: Step A is measured against uncommitted fixture
+# changes), so its post-run check is scoped to the files it mutated.
+.n1-mutation-probe-state/

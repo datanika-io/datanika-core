@@ -270,17 +270,16 @@ class TestMcpOAuthRefusesStoredCrossOrgReferences:
 
         from datanika.models.api_key import ApiKey
         from datanika.models.mcp_oauth import OAuthGrant, OAuthToken
-        from datanika.models.user import User
         from datanika.services.encryption import EncryptionService
+        from tests.factories import make_user
 
         fernet_key = base64.urlsafe_b64encode(b"0" * 32).decode()
-        user = User(
+        user = make_user(
+            db_session,
             email=f"mcp-{access_token[-6:]}@example.com",
-            password_hash="h",
             full_name="MCP",
+            password_hash="h",
         )
-        db_session.add(user)
-        db_session.flush()
 
         key = ApiKey(org_id=key_org, user_id=user.id, name="k", key_hash=f"h{access_token[-8:]}")
         db_session.add(key)

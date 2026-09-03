@@ -2,11 +2,19 @@ name: Build & push image
 
 # Builds the combined core+cloud Docker image on GHA and pushes to
 # ghcr.io/datanika-io/datanika-core. Downstream deploys pull this image
-# instead of building on the Hetzner host (saves ~2 GB RAM + ~30s CPU
-# spike on every deploy, which landed on live users under Granian).
+# instead of building on the app host (saves ~2 GB RAM + ~30s CPU spike on
+# every deploy, which landed on live users under Granian).
 #
-# Phase 1: builds + pushes only. Deploy jobs still build on Hetzner.
-# Phase 2 (separate PR): flip deploy jobs to `docker compose pull`.
+# 🚨 THE HOST NAMED HERE WAS STALE BY SEVEN WEEKS. It said "Hetzner", and that
+# box was TERMINATED 2026-07-14; production moved to pointer.gr (185.25.22.188)
+# on 2026-07-17. A stale host name in a deploy-adjacent file is the first thing
+# an incident responder reads, which is why it is corrected rather than left.
+#
+# Phase 1: builds + pushes only. The deploy still builds on the box itself
+# (deploy-pointer.yml, tar over SSH).
+# Phase 2 (never started): flip the deploy to `docker compose pull`. ⚠️ That is
+# blocked, not merely unstarted — ci.yml records that GHCR is inaccessible FROM
+# the box, and core#1014 is why the package cannot simply be made public.
 #
 # Tagging:
 #   push to dev    → :dev and :dev-<short-sha>

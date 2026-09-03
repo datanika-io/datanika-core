@@ -77,7 +77,43 @@ Three things the controls establish that the verdicts alone do not:
   same `check your credentials and network settings` string as duckdb's. **The misdirection is not a
   duckdb bug. It is the whole local-file class**, on both the success and failure paths.
 
-### 2a. What (C) is, and what it is not
+### 2a. The prescribed read-only forms were run, not just written down
+
+D1 names two specific incantations. A spec that hands an implementer an unverified one is worse than
+a spec that stays vague, so both were executed:
+
+```
+sqlite:///file:<path>?mode=ro&uri=true   REAL file    -> ok=True
+                                         ABSENT file  -> ok=False, and the file is NOT created
+CONTROL, today's form  sqlite:///<path>   ABSENT file  -> ok=True,  and the file IS created   (#979)
+
+duckdb.connect(path, read_only=True)      REAL file    -> ok=True
+                                          ABSENT file  -> ok=False, and the file is NOT created
+duckdb.connect(path, connect_timeout=5)                -> TypeError                            (#978)
+```
+
+The control is the point: today's form and the read-only form differ **only** in the flag, and the
+ghost file appears under one and not the other. That is what makes "stop creating the file" a
+one-line change rather than a redesign.
+
+🚨 **But one requirement in D2 does not fall out of this, and it is the one most likely to be
+quietly dropped.** The read-only absent-file failure is:
+
+```
+OperationalError: (sqlite3.OperationalError) unable to open database file
+```
+
+— which is **character-for-character the message an unwritable or missing parent directory
+produces.** So *"no database at that path"* and *"cannot open that path"* **cannot be told apart from
+the exception**, and D2 asks for exactly that distinction because they call for different user
+actions. The implementer needs an explicit existence/readability check alongside the open; reading
+the driver's error text will not do it, and an `except` that maps this one message to *"no database
+at that path"* will confidently tell a user with a permissions problem to fix their path.
+
+⚠️ This is also why AC4 says the negative control must fail **for its own reason**. Two failures with
+the same message are not two controls.
+
+### 2b. What (C) is, and what it is not
 
 (C) is a **local reproduction of a shape**, not a production exploit — deliberately. It shows that
 `_test_file_source` and the dlt lister behind it take no org, consult no ownership, and yield every
@@ -92,7 +128,7 @@ on the **database row** (`get_org_uploaded_file`) and nowhere on the filesystem.
 🚨 **The security write-up is deliberately not in this file.** `datanika-core` is public; the
 detailed path, the glob behaviour and the reachability argument are in
 `plans/security/LOCAL_PATH_FILE_SOURCE_2026-09-03.md` (private repo) and tracked by the neutrally
-titled core issue linked from it — the [core#748] precedent, for the same reason. **I did not test
+titled core issue [core#985] — the [core#748] precedent, for the same reason. **I did not test
 this against production and nobody should**: doing so would mean reading another org's data.
 
 What matters *here* is only the product consequence, and it is decided in D4.
@@ -158,6 +194,9 @@ whether a message earns its own string:
 **Assert on the message, not only on the boolean.** The misdirection is half the cost of both bugs,
 and a fix that flips the boolean while keeping the sentence has fixed the cheaper half.
 
+🚨 **Rows 2 and 3 are not separable by catching the exception** — see §2a. Both surface as
+unable to open database file. They need an explicit existence/readability check.
+
 ### D3 · Derive connect-args from the dialect, not from a list of carve-outs
 
 There are already three (`mssql` → `login_timeout`, `oracle` → `tcp_connect_timeout`, `sqlite` →
@@ -177,7 +216,7 @@ answer, both sides, as that criterion asks.
 **The reasoning is not tidiness.** On `app.datanika.io`, a path a user types is not a path on their
 machine. It names a location inside **our** container, on infrastructure shared with every other
 tenant. The feature as built therefore offers a hosted user something we never meant to offer, and it
-offers it through a field with no validation of any kind. See §2a.
+offers it through a field with no validation of any kind. See §2b.
 
 **Decision.** A new setting — default **permitted**, so nothing changes for self-hosters, who are the
 only people the feature was ever for, and so no existing local deployment breaks:
@@ -288,6 +327,7 @@ extending its scope.
 [core#793]: https://github.com/datanika-io/datanika-core/issues/793
 [core#821]: https://github.com/datanika-io/datanika-core/issues/821
 [core#872]: https://github.com/datanika-io/datanika-core/issues/872
+[core#985]: https://github.com/datanika-io/datanika-core/issues/985
 [core#978]: https://github.com/datanika-io/datanika-core/issues/978
 [core#979]: https://github.com/datanika-io/datanika-core/issues/979
 [landing#459]: https://github.com/datanika-io/datanika-landing/issues/459

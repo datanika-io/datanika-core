@@ -698,12 +698,12 @@ class DbtProjectService:
             ]
         )
 
-        rows_affected = 0
-        if result.result:
-            for node_result in result.result:
-                resp = getattr(node_result, "adapter_response", None)
-                if resp and hasattr(resp, "rows_affected"):
-                    rows_affected += resp.rows_affected or 0
+        # core#864: this used to inline an object-only read —
+        # `if resp and hasattr(resp, "rows_affected")` — but dbt returns
+        # adapter_response as a **dict**, so that branch was dead and every
+        # snapshot reported 0. `_sum_rows_affected` has always handled both
+        # shapes; delegating keeps the two call sites from drifting again.
+        rows_affected = _sum_rows_affected(result)
 
         logs = _format_dbt_logs(result)
         return {"success": result.success, "rows_affected": rows_affected, "logs": logs}

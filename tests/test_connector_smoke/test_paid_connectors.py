@@ -1,4 +1,4 @@
-"""Nightly live-connector smoke matrix (PLAN_QA.md §P1).
+"""Nightly live-connector smoke matrix.
 
 One test per verified paid-connector sandbox. Each probe is the
 lightest auth + metadata call that catches:
@@ -10,25 +10,83 @@ lightest auth + metadata call that catches:
 Failure → Telegram alert from the nightly workflow. Not wired into
 PR CI (gated by ``DATANIKA_CONNECTOR_SMOKE=1``; see conftest.py).
 
-## Status of the 9 paid connectors in PLAN_QA.md
+## Status of the 9 paid connectors
 
 | Connector      | Tested here? | Reason |
 |----------------|:-:|-|
 | BigQuery       | ✅ |   |
-| Databricks     | ✅ |   |
+| Databricks     | ✅ | control plane only — see the warehouses probe |
 | Stripe         | ✅ |   |
-| Kafka/Redpanda | ✅ | re-provisioned 2026-07-21 (core#342) |
+| Kafka/Redpanda | ⚠️ | pinned awaiting-provisioning — trial org reclaimed (cloud#160) |
 | HubSpot        | ✅ |   |
 | Shopify        | ✅ | provisioned 2026-07-21 |
 | GA4            | ✅ | provisioned 2026-07-21 |
 | Salesforce     | ⬜ | signup blocked on bot detection — one human click |
 | Snowflake      | ⬜ | **parked** — trial denied by Snowflake's risk engine |
 
-Salesforce and Snowflake are the last two gaps; both are documented in
-`PLAN_HUMAN_LOCKERS.md`. Snowflake is *parked*, not pending: signup
-returns `SUPPRESSED_GENERIC` from the vendor's risk engine and is
-probably unwinnable from our egress IP, so treat it as an accepted
-coverage gap rather than a to-do.
+Salesforce and Snowflake are the last two gaps, tracked in the founder queue
+(`human-locked` issues in `datanika-cloud`). Snowflake is *parked*, not pending:
+signup returns `SUPPRESSED_GENERIC` from the vendor's risk engine and is probably
+unwinnable from our egress IP, so treat it as an accepted coverage gap rather
+than a to-do.
+
+## 🚨 What each probe would FAIL on — the core#992 sweep
+
+**Reachability of *some* endpoint is not liveness of the account.** A vendor
+deliberately keeps read-only metadata serving after it suspends or expires a
+tenant — which is precisely the moment our probe most needs to fail. Two probes
+here were green on a workspace that could not start compute, and one asserted
+something that could not be false.
+
+So for every probe below: *name the vendor state it would fail on, and confirm
+that state is distinguishable from the one it passes on.* Swept 2026-09-03.
+
+**bigquery datasets** — fails on: key revoked · project renamed · API disabled ·
+key/project crossed. Distinguishable ✅ (the cross-check reads the key file's own
+`project_id`). ⚠️ **Not** billing — see the probe.
+
+**databricks warehouses** — fails on: PAT revoked · BI-Tools scope dropped ·
+warehouse deleted. Distinguishable ✅.
+⚠️ **Not** trial expiry / compute gating — see the probe. A further check —
+*`DATABRICKS_HTTP_PATH` must still name a warehouse that exists* — is measured
+and correct but **not shipped here**: it needs a new per-key GitHub secret, which
+is core#983 Phase B's lane, and landing the assertion ahead of the secret reds
+the nightly with `Missing env vars` (exactly what
+`test_nightly_smoke_env_parity.py` exists to catch). Tracked on core#992.
+
+**databricks UC catalogs** — fails on: UC scope dropped from the PAT ✅.
+⚠️ Same compute-gating gap.
+
+**stripe livemode** — fails on: key revoked (401) · a **live** key replacing the
+test key ✅. Test-mode keys do not expire and test mode has no billing state to
+lapse, so there is no quiet-death state here.
+
+**stripe charges scope** — fails on: `charges.read` narrowed (403) ✅.
+
+**hubspot account** — fails on: token revoked · portal deleted · account type
+downgraded ✅. `accountType == DEVELOPER_TEST` is itself a liveness statement.
+
+**hubspot properties** — fails on: CRM scope dropped · API shape change ✅
+(`>= 50` against a normal 300+).
+
+**shopify shop.json / scopes** — fails on: token revoked or uninstalled · store
+deleted · API version retired · token crossed · seeded data wiped ✅.
+⚠️ **But see the residual below.**
+
+**ga4 runReport** — fails on: key revoked · property deleted · Data API disabled
+✅ (`metadata.time_zone` is populated regardless of traffic).
+
+**ga4 metadata** — fails on: property misconfigured · API shape change ✅. GA4
+returns its schema whatever the traffic, unlike a row count.
+
+⚠️ **Unverified residual: a FROZEN Shopify development store.** Shopify freezes
+dev stores for inactivity or when the partner account lapses, and the Admin API
+is believed to keep serving `shop.json` when it does — which would be this exact
+defect a third time. It is **not measured**, because measuring it means freezing
+the store, and no read-only signal for it has been found. Recorded rather than
+guarded: inventing an assertion for a state nobody has observed is how a check
+that can only ever be green gets written. Tracked in the issue linked from
+core#992.
 """
 
 from __future__ import annotations
@@ -49,7 +107,21 @@ def _log(msg: str) -> None:
 def test_bigquery_auth_and_list_datasets(require_env):
     """Service-account auth + list datasets in the QA project.
 
-    Catches: key revoked, project ID changed, API disabled, IAM scope drift.
+    Catches: key revoked, project ID changed, API disabled, IAM scope drift,
+    and a key/project pair that has been crossed in the secret bundle.
+
+    The real check is that ``list_datasets`` **did not raise** — an empty
+    project is a healthy state, so the count proves nothing (same trap as
+    Shopify's ``orders=0`` and GA4's zero rows below). The assertion that can
+    be false is the credential cross-check: the key file carries its own
+    ``project_id``, and it must be the project we configured.
+
+    Does NOT catch: billing disabled on the project. Production run 9 failed
+    with ``403 Billing has not been enabled for this project. DML queries are
+    not allowed in the free tier`` (cloud#124) while this probe was green on
+    the same project — metadata reads are free and only DML is billed, so no
+    metadata call can see the difference. **Green here does not mean BigQuery
+    pipelines work.** Registered in ``UNOBSERVABLE_STATES`` (conftest.py).
     """
     env = require_env("BIGQUERY_PROJECT_ID", "BIGQUERY_CREDENTIALS_FILE")
 
@@ -62,11 +134,14 @@ def test_bigquery_auth_and_list_datasets(require_env):
     # list_datasets is the cheapest call that exercises both auth and project access.
     datasets = list(client.list_datasets(max_results=5))
     _log(
-        f"bigquery: email={creds.service_account_email} datasets={len(datasets)} "
-        f"elapsed={int((time.monotonic() - t0) * 1000)}ms"
+        f"bigquery: email={creds.service_account_email} key_project={creds.project_id} "
+        f"datasets={len(datasets)} elapsed={int((time.monotonic() - t0) * 1000)}ms"
     )
-    # An empty project is fine (no datasets yet) — what matters is the call succeeded.
-    assert datasets is not None
+    assert creds.project_id == env["BIGQUERY_PROJECT_ID"], (
+        f"The service-account key belongs to project {creds.project_id!r}, not the "
+        f"configured {env['BIGQUERY_PROJECT_ID']!r}. The BigQuery and GA4 probes share "
+        "one key file — secrets may have been crossed in qa-connectors.env."
+    )
 
 
 # ---------- Databricks ----------
@@ -75,7 +150,28 @@ def test_bigquery_auth_and_list_datasets(require_env):
 def test_databricks_auth_and_list_warehouses(require_env):
     """PAT auth + list SQL warehouses (BI Tools scope).
 
-    Catches: PAT revoked, workspace URL changed, scope downgrade, trial expiry.
+    Catches: PAT revoked, workspace URL changed, BI-Tools scope downgrade, and
+    the warehouse being deleted.
+
+    Does NOT catch: trial expiry / compute gating. This probe reads the control
+    plane, and on this workspace the control plane is **entirely intact while no
+    compute can start**. Measured 2026-09-03 over 30 read-only endpoints:
+    warehouses, UC catalogs, clusters, jobs, ``sql/config`` and SCIM (still
+    granting ``allow-cluster-create``) all return 200, exactly as on a live
+    workspace, while::
+
+        POST /api/2.0/sql/warehouses/{id}/start
+          -> 400 denyReason=INACTIVE domain=resource-gatekeeper
+
+    The warehouse **row survives the expiry**, which is why the old assertion
+    message here — *"No SQL warehouses found, trial workspace may have
+    expired"* — could never fire for the reason it named (core#992).
+
+    ⚠️ The discriminating call is a **write that starts billable serverless
+    compute**, so a probe must not make it (WORKFLOW_RULES 7a). Databricks
+    compute liveness is therefore not observable from here at all; it is tracked
+    on cloud#124 and registered in ``UNOBSERVABLE_STATES`` (conftest.py).
+    **Green here does not mean Databricks pipelines work.**
     """
     env = require_env("DATABRICKS_HOST", "DATABRICKS_TOKEN")
 
@@ -91,7 +187,11 @@ def test_databricks_auth_and_list_warehouses(require_env):
     )
     warehouses = r.json().get("warehouses", [])
     _log(f"databricks: warehouses={len(warehouses)} elapsed={elapsed}ms")
-    assert warehouses, "No SQL warehouses found — trial workspace may have expired"
+    assert warehouses, (
+        "No SQL warehouses in the workspace. The PAT authenticated and the endpoint "
+        "answered, so this is a deleted warehouse or a BI-Tools scope revoke — NOT a "
+        "trial expiry, which leaves the row in place (core#992)."
+    )
 
 
 def test_databricks_auth_and_list_uc_catalogs(require_env):
@@ -99,6 +199,10 @@ def test_databricks_auth_and_list_uc_catalogs(require_env):
 
     Catches: UC scope dropped from PAT. Second call so a partial scope
     revoke is caught specifically, not hidden behind warehouses.
+
+    Does NOT catch: trial expiry / compute gating — see the warehouses probe
+    above for the measurement. UC metadata is served by the metastore and keeps
+    answering 200 after the workspace can no longer start compute.
     """
     env = require_env("DATABRICKS_HOST", "DATABRICKS_TOKEN")
 

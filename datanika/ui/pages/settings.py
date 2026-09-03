@@ -496,6 +496,98 @@ def _remove_member_dialog(member: MemberItem) -> rx.Component:
     )
 
 
+def _leave_org_dialog() -> rx.Component:
+    """Ask before signing somebody out of the product (core#851, SPEC_MUTATION_FEEDBACK D7a).
+
+    This was the **twelfth** one-click destructive control and the one core#851's
+    own sweep could not see: ``leave_org`` takes no arguments, so it is written
+    ``on_click=SettingsState.leave_org`` — an ``ast.Attribute``, not an
+    ``ast.Call``, and the guard's visitor only had a ``visit_Call`` arm. Widening
+    the verb list would never have found it.
+
+    Three things make it unlike every other entry on that list:
+
+    * It is deliberately **not** role-gated (``SPEC_ORG_ROLES`` R6 — leaving is
+      the one action every member has), so every member sees it, including the
+      ones with no way back.
+    * Every other entry deletes a **row**. This one removes the actor's access to
+      all of them. The membership is soft-deleted, so an operator can restore it;
+      the user cannot, cannot see that it is restorable, and has just been
+      ejected from the surface that would have said so.
+    * 🚨 **The handler ends in `switch_org` or `logout`, and this one button
+      produces both.** Disclosing which is the substance of the fix — a dialog
+      that only asks "are you sure?" leaves the more serious outcome undisclosed,
+      which is the failure this whole class is about.
+
+    ⚠️ **No success toast, and that is a decision, not an omission.** ``leave_org``
+    ends in ``return <event>``; adding a ``yield`` makes it an async generator,
+    where ``return`` *with a value* is a ``SyntaxError``. Yielding the events
+    instead compiles — and the event is a **navigation**, so the toast would race
+    a redirect and render on ``/login`` if at all. The dialog before the act is
+    the acknowledgement; the destination is the outcome. See D7a.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                _t["settings.leave_org"],
+                size="1",
+                color_scheme="red",
+                variant="ghost",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["settings.leave_org_title"]),
+            rx.alert_dialog.description(_t["settings.leave_org_body"]),
+            rx.vstack(
+                rx.card(
+                    rx.text(SettingsState.org_name, size="2", weight="bold"),
+                    rx.text(SettingsState.org_slug, size="1", color="var(--gray-9)"),
+                ),
+                # Exactly one of these renders. They are branches of the same
+                # `rx.cond`, so "both" and "neither" are unreachable by
+                # construction rather than by a second rule that could drift.
+                rx.cond(
+                    SettingsState.leaving_signs_me_out,
+                    rx.callout(
+                        _t["settings.leave_org_signs_you_out"],
+                        icon="log_out",
+                        color_scheme="red",
+                        width="100%",
+                    ),
+                    rx.callout(
+                        _t["settings.leave_org_switches_you"]
+                        + " "
+                        + SettingsState.leaving_switches_me_to,
+                        icon="arrow_right_left",
+                        color_scheme="amber",
+                        width="100%",
+                    ),
+                ),
+                rx.text(_t["settings.leave_org_reversible"], size="1", color="var(--gray-9)"),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(
+                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["settings.leave_org_confirm"],
+                        color_scheme="red",
+                        on_click=SettingsState.leave_org,
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
+        ),
+    )
+
+
 def member_row(member: MemberItem) -> rx.Component:
     """One row of the members table, rendered for what the viewer may do.
 
@@ -529,19 +621,79 @@ def member_row(member: MemberItem) -> rx.Component:
         rx.table.cell(
             rx.cond(
                 member.is_self,
-                rx.button(
-                    _t["settings.leave_org"],
-                    on_click=SettingsState.leave_org,
-                    size="1",
-                    color_scheme="red",
-                    variant="ghost",
-                ),
+                _leave_org_dialog(),
                 rx.cond(
                     member.can_manage,
                     _remove_member_dialog(member),
                     rx.fragment(),
                 ),
             ),
+        ),
+    )
+
+
+def _transfer_ownership_dialog() -> rx.Component:
+    """Ask before handing the org away (SPEC_MUTATION_FEEDBACK D7b).
+
+    The only route to ``MemberRole.OWNER``, and it demotes the actor in the same
+    transaction — ``transfer_ownership`` re-reads their role immediately
+    afterwards. **Only the new owner can transfer it back**, so the undo lives in
+    somebody else's hands: ``leave_org``'s shape applied to control rather than
+    to access.
+
+    ⚠️ The disabled state is not decoration. ``transfer_ownership`` refuses with
+    *"Choose the member who will become the owner"* when the select is empty, and
+    offering a confirmation for an act that cannot succeed is the pattern
+    ``_delete_account_dialog`` avoids for the sole-owner case.
+
+    ``settings.transfer_ownership_help`` already states the consequence honestly —
+    but that is help text on a card, read before the select is touched, not a
+    confirmation at the moment of the act. Both, for the same reason core#851
+    kept row-content aiming *and* added a dialog: they are different guarantees.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                _t["settings.transfer_ownership"],
+                size="2",
+                color_scheme="amber",
+                disabled=SettingsState.transfer_to_email == "",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["settings.transfer_ownership_title"]),
+            rx.alert_dialog.description(_t["settings.transfer_ownership_body"]),
+            rx.vstack(
+                rx.card(
+                    rx.text(SettingsState.transfer_to_email, size="2", weight="bold"),
+                    rx.text(SettingsState.org_name, size="1", color="var(--gray-9)"),
+                ),
+                rx.callout(
+                    _t["settings.transfer_ownership_irreversible"],
+                    icon="triangle_alert",
+                    color_scheme="amber",
+                    width="100%",
+                ),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                rx.alert_dialog.cancel(
+                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["settings.transfer_ownership_confirm"],
+                        color_scheme="amber",
+                        on_click=SettingsState.transfer_ownership,
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
         ),
     )
 
@@ -566,12 +718,7 @@ def transfer_ownership_card() -> rx.Component:
                     on_change=SettingsState.set_transfer_to_email,
                     size="2",
                 ),
-                rx.button(
-                    _t["settings.transfer_ownership"],
-                    on_click=SettingsState.transfer_ownership,
-                    size="2",
-                    color_scheme="amber",
-                ),
+                _transfer_ownership_dialog(),
                 spacing="2",
             ),
             spacing="3",
@@ -579,6 +726,77 @@ def transfer_ownership_card() -> rx.Component:
             align="start",
         ),
         rx.fragment(),
+    )
+
+
+def _cancel_invitation_dialog(inv: InvitationItem) -> rx.Component:
+    """Ask before revoking a pending invitation (core#851, SPEC_MUTATION_FEEDBACK D7c).
+
+    core#851's **eleventh** site, and the one its sweep missed for a different
+    reason from ``leave_org``: the sweep matched destructive *verbs*
+    (``delete|revoke|remove|purge``) and this handler is spelled ``cancel_``. Two
+    independent blind spots, one predicate and one matcher, in the same census.
+
+    ⚠️ **This is the lightest of the three dialogs on purpose.** Re-inviting fully
+    restores the state and nobody loses access they already had, so it is a plain
+    confirm rather than a warning — core#851 rated it *"low, and lower than the
+    ten already listed"*, which is right.
+
+    It earns one anyway because it sits **between two controls on the same card
+    that both confirm** — ``_remove_member_dialog`` above and
+    ``_delete_channel_dialog`` below. On a page that has established the pattern,
+    an absent dialog reads as a claim that this action is safe.
+    """
+    return rx.alert_dialog.root(
+        rx.alert_dialog.trigger(
+            rx.button(
+                _t["common.cancel"],
+                size="1",
+                color_scheme="red",
+                variant="ghost",
+            ),
+        ),
+        rx.alert_dialog.content(
+            rx.alert_dialog.title(_t["settings.cancel_invitation_title"]),
+            rx.vstack(
+                rx.card(
+                    rx.text("#", inv.id, "  ", inv.email, size="2", weight="bold"),
+                    rx.text(inv.role, size="1", color="var(--gray-9)"),
+                ),
+                rx.text(
+                    _t["settings.cancel_invitation_reversible"],
+                    size="1",
+                    color="var(--gray-9)",
+                ),
+                spacing="3",
+                width="100%",
+                margin_top="12px",
+            ),
+            rx.flex(
+                # ⚠️ Not `common.cancel` here: on this one dialog "Cancel" is
+                # the *destructive* verb — it labels the trigger. A back-out
+                # button reading "Cancel" beside a confirm button reading
+                # "Yes, cancel invitation" is a coin flip, not a choice.
+                rx.alert_dialog.cancel(
+                    rx.button(
+                        _t["settings.cancel_invitation_keep"],
+                        variant="soft",
+                        color_scheme="gray",
+                    ),
+                ),
+                rx.alert_dialog.action(
+                    rx.button(
+                        _t["settings.cancel_invitation_confirm"],
+                        color_scheme="red",
+                        on_click=SettingsState.cancel_invitation(inv.id),
+                    ),
+                ),
+                spacing="3",
+                justify="end",
+                margin_top="16px",
+            ),
+            max_width="480px",
+        ),
     )
 
 
@@ -603,13 +821,7 @@ def _invitation_row(inv: InvitationItem) -> rx.Component:
         rx.table.cell(
             rx.cond(
                 SettingsState.can_manage_members,
-                rx.button(
-                    _t["common.cancel"],
-                    on_click=SettingsState.cancel_invitation(inv.id),
-                    size="1",
-                    color_scheme="red",
-                    variant="ghost",
-                ),
+                _cancel_invitation_dialog(inv),
                 rx.fragment(),
             ),
         ),

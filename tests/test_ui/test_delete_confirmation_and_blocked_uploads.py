@@ -51,12 +51,91 @@ Three things keep that from being decorative:
    persisting, its exclusion stops being true and this goes red — rather than
    remaining a comment somebody wrote in 2026.
 3. **The dialog is a claim the client makes; the handler check is the refusal.**
-   So the guard also requires every persisted destructive handler to call
-   ``_check_role``. That assertion was **red on `DagState.remove_dependency`**
+   So the guard also requires every persisted destructive handler to carry a
+   server-side refusal. That assertion was **red on `DagState.remove_dependency`**
    when it was written — the one persisted destructive handler in the product
    with no role check at all, which no existing test could see because
    ``test_rbac_enforcement.py``'s ``EXPECTED_ROLES`` had no ``dag_state`` entry.
    A guard whose first run is green has not been shown able to fail.
+
+**SPEC_MUTATION_FEEDBACK §7 / D8 — four ways this census was blind.** Deciding
+``leave_org``'s confirmation exposed that the guard could not *see* the control
+it was deciding about. core#851 named two gaps; measuring found two more.
+
+===  ====================================================================
+gap  what it was, and what it hid
+===  ====================================================================
+1    the predicate was a list of **spellings** — missed ``cancel_invitation``
+     (spelled ``cancel_``) and ``leave_org``. Now verb-prefix ∪
+     ``_audit(…, "delete", …)``, with :data:`CENSUS_DISAGREEMENT` asserting
+     every disagreement rather than silently unioning them.
+2    the matcher walked only ``ast.Call`` — so **every zero-argument handler
+     was invisible by node type**, 43 call-shaped references against 205
+     attribute-shaped ones. The invisible set included
+     ``AccountState.delete_account``.
+3    a confirmation was recognised only as ``alert_dialog.action`` — the
+     typed confirmation on ``delete_account`` is a form ``on_submit`` inside
+     ``alert_dialog.content``, and could never have passed. See
+     :data:`FORM_CONFIRMED`.
+4    🚨 the role check was a **substring over the handler source, which
+     includes the docstring**. ``leave_org``'s docstring explains why it
+     deliberately has no role check, and that explanation contains the
+     literal ``_check_role`` — so closing gap 2 would have made this guard
+     go **green on it because of a sentence saying it is not guarded**. Now
+     read by AST; see :func:`_self_calls`.
+===  ====================================================================
+
+**Fifteen negative controls, every one applied to a real shipped file** — a
+synthetic control is written from the same mental model as the check, so it
+agrees with the check including where the check is wrong. Each had to turn *its
+own* assertion red **and name the cause**; a red for an unrelated reason is not
+a control. Reproduce any of them by applying the mutation and running the named
+test:
+
+*mutation on the real file* -> *assertion that caught it*
+
+1.  remove the ``ast.Attribute`` arm
+    -> ``test_the_matcher_sees_both_reference_shapes``
+2.  narrow that arm to ``on_click`` only
+    -> ``test_the_scan_is_not_blind``, naming ``leave_org``
+3.  drop the audit derivation from the predicate
+    -> ``test_the_scan_is_not_blind``, naming ``cancel_invitation``
+4.  delete ``leave_org``'s ``_require_live_session`` call
+    -> ``test_every_persisted_destructive_handler_checks_a_role``
+5.  🔑 leave that call **only in a comment** -> same assertion. This is gap 4,
+    and it is the whole reason the check reads the AST.
+6.  rewire ``leave_org`` onto the dialog *trigger*
+    -> ``test_every_destructive_call_is_behind_a_confirmation``
+7.  unwire ``cancel_invitation`` back to a bare button -> same
+8.  withdraw ``delete_account`` from :data:`FORM_CONFIRMED` -> same
+9.  collapse the leave dialog to one outcome branch
+    -> ``test_the_dialog_renders_exactly_one_of_them``
+10. move ``transfer_ownership`` onto its trigger
+    -> ``test_the_handler_hangs_off_the_action``
+11. ``return`` ``update_org``'s toast instead of yielding it
+    -> ``test_it_yields_a_toast`` in the ratchet module
+12. delete ``change_member_role``'s toast -> same
+13. unclassify ``transfer_ownership``
+    -> ``test_every_committing_handler_is_classified``
+14. undeclare ``leave_org``'s census disagreement
+    -> ``test_every_census_disagreement_is_declared``
+15. slip a service call in front of the refusal
+    -> ``test_the_check_is_the_first_thing_the_handler_does``
+
+⚠️ **One of those fifteen was wrong on its first run and went green** — it
+removed the ``ast.Constant`` requirement from :func:`_is_state_reset`, which
+only makes the skip *more* permissive, and since the next statement in
+``delete_account`` is an ``if`` rather than an assignment, nothing extra was
+skipped and the outcome was identical. **A mutation that changes no behaviour is
+not a control**, however plausible it looks written down. The replacement
+exercises the property the allowance exists for.
+
+⚠️ **And eight of them silently matched nothing on their first run.** These
+files are ``i/lf w/crlf`` in the working tree, so a multi-line anchor written
+with ``\\n`` matches zero times — which reads as *"the anchor moved"* rather than
+*"my harness cannot see the file"*. The tell was that **every single-line
+control passed and every multi-line one failed**. Normalise line endings before
+matching source.
 """
 
 import ast

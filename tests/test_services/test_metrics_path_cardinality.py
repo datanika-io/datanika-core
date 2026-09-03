@@ -73,13 +73,37 @@ handles exactly that case. It is kept here, correctly labelled as a *control*
 rather than as the defect it was filed as. The real AC2 is the UUID/ULID case,
 which the code demonstrably fails while its prose claims otherwise.
 
-The xfail markers
------------------
-Four assertions describe the defect and are therefore
-``xfail(strict=True, raises=AssertionError)``. **Strict is load-bearing**: the
-moment the fix lands they XPASS, which is a failure, so the markers cannot
-outlive the defect and the fix cannot land silently (``docs/QA_RULES.md`` §5).
-Removing all four is part of the fix's PR.
+The xfail markers are gone, and that is the record of the fix
+--------------------------------------------------------------
+Four assertions described the defect and shipped as
+``xfail(strict=True, raises=AssertionError)``. **Strict was load-bearing**: an
+XPASS is a failure, so the markers could not outlive the defect. All four were
+removed when the fix landed (core#896, Engineering) and the assertions now run
+as ordinary tests — which is the only state in which they can catch a
+*regression* rather than merely pin a known defect.
+
+⚠️ core#896 was once closed **COMPLETED with only this file shipped** — 624
+insertions, no production code — while all four markers were still live and
+naming the defect. If you are reading this because the issue looks settled,
+the check is ``git log -- datanika/services/metrics.py``, not the issue state.
+
+Three assertions were added by the fix, for surfaces the issue does not cover
+-----------------------------------------------------------------------------
+``<other>`` is a bucket for **unmatched** paths, and the two worst surfaces here
+are *matched*:
+
+* ``/api/auth/sso/login/{org_slug}`` and three sibling auth routes take a
+  free-form segment from an unauthenticated caller and match a real route, so no
+  unmatched-path bucket reaches them (all 34 ``/api/v1/*`` parameters are
+  ``:int`` and were already collapsed by ``part.isdigit()``);
+* ``app._api`` carries two ``Mount``s — Reflex puts socket.io at ``/_event`` and
+  a ``StaticFiles`` server at ``/_upload`` — and a ``Mount`` matches, sets
+  ``endpoint``, then hands an arbitrary tail to a sub-application that reports
+  nothing about what it matched.
+
+The third, ``test_the_producible_label_set_is_bounded_by_the_route_table``, is
+the class statement the other two are instances of, and the only one that can
+catch a surface nobody has thought of yet.
 
 Setup invariants raise ``HarnessError`` — a ``RuntimeError``, never an
 ``AssertionError`` — because a bare ``assert`` in the setup of an
@@ -89,10 +113,11 @@ defect being present. This has already earned its keep here: the first version o
 ``SCANNER_PATHS`` held 46 paths where the criterion names 50, and the guard said
 so instead of quietly xfailing.
 
-Not asserted here: core#896 AC3 (a checked-in ceiling on
-``count(count_over_time(http_request_duration_seconds_bucket[30d]))``). That is a
-statement about the production TSDB, scored by ``scripts/slo_report.py`` against
-Prometheus, not by pytest.
+core#896 AC3 is asserted here in the only form pytest can hold: a ceiling on the
+label values the middleware can *produce*, derived from the route table rather
+than written down as a number. The production half — a ceiling on
+``count(count_over_time(http_request_duration_seconds_bucket[30d]))`` — is a
+statement about the TSDB and belongs to ``scripts/slo_report.py``.
 """
 
 from __future__ import annotations
@@ -101,10 +126,9 @@ import inspect
 import re
 from collections.abc import Iterable
 
-import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Mount, Route
 
 from datanika.services import metrics as metrics_module
 from datanika.services.metrics import (
@@ -226,16 +250,41 @@ async def _endpoint(request):  # noqa: ANN001, ANN202 - a Starlette endpoint
     return PlainTextResponse("ok")
 
 
+async def _mounted_app(scope, receive, send):  # noqa: ANN001, ANN201 - a bare ASGI app
+    """A sub-application mounted under a prefix.
+
+    Stands in for the two real ones on ``app._api``: Reflex mounts socket.io at
+    ``/_event`` and a ``StaticFiles`` server at ``/_upload``. A ``Mount`` serves
+    an arbitrary tail and reports **nothing** about what it matched, so the tail
+    is caller-controlled on a route that nonetheless *matched*.
+    """
+    await PlainTextResponse("ok")(scope, receive, send)
+
+
 # The route table only has to be representative of the *shapes* production
 # serves: an int-converted param, a bare string param (which is what a UUID or a
-# ULID arrives as), and two parameterless routes that must stay distinguishable.
+# ULID arrives as), two parameterless routes that must stay distinguishable, the
+# free-form caller-supplied segments the auth routes take, and a Mount.
 ROUTES = [
     Route("/api/v1/pipelines", _endpoint),
     Route("/api/v1/pipelines/{pipeline_id:int}", _endpoint),
     Route("/api/v1/connections", _endpoint),
     Route("/api/v1/connections/{connection_id}", _endpoint),
     Route("/api/v1/runs/{run_id}", _endpoint),
+    # Verbatim shapes from datanika/services/{sso,oauth}_routes.py. The segment
+    # is invented by an unauthenticated caller and the route MATCHES, so an
+    # "<other>" bucket for unmatched paths does not reach it.
+    Route("/api/auth/sso/login/{org_slug}", _endpoint),
+    Route("/api/auth/login/{provider}", _endpoint),
+    # Reflex's own mounts, in shape: a matched prefix with an unbounded tail.
+    Mount("/_files", app=_mounted_app),
 ]
+
+# Every parameterless route above, plus one template per parameterised route.
+# Used as the ceiling in ``test_the_producible_label_set_is_bounded``: the fix's
+# whole claim is that the label value comes from the ROUTE TABLE and never from
+# the request, so the table's size is the bound.
+DISTINCT_ROUTE_TEMPLATES = 8
 
 
 async def _drive(paths: Iterable[str], *, method: str = "GET") -> None:
@@ -407,11 +456,6 @@ async def test_control_different_routes_with_ids_stay_distinct() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="core#896: unmatched paths are used verbatim as label values; no <other> bucket exists",
-)
 async def test_unmatched_paths_collapse_to_one_bucket() -> None:
     """core#896 AC1 — 50 unmatched paths must add at most one label value.
 
@@ -443,11 +487,6 @@ async def test_unmatched_paths_collapse_to_one_bucket() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="core#896: nothing produces a '<other>' bucket, so unmatched paths have no name",
-)
 async def test_unmatched_paths_land_in_a_named_other_bucket() -> None:
     """The bucket has to be *named*, not merely singular.
 
@@ -464,11 +503,120 @@ async def test_unmatched_paths_land_in_a_named_other_bucket() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="core#896 AC2 (revised): only integer segments collapse; UUID and ULID ids do not",
-)
+async def test_free_form_segments_on_a_matched_route_collapse() -> None:
+    """core#896's extra AC — the vector an ``<other>`` bucket does **not** reach.
+
+    ``/api/auth/sso/login/{org_slug}``, ``/api/auth/sso/metadata/{org_slug}``,
+    ``/api/auth/login/{provider}`` and ``/api/auth/callback/{provider}`` take a
+    segment invented by an unauthenticated caller, are outside
+    ``_SKIP_PREFIXES``, and **match a real route**. So they are not "unmatched",
+    and AC1's ``<other>`` bucket for unmatched paths leaves every one of them
+    minting a permanent series per slug.
+
+    All 34 ``/api/v1/*`` parameters are ``:int`` and were already collapsed by
+    ``part.isdigit()``; these four are the exposed surface, which is why a fix
+    has to derive the label from **which segments the router treated as
+    parameters** rather than from what the segments look like. No shape test
+    distinguishes ``acme`` from ``login``.
+    """
+    slugs = [f"tenant-{n}" for n in range(50)]
+    landed = {await _label_for(f"/api/auth/sso/login/{slug}") for slug in slugs}
+
+    assert len(landed) == 1, (
+        f"50 invented org slugs on ONE matched route landed on {len(landed)} label "
+        f"values. Sample: {sorted(str(v) for v in landed)[:3]}"
+    )
+    (label,) = landed
+    assert label not in (None, "<other>"), (
+        f"a real route metered as {label!r}. Collapsing matched routes into the "
+        "unmatched bucket is the failure mode "
+        "test_control_permissive_distinct_routes_stay_distinct exists for; the "
+        "slug must be redacted while the route survives."
+    )
+
+    # Two different free-form routes must stay two different series, exactly as
+    # two different int-parameterised routes do.
+    provider = await _label_for("/api/auth/login/google")
+    assert provider != label, (
+        f"/api/auth/login/{{provider}} and /api/auth/sso/login/{{org_slug}} both "
+        f"metered as {label!r}"
+    )
+
+
+async def test_mounted_subapp_tails_are_bounded() -> None:
+    """A ``Mount`` matches, so its caller-controlled tail is not "unmatched" either.
+
+    ``app._api`` carries two mounts that core#896 does not mention and that no
+    ``_SKIP_PREFIXES`` entry covers: Reflex mounts socket.io at ``/_event`` and a
+    ``StaticFiles`` server at ``/_upload`` (``reflex/app.py``), and Apache routes
+    both to the backend. ``Mount.matches`` sets ``endpoint`` and extends
+    ``root_path``, then hands the remainder to a sub-application that reports
+    nothing back — so every filename a caller asks for arrives at the metering
+    code as a matched request with a distinct path.
+    """
+    landed = {await _label_for(f"/_files/{n}/report-{n}.csv") for n in range(50)}
+
+    assert len(landed) == 1, (
+        f"50 distinct tails under one mount landed on {len(landed)} label values. "
+        f"Sample: {sorted(str(v) for v in landed)[:3]}"
+    )
+    (label,) = landed
+    assert label is not None, "a mounted request was not metered at all"
+    assert "report-" not in label, (
+        f"the mounted tail reached the label verbatim: {label!r}. The tail is "
+        "unauthenticated input and the sub-application does not tell us what it "
+        "matched, so nothing about it may become a label value."
+    )
+
+
+async def test_the_producible_label_set_is_bounded_by_the_route_table() -> None:
+    """core#896 AC3, expressed where pytest can assert it: a checked-in ceiling.
+
+    AC3 as filed —
+    ``count(count_over_time(http_request_duration_seconds_bucket[30d]))`` against
+    a ceiling — is a statement about the production TSDB and is scored by
+    ``scripts/slo_report.py``. The claim *underneath* it is checkable here and is
+    the one that actually has to hold: **every label value comes from the route
+    table, so the route table is the bound.** An adversary picking paths cannot
+    raise it.
+
+    This is the assertion that catches a *future* unbounded surface — a new
+    ``Mount``, a new free-form parameter, a new sub-router — which the
+    case-by-case tests above cannot, because they each name a shape somebody
+    already thought of.
+    """
+    corpus = (
+        list(SCANNER_PATHS)
+        + [f"/api/auth/sso/login/tenant-{n}" for n in range(30)]
+        + [f"/api/auth/login/provider-{n}" for n in range(30)]
+        + [f"/_files/{n}/report-{n}.csv" for n in range(30)]
+        + [f"/api/v1/pipelines/{n}" for n in range(30)]
+        + [f"/api/v1/connections/{UUID_A[:-1]}{c}" for c in "0123456789abcdef"]
+        + [f"/api/v1/runs/{ULID_A[:-1]}{c}" for c in "0123456789ABCDEF"]
+    )
+    if len(corpus) < 200:
+        raise HarnessError(
+            f"the corpus holds {len(corpus)} paths; a ceiling asserted over a "
+            "handful of requests is satisfied by arithmetic rather than by the fix"
+        )
+
+    landed = {await _label_for(path) for path in corpus}
+    ceiling = DISTINCT_ROUTE_TEMPLATES + 1  # + the single unmatched bucket
+
+    assert len(landed) <= ceiling, (
+        f"{len(corpus)} adversarially chosen paths produced {len(landed)} distinct "
+        f"label values against a ceiling of {ceiling} (one per route template in "
+        f"ROUTES, plus '<other>'). Each costs ~14 Prometheus series once the "
+        f"histogram is counted. Sample of the excess: "
+        f"{sorted(str(v) for v in landed)[:5]}"
+    )
+    assert len(landed) > 1, (
+        "everything collapsed into a single value, which passes every cardinality "
+        "assertion and destroys the metric. See "
+        "test_control_permissive_distinct_routes_stay_distinct."
+    )
+
+
 async def test_uuid_and_ulid_identifiers_collapse() -> None:
     """core#896 AC2, as revised — the criterion the code actually fails.
 
@@ -634,14 +782,6 @@ def _module_prose() -> list[tuple[str, str]]:
     return prose
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "core#896: _normalize_path's docstring says '(IDs, UUIDs)' and UUIDs are not "
-        "handled — a false prose coverage claim, the same shape core#673 fixed today"
-    ),
-)
 async def test_module_prose_about_identifiers_is_true() -> None:
     """Every identifier kind the module's prose names must actually be collapsed.
 

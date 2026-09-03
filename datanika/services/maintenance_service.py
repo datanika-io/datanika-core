@@ -1,10 +1,13 @@
 """Maintenance service — cleanup orphaned files and stale artifacts.
 
 ⚠️ **There is deliberately no run-retention sweep here (core#1000).** ``purge_old_runs``
-soft-deleted completed runs past 90 days and nothing read ``Run.deleted_at``: this codebase
-has no global soft-delete filter, and ``ExecutionService.list_runs`` carries no predicate for
-it. The sweep therefore hid nothing and removed nothing, while logging a purge count hourly
-from 2026-08-30 (core#653) — retention that read as enforced and was not.
+soft-deleted completed runs past 90 days, and **no reader could observe the mark**: this
+codebase has no global soft-delete filter, and neither ``ExecutionService.list_runs`` /
+``get_org_run`` nor ``dependency_check`` carries a ``deleted_at`` predicate. The one place
+that does read ``Run.deleted_at`` is ``cleanup_orphaned_dlt_dirs`` below, and it selects
+RUNNING/PENDING runs while the purge only ever marked SUCCESS/FAILED/CANCELLED — so the two
+never intersected. The sweep therefore hid nothing and removed nothing, while logging a purge
+count hourly from 2026-08-30 (core#653) — retention that read as enforced and was not.
 
 Founder decision, 2026-09-03: **the published pages are right and the sweep was wrong.**
 ``datanika.io/privacy`` and ``/trust`` state that run history, run logs and configuration

@@ -1279,7 +1279,7 @@ and the expand migration backfilled every pre-existing row.
 | path | what it does |
 |---|---|
 | `datanika/scripts/e2e_seed.py::_build_fixture` | constructs `User(email=…, full_name=…)` at **three** sites (org A owner, org A viewer, org B owner) and never touches `UserPII` |
-| 15 test modules | construct `User(email=…)` by hand in fixtures |
+| **20 test modules**, 43 sites | construct `User(email=…)` by hand — 19 in reusable fixtures, 24 inline. Re-counted 2026-09-03; the figure here was an estimate. Census in §8a.6 |
 | `tests/…/test_pii_separation.py::test_the_legacy_column_is_still_readable_during_the_dual_write_window` | constructs one **deliberately**, and asserts the legacy clause finds it |
 
 🔑 **This is not a production defect and should not be filed as one.** In production every user has a
@@ -1352,17 +1352,56 @@ and the eight callers do not agree on what to do about it:
 invariant is not loud anywhere. Five of the seven callers degrade silently, one of them into a
 refused erasure — the exact obligation this whole spec exists to satisfy.
 
+> 🆕 **This table is INCOMPLETE and the missing row is the one users hit first — see §8a.9.**
+> It enumerates callers *of `get_user_by_email`*. `email_routes.accept_invite` does not call it: it
+> issues its **own** `select(User).where(User.email == …)`, so it is invisible to a caller census and
+> to `git grep "N+1"` alike. It breaks at N+1 for the same reason and reaches the *same* unescapable
+> loop as row 2, one step earlier and with no test covering it.
+
 **Contract:** N+1 may not merge while any user-creation path in the repo bypasses the sidecar. That
 is a stronger statement than *"fix the seed"*, and it is the one to hold.
 
 ### 8a.6 · Ship order
 
 **Step A — lands NOW, under N, in its own PR. Not part of N+1.**
-Give the three `_build_fixture` sites a `UserPII` row (or route them through `UserService`), and give
-the ~15 test fixtures the same. It is correct under N on its own terms — it removes rows that violate
-the dual-write invariant — so it carries no N+1 risk and needs no coordination with the release.
-Doing it separately means **the N+1 PR's diff is only the deletions**, and every red it produces is
-about N+1 rather than about fixtures.
+Give every path that constructs a `User` a matching `user_pii` row. It is correct under N on its own
+terms — it removes rows that violate the dual-write invariant — so it carries no N+1 risk and needs
+no coordination with the release. Doing it separately means **the N+1 PR's diff is only the
+deletions**, and every red it produces is about N+1 rather than about fixtures.
+
+> 🆕 **CENSUS 2026-09-03 — the scope was measured and it is 3× what this paragraph first said.**
+> The sentence above previously read *"the three `_build_fixture` sites … and the ~15 test fixtures"*.
+> Counted exhaustively over `datanika/scripts/` and `tests/`:
+>
+> | | |
+> |---|---|
+> | `User(...)` construction sites | **46** (3 in `e2e_seed.py`, 43 under `tests/`) |
+> | of those, creating a `UserPII` | **0** |
+> | distinct files | **21** |
+> | inside a reusable fixture or helper | **22** |
+> | written inline in a single test | **24** |
+>
+> ⚠️ **There is no shared user factory to patch.** Five `conftest.py` files exist and **none**
+> constructs a `User`; the 22 reusable sites are 16 independently-defined per-file `user` fixtures
+> plus three helpers, two of which (`_member()` in `test_org_role_authority.py:66` and
+> `test_privilege_escalation.py:143`) are near-identical copies. **The one-line fix does not exist.**
+>
+> 🔑 **This is why Step A is a factory and not 46 edits.** §8a.7 notes N+2 turns every
+> `User(email=…)` into a `TypeError`. Introducing a `db_session`-level factory in `tests/conftest.py`
+> and repointing all 46 sites makes **N+2's fixture cost one edit** instead of forty-six. Adding a
+> sidecar line beside each construction satisfies N+1 and pays nothing forward.
+>
+> ⚠️ **Do NOT implement the factory by calling `_sync_user_pii`** — #939 item 3 deletes it in N+1, so
+> fixtures calling it break at exactly the release this step exists to protect.
+>
+> 🚨 **One site is excluded and must stay as it is:** `test_pii_separation.py:112`, inside
+> `test_the_legacy_column_is_still_readable_during_the_dual_write_window`. It builds a sidecar-less
+> user on purpose and its next line asserts `db_session.get(UserPII, user.id) is None` as a stated
+> precondition. Kind 1 in §8a.4 — **deleted** in the N+1 PR, never "fixed" here.
+>
+> Related and separate: `tests/test_security/test_org_role_authority.py:442` constructs an
+> `Invitation` passing **both** `email=` and `token=`, with no `InvitationPII` and **no `token_hash`**.
+> That is the same hazard for the invitation sidecar and it is the one site §8a.7 already named.
 
 ⚠️ QA offered to take this on [core#951] (they are already in `e2e_seed.py`). Either owner is fine;
 what is not fine is it riding *inside* the N+1 PR, where a fixture fix and a behaviour change become
@@ -1381,13 +1420,21 @@ N+1 tolerates a hand-built `User(email=…)` — the column still exists, it is 
 drops the column, so every one of those constructions becomes a `TypeError`.** Same for
 `full_name`, `oauth_provider_id`, `invitations.email` and `invitations.token`.
 
-Measured on `origin/dev`: **15 test modules** construct `User(...)` with `email=`, plus three sites in
-`e2e_seed.py` and one `Invitation(token=…)` in `tests/test_security/test_org_role_authority.py:447`.
-Step A above closes the N+1 half of this; **the N+2 half is a separate sweep and should be scoped
-before N+2 is scheduled**, not discovered during it.
+🆕 **Re-measured 2026-09-03, exhaustively: 46 `User(...)` construction sites across 21 files** —
+3 in `e2e_seed.py` and 43 under `tests/`, **none** of which creates a `UserPII`. Plus one
+`Invitation(email=…, token=…)` at `tests/test_security/test_org_role_authority.py:442`.
+*(The estimate this replaces is quoted in §8a.6's census note, deliberately inside a blockquote so a
+contradiction grep over live text still reads 0.)*
+Step A above closes all of this **if it is done as a factory**; done as 46 inline sidecar-adds it
+closes only the N+1 half and leaves the N+2 sweep at full size. See the census in §8a.6.
 
-✅ The good news is the direction of failure: N+2 fails **loudly** at import/construction time, which
-is the opposite of N+1. It is work, not risk.
+✅ The good news is the direction of failure **for the constructions**: N+2 fails **loudly** at
+construction time, which is the opposite of N+1. It is work, not risk.
+
+🚨 **That good news does NOT extend to the reads, and §8a.9 is the correction.** A dropped column
+read as `invitation.email` or `user.email` raises `AttributeError` **at request time, in production**
+— not at import, and not in CI. There are eight such production sites; §8a.9 tabulates them and the
+release each one dies at. **Scope the reads before scheduling N+2, not only the constructions.**
 
 ### 8a.8 · 🚨 Why acceptance criterion 1 cannot see any of this
 
@@ -1409,6 +1456,103 @@ annotated.* Criterion 1 proves the **deletions** are complete. It says nothing a
 `(removed in N+1)`. **It is not any of #939's eight items.** The grep finds it; the enumeration does
 not. That is the argument for keeping *both* — a hand-written list and a mechanical sweep fail in
 opposite directions, and here each one covers the other's gap.
+
+### 8a.9 · 🚨 A production caller N+1 breaks that NEITHER the item list NOR criterion 1 can see
+
+**Measured 2026-09-03 on `origin/dev`. This section changes what N+1 must do — read it before
+writing that PR.**
+
+§8a.8 credits criterion 1 with catching a *marked* site #939's list missed. **The converse case
+exists and is worse: a site carrying no marker at all.** The list does not name it and
+`git grep -n "N+1"` cannot find it, because that grep's entire content is the annotations somebody
+remembered to write.
+
+#### The site
+
+`datanika/services/email_routes.py:74-76` — the handler behind **`/api/accept-invite`**, i.e. the
+link in every invitation email:
+
+```python
+user = session.execute(
+    sa_select(User).where(User.email == invitation.email)
+).scalar_one_or_none()
+```
+
+It is a **second identity lookup by address**, bypassing `UserService.get_user_by_email` entirely.
+Three defects, in increasing severity; only the third is about N+1:
+
+1. **Case-sensitive.** The chokepoint lowercases both sides; this does not. `create_invitation`'s own
+   docstring (`:63-66`) records that the local copy *it* replaced had exactly this defect. This is a
+   third copy, still live, on the acceptance path.
+2. **No `deleted_at IS NULL`.** Mitigated today only by erasure's step 1a NULLing `users.email` — the
+   filter is structurally absent, and step 1a is deleted in N+2.
+3. 🚨 **After N+1 it matches nobody who registered after the N+1 deploy.** #939 item 4 stops passing
+   `email` to the `User` constructor, so from that deploy on `users.email` is NULL for new users while
+   `user_pii.email` carries the address. This query reads the legacy column and **has no sidecar half
+   to fall back to** — it is not an `or_` that N+1 trims, it is a raw query nobody annotated.
+
+**What the user experiences** is §8a.5's unescapable-loop row, reached one step earlier than §8a.5
+says: the route redirects them to `/signup?invite_token=…`, telling an already-registered person to
+register; registering again hits the `user_pii.email` UNIQUE. §8a.5 attributes that loop to
+`accept_invitation:148`. **It is reachable by two independent paths and the HTTP one fires first.**
+
+#### Why no test went red
+
+`accept_invite` has **no behavioural test**. The only two test files naming `email_routes` cover
+`verify_email` and a source-level login-signal scan.
+
+🔑 **So §8a.3's "18 is a floor" is true in a second and sharper way than it was written.** It is a
+floor because that run was a targeted subset — and it is a floor because **an uncovered path
+contributes zero reds no matter how broken it is.** A red count measures the tests, not the damage.
+Any N+1 gate phrased as *"the suite is green"* is satisfied by this defect shipping.
+
+#### Correcting §8a.7's count for the legacy `Invitation` columns
+
+§8a.7 names one `Invitation(token=…)` in `tests/test_security/test_org_role_authority.py:447`.
+Measured over `datanika/` — **production reads or writes these columns at eight sites:**
+
+| file:line | what it does | breaks at |
+|---|---|---|
+| `services/email_routes.py:77` | the site above | **N+1** |
+| `services/invitation_service.py:145` | legacy fallback, already marked `(removed in N+1)` | **N+1** |
+| `services/invitation_service.py:83` | duplicate-pending-invitation dedupe, `Invitation.email == email` | N+2 |
+| `services/invitation_service.py:96` | writes `email=` (dual-write) | N+2 |
+| `services/email_routes.py:84` | `quote(invitation.email)` for the signup redirect | N+2 |
+| `ui/pages/settings.py:771` · `:826` | renders the invitee address in the pending table | N+2 |
+| `ui/state/settings_state.py:175` | passes `inv.email` into the resend path | N+2 |
+| `services/user_service.py:1220-1221` | erasure NULLs both — **keep**, this is step 1a's shape | N+2 |
+
+⚠️ **§8a.7's "N+2 fails loudly, it is work not risk" holds for the *constructions* and not for the
+*reads*.** A dropped column read as `invitation.email` raises `AttributeError` **at request time**,
+not at import — loud in production rather than in CI. Six of these need a sidecar read scheduled
+before N+2.
+
+#### What this adds to #939
+
+**N+1 gains an item: route `email_routes.accept_invite`'s user lookup through
+`UserService.get_user_by_email`.** One line, fixes all three defects at once, and removes a duplicate
+of the chokepoint — which is what `create_invitation:63-66` says the chokepoint exists for. It needs
+a behavioural test, since there is none today.
+
+⚠️ It is **not** a deletion, and that does not conflict with §8a.6. *"N+1's diff is only deletions"*
+is a statement about **fixtures** — Step A exists so that no fixture edit appears in the N+1 diff. A
+behaviour change N+1 genuinely requires belongs in N+1.
+
+#### 🔑 The rule this earns, and it generalises past this spec
+
+**A grep over annotations enumerates the places someone thought to annotate.** Criterion 1 is a
+completeness check on the *marked* set and nothing more — §8a.8 already says it proves the deletions
+and not the consequences; this says it does not even prove the deletions are *all* of them.
+
+**To find the unmarked set, sweep for the thing being retired, not for the note about it:**
+
+```bash
+git grep -n "User\.email\|Invitation\.email\|\.oauth_provider_id" -- datanika/
+```
+
+Every hit that is not the sidecar write is a candidate. That sweep is what found this one after the
+marker grep, the eight-item list and an 18-failure test run had all missed it — three independent
+instruments agreeing, and all three blind to the same site.
 
 ## 9. Filed separately by this spec
 

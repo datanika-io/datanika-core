@@ -169,3 +169,150 @@ From the user's side. Each must be demonstrated in a running app, not asserted f
 [core#618]: https://github.com/datanika-io/datanika-core/issues/618
 [core#623]: https://github.com/datanika-io/datanika-core/issues/623
 [core#418]: https://github.com/datanika-io/datanika-core/issues/418
+
+---
+
+## 8. Amendment, 2026-09-03 — four corrections, measured against `origin/dev` `1b1c134`
+
+§1–§7 were written on 2026-08-30 and re-verified on 2026-09-02. Everything structural in them still
+holds: `/signup` has **zero** references to `oauth`/`google`/`github`/`_social_login_button`,
+`_social_login_button` is still private to `login.py:18` (used at `:268` and `:269`), the three
+`/signup` inputs still carry no `autocomplete`, and the `oauth_state` cookie is still HMAC-signed,
+`httponly`, `samesite=lax`, `max_age=600`.
+
+**What does not hold is §2's picture of the email path**, and since §2 asks Engineering to make the
+social path match it, that matters more than any of the above. Four corrections. The first two change
+what "done" means; the third would have cost an implementation attempt; the fourth is a hazard this
+work creates rather than inherits.
+
+### 8a. 🚨 The email path also creates a spurious personal org — the orphan is not a social-path defect
+
+§2's table says the email path *"invitation accepted, switched into the inviting org"* and blames the
+social path for *"a brand-new personal org … it leaves an orphan org behind"*. Measured by AST over
+`AuthState.signup`:
+
+```
+create_org calls in signup()      : 1
+guards enclosing create_org       : NONE -- unconditional
+create_org at line 525, accept_invitation at line 567  -> org created FIRST
+```
+
+So **`svc.create_org(...)` runs for every signup, invited or not**, and `accept_invitation` runs 42
+lines later and *appends* the invited org (`self.user_orgs.append(invited)`) before switching to it.
+An invited user who signs up by email today ends in **two** orgs: `{full_name}'s Org`, which they own
+and never asked for, and the team they were actually invited to.
+
+**Consequence for this spec: "make the social path match the email path" is the wrong contract.**
+Copying it reproduces the spurious org into the funnel this work exists to make the primary one. The
+orphan org is a defect of *both* paths and has to be fixed in the shared behaviour, not mirrored.
+
+### 8b. 🚨 §2's own constraint 2 is already violated — by the reference implementation
+
+Constraint 2 reads: *"If the token is expired or already used, the user is still signed in … but must
+land with a clear message, not silently in a fresh personal org."* Measured on the email path:
+
+```
+invite except handler:
+  statements                     : 1
+  assigns anything user-visible  : False
+  body                           : logger.exception('Invitation acceptance failed during signup and was dropped: ...')
+```
+
+One statement, a log line, nothing reaches the user. The handler's own comment says *"this one is
+user-visible when it fails (they sign up and are not in the org they were invited to), so it is
+exactly the thing support needs a log line for"* — support gets the log; **the user gets nothing**.
+Landing silently in a fresh personal org is not the hazard this spec is guarding against on the social
+path. It is what ships today on the email one. Filed separately so it is not gated behind this work.
+
+⚠️ **And there is no test.** `grep -rln invite_token tests/` returns exactly one file,
+`test_services/test_email_service.py`, which covers the invitation *email*. **The invited-signup flow
+has no coverage at all**, on either path. So §5's criteria 4 and 5 are not "extend the existing
+tests" — they are the first tests this flow has ever had, and nothing currently protects the email
+path from regressing either.
+
+### 8c. 🚨 `/auth/complete` cannot read the cookie — the third mechanism bullet is not implementable as written
+
+§2's Mechanism says *"`/auth/complete` applies it through the **same** helpers the email path uses"*.
+That is right about **policy** and wrong about **transport**, in two independent ways:
+
+1. **`/auth/complete` is a Reflex frontend page**, not a backend route — `datanika.py:236`,
+   `route="/auth/complete"`. Its state reads `self.router.page.params`, i.e. the query string. The
+   cookie is `httponly`, so the browser never exposes it to JS and a client-side `rx.Cookie` var
+   cannot see it.
+2. **The cookie is already deleted by then.** `oauth_callback` calls
+   `response.delete_cookie(_OAUTH_STATE_COOKIE)` on the *same* redirect that sends the browser to
+   `/auth/complete`. It is gone before the page loads.
+
+Either one is decisive; together they make the reading unavailable rather than merely awkward. **The
+second Mechanism bullet is the whole transport**: the callback — a backend Starlette route, which
+*can* read the cookie — verifies, then puts the surviving context into the `/auth/complete?…` query
+string. `/auth/complete` then applies it from **its query string**, through the same helpers.
+
+Corrected bullet 3, replacing the original:
+
+> `/auth/complete` reads the context **from its own query string** and applies it through the same
+> helpers the email path uses — `_safe_next_path()` for `next`, the existing slug pattern for
+> `template`, `accept_invitation` for `invite_token`. It never reads the `oauth_state` cookie: that
+> cookie is `httponly` and is deleted by the callback that redirects here.
+
+⚠️ Note what this does **not** relax. Constraint 1 becomes *more* load-bearing, not less: the context
+arrives at `/auth/complete` as ordinary query parameters, so `_safe_next_path()` on the way out is the
+only thing standing between a crafted `?next=` and an open redirect. The signed cookie protects the
+value between the two backend hops; it says nothing once the value is back in a URL.
+
+### 8d. ⚠️ One cookie name, two tabs — a hazard this work creates
+
+`_OAUTH_STATE_COOKIE` is a single fixed name, so two concurrent OAuth flows in one browser overwrite
+each other's state. The first callback's `state` parameter then fails to match the surviving cookie
+and is rejected.
+
+Today that is a rare annoyance, because only `/login` offers social auth and the two flows would be
+interchangeable anyway. **This work changes both halves of that.** Once `/signup` carries context, two
+tabs is the *expected* shape of the traffic — an invitation email open in one tab, a `/templates/<slug>`
+page in another — and the flows are no longer interchangeable, because each carries a different
+invite or template.
+
+🚨 **Named because the tempting repair is the dangerous one.** Loosening the state comparison to make
+the mismatch go away would let the first tab's callback complete against the second tab's cookie — and
+therefore against the second tab's **invite context**, joining a user to an org they were not invited
+to. The state check is an auth boundary; it does not become a UX nuisance because we added a payload
+to it. Acceptable resolutions: key the cookie per-state (`oauth_state_<state>`), or keep the single
+cookie and make the failure message accurate about what happened. **Not** a weaker comparison.
+
+### 8e. Decision — an invited signup does not get a personal org
+
+Product's call, and it applies to **both** paths, closing 8a and 8b together:
+
+1. **Try the invitation first.** If `invite_token` is present and valid, the user joins the inviting
+   org and **no personal org is created**. `create_org` becomes conditional on there being no valid
+   invitation — today it has no enclosing branch at all.
+2. **The personal org is the fallback, not the default.** No token, or a token that is expired,
+   already used, or for a different address → create the personal org, exactly as now.
+3. **The fallback is announced.** When a token was supplied and could not be applied, the user lands
+   signed in, in their personal org, **and sees a message saying the invitation could not be applied
+   and that they can ask for a new one**. That is §2 constraint 2, made true for the first time.
+4. **Never zero orgs.** Every user finishes signup as a member of at least one org. Ordering the
+   invitation first must not create a window where a failure leaves them with none — attempt the
+   invitation, and create the personal org if and only if that attempt did not produce a membership.
+
+Rationale for 1, since it is the change of behaviour: the invitee never asked for a second workspace.
+It clutters the org switcher, it makes `current_org` ambiguous immediately after signup, and with
+quota enforcement live since 2026-08-31 it is a second org carrying its own Free-plan limits. The
+argument for keeping it — *"a user should always own something"* — is answered by 2 and 4.
+
+### 8f. Additions to §5's acceptance criteria
+
+Numbered from 9 so §5's eight stay unambiguous.
+
+9.  **An invited signup produces exactly one membership and exactly one org.** Assert the *count*, on
+    both the email and the social path. *(Criterion 4 as written — "the invitee appears in that org's
+    Members list" — is satisfied by today's two-org behaviour, so it cannot catch 8a.)*
+10. **An expired or already-used token produces a visible message**, on both paths. Exercise the
+    failing branch; a test that only walks the happy path passes on the current silent-swallow.
+11. **The context reaches `/auth/complete` in its query string**, and the `oauth_state` cookie is
+    absent by the time that page loads. Assert the absence — it is what stops someone reintroducing
+    the cookie read that 8c rules out.
+12. **Two overlapping OAuth flows fail closed and say so.** Start a second flow before completing the
+    first; the first must be rejected, and must not complete against the second's context. 🚨 Assert
+    that it did **not** join the org named by the second flow's token — not merely that an error
+    appeared.

@@ -244,6 +244,220 @@ half-implementation fails.
 missing *confirmation dialog* on a destructive control, which is that issue's contract, not this one's.
 Reported there.
 
+---
+
+## 7. Addendum, 2026-09-03 — the five handlers Engineering handed back
+
+Engineering shipped D1, D2 and D6 in [PR #960]. Building D2's classifier by **behaviour** rather than
+by name — the thing §2a insisted on — selected **40** committing handlers where §2 had measured ~20.
+Twenty of the extra are mutations that legitimately do not toast, and the ratchet records the reason
+beside each. **Five were handed back undecided**, correctly: which of them owes the user an
+acknowledgement is a product question, and a guard cannot answer it.
+
+This section decides all five. It is written as a decision, not a proposal: the ratchet lists in
+`tests/test_ui/test_mutations_acknowledge.py` are the executable form of it, and each entry there
+points here.
+
+### D7 · The decision, per handler
+
+| handler | dialog | toast | why |
+|---|---|---|---|
+| `SettingsState.leave_org` | **yes** | **no** | the outcome is a navigation; see D7a |
+| `SettingsState.transfer_ownership` | **yes** | **yes** | irreversible *by the actor*; see D7b |
+| `SettingsState.cancel_invitation` | **yes** | **yes** | [core#851]'s eleventh site; see D7c |
+| `SettingsState.change_member_role` | **no** | **yes** | see D7d |
+| `SettingsState.update_org` | **no** | **yes** | see D7e |
+
+Two of the five get **no dialog**, and that is a decision rather than an omission. §D5 of this spec
+and [core#851]'s own argument for excluding `remove_model` are the same argument: a confirmation on
+something that does not warrant one teaches the user to click through the ones that do. A dialog is
+spent capital.
+
+#### D7a · `leave_org` — the dialog **is** the acknowledgement, and a toast is not available
+
+This is [core#851]'s **twelfth** site and the highest-consequence one-click control in the product.
+Three properties separate it from every other entry on that list:
+
+- It is deliberately **not role-gated** (`SPEC_ORG_ROLES` R6 — leaving is the one action every member
+  has), so *every* member sees it, including the ones with no way back.
+- Every other entry deletes a **row**. This one removes the actor's access to all of them. The
+  membership is soft-deleted, so an operator can restore it — but the user cannot, cannot see that it
+  is restorable, and has been ejected from the surface that would have said so.
+- Its terminal statement is `auth_state.switch_org(...)` **or** `auth_state.logout()`, and the button
+  gives the user no way to tell which they are about to get.
+
+**No toast, for two independent reasons — and the first is mechanical.** `leave_org` ends in
+`return <event>`. Adding `yield await self._saved_toast(...)` makes it an async generator, and
+`return` *with a value* inside an async generator is a **`SyntaxError`**, not a runtime subtlety:
+
+```
+async gen + `return value`        -> SyntaxError: 'return' with value in async generator
+plain coroutine + `return value`  -> compiles          (control)
+async gen + `yield event`         -> compiles          (the available route)
+```
+
+The available route — yielding both terminal events instead of returning them — works, and is still
+wrong: the event is a **navigation**. A toast racing a logout redirect renders on `/login` if it
+renders at all. **The dialog before the act is the acknowledgement; the destination is the outcome.**
+
+So `leave_org` stays in `ACKNOWLEDGED_ELSEWHERE`, but with an argument in place of the placeholder
+comment that said it was "arguably a defect".
+
+**What the dialog must contain**, and this is the product half rather than the widget half:
+
+1. The **organization it is about to leave, by name**. The button sits in a members table where the
+   only other red control confirms by id *and* email; leaving names nothing at all today.
+2. 🚨 **Which of the two outcomes will happen.** *"You'll be signed out"* and *"You'll be switched to
+   `<other org>`"* are materially different events and the control is identical for both. A dialog
+   that says only "are you sure?" leaves the more serious outcome undisclosed, which is the failure
+   this whole class is about.
+3. That an admin can re-invite them — the honest limit of the undo, stated the way
+   `settings.remove_member_reversible` states it for the mirror action.
+
+#### D7b · `transfer_ownership` — irreversible by the person clicking it
+
+Owner-only, the **only** route to `MemberRole.OWNER`, and it demotes the actor in the same
+transaction (`_load_current_role` re-reads the role immediately afterwards). Only the new owner can
+transfer it back, so the undo lives in somebody else's hands — `leave_org`'s shape applied to control
+rather than to access.
+
+Today it is a select plus a button, with no confirmation and no acknowledgement. The failure case is
+already visible (`error_message` renders); **success is silent**, so the two most likely readings of
+a successful transfer are "nothing happened" and "it failed quietly".
+
+`settings.transfer_ownership_help` already states the consequence honestly. That is help text on a
+card, read before the select is touched — not a confirmation at the moment of the act. Both.
+
+#### D7c · `cancel_invitation` — the lightest dialog of the three, and it still earns one
+
+Persists, writes an audit row with `action="delete"`, commits. [core#851] found it as the eleventh
+site and rated it *"low, and lower than the ten already listed"* — which is right, and is the reason
+its dialog is a plain confirm rather than a warning: re-inviting fully restores the state and nobody
+loses access they already had.
+
+It earns one anyway because it sits **between two controls on the same card that both confirm**
+(`_remove_member_dialog` above it, `_delete_channel_dialog` below). On a page that has established
+the pattern, the absence of a dialog reads as a statement that this action is safe.
+
+The toast is the load-bearing half here: the only evidence a cancellation happened is a row leaving a
+table — and [core#872] is the measurement that a table in this product can show a stale row set right
+after your own successful mutation.
+
+#### D7d · `change_member_role` — a toast, and deliberately no dialog
+
+**No dialog.** The control is an `rx.select`. A confirmation on every option change fires on
+`viewer → editor` exactly as it fires on `editor → admin`, and a dialog that fires on harmless
+changes is how a user learns to dismiss dialogs unread. That is [core#851]'s `remove_model` argument,
+and it applies with more force here because the control is not destructive in most of its range.
+
+**A toast, without qualification.** This handler changes *another person's* privileges and says
+nothing. Promoting to admin hands over every destructive control [core#851] enumerates; demoting
+takes them away mid-session. The actor currently gets no confirmation that the grant landed, and the
+member it affects gets none either — the second half is out of scope here and belongs with
+notification work, but the first half is one line.
+
+#### D7e · `update_org` — a toast, and deliberately no dialog
+
+**No dialog.** There is an explicit Save button; the click is the declared intent, and a settings
+form is the canonical place where a confirmation buys nothing.
+
+**A toast**, because success and failure are pixel-identical. The handler writes
+`self.org_name = self.edit_org_name` and returns; the form goes on displaying exactly what the user
+typed whether the write landed or not. It also carries `default_dbt_schema`, which decides where
+future transformations write — a consequential change currently made with no receipt.
+
+### D8 · Closing the census, and four ways it was blind
+
+Deciding D7a exposes that [core#851]'s guard could not see the control it was deciding about. Both
+gaps that issue names are real, and measuring turned up two more. All four are in
+`tests/test_ui/test_delete_confirmation_and_blocked_uploads.py`.
+
+| # | gap | consequence |
+|---|---|---|
+| 1 | the predicate is a list of **spellings** (`delete_ remove_ revoke_ purge_`) | misses `cancel_invitation` and `leave_org` |
+| 2 | the matcher only walks `ast.Call` | misses **every** handler taking no arguments — a Reflex handler with no row id is referenced without parentheses, so there is no `Call` node |
+| 3 | a confirmation is recognised **only** as `alert_dialog.action` | `delete_account` confirms through a form's `on_submit` inside `alert_dialog.content` |
+| 4 | 🚨 the role check is a **substring over the handler source**, which includes its docstring | see below |
+
+**Gap 2 is the one that matters most**, because it is not fixed by any amount of predicate work and
+because of what it was hiding. Measured on `origin/dev`: the sweep sees **43** `ast.Call`-shaped
+handler references and **205** `ast.Attribute`-shaped ones. The invisible set includes
+`AccountState.delete_account` — account erasure, no grace period, the most destructive control in the
+product. It is correctly implemented today, behind a typed confirmation. **The guard has been green
+about it without being able to see it**, so an unwiring of that dialog tomorrow would not be caught.
+
+**Gap 4 is the one worth carrying beyond this file.** `test_every_persisted_destructive_handler_checks_a_role`
+tests `"_check_role" not in source`, where `source` is `ast.get_source_segment` of the handler — which
+includes the docstring. `leave_org`'s docstring **explains why it deliberately has no role check**,
+and that explanation contains the literal `_check_role`. Measured, with `remove_member` as the
+positive control:
+
+| handler | substring in source | in docstring only | AST: really calls it |
+|---|---|---|---|
+| `SettingsState.leave_org` | ✅ | ✅ | ❌ |
+| `SettingsState.remove_member` | ✅ | ❌ | ✅ |
+| `AccountState.delete_account` | ❌ | ❌ | ❌ |
+
+So the instant gap 2 is closed and `leave_org` becomes visible, the guard reports it as role-checked
+**because of a sentence saying it is not.** 🔑 *A substring check over source is satisfied by prose
+about the code, and the prose most likely to contain the token is the comment explaining why the
+token is absent.*
+
+`leave_org` and `delete_account` both have a real refusal — `_require_live_session` plus a
+service-level invariant (the owner-count check; the sole-owner refusal) — and neither is a role
+check. That is declared, per handler, and checked by AST rather than by substring.
+
+### D9 · Copy — 16 further keys, all nine locales
+
+| key | English |
+|---|---|
+| `settings.org_saved_toast` | Organization settings saved |
+| `settings.role_changed_toast` | Role updated |
+| `settings.ownership_transferred_toast` | Ownership transferred |
+| `settings.invitation_cancelled_toast` | Invitation cancelled |
+| `settings.leave_org_title` | Leave this organization? |
+| `settings.leave_org_body` | You lose access to everything in this organization immediately — connections, pipelines, uploads and their history. |
+| `settings.leave_org_signs_you_out` | This is your only organization, so you will be signed out. |
+| `settings.leave_org_switches_you` | You will be switched to your other organization. |
+| `settings.leave_org_reversible` | An admin can invite you back, but you cannot undo this yourself. |
+| `settings.leave_org_confirm` | Yes, leave |
+| `settings.transfer_ownership_title` | Transfer ownership? |
+| `settings.transfer_ownership_body` | They become the owner and you become an admin, immediately. |
+| `settings.transfer_ownership_irreversible` | Only the new owner can transfer it back. |
+| `settings.transfer_ownership_confirm` | Yes, transfer ownership |
+| `settings.cancel_invitation_title` | Cancel this invitation? |
+| `settings.cancel_invitation_reversible` | The link stops working. You can send a new invitation at any time. |
+
+⚠️ **`settings.leave_org_signs_you_out` and `settings.leave_org_switches_you` are mutually exclusive
+and exactly one must render.** Rendering both, or neither, is the defect D7a names — a dialog that
+does not disclose which outcome it is about to produce.
+
+### D10 · Acceptance criteria for this addendum
+
+Numbered from 10 so §5's nine are unambiguous.
+
+10. **Leaving names the organization and states the outcome.** Open the dialog as a member of two
+    orgs and as a member of one; the two renders differ, and each says which thing will happen.
+    *(A dialog that renders the same text in both cases fails, however correct its buttons are.)*
+11. **All four new toasts fire on success and none fires on failure.** Exercise each failing branch —
+    a role refusal for `change_member_role`, a duplicate slug for `update_org`, a successor who is
+    not a member for `transfer_ownership` — and assert the error is visible and **no** success toast
+    was yielded. *(§5 criterion 9, applied to the four handlers this addendum adds.)*
+12. 🚨 **The widened census sees `leave_org` and `delete_account`.** Assert both by name, not by a
+    count. *(A count rises for the wrong reason; these two are the ones gap 2 was hiding, and
+    `delete_account` is the control whose correctness nobody could previously check.)*
+13. **The role assertion is shown red by deleting a real `_check_role` call**, and green is not
+    obtainable by writing `_check_role` in a comment. *(Both directions. The second is the actual
+    defect — mutate a real handler to mention it only in prose and confirm the guard still fails.)*
+14. **Each of the three new dialogs is shown to mutate nothing on the trigger** by rewiring its
+    handler onto `alert_dialog.trigger` and confirming the guard names that site.
+15. **Every disagreement between the verb census and the audit census is declared**, and adding an
+    undeclared one fails. *(A silent union hides class B — a handler that persists and writes no
+    audit row is a finding, and that is how [core#934] was found.)*
+
+[PR #960]: https://github.com/datanika-io/datanika-core/pull/960
+[core#934]: https://github.com/datanika-io/datanika-core/issues/934
+
 [core#804]: https://github.com/datanika-io/datanika-core/issues/804
 [core#851]: https://github.com/datanika-io/datanika-core/issues/851
 [core#869]: https://github.com/datanika-io/datanika-core/issues/869

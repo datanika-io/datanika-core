@@ -11,11 +11,34 @@ from datanika.config import settings
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     ConnectionService,
+    ConnectionVerdict,
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 logger = logging.getLogger(__name__)
+
+#: ``ConnectionVerdict.reason`` → i18n key (SPEC_LOCAL_FILE_CONNECTIONS D6).
+#:
+#: 🚨 **The keys live here, in the UI, and that is deliberate twice over.**
+#:
+#: 1. ``BaseState._translated``'s own rule: *"Services raise plain English —
+#:    they have no locale and no business having one."* A service returning an
+#:    i18n key puts a presentation concern one layer down, where the API and the
+#:    Celery tasks that also call ``test_connection`` have no use for it.
+#: 2. ``tests/test_i18n``'s orphan scanner walks ``datanika/ui`` **only**. A key
+#:    whose sole literal sits in ``services/`` reads as an orphan, and the
+#:    documented remedy for a false orphan is to *delete the key* — which
+#:    silently drops nine translations with every check green (core#872). Keeping
+#:    the literals in the scanned tree keeps that check honest in both
+#:    directions rather than widening what it can see.
+_VERDICT_KEYS = {
+    "file_found": "connections.test_file_found",
+    "file_missing": "connections.test_file_missing",
+    "file_unopenable": "connections.test_file_unopenable",
+    "file_in_memory": "connections.test_file_in_memory",
+    "driver_unavailable": "connections.test_driver_unavailable",
+}
 
 # SaaS source types that use endpoint/resource selection (not SQL mode).
 #
@@ -1430,6 +1453,33 @@ class ConnectionState(BaseState):
         # six more handlers needed the same three lines.
         yield await self._deleted_toast("connections.deleted_toast", "Connection retired")
 
+    async def _verdict_message(self, verdict: ConnectionVerdict) -> str:
+        """Translate a verdict, falling back to the service's English (D6).
+
+        `test_message` is rendered raw from the service today and `en.json`
+        holds `connections.test` — the *button label* — and not one verdict
+        string, so every user in all nine locales reads these in English. New
+        sentences arrive with keys; a branch with no `reason` falls back to the
+        service's English and keeps exactly today's behaviour, so this is
+        additive rather than a rewrite of every connector's message.
+
+        ⚠️ **The substitution is server-side.** `_translated` reads the reactive
+        `I18nState` dict and returns a plain `str`, so `{arg}` is filled in here
+        — a Reflex `Var` cannot be `.format()`ted in the browser, and a
+        placeholder that survives to the DOM is worse than English.
+
+        ⚠️ **An unknown `reason` falls back rather than raising.** A service
+        that grows a reason before the UI maps it then ships English, which is
+        the same failure the mapping exists to prevent — so
+        `test_local_file_connections.py` asserts the two sets agree, and this
+        branch only decides what happens to a user while that is being fixed.
+        """
+        key = _VERDICT_KEYS.get(verdict.reason)
+        if not key:
+            return verdict.message
+        text = await self._translated(key, verdict.message)
+        return text.replace("{arg}", verdict.arg) if verdict.arg else text
+
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""
         validation_error = self._validate_form()
@@ -1454,16 +1504,20 @@ class ConnectionState(BaseState):
         # Converting an unknown failure into a red verdict is strictly safer
         # than letting it through.
         try:
-            ok, msg = ConnectionService.test_connection(config, ConnectionType(self.form_type))
+            verdict = ConnectionService.test_connection_verdict(
+                config, ConnectionType(self.form_type)
+            )
         except Exception:
             logger.exception("Connection test crashed for type %s", self.form_type)
-            ok, msg = False, "The connection test failed unexpectedly — please report this"
+            verdict = ConnectionVerdict(
+                False, "The connection test failed unexpectedly — please report this"
+            )
         # core#821: `ok` is now True / False / None. A crash above yields
         # False, so an unknown failure still reads as a failure and never as
         # the neutral verdict.
-        self.test_success = ok is True
-        self.test_untested = ok is None
-        self.test_message = msg
+        self.test_success = verdict.ok is True
+        self.test_untested = verdict.ok is None
+        self.test_message = await self._verdict_message(verdict)
 
     async def test_saved_connection(self, conn_id: int):
         """Test connectivity for an already-saved connection."""

@@ -6,6 +6,8 @@ import logging
 import re
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, inspect, select, text
@@ -20,6 +22,40 @@ from datanika.services.naming import validate_name
 logger = logging.getLogger(__name__)
 
 validate_connection_name = partial(validate_name, entity_label="Connection")
+
+
+class ConnectionVerdict(NamedTuple):
+    """What Test Connection concluded, in a form the UI can translate.
+
+    ``ok`` keeps the three-valued shape ``_test_saas_source`` established and
+    ``ConnectionState`` already renders: ``True`` green, ``False`` red, ``None``
+    **neutral — never green**. Its docstring states the rule this type carries
+    to every branch: *failure and "not tested" are different answers and neither
+    may be rendered as the other.*
+
+    ``message`` is English, for the API, the logs and any caller with no locale.
+
+    ``reason`` is a machine-readable slug, **not an i18n key**, and the
+    distinction is the layering rule this codebase already states —
+    ``BaseState._translated``: *"Services raise plain English — they have no
+    locale and no business having one."* The UI owns the reason → key mapping
+    (`connection_state._VERDICT_KEYS`), which also keeps the key literals inside
+    the tree `tests/test_i18n` scans, so a key with no reader is still caught.
+
+    ``arg`` is the single interpolation value — a path, or a connector name. One
+    scalar rather than a dict deliberately: a bare ``dict`` on a public Reflex
+    state var is the shape core#972 was.
+
+    A branch with no ``reason`` renders ``message`` as-is, which is exactly
+    today's behaviour, so this is additive rather than a rewrite of every
+    connector's verdict.
+    """
+
+    ok: bool | None
+    message: str
+    reason: str = ""
+    arg: str = ""
+
 
 # Connector types that exist but are no longer offered.
 #
@@ -203,6 +239,62 @@ _FILE_TYPES = {
     ConnectionType.JSON,
     ConnectionType.PARQUET,
 }
+
+#: SQL connection types whose "database" is a **local file**, not a network
+#: service (core#978, core#979 / SPEC_LOCAL_FILE_CONNECTIONS).
+#:
+#: Derived from ``_build_sa_url``: exactly the two branches that read
+#: ``config["path"]`` and emit ``<dialect>:///<path>`` with no host, no port and
+#: no user. Everything that follows — no network timeout, a read-only open, and
+#: a vocabulary with no *credentials* or *network* in it — follows from that one
+#: property rather than from a list of connector names.
+_LOCAL_FILE_DB_TYPES = {ConnectionType.SQLITE, ConnectionType.DUCKDB}
+
+#: Values of ``path`` that name no file at all. An in-memory database is created
+#: fresh on every connect by definition, so "does it already exist?" is not a
+#: question about it and read-only is not a mode it has — measured: duckdb
+#: refuses ``:memory:`` with ``read_only=True`` outright.
+_IN_MEMORY_PATHS = {":memory:", ""}
+
+#: The kwarg each DBAPI accepts for a **bounded connect**, where the default is
+#: ``connect_timeout``.
+#:
+#: 🚨 This is a *network* parameter and it is derived from the dialect, not
+#: accumulated as carve-outs (SPEC_LOCAL_FILE_CONNECTIONS D3). It was a chain of
+#: ``elif``s with two exceptions already in it, and duckdb was the missing third
+#: case: ``duckdb.connect()`` accepts only ``(database, read_only, config)`` and
+#: raises ``TypeError: connect(): incompatible function arguments`` on
+#: ``connect_timeout``. The generic ``except`` caught it and told the user to
+#: *check your credentials and network settings* — for a local file, on the one
+#: onboarding path we advertise as needing neither.
+_CONNECT_TIMEOUT_KWARG = {
+    ConnectionType.MSSQL: "login_timeout",  # pymssql
+    ConnectionType.ORACLE: "tcp_connect_timeout",  # oracledb
+}
+
+
+def _connect_args(connection_type: ConnectionType, config: dict) -> dict:
+    """Connect-args for one dialect, derived from what the dialect *is*.
+
+    Two rules, and each answers a different question:
+
+    * **Is there a network to time out?** A local-file database opens a file
+      descriptor, so a connect timeout is meaningless and — for duckdb —
+      fatal.
+    * **Is this a read?** Test Connection must be incapable of writing (D1), so
+      a local-file open is read-only wherever read-only is a mode that exists.
+    """
+    if connection_type in _LOCAL_FILE_DB_TYPES:
+        path = str(config.get("path") or config.get("database") or ":memory:")
+        if path in _IN_MEMORY_PATHS:
+            return {}
+        if connection_type == ConnectionType.DUCKDB:
+            return {"read_only": True}
+        # sqlite carries read-only in the URL, not in connect_args — see
+        # ``_build_sa_url``.
+        return {}
+    return {_CONNECT_TIMEOUT_KWARG.get(connection_type, "connect_timeout"): 5}
+
 
 # Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
 _NON_DB_TYPES = {
@@ -584,8 +676,14 @@ def describe_connection_failure(exc: Exception, config: dict, fallback: str) -> 
     return f"{fallback}: {reason}" if reason else fallback
 
 
-def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
-    """Build a SQLAlchemy connection URL from config dict and connection type."""
+def _build_sa_url(config: dict, connection_type: ConnectionType, *, read_only: bool = False) -> str:
+    """Build a SQLAlchemy connection URL from config dict and connection type.
+
+    ``read_only`` is honoured only where the dialect carries the mode in the URL
+    rather than in connect-args — sqlite today. It defaults to ``False`` so
+    every existing caller (the loaders, ``execute_query``, the API) keeps a
+    writable URL; **only Test Connection asks for a read** (D1).
+    """
     if connection_type in (ConnectionType.POSTGRES, ConnectionType.REDSHIFT):
         driver = "postgresql+psycopg2"
         port = config.get("port", 5432 if connection_type == ConnectionType.POSTGRES else 5439)
@@ -616,6 +714,14 @@ def _build_sa_url(config: dict, connection_type: ConnectionType) -> str:
 
     if connection_type == ConnectionType.SQLITE:
         path = config.get("path", ":memory:")
+        if read_only and path not in _IN_MEMORY_PATHS:
+            # SQLite has no read-only *connect arg*; the mode travels in a URI
+            # filename, which needs `uri=true` for the driver to parse it at
+            # all. Measured: with this, a path that does not exist fails and
+            # **no file is created**; without it, SQLite's open-or-create
+            # semantics manufacture the very database the check then reports
+            # finding (core#979).
+            return f"sqlite:///file:{path}?mode=ro&uri=true"
         return f"sqlite:///{path}"
 
     if connection_type == ConnectionType.SNOWFLAKE:
@@ -956,8 +1062,15 @@ class ConnectionService:
         CSV guide warned *"a wrong path looks exactly like a right one here"*;
         that was a description of a gap, not a fact of life.
 
-        Uses the same lister the loader uses, so a connection that tests green
-        and a run that finds files agree by construction.
+        ⚠️ **This used to claim the check and the loader "agree by construction"
+        because they use the same lister. That is true of the glob semantics and
+        false of the filesystem** (core#979 AC5, SPEC_LOCAL_FILE_CONNECTIONS D7).
+        Test Connection runs in the **web** process; the extract runs in
+        **celery**; the two share exactly two named volumes. For a *local*
+        ``bucket_url`` the guarantee does not hold — same code, different
+        container — and it is the kind of claim someone relies on while deciding
+        not to check something. It holds for ``s3://`` and other remote schemes,
+        where the URL means the same thing in both containers.
         """
         from dlt.sources.filesystem import filesystem
 
@@ -986,7 +1099,16 @@ class ConnectionService:
             first = next(iter(filesystem(**kwargs)), None)
         except Exception as exc:
             logger.warning("File-source connection test failed for %s: %s", location, exc)
-            return False, f"Could not read {location} — check the path, permissions and credentials"
+            # D2 / AC5: a **local** file source has no credentials. Telling its
+            # user to check some is the same misdirection core#978 found on
+            # duckdb — advice for a thing that does not exist, on the path we
+            # advertise as needing nothing. `s3` keeps the credentials clause
+            # because for `s3` it is the likeliest cause.
+            if connection_type == ConnectionType.S3:
+                return False, (
+                    f"Could not read {location} — check the bucket URL, permissions and credentials"
+                )
+            return False, f"Could not read {location} — check the path and its permissions"
 
         if first is None:
             return False, describe_empty_file_match(location, file_glob)
@@ -1069,33 +1191,162 @@ class ConnectionService:
         return True, "Credentials verified"
 
     @staticmethod
-    def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:
-        """Test real database connectivity via SELECT 1. Returns (success, message)."""
+    def _test_local_file_db(
+        config: dict, connection_type: ConnectionType
+    ) -> ConnectionVerdict | None:
+        """Answer for a local-file database, or ``None`` to fall through.
+
+        Five outcomes, five sentences (D2), because they call for five different
+        user actions — and none of them mentions credentials or a network, which
+        a file on a disk does not have.
+
+        🚨 **Two independent mechanisms, doing two different jobs.** Measured:
+
+        * The **existence check** is what produces the right *sentence*. SQLite
+          returns the identical ``unable to open database file`` for "there is
+          nothing here" and "the directory is not readable", so the driver
+          cannot distinguish them and the check has to.
+        * The **read-only open** is what makes the check honest. Without it
+          SQLite's open-or-create semantics create the database the check then
+          reports finding, so the user's evidence that the path was right is the
+          artifact the check just fabricated (core#979).
+
+        Neither substitutes for the other: read-only alone gives the right
+        boolean with the wrong message; the existence check alone still writes.
+        """
+        if connection_type not in _LOCAL_FILE_DB_TYPES:
+            return None
+
+        path = str(config.get("path") or config.get("database") or ":memory:")
+        in_memory = path in _IN_MEMORY_PATHS
+
+        if not in_memory and not Path(path).exists():
+            return ConnectionVerdict(
+                False,
+                f"No database at '{path}'. Check the path, or create the file first.",
+                reason="file_missing",
+                arg=path,
+            )
+
+        try:
+            url = _build_sa_url(config, connection_type, read_only=not in_memory)
+        except ValueError as exc:
+            return ConnectionVerdict(False, str(exc))
+
+        # 🚨 **The in-memory case still connects, and that is the point.**
+        # An earlier draft returned ``True`` for ``:memory:`` without opening
+        # anything — a control that can only give one answer, which is the exact
+        # shape SPEC_LOCAL_FILE_CONNECTIONS exists to stop. Opening it is a real
+        # question with a real failure: the dialect has to resolve and the driver
+        # has to be installed, and ``duckdb_engine`` missing from the image is a
+        # thing that has happened here before (core#602). An existing test caught
+        # the short-circuit by asserting ``create_engine`` was called at all.
+        engine = None
+        try:
+            engine = create_engine(url, connect_args=_connect_args(connection_type, config))
+            with engine.connect() as conn:
+                # 🚨 **Not ``SELECT 1``.** Measured: SQLite opens *any* readable
+                # file and answers ``SELECT 1`` from the driver without ever
+                # reading a page, so a text file renamed ``.sqlite`` tested
+                # green. The header is only validated when a page is actually
+                # read — so the probe has to read the catalog, which is also the
+                # question the user is asking: *is there a database here?*
+                # ``inspect`` is dialect-agnostic and covers duckdb the same way.
+                inspect(conn).get_table_names()
+            if in_memory:
+                # Not "Connected successfully": an in-memory database keeps
+                # nothing, and a green tick with no caveat invites the reader to
+                # believe their data is somewhere.
+                return ConnectionVerdict(
+                    True,
+                    "Connected — in-memory database. Nothing is written to disk.",
+                    reason="file_in_memory",
+                )
+            return ConnectionVerdict(
+                True,
+                f"Connected — read the database at '{path}'.",
+                reason="file_found",
+                arg=path,
+            )
+        except Exception:
+            logger.warning(
+                "Local-file connection test failed for %s at %s",
+                connection_type.value,
+                path,
+                exc_info=True,
+            )
+            if in_memory:
+                return ConnectionVerdict(
+                    False,
+                    f"The {connection_type.value} driver is not available in this build.",
+                    reason="driver_unavailable",
+                    arg=connection_type.value,
+                )
+            return ConnectionVerdict(
+                False,
+                f"Cannot open '{path}' — check that it is a "
+                f"{connection_type.value} database and that it is readable.",
+                reason="file_unopenable",
+                arg=path,
+            )
+        finally:
+            if engine is not None:
+                engine.dispose()
+
+    @staticmethod
+    def test_connection_verdict(config: dict, connection_type: ConnectionType) -> ConnectionVerdict:
+        """The structured form of :meth:`test_connection` (D6).
+
+        Carries an i18n **key** alongside the English sentence so the UI can
+        translate. ``test_message`` is rendered raw from this service today, and
+        `en.json` holds the *button label* and not one verdict string — so every
+        user in all nine locales reads these verdicts in English. New sentences
+        must not add to that, which is why they arrive with keys and a reader in
+        the same change.
+
+        A branch that has not been converted returns ``key=""`` and the UI falls
+        back to the English text, which is exactly today's behaviour — so this
+        is additive rather than a rewrite of every connector's message.
+        """
         if not config:
-            return False, "Configuration is empty"
+            return ConnectionVerdict(False, "Configuration is empty")
 
         if connection_type == ConnectionType.MONGODB:
-            return ConnectionService._test_mongodb(config)
+            return ConnectionVerdict(*ConnectionService._test_mongodb(config))
 
         if connection_type in _FILE_TYPES:
-            return ConnectionService._test_file_source(config, connection_type)
+            return ConnectionVerdict(*ConnectionService._test_file_source(config, connection_type))
 
         if connection_type in _NON_DB_TYPES:
-            return ConnectionService._test_saas_source(config, connection_type)
+            return ConnectionVerdict(*ConnectionService._test_saas_source(config, connection_type))
 
+        local = ConnectionService._test_local_file_db(config, connection_type)
+        if local is not None:
+            return local
+
+        return ConnectionVerdict(*ConnectionService._test_sql_connection(config, connection_type))
+
+    @staticmethod
+    def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:
+        """Test real database connectivity via SELECT 1. Returns (success, message).
+
+        Kept as the two-tuple every existing caller expects; see
+        :meth:`test_connection_verdict` for the form the UI uses.
+        """
+        v = ConnectionService.test_connection_verdict(config, connection_type)
+        return v.ok, v.message
+
+    @staticmethod
+    def _test_sql_connection(
+        config: dict, connection_type: ConnectionType
+    ) -> tuple[bool | None, str]:
+        """The network-database branch: build a URL, open it, ``SELECT 1``."""
         try:
             url = _build_sa_url(config, connection_type)
         except ValueError as e:
             return False, str(e)
 
-        connect_args: dict = {}
-        if connection_type == ConnectionType.MSSQL:
-            connect_args = {"login_timeout": 5}
-        elif connection_type == ConnectionType.ORACLE:
-            # oracledb's DBAPI does not accept ``connect_timeout``.
-            connect_args = {"tcp_connect_timeout": 5}
-        elif connection_type != ConnectionType.SQLITE:
-            connect_args = {"connect_timeout": 5}
+        connect_args = _connect_args(connection_type, config)
 
         # Build the engine. Every failure here has to come back as a verdict.
         #

@@ -139,6 +139,24 @@ _TRANSLATED_KEY_RE = re.compile(r'_translated\(\s*"([^"]+)"')
 # do both create and update therefore use explicit if/else branches rather than
 # `"a" if edit else "b"` — readable, and visible to the tooling.
 _SAVED_TOAST_KEY_RE = re.compile(r'_saved_toast\(\s*"([^"]+)"')
+# core#978 / core#979 add a FOURTH indirection, and this file's own lesson —
+# **adding an indirection is adding an idiom** — is now on its fourth instance,
+# each written by somebody who had just been bitten by the previous one.
+#
+# The new idiom is a **mapping constant whose values are keys**.
+# `ConnectionState._VERDICT_KEYS` maps a service-side verdict `reason` to the
+# key the UI looks up. It exists because a *service* must not carry i18n keys
+# (`BaseState._translated`: "services have no locale and no business having
+# one") and because this scanner walks `datanika/ui` only — so a key whose sole
+# literal lived in `services/` would read as an orphan, and the documented
+# remedy for a false orphan is to DELETE the key.
+#
+# ⚠️ Anchored to a whole line with a **dotted** value on the right, so it reads
+# `"file_found": "connections.test_file_found",` and not an arbitrary dict.
+# Measured when added: 5 matches, all real keys, **0 false matches anywhere in
+# `datanika/ui`** — a pattern that matched extra values would make a genuinely
+# orphaned key look used, which is this check failing in the silent direction.
+_KEY_MAP_VALUE_RE = re.compile(r'^\s*"[a-z_]+"\s*:\s*"([a-z_]+\.[a-z_.]+)"\s*,?\s*$', re.M)
 
 
 def _collect_keys_from_code() -> set[str]:
@@ -151,6 +169,7 @@ def _collect_keys_from_code() -> set[str]:
         keys.update(_TOAST_KEY_RE.findall(text))
         keys.update(_TRANSLATED_KEY_RE.findall(text))
         keys.update(_SAVED_TOAST_KEY_RE.findall(text))
+        keys.update(_KEY_MAP_VALUE_RE.findall(text))
     return keys
 
 
@@ -162,6 +181,52 @@ def _collect_keys_from_json() -> dict[str, set[str]]:
         with open(path, encoding="utf-8") as f:
             result[locale] = set(json.load(f).keys())
     return result
+
+
+class TestTheScannerSeesEachIdiom:
+    """Each key-usage idiom, asserted to be reachable by the scanner.
+
+    🚨 **This is the control the previous three additions did not have.** Every
+    one of `_TOAST_KEY_RE`, `_TRANSLATED_KEY_RE` and `_SAVED_TOAST_KEY_RE` was
+    added *after* the idiom it matches shipped and reported every one of its keys
+    as an orphan — three times, with the comment above each pattern warning the
+    next person. A pattern that silently stops matching (a rename, a reformat, a
+    helper that grows a keyword argument) puts the scanner straight back into
+    that state, and the symptom is a **false orphan**, whose documented remedy is
+    to delete the key.
+
+    So each idiom gets one live example asserted by name. A test that says
+    "these regexes find something" would be satisfied by any one of them.
+    """
+
+    def test_every_idiom_contributes_at_least_one_key(self):
+        found = _collect_keys_from_code()
+        for idiom, example in [
+            ('_t["..."]', "app.name"),
+            ("_translated(...)", "connections.deleted_toast"),
+            ("_VERDICT_KEYS mapping", "connections.test_file_missing"),
+        ]:
+            assert example in found, (
+                f"the {idiom} idiom no longer reaches the scanner — {example!r} was not "
+                "collected, so every key that only appears through it now reads as an "
+                "orphan, and the documented remedy for an orphan is to delete it"
+            )
+
+    def test_the_key_map_pattern_does_not_over_match(self):
+        """The other direction, and it fails silently.
+
+        A pattern that scoops up extra dict values makes a genuinely orphaned key
+        look used. Measured at 0 false matches when added; asserted so a later
+        loosening has to be deliberate.
+        """
+        en = _collect_keys_from_json()["en"]
+        matched: set[str] = set()
+        for py_file in _UI_ROOT.rglob("*.py"):
+            matched.update(_KEY_MAP_VALUE_RE.findall(py_file.read_text(encoding="utf-8")))
+        assert matched <= en, (
+            "the key-map pattern matched values that are not translation keys, so it "
+            f"can now hide a real orphan: {sorted(matched - en)}"
+        )
 
 
 class TestCodeJsonSync:

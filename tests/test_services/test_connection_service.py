@@ -342,10 +342,19 @@ class TestTestConnection:
         assert "empty" in msg.lower()
 
     def test_sqlite_real_connection(self, svc):
-        """Real in-memory SQLite — no mocks needed."""
+        """Real in-memory SQLite — no mocks needed.
+
+        ⚠️ The message changed in core#979: an in-memory database keeps nothing,
+        and "Connected successfully" with no caveat invites the reader to believe
+        their data is somewhere. The *verdict* is unchanged and is what this test
+        is about; the sentence is asserted in
+        `tests/test_services/test_local_file_connections.py` alongside the other
+        four local-file outcomes.
+        """
         ok, msg = svc.test_connection({"path": ":memory:"}, ConnectionType.SQLITE)
         assert ok is True
-        assert msg == "Connected successfully"
+        assert "Connected" in msg
+        assert "in-memory" in msg
 
     def test_postgres_connection_mocked(self, svc):
         """Mock create_engine to verify SELECT 1 is executed."""
@@ -538,8 +547,28 @@ class TestTestConnectionConnectArgs:
         assert call.kwargs["connect_args"] == {"connect_timeout": 5}
 
     def test_sqlite_uses_no_connect_args(self, svc):
+        """sqlite gets no network timeout — and `create_engine` is still called.
+
+        🚨 **`call` being non-None is the load-bearing half.** This test caught a
+        draft of core#979 that returned `True` for `:memory:` *without opening
+        anything* — a control that can only give one answer, which is exactly what
+        SPEC_LOCAL_FILE_CONNECTIONS exists to stop. `call.kwargs` would have raised
+        `AttributeError` on `None`; asserting it explicitly says why.
+        """
         call = self._run(svc, ConnectionType.SQLITE, {"path": ":memory:"})
+        assert call is not None, (
+            "create_engine was never called, so the sqlite verdict was decided "
+            "without opening anything"
+        )
         assert call.kwargs["connect_args"] == {}
+
+    def test_duckdb_gets_no_network_timeout(self, svc):
+        """core#978. `duckdb.connect()` accepts only (database, read_only, config)
+        and raises TypeError on `connect_timeout`, so every input failed and the
+        user was told to check credentials a local file does not have."""
+        call = self._run(svc, ConnectionType.DUCKDB, {"path": ":memory:"})
+        assert call is not None
+        assert "connect_timeout" not in call.kwargs["connect_args"]
 
 
 class TestBuildSaUrl:

@@ -127,15 +127,29 @@ def local_path_types() -> list[ConnectionType]:
 
 #: The two defects, each pinned to its issue. Keeping them in one place means the
 #: xfail reason, the parametrisation and the control below cannot drift apart.
-KNOWN_BROKEN: dict[ConnectionType, str] = {
-    ConnectionType.SQLITE: (
-        "core#979 — reports 'Connected successfully' for a path that holds no "
-        "database, and creates the database while doing so"
-    ),
-    ConnectionType.DUCKDB: (
-        "core#978 — connect_timeout is passed to a dialect that rejects it, so no input can succeed"
-    ),
-}
+#:
+#: ✅ **BOTH FIXED 2026-09-03 (PR #996), and the dict is deliberately empty
+#: rather than deleted.** `_param` below reads it, so emptying it clears every
+#: parametrised marker in one place — which is what this structure was for.
+#:
+#: 🔑 Each marker was cleared the way this module's header demands: **the fix
+#: was mutated back and each test was confirmed red for its own stated reason**,
+#: not merely observed to pass. Reasons kept, so what the file once pinned is
+#: still legible:
+#:
+#: * `sqlite` — reported `Connected successfully` for a path holding no database,
+#:   and created the database while doing so. Fixed by an existence check (which
+#:   produces the right *sentence*) plus a read-only open (which makes the check
+#:   incapable of writing). **Neither substitutes for the other**, and removing
+#:   the read-only half left this file green — the pre-check catches the same
+#:   case first. Only a mutation showed it.
+#: * `duckdb` — `connect_timeout` was passed to a dialect whose DBAPI takes only
+#:   `(database, read_only, config)`, so no input could succeed. Connect-args are
+#:   now derived from the dialect.
+#:
+#: ⚠️ Re-populating this dict is how a future regression would be *parked*
+#: rather than fixed. Add an entry only for a defect that is genuinely unfixed.
+KNOWN_BROKEN: dict[ConnectionType, str] = {}
 
 
 def _param(ct: ConnectionType):
@@ -286,12 +300,28 @@ def test_success_means_it_observed_something_it_did_not_create(
         "which runs in a different process, will find no tables."
     )
 
+    # ⚠️ **This does NOT verify the read-only open, and cannot.** The fix has two
+    # mechanisms: an existence check before the open (which produces the right
+    # *sentence*) and a read-only open (which makes the check incapable of
+    # writing). The pre-check returns first, so from `test_connection`'s public
+    # surface the two are indistinguishable — measured while clearing this
+    # module's marker: removing `read_only` leaves every assertion here green.
+    #
+    # 🔑 That is not a hole to paper over with a stronger assertion here; it is
+    # the nature of defence in depth. Read-only is verified on its own, at the
+    # URL and connect-args level and with a negative control proving the
+    # *writable* form does create the file, in
+    # `tests/test_services/test_local_file_connections.py`
+    # (`test_read_only_alone_prevents_creation__and_is_verified_on_its_own`).
+    # **Two guards where either alone passes the suite is one guard and a
+    # decoration** — so each needs a test that fails when only that one is gone.
 
-@pytest.mark.xfail(
-    reason=KNOWN_BROKEN[ConnectionType.SQLITE] + " (core#979 AC2: the two failure modes)",
-    strict=True,
-    raises=AssertionError,
-)
+
+# ✅ core#979 AC2 fixed 2026-09-03 (PR #996). The two outcomes now carry distinct
+# messages, because the *driver* cannot tell them apart: SQLite returns the
+# identical `unable to open database file` for "nothing is here" and "I cannot
+# read this directory", so the distinction has to come from an explicit
+# existence check before the open.
 def test_absent_and_unopenable_are_distinguishable(tmp_path: Path) -> None:
     """core#979 AC2 — they call for different user actions, so they must read differently.
 
@@ -329,14 +359,39 @@ def test_absent_and_unopenable_are_distinguishable(tmp_path: Path) -> None:
         "and 'that path cannot be opened' are different problems with different fixes."
     )
 
+    # 🚨 **The assertion above is satisfied by the PATH alone**, and that is this
+    # test's own docstring trap arriving by a second route. Both messages now
+    # interpolate the path they are about, and the two paths differ by
+    # construction — so `msg_absent != msg_unopenable` holds even when both
+    # outcomes are the *same class*. Measured 2026-09-03 while clearing the
+    # marker: deleting the existence pre-check (leaving both cases to fail at the
+    # read-only open, both as "cannot open") left this test **green**.
+    #
+    # "Two strings differing is not two failure modes differing" — the docstring
+    # says it about `"Connected successfully"`; it is equally true of a variable.
+    # Compare with the variable part removed, so the subject is the outcome class.
+    def _shape(msg: str, path: Path) -> str:
+        return msg.replace(str(path), "<path>")
+
+    assert _shape(msg_absent, absent) != _shape(msg_unopenable, unopenable), (
+        f"With the paths removed both failure modes read {_shape(msg_absent, absent)!r}. "
+        "The messages differ only because they quote different paths, which tells the "
+        "user nothing about which of the two problems they have."
+    )
+
 
 # --------------------------------------------------------------------------- #
 # core#978 — the three config spellings, and the message
 # --------------------------------------------------------------------------- #
 
 
+# ✅ core#978 AC1 fixed 2026-09-03 (PR #996), all three spellings.
+# ⚠️ `memory` is the one that constrains the fix: `duckdb.connect(":memory:",
+# read_only=True)` raises `Cannot launch in-memory database in read-only mode!`,
+# so D1's read-only open is conditional on the path naming a real file. An
+# in-memory database is created fresh on every connect; there is nothing for
+# read-only to protect and nothing that could pre-exist.
 @pytest.mark.parametrize("spelling", ["path", "database", "memory"])
-@pytest.mark.xfail(reason=KNOWN_BROKEN[ConnectionType.DUCKDB], strict=True, raises=AssertionError)
 def test_duckdb_connects_through_every_supported_spelling(spelling: str, tmp_path: Path) -> None:
     """core#978 AC1 — all three, because the config has two spellings and the
     published guide uses a file.
@@ -371,17 +426,12 @@ def test_the_duckdb_dbapi_really_rejects_connect_timeout() -> None:
     assert "incompatible function arguments" in str(exc.value)
 
 
+# ✅ core#978 AC4 fixed 2026-09-03 (PR #996).
+# 🔑 This marker's own reason was right about the thing that matters: it is a
+# SEPARATE criterion from the connect-args fix, and correcting the connect args
+# alone leaves the message exactly as it was. The file-backed branch now returns
+# its own four sentences rather than falling through to the generic handler.
 @pytest.mark.parametrize("connection_type", local_path_types(), ids=lambda t: t.value)
-@pytest.mark.xfail(
-    reason=(
-        "core#978 AC4 — the generic handler tells the user to 'check your credentials "
-        "and network settings' for a file-backed connector that has neither. Note this "
-        "is a SEPARATE acceptance criterion from the connect_timeout fix: correcting "
-        "the connect args alone leaves this message exactly as it is."
-    ),
-    strict=True,
-    raises=AssertionError,
-)
 def test_a_file_backed_failure_never_blames_credentials_or_the_network(
     connection_type: ConnectionType, tmp_path: Path
 ) -> None:

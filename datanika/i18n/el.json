@@ -126,6 +126,7 @@
   "common.actions": "Ενέργειες",
   "common.id": "ID",
   "common.name": "Όνομα",
+  "common.loading": "Φόρτωση…",
   "common.type": "Τύπος",
   "common.status": "Κατάσταση",
   "common.all": "Όλα",

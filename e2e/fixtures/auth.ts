@@ -153,12 +153,28 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     });
   },
 
+  // core#927. This is the harness's least-hardened navigation path, and it was
+  // the site of one of the two `template-prefill.spec.ts` flakes: on run
+  // 33528992652 it failed at the `toHaveURL` below, ten seconds after the click,
+  // and passed on retry -- a GATING spec retried into green.
+  //
+  // The other two login paths in this harness are both more forgiving, and the
+  // asymmetry was accidental rather than reasoned: `signUp` makes three attempts
+  // (core#295 -- a Reflex form clicked before hydration falls back to a native
+  // GET, which does nothing server-side), and `loginAsViewer` in
+  // viewer-role-ui.spec.ts passes an explicit 15 s. This one took Playwright's
+  // 5 s `toHaveURL` default for a round trip that is bcrypt + a DB read + a JWT
+  // + a websocket-driven redirect on a shared staging box.
+  //
+  // What is deliberately NOT done here is a retry around the assertion
+  // (QA_RULES §12). The budget is raised to match the other two paths and the
+  // wait is left able to fail.
   loggedInPage: async ({ page, testUser }, use) => {
     await gotoReady(page, "/login");
     await page.getByLabel(/email/i).fill(testUser.email);
     await page.getByLabel(/password/i).fill(testUser.password);
     await page.getByRole("button", { name: /log in|sign in/i }).click();
-    await expect(page).toHaveURL(/\/dashboard|\/connections|\/$/);
+    await expect(page).toHaveURL(/\/dashboard|\/connections|\/$/, { timeout: 15_000 });
     await use(page);
   },
 });

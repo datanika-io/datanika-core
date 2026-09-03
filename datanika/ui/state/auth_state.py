@@ -179,6 +179,19 @@ class AuthState(rx.State):
     # (SPEC_SIGNUP_ENUMERATION D5) — sharing a free-text var with the #128
     # verbatim "Email already exists" is how that property gets lost.
     signup_blocked: str = ""
+    # What happened to an invitation token supplied at signup (core#981). One of
+    # "not_applied", or "" when no token was supplied or it was applied.
+    #
+    # A **bounded flag**, not a sentence, for the same reason as
+    # ``signup_blocked`` above: the page renders a translated string chosen by
+    # this value. `test_message` on /connections is the counter-example —
+    # rendered raw from the service, so all nine locales read it in English.
+    #
+    # ⚠️ Deliberately one value rather than one per cause. Expired, already
+    # used, cancelled and issued-to-another-address all call for the same
+    # action — ask for a new invitation — and naming which one it was tells an
+    # unauthenticated caller something about a token they may not own.
+    invite_notice: str = ""
 
     def clear_auth_error(self):
         self.auth_error = ""
@@ -469,6 +482,69 @@ class AuthState(rx.State):
         self._load_current_role(user_id, org_id)
         return rx.redirect(self._post_auth_redirect_target())
 
+    def _accept_signup_invitation(self, session, invite_token: str, user_id: int):
+        """Apply an invitation token during signup (core#981).
+
+        Returns ``(org_id, org_name, org_slug, role)`` on success, or ``None``
+        when there was no token or it could not be applied — in which case the
+        caller creates the personal org instead. **Never raises**: signup must
+        succeed either way, and a user who finishes with zero orgs is worse off
+        than one who finishes with the wrong one.
+
+        🚨 **Two silences closed here, and the second was not in the issue.**
+
+        The ``except`` was the only thing that logged, and it only fires when
+        ``accept_invitation`` *raises*. The common failures — expired, already
+        accepted, cancelled, issued to a different address, user not found —
+        all return ``None``, so they logged **nothing at all**. Support did not
+        get the line either; the belief that it did is what made the missing
+        user-facing message look like the whole gap. Both audiences are served
+        here, and they are two audiences rather than one.
+
+        ⚠️ ``user_id``, not the address. The previous log line carried
+        ``self.email``, which is PII in a container log that is not covered by
+        the erasure sweep (SPEC_PII_SEPARATION); the id is what support needs
+        to find the account anyway.
+        """
+        if not invite_token:
+            return None
+
+        try:
+            from datanika.services.invitation_service import InvitationService
+
+            inv_svc = InvitationService(AuthService(settings.secret_key))
+            membership = inv_svc.accept_invitation(session, invite_token)
+        except Exception:
+            logger.exception(
+                "Invitation acceptance raised during signup and was dropped: user_id=%s",
+                user_id,
+            )
+            self.invite_notice = "not_applied"
+            return None
+
+        if membership is None:
+            logger.warning(
+                "Invitation token was not applicable during signup and was dropped: "
+                "user_id=%s (expired, already used, cancelled, or issued to another address)",
+                user_id,
+            )
+            self.invite_notice = "not_applied"
+            return None
+
+        from datanika.models.user import Organization
+
+        org = session.get(Organization, membership.org_id)
+        if org is None:
+            logger.warning(
+                "Invitation accepted for a missing org during signup: user_id=%s org_id=%s",
+                user_id,
+                membership.org_id,
+            )
+            self.invite_notice = "not_applied"
+            return None
+
+        return (org.id, org.name, org.slug, membership.role.value if membership.role else "")
+
     def signup(self, form_data: dict):
         self.auth_error = ""
 
@@ -510,21 +586,43 @@ class AuthState(rx.State):
 
         svc = self._get_user_service()
         try:
+            # core#981. Read once, before the session opens, so the two branches
+            # below cannot disagree about whether this was an invited signup.
+            invite_token = self.router.page.params.get("invite_token", "")
+            self.invite_notice = ""
+
             with get_sync_session() as session:
                 user = svc.register_user(session, email, password, full_name)
-                org_name = f"{full_name}'s Org"
-                # 🚨 The slug is no longer derived from the person's name (core#655, D4).
-                # A slug is an *identifier*: unique-constrained, in URLs, and matched by
-                # the SSO callback (`sso_routes.py` compares `Organization.slug ==
-                # org_slug`), so a name-derived slug publishes a person's name in a
-                # durable key — measured in 5 of 5 production rows. The display `name`
-                # may stay: it is text inside the tenant, and D5 step 7's erasure sweep
-                # rewrites it. The `user.id` suffix that #127 added for uniqueness is now
-                # the whole slug, so uniqueness is if anything stronger.
-                org_slug = f"org-{user.id}"
-                org = svc.create_org(session, org_name, org_slug, user.id)
-                # Capture ids before commit expires ORM attributes
-                org_id = org.id
+
+                # 🚨 **The invitation is tried FIRST and the personal org is the
+                # fallback** (core#981, SPEC_SIGNUP_SOCIAL_AUTH §2 constraint 2).
+                #
+                # ``create_org`` used to have one call site and *no enclosing
+                # branch*: it ran for every signup, and ``accept_invitation``
+                # ran 42 lines later and *appended*. So a user who accepted an
+                # invitation by signing up finished in **two** orgs — one they
+                # own and never asked for, one the team they joined — with
+                # ``current_org`` set to the first and then reassigned. Since
+                # quota enforcement went live the spare org also carries its own
+                # Free-plan limits.
+                joined = self._accept_signup_invitation(session, invite_token, user.id)
+                if joined is not None:
+                    org_id, org_name, org_slug, signup_role = joined
+                else:
+                    org_name = f"{full_name}'s Org"
+                    # 🚨 The slug is no longer derived from the person's name (core#655, D4).
+                    # A slug is an *identifier*: unique-constrained, in URLs, and matched by
+                    # the SSO callback (`sso_routes.py` compares `Organization.slug ==
+                    # org_slug`), so a name-derived slug publishes a person's name in a
+                    # durable key — measured in 5 of 5 production rows. The display `name`
+                    # may stay: it is text inside the tenant, and D5 step 7's erasure sweep
+                    # rewrites it. The `user.id` suffix that #127 added for uniqueness is now
+                    # the whole slug, so uniqueness is if anything stronger.
+                    org_slug = f"org-{user.id}"
+                    org = svc.create_org(session, org_name, org_slug, user.id)
+                    # Capture ids before commit expires ORM attributes
+                    org_id = org.id
+                    signup_role = "owner"
                 user_id = user.id
                 user_email = user.email
                 session.commit()
@@ -555,43 +653,14 @@ class AuthState(rx.State):
                 )
                 self.current_org = OrgInfo(id=org_id, name=org_name, slug=org_slug)
                 self.user_orgs = [self.current_org]
-                self.current_role = "owner"
-
-                # Accept pending invitation if signup came from invite link
-                invite_token = self.router.page.params.get("invite_token", "")
-                if invite_token:
-                    try:
-                        from datanika.services.invitation_service import InvitationService
-
-                        inv_svc = InvitationService(AuthService(settings.secret_key))
-                        membership = inv_svc.accept_invitation(session, invite_token)
-                        if membership:
-                            invited_org = session.get(type(org), membership.org_id)
-                            if invited_org:
-                                invited = OrgInfo(
-                                    id=invited_org.id,
-                                    name=invited_org.name,
-                                    slug=invited_org.slug,
-                                )
-                                self.user_orgs.append(invited)
-                                # Switch to the invited org
-                                self.current_org = invited
-                                self.current_role = membership.role.value if membership.role else ""
-                                auth = AuthService(settings.secret_key)
-                                self.access_token = auth.create_access_token(
-                                    result["user"].id, invited_org.id
-                                )
-                            session.commit()
-                    except Exception:
-                        # Best-effort by design -- signup must succeed even if
-                        # the invitation cannot be applied. But this one is
-                        # user-visible when it fails (they sign up and are not
-                        # in the org they were invited to), so it is exactly the
-                        # thing support needs a log line for (core#723).
-                        logger.exception(
-                            "Invitation acceptance failed during signup and was dropped: email=%s",
-                            self.email,
-                        )
+                self.current_role = signup_role
+                # The token must name the org the session actually landed on.
+                # ``authenticate`` picks the *most recent* membership, which is
+                # the right one today and is a property of ordering rather than
+                # of intent — so it is restated here rather than relied upon.
+                self.access_token = AuthService(settings.secret_key).create_access_token(
+                    result["user"].id, org_id
+                )
         except UserServiceError as exc:
             # Typed validation errors from user_service carry curated,
             # user-facing messages ("Email already exists", "Name is
@@ -623,6 +692,10 @@ class AuthState(rx.State):
     def dismiss_verification_notice(self):
         """Clear the post-signup confirmation banner (core#700)."""
         self.verification_mail_state = ""
+
+    def dismiss_invite_notice(self):
+        """Clear the dropped-invitation banner (core#981)."""
+        self.invite_notice = ""
 
     def dismiss_action_error(self):
         """Clear the refusal callout (core#744)."""

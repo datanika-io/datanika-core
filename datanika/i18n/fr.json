@@ -69,6 +69,8 @@
   "auth.verification_mail_sent": "Nous avons envoyé un lien de confirmation à votre adresse e-mail. Ouvrez-le pour confirmer votre compte.",
   "auth.verification_mail_failed": "Nous n'avons pas pu envoyer votre e-mail de confirmation",
   "auth.verification_mail_failed_help": "Votre compte est actif et vous pouvez continuer à travailler. Votre adresse restera non confirmée tant que nous ne pourrons pas vous joindre — réessayez plus tard depuis les paramètres.",
+  "auth.invite_not_applied": "Nous n'avons pas pu vous ajouter à l'équipe qui vous a invité",
+  "auth.invite_not_applied_help": "Votre compte est prêt et vous êtes connecté à votre propre espace de travail. Le lien d'invitation a peut-être expiré ou a déjà été utilisé — demandez à la personne qui vous a invité de vous en envoyer un nouveau.",
   "common.dismiss": "Fermer",
   "account.title": "Votre compte",
   "account.subtitle": "Ces paramètres vous concernent personnellement, pas cette organisation.",

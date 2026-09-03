@@ -69,6 +69,8 @@
   "auth.verification_mail_sent": "We sent a confirmation link to your email address. Open it to confirm your account.",
   "auth.verification_mail_failed": "We couldn't send your confirmation email",
   "auth.verification_mail_failed_help": "Your account is active and you can keep working. Your address stays unconfirmed until we can reach you — try again later from Settings.",
+  "auth.invite_not_applied": "We couldn't add you to the team that invited you",
+  "auth.invite_not_applied_help": "Your account is ready and you're signed in to your own workspace. The invitation link may have expired or already been used — ask whoever invited you to send a new one.",
   "common.dismiss": "Dismiss",
   "account.title": "Your account",
   "account.subtitle": "These settings apply to you personally, not to this organization.",

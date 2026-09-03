@@ -181,41 +181,92 @@ def _normalize_path(path: str, scope: Scope, root_path_before: str = "") -> str:
         prefix, _ = _redact_path_params(root_path_after, path_params)
         return f"{prefix.rstrip('/')}/{MOUNTED_TAIL_LABEL}"
 
-    redacted, complete = _redact_path_params(path, path_params)
-    # A parameter we could not locate means a value we did not redact. Bounded
-    # and imprecise beats precise and unbounded.
-    return redacted if complete else UNMATCHED_PATH_LABEL
+    redacted, unambiguous = _redact_path_params(path, path_params)
+    # A parameter we could not locate is a value we did not redact; a parameter we
+    # could locate in more than one place is a template we would be guessing at.
+    # Bounded and imprecise beats precise and unbounded.
+    return redacted if unambiguous else UNMATCHED_PATH_LABEL
 
 
 def _redact_path_params(path: str, path_params: Mapping[str, object]) -> tuple[str, bool]:
     """Replace each matched parameter's value with ``:<name>``, left to right.
 
-    Returns the redacted path and whether every parameter was placed.
+    Returns the redacted path and whether that placement was the **only** one
+    possible — see the ambiguity note below.
 
     ``path_params`` originates in ``re.Match.groupdict()``, so it is ordered by
     the parameter's position in the route template — the same order the values
     appear in the path. Consuming it in that order is what stops
     ``/api/v1/orgs/{org_id}/members`` redacting the literal segment ``members``
     when a caller sets ``org_id=members``.
+
+    ⚠️ **Order alone is not enough, because the router does not tell us the
+    template** (``scope["route"]`` is unset — see :func:`_normalize_path`). A
+    single parameter whose value equals a literal appearing *earlier in its own
+    route* is genuinely ambiguous: ``/api/auth/sso/login/login`` is consistent
+    with ``/api/auth/sso/login/{org_slug}`` and with ``/api/auth/sso/{org_slug}/
+    login``, and left-to-right picked the second — minting a rotated template
+    that is not a route, in a series a caller chooses (core#1020, four extra
+    values per affected route).
+
+    **No fixed search direction fixes it.** Rightmost-first would resolve that
+    case and break the ``org_id=members`` case in the paragraph above. So the
+    placement is *counted* rather than trusted: when more than one in-order
+    assignment of all parameters fits the path, this reports ambiguity and the
+    caller buckets the request. That costs precision for the handful of values
+    that collide with a literal of their own route, and it never emits a
+    template that does not exist.
     """
     pending = [(name, str(value)) for name, value in path_params.items() if str(value)]
     segments = path.split("/")
     out: list[str] = []
+    remaining = list(pending)
     index = 0
 
     while index < len(segments):
-        if pending:
-            name, value = pending[0]
+        if remaining:
+            name, value = remaining[0]
             value_segments = value.split("/")
             if _segments_match(segments[index : index + len(value_segments)], value_segments):
                 out.append(f":{name}")
                 index += len(value_segments)
-                pending.pop(0)
+                remaining.pop(0)
                 continue
         out.append(segments[index])
         index += 1
 
-    return ("/".join(out) or "/"), not pending
+    redacted = "/".join(out) or "/"
+    if remaining:
+        return redacted, False
+    return redacted, _placement_count(segments, pending, 0, limit=2) == 1
+
+
+def _placement_count(
+    segments: list[str],
+    pending: list[tuple[str, str]],
+    start: int,
+    limit: int,
+) -> int:
+    """How many in-order placements of ``pending`` fit ``segments[start:]``, capped at ``limit``.
+
+    Only "one" and "more than one" matter, so the search stops at ``limit``.
+    Counting *complete* assignments rather than per-value occurrences is what
+    keeps a legitimate ``/orgs/5/members/5`` unambiguous: the two parameters
+    share a value, and there is still exactly one way to place both in order.
+    """
+    if not pending:
+        return 1
+    _, value = pending[0]
+    value_segments = value.split("/")
+    total = 0
+    for index in range(start, len(segments) - len(value_segments) + 1):
+        if _segments_match(segments[index : index + len(value_segments)], value_segments):
+            total += _placement_count(
+                segments, pending[1:], index + len(value_segments), limit - total
+            )
+            if total >= limit:
+                return total
+    return total
 
 
 def _segments_match(actual: list[str], expected: list[str]) -> bool:

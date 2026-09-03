@@ -10,7 +10,7 @@
 # is a decision nobody revisits — the shape that let two alert rules sit green for
 # weeks while structurally unable to fire. On `expired_at` trivy stops honouring
 # the entry and the job goes red again on its own, which is the only review date
-# that reviews itself. `tests/test_deploy/test_image_cve_waivers.py` refuses an
+# that reviews itself. `tests/test_deploy/test_image_cve_signal.py` refuses an
 # entry missing either field, and refuses any id not listed there.
 #
 # ⚠️ THE CANARY DOES NOT READ THIS FILE, deliberately. It scans the same image at

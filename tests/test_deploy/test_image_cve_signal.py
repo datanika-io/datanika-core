@@ -42,6 +42,7 @@ still has to read it. That limit is why the expiry is the load-bearing part.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 
 import pytest
@@ -396,4 +397,77 @@ class TestOnlyTheGateIsFiltered:
         assert str(gate["with"]["trivyignores"]).startswith(f"{prefix}/"), (
             f"trivyignores must be prefixed with the checkout path {prefix!r}: "
             f"got {gate['with']['trivyignores']!r}"
+        )
+
+
+class TestEveryGuardNamedHereExists:
+    """A comment that names a guard must name one that exists.
+
+    Every file in this change argues the same point: a signal is only worth
+    reading if it is *discriminating*. The prose carries a lot of that weight —
+    `.trivyignore.yaml` tells the next reader which test refuses an unexpiring
+    waiver, and the `Dockerfile` tells them which test pins the cache-clean
+    ordering. A reader who follows one of those pointers and finds nothing
+    concludes the guard does not exist, and the honest conclusion from that is
+    "this constraint is unenforced" — which is worse than silence, because the
+    comment spent their trust before failing them.
+
+    That is not hypothetical: this class was added because `.trivyignore.yaml`
+    twice named `test_image_cve_waivers.py`, a file that has never existed. The
+    guard it described is real and lives in *this* file; only the name was
+    wrong. Nothing else in the repo could have caught it — the YAML parses, the
+    workflow runs, and every assertion the comment advertises genuinely passes.
+    """
+
+    _SOURCES = (_IGNOREFILE, _DOCKERFILE, _CI_WORKFLOW)
+
+    @staticmethod
+    def _refs(text: str) -> tuple[set[str], set[str]]:
+        """Split prose references into repo-relative paths and bare filenames."""
+        full = set(re.findall(r"tests/[A-Za-z0-9_/]+\.py", text))
+        bare = set(re.findall(r"\btest_[A-Za-z0-9_]+\.py", text))
+        # A bare name that is merely the tail of a full path is already covered.
+        bare = {b for b in bare if not any(f.endswith(f"/{b}") for f in full)}
+        return full, bare
+
+    def test_the_scan_sees_the_prose(self):
+        """Negative control.
+
+        Every assertion below is of the form "everything found resolves", which
+        a scan finding nothing passes trivially. If a rename or a rewrite ever
+        empties this, the two tests below stop testing anything while staying
+        green — the precise failure mode this whole file exists to refuse.
+        """
+        found = {}
+        for src in self._SOURCES:
+            assert src.is_file(), f"{src} is missing; the scan below would be vacuous"
+            full, bare = self._refs(src.read_text(encoding="utf-8"))
+            found[src.name] = full | bare
+
+        assert found[".trivyignore.yaml"], (
+            "no test file is named in the waiver file's prose. Either the "
+            "pointers were removed, or the pattern stopped matching them."
+        )
+        assert found["Dockerfile"], "no test file is named in the Dockerfile's prose"
+        assert found["ci.yml"], "no test file is named in ci.yml's prose"
+
+    @pytest.mark.parametrize("src", _SOURCES, ids=lambda p: p.name)
+    def test_every_repo_relative_path_named_in_prose_exists(self, src: Path):
+        full, _ = self._refs(src.read_text(encoding="utf-8"))
+        missing = sorted(ref for ref in full if not (_ROOT / ref).is_file())
+        assert not missing, (
+            f"{src.name} points readers at {missing}, which do not exist. A "
+            f"pointer to a missing guard reads as 'this rule is unenforced'. "
+            f"Fix the NAME if the guard moved; do not delete the pointer."
+        )
+
+    @pytest.mark.parametrize("src", _SOURCES, ids=lambda p: p.name)
+    def test_every_bare_test_filename_named_in_prose_exists(self, src: Path):
+        _, bare = self._refs(src.read_text(encoding="utf-8"))
+        tests_root = _ROOT / "tests"
+        missing = sorted(name for name in bare if not any(tests_root.rglob(name)))
+        assert not missing, (
+            f"{src.name} names {missing}, which exist nowhere under tests/. "
+            f"A bare filename is still a pointer; it just costs the reader a "
+            f"grep before it disappoints them."
         )

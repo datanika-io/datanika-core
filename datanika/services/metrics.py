@@ -9,6 +9,7 @@ Exposes:
 
 import logging
 import time
+from collections.abc import Mapping
 
 from prometheus_client import (
     REGISTRY,
@@ -87,9 +88,24 @@ bytes_processed_by_run = Histogram(
 # Paths to skip metering (high-cardinality or internal)
 _SKIP_PREFIXES = ("/_next/", "/static/", "/metrics", "/healthz", "/readyz")
 
+# Every request that matched no route shares this one label value.
+UNMATCHED_PATH_LABEL = "<other>"
+
+# Appended to a mount's prefix. A Mount matches, then hands an arbitrary tail to
+# a sub-application that reports nothing about what it matched, so the tail is
+# caller-controlled and cannot become part of a label value.
+MOUNTED_TAIL_LABEL = "<mounted>"
+
 
 class PrometheusMiddleware:
-    """ASGI middleware that records request count and latency."""
+    """ASGI middleware that records request count and latency.
+
+    The ``path`` label is derived from what the **router matched**, never from
+    what the caller sent — see :func:`_normalize_path`. This middleware sits
+    outside the router, so the routing facts it reads are only present by the
+    time the ``finally`` block runs. That is already where the metering call is;
+    do not move it earlier.
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -107,6 +123,11 @@ class PrometheusMiddleware:
         method = scope.get("method", "GET")
         status_code = 500
         start = time.perf_counter()
+        # Snapshot before routing. Starlette's ``Mount`` EXTENDS ``root_path``,
+        # so a change across the call is how we learn that a sub-application
+        # served the request. Comparing against "" instead would mislabel every
+        # request whenever the server itself is mounted under a prefix.
+        root_path_before = scope.get("root_path") or ""
 
         async def send_wrapper(message: dict) -> None:
             nonlocal status_code
@@ -118,22 +139,100 @@ class PrometheusMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             duration = time.perf_counter() - start
-            # Normalize dynamic path segments to reduce cardinality
-            normalized = _normalize_path(path)
+            normalized = _normalize_path(path, scope, root_path_before)
             http_requests_total.labels(method, normalized, str(status_code)).inc()
             http_request_duration_seconds.labels(method, normalized).observe(duration)
 
 
-def _normalize_path(path: str) -> str:
-    """Replace dynamic segments (IDs, UUIDs) with placeholders."""
-    parts = path.strip("/").split("/")
-    normalized = []
-    for part in parts:
-        if part.isdigit():
-            normalized.append(":id")
-        else:
-            normalized.append(part)
-    return "/" + "/".join(normalized) if normalized else "/"
+def _normalize_path(path: str, scope: Scope, root_path_before: str = "") -> str:
+    """Reduce a request path to the route template the router matched.
+
+    Every path parameter becomes a placeholder (IDs, UUIDs, ULIDs, slugs), a
+    request that matched no route becomes ``<other>``, and a request served by a
+    mounted sub-application becomes that mount's prefix plus ``<mounted>``.
+
+    The ``path`` label is unauthenticated input from the public internet, so
+    every value a caller can invent would mint a permanent Prometheus time
+    series — 290 of the 298 values observed on production were vulnerability
+    scanners, 31% of the whole TSDB (core#896). The value therefore has to come
+    from what the router *matched* and never from the shape of what was *sent*.
+    Shape-guessing is what the previous implementation did, and it is why
+    ``/api/auth/sso/login/{org_slug}`` — a **matched** route taking a segment
+    invented by an unauthenticated caller — stayed unbounded: no shape test
+    distinguishes ``acme`` from ``login``.
+
+    ⚠️ Starlette 0.52.1 does **not** put the matched route in the scope;
+    ``scope["route"]`` is unset for matched and unmatched requests alike, so
+    reading it buckets *everything* into ``<other>`` — which satisfies every
+    cardinality criterion and blinds every SLI in ``docs/slo_instruments.yml``.
+    What the router does set is ``endpoint`` (presence means matched) and
+    ``path_params`` (the values to redact).
+    """
+    if "endpoint" not in scope:
+        return UNMATCHED_PATH_LABEL
+
+    path_params = scope.get("path_params") or {}
+    root_path_after = scope.get("root_path") or ""
+
+    if root_path_after != root_path_before:
+        # A Mount matched: only its own prefix is bounded. Redacting the prefix
+        # too costs nothing and covers a parameterised mount, which nothing
+        # declares today.
+        prefix, _ = _redact_path_params(root_path_after, path_params)
+        return f"{prefix.rstrip('/')}/{MOUNTED_TAIL_LABEL}"
+
+    redacted, complete = _redact_path_params(path, path_params)
+    # A parameter we could not locate means a value we did not redact. Bounded
+    # and imprecise beats precise and unbounded.
+    return redacted if complete else UNMATCHED_PATH_LABEL
+
+
+def _redact_path_params(path: str, path_params: Mapping[str, object]) -> tuple[str, bool]:
+    """Replace each matched parameter's value with ``:<name>``, left to right.
+
+    Returns the redacted path and whether every parameter was placed.
+
+    ``path_params`` originates in ``re.Match.groupdict()``, so it is ordered by
+    the parameter's position in the route template — the same order the values
+    appear in the path. Consuming it in that order is what stops
+    ``/api/v1/orgs/{org_id}/members`` redacting the literal segment ``members``
+    when a caller sets ``org_id=members``.
+    """
+    pending = [(name, str(value)) for name, value in path_params.items() if str(value)]
+    segments = path.split("/")
+    out: list[str] = []
+    index = 0
+
+    while index < len(segments):
+        if pending:
+            name, value = pending[0]
+            value_segments = value.split("/")
+            if _segments_match(segments[index : index + len(value_segments)], value_segments):
+                out.append(f":{name}")
+                index += len(value_segments)
+                pending.pop(0)
+                continue
+        out.append(segments[index])
+        index += 1
+
+    return ("/".join(out) or "/"), not pending
+
+
+def _segments_match(actual: list[str], expected: list[str]) -> bool:
+    """Whether ``actual`` is the wire form of a converted parameter value.
+
+    Exact equality covers the ``str`` convertor. The ``int`` convertor
+    normalises, so ``/pipelines/007`` converts to ``7`` and ``str(7)`` is no
+    longer the segment the caller sent; reconciling numerically keeps a real
+    route in its own series instead of dropping it into ``<other>``. This is not
+    shape-guessing — the router has already told us this segment *is* the
+    parameter; we are only reconciling two spellings of its value.
+    """
+    if actual == expected:
+        return True
+    if len(actual) != 1 or len(expected) != 1:
+        return False
+    return actual[0].isdigit() and expected[0].isdigit() and int(actual[0]) == int(expected[0])
 
 
 # --- Celery signal handlers ---

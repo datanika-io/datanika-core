@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "Cannot open '{arg}' — check that it is a database file and that it is readable.",
   "connections.test_file_in_memory": "Connected — in-memory database. Nothing is written to disk.",
   "connections.test_driver_unavailable": "The {arg} driver is not available in this build.",
+  "connections.local_path_not_allowed": "Local file paths aren't available on this deployment. Upload the file instead, or point this connection at a database.",
   "connections.use_raw_json": "Use raw JSON config",
   "connections.upload_file": "Upload File",
   "connections.or_enter_path": "Or enter file path",

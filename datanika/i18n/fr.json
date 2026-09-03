@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "Impossible d'ouvrir « {arg} » — vérifiez qu'il s'agit d'un fichier de base de données et qu'il est lisible.",
   "connections.test_file_in_memory": "Connecté — base de données en mémoire. Rien n'est écrit sur le disque.",
   "connections.test_driver_unavailable": "Le pilote {arg} n'est pas disponible dans cette version.",
+  "connections.local_path_not_allowed": "Les chemins de fichiers locaux ne sont pas disponibles sur ce déploiement. Importez le fichier, ou pointez cette connexion vers une base de données.",
   "connections.use_raw_json": "Utiliser JSON brut",
   "connections.upload_file": "Importer un fichier",
   "connections.or_enter_path": "Ou saisir le chemin du fichier",

@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "Δεν είναι δυνατό το άνοιγμα του «{arg}» — ελέγξτε ότι είναι αρχείο βάσης δεδομένων και ότι είναι αναγνώσιμο.",
   "connections.test_file_in_memory": "Συνδέθηκε — βάση δεδομένων στη μνήμη. Δεν γράφεται τίποτα στον δίσκο.",
   "connections.test_driver_unavailable": "Ο οδηγός {arg} δεν είναι διαθέσιμος σε αυτή την έκδοση.",
+  "connections.local_path_not_allowed": "Οι τοπικές διαδρομές αρχείων δεν είναι διαθέσιμες σε αυτή την εγκατάσταση. Ανεβάστε το αρχείο ή στρέψτε αυτή τη σύνδεση σε μια βάση δεδομένων.",
   "connections.use_raw_json": "Χρήση JSON",
   "connections.upload_file": "Μεταφόρτωση αρχείου",
   "connections.or_enter_path": "Ή εισάγετε διαδρομή αρχείου",

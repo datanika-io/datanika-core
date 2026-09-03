@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "„{arg}“ kann nicht geöffnet werden — prüfen Sie, ob es eine Datenbankdatei und lesbar ist.",
   "connections.test_file_in_memory": "Verbunden — In-Memory-Datenbank. Es wird nichts auf die Festplatte geschrieben.",
   "connections.test_driver_unavailable": "Der Treiber {arg} ist in diesem Build nicht verfügbar.",
+  "connections.local_path_not_allowed": "Lokale Dateipfade sind in dieser Installation nicht verfügbar. Laden Sie die Datei hoch oder richten Sie diese Verbindung auf eine Datenbank aus.",
   "connections.use_raw_json": "Raw JSON verwenden",
   "connections.upload_file": "Datei hochladen",
   "connections.or_enter_path": "Oder Dateipfad eingeben",

@@ -102,6 +102,27 @@ class Settings(BaseSettings):
     # SPEC_DUAL_MODE_UX v3 components are live on both core and cloud.
     datanika_dual_mode_ux_enabled: bool = False
 
+    # SPEC_LOCAL_FILE_CONNECTIONS D4 (core#969). May a connection store a path
+    # to a **local filesystem** location — a sqlite/duckdb file, or a
+    # csv/json/parquet directory?
+    #
+    # 🚨 **Default True, and that is not timidity.** The feature was only ever
+    # for self-hosters, who are the people a path on their own disk means
+    # something to, and defaulting to False would break every existing local
+    # deployment on upgrade. Production sets it to `false` in `.env.docker`.
+    #
+    # ⚠️ **Not gated on `datanika_edition`.** The property that matters is *"is
+    # this deployment multi-tenant?"* — a deployment fact, not an edition.
+    # `DATANIKA_EDITION=cloud` gates billing, and a self-hoster running the cloud
+    # plugin is a shape we support; that person must keep their local paths.
+    #
+    # On a hosted box a path the user types is not a path on their machine: it
+    # names a location inside our container, on infrastructure shared with every
+    # other tenant. See core#969 — production connection id=14 points at a
+    # directory inside the image that no code path writes and no backup could
+    # regenerate.
+    datanika_allow_local_file_paths: bool = True
+
 
 settings = Settings()
 

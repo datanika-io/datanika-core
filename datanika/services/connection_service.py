@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import Session
 
+from datanika.config import settings
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.encryption import EncryptionService
@@ -255,6 +256,89 @@ _LOCAL_FILE_DB_TYPES = {ConnectionType.SQLITE, ConnectionType.DUCKDB}
 #: question about it and read-only is not a mode it has — measured: duckdb
 #: refuses ``:memory:`` with ``read_only=True`` outright.
 _IN_MEMORY_PATHS = {":memory:", ""}
+
+#: URL schemes that name something **outside this container**, so the value
+#: means the same thing in the web process and in the Celery worker.
+#:
+#: ⚠️ **The check below fails CLOSED**: anything that is not one of these is
+#: treated as local. An unknown-but-remote scheme is therefore refused, which is
+#: a visible, reportable wrong answer — while an unknown-but-local scheme let
+#: through is a silent tenancy hole on a shared box. Those two errors are not
+#: symmetric and the guard is aimed accordingly.
+_REMOTE_URL_SCHEMES = frozenset(
+    {"s3", "s3a", "gs", "gcs", "az", "azure", "abfs", "abfss", "adl", "http", "https", "memory"}
+)
+
+#: Connection types whose config carries a filesystem **location** the platform
+#: has to have an opinion about (D4). Derived, not remembered: the two local-file
+#: SQL dialects plus the three types whose ``bucket_url``/``path`` is handed to
+#: dlt's ``filesystem()``.
+#:
+#: ``s3`` is excluded deliberately — its ``bucket_url`` is remote, so it means
+#: the same thing in both containers, and it is the case D4's remote-scheme
+#: carve-out exists for.
+_LOCAL_PATH_TYPES = _LOCAL_FILE_DB_TYPES | {
+    ConnectionType.CSV,
+    ConnectionType.JSON,
+    ConnectionType.PARQUET,
+}
+
+
+class LocalPathNotAllowedError(ValueError):
+    """A connection would store a local path on a deployment that forbids them.
+
+    A ``ValueError`` on purpose: ``BaseState._set_error`` and ``_safe_error``
+    both surface a ``ValueError``'s message verbatim and everything else as a
+    generic toast, so the refusal reaches the user through machinery that
+    already exists rather than through a new branch in every caller.
+
+    ``reason`` follows ``ConnectionVerdict``'s split — the service has no locale,
+    the UI owns the key.
+    """
+
+    reason = "local_path_not_allowed"
+
+
+def is_local_filesystem_location(value: str) -> bool:
+    """Does this ``path``/``bucket_url`` name a location on the local disk?"""
+    if not value:
+        return False
+    text = value.strip()
+    if text in _IN_MEMORY_PATHS:
+        # Nothing is stored, so there is no filesystem location to have an
+        # opinion about. Refusing it would block a harmless configuration and
+        # tell the user to upload a file that has nothing to do with it.
+        return False
+    scheme, sep, _rest = text.partition("://")
+    # Local == not one of the known-remote schemes: a bare path, a `file://`
+    # URL, or a Windows drive letter (`D:\data`, which `urlparse` would read as
+    # a one-character scheme).
+    return not (sep and scheme.lower() in _REMOTE_URL_SCHEMES)
+
+
+def assert_local_paths_allowed(config: dict, connection_type: ConnectionType) -> None:
+    """Refuse a local path at **save** time when the deployment forbids one (D4).
+
+    🚨 **At save, not at test.** The run reads the stored config and Test
+    Connection is optional, so a test-time refusal stops nobody.
+
+    🚨 **On writes only.** Existing rows may already hold local paths —
+    production connection id=14 does — and they must keep loading and listing.
+    Nothing here is reachable from a read path; the callers are
+    ``create_connection`` and ``update_connection``.
+    """
+    if settings.datanika_allow_local_file_paths:
+        return
+    if connection_type not in _LOCAL_PATH_TYPES:
+        return
+    for key in ("bucket_url", "path", "database"):
+        value = (config or {}).get(key)
+        if isinstance(value, str) and is_local_filesystem_location(value):
+            raise LocalPathNotAllowedError(
+                "Local file paths aren't available on this deployment. Upload the file "
+                "instead, or point this connection at a database."
+            )
+
 
 #: The kwarg each DBAPI accepts for a **bounded connect**, where the default is
 #: ``connect_timeout``.
@@ -855,6 +939,13 @@ class ConnectionService:
         base_url = (config or {}).get("base_url")
         if base_url:
             validate_egress_host(base_url)
+        # D4 / core#969: a file-based destination turns whatever directory it
+        # points at into a store of record, and nothing constrained where that
+        # may be — the image (destroyed on rebuild), /tmp, a path that resolves
+        # differently in the web tier and the worker. None of those fail loudly:
+        # the connection saves, dlt writes, and the data is gone at the next
+        # deploy with a `succeeded` run and a row count in the UI.
+        assert_local_paths_allowed(config, connection_type)
         direction = infer_direction(connection_type)
         # Normalise "" → None so analytics queries can filter on a single
         # NULL check. ConnectionState.selected_template_slug defaults to ""
@@ -973,6 +1064,11 @@ class ConnectionService:
             conn.connection_type = kwargs["connection_type"]
             conn.direction = infer_direction(kwargs["connection_type"])
         if "config" in kwargs:
+            # The type may be changing in the same call, so validate against the
+            # type this row will *have*, not the one it had. Reading `conn.
+            # connection_type` after the assignment above is what makes that
+            # true; taking it from `kwargs` alone would miss a config-only edit.
+            assert_local_paths_allowed(kwargs["config"], conn.connection_type)
             conn.config_encrypted = self._encryption.encrypt(kwargs["config"])
 
         session.flush()

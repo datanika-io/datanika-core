@@ -151,6 +151,7 @@
   "connections.test_file_unopenable": "Није могуће отворити „{arg}“ — проверите да ли је то датотека базе података и да ли је читљива.",
   "connections.test_file_in_memory": "Повезано — база података у меморији. Ништа се не уписује на диск.",
   "connections.test_driver_unavailable": "Драјвер {arg} није доступан у овој верзији.",
+  "connections.local_path_not_allowed": "Локалне путање до датотека нису доступне на овој инсталацији. Отпремите датотеку или усмерите ову везу на базу података.",
   "connections.use_raw_json": "Користи сирови JSON",
   "connections.upload_file": "Отпреми фајл",
   "connections.or_enter_path": "Или унесите путању фајла",

@@ -314,6 +314,28 @@ class ConnectionState(BaseState):
     #: Must default to False: defaulting to True would claim the data had
     #: arrived on exactly the render the user waits through.
     connections_loaded: bool = False
+
+    #: A save is in flight (core#872 AC3). Two jobs, and only one of them is
+    #: cosmetic.
+    #:
+    #: The **visual** job is disabling the button so a second click is not
+    #: offered. The **load-bearing** job is that :meth:`save_connection` refuses
+    #: to run while it is set, so a second click that was *already sent* — the
+    #: one that races the disabling frame — creates nothing.
+    #:
+    #: 🚨 Disabling the control alone would not be a guard. Whether the frame
+    #: carrying `disabled` reaches the browser before a fast second click is a
+    #: question about a running stack, a websocket round trip and a human's
+    #: reflexes; it cannot be answered by a test, and a control that *looks*
+    #: guarded and is not is worse than none. The server-side refusal removes
+    #: the timing question rather than betting on it.
+    #:
+    #: Why a duplicate create is not merely untidy: connection quota enforcement
+    #: is live, so on a Free org at 4/5 the first click silently spends the last
+    #: slot and the **second** click is the one refused — the failure and the
+    #: success arriving in the opposite order from the one the user perceives.
+    is_saving: bool = False
+
     form_name: str = ""
     # "" so the type picker shows its placeholder and forces a deliberate
     # choice, rather than silently defaulting to postgres (core#593).
@@ -1300,96 +1322,119 @@ class ConnectionState(BaseState):
         self.error_message = ""
 
     async def save_connection(self):
-        """Create a new connection or update an existing one."""
-        if not await self._check_role("editor"):
-            return
-        validation_error = self._validate_form()
-        if validation_error:
-            self.error_message = validation_error
-            return
-        from datanika.ui.state.auth_state import AuthState
+        """Create a new connection or update an existing one.
 
-        auth_state = await self.get_state(AuthState)
-        org_id = auth_state.current_org.id
-        user_id = auth_state.current_user.id
-        encryption = EncryptionService(settings.credential_encryption_key)
-        svc = ConnectionService(encryption)
+        Re-entrant submits are refused (core#872 AC3). The guard is the first
+        statement and the flag is set before any ``await``, so the second event
+        cannot observe it unset: Reflex serialises events per client token, and
+        anything after an ``await`` would leave a window between the check and
+        the set.
+
+        ``yield`` immediately afterwards pushes the disabled control to the
+        browser before the work starts — the same intermediate-render idiom
+        ``transformation_state`` uses in four places. That half is the fast path
+        and is **not** what makes this correct; see :attr:`is_saving`.
+        """
+        if self.is_saving:
+            return
+        self.is_saving = True
+        yield  # render the disabled control before any work begins
         try:
-            config = self._build_config()
-        except (json.JSONDecodeError, ValueError) as e:
-            self.error_message = f"Invalid config: {e}"
-            return
-        # Captured before `_reset_form_fields()` clears it. core#872: a create
-        # that says "saved" is acceptable; an update that says "created" is not,
-        # because it tells the user a new row exists.
-        was_edit = bool(self.editing_conn_id)
-        try:
-            with get_sync_session() as session:
-                if self.editing_conn_id:
-                    svc.update_connection(
-                        session,
-                        org_id,
-                        self.editing_conn_id,
-                        name=self.form_name,
-                        connection_type=ConnectionType(self.form_type),
-                        config=config,
-                    )
-                    self._audit(
-                        session,
-                        org_id,
-                        user_id,
-                        "update",
-                        "connection",
-                        resource_id=self.editing_conn_id,
-                        new_values={"name": self.form_name, "connection_type": self.form_type},
-                    )
-                else:
-                    # Pass the template slug through so the Plausible
-                    # funnel step 3 (``template_first_run_triggered``)
-                    # can attribute this connection's first run back to
-                    # the template the user started from. #93.
-                    conn = svc.create_connection(
-                        session,
-                        org_id,
-                        self.form_name,
-                        ConnectionType(self.form_type),
-                        config,
-                        source_template_slug=self.selected_template_slug or None,
-                    )
-                    self._audit(
-                        session,
-                        org_id,
-                        user_id,
-                        "create",
-                        "connection",
-                        resource_id=conn.id,
-                        new_values={"name": self.form_name, "connection_type": self.form_type},
-                    )
-                session.commit()
-        except LocalPathNotAllowedError as e:
-            # Translated rather than surfaced verbatim (D6). `_set_error` passes
-            # a ValueError's message straight through, which would have shipped
-            # this sentence to nine locales in English — the defect D6 names,
-            # reintroduced by the change that closes it.
-            self.error_message = await self._translated(_ERROR_KEYS[e.reason], str(e))
-            self.is_quota_error = False
-            self.quota_metric = ""
-            return
-        except Exception as e:
-            self._set_error(e, "Failed to save connection")
-            return
-        # Slug was persisted on the Connection row; detach from UI state so
-        # a subsequent non-template create doesn't inherit it. #93.
-        self.selected_template_slug = ""
-        self._reset_form_fields()
-        # Yielded before the refetch, deliberately. The table repopulating is
-        # asynchronous and was measured lagging 5-17 seconds; the toast is the
-        # acknowledgement, the table is not (core#872 D5).
-        if was_edit:
-            yield await self._saved_toast("connections.saved_toast", "Connection saved")
-        else:
-            yield await self._saved_toast("connections.created_toast", "Connection created")
-        await self.load_connections()
+            if not await self._check_role("editor"):
+                return
+            validation_error = self._validate_form()
+            if validation_error:
+                self.error_message = validation_error
+                return
+            from datanika.ui.state.auth_state import AuthState
+
+            auth_state = await self.get_state(AuthState)
+            org_id = auth_state.current_org.id
+            user_id = auth_state.current_user.id
+            encryption = EncryptionService(settings.credential_encryption_key)
+            svc = ConnectionService(encryption)
+            try:
+                config = self._build_config()
+            except (json.JSONDecodeError, ValueError) as e:
+                self.error_message = f"Invalid config: {e}"
+                return
+            # Captured before `_reset_form_fields()` clears it. core#872: a create
+            # that says "saved" is acceptable; an update that says "created" is not,
+            # because it tells the user a new row exists.
+            was_edit = bool(self.editing_conn_id)
+            try:
+                with get_sync_session() as session:
+                    if self.editing_conn_id:
+                        svc.update_connection(
+                            session,
+                            org_id,
+                            self.editing_conn_id,
+                            name=self.form_name,
+                            connection_type=ConnectionType(self.form_type),
+                            config=config,
+                        )
+                        self._audit(
+                            session,
+                            org_id,
+                            user_id,
+                            "update",
+                            "connection",
+                            resource_id=self.editing_conn_id,
+                            new_values={"name": self.form_name, "connection_type": self.form_type},
+                        )
+                    else:
+                        # Pass the template slug through so the Plausible
+                        # funnel step 3 (``template_first_run_triggered``)
+                        # can attribute this connection's first run back to
+                        # the template the user started from. #93.
+                        conn = svc.create_connection(
+                            session,
+                            org_id,
+                            self.form_name,
+                            ConnectionType(self.form_type),
+                            config,
+                            source_template_slug=self.selected_template_slug or None,
+                        )
+                        self._audit(
+                            session,
+                            org_id,
+                            user_id,
+                            "create",
+                            "connection",
+                            resource_id=conn.id,
+                            new_values={"name": self.form_name, "connection_type": self.form_type},
+                        )
+                    session.commit()
+            except LocalPathNotAllowedError as e:
+                # Translated rather than surfaced verbatim (D6). `_set_error` passes
+                # a ValueError's message straight through, which would have shipped
+                # this sentence to nine locales in English — the defect D6 names,
+                # reintroduced by the change that closes it.
+                self.error_message = await self._translated(_ERROR_KEYS[e.reason], str(e))
+                self.is_quota_error = False
+                self.quota_metric = ""
+                return
+            except Exception as e:
+                self._set_error(e, "Failed to save connection")
+                return
+            # Slug was persisted on the Connection row; detach from UI state so
+            # a subsequent non-template create doesn't inherit it. #93.
+            self.selected_template_slug = ""
+            self._reset_form_fields()
+            # Yielded before the refetch, deliberately. The table repopulating is
+            # asynchronous and was measured lagging 5-17 seconds; the toast is the
+            # acknowledgement, the table is not (core#872 D5).
+            if was_edit:
+                yield await self._saved_toast("connections.saved_toast", "Connection saved")
+            else:
+                yield await self._saved_toast("connections.created_toast", "Connection created")
+            await self.load_connections()
+        finally:
+            # Every early return in the body above is a `return` inside this
+            # `try`, so the flag is cleared on the error paths too. A guard that
+            # only clears on success wedges the form on the first validation
+            # error, which is worse than the duplicate it prevents.
+            self.is_saving = False
 
     async def edit_connection(self, conn_id: int):
         """Load a saved connection into the form for editing.

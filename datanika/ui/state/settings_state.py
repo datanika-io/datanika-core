@@ -58,6 +58,14 @@ class SettingsState(BaseState):
     # membership server-side.
     transfer_candidates: list[str] = []
     transfer_to_email: str = ""
+    # What leaving will actually do to *this* member (SPEC_MUTATION_FEEDBACK
+    # D7a). `leave_org` ends in either `switch_org` or `logout`, and one Leave
+    # button produces both — so the confirmation has to disclose which. The
+    # default is the worse of the two outcomes: before `load_settings` has run,
+    # a dialog that has to guess should guess "you will be signed out" rather
+    # than promise a switch that may not happen.
+    leaving_signs_me_out: bool = True
+    leaving_switches_me_to: str = ""
 
     def redirect_legacy_billing_tab(self):
         """Send `/settings?tab=billing` to the billing page (#654).
@@ -147,6 +155,15 @@ class SettingsState(BaseState):
             if self.transfer_to_email not in self.transfer_candidates:
                 self.transfer_to_email = ""
 
+            # SPEC_MUTATION_FEEDBACK D7a. `leave_org` ends in `switch_org` OR
+            # `logout`, and the button is identical for both — so the dialog has
+            # to say which one the click is about to produce. Derived from the
+            # same `user_orgs` list the handler itself re-derives from, not from
+            # a second rule: exactly the branch below is what the handler takes.
+            remaining = [o for o in auth_state.user_orgs if o.id != auth_state.current_org.id]
+            self.leaving_signs_me_out = not remaining
+            self.leaving_switches_me_to = remaining[0].name if remaining else ""
+
             # Load pending invitations
             from datanika.services.invitation_service import InvitationService
 
@@ -212,6 +229,13 @@ class SettingsState(BaseState):
             slug=self.edit_org_slug,
         )
         self.error_message = ""
+        # SPEC_MUTATION_FEEDBACK D7e. Success and failure were pixel-identical
+        # here: the form goes on displaying exactly what the user typed either
+        # way. No dialog — the Save button is the declared intent — but this
+        # also carries `default_dbt_schema`, which decides where every future
+        # transformation writes, and that was a consequential change made with
+        # no receipt.
+        yield await self._saved_toast("settings.org_saved_toast", "Organization settings saved")
 
     async def add_member_by_email(self):
         if not await self._check_role("admin"):
@@ -346,6 +370,14 @@ class SettingsState(BaseState):
             return
         self.error_message = ""
         await self.load_settings()
+        # SPEC_MUTATION_FEEDBACK D7d. No dialog — the control is an `rx.select`,
+        # and a confirmation that fires on `viewer -> editor` exactly as it fires
+        # on `editor -> admin` is how a user learns to dismiss confirmations
+        # unread (core#851's `remove_model` argument). The toast is not
+        # optional though: this changes *another person's* privileges, and
+        # promoting to admin hands over every destructive control core#851
+        # enumerates.
+        yield await self._saved_toast("settings.role_changed_toast", "Role updated")
 
     async def remove_member(self, membership_id: int):
         if not await self._check_role("admin"):
@@ -439,6 +471,14 @@ class SettingsState(BaseState):
         # rendered until the next full page load.
         auth_state._load_current_role(auth_state.current_user.id, auth_state.current_org.id)
         await self.load_settings()
+        # SPEC_MUTATION_FEEDBACK D7b. The failure case already renders
+        # (`error_message`); success was silent, so the two most likely readings
+        # of a successful transfer were "nothing happened" and "it failed
+        # quietly". The undo lives with the new owner, which is what earns this
+        # a confirmation dialog as well as a toast.
+        yield await self._saved_toast(
+            "settings.ownership_transferred_toast", "Ownership transferred"
+        )
 
     async def leave_org(self):
         """Remove your own membership (SPEC_ORG_ROLES R6, audit P8).
@@ -536,3 +576,11 @@ class SettingsState(BaseState):
             return
         self.error_message = ""
         await self.load_settings()
+        # SPEC_MUTATION_FEEDBACK D7c. `_deleted_toast`, not `_saved_toast`: this
+        # is core#851's eleventh site and the row is genuinely going away. The
+        # only evidence a cancellation happened is a row leaving a table — and
+        # core#872 is the measurement that a table here can render a stale row
+        # set right after your own successful mutation.
+        yield await self._deleted_toast(
+            "settings.invitation_cancelled_toast", "Invitation cancelled"
+        )

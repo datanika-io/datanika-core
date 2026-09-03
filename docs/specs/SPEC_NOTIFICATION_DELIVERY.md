@@ -102,6 +102,30 @@ body duplicates `_build_quota_warning_email` (`notification_service.py:196`), an
 for one message is how the two start disagreeing. Delete it with the change that makes D1 real, and
 give the surviving path `autoretry_for`.
 
+> 🚨 **D5's deletion half is REFUTED — do not perform it.** *(Engineering, 2026-09-03, measured
+> against `datanika-cloud` `origin/dev`; full write-up in [a comment on core#652][d5-refutation].)*
+>
+> `send_quota_warning_email_task` has **one live caller**:
+> `datanika_cloud/billing/meter.py:214-218` imports it and calls `.delay(...)`. The "zero callers"
+> finding came from `git grep … -- datanika/`, and **`datanika-cloud` is a separate repository**, so
+> no `git grep` run in core can see it at any path. Core deliberately exports a Celery task surface
+> that cloud consumes — the same split as `hooks`, where each side reads as dead from the other.
+>
+> Deleting it raises `ImportError` inside meter's own `except Exception`, which would **create a new
+> silent notification failure inside the change that exists to end them**, invisible to core's CI.
+>
+> **The `autoretry_for` half of D5 was right and has shipped.** The task carried
+> `raise_on_error=True` and no `autoretry_for` — raising on a transient relay blip and then not
+> retrying.
+>
+> ⚠️ **The duplication D5 identified is real and is now user-visible**, because `_dispatch_email`
+> actually dispatches: an org whose owner address is also its configured email channel now gets
+> **two** quota-warning mails in two designs. Recipient sets differ (cloud broadcasts to *org
+> owners*; the channel path targets *the configured address*), so this is a Product copy/UX decision,
+> not a refactor. Three options are laid out in the linked comment.
+>
+> [d5-refutation]: https://github.com/datanika-io/datanika-core/issues/652#issuecomment-5522720877
+
 **D6 — Out of scope for this spec:** a **Send test notification** button (it is the right feature and
 it needs its own rate-limiting decision, exactly as [core#700] AC4 does), per-event templating,
 digesting, and any new channel type.

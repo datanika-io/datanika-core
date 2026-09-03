@@ -970,13 +970,57 @@ def _channel_actions(ch: ChannelItem) -> rx.Component:
     )
 
 
+def _delivery_badge(ch: ChannelItem) -> rx.Component:
+    """Answer "is this channel working?", which is not "is it switched on?".
+
+    The old cell rendered ``is_active`` alone as a green **On** — a green
+    affirmative beside an email channel type that had never dispatched anything,
+    on any org, in any edition (core#652). A green badge is an assertion, and
+    that one was false for the life of the feature.
+
+    Three states, deliberately, because two cannot carry the distinction that
+    matters: **off**, **on but never attempted** (grey — we are claiming nothing),
+    and **on with a delivery record** (green or red on the real outcome). A
+    channel that has never delivered must not look identical to one that has.
+    """
+    return rx.cond(
+        ch.is_active,
+        rx.cond(
+            ch.last_status == "",
+            rx.badge(_t["notifications.never_delivered"], color_scheme="gray"),
+            rx.cond(
+                ch.last_status == "success",
+                rx.badge(_t["notifications.delivering"], color_scheme="green"),
+                rx.cond(
+                    ch.last_status == "skipped",
+                    rx.badge(_t["notifications.not_delivering"], color_scheme="amber"),
+                    rx.badge(_t["notifications.delivery_failed"], color_scheme="red"),
+                ),
+            ),
+        ),
+        rx.badge(_t["notifications.off"]),
+    )
+
+
 def channel_row(ch: ChannelItem) -> rx.Component:
     return rx.table.row(
         rx.table.cell(ch.name),
         rx.table.cell(ch.channel_type),
         rx.table.cell(ch.events.join(", ")),
         rx.table.cell(
-            rx.cond(ch.is_active, rx.badge("On", color_scheme="green"), rx.badge("Off")),
+            rx.vstack(
+                _delivery_badge(ch),
+                # The reason, where there is one. AC5: a webhook returning 500
+                # must show as failed **in the UI, without reading a log** — a
+                # log line on a box the user cannot read is not feedback.
+                rx.cond(
+                    ch.last_error != "",
+                    rx.text(ch.last_error, size="1", color="var(--gray-9)"),
+                    rx.fragment(),
+                ),
+                spacing="1",
+                align="start",
+            ),
         ),
         rx.table.cell(
             rx.cond(AuthState.can_administer, _channel_actions(ch), rx.fragment()),

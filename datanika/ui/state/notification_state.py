@@ -15,6 +15,12 @@ class ChannelItem(BaseModel):
     config: dict = {}
     events: list[str] = []
     is_active: bool = True
+    #: Delivery record (core#652). ``is_active`` answers "is this switched on?";
+    #: the user is asking "is this working?". An empty ``last_status`` means the
+    #: channel has never been attempted — rendered as such, never as green.
+    last_status: str = ""
+    last_error: str = ""
+    last_attempt_at: str = ""
 
 
 class NotificationState(BaseState):
@@ -112,6 +118,9 @@ class NotificationState(BaseState):
                     config=ch.config or {},
                     events=ch.events or [],
                     is_active=ch.is_active,
+                    last_status=ch.last_status or "",
+                    last_error=ch.last_error or "",
+                    last_attempt_at=(ch.last_attempt_at.isoformat() if ch.last_attempt_at else ""),
                 )
                 for ch in rows
             ]

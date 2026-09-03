@@ -248,3 +248,94 @@ invisible?** Widening the i18n scanner makes nothing invisible. Loosening either
 And note the failure mode if you get it wrong here: the obvious "fix" for an orphan-key failure is to
 delete the key, which silently drops the translation for all nine locales and leaves the English
 fallback.
+
+## 11. A substring check over source is satisfied by prose *about* the code
+
+The generalisation, and it is the most portable thing on this page:
+
+> **A substring check over source is satisfied by prose about the code — and the prose most likely to
+> contain the token is the comment explaining why the token is absent.**
+
+`tests/test_ui/test_delete_confirmation_and_blocked_uploads.py` asked whether a persisted
+destructive handler is role-gated like this — **fixed in [core#851]/PR #976; recorded because the
+shape will recur, not because it is live**:
+
+```python
+module, _node, source = _state_handler(handler)
+if "_check_role" not in source:          # `source` is the WHOLE handler, docstring included
+    unguarded.append(...)
+```
+
+`SettingsState.leave_org` is deliberately **not** role-gated (`SPEC_ORG_ROLES` R6 — leaving is the
+one action every member has), and its docstring says so — in a sentence that contains the literal
+`` `_check_role("admin")` `` while explaining the comparison. So when [core#851]'s census was widened
+to *see* `leave_org` at all (it had been invisible to the matcher: a Reflex handler taking no
+arguments is referenced without parentheses, so there is no `ast.Call` node), the role assertion
+would have gone **green on it** — certifying as guarded the one handler whose documentation states it
+is not.
+
+🚨 **Closing a matcher gap can therefore make a guard newly, silently wrong.** Widening what a check
+*sees* is not a safe operation on a check that decides by string containment. Ask, before widening:
+*of the things this will now examine, which ones talk about themselves?*
+
+**The fix is not a better substring.** Parse it. The shipped guard now extracts the handler's actual
+`self.<name>(...)` calls (`_self_calls(node)`) and asks whether `_check_role` is among them, so a
+docstring can no longer answer for the code:
+
+```python
+body = [s for s in node.body if not isinstance(s, ast.Expr)]   # a bare string statement is the docstring
+if "_check_role" not in ast.unparse(body[0]):
+```
+
+⚠️ **The technique was already in the file, in the very next method** —
+`test_the_check_is_the_first_thing_the_handler_does` strips the docstring before matching, with a
+comment saying why. One assertion in a class did it correctly and its neighbour did not, and nothing
+reconciles two methods that agree on the token and disagree on the corpus. When you find a guard
+matching on text, check its siblings before you trust any of them.
+
+**Corollary for writing code, not tests:** a docstring that quotes the identifier it is explaining
+the absence of is a hazard to every text-based tool that will ever read the file. That is not an
+argument for vaguer docstrings — the `leave_org` one is excellent and should not change — it is an
+argument for guards that parse. The prose is right; the reader was wrong.
+
+## 12. An argued absence of a control is a decision. An unargued one is an oversight.
+
+Product is asked constantly to add a confirmation, a toast, a warning. Declining is often correct,
+and **the decline has to be written down where the next reader will meet the question**, or it is
+indistinguishable from nobody having thought about it — and it gets "fixed" by someone with less
+context.
+
+Two live examples, both recorded in `SPEC_MUTATION_FEEDBACK.md` §D7 rather than left implicit:
+
+- **`change_member_role` gets no dialog.** The control is an `rx.select`. A confirmation on every
+  option change fires on `viewer → editor` exactly as it fires on `editor → admin`. **A dialog that
+  fires on harmless changes is how a user learns to dismiss dialogs unread** — which would defeat the
+  entire delete-confirmation programme ([core#804], [core#851]) that the same department spent three
+  sessions building. It does get a toast: it changes *another person's* privileges and currently says
+  nothing.
+- **`update_org` gets no dialog.** There is an explicit Save button; the click is the declared
+  intent, and a settings form is the canonical place where a confirmation buys nothing. It gets a
+  toast, because success and failure are pixel-identical — the form goes on showing exactly what the
+  user typed either way.
+
+**A dialog is spent capital.** Every one you add makes every existing one slightly cheaper to
+dismiss, so the argument for adding one has to survive being written next to the ones you declined.
+
+Three practical consequences:
+
+1. **Record the decline in the spec, beside the acceptances**, in the same table. A separate
+   "rejected ideas" section is read by nobody; the table is read by whoever implements.
+2. **Give the reason, not the verdict.** *"No dialog — not destructive"* is a verdict and will be
+   overturned. *"It would fire identically on the harmless and the serious case"* is a reason, and it
+   also tells the next person the condition under which it changes.
+3. **Make the executable artifact point at the prose.** The ratchet lists in
+   `tests/test_ui/test_mutations_acknowledge.py` carry the classification; each entry references the
+   spec section that decided it. A test entry with no argument behind it is an allowlist, and an
+   allowlist is how a guard goes quiet.
+
+⚠️ Note the asymmetry with rule 10, which says: when a lexical guard goes red on your refactor,
+*change the code, not the guard*. That rule and this one meet at the same place. There, the guard had
+a load-bearing shape and you were arguing it away. Here, the guard has no opinion and **you** are
+supplying one. The discriminator is unchanged: **would this make a real defect invisible?** Excluding
+`change_member_role` from the dialog census makes nothing invisible — it is still in the *toast*
+census, and the ratchet fails on any new handler that is in neither.

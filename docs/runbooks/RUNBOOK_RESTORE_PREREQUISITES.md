@@ -29,21 +29,46 @@ below is required to turn that dump back into Datanika, and none of it is inside
 | 9 | Application source | git (`datanika-core`, `datanika-cloud`) | GitHub + every worktree | ✅ |
 | 10 | Apache vhosts, compose, deploy scripts | git `deploy/server/` + the box | 2 | ✅ |
 | 11 | DNS / Cloudflare config | Cloudflare account; documented in root `CLAUDE.md` | 1 + docs | ✅ |
-| 12 | **Uploaded source archives** | `datanika_uploaded_files` docker volume on the app box — **24 KB, 3 files** (2026-09-03) | **1 — app box only** | ❌ **no** — the bytes exist nowhere else |
-| 13 | Per-tenant dbt projects | `datanika_dbt_projects` docker volume — 1.5 MB, `tenant_23`, `tenant_27`, `tenant_4`, `_docs_samples` | **1 — app box only** | ⚠️ regeneration path **unverified** |
+| 12 | **Uploaded source archives** | `datanika_uploaded_files` docker volume on the app box — **15 KB, 3 files** (2026-09-03) **+** Aweb `:/opt/datanika-backups/datanika_uploaded_files_*.tar.gz.gpg` (30 d) | 2 | ❌ **no** — the bytes exist nowhere else |
+| 13 | Per-tenant dbt projects **and whatever a user pointed a file-based destination at** | `datanika_dbt_projects` docker volume — 1.4 MB **+** Aweb `:/opt/datanika-backups/datanika_dbt_projects_*.tar.gz.gpg` (30 d) | 2 | ⚠️ **split** — see below |
 
 **Rows 2 and 3 are the whole point of this document.** Everything else can be re-created from a
 vendor, a certificate authority, or git. Those two cannot be re-created from anything.
 
-> 🚨 **Rows 12–13 added 2026-09-03 ([core#954]).** `backup-offsite.sh` captures one `pg_dump` and
-> nothing else, so these two volumes are in **no backup at all** — and the dump *references* them.
-> `uploaded_files` restores 3 rows whose `archive_path` is
-> `/app/uploaded_files/archives/<sha256>.tar.gz`, and 3 connection configs decrypt to
-> `{"uploaded_file_id": …}`. A restore therefore yields **dangling `archive_path`s** — the identical
-> broken state [core#471] fixed for image rebuilds, arriving through the restore door instead.
-> Row 13 is marked *unverified* deliberately: dbt projects may be regenerable from database state,
-> which would make it a convenience rather than a prerequisite. **Nobody has checked. Do not assume
-> in either direction.**
+> ✅ **Rows 12–13 CLOSED 2026-09-03 ([core#954]).** `backup-offsite.sh` now archives both volumes,
+> encrypts each to the same recipient, round-trips the ciphertext before shipping, and gates each
+> artifact on an **independent** file count (`find` before the tar, compared after) rather than a
+> byte floor — a byte floor cannot tell an empty volume from a tar that produced nothing.
+>
+> What the gap was: the dump *references* bytes it does not contain. `uploaded_files` restores 3 rows
+> whose `archive_path` is `/app/uploaded_files/archives/<sha256>.tar.gz`, and 3 connection configs
+> decrypt to `{"uploaded_file_id": …}`. A dump-only restore yielded **dangling `archive_path`s** — the
+> identical broken state [core#471] fixed for image rebuilds, arriving through the restore door.
+>
+> 🔑 **Row 13's "is it regenerable?" question is ANSWERED, and the answer is split — which is why the
+> volume is backed up for a reason nobody predicted.** Measured 2026-09-03 rather than assumed:
+>
+> - **The `tenant_<org_id>/` subtrees ARE regenerable.** `DbtProjectService.ensure_project()`
+>   recreates the scaffold idempotently, and `write_model` / `generate_profiles_yml` /
+>   `write_source_yml_for_connection` are all called from database state immediately before each run.
+>   `Transformation.sql_body` is a `Text` column, so the model SQL lives in the database. Corroborated
+>   by the volume itself: there were **0 `models/*.sql` files** on production, which is exactly what
+>   that design predicts. `write_packages_yml`, `install_packages`, `write_snapshot` and
+>   `write_tests_config` have **no callers at all** outside the service.
+> - **`_docs_samples/` is NOT, and it is 92% of the volume by bytes.** It holds `warehouse.duckdb`
+>   (1.32 MB) and sample CSV/JSON, and **no code path writes it** — `get_project_path` only ever
+>   produces `tenant_<org_id>`. Production connection **id=14** (org 23, type `duckdb`, `deleted_at`
+>   NULL) has `path: /app/dbt_projects/_docs_samples/warehouse.duckdb`.
+>
+> **So the volume is a store of record because a user pointed a file-based destination into it**, not
+> because dbt projects are precious. Nothing constrains where a DuckDB/SQLite destination path may
+> live, so any volume can become one. Keep row 13 backed up even if the dbt-scaffolding argument
+> stops applying — and see [core#969] for the underlying "destination paths are unconstrained" issue.
+>
+> ⚠️ **Two honest limits on this.** The volume copy is taken live with no quiesce, so a DuckDB file
+> being written at 03:00 is captured torn — strictly better than no copy, and not a guarantee. And
+> the **restore drill does not yet exercise these artifacts** ([core#970]); their only proof today is
+> the creation-time round-trip plus the one manual restore recorded on [core#954].
 
 ### Why #3 is irreplaceable
 
@@ -240,5 +265,8 @@ half of the disaster recovery plan.
 [core#675]: https://github.com/datanika-io/datanika-core/issues/675
 [core#748]: https://github.com/datanika-io/datanika-core/issues/748
 [core#954]: https://github.com/datanika-io/datanika-core/issues/954
+[core#969]: https://github.com/datanika-io/datanika-core/issues/969
+[core#970]: https://github.com/datanika-io/datanika-core/issues/970
+[cloud#133]: https://github.com/datanika-io/datanika-cloud/issues/133
 [cloud#141]: https://github.com/datanika-io/datanika-cloud/issues/141
 [landing#389]: https://github.com/datanika-io/datanika-landing/issues/389

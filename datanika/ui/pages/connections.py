@@ -8,6 +8,7 @@ from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.secure_input import config_input, config_text_area
+from datanika.ui.components.table_loading import table_loading
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
@@ -265,6 +266,21 @@ def _delete_connection_dialog(conn) -> rx.Component:
 
 
 def connections_table() -> rx.Component:
+    """The table, or the third state that says it has not arrived yet (core#872).
+
+    An empty `connections` list is two different facts. Rendering the table
+    unconditionally makes them pixel-identical, and the user's recovery action
+    for "nothing happened" is to click Create again — which, with quota
+    enforcement live, is the click that gets refused.
+    """
+    return rx.cond(
+        ConnectionState.connections_loaded,
+        _connections_table_loaded(),
+        table_loading(),
+    )
+
+
+def _connections_table_loaded() -> rx.Component:
     return rx.table.root(
         rx.table.header(
             rx.table.row(

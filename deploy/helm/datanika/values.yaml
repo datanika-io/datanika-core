@@ -93,6 +93,20 @@ app:
 ## Celery worker.
 celery:
   replicaCount: 1
+  ## ⚠️ `-E` is load-bearing and its absence is nearly invisible (core#957, core#704).
+  ## It is what makes the worker publish task-lifecycle events onto the broker. A
+  ## Celery exporter pointed at a worker running WITHOUT it still emits
+  ## `celery_worker_up`, `celery_queue_length`, `celery_active_worker_count` and
+  ## `celery_active_process_count` — and ZERO `celery_task_*` series, because those
+  ## come from events while the others come from broker introspection. So the
+  ## exporter reads healthy and every task metric is silently missing.
+  ##
+  ## That state is also what you see when no task has simply run yet, which is what
+  ## makes it hard to spot: distinguish them by waiting for a beat firing (hourly)
+  ## and re-querying, never by reading the exporter's own health.
+  ##
+  ## `tests/test_deploy/test_deployment_manifest_parity.py` derives this from
+  ## docker-compose.yml rather than restating it, so dropping it here fails a test.
   command:
     - uv
     - run
@@ -102,6 +116,7 @@ celery:
     - worker
     - -l
     - info
+    - -E
   resources:
     requests:
       cpu: 250m

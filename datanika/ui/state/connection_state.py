@@ -11,11 +11,41 @@ from datanika.config import settings
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     ConnectionService,
+    ConnectionVerdict,
+    LocalPathNotAllowedError,
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
 logger = logging.getLogger(__name__)
+
+#: ``ConnectionVerdict.reason`` → i18n key (SPEC_LOCAL_FILE_CONNECTIONS D6).
+#:
+#: 🚨 **The keys live here, in the UI, and that is deliberate twice over.**
+#:
+#: 1. ``BaseState._translated``'s own rule: *"Services raise plain English —
+#:    they have no locale and no business having one."* A service returning an
+#:    i18n key puts a presentation concern one layer down, where the API and the
+#:    Celery tasks that also call ``test_connection`` have no use for it.
+#: 2. ``tests/test_i18n``'s orphan scanner walks ``datanika/ui`` **only**. A key
+#:    whose sole literal sits in ``services/`` reads as an orphan, and the
+#:    documented remedy for a false orphan is to *delete the key* — which
+#:    silently drops nine translations with every check green (core#872). Keeping
+#:    the literals in the scanned tree keeps that check honest in both
+#:    directions rather than widening what it can see.
+_VERDICT_KEYS = {
+    "file_found": "connections.test_file_found",
+    "file_missing": "connections.test_file_missing",
+    "file_unopenable": "connections.test_file_unopenable",
+    "file_in_memory": "connections.test_file_in_memory",
+    "driver_unavailable": "connections.test_driver_unavailable",
+}
+
+#: Refusal `reason` → i18n key. Same split and the same two reasons as
+#: `_VERDICT_KEYS` above: the service raises English, the UI translates.
+_ERROR_KEYS = {
+    "local_path_not_allowed": "connections.local_path_not_allowed",
+}
 
 # SaaS source types that use endpoint/resource selection (not SQL mode).
 #
@@ -270,6 +300,20 @@ class ConnectionItem(BaseModel):
 
 class ConnectionState(BaseState):
     connections: list[ConnectionItem] = []
+
+    #: False until ``load_connections`` has answered once (core#872).
+    #:
+    #: ``connections == []`` is two different facts — "this org has none" and
+    #: "the websocket has not delivered them yet" — and on production the second
+    #: lasted 5–17 seconds while rendering pixel-identically to the first. A user
+    #: who has just created a connection reads that as *"nothing happened"*, and
+    #: the recovery action they reach for is **repeating the mutation**. Since
+    #: connection-quota enforcement went live that second click is the one that
+    #: gets refused, with the first having silently succeeded.
+    #:
+    #: Must default to False: defaulting to True would claim the data had
+    #: arrived on exactly the render the user waits through.
+    connections_loaded: bool = False
     form_name: str = ""
     # "" so the type picker shows its placeholder and forces a deliberate
     # choice, rather than silently defaulting to postgres (core#593).
@@ -1250,6 +1294,9 @@ class ConnectionState(BaseState):
                     )
                 )
             self.connections = items
+        # Set AFTER the rows land, so a render that catches the flag can never
+        # find it True beside a list that has not been assigned yet.
+        self.connections_loaded = True
         self.error_message = ""
 
     async def save_connection(self):
@@ -1319,6 +1366,15 @@ class ConnectionState(BaseState):
                         new_values={"name": self.form_name, "connection_type": self.form_type},
                     )
                 session.commit()
+        except LocalPathNotAllowedError as e:
+            # Translated rather than surfaced verbatim (D6). `_set_error` passes
+            # a ValueError's message straight through, which would have shipped
+            # this sentence to nine locales in English — the defect D6 names,
+            # reintroduced by the change that closes it.
+            self.error_message = await self._translated(_ERROR_KEYS[e.reason], str(e))
+            self.is_quota_error = False
+            self.quota_metric = ""
+            return
         except Exception as e:
             self._set_error(e, "Failed to save connection")
             return
@@ -1336,7 +1392,29 @@ class ConnectionState(BaseState):
         await self.load_connections()
 
     async def edit_connection(self, conn_id: int):
-        """Load a saved connection into the form for editing."""
+        """Load a saved connection into the form for editing.
+
+        🚨 **This decrypts a stored credential and puts it in public state**, so
+        it is a privileged read and not a neutral one (core#972). It calls
+        ``get_connection_config``, which decrypts, and hands the result to
+        ``_populate_form_from_config``, which writes it into ``form_password``,
+        ``form_aws_secret_access_key``, ``form_service_account_json``,
+        ``form_client_secret`` and ``form_refresh_token`` — all public Reflex
+        state vars, all serialized to the caller's browser.
+
+        The Edit button is wrapped in ``rx.cond(AuthState.can_edit, ...)``, which
+        is a **render** condition. A Reflex event handler is dispatched by name
+        over the websocket and does not care which buttons were drawn, so before
+        this gate any authenticated member — a viewer included — could retrieve
+        the org's warehouse credentials by sending the event.
+
+        ``editor`` rather than ``admin`` deliberately: it is what ``can_edit``
+        resolves to and what ``save_connection`` already requires, so the gate
+        matches the UI's own claim about who may edit rather than inventing a
+        new boundary.
+        """
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
@@ -1350,7 +1428,15 @@ class ConnectionState(BaseState):
         self.editing_conn_id = conn_id
 
     async def copy_connection(self, conn_id: int):
-        """Load a saved connection into the form as a new copy."""
+        """Load a saved connection into the form as a new copy.
+
+        Same privileged read as ``edit_connection`` — it decrypts the config and
+        populates the same form fields — so it carries the same gate (core#972).
+        Copying is if anything the more attractive route for an attacker: it
+        yields the credentials without any expectation of writing them back.
+        """
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
@@ -1400,6 +1486,33 @@ class ConnectionState(BaseState):
         # six more handlers needed the same three lines.
         yield await self._deleted_toast("connections.deleted_toast", "Connection retired")
 
+    async def _verdict_message(self, verdict: ConnectionVerdict) -> str:
+        """Translate a verdict, falling back to the service's English (D6).
+
+        `test_message` is rendered raw from the service today and `en.json`
+        holds `connections.test` — the *button label* — and not one verdict
+        string, so every user in all nine locales reads these in English. New
+        sentences arrive with keys; a branch with no `reason` falls back to the
+        service's English and keeps exactly today's behaviour, so this is
+        additive rather than a rewrite of every connector's message.
+
+        ⚠️ **The substitution is server-side.** `_translated` reads the reactive
+        `I18nState` dict and returns a plain `str`, so `{arg}` is filled in here
+        — a Reflex `Var` cannot be `.format()`ted in the browser, and a
+        placeholder that survives to the DOM is worse than English.
+
+        ⚠️ **An unknown `reason` falls back rather than raising.** A service
+        that grows a reason before the UI maps it then ships English, which is
+        the same failure the mapping exists to prevent — so
+        `test_local_file_connections.py` asserts the two sets agree, and this
+        branch only decides what happens to a user while that is being fixed.
+        """
+        key = _VERDICT_KEYS.get(verdict.reason)
+        if not key:
+            return verdict.message
+        text = await self._translated(key, verdict.message)
+        return text.replace("{arg}", verdict.arg) if verdict.arg else text
+
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""
         validation_error = self._validate_form()
@@ -1424,16 +1537,20 @@ class ConnectionState(BaseState):
         # Converting an unknown failure into a red verdict is strictly safer
         # than letting it through.
         try:
-            ok, msg = ConnectionService.test_connection(config, ConnectionType(self.form_type))
+            verdict = ConnectionService.test_connection_verdict(
+                config, ConnectionType(self.form_type)
+            )
         except Exception:
             logger.exception("Connection test crashed for type %s", self.form_type)
-            ok, msg = False, "The connection test failed unexpectedly — please report this"
+            verdict = ConnectionVerdict(
+                False, "The connection test failed unexpectedly — please report this"
+            )
         # core#821: `ok` is now True / False / None. A crash above yields
         # False, so an unknown failure still reads as a failure and never as
         # the neutral verdict.
-        self.test_success = ok is True
-        self.test_untested = ok is None
-        self.test_message = msg
+        self.test_success = verdict.ok is True
+        self.test_untested = verdict.ok is None
+        self.test_message = await self._verdict_message(verdict)
 
     async def test_saved_connection(self, conn_id: int):
         """Test connectivity for an already-saved connection."""

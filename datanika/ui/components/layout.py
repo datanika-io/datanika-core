@@ -215,6 +215,50 @@ def verification_mail_notice() -> rx.Component:
     )
 
 
+def invite_notice() -> rx.Component:
+    """Say that the invitation did not take (core#981 AC2).
+
+    Lives in the shell for the same reason ``verification_mail_notice`` does: signup
+    authenticates and redirects, so a callout on /signup would never be seen.
+
+    **The failure it reports is invisible from anywhere else.** The user clicked an
+    invitation link, signed up, and is now signed in — in a personal org, not the team's.
+    Nothing about that screen looks wrong. The expired-link case is the common one and was
+    indistinguishable from success.
+
+    ⚠️ **Amber, not red, and dismissible.** Nothing the user did failed: their account
+    exists, they are signed in, and the only thing that did not happen is the join. A red
+    error would send them to check the account they just successfully created.
+
+    One value covers every cause on purpose — see ``AuthState.invite_notice``.
+    """
+    return rx.cond(
+        AuthState.invite_notice == "not_applied",
+        rx.callout(
+            rx.hstack(
+                rx.vstack(
+                    rx.text(_t["auth.invite_not_applied"], weight="medium"),
+                    rx.text(_t["auth.invite_not_applied_help"], size="2"),
+                    spacing="1",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.button(
+                    _t["common.dismiss"],
+                    on_click=AuthState.dismiss_invite_notice,
+                    size="1",
+                    variant="ghost",
+                ),
+                width="100%",
+                align="start",
+            ),
+            icon="mail_warning",
+            color_scheme="amber",
+            width="100%",
+        ),
+    )
+
+
 def signed_out_panel() -> rx.Component:
     """Shown when a mutating handler discovered the session had ended (#673).
 
@@ -334,6 +378,7 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
                 rx.box(
                     rx.vstack(
                         verification_mail_notice(),
+                        invite_notice(),
                         action_error_notice(),
                         rx.cond(title != "", rx.heading(title, size="6"), rx.fragment()),
                         *children,

@@ -40,6 +40,13 @@ So this is a **two-list ratchet**, and the derived half is the equality:
 ⚠️ Deciding that the other 20 owe the user an acknowledgement is a **Product**
 call, not an Engineering one. This file records the split; it does not settle it.
 
+🆕 **Five of those 20 are now settled — SPEC_MUTATION_FEEDBACK §7 (D7a–D7e).**
+Four moved into ``ACKNOWLEDGES``; ``leave_org`` stays in
+``ACKNOWLEDGED_ELSEWHERE`` with an argument rather than the placeholder that
+said it was *"arguably a defect"*. Two of the five also gained a confirmation
+dialog and two deliberately did not — the reasons are in the spec, not restated
+here.
+
 ## Classify by behaviour, never by name
 
 Both directions of the naming heuristic are wrong here, which §2a established by
@@ -81,6 +88,14 @@ ACKNOWLEDGES = frozenset(
         "SettingsState.add_member_by_email",
         "TransformationState.save_transformation",
         "UploadState.save_upload",
+        # Four of the five handed back by PR #960 for a product decision.
+        # SPEC_MUTATION_FEEDBACK §7 (D7b–D7e) decides them; the reasons are
+        # there rather than restated here, because two of the four also get a
+        # confirmation dialog and two deliberately do not.
+        "SettingsState.update_org",  # D7e — success and failure were pixel-identical
+        "SettingsState.change_member_role",  # D7d — changes another person's privileges
+        "SettingsState.transfer_ownership",  # D7b — irreversible by the actor
+        "SettingsState.cancel_invitation",  # D7c — core#851's eleventh site
         # Destructive — already shipped by core#804 / core#851.
         "ApiKeyState.revoke_api_key",
         "ConnectionState.delete_connection",
@@ -117,14 +132,20 @@ ACKNOWLEDGED_ELSEWHERE = frozenset(
         "BackupState.confirm_restore",  # ditto, and it reloads the page on success
         "PipelineState.run_pipeline",  # "Run triggered" toast (D6)
         "UploadState.run_upload",  # "Run triggered" toast (D6)
-        # 🔴 The five below are arguably defects, and are NOT this issue's scope.
-        # `cancel_invitation` is core#851's eleventh site — a one-click
-        # irreversible mutation with neither a dialog nor a toast, reported there.
-        "SettingsState.update_org",
-        "SettingsState.change_member_role",
-        "SettingsState.transfer_ownership",
+        # 🚨 The fifth handler PR #960 handed back, and the only one of the five
+        # that stays here. SPEC_MUTATION_FEEDBACK D7a decides it, and the reason
+        # is mechanical before it is aesthetic: `leave_org`'s terminal statements
+        # are `return auth_state.switch_org(…)` and `return auth_state.logout()`,
+        # and `return` WITH A VALUE inside an async generator is a SyntaxError —
+        # so adding a `yield` here does not compile. Yielding the two events
+        # instead does compile, and is still wrong: the event is a navigation, so
+        # the toast races a redirect and renders on /login if at all.
+        #
+        # What it gets instead is a confirmation dialog that discloses which of
+        # the two outcomes the click will produce — core#851's twelfth site.
+        # Asserted by TestLeavingDisclosesWhichOutcomeItProduces in
+        # tests/test_ui/test_delete_confirmation_and_blocked_uploads.py.
         "SettingsState.leave_org",
-        "SettingsState.cancel_invitation",
     }
 )
 

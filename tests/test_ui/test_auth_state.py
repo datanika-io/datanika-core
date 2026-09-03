@@ -253,6 +253,12 @@ class TestSignupExceptionHandling:
             auth_error="",
             # core#639 — signup consults a rate limiter before the lookup.
             signup_blocked="",
+            # core#981 — signup now reads the invite token before it opens a
+            # session, so the stand-in needs a router. Without it the read
+            # raises AttributeError inside the try and this test's own error
+            # path is masked by the generic catch-all.
+            invite_notice="",
+            router=SimpleNamespace(page=SimpleNamespace(params={})),
             _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
@@ -295,6 +301,12 @@ class TestSignupExceptionHandling:
             auth_error="",
             # core#639 — signup consults a rate limiter before the lookup.
             signup_blocked="",
+            # core#981 — signup now reads the invite token before it opens a
+            # session, so the stand-in needs a router. Without it the read
+            # raises AttributeError inside the try and this test's own error
+            # path is masked by the generic catch-all.
+            invite_notice="",
+            router=SimpleNamespace(page=SimpleNamespace(params={})),
             _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )

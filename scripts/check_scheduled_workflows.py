@@ -132,6 +132,9 @@ class WorkflowState:
     created_at: datetime
     crons: list[str] = field(default_factory=list)
     last_schedule_run: datetime | None = None
+    #: The workflow RECORD exists and is listed by the API, but its file is not on
+    #: the default branch. See :func:`default_branch_workflow_paths` (core#982).
+    file_missing: bool = False
 
     @property
     def ref(self) -> str:
@@ -148,6 +151,34 @@ def find_problems(
     notes: list[str] = []
 
     for wf in workflows:
+        # core#982 — a third state, distinct from both "synthesised by GitHub" and
+        # "healthy". Handled BEFORE the no-crons skip: a file we cannot read has no
+        # crons, so the skip below would swallow it silently.
+        if wf.file_missing:
+            if wf.last_schedule_run is not None:
+                problems.append(
+                    f"{wf.ref} is registered as `{wf.state}` but its FILE is absent from "
+                    f"the default branch -- and it HAS fired on a `schedule` event before, "
+                    f"most recently {wf.last_schedule_run.isoformat()}. A workflow that "
+                    f"used to run on a schedule and whose file is now gone is a schedule "
+                    f"that has stopped, which is exactly what this watchdog exists to find. "
+                    f"Either restore the file to the default branch, or -- if the removal "
+                    f"was intended -- retire the leftover record by deleting that "
+                    f"workflow's runs."
+                )
+            else:
+                notes.append(
+                    f"{wf.ref} is registered as `{wf.state}` but its FILE is absent from "
+                    f"the default branch, and it has NEVER fired on a `schedule` event. "
+                    f"Two readings, and the API cannot separate them -- do not assume the "
+                    f"first: (a) a leftover record from a branch that carried a workflow "
+                    f"file and was then deleted; GitHub keeps the record, and it is retired "
+                    f"by deleting that workflow's runs. (b) a scheduled workflow removed "
+                    f"from the default branch before it ever fired, in which case the "
+                    f"schedule it was supposed to keep is simply not running."
+                )
+            continue
+
         if not wf.crons:
             continue
 
@@ -247,6 +278,59 @@ def is_repository_workflow(path: str) -> bool:
     return path.startswith(WORKFLOW_DIR_PREFIX)
 
 
+def default_branch_workflow_paths(repo: str, ref: str) -> set[str]:
+    """Workflow file paths that actually exist on ``ref``, from ONE directory listing.
+
+    🚨 core#982. GitHub keeps a workflow **record** after the branch that carried
+    its file is deleted. On 2026-09-03 ``importtime-probe.yml`` was listed as
+    ``active`` while ``git ls-tree`` reported it ABSENT on both ``master`` and
+    ``dev``: it came from a throwaway branch, pushed and deleted inside one
+    session. Its path passes :func:`is_repository_workflow` -- it *is* a
+    ``.github/workflows/`` path, so core#952's whitelist correctly lets it through
+    -- and ``contents/<path>`` then 404s and kills the whole run before any repo is
+    checked. That would have been the **fifth** consecutive failed night, reading
+    as *"core#952's fix does not work"* when the fix works and a new instance of
+    the same class had arrived.
+
+    ⚠️ The obvious repair is ``try: _parse_crons(...) except CalledProcessError:
+    continue``, and this module's standing rule forbids it: a 404 on a file we
+    believe exists must stay fatal, or the watchdog reports ``active, all fine``
+    for a workflow it never read -- the precise defect it exists to detect,
+    relocated into the detector.
+
+    So instead of catching the failure, ask the default branch what it *has*. One
+    call per repo, no error-text parsing, and ``_parse_crons``'s 404 keeps its
+    original meaning: a file the listing says is present but which cannot be read
+    is still an anomaly and still fatal.
+    """
+    listing = _gh(
+        "api",
+        f"repos/{repo}/contents/{WORKFLOW_DIR_PREFIX.rstrip('/')}?ref={ref}",
+        "--jq",
+        ".[].path",
+    )
+    paths = {line.strip() for line in listing.splitlines() if line.strip()}
+    if not paths:
+        # Anti-vacuity. An empty listing makes EVERY workflow look file-missing,
+        # which would turn one unreadable directory into a page of plausible
+        # findings about workflows that are perfectly healthy.
+        raise RuntimeError(
+            f"{repo}: the default branch ({ref}) lists no files under "
+            f"{WORKFLOW_DIR_PREFIX}. Refusing to continue -- every workflow would "
+            f"be reported as missing its file, which is a fault in this check "
+            f"rather than in the repository."
+        )
+    return paths
+
+
+def _last_schedule_run(repo: str, workflow_id: int | str) -> datetime | None:
+    runs = json.loads(
+        _gh("api", f"repos/{repo}/actions/workflows/{workflow_id}/runs?event=schedule&per_page=1")
+    )
+    latest = runs.get("workflow_runs") or []
+    return _ts(latest[0]["created_at"]) if latest else None
+
+
 def _parse_crons(repo: str, path: str, ref: str) -> list[str]:
     """Read the workflow file off the default branch and pull out its crons."""
     import yaml
@@ -270,6 +354,7 @@ def _ts(value: str | None) -> datetime | None:
 
 def collect(repo: str) -> list[WorkflowState]:
     default_branch = _gh("api", f"repos/{repo}", "--jq", ".default_branch").strip()
+    present = default_branch_workflow_paths(repo, default_branch)
     workflows = json.loads(_gh("api", f"repos/{repo}/actions/workflows", "--paginate"))
     out: list[WorkflowState] = []
     for wf in workflows.get("workflows", []):
@@ -278,16 +363,26 @@ def collect(repo: str) -> list[WorkflowState]:
             # drop out of the watchlist without anyone noticing.
             print(f"  (skipping {repo} :: {wf['path']} -- synthesised by GitHub, not a repo file)")
             continue
+        if wf["path"] not in present:
+            # core#982. Reported, never swallowed and never guessed at: whether
+            # this is harmless litter or a schedule that has stopped is decided
+            # downstream, on whether it ever fired.
+            out.append(
+                WorkflowState(
+                    repo=repo,
+                    name=wf["name"],
+                    path=wf["path"],
+                    state=wf["state"],
+                    created_at=_ts(wf["created_at"]),
+                    crons=[],
+                    last_schedule_run=_last_schedule_run(repo, wf["id"]),
+                    file_missing=True,
+                )
+            )
+            continue
         crons = _parse_crons(repo, wf["path"], default_branch)
         if not crons:
             continue
-        runs = json.loads(
-            _gh(
-                "api",
-                f"repos/{repo}/actions/workflows/{wf['id']}/runs?event=schedule&per_page=1",
-            )
-        )
-        latest = runs.get("workflow_runs") or []
         out.append(
             WorkflowState(
                 repo=repo,
@@ -296,7 +391,7 @@ def collect(repo: str) -> list[WorkflowState]:
                 state=wf["state"],
                 created_at=_ts(wf["created_at"]),
                 crons=crons,
-                last_schedule_run=_ts(latest[0]["created_at"]) if latest else None,
+                last_schedule_run=_last_schedule_run(repo, wf["id"]),
             )
         )
     return out
@@ -313,10 +408,16 @@ def main() -> int:
     # looked at -- and a total-count guard passes happily on core's four while
     # landing, the repo this watchdog was built for, went unexamined. That is
     # not hypothetical: it is exactly what happened on 2026-08-31..09-02.
+    #
+    # ⚠️ core#982: counted on workflows that actually carry a cron, NOT on
+    # ``len(found)``. A file-missing record is something to report, never
+    # something that vouches for a repo being watched -- otherwise a repo whose
+    # workflow files had all vanished would satisfy this guard with a page of
+    # findings about workflows nothing is running.
     per_repo: dict[str, int] = {}
     for repo in args.repos:
         found = collect(repo)
-        per_repo[repo] = len(found)
+        per_repo[repo] = len([w for w in found if w.crons])
         workflows.extend(found)
 
     empty = [repo for repo, n in per_repo.items() if n == 0]
@@ -332,19 +433,35 @@ def main() -> int:
     problems, notes = find_problems(workflows, datetime.now(UTC))
 
     counts = ", ".join(f"{repo}={n}" for repo, n in per_repo.items())
+    scheduled = [w for w in workflows if w.crons]
+    orphans = [w for w in workflows if w.file_missing]
     print(
-        f"Checked {len(workflows)} scheduled workflow(s) across {len(args.repos)} repo(s): {counts}"
+        f"Checked {len(scheduled)} scheduled workflow(s) across {len(args.repos)} repo(s): {counts}"
     )
-    for wf in sorted(workflows, key=lambda w: w.ref):
+    for wf in sorted(scheduled, key=lambda w: w.ref):
         last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
         print(f"  [{wf.state:>20}] {wf.ref}")
         print(f"       cron={wf.crons}  last_schedule_run={last}")
+    for wf in sorted(orphans, key=lambda w: w.ref):
+        last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
+        print(f"  [{'FILE NOT ON DEFAULT':>20}] {wf.ref}")
+        print(f"       state={wf.state}  last_schedule_run={last}")
 
     for note in notes:
         print(f"::notice::{note}")
 
     if not problems:
-        print("\nAll scheduled workflows are active and firing.")
+        # ⚠️ Deliberately does not say "all fine": an orphaned record is a note,
+        # not a problem, and a closing line that hid it would be the summary
+        # contradicting the body two screens above it.
+        if orphans:
+            print(
+                f"\nAll {len(scheduled)} scheduled workflows are active and firing. "
+                f"{len(orphans)} workflow record(s) have no file on the default "
+                f"branch -- see the notices above and decide which reading applies."
+            )
+        else:
+            print("\nAll scheduled workflows are active and firing.")
         return 0
 
     print()

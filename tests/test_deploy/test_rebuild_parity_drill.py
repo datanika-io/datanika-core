@@ -235,6 +235,28 @@ def production_is_only_ever_read(code: list[str]) -> bool:
     return True
 
 
+def defaults_come_from_the_rebuild(code: list[str]) -> bool:
+    """`column_default` must be read from the REBUILT database, never from production.
+
+    🚨 This guard exists because the first version got it backwards, and only a measurement
+    found it. The drill models: *we rebuild from source, then someone creates the paid rows
+    out of band in the NEW database*. The defaults that apply are therefore the rebuilt
+    schema's. Reading production's catalogue answers a different question and makes the
+    headline finding track **production's** schema drift instead of the rebuild's.
+
+    How it surfaced: running the drill against the staging image — which already carries
+    core#1047, the migration that DROPs the `max_schedules` default — still reported
+    `max_schedules default_would_give=10` and an unchanged fingerprint, because the number
+    came from prod's catalogue where #1047 had not landed. **The drill was structurally
+    blind to the exact class of fix it exists to notice**, while passing.
+    """
+    joined = "\n".join(code)
+    m = re.search(
+        r"(psql_prod|psql_fresh)\s+\"select column_name \|\| '=' \|\| column_default", joined
+    )
+    return bool(m) and m.group(1) == "psql_fresh"
+
+
 PREDICATES = {
     "isolated_network": isolated_network,
     "preflight_aborts": preflight_aborts,
@@ -244,6 +266,7 @@ PREDICATES = {
     "bootstrap_branch_is_reachable": bootstrap_branch_is_reachable,
     "stdin_is_never_stolen": stdin_is_never_stolen,
     "production_is_only_ever_read": production_is_only_ever_read,
+    "defaults_come_from_the_rebuild": defaults_come_from_the_rebuild,
 }
 
 # Mutations of the REAL script, one per predicate, in the shape a careless edit
@@ -261,7 +284,10 @@ MUTATIONS = {
         ": # metric datanika_rebuild_parity_slugs_missing removed",
     ),
     "verdict_can_fail": ('if [ -n "${FAILURES}" ]; then', "if false; then"),
-    "bootstrap_branch_is_reachable": ("${EXPECTED_GAP-d40ef", "${EXPECTED_GAP:-d40ef"),
+    # Pin-agnostic on purpose: an anchor carrying the fingerprint stops matching the moment
+    # the pin legitimately moves, and a mutation whose anchor matches nothing is a mutation
+    # that never applied — a harness reporting its own breakage as "your guard is fine".
+    "bootstrap_branch_is_reachable": ('"${EXPECTED_GAP-', '"${EXPECTED_GAP:-'),
     "stdin_is_never_stolen": (
         "psql -U datanika -d datanika -At -F'|' -c \"$1\" </dev/null",
         "psql -U datanika -d datanika -At -F'|' -c \"$1\"",
@@ -269,6 +295,10 @@ MUTATIONS = {
     "production_is_only_ever_read": (
         'psql_prod "select count(*) from plans"',
         "psql_prod \"delete from plans where slug = ''\"",
+    ),
+    "defaults_come_from_the_rebuild": (
+        "psql_fresh \"select column_name || '=' || column_default",
+        "psql_prod \"select column_name || '=' || column_default",
     ),
 }
 
@@ -339,7 +369,12 @@ def test_the_pinned_gap_is_a_real_measurement_with_its_reason_beside_it():
     text = SCRIPT.read_text(encoding="utf-8")
     m = re.search(r'EXPECTED_GAP="\$\{EXPECTED_GAP-([0-9a-f]{16})\}"', text)
     assert m, "EXPECTED_GAP must be a pinned 16-hex-char fingerprint"
-    block = text[max(0, m.start() - 1600) : m.end()]
+    # Anchor on STRUCTURE, not on a character distance: the block is whatever sits between
+    # the section header and the assignment. A fixed window silently measured the wrong span
+    # the moment the comment grew, which is this project's window-guard trap exactly.
+    header = text.rfind("── The pinned expectation", 0, m.start())
+    assert header != -1, "the pinned expectation must sit under its own section header"
+    block = text[header : m.end()]
     for token in ("core#1060", "core#928", "SHRANK", "GREW"):
         assert token in block, (
             f"the pinned expectation must name {token} in the same block — a baseline "

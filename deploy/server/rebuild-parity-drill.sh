@@ -69,18 +69,26 @@ IGNORE_COLS="id created_at updated_at paddle_product_id paddle_price_id"
 #                             That is a NEW instance of core#928's class. File it.
 # The gap itself is printed in full on every run regardless, so it is never only a hash.
 #
-# Pinned 2026-09-04 against `:latest` (master a9c4e2b7d5f3): 4 missing slugs, 30 wrong-by-default
-# column values. 🔔 THE NEXT RUN AFTER THE 2026-09-04 PROMOTION IS EXPECTED TO GO RED, and that
-# is this check's arming proof rather than a defect: core#1047 (`b4d8f1a2c6e9`) drops the
-# `max_schedules` server default, which removes 4 of the 30 lines. Re-pin then, having read the
-# gap — do not pre-empt it by pinning a number nobody has measured.
+# Pinned 2026-09-04 to the value MEASURED against alembic head `b4d8f1a2c6e9` — i.e. the schema
+# this promotion puts on `:latest`: 4 missing slugs, **26** wrong-by-default column values.
+#
+# 🔑 It is 26 and not 30 because core#1047 (`b4d8f1a2c6e9`) DROPs the `max_schedules` server
+# default, removing 4 lines. I had written the pin as 30 with a note predicting a red first run;
+# the prediction was right about the world and wrong about this script, which was reading the
+# defaults from PRODUCTION's catalogue rather than the rebuild's. Running the drill against the
+# staging image — already on that head — is what exposed it: same 30, same fingerprint, blind to
+# the fix. The pin below is a measurement of the post-promotion schema, not a forecast.
+#
+# Discrimination control, same production reference, two rebuild images:
+#   :latest  head a9c4e2b7d5f3 (pre-#1047)  -> 30 columns, d40ef6fd71337e53
+#   :staging head b4d8f1a2c6e9 (post-#1047) -> 26 columns, d0e77bd8d96b9219   <- pinned
 #
 # ⚠️ `${VAR-default}`, NOT `${VAR:-default}`. With `:-` an explicitly EMPTY override falls back to
 # the pinned value, which made the "nothing pinned" branch below structurally unreachable — a
 # branch that can never fire, found by running the arm that was supposed to exercise it. With `-`
 # only an UNSET variable takes the default, so `EXPECTED_GAP= ` reaches the bootstrap path and the
 # guard is testable.
-EXPECTED_GAP="${EXPECTED_GAP-d40ef6fd71337e53}"
+EXPECTED_GAP="${EXPECTED_GAP-d0e77bd8d96b9219}"
 
 cleanup() {
     docker rm -f "${DB}" >/dev/null 2>&1 || true
@@ -220,11 +228,22 @@ done < "${WORK}/live.slugs"
 
 # ── 7. the core#1060 finding, DERIVED rather than restated ───────────────────
 # For each slug a rebuild does not create, report what a bare out-of-band INSERT would take
-# from the column defaults, next to what production actually serves. Computed from the live
-# catalogue, so it stays true as columns are added — the point of core#1060 is precisely that
-# these two disagree and nothing says so.
+# from the column defaults, next to what production actually serves.
+#
+# 🚨 THE DEFAULTS MUST COME FROM THE REBUILT DATABASE (`psql_fresh`), NEVER FROM PRODUCTION.
+# The scenario this drill models is: we rebuild from source, and someone then creates the paid
+# rows out of band *in the new database*. So the defaults that apply are the REBUILT schema's.
+# Reading production's catalogue answers a different and far less interesting question — "what
+# would happen if you inserted into the database that already has the rows" — and it makes the
+# whole finding track PRODUCTION's schema drift instead of the rebuild's.
+#
+# Measured, which is the only reason this was found: running the drill with the STAGING image
+# (already carrying core#1047, which DROPs this default) still reported
+# `max_schedules default_would_give=10` and an unchanged fingerprint, because the number came
+# from prod's catalogue where #1047 had not landed. The drill was blind to the very fix it is
+# meant to notice. A prediction turned into a measurement, and the prediction was wrong.
 : > "${WORK}/gap.txt"
-psql_prod "select column_name || '=' || column_default from information_schema.columns
+psql_fresh "select column_name || '=' || column_default from information_schema.columns
            where table_name='plans' and column_default is not null
              and column_default not like 'nextval%' and column_default <> 'now()'
            order by column_name" > "${WORK}/defaults.txt"

@@ -194,11 +194,17 @@ def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
                 {"n": "QA bigint probe", "s": "qa-bigint-probe"},
             ).scalar_one()
 
+            # `overage_run_price_cents` is stated since core migration `c5e9a3b7d2f4`
+            # (cloud#177) dropped its `server_default`: a raw INSERT that omits a runs
+            # price is now refused rather than silently priced at a cent per run. Zero,
+            # because model runs are not billed — that is the founder decision the
+            # migration implements, not a placeholder.
             plan_id = conn.execute(
                 text(
                     "INSERT INTO plans (name, slug, paddle_price_id, "
-                    "paddle_product_id, price_cents, interval, bytes_included) "
-                    "VALUES (:n, :s, :ppi, :ppp, :pc, :i, :bi) RETURNING id"
+                    "paddle_product_id, price_cents, interval, bytes_included, "
+                    "overage_run_price_cents) "
+                    "VALUES (:n, :s, :ppi, :ppp, :pc, :i, :bi, :orp) RETURNING id"
                 ),
                 {
                     "n": "QA Probe Plan",
@@ -208,6 +214,7 @@ def test_realistic_byte_size_roundtrip(roundtrip_db_url: str) -> None:
                     "pc": 0,
                     "i": "month",
                     "bi": _PROBE_PLAN_BYTES,
+                    "orp": 0,
                 },
             ).scalar_one()
 

@@ -7,9 +7,11 @@ import pytest
 from datanika.services.dlt_runner import (
     DEFAULT_BATCH_SIZE,
     INTERNAL_CONFIG_KEYS,
+    KAFKA_SECURITY_KEYS,
     DltRunnerError,
     DltRunnerService,
     _extract_rows_loaded,
+    _kafka_security_kwargs,
 )
 from datanika.services.egress_guard import EgressValidationError
 from datanika.services.egress_guard import validate_egress_host as _real_validate_egress_host
@@ -1562,6 +1564,115 @@ class TestKafkaSource:
     def test_requires_topics(self, svc):
         with pytest.raises(DltRunnerError, match="topics"):
             svc._build_kafka_source({"bootstrap_servers": "localhost:9092"}, {})
+
+
+class TestKafkaSecurityKwargs:
+    """core#1054 — the credential path, at the unit level.
+
+    The row-moving proof is
+    ``test_source_builders_move_rows.py::TestKafkaSaslSourceMovesRows``, against a
+    container broker that genuinely refuses anonymous clients. These cover the
+    branches that produce a *message* rather than a connection, which is the half
+    a broker cannot demonstrate.
+    """
+
+    _BROKER = {"bootstrap_servers": "b:9092", "topics": ["t"], "group_id": "g"}
+
+    def test_no_security_config_stays_byte_for_byte_unauthenticated(self):
+        """The pre-existing PLAINTEXT path must be untouched — empty, not defaulted."""
+        assert _kafka_security_kwargs({"bootstrap_servers": "b:9092"}, {}) == {}
+
+    def test_sasl_credentials_reach_the_consumer(self):
+        kwargs = _kafka_security_kwargs(
+            {
+                **self._BROKER,
+                "security_protocol": "SASL_SSL",
+                "sasl_plain_username": "u",
+                "sasl_plain_password": "p",
+            },
+            {},
+        )
+        assert kwargs == {
+            "security_protocol": "SASL_SSL",
+            "sasl_mechanism": "PLAIN",
+            "sasl_plain_username": "u",
+            "sasl_plain_password": "p",
+        }
+
+    def test_an_explicit_mechanism_is_not_overwritten_by_the_default(self):
+        """Redpanda Serverless is SCRAM-SHA-256; defaulting over it would break it."""
+        kwargs = _kafka_security_kwargs(
+            {
+                **self._BROKER,
+                "security_protocol": "SASL_SSL",
+                "sasl_mechanism": "SCRAM-SHA-256",
+                "sasl_plain_username": "u",
+                "sasl_plain_password": "p",
+            },
+            {},
+        )
+        assert kwargs["sasl_mechanism"] == "SCRAM-SHA-256"
+
+    @pytest.mark.parametrize("missing", ["sasl_plain_username", "sasl_plain_password"])
+    def test_a_half_configured_sasl_connection_is_refused_by_name(self, missing):
+        """The case that otherwise reads as an unreachable broker.
+
+        Without this the consumer negotiates anonymously, the broker drops it, and
+        the user is told ``Unable to bootstrap from [...]`` — a network message for
+        a credentials problem.
+        """
+        config = {
+            **self._BROKER,
+            "security_protocol": "SASL_PLAINTEXT",
+            "sasl_plain_username": "u",
+            "sasl_plain_password": "p",
+        }
+        del config[missing]
+
+        with pytest.raises(DltRunnerError, match=missing):
+            _kafka_security_kwargs(config, {})
+
+    def test_an_unknown_protocol_names_the_field_not_the_socket(self):
+        with pytest.raises(DltRunnerError, match="security_protocol"):
+            _kafka_security_kwargs({**self._BROKER, "security_protocol": "SASL-SSL"}, {})
+
+    def test_the_protocol_is_accepted_case_insensitively(self):
+        kwargs = _kafka_security_kwargs(
+            {
+                **self._BROKER,
+                "security_protocol": "sasl_ssl",
+                "sasl_plain_username": "u",
+                "sasl_plain_password": "p",
+            },
+            {},
+        )
+        assert kwargs["security_protocol"] == "SASL_SSL"
+
+    @pytest.mark.parametrize("key", KAFKA_SECURITY_KEYS)
+    def test_a_security_key_in_dlt_config_is_refused_rather_than_ignored(self, key):
+        """``dlt_config`` is an unencrypted JSON column — see ``_kafka_security_kwargs``.
+
+        Refusing is deliberate, and the alternative to argue against is *ignoring*:
+        that fails the run with a bootstrap timeout naming nothing, which is the
+        failure this whole change removes.
+        """
+        with pytest.raises(DltRunnerError, match=key):
+            _kafka_security_kwargs(self._BROKER, {key: "x"})
+
+    def test_every_security_key_is_internal_so_none_reaches_pipeline_run(self):
+        """The third layer of core#1054, pinned directly.
+
+        ``execute()`` forwards every key not in ``INTERNAL_CONFIG_KEYS`` to
+        ``pipeline.run()``. Before this change all four fell through and dlt raised
+        ``TypeError: Pipeline.run() got an unexpected keyword argument``.
+        """
+        assert set(KAFKA_SECURITY_KEYS) <= INTERNAL_CONFIG_KEYS
+
+    def test_the_password_is_registered_as_a_secret(self):
+        """Or `_redact_secrets` quotes a broker password back in a failed test."""
+        from datanika.services.connection_service import SECRET_CONFIG_KEYS
+
+        assert "sasl_plain_password" in SECRET_CONFIG_KEYS
 
 
 def _gai_private(ip: str = "10.0.0.5"):

@@ -8,3 +8,17 @@ deploy/apache/*.example text eol=lf
 
 # Staging compose is byte-compared on a Linux box by CD; CRLF would fake a change.
 deploy/staging/*.yml text eol=lf
+
+# core#1076. Same reason as deploy/apache/ above, one directory over: everything in
+# deploy/server/ is hand-installed onto a Linux box (core#747), and two of these .conf
+# files are pinned byte-identical to their deploy/apache/ twins by
+# tests/test_deploy/test_server_script_coverage.py.
+#
+# 🚨 Without these rules that guard is red on EVERY Windows push and green in CI: the
+# blobs are the same git object, `core.autocrlf=true` materialises deploy/server/ as
+# CRLF and deploy/apache/ as LF, and the guard compares raw bytes. Linux CI checks out
+# both as LF, so it passes there for a reason unrelated to the property it asserts.
+# `deploy/server/*.sh` was already covered by the `*.sh` rule at the top, which is why
+# only the .conf/.yml half drifted.
+deploy/server/*.conf text eol=lf
+deploy/server/*.yml text eol=lf

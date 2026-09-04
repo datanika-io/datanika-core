@@ -88,6 +88,65 @@ class FileUploadService:
             )
         return ext
 
+    @staticmethod
+    def _reject_path_segments(filename: str) -> None:
+        """Refuse a name that is a *path* rather than a file name (core#1027).
+
+        Before this, ``save_file`` validated size and extension and looked at
+        the path not at all. ``'../../.env'`` and ``'/etc/passwd'`` were refused
+        — but by the **extension allowlist**, which is why the same traversal
+        with an allowed extension, ``'../../evil.csv'``, was accepted and
+        written verbatim as the tar member name.
+
+        Why this is not redundant with ``extract_for_dlt``'s ``filter="data"``:
+
+        * that filter refuses ``..`` and **relocates** an absolute member rather
+          than refusing it (``/tmp/x.csv`` extracts to ``<dest>/tmp/x.csv``), so
+          the two checks cover different inputs;
+        * even where it does refuse, it refuses in the **Celery worker**, long
+          after the user has left the upload form. Accept-now-fail-later is the
+          slower, more confusing failure, and the error it produces names the
+          extraction or the file glob rather than the filename the user chose.
+
+        🚨 **Both separators, and the backslash is the one that matters in
+        production.** Reflex reduces an uploaded name to ``Path(name.lstrip("/")).name``
+        (``reflex/app.py``), and ``Path`` is ``PosixPath`` in the container. So
+        by the time a browser upload reaches here, a ``/``-bearing name has
+        *already* been reduced to its basename — incidentally, not by design —
+        while a ``\\``-bearing one arrives **whole**, because POSIX does not
+        treat ``\\`` as a separator. Measured, on Linux:
+
+        =========================  ====================  ==================
+        filename                   reflex, container     reflex, dev box
+        =========================  ====================  ==================
+        ``../../evil.csv``         ``evil.csv``          ``evil.csv``
+        ``..\\..\\evil.csv``       ``..\\..\\evil.csv``  ``evil.csv``
+        =========================  ====================  ==================
+
+        ⚠️ **So an end-to-end reproduction on a Windows dev box shows nothing
+        reaching this function, and production is the platform where one does.**
+        Anyone re-deriving this issue locally through the UI gets the flattering
+        answer.
+
+        And it is why the check is an explicit separator test rather than the
+        more obvious ``filename != os.path.basename(filename)``:
+        ``os.path.basename`` is ``posixpath.basename`` in the container, which
+        returns ``'..\\..\\evil.csv'`` unchanged — blind to the single case that
+        is actually reachable there. (The two also disagree on drive prefixes:
+        ``'C:data.csv'`` loses its drive on Windows and survives whole on
+        POSIX.) A validator that answers differently on the developer's machine
+        and in production is worse than the hole it closes.
+
+        Invariant this relies on: ``_infer_content_type`` has already run, so
+        the name ends in an allowed extension and its final segment is
+        non-empty. Pinned by
+        ``test_the_extension_check_runs_before_the_path_check``.
+        """
+        if "/" not in filename and "\\" not in filename:
+            return
+        basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        raise ValueError(f"File name must not contain a path. Upload it as '{basename}'.")
+
     def save_file(
         self,
         session: Session,
@@ -102,6 +161,12 @@ class FileUploadService:
             )
 
         content_type = self._infer_content_type(filename)
+        # core#1027. Order is load-bearing, not incidental: the extension check
+        # stays first so a traversal name with a *disallowed* extension is still
+        # attributed to its type, which is what the two allowlist tests in
+        # tests/test_security/test_path_traversal.py measure. Swapping them
+        # would leave those names refused — and the allowlist untested for them.
+        self._reject_path_segments(filename)
         file_hash = hashlib.sha256(content).hexdigest()
 
         # Create tar.gz archive

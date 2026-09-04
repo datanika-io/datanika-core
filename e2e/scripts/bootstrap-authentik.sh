@@ -282,6 +282,26 @@ else:
 # no <ds:Signature> at all, and `wantAssertionsSigned: True` refuses it — that
 # is core#768, and `wantAssertionsSigned` is the fix for the 2026-07-20
 # auth-bypass, so it must never be relaxed to make this pass.
+#
+# 🚨 sign_assertion MUST accompany signing_kp, and its absence cost the WHOLE
+# SSO tier (core#854). authentik refuses the POST outright:
+#
+#   HTTP 400 {"non_field_errors":["With a signing keypair selected, at least one
+#   of 'Sign assertion' and 'Sign Response' must be selected."]}
+#
+# selecting a keypair says which key; it does not say what to sign, and a key
+# that signs nothing is rejected rather than ignored. The provider was therefore
+# never created, this script exited 1, and steps 10-14 of `e2e-sso` — including
+# `Run SSO specs` — were SKIPPED. So the tier was not failing, it was
+# **unmeasured**, which reads redder and tells you less. The image is pinned at
+# 2024.12, so this was never a version bump: the payload has never been valid.
+#
+# ⚠️ It must be sign_assertion and NOT sign_response. sso_routes.py:509-510 sets
+# `wantAssertionsSigned: True` and `wantMessagesSigned: False`, so the assertion
+# is the half our SP validates. Signing only the response would satisfy authentik
+# and turn this step green while the specs still failed on an unsigned
+# assertion — and the tempting next move from there is relaxing
+# `wantAssertionsSigned`, which is exactly the auth bypass above.
 SAML_BODY="{
   \"name\": \"datanika-saml-e2e\",
   \"authorization_flow\": \"${AUTH_FLOW_PK}\",
@@ -291,6 +311,8 @@ SAML_BODY="{
   \"issuer\": \"${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/\",
   \"sp_binding\": \"post\",
   \"signing_kp\": \"${SIGNING_KEY_PK}\",
+  \"sign_assertion\": true,
+  \"sign_response\": false,
   \"name_id_mapping\": \"${SAML_NAMEID_PK}\",
   \"property_mappings\": ${SAML_MAPPING_PKS}
 }"
@@ -310,6 +332,11 @@ if p.get('sp_binding') != 'post':
     problems.append(f\"sp_binding is {p.get('sp_binding')!r}, not 'post' (core#830)\")
 if not p.get('signing_kp'):
     problems.append('signing_kp is unset, so assertions are UNSIGNED (core#768)')
+if not p.get('sign_assertion'):
+    # A selected key signs nothing unless this is on. Checking signing_kp alone
+    # asserts that a key was CHOSEN, which is not the property we need (core#854).
+    problems.append('sign_assertion is off, so the key signs nothing and '
+                    'wantAssertionsSigned refuses the response (core#854)')
 if not p.get('property_mappings'):
     problems.append('no property_mappings, so AttributeStatement is empty and schema-invalid')
 if not p.get('name_id_mapping'):

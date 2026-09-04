@@ -1335,6 +1335,11 @@ jobs:
           GATING_OUTCOME: ${{ steps.gating.outcome }}
           ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
           JOB_STATUS: ${{ job.status }}
+          # core#1029. `flaky_gate` runs on `always()` and writes `status=` to
+          # $GITHUB_OUTPUT, so this is populated even when the gating step died.
+          # Empty on the one path where that step is itself skipped (a cancelled
+          # job), which is why the `cancelled` branch stays first.
+          FLAKY_STATUS: ${{ steps.flaky_gate.outputs.status }}
         run: |
           # !! `cancelled()` MUST NOT appear in this `env:`, and that is not
           # style. The status-check functions (success/failure/cancelled/always)
@@ -1355,10 +1360,28 @@ jobs:
           # "the harness did not run" for a harness that is perfectly fine. The two states
           # need different responses: `no_verdict` means fix the harness, `wrong_build`
           # means re-deploy this commit.
+          # core#1029: `no-evidence` means the report contains NO TESTS -- Playwright's
+          # globalSetup died, or the report could not be read. The gating step is red in
+          # that case, so keying on its outcome alone announced "GATING E2E specs FAILED,
+          # this red is a real test failure" for a run in which zero specs executed. It is
+          # an ABSENT reading, not a failing one, and the two need opposite responses.
+          #
+          # ⚠️ Ordering is load-bearing in BOTH directions and is pinned by
+          # tests/test_deploy/test_e2e_staging_verdict_classifier.py:
+          #   * AFTER `wrong_build` — an attribution refusal skips the gating step and so
+          #     also leaves no report; classifying it `no_verdict` would page "fix the
+          #     harness" for a harness that is fine (core#876).
+          #   * BEFORE `gating_failed` — that is the whole point; placed after, it is
+          #     unreachable and the guard's textual half would still have passed.
+          # It also catches the emptier, more dangerous case: a report with no tests and a
+          # step that PASSED (`{"files":[],"stats":{"total":0,"ok":true}}`, the de00365
+          # shape) is not `clean` either. Only `clean` is a green -- detect_flaky_gating.py.
           if [ "$JOB_STATUS" = "cancelled" ] || [ "$GATING_OUTCOME" = "cancelled" ]; then
             STATE=cancelled
           elif [ "$ATTRIB_OUTCOME" = "failure" ]; then
             STATE=wrong_build
+          elif [ "$FLAKY_STATUS" = "no-evidence" ]; then
+            STATE=no_verdict
           elif [ "$GATING_OUTCOME" = "failure" ]; then
             STATE=gating_failed
           elif [ "$GATING_OUTCOME" = "success" ]; then
@@ -1374,7 +1397,7 @@ jobs:
             infra_only)
               echo "::warning::The gating E2E specs PASSED — this job is red for a NON-TEST reason (artifact upload, or a step after the specs). Do not read this as an E2E failure; no issue was filed and no alert was paged. Find the failing step before treating the promotion as blocked (core#873)." ;;
             no_verdict)
-              echo "::error::e2e-staging produced NO E2E VERDICT — the gating step did not run (outcome=$GATING_OUTCOME). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. Fix the harness, then re-run." ;;
+              echo "::error::e2e-staging produced NO E2E VERDICT (gating outcome=$GATING_OUTCOME, report=$FLAKY_STATUS). Either the gating step never ran, or it ran and collected ZERO specs — Playwright's globalSetup is the usual cause of the second (core#1029). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read, and a green on the NEXT push means the harness started, not that a flake cleared. Fix the harness, then re-run." ;;
             wrong_build)
               echo "::error::e2e-staging REFUSED to run: staging was not running this commit (core#876). This is NOT an E2E failure and NOT a broken harness — the specs were never started, so this commit still has no reading. Re-run this commit's deploy, then re-run this job. Do NOT re-deploy from inside a verifier (core#753)." ;;
             cancelled)

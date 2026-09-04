@@ -3,6 +3,7 @@
 import logging
 
 import reflex as rx
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from datanika.db import get_sync_session  # noqa: F401 — re-exported
@@ -15,6 +16,51 @@ ROLE_HIERARCHY = {"owner": 4, "admin": 3, "editor": 2, "viewer": 1}
 def check_role_hierarchy(current_role: str, required_role: str) -> bool:
     """Check if current_role meets or exceeds required_role."""
     return ROLE_HIERARCHY.get(current_role, 0) >= ROLE_HIERARCHY.get(required_role, 0)
+
+
+def is_user_facing(exc: Exception) -> bool:
+    """Is this exception's own text something we authored, and safe to show? (core#1032)
+
+    ``ValueError`` is this codebase's deliberate carrier for user-facing text —
+    quota refusals, validation refusals, ``connection_service`` says so in a
+    docstring — so ``isinstance(exc, ValueError)`` was the right *intent*. It is
+    the wrong *boundary*, because **pydantic's ``ValidationError`` is a subclass
+    of ``ValueError``**, and it is a class we do not author.
+
+    The consequence was measured on the unfixed billing page (cloud#164), where
+    ``error_message`` became::
+
+        1 validation error for SubscriptionInfo
+        max_schedules
+          Input should be a valid integer [type=int_type, input_value=None, ...]
+
+    while the handler's own ``"Failed to load billing data"`` was passed and
+    never used. Note ``input_value=``: a pydantic report echoes the offending
+    value into a rendered string, which is not what a method called "safe error"
+    should do.
+
+    Two things settled by measurement rather than by reading, both of which the
+    issue flagged as easy to get wrong:
+
+    * ``pydantic.ValidationError`` **is** ``pydantic_core.ValidationError`` — the
+      same object, not an alias to a wrapper — so the documented public name is
+      correct here. Pinned by ``test_the_two_import_paths_name_the_same_class``.
+    * ``PydanticUserError`` and ``PydanticSchemaGenerationError`` are **not**
+      ``ValueError`` subclasses, so they already reached the fallback and this
+      needs no widening.
+
+    🔑 **It is a module-level function, and both callers use it, deliberately.**
+    ``_safe_error`` and ``_set_error`` carried this branch *twice*; the issue
+    named only one of them, and fixing one would have left the identical defect
+    live on ``save_connection``, ``save_pipeline``, ``save_schedule``,
+    ``add_member`` and ``save_upload``. One predicate is what stops them
+    diverging again, and ``TestTheTwoStayInStep`` is what notices if they do.
+
+    A ``UserFacingError`` marker class would be the better long-term shape, but
+    that is ~30 raise sites and its own decision; this is the narrowing that
+    keeps every intended case working today.
+    """
+    return isinstance(exc, ValueError) and not isinstance(exc, ValidationError)
 
 
 class BaseState(rx.State):
@@ -179,18 +225,13 @@ class BaseState(rx.State):
         _log.exception("Caught exception in state handler")
         self.is_quota_error = type(exc).__name__ == "QuotaExceededError"
         self.quota_metric = (getattr(exc, "metric", None) or "") if self.is_quota_error else ""
-        if isinstance(exc, ValueError):
-            self.error_message = str(exc)
-        else:
-            self.error_message = fallback
+        self.error_message = str(exc) if is_user_facing(exc) else fallback
 
     @staticmethod
     def _safe_error(exc: Exception, fallback: str = "An error occurred") -> str:
         """Return a user-safe error message. Logs the full exception."""
         _log.exception("Caught exception in state handler")
-        if isinstance(exc, ValueError):
-            return str(exc)
-        return fallback
+        return str(exc) if is_user_facing(exc) else fallback
 
     async def _deleted_toast(self, key: str, fallback: str):
         """A translated success toast for a destructive handler (core#804, core#851).

@@ -74,6 +74,31 @@ jobs:
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
 
+      # core#747. Until now `deploy/server/` was applied by NO workflow. The tarball above
+      # ships it to /opt/datanika/datanika/deploy/server/, which is worse than not shipping
+      # it: the correct content lands on the box at a path nothing reads, beside the stale
+      # copy that cron actually runs.
+      #
+      # Measured 2026-09-04: backup-offsite.sh on the box was 874c8a3c… while origin/master
+      # had 58baca17… — core#1017 merged, promoted, and NOT running, with every signal
+      # saying it had shipped. Three files were hand-installed that day. This step is what
+      # replaces hand-installing.
+      #
+      # Runs immediately after the transfer and BEFORE the build, so a bad install aborts
+      # the deploy while production is still entirely untouched. The script is idempotent
+      # (copy + hash compare) and fails closed if its own list is truncated.
+      - name: Install the box-side scripts (deploy/server) — core#747
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'bash /opt/datanika/datanika/scripts/install-server-scripts.sh' \
+            | tee /tmp/install-server.log
+          {
+            echo "### deploy/server install (core#747)"
+            echo '```'
+            cat /tmp/install-server.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # Bound docker's disk growth BEFORE building, not after. core#666.
       #
       # Timing is the whole design. Pruning after the swap verifies but before the old

@@ -10,35 +10,62 @@ The only thing that made that survivable was having the configuration written do
 it down somewhere unversioned was the remaining half of the problem.
 
 🚨 **"Applied by" means INSTALLED by, not scheduled by** — the distinction is [core#747], and this
-table previously blurred it. `backup-offsite.sh` and `restore-drill.sh` said *"cron, 03:00"* and
+table once blurred it. `backup-offsite.sh` and `restore-drill.sh` said *"cron, 03:00"* and
 *"monthly cron"*, which names what **runs** the copy on the box and says nothing about what **puts
-it there**. Nothing does. The deploy tarball ships this whole tree to
-`/opt/datanika/datanika/deploy/server/`, which makes it worse rather than better: the correct
-content sits on the box at a path nothing reads, beside the stale copy that actually runs.
+it there**. Read quickly, that is a column that looks filled in. Nothing put them there, and the
+deploy tarball ships this whole tree to `/opt/datanika/datanika/deploy/server/`, which made it worse
+rather than better: the correct content sat on the box at a path nothing reads, beside the stale
+copy that actually ran.
+
+✅ **Closed 2026-09-04.** `scripts/install-server-scripts.sh` installs the five files below, and
+`deploy-pointer.yml` invokes it immediately after the source transfer — before the build, so a bad
+install aborts the deploy while production is still untouched. It is idempotent (copy + hash
+compare), atomic per file (temp file + rename, because `backup-offsite.sh` may be mid-run at 03:00),
+and **fails closed** if its own list is truncated.
 
 | File | Lives on the box at | Installed by | Then run by |
 |---|---|---|---|
-| `apache-app.datanika.io.conf` | `/etc/apache2/sites-enabled/zapp-datanika-io.conf` | `scripts/sync-vhosts.sh`, from the deploy | Apache |
-| `apache-staging-app.datanika.io.conf` | `/etc/apache2/sites-enabled/` (staging vhost) | `scripts/sync-vhosts.sh` | Apache |
-| `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap | Apache |
+| `backup-offsite.sh` | `/opt/datanika/scripts/backup-offsite.sh` | ✅ `scripts/install-server-scripts.sh`, from the deploy | cron, 03:00 |
+| `restore-drill.sh` | `/opt/datanika/scripts/restore-drill.sh` | ✅ `scripts/install-server-scripts.sh` | cron, monthly 05:00 |
+| `rebuild-parity-drill.sh` | `/opt/datanika/scripts/rebuild-parity-drill.sh` | ✅ `scripts/install-server-scripts.sh` | cron, monthly 05:30 |
+| `export-prod-settings.sh` | `/opt/datanika/scripts/export-prod-settings.sh` | ✅ `scripts/install-server-scripts.sh` | cron, every 5 min |
+| `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | ✅ `scripts/install-server-scripts.sh` (the file); `gpg --import` into root's keyring stays manual | `backup-offsite.sh` |
+| `apache-app.datanika.io.conf` | ⚠️ nowhere — see [core#745] | **nothing** — a duplicate of `deploy/apache/app.datanika.io.conf`, which is what `sync-vhosts.sh` reads | n/a |
+| `apache-staging-app.datanika.io.conf` | ⚠️ nowhere — see [core#745] | **nothing** — duplicate of `deploy/apache/staging-app.datanika.io.conf` | n/a |
+| `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap by `deploy-bluegreen.sh` | Apache |
 | `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** (see below) | `systemd-networkd` |
-| `backup-offsite.sh` | `/opt/datanika/scripts/backup-offsite.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, 03:00 |
-| `restore-drill.sh` | `/opt/datanika/scripts/restore-drill.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, monthly 05:00 |
-| `rebuild-parity-drill.sh` | `/opt/datanika/scripts/rebuild-parity-drill.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, monthly 05:30 |
-| `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | **by hand** — `gpg --import` into root's keyring | `backup-offsite.sh` |
-| `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy | compose |
+| `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy (`ci.yml`) | compose |
 | `deploy-pointer.sh` | dev-machine fallback | n/a — never installed | by hand, only if CD is broken |
 
-**Installing one of the hand-installed files, and proving you did:** copy the committed bytes and
-compare hashes on both sides. Never edit the box copy — that is how the repo copy and the running
-copy diverge silently, which is the condition this directory exists to end.
+⚠️ **`export-prod-settings.sh` was absent from this table entirely** until 2026-09-04, while running
+from cron every five minutes on production. A file missing from the inventory is worse than one
+listed with the wrong column, because nothing prompts you to check it.
+
+🚨 **The two `apache-*.conf` rows are [core#745] and this table used to state the opposite** — that
+`sync-vhosts.sh` applied them. It reads `deploy/apache/`. Verified by measurement 2026-09-04: the
+pairs are byte-identical (`9e2cf96e`, `98ff0099`), which is exactly what makes them harmless *now*
+and dangerous later — edit the copy here and the change is real, reviewed, merged and deployed, and
+reaches no vhost. `tests/test_deploy/test_server_script_coverage.py::test_the_apache_duplicates_have_not_drifted`
+now pins them identical, so the day they diverge, CI says so instead of Apache staying silent.
+
+**Coverage is enforced, not remembered.** `tests/test_deploy/test_server_script_coverage.py` parses
+the installer's own `INSTALL` / `INSTALL_DATA` arrays and requires every file in this directory to be
+either installed or listed in its `NOT_INSTALLED` map **with a reason**. It also asserts
+`deploy-pointer.yml` actually *calls* the installer — an installer nothing runs is core#747 one level
+up, and looks identical to a fix.
+
+**Verifying an install by hand** (the deploy does this for you now; this is for incident work):
 
 ```bash
 K="-i ~/.ssh/id_ed25519"; B=root@185.25.22.188
-scp $K deploy/server/<file> $B:/opt/datanika/scripts/<file>
-ssh $K $B "chmod 0755 /opt/datanika/scripts/<file>; sha256sum /opt/datanika/scripts/<file>"
+ssh $K $B "sha256sum /opt/datanika/scripts/<file>"
 sha256sum deploy/server/<file>          # the two must match, and you must LOOK
 ```
+
+Never edit the box copy — that is how the repo copy and the running copy diverge silently, which is
+the condition this directory exists to end.
+
+[core#745]: https://github.com/datanika-io/datanika-core/issues/745
 
 [core#747]: https://github.com/datanika-io/datanika-core/issues/747
 

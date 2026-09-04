@@ -6,6 +6,25 @@ here merge into `dev`, so their own `Closes #N` never fires; the issue is closed
 the promotion PR (dev -> master) carries the reference. WORKFLOW_RULES §8 makes that a
 manual enumeration step, which is why issues leak.
 
+References come in three kinds, and conflating them is what this script got wrong:
+
+  * **closing** (`closes`/`fixes`/`resolves` #N) -- the department that owns the issue
+    is declaring that this change fully delivers it. Rendered with the keyword, so
+    merging the promotion closes it.
+  * **tracking** (`refs`/`part of`/`towards` #N) -- touches it, does not finish it.
+    Rendered WITHOUT a keyword, as a candidate the promoter reviews. `WORKFLOW_RULES`
+    §4 tells departments to write this by default, because landing#273 showed what
+    `closes` on a partial fix does.
+  * **cross-repo** (`cloud#151`, `landing#343`) -- real, and not closable from here.
+
+🚨 **The promoter must never guess which is which.** The keyword is the owning
+department's declaration and this script only reports it. What it must NOT do is stay
+silent about a commit it could not classify -- that is core#1040: promotion PR #1038
+carried three commits, emitted one `Closes`, and dropped the other two (one cross-repo,
+one referencing nothing) with no signal at all. An empty derivation looks exactly like a
+correct one. So every promoted commit is now accounted for in the body, and the ones
+nobody declared anything about are named.
+
 References are gathered from two places, because neither alone is reliable:
   1. the commit messages being promoted -- our convention puts `(closes #N)` there, but
      not every commit follows it;
@@ -55,6 +74,70 @@ DECLARATION = re.compile(
 )
 
 
+# -----------------------------------------------------------------------------------
+# The NON-closing half. Ported from datanika-landing, where it shipped as landing#455
+# after five consecutive promotions reported `success` while deriving nothing -- because
+# the script matched only closing keywords and every commit wrote `refs #N`.
+#
+# That is not a convention to correct. WORKFLOW_RULES §4 records landing#273, where
+# `closes #272` on a 4-of-36 partial fix retired the whole issue and 31 guides stopped
+# existing as tracked work. Departments write `refs` *because they were told to*.
+#
+# So the answer is not to widen the closing regex -- that reintroduces #273 exactly. It
+# is to derive the `refs` set as well and print it **without a keyword**, as candidates
+# the promoter reviews. Both rules survive: the derivation is mechanical (which is what
+# §8 automated) and the closure stays a judgement (which is what §4 protects).
+#
+# ⚠️ A bare `#N` in a PR body closes NOTHING -- only keyword+`#N` does. That is what
+# makes the candidate list safe to render mechanically.
+#
+# `see` is deliberately absent: it marks background reading, not authorship.
+TRACKING = re.compile(
+    r"\b(?:refs?|part\s+of|towards?|addresses|implements)\s*:?\s+#(\d+)\b",
+    re.IGNORECASE,
+)
+
+TRACKING_DECLARATION = re.compile(
+    r"^\s*(?:[-*]\s*)?(?:refs?|part\s+of|towards?|addresses|implements)\s*:?\s+#(\d+)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# A reference to another repository's tracker: `refs cloud#151`, `closes landing#343`.
+# Real work, and **not closable from this promotion** -- cloud ships inside the core
+# image, so a cloud issue is closed by a core deploy verifying it on the serving
+# container, not by this merge.
+#
+# The point of matching these is NOT to act on them. It is that `refs cloud#151` used to
+# match nothing at all: the closing and tracking patterns both require whitespace before
+# `#`, so a repo-qualified reference fell through both and the commit vanished from the
+# body. A commit whose only reference points elsewhere is a commit we understood; a
+# commit we dropped silently is not. (core#1040)
+#
+# 🚨 A KEYWORD is required here, exactly as it is for same-repo references. Found by
+# rehearsing this against a real promotion: an unqualified `([A-Za-z][\w.-]*)#(\d+)`
+# harvested `cloud#164` and `cloud#165` out of a commit body that merely CITED them as
+# already-shipped background, and reported the batch 3/3 accounted. A bare mention is
+# not a declaration -- that asymmetry is the entire basis of this script, and dropping
+# it for the cross-repo case buys a flattering coverage number and nothing else.
+CROSS_REPO = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?|part\s+of|towards?|addresses"
+    r"|implements)\s*:?\s+([A-Za-z][\w.-]*)#(\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def repo_aliases(repo: str) -> set[str]:
+    """The spellings that mean *this* repository, lower-cased.
+
+    `datanika-io/datanika-core` -> {"datanika-core", "core"}. Our prose writes `core#N`
+    and `landing#N` constantly, and without this every such mention is rendered under
+    "referenced in another repository" -- which is both wrong and the kind of confident
+    wrong line that gets believed.
+    """
+    name = repo.split("/")[-1].lower()
+    return {name, name.rsplit("-", 1)[-1]}
+
+
 def strip_non_declarative(text: str) -> str:
     """Remove code blocks, inline code and block quotes before scanning for keywords."""
     text = FENCED.sub(" ", text)
@@ -75,8 +158,48 @@ def find_refs(subject: str, body: str) -> set[int]:
     return found
 
 
+def find_tracking_refs(subject: str, body: str) -> set[int]:
+    """Non-closing references (`refs`/`part of`/`towards`/…) -- candidates, not closures.
+
+    Same subject/body asymmetry as `find_refs`, and for the same measured reason: the
+    subject is short and deliberate so it is scanned whole, while a body is prose and is
+    scanned only for line-initial declarations after code and quotes are stripped.
+    Reusing that shape rather than inventing a second one means the false-positive class
+    this script already closed stays closed on the new path too.
+    """
+    found = {int(n) for n in TRACKING.findall(subject or "")}
+    found |= {int(n) for n in TRACKING_DECLARATION.findall(strip_non_declarative(body or ""))}
+    return found
+
+
+def find_cross_repo_refs(subject: str, body: str, mine: set[str]) -> set[str]:
+    """Keyword-qualified `cloud#151`-style references, as `repo#number` strings.
+
+    Deliberately NOT parsed into a number: these are not addressable in this repo and
+    must never reach the closing or candidate lists. They exist so the coverage check
+    can say *"this commit referenced something, elsewhere"* rather than *"this commit
+    referenced nothing"* -- two different states that looked identical before core#1040.
+
+    `mine` are the spellings that mean this repo; a self-qualified `core#N` is dropped
+    here and handled by the same-repo patterns (or, if it was a bare mention, by not
+    being a reference at all).
+    """
+    out = set()
+    for blob in (subject or "", strip_non_declarative(body or "")):
+        for owner, num in CROSS_REPO.findall(blob):
+            if owner.lower() in mine:
+                continue
+            out.add(f"{owner}#{num}")
+    return out
+
+
 def run(*args: str) -> str:
-    result = subprocess.run(args, capture_output=True, text=True)
+    # `encoding="utf-8"` is not cosmetic. Without it `text=True` decodes with the
+    # platform locale codec, which on a Windows dev box is cp1251: every em dash in an
+    # issue title comes back as mojibake. On the ubuntu runner it happens to be right,
+    # so the defect is invisible in CI and appears only in the local DRY_RUN rehearsal
+    # below -- i.e. exactly where someone is checking the block before a promotion.
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         print(f"  ! command failed: {' '.join(args)}\n    {result.stderr.strip()[:300]}")
         return ""
@@ -131,13 +254,27 @@ def main() -> int:
     print(f"  commits being promoted: {len(commits)}")
 
     refs: dict[int, set[str]] = {}
+    tracking: dict[int, set[str]] = {}
+    # sha -> what we derived from it. A sha whose set stays empty is one this script
+    # could not classify, and core#1040 is that it used to disappear rather than say so.
+    accounted: dict[str, set[str]] = {}
+    subjects: dict[str, str] = {}
+    mine = repo_aliases(repo)
     shas = []
     for entry in commits:
         sha, _, message = entry.strip().partition("\x1f")
         shas.append(sha)
         subject, _, msg_body = message.strip().partition("\n")
+        subjects[sha] = subject.strip()
+        accounted.setdefault(sha, set())
         for num in find_refs(subject, msg_body):
             refs.setdefault(num, set()).add(f"commit {sha[:7]}")
+            accounted[sha].add(f"closes #{num}")
+        for num in find_tracking_refs(subject, msg_body):
+            tracking.setdefault(num, set()).add(f"commit {sha[:7]}")
+            accounted[sha].add(f"refs #{num}")
+        for ref in find_cross_repo_refs(subject, msg_body, mine):
+            accounted[sha].add(ref)
 
     # Also consult the source PRs: a rebase-merge can leave the keyword only on the PR.
     for sha in shas:
@@ -147,11 +284,64 @@ def main() -> int:
         for pull in pulls:
             if not introduced_the_commit(pull):
                 continue
-            for num in find_refs(pull.get("title", ""), pull.get("body") or ""):
+            title, body_text = pull.get("title", ""), pull.get("body") or ""
+            for num in find_refs(title, body_text):
                 refs.setdefault(num, set()).add(f"#{pull['number']}")
+                accounted[sha].add(f"closes #{num}")
+            for num in find_tracking_refs(title, body_text):
+                tracking.setdefault(num, set()).add(f"#{pull['number']}")
+                accounted[sha].add(f"refs #{num}")
+            for ref in find_cross_repo_refs(title, body_text, mine):
+                accounted[sha].add(ref)
 
-    if not refs:
-        print("  no closing references found; leaving the body unchanged")
+    # An issue that some commit genuinely closes is not also a candidate.
+    for num in refs:
+        tracking.pop(num, None)
+
+    unaccounted = [s for s in shas if not accounted.get(s)]
+
+    def _is_cross_repo(label: str) -> bool:
+        """`cloud#151` yes; the `closes #12` / `refs #34` labels this repo owns, no."""
+        return "#" in label and not label.startswith(("closes ", "refs "))
+
+    elsewhere = sorted({r for s in shas for r in accounted.get(s, set()) if _is_cross_repo(r)})
+
+    print(
+        f"  closing: {len(refs)}  tracking: {len(tracking)}  "
+        f"commits accounted: {len(shas) - len(unaccounted)}/{len(shas)}"
+    )
+
+    # -------------------------------------------------------------------------------
+    # This check exists so the workflow can go RED (landing#455, ported).
+    #
+    # Reporting `success` on every run *was* the defect: five consecutive landing
+    # promotions derived nothing, wrote an empty block and exited 0, which is
+    # indistinguishable from a promotion that genuinely closes nothing. Nothing was
+    # ever red, so nobody looked.
+    #
+    # Every commit in this project carries a `[Dept]` tag and, by convention, an issue
+    # reference. Three or more commits yielding NO reference of any kind is a convention
+    # breakdown or a broken parser, not a normal promotion.
+    #
+    # The threshold is deliberately conservative: a one- or two-commit hotfix promotion
+    # with no issue is legitimate and must not go red. A *partially* unaccounted batch
+    # is not red either -- it is REPORTED, in the body, which is core#1040's whole
+    # point: the promoter needs to see it, not to be blocked by it.
+    # 🚨 `elsewhere` belongs in this condition, and leaving it out was a FALSE RED.
+    # A batch whose commits all carry `refs cloud#151` derives no same-repo reference of
+    # either kind, so without this three such commits fail the job saying not one
+    # reference was derived -- while every one of them referenced something. That is the
+    # exact shape of the commit this work started from. A job that goes red when nothing
+    # is wrong teaches people to merge past it, which costs more than the check earns.
+    if not refs and not tracking and not elsewhere:
+        if len(commits) >= 3:
+            print(
+                f"::error::{len(commits)} commits promoted and NOT ONE issue reference was "
+                "derived. Either the commit convention has drifted or this parser is broken. "
+                "Refusing to report success on an empty derivation (landing#455)."
+            )
+            return 1
+        print("  no references found in a short promotion; leaving the body unchanged")
         return 0
 
     # Don't re-list issues that are already closed -- keeps the block honest about what
@@ -175,14 +365,41 @@ def main() -> int:
         else:
             lines.append(f"- Closes #{num} — {title} · via {via}")
 
-    if not lines:
-        print("  references found, but none resolve to issues; body unchanged")
+    # The candidate half. NO closing keyword on any of these lines, by design: a bare
+    # `#N` in a PR body closes nothing, which is exactly the property that lets this list
+    # be generated mechanically without re-creating landing#273.
+    candidate_lines = []
+    suppressed_closed = 0
+    for num in sorted(tracking):
+        issue = gh_api(f"repos/{repo}/issues/{num}")
+        if not isinstance(issue, dict) or "number" not in issue:
+            continue
+        if issue.get("pull_request"):
+            continue
+        if issue.get("state") == "closed":
+            # Already reconciled; re-listing it is noise. But it DID account for a
+            # commit, so it is counted -- otherwise the coverage number below has no
+            # visible explanation and reads like an arithmetic error.
+            suppressed_closed += 1
+            continue
+        title = (issue.get("title") or "").strip()
+        via = ", ".join(sorted(tracking[num]))
+        candidate_lines.append(f"- #{num} — {title} · via {via}")
+
+    # The "I could not tell" half (core#1040). Two distinct states, kept distinct:
+    # a commit that referenced ANOTHER repo's tracker, and a commit that referenced
+    # nothing at all. Both used to vanish; only one of them is a convention lapse.
+    unaccounted_lines = []
+    for sha in unaccounted:
+        unaccounted_lines.append(f"- `{sha[:7]}` — {subjects.get(sha, '')}")
+
+    if not lines and not candidate_lines and not unaccounted_lines and not elsewhere:
+        print("  references found, but none resolve to open issues; body unchanged")
         return 0
 
-    block = "\n".join(
-        [
-            START,
-            "",
+    sections = [START, ""]
+    if lines:
+        sections += [
             "### Issues closed by this promotion",
             "",
             "_Generated from the commits being promoted. Feature PRs merge into `dev`, "
@@ -191,9 +408,68 @@ def main() -> int:
             "",
             *lines,
             "",
-            END,
         ]
+    if candidate_lines:
+        sections += [
+            "### Promoted, close by hand if complete",
+            "",
+            "_These commits reference the issues below with `refs` / `part of` / "
+            "`towards`, which closes nothing **on purpose**: `WORKFLOW_RULES` §4 records "
+            "landing#273, where `closes #272` on a 4-of-36 partial fix retired the whole "
+            "issue. The list is derived mechanically and the closure stays a judgement — "
+            "review each and close the ones whose acceptance criteria are fully met._",
+            "",
+            *candidate_lines,
+            "",
+        ]
+    if elsewhere:
+        sections += [
+            "### Referenced in another repository — not closable from here",
+            "",
+            "_A cloud issue is closed by the **core** deploy that verifies it on the "
+            "serving container, not by this merge; cloud ships inside the core image at "
+            "a pinned `ref: master`. Listed so the commit is accounted for._",
+            "",
+            *[f"- `{r}`" for r in elsewhere],
+            "",
+        ]
+    if unaccounted_lines:
+        sections += [
+            "### ⚠️ No issue reference derived — I could not tell",
+            "",
+            "_These commits carry no closing, tracking or cross-repo reference that this "
+            "generator can parse, so **nothing above speaks for them**. That may be "
+            "correct (a comment-only or tooling commit), or it may be a missed reference. "
+            "It is stated rather than omitted because an absent line and a correct "
+            "derivation used to look identical (core#1040)._",
+            "",
+            *unaccounted_lines,
+            "",
+        ]
+    coverage = (
+        f"_Coverage: **{len(shas) - len(unaccounted)} of {len(shas)}** promoted commits "
+        "accounted for."
     )
+    if suppressed_closed:
+        coverage += (
+            f" {suppressed_closed} reference(s) resolved to an already-closed issue and "
+            "are not listed."
+        )
+    coverage += "_"
+    sections += [coverage, "", END]
+    block = "\n".join(sections)
+
+    # Rehearsal path. The promoter can see the exact block a promotion would generate
+    # BEFORE opening the PR -- the only moment at which noticing an empty derivation is
+    # still cheap. Writes nothing.
+    #
+    #   REPO=datanika-io/datanika-core PR_NUMBER=0 \
+    #   BASE_SHA=origin/master HEAD_SHA=origin/dev DRY_RUN=1 \
+    #     python .github/scripts/promotion_refs.py
+    if os.environ.get("DRY_RUN", "").lower() in ("1", "true", "yes"):
+        print("  DRY RUN — the block that would be written:\n")
+        print(block)
+        return 0
 
     current = (
         run("gh", "pr", "view", pr_number, "--repo", repo, "--json", "body", "-q", ".body") or ""
@@ -211,8 +487,11 @@ def main() -> int:
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(body)
     run("gh", "pr", "edit", pr_number, "--repo", repo, "--body-file", path)
-    print(f"  wrote {len(lines)} reference(s) into the PR body:")
-    for line in lines:
+    print(
+        f"  wrote {len(lines)} closing + {len(candidate_lines)} candidate reference(s), "
+        f"{len(unaccounted_lines)} unaccounted commit(s):"
+    )
+    for line in lines + candidate_lines + unaccounted_lines:
         print(f"    {line}")
     return 0
 

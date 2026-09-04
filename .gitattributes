@@ -22,3 +22,9 @@ deploy/staging/*.yml text eol=lf
 # only the .conf/.yml half drifted.
 deploy/server/*.conf text eol=lf
 deploy/server/*.yml text eol=lf
+
+# The armoured backup public key is one of the five files install-server-scripts.sh puts
+# on the box. GnuPG's armour format is line-oriented, so CRLF is a correctness question
+# here and not a diff-noise one. Left out of the rule above because it is not a .conf;
+# found by test_the_deployed_conf_files_are_pinned_to_lf rather than by anyone noticing.
+deploy/server/*.asc text eol=lf

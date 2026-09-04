@@ -87,6 +87,46 @@ APACHE_DUPLICATES = {
 }
 
 
+def _drift_message(decoy: str, real: str, a: bytes, b: bytes) -> str:
+    """Name the CAUSE, because the two causes have opposite remedies (core#1076).
+
+    Byte-inequality here has two sources and they look identical in the assertion:
+
+    * a **real edit** to one of the two copies — the thing this pin exists to catch;
+    * a **checkout artifact**, where the same git object is materialised CRLF on one path
+      and LF on the other. That happened on every Windows worktree until `21e6b01` gave
+      `deploy/server/*.conf` the `text eol=lf` rule its twin directory already had — and
+      `.gitattributes` applies at *checkout*, so an unchanged file in a worktree that
+      already existed is **never rewritten**. The rule also makes git normalise both forms
+      to one blob, so `git status`, `git diff` and `git hash-object` all report the file as
+      clean while this comparison still sees the CR.
+
+    Sending someone with a checkout artifact to "re-sync the two copies" is sending them to
+    edit a file that is already correct.
+    """
+    if a.replace(b"\r\n", b"\n") == b.replace(b"\r\n", b"\n"):
+        return (
+            f"deploy/server/{decoy} and deploy/apache/{real} differ ONLY in line endings.\n"
+            "The two copies are identical: they are the same git object, and git agrees "
+            "they are clean.\n"
+            "Your working tree predates core#1076's `.gitattributes` rule, which applies at "
+            "checkout and therefore never rewrote a file it did not otherwise have to "
+            "touch.\n\n"
+            "Repair this worktree (the files are tracked, nothing is lost):\n"
+            "    rm -f deploy/server/apache-app.datanika.io.conf "
+            "deploy/server/apache-staging-app.datanika.io.conf\n"
+            "    git checkout -- deploy/server/\n\n"
+            "`git add --renormalize` does NOT fix it: it re-runs the clean filter, finds the "
+            "blob already correct, and never touches the file."
+        )
+    return (
+        f"deploy/server/{decoy} has drifted from deploy/apache/{real}.\n"
+        f"Only deploy/apache/ is read by scripts/sync-vhosts.sh, so whichever of these "
+        f"you just edited, the one that reaches Apache is deploy/apache/{real}.\n"
+        f"Resolve core#745 by deleting the deploy/server/ copy, or re-sync the two."
+    )
+
+
 def _installer_text() -> str:
     return INSTALLER.read_text(encoding="utf-8")
 
@@ -171,15 +211,56 @@ def test_the_apache_duplicates_have_not_drifted():
 
     Pinning them byte-identical converts that latent decoy into one that announces itself.
     """
+    assert len(APACHE_DUPLICATES) >= 2, (
+        "APACHE_DUPLICATES is down to "
+        f"{sorted(APACHE_DUPLICATES)}; an emptied mapping makes this loop run zero times "
+        "and pass forever, which is the silent green the rest of this file exists to stop."
+    )
     for decoy, real in APACHE_DUPLICATES.items():
         a = (SERVER_DIR / decoy).read_bytes()
         b = (APACHE_DIR / real).read_bytes()
-        assert a == b, (
-            f"deploy/server/{decoy} has drifted from deploy/apache/{real}.\n"
-            f"Only deploy/apache/ is read by scripts/sync-vhosts.sh, so whichever of these "
-            f"you just edited, the one that reaches Apache is deploy/apache/{real}.\n"
-            f"Resolve core#745 by deleting the deploy/server/ copy, or re-sync the two."
-        )
+        assert a == b, _drift_message(decoy, real, a, b)
+
+
+def test_the_drift_message_tells_the_two_causes_apart():
+    """Arm `_drift_message` on the real vhost bytes — the function the assertion calls.
+
+    A control written *beside* a predicate keeps passing when the predicate changes, so
+    this calls the same `_drift_message` the assertion above does, on the real file rather
+    than on a fixture (core#754: a synthetic control agrees with the check including where
+    the check is wrong).
+
+    Both directions, because a message narrowed until it only ever says "line endings" is a
+    worse bug than the one it fixed: a genuine drift would then be handed a remedy that
+    discards it.
+    """
+    lf = (APACHE_DIR / "app.datanika.io.conf").read_bytes()
+    assert b"\r\n" not in lf, (
+        "deploy/apache/app.datanika.io.conf is CRLF in this worktree, so this control "
+        "cannot construct the two cases. Run: rm -f the file and `git checkout -- "
+        "deploy/apache/`."
+    )
+
+    # Assert on the REMEDY each branch sends the reader to, not on a phrase. The first
+    # draft of this control banned the substring "has drifted" from the artifact branch —
+    # and that branch's own sentence began "Nothing has drifted", so a correct denial
+    # tripped the ban. `WORKFLOW_RULES` calls this out under "count the instruction, not
+    # the phrase"; the remedy is the only thing a reader actually acts on, so pin that.
+    checkout_artifact = _drift_message("d", "r", lf.replace(b"\n", b"\r\n"), lf)
+    assert "ONLY in line endings" in checkout_artifact
+    assert "git checkout -- deploy/server/" in checkout_artifact
+    assert "Resolve core#745" not in checkout_artifact, (
+        "the checkout-artifact branch must not send anyone to re-sync two copies that are "
+        "already the same git object"
+    )
+
+    real_drift = _drift_message("d", "r", lf + b"# a real edit\n", lf)
+    assert "Resolve core#745" in real_drift
+    assert "ONLY in line endings" not in real_drift
+    assert "git checkout -- deploy/server/" not in real_drift, (
+        "a real drift must never be handed the line-ending remedy: `git checkout --` "
+        "would silently throw the edit away"
+    )
 
 
 def test_the_deploy_workflow_invokes_the_installer():

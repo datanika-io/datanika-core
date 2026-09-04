@@ -182,6 +182,25 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         paddle_product_id="pro_qa_preservation",
         price_cents=7900,
         interval="month",
+        # 🚨 Required since core migration `c5e9a3b7d2f4` (cloud#177) dropped this
+        # column's `server_default`: a raw INSERT that omits a runs price is now
+        # *refused* rather than silently priced at a cent per run. This fixture is
+        # exactly the shape that used to be filled by the default, and it went red
+        # here — which is the migration working, not a fixture bug.
+        #
+        # ⚠️ The VALUE is load-bearing, and `0` is the right one for two reasons.
+        # Seeding a non-zero price would seed a row the product forbids: after
+        # cloud#177 model runs are not billed, so every real row holds 0. And this
+        # guard compares values across `upgrade head -> downgrade -1 -> upgrade
+        # head`, so a seeded `1` would be rewritten to `0` by the head migration's
+        # deliberate UPDATE and reported as data loss. Marking that migration
+        # `one_way` to silence it would switch **both** round-trip guards off for
+        # the whole release — a far worse trade than seeding the value the product
+        # actually requires. The up/down/up behaviour of this specific column is
+        # asserted directly, against a real Postgres, by
+        # `test_c5e9_runs_are_not_billed.py`'s
+        # `test_the_downgrade_restores_the_default_without_re_pricing`.
+        overage_run_price_cents=0,
         created_at=_ts(next(n)),
         updated_at=_ts(next(n)),
     )

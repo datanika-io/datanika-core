@@ -232,7 +232,15 @@ class TestTheBodyAccountsForEveryCommit:
 
     @staticmethod
     def _drive(monkeypatch, capsys, commits, pulls_by_sha, issues):
-        """commits: list of (sha, message). Returns the rendered block."""
+        """commits: list of (sha, message). Returns the rendered block.
+
+        `issues` maps number -> the issue dict, or `refs.ISSUE_MISSING` for a number
+        the repository does not have, or `None` for a lookup that failed. A number
+        **absent** from the dict is `ISSUE_MISSING`, which is the honest stub: a
+        fixture repo containing no such issue is a repo where that number 404s. That
+        default is load-bearing — modelling it as `None` would have every test
+        silently exercise the API-failure path instead.
+        """
         log = "".join(f"{sha}\x1f{msg}\x1e" for sha, msg in commits)
 
         def fake_run(*args):
@@ -243,12 +251,14 @@ class TestTheBodyAccountsForEveryCommit:
         def fake_gh_api(path):
             if "/pulls" in path:
                 return pulls_by_sha.get(path.rsplit("/", 2)[-2], [])
-            if "/issues/" in path:
-                return issues.get(int(path.rsplit("/", 1)[-1]))
             return None
+
+        def fake_gh_issue(repo, num):
+            return issues.get(num, refs.ISSUE_MISSING)
 
         monkeypatch.setattr(refs, "run", fake_run)
         monkeypatch.setattr(refs, "gh_api", fake_gh_api)
+        monkeypatch.setattr(refs, "gh_issue", fake_gh_issue)
         monkeypatch.setenv("REPO", "datanika-io/datanika-core")
         monkeypatch.setenv("PR_NUMBER", "0")
         monkeypatch.setenv("BASE_SHA", "aaa")
@@ -344,3 +354,174 @@ class TestTheBodyAccountsForEveryCommit:
         assert "already-closed issue" in out, (
             "but the coverage line must explain why 2 accounted shows 1 visible entry"
         )
+
+
+class TestAReferenceThatDoesNotResolve:
+    """landing#493: a parsed reference that resolves to nothing used to vanish.
+
+    `landing 36048435` said `refs #676`. No such issue exists in `datanika-landing`
+    (the highest is 486; the author almost certainly meant `core#676`). The generator
+    parsed the reference -- so the commit counted as *accounted for* -- and then
+    dropped the line at `if not isinstance(issue, dict): continue`. The body therefore
+    looked complete while one promoted commit was spoken for nowhere.
+
+    Both directions are defects, which is why there are three states and not two:
+    dropping it silently is what happened, and calling a transient API failure a typo
+    would print a false accusation into a promotion body.
+    """
+
+    _drive = staticmethod(TestTheBodyAccountsForEveryCommit._drive)
+
+    def test_a_nonexistent_number_is_named_rather_than_dropped(self, monkeypatch, capsys):
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[
+                ("3" * 40, "[Product] Spec: the sub-processor register (refs #676)\n"),
+                ("4" * 40, "[QA] Real work (refs #905)\n"),
+            ],
+            pulls_by_sha={},
+            issues={905: {"number": 905, "state": "open", "title": "Still open"}},
+        )
+        assert rc == 0
+        assert "does not resolve in this repository" in out
+        assert "#676" in out, "the mistyped number must appear, or the typo stays invisible"
+        assert "3333333" in out, "and the commit that carried it, so it can be traced"
+
+    def test_the_coverage_line_says_so_rather_than_reading_as_clean(self, monkeypatch, capsys):
+        """A commit whose only reference is unresolvable still counts as accounted --
+        it IS named, in the new section. Without a sentence in the coverage line the
+        number reads as if nothing were wrong, which is the defect one level up."""
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[("5" * 40, "[Product] Spec (refs #676)\n")],
+            pulls_by_sha={},
+            issues={},
+        )
+        assert "1 of 1" in out
+        assert "did not resolve to an issue here" in out
+
+    def test_a_block_is_written_even_when_every_reference_is_unresolvable(
+        self, monkeypatch, capsys
+    ):
+        """The exact landing#492 shape. Before the fix this fell through the
+        'none resolve to open issues; body unchanged' early return and rendered
+        NOTHING -- an empty body for a promotion with a mistyped reference in it."""
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[("6" * 40, "[Product] Spec (refs #676)\n")],
+            pulls_by_sha={},
+            issues={},
+        )
+        assert rc == 0
+        assert refs.START in out, "no block at all is how the reference stayed invisible"
+        assert "#676" in out
+
+    def test_the_unresolvable_line_closes_nothing(self, monkeypatch, capsys):
+        """Safety property, same as the candidate list. GitHub parses the raw body, so
+        a keyword here would close whatever issue that number happens to hit."""
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[("7" * 40, "[Product] Spec (closes #676)\n")],
+            pulls_by_sha={},
+            issues={},
+        )
+        block = out.split(refs.START, 1)[1]
+        for line in block.splitlines():
+            if line.startswith("- `#676`"):
+                assert not refs.KEYWORD.search(line), f"would close: {line!r}"
+                break
+        else:
+            raise AssertionError("no line for #676 was rendered at all")
+
+    def test_a_failed_lookup_is_not_reported_as_a_typo(self, monkeypatch, capsys):
+        """The other direction. `None` means 'we could not check', and saying
+        'does not resolve' there accuses a perfectly good reference."""
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[("8" * 40, "[Infra] Something (refs #500)\n")],
+            pulls_by_sha={},
+            issues={500: None},
+        )
+        assert "could not be checked" in out
+        assert "does not resolve in this repository" not in out
+
+    def test_a_number_that_is_a_pull_request_is_named_too(self, monkeypatch, capsys):
+        """`#N` resolving to a PR was also a bare `continue`. Same silent drop."""
+        rc, out = self._drive(
+            monkeypatch,
+            capsys,
+            commits=[("9" * 40, "[Infra] Something (refs #400)\n")],
+            pulls_by_sha={},
+            issues={
+                400: {
+                    "number": 400,
+                    "state": "open",
+                    "title": "A pull request",
+                    "pull_request": {"url": "..."},
+                }
+            },
+        )
+        assert "resolves to a pull request, not an issue" in out
+        assert "#400" in out
+
+
+class TestGhIssueSeparates404FromFailure:
+    """The seam that makes three states possible, tested against gh's real shapes.
+
+    Measured 2026-09-04 against the live API rather than assumed:
+
+        existing issue     -> rc 0, stdout is the issue JSON
+        nonexistent issue  -> rc 1, stdout {"message":"Not Found",...,"status":"404"}
+                                    stderr `gh: Not Found (HTTP 404)`
+
+    `run()` discarded stdout on a non-zero exit, which is *why* the two were
+    indistinguishable: the only machine-readable status lives in the body it threw
+    away.
+    """
+
+    @staticmethod
+    def _with(monkeypatch, rc, stdout, stderr=""):
+        monkeypatch.setattr(refs, "run_capture", lambda *a: (rc, stdout, stderr))
+
+    def test_a_real_issue_comes_back_as_a_dict(self, monkeypatch):
+        self._with(monkeypatch, 0, '{"number": 486, "state": "open", "title": "x"}')
+        got = refs.gh_issue("datanika-io/datanika-landing", 486)
+        assert isinstance(got, dict) and got["number"] == 486
+
+    def test_a_404_body_is_issue_missing(self, monkeypatch):
+        self._with(
+            monkeypatch,
+            1,
+            '{"message":"Not Found","documentation_url":"https://x","status":"404"}',
+            "gh: Not Found (HTTP 404)",
+        )
+        assert refs.gh_issue("datanika-io/datanika-landing", 676) is refs.ISSUE_MISSING
+
+    def test_a_404_with_an_unparseable_body_still_reads_as_missing(self, monkeypatch):
+        """Falls back to stderr, because neither output shape is a contract."""
+        self._with(monkeypatch, 1, "not json at all", "gh: Not Found (HTTP 404)")
+        assert refs.gh_issue("datanika-io/datanika-landing", 676) is refs.ISSUE_MISSING
+
+    def test_any_other_failure_is_none_not_missing(self, monkeypatch):
+        """A rate limit, a network drop or a bad token must NOT render as a typo."""
+        self._with(monkeypatch, 1, "", "error connecting to api.github.com")
+        assert refs.gh_issue("datanika-io/datanika-core", 500) is None
+
+    def test_a_rate_limit_is_not_a_404(self, monkeypatch):
+        self._with(
+            monkeypatch,
+            1,
+            '{"message":"API rate limit exceeded","status":"403"}',
+            "gh: API rate limit exceeded (HTTP 403)",
+        )
+        assert refs.gh_issue("datanika-io/datanika-core", 500) is None
+
+    def test_a_success_that_is_not_an_issue_object_is_none(self, monkeypatch):
+        """Belt and braces: rc 0 with a body that has no `number` is not an issue."""
+        self._with(monkeypatch, 0, '{"message": "something else"}')
+        assert refs.gh_issue("datanika-io/datanika-core", 500) is None

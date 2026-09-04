@@ -74,9 +74,30 @@ docker compose up -d --build   # build the image from that source
 > exists but is **private**, so `docker pull` on any tag answers `denied` for everyone
 > outside the org — this README told you otherwise until 2026-09-03. It stays private on
 > purpose: the image grafts in our closed-source cloud plugin, so publishing it as built
-> today would publish that too. A core-only public image is tracked in
-> [#1014](https://github.com/datanika-io/datanika-core/issues/1014). **Pin the source tag
-> and build**; that path is exercised by CI.
+> today would publish that too. **Pin the source tag and build**; that path is exercised
+> by CI.
+>
+> **Building it yourself gives you the same artifact we would publish.** Since
+> 2026-09-04 the Dockerfile carries a `DATANIKA_IMAGE_EDITION` build arg, and the
+> core-only variant is built and asserted on every PR (`core-only-image` in CI) from a
+> context that does not contain the cloud tree at all — which is the context you have.
+>
+> ⚠️ **The Dockerfile expects a monorepo-shaped context**: it does
+> `COPY datanika/pyproject.toml`, so the build context is the **parent** directory and
+> this checkout has to be the `datanika/` inside it. Clone it under that name and build
+> from one level up:
+>
+> ```bash
+> git clone https://github.com/datanika-io/datanika-core.git datanika
+> docker build --build-arg DATANIKA_IMAGE_EDITION=core -f datanika/Dockerfile .
+> ```
+>
+> The resulting image carries no `/cloud` tree and cannot import `datanika_cloud`.
+> Leave `DATANIKA_EDITION` unset — its default is `core`. Setting it to `cloud` on this
+> image fails immediately and loudly (`ModuleNotFoundError: No module named
+> 'datanika_cloud'`), which is deliberate: the alternative is a service that looks
+> healthy and enforces nothing. Publishing this under a public GHCR package is tracked
+> in [#1014](https://github.com/datanika-io/datanika-core/issues/1014).
 
 Every version's notes are on the [Releases page](https://github.com/datanika-io/datanika-core/releases).
 Security advisories cite the first patched release (e.g. `Patched: v0.1.0`), so a pinned

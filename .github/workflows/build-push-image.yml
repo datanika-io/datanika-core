@@ -30,7 +30,21 @@ name: Build & push image
 # 🚨 core#1014 — NOBODY OUTSIDE THE ORG CAN PULL WHAT THIS PUSHES, and that is correct
 # for now. The package is private, and it must stay private while this build grafts the
 # closed-source datanika-cloud tree into the image. Making it public is not a settings
-# fix, it is a publication. A core-only public image is the open decision on #1014.
+# fix, it is a publication.
+#
+# ⚠️ THIS JOB BUILDS THE **CLOUD** EDITION, and it does so by passing no build arg at
+# all. Since 2026-09-04 the Dockerfile takes `DATANIKA_IMAGE_EDITION`, defaulting to
+# `cloud` precisely so this workflow and the box's compose build are unchanged. If that
+# default ever flips, this job silently starts publishing an image with no billing
+# plugin — every container healthy, nothing metered, which is core#772's shape.
+# Guarded by tests/test_deploy/test_core_only_image.py.
+#
+# 🟡 THE CORE-ONLY IMAGE EXISTS AND IS NOT PUBLISHED HERE, deliberately. `ci.yml`'s
+# `core-only-image` job builds and probes it on every PR; nothing pushes it. GHCR
+# visibility is per PACKAGE and not per tag, so publishing it means a SECOND package
+# and a one-way public/private decision — not a tag added to this list. The order that
+# keeps that door shut is build → verify → decide, and only the third step is left.
+# Do not add a core-only tag to `Compute tags` below to "get it started".
 
 on:
   push:

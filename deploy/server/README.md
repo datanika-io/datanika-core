@@ -9,17 +9,38 @@ on 2026-07-14 and took the server, its data and its backups with it; prod was re
 The only thing that made that survivable was having the configuration written down somewhere. Writing
 it down somewhere unversioned was the remaining half of the problem.
 
-| File | Lives on the box at | Applied by |
-|---|---|---|
-| `apache-app.datanika.io.conf` | `/etc/apache2/sites-enabled/zapp-datanika-io.conf` | `scripts/sync-vhosts.sh`, from the deploy |
-| `apache-staging-app.datanika.io.conf` | `/etc/apache2/sites-enabled/` (staging vhost) | `scripts/sync-vhosts.sh` |
-| `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap |
-| `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** |
-| `backup-offsite.sh` | `/opt/datanika/scripts/backup-offsite.sh` | cron, 03:00 |
-| `restore-drill.sh` | `/opt/datanika/scripts/` | monthly cron |
-| `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | **by hand** — `gpg --import` into root's keyring |
-| `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy |
-| `deploy-pointer.sh` | dev-machine fallback | run by hand only if CD is broken |
+🚨 **"Applied by" means INSTALLED by, not scheduled by** — the distinction is [core#747], and this
+table previously blurred it. `backup-offsite.sh` and `restore-drill.sh` said *"cron, 03:00"* and
+*"monthly cron"*, which names what **runs** the copy on the box and says nothing about what **puts
+it there**. Nothing does. The deploy tarball ships this whole tree to
+`/opt/datanika/datanika/deploy/server/`, which makes it worse rather than better: the correct
+content sits on the box at a path nothing reads, beside the stale copy that actually runs.
+
+| File | Lives on the box at | Installed by | Then run by |
+|---|---|---|---|
+| `apache-app.datanika.io.conf` | `/etc/apache2/sites-enabled/zapp-datanika-io.conf` | `scripts/sync-vhosts.sh`, from the deploy | Apache |
+| `apache-staging-app.datanika.io.conf` | `/etc/apache2/sites-enabled/` (staging vhost) | `scripts/sync-vhosts.sh` | Apache |
+| `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap | Apache |
+| `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** (see below) | `systemd-networkd` |
+| `backup-offsite.sh` | `/opt/datanika/scripts/backup-offsite.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, 03:00 |
+| `restore-drill.sh` | `/opt/datanika/scripts/restore-drill.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, monthly 05:00 |
+| `rebuild-parity-drill.sh` | `/opt/datanika/scripts/rebuild-parity-drill.sh` | 🚨 **BY HAND — no workflow installs it** ([core#747]) | cron, monthly 05:30 |
+| `backup-pubkey.asc` | `/opt/datanika/scripts/backup-pubkey.asc` | **by hand** — `gpg --import` into root's keyring | `backup-offsite.sh` |
+| `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy | compose |
+| `deploy-pointer.sh` | dev-machine fallback | n/a — never installed | by hand, only if CD is broken |
+
+**Installing one of the hand-installed files, and proving you did:** copy the committed bytes and
+compare hashes on both sides. Never edit the box copy — that is how the repo copy and the running
+copy diverge silently, which is the condition this directory exists to end.
+
+```bash
+K="-i ~/.ssh/id_ed25519"; B=root@185.25.22.188
+scp $K deploy/server/<file> $B:/opt/datanika/scripts/<file>
+ssh $K $B "chmod 0755 /opt/datanika/scripts/<file>; sha256sum /opt/datanika/scripts/<file>"
+sha256sum deploy/server/<file>          # the two must match, and you must LOOK
+```
+
+[core#747]: https://github.com/datanika-io/datanika-core/issues/747
 
 ## Two things to know before trusting a file here
 

@@ -8,8 +8,9 @@ Exposes:
 """
 
 import logging
+import re
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 from prometheus_client import (
     REGISTRY,
@@ -96,6 +97,79 @@ UNMATCHED_PATH_LABEL = "<other>"
 # caller-controlled and cannot become part of a label value.
 MOUNTED_TAIL_LABEL = "<mounted>"
 
+# How far to follow the ASGI wrapper chain looking for the route table. Starlette's
+# own stack is three deep; the bound stops a cycle or a self-referential wrapper
+# from spinning, and reaching it simply means no index (the search still runs).
+_MAX_WRAPPER_DEPTH = 12
+
+# `{name}` -> `:name`, matching what `_redact_path_params` emits so a template and a
+# redacted path are the same label value for the same route.
+_PARAM_IN_TEMPLATE = re.compile(r"\{([^}:]+)(?::[^}]+)?\}")
+
+
+def _find_route_table(app: object) -> Sequence[object]:
+    """Follow ``.app`` until something exposes a route table.
+
+    🚨 **The obvious one-liner — ``getattr(app, "routes", ())`` — is empty in
+    production**, and full in every direct-construction test, which is the worst
+    possible combination. ``datanika/datanika.py`` installs this middleware with
+    ``app._api.add_middleware(PrometheusMiddleware)``, and Starlette's stack is
+    ``ServerErrorMiddleware -> user middleware -> ExceptionMiddleware -> Router``. So
+    the object handed to ``__init__`` is an ``ExceptionMiddleware``, which has no
+    ``routes``; the ``Router`` that has them is one ``.app`` further in. Measured:
+
+    ``AFTER stack build: ExceptionMiddleware has .routes = False len = 0``
+    ``wrapped.app -> Router has .routes = True len = 2``
+
+    Walking the chain covers both shapes with one rule, rather than making the test
+    harness lie about how the middleware is installed.
+    """
+    node = app
+    seen: set[int] = set()
+    for _ in range(_MAX_WRAPPER_DEPTH):
+        routes = getattr(node, "routes", None)
+        if routes:
+            return routes
+        node = getattr(node, "app", None)
+        if node is None or id(node) in seen:
+            break
+        seen.add(id(node))
+    return ()
+
+
+def _build_endpoint_index(routes: Iterable[object]) -> dict[int, str]:
+    """``id(endpoint)`` -> route template, for endpoints serving exactly one route.
+
+    Keyed on identity because an endpoint need not be hashable, and safe to key that
+    way because the middleware holds the app, the app holds the router, and the router
+    holds the routes — so nothing here is collected while the index is alive.
+
+    **``Mount`` is deliberately not indexed and not descended into.** A ``Mount``
+    extends ``root_path``, which :func:`_normalize_path` detects *before* it reaches
+    the lookup and answers with ``<mounted>`` — because a mount serves a
+    caller-controlled tail and reports nothing about what it matched. Indexing routes
+    underneath one would build entries no request can ever reach, and an unreachable
+    branch is worse than an absent one.
+
+    An endpoint serving **more than one** template is dropped rather than resolved to
+    whichever route was seen last: either template would be a guess, and one of them
+    names a route the request did not match. Two routes on one handler is ordinary
+    Starlette — measured on the real app 2026-09-04, ``app._api`` carries **84 routes:
+    83 ``Route`` on 83 distinct endpoints, plus 1 ``Mount``**, so the index resolves 83
+    and nothing falls back. That is a measurement, not a law, and this branch is what
+    keeps it from becoming one. (core#1035 recorded 78/78; the table has grown since.)
+    """
+    templates: dict[int, set[str]] = {}
+    for route in routes:
+        if not isinstance(route, Route):
+            continue
+        endpoint = getattr(route, "endpoint", None)
+        path_format = getattr(route, "path_format", "")
+        if endpoint is None or not path_format:
+            continue
+        templates.setdefault(id(endpoint), set()).add(_PARAM_IN_TEMPLATE.sub(r":\1", path_format))
+    return {key: next(iter(seen)) for key, seen in templates.items() if len(seen) == 1}
+
 
 class PrometheusMiddleware:
     """ASGI middleware that records request count and latency.
@@ -109,6 +183,13 @@ class PrometheusMiddleware:
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
+        # Built once, here, because Starlette builds its middleware stack **lazily on
+        # the first request** — so by the time this runs, every route appended at
+        # import time (including `/mcp` and the OAuth AS routes, which
+        # `datanika/datanika.py` appends *after* `add_middleware`) is already in the
+        # table. A route added after the first request would simply be absent, and an
+        # absent entry falls back to the search rather than mislabelling anything.
+        self._templates = _build_endpoint_index(_find_route_table(app))
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -139,12 +220,17 @@ class PrometheusMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             duration = time.perf_counter() - start
-            normalized = _normalize_path(path, scope, root_path_before)
+            normalized = _normalize_path(path, scope, root_path_before, self._templates)
             http_requests_total.labels(method, normalized, str(status_code)).inc()
             http_request_duration_seconds.labels(method, normalized).observe(duration)
 
 
-def _normalize_path(path: str, scope: Scope, root_path_before: str = "") -> str:
+def _normalize_path(
+    path: str,
+    scope: Scope,
+    root_path_before: str = "",
+    templates: Mapping[int, str] | None = None,
+) -> str:
     """Reduce a request path to the route template the router matched.
 
     Every path parameter becomes a placeholder (IDs, UUIDs, ULIDs, slugs), a
@@ -167,6 +253,13 @@ def _normalize_path(path: str, scope: Scope, root_path_before: str = "") -> str:
     cardinality criterion and blinds every SLI in ``docs/slo_instruments.yml``.
     What the router does set is ``endpoint`` (presence means matched) and
     ``path_params`` (the values to redact).
+
+    🆕 **core#1035: ``endpoint`` is enough to recover the template exactly**, without
+    the search. :func:`_build_endpoint_index` inverts the route table once, so a
+    matched request looks its template up instead of reconstructing it — and a lookup
+    has no search direction to get wrong. ``templates`` is that index; when it does
+    not contain the endpoint (two routes sharing one handler, or a route added after
+    the middleware was constructed) the search below still runs, unchanged.
     """
     if "endpoint" not in scope:
         return UNMATCHED_PATH_LABEL
@@ -180,6 +273,19 @@ def _normalize_path(path: str, scope: Scope, root_path_before: str = "") -> str:
         # declares today.
         prefix, _ = _redact_path_params(root_path_after, path_params)
         return f"{prefix.rstrip('/')}/{MOUNTED_TAIL_LABEL}"
+
+    # core#1035. The router already knows which template it matched; ask it, rather
+    # than reconstructing the answer by searching the path for the parameter's value.
+    # A lookup has no search direction to get wrong, so the whole ambiguity class
+    # below simply does not arise for an indexed endpoint.
+    if templates:
+        template = templates.get(id(scope["endpoint"]))
+        if template is not None:
+            # `scope["path"]` is the full path including `root_path` (ASGI spec),
+            # while a route's template is relative to its router. They differ only
+            # when the server itself is mounted under a prefix — in which case the
+            # search-based branch below would have kept that prefix, so keep it here.
+            return f"{root_path_before.rstrip('/')}{template}"
 
     redacted, unambiguous = _redact_path_params(path, path_params)
     # A parameter we could not locate is a value we did not redact; a parameter we
@@ -216,6 +322,11 @@ def _redact_path_params(path: str, path_params: Mapping[str, object]) -> tuple[s
     caller buckets the request. That costs precision for the handful of values
     that collide with a literal of their own route, and it never emits a
     template that does not exist.
+
+    🆕 **Since core#1035 this is the FALLBACK, not the primary path.** An indexed
+    endpoint never reaches here, so the precision cost above is now paid only where
+    two routes share one handler — zero routes on today's table. Everything in this
+    docstring stays true of the cases that do reach it, which is why it stays.
     """
     pending = [(name, str(value)) for name, value in path_params.items() if str(value)]
     segments = path.split("/")

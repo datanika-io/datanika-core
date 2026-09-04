@@ -688,6 +688,105 @@ as a finding, *"the flag does not exist yet"* and *"the seed found drift"* are t
 Same family as *ask the running artifact, not the manifest* (core#646) and *a scheduled workflow runs
 the default branch's copy of itself* — in all three, a branch state was read as a deployment state.
 
+🆕 **The `--help` form of that check is fragile and the fix is one line.** A parser built with
+`description=__doc__` prints the module docstring, and ours carry emoji: on a non-UTF-8 stdout
+`--help` **raises part-way through printing**, and a truncated help text greps to `0` — *the same
+answer as a copy that genuinely lacks the flag.* Keep `--help` ASCII, or better, give the script a
+machine-readable capability probe (rule 26).
+
+---
+
+## 24. Ask what your instrument EXCLUDES before reporting what it found
+
+**2026-09-05, core#1069 / cloud#195.** Re-deriving how many tables agree with `TimestampMixin`, I ran
+cloud's shipped AST nullability scanner over every model table and got:
+
+```
+agree: 0    DISAGREE: 3    not visible in the migrations: 23
+```
+
+*"Twenty-three core tables whose migrations never state nullability"* is a striking finding, and it
+is **entirely an artifact of the instrument**: `_scan_core_nullability` carries
+`if table not in _CLOUD_TABLES: continue`. Widened deliberately, the real answer is **18 agree,
+7 disagree, 1 invisible** — and the invisible one is a genuine blind spot worth its own issue
+(`uploads` is created by `rename_table`, which that scanner does not follow while its sibling in the
+same file does).
+
+> **A scope filter and an empty result are the same output. Read the predicate's exclusions before
+> you read its findings — especially when you are borrowing somebody else's scanner.**
+
+**Rules:**
+1. **Print the scope with the result.** *"scanner scope widened: 3 → 30 tables"* on its own line is
+   what made the second run interpretable.
+2. **A borrowed instrument carries its owner's assumptions.** Reusing a guard's extractor is right —
+   it stops your number disagreeing with the guard for a reason of your own making — but its
+   *filters* were written for the guard's question, not yours.
+3. **When two scanners read the same tree, assert they see the same set.** That assertion is what
+   would have caught cloud#195, and it is one line.
+
+---
+
+## 25. A check whose input can be empty is vacuous — put a floor on the count
+
+**2026-09-05, found in my own tooling, which is where this class always is.** A merge gate:
+
+```bash
+RUNS=$(gh api ".../check-runs" -q '...')
+printf '%s\n' "$RUNS" | grep -qv '=completed:success' && { echo "not green"; exit 1; }
+```
+
+With **no checks at all** — a head whose runs have not been created yet, or an API hiccup —
+`grep -qv` matches nothing, returns 1, the guard does not fire, and the merge proceeds. *"Nothing is
+red"* and *"nothing was measured"* are the same output. The second version counts first:
+
+```bash
+N=$(printf '%s\n' "$RUNS" | grep -c '=completed:success')
+[ "$N" -ge 2 ] || { echo "fewer than 2 green checks - refusing"; exit 1; }
+```
+
+**Rules:**
+1. **Every list-shaped gate needs a floor**, and the floor is a *number you derived*, not `>= 1`.
+2. **Absence is not a state you may pass through.** `NO-VERDICT` is a third outcome; collapsing it
+   onto green is how a dead runner reads as a clean run (`landing#505`), and onto red is how a
+   promotion window reads as a defect (rule 23).
+3. 🆕 **Re-run every mutation sweep after `ruff format`.** Formatting rewraps string literals and
+   moves byte anchors: one anchor in a sweep went `ANCHOR-0` post-format. It reported that loudly
+   instead of going green — *only because the harness asserts its anchor matched exactly once.*
+   Without that assertion a moved anchor is a mutation that silently never applied, i.e. a
+   mutation-testing tool whose own breakage says *"your test is perfect"*.
+
+---
+
+## 26. An exit code cannot say "I did not run" — only a positive artifact can
+
+**2026-09-05, core#1060.** `seed_paid_plans.py` had three conditions sharing one non-zero colour and
+needing three different responses, one of which **spends real money** (`seed_annual_plans.py` calls
+`client.create_price()` against the live Paddle account). Splitting the codes into a partition —
+`0 CLEAN / 1 DRIFT / 3 INCOMPLETE / 4 REFUSED / 5 ERROR`, with `2` reserved for argparse — was
+necessary and **not sufficient**, because the hardest case is not a condition at all:
+
+> **A drill must tell *"the script refused"* from *"the script is not there yet"*, and both are
+> non-zero. No number distinguishes them, because one of them is the body never having run.**
+
+What does: **every terminating run prints one verdict line, last on stdout, and a run that never
+reached the body prints none.** No line = *no verdict*, which is neither clean nor a finding. The
+line also carries the whole outcome vector, so the code's precedence cannot hide a second finding.
+
+**Rules:**
+1. **Reserve the codes your framework owns.** `argparse` exits `2`; if your body can return `2`,
+   *"this copy is older than your invocation"* and *"this copy found a defect"* are one reading.
+2. **Give the script a capability probe that opens nothing** — ours prints `SEED-CONTRACT:` lines
+   derived from the parser and touches no database, so it answers inside an image with nothing
+   reachable. That is rule 23's *"gate on the artifact"* made cheap enough to run every time.
+3. 🚨 **An uncaught exception exits `1`.** Whatever `1` means in your partition, a crash now means it
+   too — here that was *"re-run with `--apply`"*, i.e. **an instruction to write, against a database
+   that was not there.** Wrap `main` and return a distinct code, and render the counts as `?` rather
+   than `0`: a zero is a measurement the run never made.
+4. **Found by running it, not by reading it.** I designed the whole partition from the source and
+   would have shipped it without case 3; the first real subprocess invocation returned
+   `exit=1, no verdict line` four times in a row.
+
+---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830

@@ -41,8 +41,21 @@
   2026-09-03.** The GHCR package is **private** — measured, with a positive control on a
   known-public package — so every tag answers `denied` to an anonymous pull. It cannot
   simply be flipped public: the image grafts the closed-source `datanika-cloud` tree at
-  `/cloud/`. Until a **core-only** image exists ([#1014]), the pinnable artifact is the
-  **source tag**, and the README says so.
+  `/cloud/`. Until a **core-only** image is *published* ([#1014]), the pinnable artifact
+  is the **source tag**, and the README says so.
+  - 🟡 **Half of that is now done (2026-09-04).** The core-only image **exists and is
+    built and verified on every PR** — `core-only-image` in `ci.yml`, from a context
+    with no `datanika-cloud/` in it, probed with `--edition core`. Measured on the
+    artifact rather than the Dockerfile: `/cloud` absent, `datanika_cloud` not
+    importable, neither repository's `.git` present, and the worker entrypoint imports.
+    The image is **2.37 GB** against the cloud image's 2.42 GB.
+  - 🔴 **What is still missing is a `docker pull` anyone can run, and it is one
+    decision, not one commit.** GHCR visibility is per **package**, not per tag, so
+    "publish the core-only tag and keep the rest private" is not a configuration that
+    exists — it needs a **second package**, and making a package public is a one-way
+    door. Nothing here is blocked on engineering; it is blocked on a founder saying
+    yes, with the verified artifact in front of them. **Do not close [#1014] on the
+    build landing.**
 
 ## Explicitly out of scope
 

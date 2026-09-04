@@ -499,6 +499,158 @@ jobs:
               ;;
           esac
 
+
+  # ===========================================================================
+  # core-only-image — NOT required. (core#1014)
+  # ===========================================================================
+  #
+  # `SPEC_RELEASE_VERSIONING` tells self-hosters to pin a release image. Nobody
+  # outside the org can pull one: `ghcr.io/datanika-io/datanika-core` is private,
+  # and it must stay private because every tag it carries grafts the closed-source
+  # `datanika-cloud` tree in at /cloud. Making that package public is not a
+  # settings fix, it is a publication.
+  #
+  # The artifact a self-hoster should get is the AGPL core WITHOUT the billing
+  # plugin they cannot use. This job builds exactly that and asserts what came out
+  # of it. It does NOT push, and that is deliberate — see "why nothing is
+  # published" below.
+  #
+  # ---------------------------------------------------------------------------
+  # THREE PROPERTIES, and the second is why this is not just image-probe again
+  # ---------------------------------------------------------------------------
+  #
+  # 1. NO `CLOUD_REPO_TOKEN`. The core-only build needs no cloud checkout at all,
+  #    so this job runs on a FORK PR — where `image-probe` and `image-cve` both
+  #    skip every step and report green having built nothing (see image-probe's
+  #    header). This is the only assertion on a real image that a fork PR gets.
+  #
+  # 2. THE CONTEXT DELIBERATELY HAS NO `datanika-cloud/`. That is the shape a
+  #    self-hoster and a fork actually have, and it is what makes this a test of
+  #    the edition split rather than of a build flag: if `variant-cloud` ever
+  #    stopped being dead-stage-eliminated, `COPY datanika-cloud/ /cloud/` would
+  #    fail here with "not found" instead of quietly grafting a tree that a
+  #    same-context build happens to have lying around.
+  #
+  # 3. THE PROBE ASSERTS BOTH DIRECTIONS. `--edition core` fails if /cloud exists,
+  #    if `datanika_cloud` is importable, if either repo's `.git` shipped, or if
+  #    the image cannot import `datanika.tasks.celery_app` — the worker entrypoint,
+  #    which is where `bootstrap_cloud()` is called from behind the edition guard.
+  #    A core-only image that does not start is worse than none, because it looks
+  #    published.
+  #
+  # ---------------------------------------------------------------------------
+  # WHY NOTHING IS PUBLISHED HERE
+  # ---------------------------------------------------------------------------
+  # GHCR visibility is per PACKAGE, not per tag, so "publish the core-only tag
+  # publicly and keep the rest private" is not a configuration that exists — it
+  # needs a second package, and making a package public is a one-way door. The
+  # order that keeps that door shut is: build the artifact, verify it carries no
+  # cloud tree and no `.git` for either repo, and only then let someone decide
+  # about visibility with the artifact in front of them. This job is the first
+  # two steps. The third is a founder decision recorded on core#1014.
+  #
+  # ---------------------------------------------------------------------------
+  # WHY IT IS NOT A REQUIRED CHECK (yet)
+  # ---------------------------------------------------------------------------
+  # It has no track record. `image-probe` graduated on 3 consecutive green reads
+  # of its own LOG LINE on `dev` — six, in the end — and gating a brand-new job
+  # would make "loosen the assertion" the cheapest way to merge anything, which
+  # is the incentive inversion the tier policy exists to prevent. Same bar here:
+  # 3 consecutive `CORE_ONLY_RESULT=success` on `dev`, read from the log line and
+  # not from the job tick, then promote it with one API call.
+  #
+  # ⚠️ The step below has NO `continue-on-error`. Non-required and
+  # quarantined-green are different things: this job going red is a real signal
+  # on the run, it simply does not block the merge.
+  core-only-image:
+    name: core-only-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout core (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: core
+
+      - name: Reshape build context (core only — no cloud checkout, on purpose)
+        run: |
+          # Same layout the Dockerfile assumes, minus datanika-cloud/. `cp -r`
+          # rather than `mv` to match image-probe, which keeps `core/` in place
+          # for the scripts it runs out of the checkout.
+          mkdir -p build-context
+          cp -r core build-context/datanika
+          echo "context entries: $(ls -1 build-context | tr '\n' ' ')"
+          if [ -e build-context/datanika-cloud ]; then
+            echo "::error::build-context/datanika-cloud exists — this job must build from a context WITHOUT it, or property 2 in the header is not being tested."
+            exit 1
+          fi
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "core/uv.lock"
+
+      - name: Export the locked pins
+        working-directory: core
+        run: |
+          # --no-dev because the image builds --no-dev; the comparison basis has
+          # to match the artifact or the drift check reports dozens of
+          # legitimately-absent packages and buries any real finding.
+          uv export --frozen --no-dev --no-emit-project --no-hashes -o ../lock-pins.txt
+          echo "exported $(grep -c '==' ../lock-pins.txt) pins"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the core-only image
+        uses: docker/build-push-action@v6
+        with:
+          context: build-context
+          file: build-context/datanika/Dockerfile
+          build-args: |
+            DATANIKA_IMAGE_EDITION=core
+          push: false
+          load: true
+          tags: datanika-core:core-only
+          # Reads the same gha cache build-push-image.yml populates. The two
+          # editions share every layer of the `base` stage — which is all of the
+          # expensive work, including the from-source lxml/xmlsec build — so this
+          # usually pays only for the `final` stage. Measured locally: 6m19s cold
+          # for the cloud image, then 5s for the core one off a warm cache.
+          cache-from: type=gha
+          platforms: linux/amd64
+
+      - name: Probe the core-only image
+        id: probe
+        run: |
+          python3 core/scripts/probe_built_image.py \
+            --image datanika-core:core-only \
+            --edition core \
+            --lock-pins lock-pins.txt
+
+      - name: Record the result
+        if: always()
+        run: |
+          # Read `outcome`, not `conclusion`: they agree today because there is no
+          # continue-on-error, and this line keeps meaning the same thing if one
+          # is ever added. "did not run" and "passed" must never look alike.
+          RESULT="${{ steps.probe.outcome }}"
+          echo "CORE_ONLY_RESULT=${RESULT}"
+          case "${RESULT}" in
+            success)
+              echo "::notice::core-only-image passed: the AGPL-only artifact builds, carries no /cloud tree and no VCS history, and starts."
+              ;;
+            failure)
+              echo "::error::core-only-image FAILED. Non-required, so it does not block this merge — but a self-hoster image that cannot be built or cannot start is the thing core#1014 exists to prevent."
+              ;;
+            skipped)
+              echo "::error::core-only-image did NOT RUN — the build above failed. That proves nothing about the artifact either way."
+              ;;
+            *)
+              echo "::error::core-only-image outcome=${RESULT} — unexpected. Treat as not evaluated."
+              ;;
+          esac
+
   # ---------------------------------------------------------------------------
   # image-cve — trivy scan of the BUILT IMAGE (#723, placement resolved with #728)
   #

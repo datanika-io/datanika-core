@@ -409,11 +409,28 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         required=["path"],
     ),
     # ---- Streaming ----
+    # ⚠️ The four security fields are OPTIONAL in the schema and mandatory in
+    # practice. Every managed Kafka a user can reach — Confluent Cloud, Redpanda
+    # Serverless, Aiven, Upstash — is SASL over TLS on its free tier, so a
+    # connection without them addresses only a broker the operator runs
+    # unauthenticated. They were absent entirely until core#1054, which is why
+    # this connector could not reach any broker a customer owns.
+    #
+    # They stay optional because a self-hoster's own broker on a private network
+    # legitimately has none, and `security_protocol` defaults to PLAINTEXT in
+    # kafka-python. `_build_kafka_source` refuses the half-configured middle —
+    # a SASL protocol with no username — rather than letting it time out.
     "kafka": _schema(
         {
             "bootstrap_servers": _str("Comma-separated Kafka brokers"),
             "topics": _str("Comma-separated topic names"),
             "group_id": _str("Consumer group ID"),
+            "security_protocol": _str(
+                "PLAINTEXT, SSL, SASL_PLAINTEXT or SASL_SSL (default PLAINTEXT)"
+            ),
+            "sasl_mechanism": _str("PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512 (default PLAIN)"),
+            "sasl_plain_username": _str("SASL username"),
+            "sasl_plain_password": _str("SASL password", sensitive=True),
         },
         required=["bootstrap_servers", "topics", "group_id"],
     ),

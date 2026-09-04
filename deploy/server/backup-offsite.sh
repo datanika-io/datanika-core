@@ -173,10 +173,72 @@ for VOL in ${FILE_VOLUMES}; do
     SRC_FILES=$(find "${MP}" -type f | wc -l)
 
     echo "[$(date)] archiving ${VOL} (${SRC_FILES} files) from ${MP}..."
-    # `|| true`: GNU tar exits 1 for "file changed as we read it", which on a live
-    # volume is expected and not corruption. The member-count check below is the
-    # real gate — assert the outcome, never the exit code.
-    tar czf "${VTAR}" -C "${MP}" . 2>/dev/null || true
+    # ── core#1017: the copy is live, and tar already tells us when that bit ─────
+    #
+    # This line used to be `tar czf ... 2>/dev/null || true`, with a comment saying
+    # "file changed as we read it" is "expected and not corruption". The first half
+    # was right and the second was exactly backwards: that message IS the torn-file
+    # condition, and the line discarded BOTH halves of the only evidence that
+    # exists — the exit code (`|| true`) and the per-file diagnostic (`2>/dev/null`).
+    # The member-count gate below could never see it: the bytes are all there, some
+    # of them are just from two different moments.
+    #
+    # Measured on this box, /tmp only, against a copy of the real
+    # `_docs_samples/warehouse.duckdb` with DuckDB writing it continuously:
+    #
+    #   tar under write load        20 of 40 archives flagged, exit 1
+    #   tar with the writer stopped  0 of 1, exit 0, empty stderr   <- control
+    #   retry-on-change             10 of 10 rounds converged within 5 attempts
+    #   the same, writer stopped     converged on attempt 1         <- control
+    #
+    # ⚠️ Why RETRY and not a snapshot, and not a pause. There is no snapshot to
+    # take: `/` is **ext4 with no LVM and no reflink support** (`cp --reflink=always`
+    # -> "Operation not supported"), measured rather than assumed. And a pause
+    # would be a nightly availability decision — `datanika-app-b` and
+    # `datanika-celery` both mount these volumes rw, so quiescing means freezing
+    # the serving container. The archives take **23 ms and 50 ms**, so simply
+    # taking the copy again is cheaper than either.
+    #
+    # 🚨 Why the DRILL cannot substitute for this, which is the correction worth
+    # carrying: a DuckDB-level integrity check on the restored file is a WEAK
+    # detector. Of the archives tar flagged, essentially all still opened and
+    # completed a full `EXPORT DATABASE`. A torn copy usually looks fine — it is
+    # internally consistent enough to read and wrong about what it contains. So
+    # the moment the tear is detectable is HERE, at the copy, and nowhere later.
+    #
+    # ⚠️ DuckDB also writes a `.wal` sidecar, so consistency spans TWO files: an
+    # individually-intact pair captured microseconds apart is still a mismatched
+    # pair. tar flags either file moving, which is what makes it the right signal.
+    #
+    # It never aborts the backup. A possibly-torn archive is worth more than no
+    # archive at all — the failure mode this whole script exists to prevent is an
+    # empty off-site directory. What changes is that we now KNOW, and say so in a
+    # metric, instead of shipping a torn file that every downstream check calls
+    # clean.
+    TAR_ERR=$(mktemp)
+    VOL_TORN=1
+    VOL_TAR_TRIES=0
+    for TRY in 1 2 3 4 5; do
+        VOL_TAR_TRIES=${TRY}
+        TAR_RC=0
+        tar czf "${VTAR}" -C "${MP}" . 2>"${TAR_ERR}" || TAR_RC=$?
+        if [ "${TAR_RC}" -eq 0 ] && ! grep -q 'changed as we read it' "${TAR_ERR}"; then
+            VOL_TORN=0
+            break
+        fi
+        echo "[$(date)] ${VOL}: a file changed while the archive was being read (attempt ${TRY}/5) — retaking"
+        sed 's/^/      /' "${TAR_ERR}"
+        sleep 2
+    done
+    rm -f "${TAR_ERR}"
+    if [ "${VOL_TORN}" -eq 0 ]; then
+        echo "[$(date)] ${VOL}: point-in-time copy taken on attempt ${VOL_TAR_TRIES}"
+    else
+        echo "[$(date)] WARNING: ${VOL} could not be captured cleanly in 5 attempts."
+        echo "  Shipping it anyway — a possibly-torn archive beats no archive — but do NOT"
+        echo "  treat this night's copy of ${VOL} as a point-in-time one. Watch"
+        echo "  datanika_backup_files_torn{volume=\"${VOL}\"} (core#1017)."
+    fi
 
     # A readable archive whose regular-file members are at least what the source
     # held. This is the per-artifact gate core#954 asked for, and it is a better
@@ -210,6 +272,8 @@ for VOL in ${FILE_VOLUMES}; do
     # Metric lines, emitted with the rest of the block only on full success.
     VOL_METRICS="${VOL_METRICS:-}datanika_backup_last_files_size_bytes{volume=\"${VOL}\"} ${VSIZE}
 datanika_backup_last_files_count{volume=\"${VOL}\"} ${TAR_FILES}
+datanika_backup_files_torn{volume=\"${VOL}\"} ${VOL_TORN}
+datanika_backup_files_tar_attempts{volume=\"${VOL}\"} ${VOL_TAR_TRIES}
 "
 done
 
@@ -257,6 +321,18 @@ TMP="${TEXTFILE_DIR}/datanika_backup.prom.$$"
     echo "# TYPE datanika_backup_last_files_size_bytes gauge"
     echo "# HELP datanika_backup_last_files_count Regular files captured in the last per-volume archive"
     echo "# TYPE datanika_backup_last_files_count gauge"
+    # core#1017. 1 means tar reported a file changing under it on all 5 attempts,
+    # so this volume's archive is NOT a point-in-time copy. It still shipped.
+    #
+    # ⚠️ This is the ONLY series that can carry that fact. Size and count are
+    # both satisfied by a torn archive — the bytes are all present, they are
+    # just from two moments — and so are `gzip -t`, `tar tzf` and the gpg
+    # round-trip. Nothing downstream can recover this information later: a
+    # restored torn DuckDB file usually opens and exports cleanly.
+    echo "# HELP datanika_backup_files_torn 1 if tar saw the volume change under it on every attempt"
+    echo "# TYPE datanika_backup_files_torn gauge"
+    echo "# HELP datanika_backup_files_tar_attempts Attempts needed to take a copy nothing changed under"
+    echo "# TYPE datanika_backup_files_tar_attempts gauge"
     printf '%s' "${VOL_METRICS:-}"
 } > "${TMP}"
 mv "${TMP}" "${TEXTFILE_DIR}/datanika_backup.prom"

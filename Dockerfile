@@ -1,4 +1,39 @@
-FROM python:3.12-slim
+# Two editions, one file (core#1014).
+#
+#   DATANIKA_IMAGE_EDITION=cloud  (DEFAULT)  core + the private datanika-cloud plugin at /cloud
+#   DATANIKA_IMAGE_EDITION=core              AGPL core alone, no /cloud tree at all
+#
+# WHY A BUILD ARG AND NOT A SECOND DOCKERFILE. `COPY datanika-cloud/ /cloud/`
+# hard-fails when the tree is absent and Docker has no conditional COPY, so the
+# edition has to be a stage selection. A second Dockerfile would work and is the
+# wrong shape: this file carries three build-time assertions (the VCS check, the
+# uv-cache check, the /mcp import check) and duplicating it is how one copy
+# silently loses a guard. Both editions descend from the SAME `final` stage, so
+# every assertion below runs in both by construction, not by upkeep.
+#
+# WHY THE DEFAULT IS `cloud`. `docker-compose.yml` and `deploy-pointer.yml` pass
+# no build arg. The default is what production builds, so an unqualified
+# `docker build` / `docker compose build` behaves exactly as it did before this
+# split.
+#
+# MEASURED, on buildx 0.30, four arms plus a negative control:
+#
+#   context WITHOUT datanika-cloud/, EDITION=core   -> builds, /cloud absent
+#   context WITHOUT datanika-cloud/, EDITION=cloud  -> FAILS at the COPY  <- control
+#   context WITH    datanika-cloud/, EDITION=cloud  -> builds, /cloud present
+#   context WITH    datanika-cloud/, EDITION=core   -> builds, /cloud ABSENT
+#   EDITION=<typo>                                  -> FAILS resolving the stage
+#
+# The fourth arm is the discriminating one: BuildKit does not build a stage the
+# selected target does not descend from, so the cloud tree cannot reach a core
+# image even from a context that contains it. The second arm is what proves the
+# first is not passing because the COPY was skipped for some unrelated reason.
+ARG DATANIKA_IMAGE_EDITION=cloud
+
+# =============================================================================
+# base — everything both editions share, including all the expensive work.
+# =============================================================================
+FROM python:3.12-slim AS base
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let
@@ -57,16 +92,46 @@ COPY datanika/ .
 # in Docker. To enable native verified sources, run `dlt init <source> <dest>`
 # inside the container after build.
 
-# Copy cloud edition plugin source
+# =============================================================================
+# variant-* — the ONLY difference between the two editions. Keep these stages
+# to the cloud graft and nothing else: anything added here has to be added
+# twice, which is the duplication this split exists to avoid.
+# =============================================================================
+
+# Core-only: deliberately empty. `/cloud` never exists, so `datanika_cloud` is
+# not importable and `DATANIKA_EDITION=cloud` cannot be honoured at runtime —
+# which is correct, because the plugin an OSS user cannot obtain is also the one
+# they cannot be billed by. All three of core's references to it are already
+# edition-gated or ImportError-suppressed (datanika.py, tasks/celery_app.py,
+# migrations/env.py), so no application change is needed for this to work.
+FROM base AS variant-core
+
+# Cloud: graft the private plugin source in.
+FROM base AS variant-cloud
 COPY datanika-cloud/ /cloud/
 
-# core#1014 - the two COPYs above are unfiltered unless an ignore file applies, and
+# =============================================================================
+# final — every assertion lives here, so both editions run all of them.
+# =============================================================================
+FROM variant-${DATANIKA_IMAGE_EDITION} AS final
+
+# ⚠️ An ARG declared before the first FROM is visible to FROM lines and to
+# NOTHING ELSE. Re-declaring it here is what makes it readable by the RUN steps
+# below; without this line `$DATANIKA_IMAGE_EDITION` expands to the empty string
+# and the edition assertion falls through to its error branch.
+ARG DATANIKA_IMAGE_EDITION
+
+# core#1014 - the COPYs above are unfiltered unless an ignore file applies, and
 # the repo's own `.dockerignore` applies to NEITHER build path (see the header of
 # `Dockerfile.dockerignore`, which is the file that does). Assert the outcome here
 # rather than trusting that file to be read: a published image carrying /cloud/.git
 # publishes the PRIVATE datanika-cloud repository's entire history the moment the
 # GHCR package's visibility changes. The deploy tarball uses --exclude-vcs, so this
 # cannot fire on the box; it fires on a GHA build that lost its ignore file.
+#
+# Runs in BOTH editions. In the core edition the /cloud/.git half is vacuous by
+# construction — that is the point of also asserting the edition invariant below,
+# which is the check that can actually tell the two images apart.
 RUN set -e; \
     for d in /app/.git /cloud/.git; do \
       if [ -e "$d" ]; then \
@@ -76,11 +141,39 @@ RUN set -e; \
     done; \
     echo "build context VCS check: /app/.git and /cloud/.git both absent"
 
+# Assert the image is the edition it was asked for (core#1014).
+#
+# Without this, the two failure directions are both silent. A core build that
+# somehow acquired /cloud ships the closed plugin in the artifact we intend to
+# publish openly; a cloud build that lost it starts, serves, and enforces no
+# quota at all — the shape of core#772, where hooks were subscribed nowhere and
+# every container read healthy. `test -e` on the tree, not an env var: the whole
+# point is what is IN the image.
+RUN set -e; \
+    case "$DATANIKA_IMAGE_EDITION" in \
+      cloud) \
+        [ -f /cloud/pyproject.toml ] || { echo "FATAL: edition=cloud but /cloud/pyproject.toml is missing"; exit 1; }; \
+        echo "edition check: cloud - /cloud present" ;; \
+      core) \
+        [ ! -e /cloud ] || { echo "FATAL: edition=core but /cloud exists - the core-only image must carry no closed-source tree"; exit 1; }; \
+        echo "edition check: core - /cloud absent" ;; \
+      *) \
+        echo "FATAL: DATANIKA_IMAGE_EDITION must be 'core' or 'cloud', got '$DATANIKA_IMAGE_EDITION'"; \
+        exit 1 ;; \
+    esac
+
 # Reflex needs to initialize on first run (recreates .venv)
 RUN uv run reflex init
 
-# Install cloud plugin AFTER reflex init (which recreates the venv)
-RUN uv pip install --constraint /tmp/lock-constraints.txt /cloud
+# Install cloud plugin AFTER reflex init (which recreates the venv).
+# Skipped entirely in the core edition — there is nothing at /cloud to install,
+# and the edition assertion above has already proven that.
+RUN set -e; \
+    if [ "$DATANIKA_IMAGE_EDITION" = "cloud" ]; then \
+      uv pip install --constraint /tmp/lock-constraints.txt /cloud; \
+    else \
+      echo "edition=core: cloud plugin deliberately not installed"; \
+    fi
 
 # Install the datanika-mcp tool-surface package so the app can mount the remote
 # MCP endpoint (/mcp). Copied in via `COPY datanika/ .` above → /app/datanika-mcp.

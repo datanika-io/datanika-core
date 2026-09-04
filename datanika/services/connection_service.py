@@ -679,6 +679,10 @@ SECRET_CONFIG_KEYS = frozenset(
         "auth_token",
         "aws_access_key_id",
         "security_token",
+        # Added core#1054 with the Kafka SASL fields. A broker password reaches
+        # user-visible prose the same way a database one does: kafka-python's
+        # bootstrap errors quote the client config, so this is not a formality.
+        "sasl_plain_password",
     }
 )
 

@@ -95,6 +95,35 @@ _ROUTES_SNIPPET = (
 
 _PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
 
+# The edition invariant (core#1014). Facts about the ARTIFACT, not about a setting:
+# `DATANIKA_EDITION` is an env var the box supplies, so reading it here would answer a
+# question nobody asked. What matters is whether the closed-source tree is IN the image.
+#
+# `find_spec` rather than `import`: importing `datanika_cloud` pulls the plugin, which
+# imports back into `datanika.ui.state.auth_state` and reaches `celery_app` again
+# (core#832). The question is "is it installed", and `find_spec` answers exactly that
+# without executing anything.
+_EDITION_SNIPPET = (
+    "import json, pathlib, importlib.util;"
+    "print(json.dumps({"
+    "'cloud_tree': pathlib.Path('/cloud').exists(),"
+    "'cloud_installed': importlib.util.find_spec('datanika_cloud') is not None,"
+    "'app_git': pathlib.Path('/app/.git').exists(),"
+    "'cloud_git': pathlib.Path('/cloud/.git').exists()"
+    "}))"
+)
+
+# The core-only image's whole claim is that it runs without the plugin. `celery_app` is
+# the entrypoint that made core#772 possible — it is where `bootstrap_cloud()` is
+# called from, behind the edition guard — so it is the import most likely to break if
+# a supposedly-gated cloud reference is not actually gated. `datanika.datanika` builds
+# the whole Reflex app and needs far more environment; this is the discriminating one.
+_CORE_STARTUP_SNIPPET = (
+    "import datanika.tasks.celery_app;"
+    "from datanika import hooks;"
+    "print('celery_app imported; handlers=%d' % len(hooks._handlers))"
+)
+
 
 def normalize(name: str) -> str:
     """PEP 503 normalisation, so `Foo_Bar` and `foo-bar` compare equal."""
@@ -211,6 +240,16 @@ def main() -> int:
         "--lock-pins",
         help="`uv export --frozen --no-dev --no-emit-project --no-hashes` output",
     )
+    parser.add_argument(
+        "--edition",
+        choices=("cloud", "core"),
+        default="cloud",
+        help=(
+            "which image this is (core#1014). `cloud` is the default because that is "
+            "what production builds; `core` asserts the AGPL-only artifact carries no "
+            "closed-source tree and still starts."
+        ),
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -307,6 +346,76 @@ def main() -> int:
                 )
             else:
                 print(f"    OK — no drift across {compared} shared packages")
+
+    # --- D. the edition invariant (core#1014) -----------------------------
+    #
+    # Asserted in BOTH directions on purpose. A check that only says "core has no
+    # /cloud" passes on an image that is empty, broken, or simply the wrong thing;
+    # the cloud arm is what proves the check can tell the two apart at all.
+    print(f"\n[D] edition invariant — expecting a {args.edition!r} image")
+    result = run_in_image(args.image, [*py, "-c", _EDITION_SNIPPET])
+    if result.returncode != 0:
+        failures.append(
+            f"D: could not read the edition facts out of the image: "
+            f"{(result.stderr or result.stdout).strip()[:300]}"
+        )
+        print("    FAIL — could not read the edition facts")
+    else:
+        facts = json.loads(last_line(result.stdout))
+        for key in ("cloud_tree", "cloud_installed", "app_git", "cloud_git"):
+            print(f"    {key:16} {facts[key]}")
+
+        # Both editions: neither repository's history may ship. The Dockerfile
+        # asserts this at build time; re-asserting it on the artifact is the point
+        # of core#1014 — the build-time check is only as good as the layer cache
+        # that may have skipped it.
+        for key, path in (("app_git", "/app/.git"), ("cloud_git", "/cloud/.git")):
+            if facts[key]:
+                failures.append(
+                    f"D: {path} is IN the image. For /cloud that publishes the "
+                    "PRIVATE datanika-cloud repository's entire history the moment "
+                    "the package's visibility changes (core#1014)."
+                )
+
+        if args.edition == "core":
+            if facts["cloud_tree"]:
+                failures.append(
+                    "D: this is supposed to be the core-only image and /cloud is "
+                    "present. The artifact we intend to publish openly would carry "
+                    "the closed-source billing plugin."
+                )
+            if facts["cloud_installed"]:
+                failures.append(
+                    "D: `datanika_cloud` is importable in the core-only image. The "
+                    "tree may be gone while the installed distribution is not — "
+                    "`uv pip install /cloud` copies into site-packages, so deleting "
+                    "/cloud alone would leave this true."
+                )
+            # The claim the whole variant rests on: it runs without the plugin.
+            startup = run_in_image(args.image, [*py, "-c", _CORE_STARTUP_SNIPPET])
+            if startup.returncode == 0:
+                print(f"    startup         OK — {last_line(startup.stdout)}")
+            else:
+                detail = (startup.stderr or startup.stdout).strip().splitlines()
+                failures.append(
+                    "D: the core-only image cannot import `datanika.tasks."
+                    "celery_app` — the worker entrypoint. A core-only image that "
+                    "does not start is worse than none, because it looks published.\n"
+                    f"       {detail[-1] if detail else '(no output)'}"
+                )
+                print(f"    startup         FAIL — {detail[-1] if detail else ''}")
+        else:
+            if not facts["cloud_tree"]:
+                failures.append(
+                    "D: the cloud image has no /cloud tree. Quota enforcement and "
+                    "metering would be silently absent while every container reads "
+                    "healthy — that is core#772."
+                )
+            if not facts["cloud_installed"]:
+                failures.append(
+                    "D: `datanika_cloud` is not importable in the cloud image, so "
+                    "`bootstrap_cloud()` cannot run."
+                )
 
     print("\n" + "=" * 70)
     if failures:

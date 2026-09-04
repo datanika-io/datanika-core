@@ -443,6 +443,13 @@ class ConnectionState(BaseState):
     form_bootstrap_servers: str = ""  # Kafka
     form_topics: str = ""  # Kafka
     form_group_id: str = ""  # Kafka
+    # core#1054. Without these the form can only describe an unauthenticated
+    # broker, and every managed Kafka free tier is SASL-only — so the connector
+    # was unreachable for any broker a customer can actually provision.
+    form_security_protocol: str = ""  # Kafka
+    form_sasl_mechanism: str = ""  # Kafka
+    form_sasl_plain_username: str = ""  # Kafka
+    form_sasl_plain_password: str = ""  # Kafka
 
     # Pipeline template currently driving the form prefill (empty = none).
     # Set when the user clicks a card on /pipelines/templates and arrives
@@ -718,6 +725,18 @@ class ConnectionState(BaseState):
 
     def set_form_group_id(self, value: str):
         self._set_config_field("form_group_id", value)
+
+    def set_form_security_protocol(self, value: str):
+        self._set_config_field("form_security_protocol", value)
+
+    def set_form_sasl_mechanism(self, value: str):
+        self._set_config_field("form_sasl_mechanism", value)
+
+    def set_form_sasl_plain_username(self, value: str):
+        self._set_config_field("form_sasl_plain_username", value)
+
+    def set_form_sasl_plain_password(self, value: str):
+        self._set_config_field("form_sasl_plain_password", value)
 
     def _record_uploaded_file(self, file_id: int, original_name: str) -> None:
         """Store the uploaded file on the form, and invalidate the verdict.
@@ -1014,6 +1033,14 @@ class ConnectionState(BaseState):
                 config["topics"] = [t.strip() for t in self.form_topics.split(",") if t.strip()]
             if self.form_group_id:
                 config["group_id"] = self.form_group_id
+            if self.form_security_protocol:
+                config["security_protocol"] = self.form_security_protocol
+            if self.form_sasl_mechanism:
+                config["sasl_mechanism"] = self.form_sasl_mechanism
+            if self.form_sasl_plain_username:
+                config["sasl_plain_username"] = self.form_sasl_plain_username
+            if self.form_sasl_plain_password:
+                config["sasl_plain_password"] = self.form_sasl_plain_password
 
         elif t in ("pipedrive", "asana"):
             if self.form_api_key:
@@ -1106,6 +1133,10 @@ class ConnectionState(BaseState):
         self.form_bootstrap_servers = ""
         self.form_topics = ""
         self.form_group_id = ""
+        self.form_security_protocol = ""
+        self.form_sasl_mechanism = ""
+        self.form_sasl_plain_username = ""
+        self.form_sasl_plain_password = ""
         self.error_message = ""
         # Assigned directly rather than via `_clear_test_verdict`: this function
         # already cleared both halves correctly, and it is borrowed by a
@@ -1175,6 +1206,10 @@ class ConnectionState(BaseState):
         self.form_bootstrap_servers = ""
         self.form_topics = ""
         self.form_group_id = ""
+        self.form_security_protocol = ""
+        self.form_sasl_mechanism = ""
+        self.form_sasl_plain_username = ""
+        self.form_sasl_plain_password = ""
 
         if conn_type in _DB_TYPES:
             self.form_host = config.get("host", "")
@@ -1284,6 +1319,10 @@ class ConnectionState(BaseState):
             topics = config.get("topics", [])
             self.form_topics = ", ".join(topics) if isinstance(topics, list) else topics
             self.form_group_id = config.get("group_id", "")
+            self.form_security_protocol = config.get("security_protocol", "")
+            self.form_sasl_mechanism = config.get("sasl_mechanism", "")
+            self.form_sasl_plain_username = config.get("sasl_plain_username", "")
+            self.form_sasl_plain_password = config.get("sasl_plain_password", "")
         elif conn_type in ("pipedrive", "asana"):
             self.form_api_key = config.get("api_key", "")
         elif conn_type == "freshdesk":
@@ -1444,8 +1483,9 @@ class ConnectionState(BaseState):
         ``get_connection_config``, which decrypts, and hands the result to
         ``_populate_form_from_config``, which writes it into ``form_password``,
         ``form_aws_secret_access_key``, ``form_service_account_json``,
-        ``form_client_secret`` and ``form_refresh_token`` — all public Reflex
-        state vars, all serialized to the caller's browser.
+        ``form_client_secret``, ``form_refresh_token`` and (core#1054)
+        ``form_sasl_plain_password`` — all public Reflex state vars, all
+        serialized to the caller's browser.
 
         The Edit button is wrapped in ``rx.cond(AuthState.can_edit, ...)``, which
         is a **render** condition. A Reflex event handler is dispatched by name

@@ -802,6 +802,43 @@ def kafka_fields() -> rx.Component:
             value=ConnectionState.form_group_id,
             on_change=ConnectionState.set_form_group_id,
         ),
+        # ── Authentication (core#1054) ──────────────────────────────────────
+        # Optional in the schema, unavoidable in practice: every managed Kafka
+        # free tier — Confluent Cloud, Redpanda Serverless, Aiven, Upstash — is
+        # SASL over TLS, so without these the form can only describe a broker
+        # the operator runs unauthenticated on a private network.
+        #
+        # The placeholders are protocol and mechanism identifiers, not prose, so
+        # they are literals rather than i18n keys — `WORKFLOW_RULES` §6 lists
+        # placeholders and technical identifiers as the two things not to
+        # translate, and these are both at once. The labels are translated.
+        rx.text(_t["connections.security_protocol"], size="2", weight="bold"),
+        config_input(
+            "security_protocol",
+            placeholder="SASL_SSL",
+            value=ConnectionState.form_security_protocol,
+            on_change=ConnectionState.set_form_security_protocol,
+        ),
+        rx.text(_t["connections.sasl_mechanism"], size="2", weight="bold"),
+        config_input(
+            "sasl_mechanism",
+            placeholder="PLAIN",
+            value=ConnectionState.form_sasl_mechanism,
+            on_change=ConnectionState.set_form_sasl_mechanism,
+        ),
+        rx.text(_t["connections.sasl_username"], size="2", weight="bold"),
+        config_input(
+            "sasl_plain_username",
+            value=ConnectionState.form_sasl_plain_username,
+            on_change=ConnectionState.set_form_sasl_plain_username,
+        ),
+        rx.text(_t["connections.sasl_password"], size="2", weight="bold"),
+        config_input(
+            "sasl_plain_password",
+            secret=True,
+            value=ConnectionState.form_sasl_plain_password,
+            on_change=ConnectionState.set_form_sasl_plain_password,
+        ),
         spacing="2",
         width="100%",
     )

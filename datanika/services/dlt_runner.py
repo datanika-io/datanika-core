@@ -258,6 +258,17 @@ INTERNAL_CONFIG_KEYS = {
     "idle_timeout_ms",
     "start_from",
     "enable_auto_commit",
+    # The four Kafka security keys (core#1054). They are listed here **not**
+    # because a builder reads them as configuration from `dlt_config` — they are
+    # connection-only, see `_kafka_security_kwargs` — but because the builder
+    # reads them to REFUSE them. Without that read they fall through to
+    # `pipeline.run()` and dlt raises `TypeError: Pipeline.run() got an
+    # unexpected keyword argument 'security_protocol'`, which names dlt and
+    # sends the user nowhere near the connection form.
+    "security_protocol",
+    "sasl_mechanism",
+    "sasl_plain_username",
+    "sasl_plain_password",
     "owner",
     "repo",
     "github_source_type",
@@ -1010,6 +1021,81 @@ def _kafka_topics(raw) -> list[str]:
     if isinstance(raw, str):
         return [t.strip() for t in raw.split(",") if t.strip()]
     return [str(t).strip() for t in raw if str(t).strip()]
+
+
+#: How a Kafka consumer authenticates to the broker. These live on the
+#: **connection**, never on an upload's ``dlt_config`` — ``_kafka_security_kwargs``
+#: says why that is a security boundary rather than a preference.
+KAFKA_SECURITY_KEYS = (
+    "security_protocol",
+    "sasl_mechanism",
+    "sasl_plain_username",
+    "sasl_plain_password",
+)
+
+#: What ``kafka-python`` accepts for ``security_protocol``. Checked here so a typo
+#: in a free-text form field names the field, instead of surfacing as a bootstrap
+#: timeout that reads like an unreachable broker.
+_KAFKA_SECURITY_PROTOCOLS = ("PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL")
+
+#: Confluent Cloud's default and the most common managed choice. Redpanda
+#: Serverless wants ``SCRAM-SHA-256``; both are set explicitly on the connection.
+_DEFAULT_KAFKA_SASL_MECHANISM = "PLAIN"
+
+
+def _kafka_security_kwargs(config: dict, dlt_config: dict) -> dict:
+    """The SASL/TLS kwargs for ``KafkaConsumer``, read from the CONNECTION only.
+
+    **Why there is no ``dlt_config`` fallback, when ``topics`` has one.**
+    ``Connection.config`` is Fernet-encrypted at rest (``config_encrypted``), and
+    every value stored under a :data:`~datanika.services.connection_service.SECRET_CONFIG_KEYS`
+    name is stripped out of user-visible errors by ``_redact_secrets`` and out of
+    ``BackupService.export_backup``. ``Upload.dlt_config`` is a plain ``JSON``
+    column with none of that. So accepting ``sasl_plain_password`` there would
+    write a broker password in clear text into the database and into every
+    backup, outside the redactor's reach — the convenient fallback is precisely
+    the one that leaks.
+
+    A security key found in ``dlt_config`` therefore **raises**. Ignoring it
+    would be worse than either alternative: the run then fails with a bootstrap
+    timeout that names nothing, which is the exact failure this whole change
+    exists to remove.
+    """
+    misplaced = sorted(k for k in KAFKA_SECURITY_KEYS if k in dlt_config)
+    if misplaced:
+        raise DltRunnerError(
+            "Kafka security settings belong on the connection, not in the pipeline "
+            f"config: {', '.join(misplaced)}. Set them on the Kafka connection — it "
+            "stores credentials encrypted and keeps them out of error messages and "
+            "backups, and the pipeline config does neither."
+        )
+
+    kwargs = {k: config[k] for k in KAFKA_SECURITY_KEYS if config.get(k) not in (None, "")}
+
+    protocol = kwargs.get("security_protocol")
+    if protocol is None:
+        return kwargs
+    protocol = str(protocol).strip().upper()
+    if protocol not in _KAFKA_SECURITY_PROTOCOLS:
+        raise DltRunnerError(
+            f"Unknown Kafka security_protocol {protocol!r}. "
+            f"Expected one of: {', '.join(_KAFKA_SECURITY_PROTOCOLS)}."
+        )
+    kwargs["security_protocol"] = protocol
+
+    if protocol.startswith("SASL_"):
+        missing = [k for k in ("sasl_plain_username", "sasl_plain_password") if k not in kwargs]
+        if missing:
+            # Without this the consumer negotiates as anonymous and the broker
+            # simply drops it, surfacing as `Unable to bootstrap from [...]` —
+            # a message about the network for a problem in the credentials.
+            raise DltRunnerError(
+                f"security_protocol {protocol} needs {' and '.join(missing)} "
+                "on the Kafka connection."
+            )
+        kwargs.setdefault("sasl_mechanism", _DEFAULT_KAFKA_SASL_MECHANISM)
+
+    return kwargs
 
 
 def _kafka_record(message) -> dict:
@@ -2267,6 +2353,16 @@ class DltRunnerService:
         key — with a ``merge`` write disposition that makes re-reads idempotent,
         so an operator who wants at-least-once can have it by turning
         auto-commit off and letting the key deduplicate.
+
+        **Authentication (core#1054).** This consumer took no security kwargs at
+        all until then, so it could address only a broker that lets anyone in —
+        and no managed Kafka does. Confluent Cloud, Redpanda Serverless, Aiven
+        and Upstash are SASL over TLS on their free tiers, which made "we ship a
+        Kafka connector" true of a code path no customer could reach.
+        ``_kafka_security_kwargs`` reads the credential off the **connection**,
+        and states why it refuses to read one out of ``dlt_config``. An
+        unauthenticated broker is unaffected: with no security fields set that
+        helper returns ``{}`` and the call below is what it always was.
         """
         bootstrap_servers = config.get("bootstrap_servers", "")
         topics = _kafka_topics(dlt_config.get("topics") or config.get("topics", []))
@@ -2288,6 +2384,7 @@ class DltRunnerService:
         idle_timeout_ms = int(dlt_config.get("idle_timeout_ms", DEFAULT_KAFKA_IDLE_TIMEOUT_MS))
         auto_offset_reset = dlt_config.get("start_from", "earliest")
         auto_commit = bool(dlt_config.get("enable_auto_commit", True))
+        security = _kafka_security_kwargs(config, dlt_config)
 
         def _topic_resource(topic: str):
             @dlt.resource(
@@ -2315,6 +2412,10 @@ class DltRunnerService:
                     auto_offset_reset=auto_offset_reset,
                     enable_auto_commit=auto_commit,
                     consumer_timeout_ms=idle_timeout_ms,
+                    # Splatted rather than named: an empty dict is the
+                    # unauthenticated broker this builder already supported, so
+                    # the PLAINTEXT path is byte-for-byte what it was.
+                    **security,
                 )
                 try:
                     for message in consumer:

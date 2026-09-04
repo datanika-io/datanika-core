@@ -44,6 +44,7 @@ existed**. This is the thin layer that was missing, not a replacement.
 
 from __future__ import annotations
 
+import contextlib
 import http.server
 import inspect
 import json
@@ -1079,6 +1080,157 @@ class TestKafkaSourceMovesRows:
             rows = _rows(db_path, "widgets")
 
         assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)]
+
+
+# ── An AUTHENTICATED broker, with no vendor account ─────────────────────────────
+# The class above proves rows move off a broker that lets anyone in. **No managed
+# Kafka works that way.** Confluent Cloud, Redpanda Serverless, Aiven and Upstash
+# are all TLS + SASL on their free tiers, so every broker a user can actually
+# reach requires a credential — and `CONFIG_SCHEMAS["kafka"]` had no credential
+# field, `_build_kafka_source` passed no security kwargs, and the security keys
+# were absent from `INTERNAL_CONFIG_KEYS`. Three layers, one outcome: the
+# connector could not connect to any broker a customer owns.
+#
+# 🚨 **The nightly smoke could not see it**, and that is the part worth carrying.
+# `tests/test_connector_smoke/test_paid_connectors.py` builds its own
+# `KafkaAdminClient(security_protocol="SASL_SSL", sasl_plain_username=...)` **inside
+# the test**. So it proves the vendor sandbox is reachable and proves nothing about
+# our builder — reviving a dead Redpanda account would have turned that green while
+# the product still could not connect. A test that supplies the missing thing
+# itself is core#992's shape exactly.
+#
+# A broker in a container closes this with no card, no vendor account and no
+# managed tier — and it is the only arrangement in which this connector has a
+# test that is able to fail.
+
+_SASL_USER = "datanika"
+_SASL_PASSWORD = "probe-secret-pw"
+
+#: No underscore in the listener name, deliberately. Confluent's env→property
+#: translation lowercases and maps ``_`` to ``.``, so
+#: ``KAFKA_LISTENER_NAME_SASL_PLAINTEXT_PLAIN_SASL_JAAS_CONFIG`` arrives as
+#: ``listener.name.sasl.plaintext.plain.sasl.jaas.config`` and binds to **no**
+#: listener. Measured: the broker then exits 1 before logging "Kafka Server
+#: started", and testcontainers reports only a wait-strategy timeout.
+_SASL_LISTENER = "SASL"
+
+_JAAS = (
+    "org.apache.kafka.common.security.plain.PlainLoginModule required "
+    f'username="{_SASL_USER}" password="{_SASL_PASSWORD}" '
+    f'user_{_SASL_USER}="{_SASL_PASSWORD}";'
+)
+
+
+def _anonymous_write_refused(bootstrap: str) -> bool | None:
+    """Does a credential-less client actually get turned away at the wire?
+
+    Returns ``True`` refused, ``False`` accepted, and ``None`` when the probe
+    never reached the broker — which the caller must **not** read as a refusal.
+
+    That third case is not defensive padding. The first version of this control
+    passed ``api_version_auto_timeout_ms``, which kafka-python 3.x rejects, so it
+    raised ``ValueError: Unrecognized configs`` in the **constructor** and reported
+    the broker as authenticating while nothing had left the process. It is the same
+    kwarg core#331 already caught once in the nightly smoke.
+    """
+    from kafka import KafkaProducer
+
+    try:
+        producer = KafkaProducer(bootstrap_servers=bootstrap, bootstrap_timeout_ms=15000)
+    except (TypeError, ValueError):
+        return None  # bad kwarg / bad config: never reached the broker
+    except Exception:  # noqa: BLE001 - any transport-level rejection counts
+        return True
+    try:
+        producer.send("widgets-sasl", b"anonymous").get(timeout=20)
+    except Exception:  # noqa: BLE001
+        return True
+    finally:
+        # A close that fails tells us nothing about the broker's auth policy,
+        # which is the only question this helper answers.
+        with contextlib.suppress(Exception):
+            producer.close(timeout=5)
+    return False
+
+
+@pytest.fixture(scope="class")
+def sasl_broker():
+    """A real Kafka broker that refuses anonymous clients. ~40 s to start."""
+    from testcontainers.kafka import KafkaContainer
+
+    container = (
+        KafkaContainer(listener_name=_SASL_LISTENER, security_protocol="SASL_PLAINTEXT")
+        .with_kraft()
+        .with_env("KAFKA_SASL_ENABLED_MECHANISMS", "PLAIN")
+        .with_env(f"KAFKA_LISTENER_NAME_{_SASL_LISTENER}_PLAIN_SASL_JAAS_CONFIG", _JAAS)
+    )
+    with container as broker:
+        yield broker
+
+
+@requires_docker
+class TestKafkaSaslSourceMovesRows:
+    """``_build_kafka_source`` against a broker that demands a credential.
+
+    Two tests, and the order matters. The first is the **arming control**: it
+    proves the broker turns an anonymous client away. Without it a green on the
+    second test is satisfiable by a broker that never asked for anything, which is
+    exactly what the credential-free class above runs against.
+    """
+
+    def test_the_broker_refuses_an_unauthenticated_client(self, sasl_broker):
+        """Arming control. If this fails, the test below proves nothing."""
+        refused = _anonymous_write_refused(sasl_broker.get_bootstrap_server())
+
+        assert refused is not None, (
+            "the control never reached the broker — it failed in the client "
+            "constructor, which is indistinguishable from a refusal and would make "
+            "the SASL probe below vacuous"
+        )
+        assert refused is True, (
+            "an anonymous producer was ACCEPTED, so this broker is not enforcing "
+            "SASL and a green below would say nothing about credentials"
+        )
+
+    def test_rows_land_from_an_authenticated_broker(self, sasl_broker, tmp_path):
+        from kafka import KafkaProducer
+
+        bootstrap = sasl_broker.get_bootstrap_server()
+        sasl = {
+            "security_protocol": "SASL_PLAINTEXT",
+            "sasl_mechanism": "PLAIN",
+            "sasl_plain_username": _SASL_USER,
+            "sasl_plain_password": _SASL_PASSWORD,
+        }
+
+        # SETUP retry only (core#578) — never around the load or the assertion.
+        producer = await_setup(
+            "kafka broker accepting authenticated producers",
+            lambda: KafkaProducer(
+                bootstrap_servers=bootstrap,
+                value_serializer=lambda v: json.dumps(v).encode(),
+                **sasl,
+            ),
+            container=sasl_broker,
+        )
+        for widget in WIDGETS:
+            producer.send("widgets-sasl", widget)
+        producer.flush()
+
+        db_path = _extract_load(
+            tmp_path,
+            "kafka",
+            {"bootstrap_servers": bootstrap, "group_id": "probe-sasl", **sasl},
+            {"topics": ["widgets-sasl"]},
+        )
+
+        rows = _rows(db_path, "widgets_sasl")
+
+        assert rows == [("alpha", 100), ("beta", 200), ("gamma", 300)], (
+            "the Kafka source did not deliver rows from an authenticated broker. "
+            "Every managed Kafka free tier is SASL-only, so this is the only "
+            "configuration a customer can actually reach."
+        )
 
 
 @requires_docker

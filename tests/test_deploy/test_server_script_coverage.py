@@ -29,7 +29,7 @@ either the installer names it or `NOT_INSTALLED` explains it.
 from __future__ import annotations
 
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -38,6 +38,7 @@ SERVER_DIR = ROOT / "deploy" / "server"
 APACHE_DIR = ROOT / "deploy" / "apache"
 INSTALLER = ROOT / "scripts" / "install-server-scripts.sh"
 DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-pointer.yml"
+GITATTRIBUTES = ROOT / ".gitattributes"
 
 # `NAME=( a b c )` across however many lines, up to the closing paren.
 _ARRAY = re.compile(r"^(INSTALL|INSTALL_DATA)=\(\s*(.*?)^\)", re.M | re.S)
@@ -84,6 +85,21 @@ NOT_INSTALLED: dict[str, str] = {
 APACHE_DUPLICATES = {
     "apache-app.datanika.io.conf": "app.datanika.io.conf",
     "apache-staging-app.datanika.io.conf": "staging-app.datanika.io.conf",
+}
+
+
+# Files in deploy/server/ or deploy/apache/ that need no `eol=lf` rule (core#1076).
+#
+# ⚠️ Same bar as NOT_INSTALLED above: an entry here is a claim that needs a reason. The
+# reason has to be "this file never reaches a Linux machine", not "adding the rule was
+# inconvenient" — everything else in these two directories is installed onto the box,
+# byte-compared there by CD, or both.
+EOL_EXEMPT: dict[str, str] = {
+    "README.md": (
+        "Documentation for the directory it sits in. Listed in NOT_INSTALLED, never "
+        "shipped, never byte-compared — the only file in either directory that no machine "
+        "outside a developer's checkout ever reads."
+    ),
 }
 
 
@@ -170,16 +186,98 @@ def test_the_apache_duplicates_have_not_drifted():
     real, reviewed, merged, deployed — and has no effect on any vhost.
 
     Pinning them byte-identical converts that latent decoy into one that announces itself.
+
+    ⚠️ Line endings are normalised before comparing, and that is core#1076 (measured
+    2026-09-04, after the `.gitattributes` fix shipped). The first version of this test
+    compared raw working-tree bytes, which on Windows is **not a property of the repository
+    at all** — it is a property of when each file was last written to disk. `core.autocrlf`
+    is `true` machine-wide here, so a file checked out before its `text eol=lf` rule existed
+    stays CRLF, and one checked out after is LF. The two paths below are the *same git
+    object* (`i/lf` on both, identical blob OIDs) and the test still failed, refusing every
+    department's push while passing in CI, where Linux materialises both as LF.
+
+    🔑 `21e6b01c` added the missing `deploy/server/*.conf text eol=lf` rule and is correct
+    and necessary — but it does **not** fix an existing checkout, and cannot. With `text`
+    set, git's filter normalises on read, so a CRLF working copy compares equal to the index
+    and reads as *unmodified*; no checkout, pull or branch switch will ever re-materialise
+    it. Verified: switching to `origin/master` and back across the fix left
+    `deploy/server/apache-app.datanika.io.conf` at `w/crlf` beside `deploy/apache/` at
+    `w/lf`. The only thing that clears it is `rm` + `git checkout -- deploy/server/`.
+
+    So the byte comparison had two possible reds and only one of them was drift. Content
+    equality is the property this test names, and it is what is compared now;
+    `test_the_deployed_conf_files_are_pinned_to_lf` below owns the line-ending half, at the
+    layer that actually decides it.
     """
     for decoy, real in APACHE_DUPLICATES.items():
-        a = (SERVER_DIR / decoy).read_bytes()
-        b = (APACHE_DIR / real).read_bytes()
+        a = (SERVER_DIR / decoy).read_bytes().replace(b"\r\n", b"\n")
+        b = (APACHE_DIR / real).read_bytes().replace(b"\r\n", b"\n")
         assert a == b, (
             f"deploy/server/{decoy} has drifted from deploy/apache/{real}.\n"
             f"Only deploy/apache/ is read by scripts/sync-vhosts.sh, so whichever of these "
             f"you just edited, the one that reaches Apache is deploy/apache/{real}.\n"
-            f"Resolve core#745 by deleting the deploy/server/ copy, or re-sync the two."
+            f"Resolve core#745 by deleting the deploy/server/ copy, or re-sync the two.\n"
+            f"(Line endings are normalised before this comparison, so a CRLF checkout is "
+            f"NOT what you are looking at — this is a real content difference.)"
         )
+
+
+def test_the_deployed_conf_files_are_pinned_to_lf():
+    """core#1076: every file here is deployed to a Linux box, so it must be `eol=lf`.
+
+    This is the guard that would have caught #1076 in the first place, and it is deliberately
+    at a different layer from the drift test above. That one compares *content* and is now
+    immune to line endings; this one asserts the **cause** — that `.gitattributes` pins each
+    deployed file to LF — so the two cannot both be satisfied by the same mistake.
+
+    Why it matters beyond tidiness: `sync-vhosts.sh` byte-compares on the box before
+    reloading Apache, and Infra hand-installs the rest of `deploy/server/`. A file committed
+    with CRLF makes every deploy see a spurious change; a shell script or a systemd-networkd
+    unit with CRLF can fail outright on Linux. `.gitattributes` already carried the rule and
+    the comment explaining it for `deploy/apache/`, and simply did not carry it one directory
+    over — which is how the rule reached some of the tree and not the rest.
+
+    The set is derived from what is on disk, not restated, so a new deployed file is covered
+    the day it is added rather than the day someone remembers this test.
+    """
+    attrs = GITATTRIBUTES.read_text(encoding="utf-8")
+    rules = {
+        line.split()[0]
+        for line in (raw.strip() for raw in attrs.splitlines())
+        if line and not line.startswith("#") and "eol=lf" in line
+    }
+    assert rules, ".gitattributes declares no eol=lf rules at all — this test is vacuous"
+
+    def covered(rel: Path) -> bool:
+        # A rule covers a file if it matches by extension glob in the file's own directory,
+        # or by a repo-wide extension glob such as `*.sh`.
+        return any(
+            PurePosixPath(rel.as_posix()).match(rule) or PurePosixPath(rel.name).match(rule)
+            for rule in rules
+        )
+
+    checked, uncovered = 0, []
+    for directory in (SERVER_DIR, APACHE_DIR):
+        for path in sorted(directory.iterdir()):
+            if not path.is_file() or path.name in EOL_EXEMPT:
+                continue
+            checked += 1
+            rel = path.relative_to(ROOT)
+            if not covered(rel):
+                uncovered.append(rel.as_posix())
+
+    # Anti-vacuity: a walk that finds nothing passes for the wrong reason. Both directories
+    # have held files since core#747; zero here means the walk broke, not that we are clean.
+    assert checked >= len(APACHE_DUPLICATES) * 2, (
+        f"only {checked} files walked across deploy/server/ + deploy/apache/ — this test "
+        f"cannot have checked the {len(APACHE_DUPLICATES)} pinned vhost pairs"
+    )
+
+    assert not uncovered, (
+        "These files are deployed to a Linux box but no .gitattributes rule pins them to "
+        f"LF, so `core.autocrlf` decides their bytes per checkout (core#1076): {uncovered}\n"
+        "Add a `<dir>/*.<ext> text eol=lf` rule, next to the ones already there."
+    )
 
 
 def test_the_deploy_workflow_invokes_the_installer():

@@ -25,7 +25,16 @@ live**. The obvious check actively misleads. The discriminating check is:
 git config --get core.hooksPath        # -> scripts/hooks
 ```
 
-The hook runs ruff plus the **entire pytest suite** before the pack is sent — measured at
+🔴 **CORRECTED 2026-09-04 — the scope in the next sentence is no longer true, and a rules file that
+contradicts the code is how the `UV_NO_SYNC` trap reached two departments.** Since **core#964** the
+core hook runs **`pytest tests/test_deploy/`**, not the whole suite: measured **998 passed, 1
+skipped, 2 xfailed in 109s** on 2026-09-04, against the ~15 minutes below. The *mechanism* of this
+rule is unchanged and is why it stays — a push that looks hung is still the hook, the transport is
+still opened first, and `ls .git/hooks/pre-push` still lies. What changed is only how long to expect
+to wait, and therefore how alarming a two-minute silence should be. `datanika-cloud`'s hook is
+**unchanged and still runs its full suite** (~70s), so both readings are live, one per repo.
+
+The hook ran ruff plus the **entire pytest suite** before the pack was sent — measured at
 **882.91s (14:42) for 4783 passed, 29 skipped, 10 xfailed** on 2026-09-01. Git opens the HTTPS
 transport *before* running the hook, so `git-remote-https.exe` sits in the process list for the whole
 run. A twelve-minute-old `git-remote-https` is therefore the **expected** appearance of a healthy
@@ -56,9 +65,28 @@ the log says what the mechanism predicts.** Here the log said `pre-push: branch 
 treats `*.md`, `docs/*` and images as inert, so a documentation change skips the suite and pushes in
 seconds. It tests code extensions *first*, so `docs/conf.py` correctly still runs.
 
+> 🚨 **And "inert" is decided by extension, which is wrong for at least one file.** Measured
+> 2026-09-04 while shipping core#1076: a commit changing **only `.gitattributes`** reported
+> `pre-push: pytest SKIPPED — every changed file is documentation or an image (checked 1 files)`.
+> `.gitattributes` is not documentation — it decides the **working-tree bytes** of every file it
+> matches, and that very commit changed five files' contents on disk. It is close to the *last*
+> file that should skip the suite. Raised on core#1076; until it is fixed, **run the suite by hand
+> when your diff touches `.gitattributes`, `.gitignore` or anything else that changes what other
+> files are.**
+
 ---
 
 ## 2. Auto-merge does not update a `BEHIND` branch
+
+> 🔴 **SUPERSEDED ON `datanika-core` AND `datanika-landing` (2026-09-03, core#904) — still live on
+> `datanika-cloud`.** Both public repos now have a **merge queue** on `dev`: `gh pr merge <n> --auto`
+> with **no method flag**, and the queue rebases the entry onto current `dev` before testing it, so
+> `BEHIND` never arises. Measured 2026-09-04: PRs #1074, #1077 and #1078 each read green, enqueued,
+> and merged with **no rebase treadmill at all**.
+>
+> **The finding below is still true and still applies to `datanika-cloud`**, which is a private repo
+> on a free org and can therefore never have a queue (the rulesets API answers `403 Upgrade to
+> GitHub Pro`). Keep reading it for cloud; ignore its instructions on core and landing.
 
 `dev` is protected with `strict = true` (a PR must be rebased onto current `dev` to merge). Arming
 auto-merge on a PR that is already `BEHIND` is **a no-op**: nothing wakes it up, and it will sit
@@ -100,6 +128,14 @@ never on a specific SHA in a workflow that rebases. This repo rebases on essenti
 ---
 
 ## 4. Serialize your own PRs deliberately under `strict = true`
+
+> 🔴 **SUPERSEDED on core and landing by the same merge queue as rule 2** — the queue serialises
+> entries for you and rebases each one before testing, so holding two PRs costs nothing and the
+> livelock this rule exists to break cannot form. **Still live on `datanika-cloud`.**
+>
+> ⚠️ **Its last corollary is NOT superseded and is the most valuable part of the section**: after
+> *any* rebase — server-side, queue-side or local — the checks API answers for the **old head** for a
+> few seconds, and the stale answer is the reassuring one. That is true under a queue too.
 
 With five departments merging into one protected `dev`, every merge makes every other open PR
 `BEHIND`, and clearing that costs a **~15-minute local suite** per attempt (rule 1). `dev` moved
@@ -487,6 +523,170 @@ hides the `else` branch. Two call sites needed create/update discrimination and 
 2. **Do not compute a scanned literal.** Ternaries, f-strings and locals are all invisible to a
    regex-based key scanner; branch instead.
 3. **When you get bitten by a derivation's blind spot, write the warning next to the derivation.**
+
+---
+
+## 18. Build the unit the way the app builds it, or your suite is a second implementation
+
+**core#1035, 2026-09-04.** The issue specified an `endpoint → template` index *"built in
+`PrometheusMiddleware.__init__` off `app.routes`"*. Production installs that middleware with
+`app._api.add_middleware(PrometheusMiddleware)`, and Starlette's stack is
+`ServerErrorMiddleware → user middleware → ExceptionMiddleware → Router`. So `__init__` is handed an
+**`ExceptionMiddleware`, which has no `.routes`**:
+
+```
+AFTER stack build: ExceptionMiddleware has .routes = False len = 0
+wrapped.app -> Router          has .routes = True  len = 2
+```
+
+The whole test file constructed `PrometheusMiddleware(Starlette(routes=ROUTES))` **directly**, and a
+`Starlette` *does* have `.routes`. So the specified implementation is **empty in production and full
+in every test.** Mutating the shipped file back to it gives **2 failed, 19 passed** — and the 19
+include every acceptance criterion the issue lists.
+
+> **A harness that constructs the unit differently from the way it is installed is not a harness, it
+> is a second implementation — and it is the one your assertions describe.**
+
+**Rules:**
+1. **Write one test that builds the object the way production builds it**, even when it is clumsier.
+   Here that is a `_production_shaped_app()` helper doing `add_middleware` + a real request.
+2. **Ask what the framework hands your constructor**, not what you passed to the thing you think you
+   wrapped. One `print(type(app).__name__)` answered this.
+3. **Walk, don't assume.** Following `.app` for a bounded depth covers both shapes with one rule,
+   instead of making the harness lie about the install.
+4. Same family as rule 7's negative-control rule, one level out: there the *control* only exercised
+   the believed path; here the *constructor* did.
+
+⚠️ **A second, cheaper instance from the same afternoon:** every route in that file's `ROUTES` shared
+one `_endpoint` function, so an endpoint-keyed index is *always* ambiguous there. The new code path
+would have been unreachable from every test while working perfectly in production. **When a fixture
+collapses a dimension the code under test keys on, the fixture is the bug.** The real table is 83
+routes on 83 distinct endpoints; the test table now matches it.
+
+---
+
+## 19. A guard's failure message must name what to read and *where*
+
+**cloud#177, 2026-09-04.** `test_the_charge_loop_does_not_meter_model_runs_at_all` correctly goes red
+on the one-token edit that would start billing model runs. Its message says:
+
+> *"confirm every plan's `overage_run_price_cents` is 0, and then update this assertion"*
+
+**Every source an engineer can reach from the repo already said 0** — the model's Python default, the
+seeder's `PUBLISHED_ENTITLEMENTS`, both `e2e_admin` branches, the AST guard requiring every
+production `Plan(...)` to state a price. The one place that said `1` was **production**.
+
+So an honest reader satisfies the instruction completely, in good faith, from the repo, and ships the
+charge. The guard is right in shape and points at a **proxy**.
+
+> **If the property is only knowable from the running system, the message must say so and give the
+> command.** *"Confirm X is true"* is an invitation to confirm it wherever it is cheapest to look.
+
+**Rules:**
+1. **Name the artifact, not the property**: *"read it off the serving container with `docker exec …`,
+   not off this repo"*.
+2. **Name who can read it** when it is another department's lane. A message that asks for something
+   the reader cannot do gets satisfied by something they can.
+3. This is the mirror of rule 15 (*asserting a flag is `False` proves nothing unless your test made
+   it `True`*): there the test could not distinguish two states, here the *reader* could not.
+
+---
+
+## 20. A check with only one possible answer says nothing — in either direction
+
+Two instances the same day, failing opposite ways.
+
+**A permanent red (core#1060).** `seed_paid_plans.py --apply` on a fresh build seeds every row it
+owns **correctly** and exits **1** — and so does every run after it, for ever, because two annual
+rows are legitimately absent and the script deliberately refuses to create them. Wired into a drill
+as *"non-zero exit = finding"*, that is a red that is never a finding, and a permanent red trains its
+reader to ignore the report. Fixed with a flag that excuses **only** the one condition the caller
+knows it cannot satisfy — and pinned in both directions, because a flag that excuses everything is
+the same defect wearing the opposite sign.
+
+**A permanent green, locally impossible (core#1076).** A guard byte-compared two checked-in files
+that are the **same git object**. `.gitattributes` gave one directory `text eol=lf` and not its twin,
+`core.autocrlf` is `true` on the dev machines, so git materialised one CRLF and one LF. **Red on
+every Windows push, and structurally unable to fail in Linux CI.** Since the pre-push hook runs
+`tests/test_deploy/`, it blocked every department, and `--no-verify` is forbidden.
+
+**Rules:**
+1. **Before shipping a check, ask what its two answers are and construct both.** If you cannot make
+   it say the other thing, it is not a check.
+2. **Ask what it says on a correct system, forever.** A check whose steady state is red is a check
+   nobody reads by week two.
+3. 🚨 **Anything added under `tests/test_deploy/` gates every department's push.** Treat that
+   directory as production tooling, not as tests.
+4. **`git ls-files --eol` is the only honest reading of line endings here.** MSYS `sed`, `od` and
+   `cat -A` normalise CRLF in flight and will tell you two files agree when the bytes do not.
+
+---
+
+## 21. Migrations: derive the target set, state the criterion both ways, and mean the backfill
+
+**core#1069, 2026-09-04**, release N of a chain over seven tables.
+
+1. **Derive the set you are fixing from the system, not from the issue.** The seven drifted tables
+   are re-read from `information_schema` at the parent revision by the test, so a list retyped into
+   the migration cannot silently go stale — a retyped list is what produced the defect.
+2. **State the criterion in both directions.** Not *"the seven are fixed"* but *"exactly these seven
+   before, and **none at all** after"*. The second half is what the *next* drifted table fails.
+3. 🔑 **Check whether the model or the database is wrong before changing either.** The inherited plan
+   was to relax `TimestampMixin` to `Mapped[datetime | None]`. Measured: **17 of 22** tables already
+   agreed with the mixin, so that would have made 17 correct tables wrong to accommodate seven
+   sloppy `create_table`s — and would have addressed one of **three** independent disagreements.
+   Two tables get all three right, which is what proves the declaration achievable.
+   **The majority is evidence about which side drifted.**
+4. **Backfill from the row's own history, not from `now()`** — and decide by asking what the column
+   *means*. `now()` asserts every untouched row was modified at migration time. ⚠️ The opposite
+   conclusion was right in core#726, where backfilling `password_changed_at` from `created_at` moved
+   a **session-revocation baseline backwards** and failed open. `updated_at` is read at seven API
+   serialization sites and by nothing that makes an authorization decision; that difference, not a
+   general preference, is the whole argument.
+5. **Assert the contract half ABSENT.** `SET NOT NULL` and a type change are release N+1, and the
+   AST policy guard cannot see them when they arrive as `op.execute`. A behavioural test reading the
+   catalogue after the migration is the only mechanical thing between a correct chain and a
+   two-releases-in-one deploy. **Show it red by smuggling the N+1 statement in.**
+
+---
+
+## 22. Read the jobs, not the run — a stale run-level read is indistinguishable from a running job
+
+**2026-09-04.** `GET actions/runs/<id>` answered `status: in_progress, conclusion: null,
+updated_at: 19:39:07Z` on **three** reads spread over ~15 minutes, for a deploy that had completed
+`success` at **19:47:24Z**. `actions/runs/<id>/jobs` was correct throughout. On that basis I told a
+live issue that a production deploy was still in flight, and used it to justify a hold.
+
+QA's existing rule says *a run-level conclusion cannot answer a question about one job*. This is its
+second edge: **it cannot reliably answer a question about the run either.**
+
+**Rules:**
+1. **Ask the jobs endpoint** for anything you are about to write down or act on.
+2. **`updated_at` is the tell** — if it is older than the thing you are asking about, you are holding
+   a snapshot.
+3. **When a read you published turns out stale, correct it with a new comment, not by editing the
+   old one.** The wrong reading and the reason it looked right are the reusable part.
+
+---
+
+## 23. `master` is not production, and a promoted cloud tree is not a deployed one
+
+**2026-09-04.** Cloud promotion #191 merged at **20:29:40Z**; core promotion #1070 at **19:39:01Z**.
+`deploy-pointer.yml` checks the cloud repo out at a pinned `ref: master` and tars both trees to the
+box, so **a promoted cloud tree reaches production only on the next core `master` push.** Cloud `dev`
+and `master` read `identical`, every check was green, and the change had not shipped.
+
+Concretely, wiring a drill to a new cloud CLI flag that day would have got
+`error: unrecognized arguments`, which argparse exits **2** for — and in a drill that treats non-zero
+as a finding, *"the flag does not exist yet"* and *"the seed found drift"* are the same colour.
+
+> **Gate on the artifact, not on the branch.**
+> ```bash
+> docker exec <serving-colour> /app/.venv/bin/python /cloud/scripts/<script>.py --help | grep -c <flag>
+> ```
+
+Same family as *ask the running artifact, not the manifest* (core#646) and *a scheduled workflow runs
+the default branch's copy of itself* — in all three, a branch state was read as a deployment state.
 
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704

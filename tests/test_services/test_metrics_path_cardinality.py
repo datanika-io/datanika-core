@@ -251,6 +251,29 @@ async def _endpoint(request):  # noqa: ANN001, ANN202 - a Starlette endpoint
     return PlainTextResponse("ok")
 
 
+def _distinct_endpoint(name: str):  # noqa: ANN202 - returns a Starlette endpoint
+    """A fresh endpoint object per route.
+
+    🚨 **Every route in ``ROUTES`` used to share the single ``_endpoint`` above, and that
+    made the whole test table unrepresentative of production in the one way core#1035
+    cares about.** The real table is **78 routes, 78 distinct endpoint objects, 0 shared**
+    — so an ``endpoint -> template`` lookup is exact there, while against a table where
+    all seven share one function it is *always* ambiguous and always falls back. Keeping
+    the shared function would have left the new code path unreachable from every test in
+    this file while it worked perfectly in production: the inverse of the usual defect,
+    and just as invisible.
+
+    The deliberately-shared case has its own route table, in
+    ``test_two_routes_sharing_an_endpoint_fall_back_instead_of_guessing``.
+    """
+
+    async def endpoint(request):  # noqa: ANN001, ANN202
+        return PlainTextResponse(name)
+
+    endpoint.__name__ = f"_endpoint_{name}"
+    return endpoint
+
+
 async def _mounted_app(scope, receive, send):  # noqa: ANN001, ANN201 - a bare ASGI app
     """A sub-application mounted under a prefix.
 
@@ -267,16 +290,20 @@ async def _mounted_app(scope, receive, send):  # noqa: ANN001, ANN201 - a bare A
 # ULID arrives as), two parameterless routes that must stay distinguishable, the
 # free-form caller-supplied segments the auth routes take, and a Mount.
 ROUTES = [
-    Route("/api/v1/pipelines", _endpoint),
-    Route("/api/v1/pipelines/{pipeline_id:int}", _endpoint),
-    Route("/api/v1/connections", _endpoint),
-    Route("/api/v1/connections/{connection_id}", _endpoint),
-    Route("/api/v1/runs/{run_id}", _endpoint),
+    Route("/api/v1/pipelines", _distinct_endpoint("pipelines")),
+    Route("/api/v1/pipelines/{pipeline_id:int}", _distinct_endpoint("pipeline")),
+    Route("/api/v1/connections", _distinct_endpoint("connections")),
+    Route("/api/v1/connections/{connection_id}", _distinct_endpoint("connection")),
+    Route("/api/v1/runs/{run_id}", _distinct_endpoint("run")),
+    # core#1035 AC2. A parameter whose value equals a literal appearing AFTER it in
+    # its own route — the mirror of the sso case below. No fixed search direction
+    # gets both: leftmost is right here and wrong there.
+    Route("/api/v1/orgs/{org_id}/members", _distinct_endpoint("members")),
     # Verbatim shapes from datanika/services/{sso,oauth}_routes.py. The segment
     # is invented by an unauthenticated caller and the route MATCHES, so an
     # "<other>" bucket for unmatched paths does not reach it.
-    Route("/api/auth/sso/login/{org_slug}", _endpoint),
-    Route("/api/auth/login/{provider}", _endpoint),
+    Route("/api/auth/sso/login/{org_slug}", _distinct_endpoint("sso_login")),
+    Route("/api/auth/login/{provider}", _distinct_endpoint("oauth_login")),
     # Reflex's own mounts, in shape: a matched prefix with an unbounded tail.
     Mount("/_files", app=_mounted_app),
 ]
@@ -285,7 +312,7 @@ ROUTES = [
 # Used as the ceiling in ``test_the_producible_label_set_is_bounded``: the fix's
 # whole claim is that the label value comes from the ROUTE TABLE and never from
 # the request, so the table's size is the bound.
-DISTINCT_ROUTE_TEMPLATES = 8
+DISTINCT_ROUTE_TEMPLATES = 9
 
 
 def _literal_collision_paths() -> list[str]:
@@ -618,8 +645,17 @@ async def test_a_value_equal_to_its_own_routes_literal_never_rotates_the_templat
     direction is universally correct**. Leftmost mislabels this case; rightmost mislabels
     ``/api/v1/orgs/{org_id}/members`` with ``org_id=members``, the case the shipped
     docstring is about. So the fix refuses to guess: an ambiguous placement returns
-    ``<other>``, which is the honest answer rather than a confident wrong one. Exact
-    recovery needs an endpoint → template index and is filed separately.
+    ``<other>``, which is the honest answer rather than a confident wrong one.
+
+    🆕 **core#1035 shipped that index, so the search no longer runs for an indexed
+    endpoint and this case now gets its route's own template — AC1 as originally
+    written.** The paragraph above is kept because it is still exactly true of the
+    **fallback**, which is reached whenever two routes share one handler, and because
+    the reasoning is what makes the fallback's shape defensible. This test is
+    deliberately **not** tightened to demand the template: its job is *"no rotated
+    template, ever"*, which must hold on both paths. The stronger assertion lives in
+    ``test_a_value_equal_to_an_earlier_literal_gets_its_own_template``, where a
+    regression names the mechanism that broke rather than this one.
 
     What must hold, and does:
       * no rotated template is ever produced — that is the defect;
@@ -700,6 +736,189 @@ async def test_the_producible_label_set_is_bounded_by_the_route_table() -> None:
         "everything collapsed into a single value, which passes every cardinality "
         "assertion and destroys the metric. See "
         "test_control_permissive_distinct_routes_stay_distinct."
+    )
+
+
+# ---------------------------------------------------------------------------
+# core#1035 — the endpoint -> template index
+# ---------------------------------------------------------------------------
+#
+# #1020 shipped the only thing a *searcher* can do about a parameter whose value
+# equals a literal of its own route: refuse to guess, and bucket. This section is
+# the mechanism that does not have to guess — `scope["endpoint"]` IS set on every
+# matched request, so the template can be looked up instead of reconstructed.
+
+
+async def _label_via(app, path: str) -> str | None:
+    """Drive one request through ``app`` and return the label value it moved."""
+    before = _path_counts()
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    seen: list[int] = []
+
+    async def send(message: dict) -> None:
+        if message["type"] == "http.response.start":
+            seen.append(message["status"])
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "root_path": "",
+            "headers": [],
+            "client": ("127.0.0.1", 5000),
+            "server": ("testserver", 80),
+        },
+        receive,
+        send,
+    )
+    if not seen:
+        raise HarnessError(f"no response start for {path!r} — the app did not run")
+
+    after = _path_counts()
+    moved = sorted(k for k, v in after.items() if v > before.get(k, 0.0))
+    if len(moved) > 1:
+        raise HarnessError(f"{path!r} incremented {len(moved)} label values ({moved})")
+    return moved[0] if moved else None
+
+
+def _production_shaped_app(routes=None):  # noqa: ANN001, ANN202
+    """The app built the way ``datanika/datanika.py:312`` builds it.
+
+    🚨 **This is not a stylistic difference from ``PrometheusMiddleware(Starlette(...))``
+    and it is the whole reason this helper exists.** Production calls
+    ``app._api.add_middleware(PrometheusMiddleware)``, and Starlette's stack is
+    ``ServerErrorMiddleware -> user middleware -> ExceptionMiddleware -> Router``. So the
+    object the middleware is handed is an **``ExceptionMiddleware``**, which has **no
+    ``.routes``** — measured, not inferred:
+
+    ``AFTER stack build: ExceptionMiddleware has .routes = False len = 0``
+    ``wrapped.app -> Router has .routes = True len = 2``
+
+    core#1035 specifies the index as *"built in ``PrometheusMiddleware.__init__`` off
+    ``app.routes``"*. Built that way it is **empty in production and full in every test in
+    this file**, because the tests construct the middleware directly around a ``Starlette``
+    — which does have ``.routes``. A fix that passes its whole suite and does nothing where
+    it ships is this project's signature defect; this helper is what makes it impossible
+    here.
+    """
+    app = Starlette(routes=routes if routes is not None else ROUTES)
+    app.add_middleware(PrometheusMiddleware)
+    # Deliberately NOT calling `build_middleware_stack()` here. It *returns* the stack
+    # and leaves `self.middleware_stack` as `None`; Starlette assigns it on the first
+    # request. Driving the app is therefore what constructs the middleware — which is
+    # also when production constructs it, after every route has been appended.
+    return app
+
+
+async def test_the_index_is_populated_when_installed_the_way_production_installs_it() -> None:
+    """🔑 The discriminating test, and the one the issue's own design fails.
+
+    Asserted through behaviour rather than by reaching for a private attribute: a path
+    whose parameter collides with a literal of its own route can only get its own template
+    from the lookup. If the index is empty the searcher runs, finds the placement
+    ambiguous, and buckets — so this reads ``<other>``.
+    """
+    label = await _label_via(_production_shaped_app(), "/api/auth/sso/login/login")
+    assert label == "/api/auth/sso/login/:org_slug", (
+        f"metered as {label!r}. If it is {UNMATCHED_PATH_LABEL!r}, the index is empty "
+        "under the production install shape — `add_middleware` hands the middleware an "
+        "ExceptionMiddleware, which has no `.routes`; the router is one `.app` further in."
+    )
+
+
+async def test_a_value_equal_to_an_earlier_literal_gets_its_own_template() -> None:
+    """core#1035 AC1 — #1020's AC1 as originally written.
+
+    ``/api/auth/sso/login/login`` is consistent with ``/api/auth/sso/login/{org_slug}``
+    and with ``/api/auth/sso/{org_slug}/login``. A searcher cannot choose; a lookup does
+    not have to.
+    """
+    assert await _label_for("/api/auth/sso/login/login") == "/api/auth/sso/login/:org_slug"
+
+
+async def test_a_value_equal_to_a_later_literal_gets_its_own_template_too() -> None:
+    """core#1035 AC2 — the mirror, and the reason no fixed search direction works.
+
+    ``/api/v1/orgs/members/members`` with ``org_id=members`` needs **leftmost**;
+    ``/api/auth/sso/login/login`` above needs **rightmost**. One route table, both
+    directions, so a searcher is wrong on one of them whatever it picks.
+    """
+    assert await _label_for("/api/v1/orgs/members/members") == "/api/v1/orgs/:org_id/members"
+
+
+async def test_two_routes_sharing_an_endpoint_fall_back_instead_of_guessing() -> None:
+    """core#1035 AC3. ``0 shared endpoints`` is true of today's table and is not a law.
+
+    Two routes on one handler is ordinary Starlette. The reverse map is then not a
+    function, and the only safe thing is to **degrade to the search** — never to pick
+    whichever template was indexed last, which would emit a template the request did not
+    match.
+    """
+    shared = _distinct_endpoint("shared")
+    routes = [
+        Route("/api/auth/sso/login/{org_slug}", shared),
+        Route("/api/twin/sso/login/{org_slug}", shared),
+    ]
+    label = await _label_via(_production_shaped_app(routes), "/api/auth/sso/login/login")
+    assert label == UNMATCHED_PATH_LABEL, (
+        f"a shared endpoint produced {label!r}. Either template would be a guess, and one "
+        "of them names a route this request did not match."
+    )
+
+
+async def test_control_a_distinct_endpoint_on_the_same_table_still_resolves() -> None:
+    """Arming for the test above: it must be the *sharing* that causes the fallback, not
+    the two-route table, the helper, or the path."""
+    routes = [
+        Route("/api/auth/sso/login/{org_slug}", _distinct_endpoint("a")),
+        Route("/api/twin/sso/login/{org_slug}", _distinct_endpoint("b")),
+    ]
+    label = await _label_via(_production_shaped_app(routes), "/api/auth/sso/login/login")
+    assert label == "/api/auth/sso/login/:org_slug"
+
+
+async def test_no_collision_path_lands_in_the_unmatched_bucket() -> None:
+    """core#1035 AC4, **corrected** — the criterion as filed cannot hold.
+
+    AC4 asked for the ceiling in ``test_the_producible_label_set_is_bounded_by_the_route_table``
+    to **drop**. It cannot: that ceiling is ``DISTINCT_ROUTE_TEMPLATES + 1``, the ``+1`` is
+    the unmatched bucket, and ``SCANNER_PATHS`` are genuinely unmatched — so ``<other>``
+    is produced whatever the lookup does. Every colliding path also shares its template
+    with a non-colliding path already in the corpus, so the *landed* count does not move
+    either. **A ceiling is the wrong instrument for "the lookup is reached".**
+
+    The property AC4 was reaching for is directly assertable, and this is it: no path in
+    the derived collision corpus buckets. It fails against #1020's shipped behaviour, which
+    is what the ceiling could not do.
+    """
+    collisions = _literal_collision_paths()
+    if len(collisions) < 8:
+        raise HarnessError(
+            f"the derived collision corpus is {collisions!r} — too small to be a test"
+        )
+
+    bucketed = [p for p in collisions if await _label_for(p) == UNMATCHED_PATH_LABEL]
+    assert not bucketed, (
+        f"{len(bucketed)} of {len(collisions)} collision paths still bucket: {bucketed}. "
+        "Each is a matched request losing its route's identity in the metric."
+    )
+
+
+async def test_control_genuinely_unmatched_paths_still_bucket() -> None:
+    """The other half of the narrowing. A lookup that resolved *everything* would satisfy
+    the test above and destroy the cardinality bound core#896 exists for."""
+    labels = {await _label_for(p) for p in list(SCANNER_PATHS)[:12]}
+    assert labels == {UNMATCHED_PATH_LABEL}, (
+        f"unmatched scanner paths produced {sorted(str(x) for x in labels)}"
     )
 
 

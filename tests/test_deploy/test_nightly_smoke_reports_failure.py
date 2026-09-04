@@ -88,7 +88,11 @@ def workflow_text() -> str:
 
 
 def _smoke_step(text: str) -> str:
-    """The `run:` block of the `Run connector smoke tests` step."""
+    """The `run:` block of the `Run connector smoke tests` step, RAW.
+
+    Includes comments. Only use where prose is legitimately part of the claim;
+    for anything asserting what the step *does*, use `_smoke_code`.
+    """
     start = text.index("- name: Run connector smoke tests")
     nxt = text.index("- name: Telegram alert on failure", start)
     block = text[start:nxt]
@@ -96,19 +100,116 @@ def _smoke_step(text: str) -> str:
     return block
 
 
+def _strip_comments(block: str) -> str:
+    """Drop whole-line `#` comments. See core#1055.
+
+    🚨 **Every assertion about what this step DOES must go through here.** All
+    three exit-code guards below used to assert containment against the raw
+    block, and this step's prose names `PIPESTATUS`, `pipefail`, `skipped` and
+    `::error::`. Measured on `origin/dev`:
+
+        PIPESTATUS in whole block : True
+        PIPESTATUS in code only   : False    <- comment-only, always has been
+
+    So `or "PIPESTATUS" in block` was permanently true, and deleting
+    `set -o pipefail` — which *is* core#827 — left the guard GREEN. Same for
+    the `exit "$rc"` branch and the skip guard. Three guards, none able to
+    fail, protecting a defect that already cost eight consecutive nights of
+    `success` over `12 failed, 9 passed`.
+
+    Whole-line only: a trailing `#` inside a shell command can be a literal
+    (`grep '#'`), and stripping those would corrupt the command being asserted
+    on. `TestTheCommentStripper` pins both directions.
+    """
+    return "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _smoke_code(text: str) -> str:
+    """The smoke step with its commentary removed — what it actually runs."""
+    return _strip_comments(_smoke_step(text))
+
+
+# --- The predicates, as functions, so their ability to fail is testable -----
+#
+# core#1055: an assertion buried inside a test can only be exercised by
+# mutating the real workflow from an external harness. Pulled out here, each
+# one is fed a deliberately-broken block by `TestTheGuardsCanFail` below, in
+# the same run, so the guard's discrimination is itself a CI-gated property
+# rather than something a past session claims to have measured once.
+
+
+def _pipes_without_pipefail(code: str) -> bool:
+    """True when the step pipes but nothing preserves the pipeline's status."""
+    if "| tee" not in code and "|tee" not in code:
+        return False  # no pipe at all — nothing to launder
+    handled = (
+        "set -o pipefail" in code
+        or "set -eo pipefail" in code
+        or "set -euo pipefail" in code
+        or "PIPESTATUS" in code
+        or re.search(r"^\s*shell:\s*bash", code, re.MULTILINE) is not None
+    )
+    return not handled
+
+
+def _branch_then_action(code: str, condition: str, action: str, window: int = 8) -> bool:
+    """True when a line matching `condition` is followed by one matching `action`.
+
+    🚨 **A token check is not a branch check, and that gap is independent of
+    the comment one (core#1055).** Both predicates below used to be
+    "does this string appear anywhere in the step". Under that rule, replacing
+    a guard's condition with `false` — leaving its body, its `::error::` text
+    and its `exit` intact but unreachable — kept them GREEN. Measured, after
+    comment-stripping was already in place.
+
+    An unreachable `exit "$rc"` is not an exit, and `n_skipped=$(field skipped)`
+    is not a skip guard. So the shape asserted is *a condition, and an action
+    close enough below it to be inside the same block*.
+
+    `window` is generous because these blocks carry a long `::error::` message
+    between the `if` and the `exit`.
+    """
+    lines = code.splitlines()
+    for i, line in enumerate(lines):
+        if re.search(condition, line) and any(
+            re.search(action, nxt) for nxt in lines[i + 1 : i + 1 + window]
+        ):
+            return True
+    return False
+
+
+def _acts_on_the_exit_code(code: str) -> bool:
+    """True when a non-zero pytest status actually exits the step non-zero.
+
+    Requires the *branch* on `$rc` and an `exit` inside it — not merely the
+    presence of the word somewhere in the step.
+    """
+    if "PIPESTATUS" in code:
+        return True
+    return _branch_then_action(
+        code,
+        condition=r'if\s+\[\s*"?\$\{?rc\}?"?\s+-ne\s+0',
+        action=r'exit\s+"?\$\{?rc',
+    )
+
+
+def _has_skip_guard(code: str) -> bool:
+    """True when the step still fails on a skipped probe.
+
+    Requires a branch testing the reporter's own skip count and a non-zero exit
+    inside it. `n_skipped=$(field skipped)` merely *reads* the count; a guard
+    is a branch that acts on it.
+    """
+    return _branch_then_action(
+        code,
+        condition=r'if\s+.*n_skipped.*!=\s*"0"',
+        action=r"exit\s+1",
+    )
+
+
 class TestPytestExitCodeSurvives:
     def test_the_smoke_step_does_not_launder_pytest_exit_code(self, workflow_text: str) -> None:
-        block = _smoke_step(workflow_text)
-        if "| tee" not in block and "|tee" not in block:
-            return  # no pipe at all — nothing to launder
-        handled = (
-            "set -o pipefail" in block
-            or "set -eo pipefail" in block
-            or "set -euo pipefail" in block
-            or "PIPESTATUS" in block
-            or re.search(r"^\s*shell:\s*bash", block, re.MULTILINE) is not None
-        )
-        assert handled, (
+        assert not _pipes_without_pipefail(_smoke_code(workflow_text)), (
             "The smoke step pipes pytest into tee without pipefail, shell: bash, or "
             "PIPESTATUS. A pipeline's exit status is tee's, and GitHub's default "
             "run: shell is `bash -e {0}` with no -o pipefail — so pytest's failure "
@@ -118,20 +219,135 @@ class TestPytestExitCodeSurvives:
 
     def test_a_nonzero_pytest_exit_actually_fails_the_step(self, workflow_text: str) -> None:
         """Capturing the status is not enough — something must act on it."""
-        block = _smoke_step(workflow_text)
-        assert re.search(r'exit\s+"?\$(\{)?rc', block) or "PIPESTATUS" in block, (
+        assert _acts_on_the_exit_code(_smoke_code(workflow_text)), (
             "The step captures pytest's exit code but never exits non-zero on it. "
             "Recording a failure without acting on it is the same green."
         )
 
     def test_the_skip_guard_is_kept(self, workflow_text: str) -> None:
         """The skip guard is still the only thing that catches a dropped env gate."""
-        block = _smoke_step(workflow_text)
-        assert "skipped" in block and "::error::" in block, (
+        assert _has_skip_guard(_smoke_code(workflow_text)), (
             "The skip guard was removed. It catches the one hole pipefail cannot: if "
             "DATANIKA_CONNECTOR_SMOKE were dropped, every probe would skip at "
             "collection time and pytest would exit 0."
         )
+
+
+class TestTheCommentStripper:
+    """core#1055 — the stripper is now load-bearing, so pin both directions.
+
+    A stripper that removed too much would silently delete the commands being
+    asserted on, and every guard above would fail open in the other direction:
+    `_pipes_without_pipefail` would see no `| tee` and return False.
+    """
+
+    def test_a_comment_line_is_removed(self) -> None:
+        assert _strip_comments("  # set -o pipefail\n  echo hi") == "  echo hi"
+
+    def test_a_real_command_survives(self) -> None:
+        assert "set -o pipefail" in _strip_comments("  set -o pipefail\n  # noise")
+
+    def test_a_hash_inside_a_command_is_not_treated_as_a_comment(self) -> None:
+        line = "  grep -c '#' /tmp/x"
+        assert _strip_comments(line) == line
+
+    def test_the_real_step_still_contains_its_pipeline_after_stripping(
+        self, workflow_text: str
+    ) -> None:
+        """Anti-vacuity for every guard above: if stripping ate the command,
+        `_pipes_without_pipefail` returns False for the wrong reason."""
+        code = _smoke_code(workflow_text)
+        assert "pytest tests/test_connector_smoke/" in code
+        assert "| tee" in code, (
+            "the pipeline vanished from the stripped code — the guards above are "
+            "now passing because there is nothing left to check"
+        )
+
+
+class TestTheGuardsCanFail:
+    """core#1055 — the arming, in-suite, on synthetic blocks.
+
+    All three guards above used to be structurally unable to fail: their
+    assertions were satisfied by the step's own comments. Measured on the real
+    workflow — deleting `set -o pipefail`, neutering the `exit "$rc"` branch,
+    and neutering the skip guard each left the corresponding test **PASSED**.
+
+    A guard proved discriminating once by an external harness is a claim about
+    a past session. These run every time CI does.
+    """
+
+    _PIPED = "          pytest tests/test_connector_smoke/ -v | tee /tmp/smoke.log || rc=$?\n"
+
+    def test_pipefail_predicate_catches_the_core_827_shape(self) -> None:
+        assert _pipes_without_pipefail(self._PIPED), (
+            "the exact core#827 defect — a bare pipe into tee — is not detected"
+        )
+
+    def test_pipefail_predicate_accepts_the_fixed_shape(self) -> None:
+        assert not _pipes_without_pipefail("          set -o pipefail\n" + self._PIPED)
+
+    def test_pipefail_predicate_is_not_fooled_by_a_comment(self) -> None:
+        """The defect itself: prose naming PIPESTATUS must not satisfy it."""
+        commented = "          # ${PIPESTATUS[0]} rather than plain -e\n" + self._PIPED
+        assert _pipes_without_pipefail(_strip_comments(commented)), (
+            "a comment mentioning PIPESTATUS still satisfies the pipefail check — "
+            "this is core#1055 unfixed"
+        )
+
+    def test_exit_code_predicate_catches_a_captured_but_unused_status(self) -> None:
+        assert not _acts_on_the_exit_code(self._PIPED)
+
+    _RC_GUARD = (
+        '          if [ "$rc" -ne 0 ]; then\n'
+        '            echo "::error::Connector smoke probes FAILED"\n'
+        '            exit "$rc"\n'
+        "          fi\n"
+    )
+
+    def test_exit_code_predicate_accepts_a_real_exit(self) -> None:
+        assert _acts_on_the_exit_code(self._PIPED + self._RC_GUARD)
+
+    def test_exit_code_predicate_rejects_an_unreachable_exit(self) -> None:
+        """The second half of core#1055, independent of comments.
+
+        Disabling the branch while leaving its body intact is what a careless
+        edit looks like, and a token check cannot see it: `exit "$rc"` is still
+        right there in the file, and it can never run.
+        """
+        disabled = self._PIPED + self._RC_GUARD.replace('if [ "$rc" -ne 0 ]', "if false")
+        assert not _acts_on_the_exit_code(disabled), (
+            'an unreachable `exit "$rc"` still satisfies the exit-code check'
+        )
+
+    _SKIP_GUARD = (
+        '          if [ "${n_skipped:-1}" != "0" ]; then\n'
+        '            echo "::error::Smoke probes were SKIPPED"\n'
+        "            exit 1\n"
+        "          fi\n"
+    )
+
+    def test_skip_guard_predicate_accepts_the_real_guard(self) -> None:
+        assert _has_skip_guard(self._SKIP_GUARD)
+
+    def test_skip_guard_predicate_catches_removal(self) -> None:
+        assert not _has_skip_guard(self._PIPED)
+
+    def test_skip_guard_predicate_rejects_a_mere_mention_of_the_count(self) -> None:
+        """`n_skipped=$(field skipped)` reads the count; it does not guard on it.
+
+        Under the old token check this was indistinguishable from the guard,
+        because the step also carries five other `::error::` lines.
+        """
+        reads_but_does_not_guard = (
+            "          n_skipped=$(field skipped)\n"
+            '          echo "::error::something else entirely"\n'
+            "          exit 1\n"
+        )
+        assert not _has_skip_guard(reads_but_does_not_guard)
+
+    def test_skip_guard_predicate_rejects_a_disabled_guard(self) -> None:
+        disabled = self._SKIP_GUARD.replace('if [ "${n_skipped:-1}" != "0" ]', "if false")
+        assert not _has_skip_guard(disabled)
 
 
 class TestNoShellSideCredentialParsing:

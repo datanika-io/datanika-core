@@ -72,6 +72,22 @@ DELETIONS: dict[Path, list[str]] = {
     INV_SVC: [
         # item 6 — get_invitation_by_token
         "                    Invitation.token == token,  # legacy — removed in N+1\n",
+        # core#1010 (PR #1018, merged 2026-09-03T20:19:30Z) added a FIFTH deletion
+        # site after §8a.8 was written: `_has_active_membership` carries its own
+        # legacy `users.email` half. Not ambiguous with USER_SVC's — 24 spaces of
+        # indent against 20, and each anchor is scoped to its own file — but N+1
+        # deletes both, so a probe that deletes one is narrower than the release
+        # again, which is the defect this module's docstring exists to warn about.
+        #
+        # 🚨 MEASURED, and it is the OPPOSITE of what was predicted. The
+        # handoff expected the un-widened probe to report "a red that is not a
+        # defect". It does not: without this clause
+        # `test_invitation_service.py` returns **13 passed**, because the one test
+        # that detects the coupling needs the clause GONE to fail. So the narrow
+        # probe was silent, not noisy — a false green, which is the worse error and
+        # the one that would have argued for narrowing it back.
+        "                        func.lower(User.email) == email,"
+        "  # legacy half — removed in N+1\n",
     ],
 }
 

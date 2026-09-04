@@ -1335,6 +1335,10 @@ jobs:
           GATING_OUTCOME: ${{ steps.gating.outcome }}
           ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
           JOB_STATUS: ${{ job.status }}
+          # core#1029. `no-evidence` means results-gating.json held no test results at
+          # all -- the tally, not the exit status. Produced by the `flaky_gate` step
+          # above, which is `if: always()` and so always has a value here.
+          FLAKY_STATUS: ${{ steps.flaky_gate.outputs.status }}
         run: |
           # !! `cancelled()` MUST NOT appear in this `env:`, and that is not
           # style. The status-check functions (success/failure/cancelled/always)
@@ -1359,8 +1363,33 @@ jobs:
             STATE=cancelled
           elif [ "$ATTRIB_OUTCOME" = "failure" ]; then
             STATE=wrong_build
+          # core#1029: a FAILED gating step is two different states, and this used to
+          # assert the first of them. `globalSetup` dying (a seed/schema drift -- the
+          # core#951 shape) exits this step exactly as a red spec does, in seconds, with
+          # ZERO specs run. The run then told the reader "the gating specs themselves
+          # went red", which aimed them at twelve specs none of which had executed.
+          #
+          # The discriminator was already in the run and unread: `detect_flaky_gating.py`
+          # parses results-gating.json and reports `no-evidence` when it holds no test
+          # results. Branch on the TALLY, not on the exit status.
+          #
+          # This is NOT what e2e-sso does, and copying that classifier here would change
+          # nothing: the two are already identical in shape and both already have a
+          # no_verdict branch. e2e-sso is correct because its harness failure is in a
+          # SEPARATE step, so the specs step is `skipped`. Here globalSetup dies inside
+          # the playwright invocation, so the step ran and failed.
+          #
+          # `no-evidence` also covers "could not be read", and that is deliberately
+          # folded in: if the results file is unreadable we genuinely do not know which
+          # specs failed, so no_verdict -- fix the harness -- is the honest verdict
+          # rather than the flattering one. QA_RULES section 23: treat a missing tally as
+          # LOUDER than a failing test, not quieter.
           elif [ "$GATING_OUTCOME" = "failure" ]; then
-            STATE=gating_failed
+            if [ "$FLAKY_STATUS" = "no-evidence" ]; then
+              STATE=no_verdict
+            else
+              STATE=gating_failed
+            fi
           elif [ "$GATING_OUTCOME" = "success" ]; then
             if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
           else
@@ -1374,7 +1403,7 @@ jobs:
             infra_only)
               echo "::warning::The gating E2E specs PASSED — this job is red for a NON-TEST reason (artifact upload, or a step after the specs). Do not read this as an E2E failure; no issue was filed and no alert was paged. Find the failing step before treating the promotion as blocked (core#873)." ;;
             no_verdict)
-              echo "::error::e2e-staging produced NO E2E VERDICT — the gating step did not run (outcome=$GATING_OUTCOME). This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. Fix the harness, then re-run." ;;
+              echo "::error::e2e-staging produced NO E2E VERDICT — gating step outcome=$GATING_OUTCOME, results tally=$FLAKY_STATUS. This is neither a pass nor a test failure: the promotion pre-flight has nothing to read. If the step FAILED with tally=no-evidence then ZERO specs ran — the usual cause is globalSetup dying on a seed/teardown FK drift (core#951), and looking at the specs will find nothing (core#1029). Fix the harness, then re-run." ;;
             wrong_build)
               echo "::error::e2e-staging REFUSED to run: staging was not running this commit (core#876). This is NOT an E2E failure and NOT a broken harness — the specs were never started, so this commit still has no reading. Re-run this commit's deploy, then re-run this job. Do NOT re-deploy from inside a verifier (core#753)." ;;
             cancelled)

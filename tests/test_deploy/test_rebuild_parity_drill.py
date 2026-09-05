@@ -32,6 +32,30 @@ than a displayed number:
 Enterprise on bytes mid-cycle, which is the exact behaviour the published FAQ
 promises it will not do.
 
+UPDATE 2026-09-05 (core#1071) — THE MEASUREMENT ABOVE HAS CHANGED, and the block
+above is kept as the dated record that produced the decision rather than edited.
+Core migration `e8b3d5c7f2a9` sets `plans.hard_cap_bytes`' server default to
+`false`, matching its sibling gate `hard_cap_runs`. So the four
+`<paid slug>.hard_cap_bytes: production=false default_would_give=true` lines leave
+the gap and it becomes **22 columns**, still across the same 4 missing slugs.
+
+    the pinned fingerprint therefore SHRANK, and that is the designed signal
+
+🚨 The new fingerprint CANNOT be computed from this repository. It is a sha256 over
+the live catalogue joined to production's own rows, so only a run on the box
+produces it. Infra re-measures against the `:staging` image once this is on `dev` —
+the same route that caught core#1047's four `max_schedules` lines before promotion —
+and re-pins `EXPECTED_GAP` in that commit. Until then the drill is expected to fail
+on the fingerprint with `SHRANK`, which the script's own message tells the reader to
+confirm against core#1060 rather than paste over. **Do not re-pin from a prediction.**
+
+`RECORDED_DEFAULT_WOULD_GIVE` below holds the three behaviour-changing columns and is
+compared against the migration chain by
+`test_the_recorded_defaults_still_match_the_migration_tree`, so this narrative cannot
+outlive the tree it describes — which is how the defect survived in the first place
+(`datanika-cloud/tests/test_bytes_migration_roundtrip.py` said "default False" while
+the DDL said True, and asserted nothing).
+
 🔑 AND THE MECHANISM IS ALREADY LIVE, not merely predicted. Staging carries a plan
 `e2e-pro` with `seats_included=2, max_connections=5, runs_included=500,
 rate_limit_rpm=60` — every one the core default, i.e. Free-tier values on a row
@@ -53,6 +77,25 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "deploy" / "server" / "rebuild-parity-drill.sh"
+
+#: The three behaviour-changing columns from the header's measurement, and what the
+#: **migration chain** gives a row that omits them. Not prose: compared against
+#: ``server_defaults()`` by ``test_the_recorded_defaults_still_match_the_migration_tree``.
+#:
+#: A dated narrative is only useful while it is true, and the failure mode of this whole
+#: class is a comment that names the *safe* value and terminates the search. Pinning the
+#: values here means a change to any of the three reds at PR time and has to be recorded
+#: above in the same commit — rather than being noticed a month later by a drill whose
+#: fingerprint moved for a reason nobody could name.
+RECORDED_DEFAULT_WOULD_GIVE = {
+    # Enterprise is sold with SSO; a rebuild silently does not have it.
+    "sso_enabled": "false",
+    # core#1071 / `e8b3d5c7f2a9`, 2026-09-05: was "true", which blocked Pro and Enterprise
+    # on volume mid-cycle against the published FAQ. Now agrees with `hard_cap_runs`.
+    "hard_cap_bytes": "false",
+    # Enterprise pays for 20; a rebuild gives 5.
+    "max_parallel_runs": "5",
+}
 
 
 def _strip_comments(text: str) -> list[str]:
@@ -355,6 +398,40 @@ def test_the_ignore_list_is_short_and_stays_short():
     assert ignored == ["id", "created_at", "updated_at", "paddle_product_id", "paddle_price_id"], (
         f"IGNORE_COLS changed to {ignored}. Each name here switches off a comparison; "
         "adding one needs a reason in the script and an update here, in the same commit."
+    )
+
+
+def test_the_recorded_defaults_still_match_the_migration_tree():
+    """The header's finding must stay true of the chain it describes (core#1071).
+
+    Anchored **outside** the drill: the values come from ``server_defaults()``, which reads
+    the migration sources and which this file cannot influence. A control comparing the
+    drill's prose against another view of the drill would be blind to both being wrong.
+
+    Positive form on purpose. Banning the old string (*"must not say
+    ``default_would_give=true``"*) is satisfied by deleting the line, and by a sentence
+    that denies it — which is exactly what a good correction looks like. Requiring the
+    right value to be **stated** is not.
+
+    When one of these legitimately moves: change the value here, say so in the header with
+    a date and the revision, and hand Infra the re-measurement. The point is that all three
+    happen in one commit instead of a fingerprint moving for a reason nobody can name.
+    """
+    from tests.test_migrations.test_plan_seed_updates_reach_real_rows import server_defaults
+
+    chain = server_defaults()
+    assert chain, "the server_default extractor returned nothing; this assertion is vacuous"
+
+    drifted = {
+        column: (recorded, chain.get(column))
+        for column, recorded in RECORDED_DEFAULT_WOULD_GIVE.items()
+        if chain.get(column) != recorded
+    }
+    assert not drifted, (
+        f"the drill's recorded finding no longer matches the migration chain: {drifted} "
+        "(column -> (recorded, chain)). Update RECORDED_DEFAULT_WOULD_GIVE *and* the dated "
+        "block in this module's docstring, and tell Infra the pinned EXPECTED_GAP needs "
+        "re-measuring — a stale narrative naming the safe value is what hid core#1071."
     )
 
 

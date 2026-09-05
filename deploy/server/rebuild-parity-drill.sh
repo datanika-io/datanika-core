@@ -83,6 +83,20 @@ IGNORE_COLS="id created_at updated_at paddle_product_id paddle_price_id"
 #   :latest  head a9c4e2b7d5f3 (pre-#1047)  -> 30 columns, d40ef6fd71337e53
 #   :staging head b4d8f1a2c6e9 (post-#1047) -> 26 columns, d0e77bd8d96b9219   <- pinned
 #
+# 🔔 KNOWN STALE AS OF 2026-09-05, and expected to fail SHRANK on its next run — core#1071.
+# Core migration `e8b3d5c7f2a9` sets `plans.hard_cap_bytes`' server default to `false` (it was
+# `true`, which is what made a rebuilt production block Pro and Enterprise on volume mid-cycle
+# against the published FAQ). That removes the four `<paid slug>.hard_cap_bytes` lines, so:
+#
+#   expected next reading: 22 columns, same 4 missing slugs, a fingerprint NOT computable here
+#
+# The fingerprint is a sha256 over the live catalogue joined to production's rows, so only a run
+# on the box produces it. Re-measure against the `:staging` image once the migration is on `dev`
+# — the route that caught core#1047's four `max_schedules` lines before promotion — and re-pin in
+# that commit. 🚨 Do NOT paste a predicted value here: the whole reason this pin is trustworthy is
+# that every value it has ever held was measured. A forecast written into a baseline is a defect
+# laundered into a constant, which is the failure this block's own warning is about.
+#
 # ⚠️ `${VAR-default}`, NOT `${VAR:-default}`. With `:-` an explicitly EMPTY override falls back to
 # the pinned value, which made the "nothing pinned" branch below structurally unreachable — a
 # branch that can never fire, found by running the arm that was supposed to exercise it. With `-`

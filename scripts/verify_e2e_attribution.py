@@ -43,6 +43,30 @@ WORKFLOW = ".github/workflows/ci.yml"
 MUTATION = "deploy-staging"
 VERIFIERS = ("smoke-staging", "e2e-staging", "e2e-sso")
 
+
+def short_name(api_name: str) -> str:
+    """`"staging / smoke-staging"` -> `"smoke-staging"`; anything else unchanged.
+
+    core#975 moved the staging jobs into a reusable workflow held by one caller job, and a
+    called workflow's check runs are named **`<caller job id> / <callee job id>`**. The
+    rename is the cost of that change and was measured before it was made, not discovered
+    after — but it lands squarely on this script, whose entire job is to look staging
+    verdicts up by name.
+
+    Stripping rather than renaming the constants, deliberately, for two reasons:
+
+    * this script's OUTPUT is quoted in `RUNBOOK_DEV_TO_MASTER.md` and read by whoever is
+      mid-promotion, and `smoke-staging` is the name they know;
+    * a bare `smoke-staging` still resolves, so the script keeps working against runs that
+      predate the move — which is exactly when someone is most likely to be reading old
+      evidence.
+
+    ⚠️ It splits on the LAST separator on purpose. A nested reusable workflow produces
+    `a / b / c`, and the job that ran is `c`.
+    """
+    return api_name.rsplit(" / ", 1)[-1].strip()
+
+
 #: A conclusion that is neither a pass nor a failure. The whole point of naming these is
 #: that they are the ones a promoter's eye slides over.
 NO_READING = {None, "", "cancelled", "skipped", "stale"}
@@ -160,7 +184,8 @@ def collect(repo: str, branch: str, pages: int) -> list[Job]:
             continue
         payload = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs")
         for job in payload.get("jobs", []):  # type: ignore[union-attr]
-            if job["name"] not in (MUTATION, *VERIFIERS):
+            name = short_name(job["name"])
+            if name not in (MUTATION, *VERIFIERS):
                 continue
             if not job.get("started_at"):
                 continue
@@ -168,7 +193,7 @@ def collect(repo: str, branch: str, pages: int) -> list[Job]:
                 Job(
                     run_id=run["id"],
                     head_sha=run["head_sha"],
-                    name=job["name"],
+                    name=name,
                     started_at=job["started_at"],
                     completed_at=job.get("completed_at") or job["started_at"],
                     conclusion=job.get("conclusion"),

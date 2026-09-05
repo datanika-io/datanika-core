@@ -184,3 +184,41 @@ def test_a_deploy_finishing_just_outside_the_window_is_not_overtaking() -> None:
     on_time = job(B, MUT, "2026-08-31T22:12:46Z", "2026-08-31T22:16:50Z", "success")
     jobs = [j for j in ORIGINAL_INCIDENT if not (j.head_sha == B and j.name == MUT)] + [on_time]
     assert verdicts(jobs, A)["e2e-staging"] == "misattributed"
+
+
+# ── the core#975 rename ──────────────────────────────────────────────────────────────
+
+
+def test_the_composed_check_name_still_resolves_to_the_job() -> None:
+    """core#975: a called workflow's check runs are `<caller job id> / <callee job id>`.
+
+    This script's whole function is to look staging verdicts up BY NAME, so the rename
+    lands directly on it. If `short_name` ever stops stripping the prefix, every lookup
+    misses and the tool reports `absent` for all three jobs — which reads as *"CI has not
+    run yet"*, the one outcome a promoter waits on rather than investigates.
+
+    Both directions are asserted: the composed form must resolve, and the bare form must
+    keep resolving, because runs that predate the move are exactly the evidence someone
+    reaches for when something looks wrong.
+    """
+    from scripts.verify_e2e_attribution import MUTATION, VERIFIERS, short_name
+
+    for bare in (MUTATION, *VERIFIERS):
+        assert short_name(bare) == bare, f"a bare name must survive unchanged: {bare}"
+        assert short_name(f"staging / {bare}") == bare, f"composed form not stripped: {bare}"
+
+    # Nesting: the job that ran is the last segment, not the first.
+    assert short_name("outer / staging / e2e-staging") == "e2e-staging"
+    # And a name that merely contains a slash is not a composed name.
+    assert short_name("build/push") == "build/push"
+
+
+def test_an_unstripped_composed_name_would_be_dropped() -> None:
+    """The control for the control: prove the filter really is name-sensitive.
+
+    Without this, `test_the_composed_check_name_still_resolves_to_the_job` could pass
+    against a filter that accepted anything, and the stripping would be decorative.
+    """
+    from scripts.verify_e2e_attribution import MUTATION, VERIFIERS
+
+    assert "staging / e2e-staging" not in (MUTATION, *VERIFIERS)

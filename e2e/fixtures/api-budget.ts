@@ -60,11 +60,25 @@ import type { APIRequestContext, APIResponse } from "@playwright/test";
  * | `sso-oidc.spec.ts`           | org A            |  1 — **NOT budgeted** |
  *
  * `sso-oidc.spec.ts` imports `test` from `@playwright/test` rather than from
- * `fixtures/auth`, so it cannot see this fixture. It is gated behind
- * `DATANIKA_E2E_SSO_AUTHENTIK=1`, which no CI job sets, so it spends nothing
- * today. **If that gate is ever turned on in `e2e-staging`, switch its import
- * to `../fixtures/auth` and budget its `/api/v1/members` call** — otherwise
- * org A's real spend is 37 against a budget that believes it is 36.
+ * `fixtures/auth`, so it cannot see this fixture.
+ *
+ * ⚠️ **Corrected 2026-09-05 (core#1099): this used to say the spec is gated behind
+ * `DATANIKA_E2E_SSO_AUTHENTIK=1`, "which no CI job sets, so it spends nothing today".
+ * The gate IS set — `ci.yml`'s `Run SSO specs` step, since `e2e-sso` was re-enabled.**
+ * The conclusion survives, but on a different premise, and the old premise was the kind
+ * that stops being true without anyone noticing.
+ *
+ * What actually keeps the spend at zero: the one budgeted test
+ * (`OIDC JIT provisioning`, the only `/api/v1/members` caller here) carries its own
+ * `test.skip(!apiKey, …)`, and `e2e-sso` runs with `DATANIKA_E2E_SKIP_SEED=1`, so no
+ * API key reaches the fixture. Measured on run 33953455311 — that test reports
+ * `skipped` while the other four in the file run.
+ *
+ * **So there are now two independent reasons it spends nothing, and only one of them is
+ * still load-bearing.** If either `e2e-staging` turns the SSO gate on, or `e2e-sso` stops
+ * skipping the seed, switch this spec's import to `../fixtures/auth` and budget its
+ * `/api/v1/members` call — otherwise org A's real spend is 37 against a budget that
+ * believes it is 36.
  *
  * Nothing else authenticates with an API key: `smoke-staging` runs in parallel
  * but only touches unauthenticated endpoints, and the seed recreates the keys

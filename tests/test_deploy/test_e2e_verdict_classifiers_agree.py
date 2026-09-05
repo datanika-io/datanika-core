@@ -17,7 +17,27 @@ accident of its shape*, and the accident is one refactor deep:
   happened. Fixing it needed a second signal (`FLAKY_STATUS=no-evidence`).
 * In `e2e-sso`, the harness is a **separate step** — Authentik bootstrap, the tunnel, the
   compose stack. When it dies, `Run SSO specs` is `skipped`, `SPECS_OUTCOME` is `skipped`, and
-  the `else` branch correctly yields `no_verdict`. No second signal is needed.
+  the `else` branch correctly yields `no_verdict`. No second signal is needed *for that route*.
+
+🚨 **CORRECTED 2026-09-05 (core#1099). The sentence above used to end "No second signal is
+needed", full stop, and that overstated what this file covers.** It reasons about the harness
+*dying*, which produces `skipped`. It does not reason about the specs *running and all
+skipping*, which produces `success` — and `e2e-sso`'s nine Authentik specs sit behind
+`process.env.DATANIKA_E2E_SSO_AUTHENTIK !== "1"`, so one env var makes every one of them skip
+while Playwright exits 0. `SPECS_OUTCOME=success` then classifies **`clean`**, and the
+`no_verdict` alert — which exists precisely so an absent verdict is not misread as a fix —
+cannot fire, because it keys on the specs step *not* being `success`.
+
+So `e2e-staging` is covered against its analogue of that route by two things this job has
+neither of: `Assert the @slow specs were actually collected`, and the `FLAKY_STATUS` tally.
+The asymmetry this file pins is real; it was simply not the only one. The gate half is now
+guarded by `test_e2e_sso_tier_is_measured.py`; the residual — a `success` from a run that
+executed zero IdP specs by any other route — needs the step to read its own tally and is
+`ci.yml`'s owner's call, tracked on core#1099.
+
+**The lesson worth more than the correction: a guard that states why something is safe is
+making a claim, and that claim needs the same scrutiny as the code.** This one enumerated the
+routes it had thought of and read as though it had enumerated all of them.
 
 So `e2e-sso` avoids #1029 because of where its harness lives, not because anyone decided it
 should. Move that bootstrap inside the specs call — or add a `|| true` that turns a skip into

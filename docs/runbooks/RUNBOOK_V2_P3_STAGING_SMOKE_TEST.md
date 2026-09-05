@@ -21,14 +21,25 @@
 - [ ] Grafana accessible at `staging-app.datanika.io:3001` (or port-forwarded)
 - [ ] CF Access credentials set if staging is behind Cloudflare Zero Trust
 
+> 🔴 **Both flag expectations above were measured on 2026-09-05 and BOTH are false.** The checkboxes now take the reading correctly; the values they expect are the ones that were never true.
+>
+> | checkbox expects | the staging process says |
+> |---|---|
+> | `datanika_dual_mode_ux_enabled` — `True`, "set by the P1 flip" | **`False`**, and the variable is absent from staging's `.env.docker`, so P1 was never applied here |
+> | `bytes_quota_enforce` — `False`, "dry-run, NOT enforcing yet" | **`True`** on the staging app *and* the worker — staging is **enforcing** |
+>
+> ⚠️ **The second one changes what section 5 below measures.** Steps written assuming violations are logged-but-not-blocked will see real rejections. Either turn enforcement off first (P1 section 2's procedure, same directory) or read section 5's expectations as inverted — but do not tick the box and proceed as though it were dry-run.
+>
+> ⚠️ Staging is blue/green: `8100` = `datanika-staging-app`, `8110` = `datanika-staging-app-b`. The checkboxes above name the blue colour; resolve the live one with `/opt/datanika-staging/active-app.sh` before running them.
+
 ## 1. Seed a test tenant with source data
 
 Create a Free-tier org with a PostgreSQL source and a PostgreSQL destination (PG-to-PG is the simplest dlt-compatible path).
 
 ```bash
-ssh root@<staging-ip>
-cd /opt/datanika/datanika
-docker compose exec app bash
+ssh -i ~/.ssh/id_ed25519 root@185.25.22.188   # staging shares the production box
+cd /opt/datanika-staging                       # STAGING. /opt/datanika/datanika is PROD.
+docker exec -it "$(/opt/datanika-staging/active-app.sh)" bash
 
 # Inside container
 uv run python <<'PY'
@@ -118,7 +129,11 @@ metrics surface below.
 
   ```bash
   ssh root@185.25.22.188
-  curl -sf http://127.0.0.1:8100/metrics > m.txt && wc -l < m.txt
+  # Staging is blue/green (8100 = blue, 8110 = green). Derive the port; a hardcoded one
+  # scrapes a stopped container the moment green is serving (core#622).
+  SBE=$(sed -nE 's/^Define DATANIKA_STG_BE ([0-9]+).*/\1/p' \
+        /etc/apache2/conf-enabled/datanika-staging-active.conf)
+  curl -sf "http://127.0.0.1:${SBE}/metrics" > m.txt && wc -l < m.txt
   grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
   grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]' m.txt
   ```
@@ -133,7 +148,7 @@ metrics surface below.
 
 ## 5. Verify `check_bytes_quota` dry-run logging
 
-Since `DATANIKA_BYTES_QUOTA_ENFORCE=false` (dry-run mode), quota violations should be logged but not enforced.
+This step assumes dry-run mode. 🚨 **Confirm that from the process first** — section 0's reading measured `bytes_quota_enforce = True` on staging on 2026-09-05, i.e. **enforcing**. If it still reads `True`, violations here are real rejections rather than log lines, and "no block occurred" stops being evidence of anything.
 
 1. Seed the test org to near its Free cap (10 GB):
    ```sql
@@ -153,7 +168,7 @@ Verification:
 
 ## 6. Verify V2 P3 UI surfaces (from VA2)
 
-With `DATANIKA_DUAL_MODE_UX_ENABLED=true` already set:
+With dual-mode UX enabled. 🚨 **It read `False` on staging on 2026-09-05**, so these surfaces will be absent for that reason rather than for a defect — check section 0's reading before filing anything from this section.
 
 - [ ] **Cost estimator card** visible on pipeline create/edit form (below mode selector)
 - [ ] **ELT nudge card** visible on runs page (if test pipeline is in ETL mode — may need >=5 runs + 20 GB to trigger; skip if threshold not met, note as expected)

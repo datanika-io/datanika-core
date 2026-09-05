@@ -964,6 +964,45 @@ Cosmetic here, and the same trap that has truncated real probe output mid-run
 (`WORKFLOW_RULES` §13 trap 4): a long-running script that prints non-ASCII **only in the interesting
 branch** runs perfectly through every boring case and dies the instant it has news.
 
+## 36. A cloud pre-push verdict depends on which BRANCH another worktree has checked out
+
+**(2026-09-05, [core#1069].)** The rule everyone carries is *"check which core your cloud venv
+resolves to"* — a question about a **path**, and `WORKFLOW_RULES` §1 has it. This is one level
+finer and it bit inside an hour:
+
+```
+same commit · same hook · same machine · two answers
+  core worktree on 1069-timestamp-contract  ->  pre-push: all checks passed
+  core worktree on 1069-rules-32-35         ->  1 failed, push refused
+```
+
+The cloud suite resolves `datanika` through an editable-install `.pth` pointing at the core
+**worktree directory**, so it reads whatever branch that directory happens to have checked out.
+I moved it to start an unrelated docs branch cut from an `origin/dev` that predated the migration,
+and a cloud test that had passed twenty minutes earlier went red on a file the cloud branch never
+touched.
+
+🚨 **The red was the lucky direction, and the point is the other one.** The cloud change was
+verified green against a core branch whose migration existed **nowhere but my disk**. Had I stopped
+there and merged, cloud `dev` would have carried a guard that only passes against an unpushed core
+ref — green locally, red for everyone else, and *"another department broke `dev`"* is what it looks
+like.
+
+**Rules:**
+1. **Before believing a cloud green, assert the core worktree is at a ref that is on
+   `origin/dev`** — or say out loud which unpushed ref the green depends on, and re-run once it
+   lands. The path check is necessary and not sufficient.
+   ```bash
+   git -C <core-worktree> ls-tree -r --name-only HEAD <the file the claim depends on>
+   git -C <core-worktree> merge-base --is-ancestor HEAD origin/dev   # 0 => nothing local-only
+   ```
+2. **A cross-repo pair has a merge ORDER, and the dependent side must gate on it.** Core first here,
+   because cloud CI checks core out at `base_ref`; the cloud push script asserted
+   `gh pr view <core-pr> --json state` was `MERGED` before pushing at all.
+3. **Do not move a shared worktree's branch while another repo's suite depends on it.** The tell is
+   a red in a file your diff cannot reach — same signature as the stale-venv traps, one layer out,
+   and with a completely different fix.
+
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704

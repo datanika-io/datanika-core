@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 
-# The org permission model. `plans/product/SPEC_ORG_ROLES.md` is the decision of
+# The org permission model. `docs/specs/SPEC_ORG_ROLES.md` is the decision of
 # record; this table is the machine-readable half of it and `UserService`
 # derives its member-management checks from here rather than restating them.
 #

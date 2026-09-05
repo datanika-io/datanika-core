@@ -5,7 +5,7 @@ Revises: b3f9d17c245e
 Create Date: 2026-08-30 18:00:00.000000
 
 Expand-only, so it is safe in a single release under
-``plans/infra/SPEC_EXPAND_CONTRACT_MIGRATIONS.md``: a nullable ADD COLUMN, a
+``docs/specs/SPEC_EXPAND_CONTRACT_MIGRATIONS.md``: a nullable ADD COLUMN, a
 CREATE TABLE, and an UPDATE. The container that is still serving during the
 blue/green window neither reads the column nor knows the table exists.
 

@@ -882,6 +882,88 @@ was still running. Exit code 2, `unexpected EOF`, from a script whose contents w
 **The name has to be unique per *invocation*, not per purpose.** A second waiter is a second script.
 Nothing was lost here because the poll was read-only — which is the only reason this is a rule
 rather than an incident.
+
+## 32. A guard designed to expire must be readable by the mechanism that expires it
+
+**(2026-09-05, [core#1069] / [cloud#171].)** cloud#194 gave the `TimestampMixin` nullability
+exclusion an expiry: `test_the_exclusion_has_not_outlived_its_reason` asserts the disagreement is
+*still there*, so that when core's release N+1 tightens those columns the test reds and names its own
+deletion. That is the right design — an exception with no expiry is how a guard becomes decoration.
+
+**With the migration on disk and all 14 columns genuinely tightened, all 17 tests stayed GREEN.**
+`f1a4c8e2d6b3` writes `op.alter_column(table, column, …)` inside a nested `for` over module
+constants, and the scanner read positional arguments as **literals only**.
+
+> **A guard designed to expire could not see the thing that expires it** — so the exception would
+> have sat there for ever, excusing six columns that no longer need it and standing in front of any
+> *future* disagreement on those names.
+
+**Rules:**
+1. **Run the expiry against the change that should trigger it, and watch it go red.** An expiry test
+   that has never fired is a claim about a future you have not tested.
+2. **The expiry and the mechanism must read the same artifact the same way.** Here the exclusion was
+   derived from the *model* and the expiry from a *source scanner*; only one of them could see the fix.
+3. Derivation and expiry are **both** required and neither substitutes for the other: derived stops
+   the exception widening, the expiry stops it outliving its reason.
+
+## 33. A pre-flight that can refuse a CORRECT database will be deleted under pressure
+
+**(2026-09-05, [core#1069].)** Built the same-row check anyone would want for the `timestamptz`
+conversion: `usage_ledger.created_at` inside its own `period_start`/`period_end`, both `timestamptz`
+**on the same row** — no join, so nothing to re-select, which is exactly what invalidated the
+nearest-neighbour probe it replaced.
+
+**It refused a correct database on its first run outside its own tests.** A round-trip harness seeds
+a ledger row with an arbitrary `created_at` and an arbitrary period.
+
+🔑 **The harness was not the defect.** *"A ledger row is written inside its own billing period"* is
+an **observation**, not an invariant — nothing in the schema or the code enforces it, `record_usage`
+merely computes the period from `now()`, and `e2e_admin.py` writes ledger rows directly.
+
+> **A check that can abort a production deploy must rest on an invariant.** One that can refuse a
+> correct database gets deleted under pressure — and it takes the checks beside it with it.
+
+**Rules:**
+1. **Ask what enforces the property**, not whether it currently holds. If the answer is *"nothing,
+   but it always does"*, it is an observation.
+2. **Remove it, and record it as a failed control** — with a test requiring the case it wrongly
+   refused to **pass**, or the next person re-adds it by instinct.
+3. What survives should be invariant-backed and **honest about its reach**. Ours: no NULLs, and
+   nothing later than `now()` — both properties of `server_default=now()` itself.
+
+## 34. A static scanner that reads only literals is blind to what a CONTRACT migration looks like
+
+**(2026-09-05, [core#1069] + [core#1071] — two instances in one day, in two repos.)**
+
+| the spelling | what the scanner did |
+|---|---|
+| `op.alter_column(table, column, …)` inside `for table in TABLES:` | skipped the call entirely |
+| `server_default=sa.text(_NEW_DEFAULT)`, constant at module level | returned `_UNKNOWN`, so the column kept its **previous** default |
+
+Both are the spellings this codebase *prefers*: a contract migration operates over a **set** of
+columns, and a default is named so `upgrade()` and `downgrade()` cannot drift. **In both cases the
+failure biased toward the reassuring answer** — a newly introduced bad default is invisible, and a
+tightened column reads as still loose.
+
+**Rules:**
+1. **Resolve module-level string constants and `for`-over-constant-sequence bindings**, or state that
+   you do not and take the silence deliberately.
+2. **Never expand partially.** A loop over something you cannot resolve must contribute *no* binding —
+   reporting some columns as stated and silently dropping the rest is worse than reporting none.
+3. **Measure the widening's blast radius before and after against the same tree.** Ours changed
+   exactly 14 values and exactly 1 value respectively; anything else would have been a second defect
+   riding along.
+
+## 35. A migration's first docstring line should be ASCII
+
+**(2026-09-05.)** Alembic echoes a revision's first docstring line into its own log
+(`Running upgrade X -> Y, <first line>`). This machine's console codec is **cp1251**, so an em-dash
+there comes back as `вЂ”` in any captured output — including a test that asserts on migration output.
+
+Cosmetic here, and the same trap that has truncated real probe output mid-run
+(`WORKFLOW_RULES` §13 trap 4): a long-running script that prints non-ASCII **only in the interesting
+branch** runs perfectly through every boring case and dies the instant it has news.
+
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
@@ -900,4 +982,7 @@ rather than an incident.
 [core#638]: https://github.com/datanika-io/datanika-core/issues/638
 [core#864]: https://github.com/datanika-io/datanika-core/issues/864
 [core#997]: https://github.com/datanika-io/datanika-core/issues/997
+[core#1069]: https://github.com/datanika-io/datanika-core/issues/1069
+[core#1071]: https://github.com/datanika-io/datanika-core/issues/1071
+[cloud#171]: https://github.com/datanika-io/datanika-cloud/issues/171
 [cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195

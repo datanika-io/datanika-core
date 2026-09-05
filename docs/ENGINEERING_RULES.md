@@ -1058,6 +1058,40 @@ gh api repos/datanika-io/datanika-core/rulesets --jq '.[] | {name, enforcement}'
    repo, so an edit there is the single unreviewed write on the one ungated surface: report it,
    do not patch it yourself.
 
+## 38. A rebase-merging queue relands the parent's commits under NEW SHAs — a stacked PR does not collapse on its own
+
+**(2026-09-05, [core#1069].)** [core#1110] was stacked on [core#1109]. I wrote — into the handoff, as
+guidance for whoever read it next — that once #1109 merged *"the merge-base moves and #1110's diff
+collapses to §37 on its own. No force-push needed."* **That is false wherever the base branch merges
+by rebase**, which is how both of our queues are configured (`REBASE`).
+
+```
+after #1109 merged:
+  origin/dev      6a435d7 Four rules ...   d127d06 Rule 36 ...   <- rebased twins, new SHAs
+  1069-rule-37    4da261c Four rules ...   096b340 Rule 36 ...   <- my originals
+                  identical patches, different commits
+```
+
+The merge-base therefore did **not** move: the PR still reported **3 commits** and
+`mergeStateStatus: UNKNOWN`. `git rebase origin/dev` resolved it in one step — git matched both by
+patch-id and dropped them (`warning: skipped previously applied commit`), leaving exactly the one
+§37 commit — but landing that requires a **force-push**, the very thing I had recorded as
+unnecessary.
+
+🔑 **The reasoning that failed is the one that is correct under a merge commit.** A `--merge`
+promotion preserves the parent's SHAs, so a child's merge-base really does move and its diff really
+does collapse by itself. Same sentence, opposite truth, decided by a repository setting that nobody
+re-reads at the moment they rely on it.
+
+**Rules:**
+1. **Before claiming a stacked PR self-resolves, ask how its base branch merges.** Rebase or squash
+   → the child must be rebased and force-pushed. Merge commit → it collapses on its own.
+2. **Verify with the refs, not the PR page.** `git log --oneline origin/dev..HEAD` names the
+   duplicates outright; `mergeStateStatus: UNKNOWN` only says GitHub has not recomputed yet.
+3. **Use `--force-with-lease`, never a bare `--force`** — a queue may have moved the branch.
+4. **A convenience claim written into a handoff is an instruction.** Mine was pushed before it was
+   tested, and was wrong; the next agent would have inherited it as fact.
+
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
@@ -1082,3 +1116,4 @@ gh api repos/datanika-io/datanika-core/rulesets --jq '.[] | {name, enforcement}'
 [cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195
 [core#923]: https://github.com/datanika-io/datanika-core/issues/923
 [core#1108]: https://github.com/datanika-io/datanika-core/issues/1108
+[core#1110]: https://github.com/datanika-io/datanika-core/pull/1110

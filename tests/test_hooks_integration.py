@@ -104,6 +104,16 @@ class TestPipelineHookEmission:
         spy = MagicMock()
         hooks.on("run.models_completed", spy)
 
+        # 🚨 The two `test` nodes carry status "success", which **real dbt never
+        # produces** — a passing test node reports "pass". `_make_node` sets
+        # `.value` explicitly, so this fixture manufactures a combination that
+        # cannot occur, and it is the exact case core#864 turned on.
+        #
+        # It is kept rather than corrected to ("test", "pass"), because as written
+        # it is the only assertion here that can tell the two answers apart: with
+        # the pre-decision tuple ("model", "test") the count is 5, and with
+        # Product's decision (models only) it is 3. A fixture using the real "pass"
+        # status would read 3 either way and prove nothing.
         raw_result = [
             self._make_node("m1", "model", "success"),
             self._make_node("m2", "model", "success"),
@@ -131,7 +141,12 @@ class TestPipelineHookEmission:
         # actually accept the payload is tests/test_hooks_contract.py's job.
         assert spy.call_count == 1
         kw = spy.call_args.kwargs
-        assert kw["org_id"] == org.id and kw["count"] == 5
+        assert kw["org_id"] == org.id and kw["count"] == 3, (
+            "3 model nodes and 2 test nodes were run; only the models are metered "
+            "(core#864, Product's decision). A count of 5 here means the dead 'test' "
+            "arm of _BILLABLE_RESOURCE_TYPES is back, and every tenant running dbt "
+            "tests is being billed for them."
+        )
         assert kw["run_id"] and kw["status"] == "success"
 
     def test_only_successful_nodes_counted(self, db_session, encryption, setup_pipeline):
@@ -139,6 +154,10 @@ class TestPipelineHookEmission:
         spy = MagicMock()
         hooks.on("run.models_completed", spy)
 
+        # `t2` is again the impossible ("test", "success") pair — see the note in
+        # the test above. It is what makes this assertion discriminating: only the
+        # model succeeds, so the count is 1 under core#864's decision and 2 under
+        # the pre-decision tuple.
         raw_result = [
             self._make_node("m1", "model", "success"),
             self._make_node("m2", "model", "error"),
@@ -165,7 +184,10 @@ class TestPipelineHookEmission:
         # actually accept the payload is tests/test_hooks_contract.py's job.
         assert spy.call_count == 1
         kw = spy.call_args.kwargs
-        assert kw["org_id"] == org.id and kw["count"] == 2
+        assert kw["org_id"] == org.id and kw["count"] == 1, (
+            "only `m1` is a successful MODEL node. A count of 2 means the "
+            "('test', 'success') node is being metered — core#864's deleted arm."
+        )
         assert kw["run_id"] and kw["status"] == "success"
 
     def test_no_emission_when_zero_billable(self, db_session, encryption, setup_pipeline):

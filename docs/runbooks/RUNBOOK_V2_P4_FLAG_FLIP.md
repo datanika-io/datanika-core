@@ -10,6 +10,40 @@
 
 ---
 
+> ✅ **POST-CONDITION ALREADY IN FORCE — re-derive before running any of this.**
+> `DATANIKA_BYTES_QUOTA_ENFORCE` reads **`True` on the serving colour, `datanika-celery` and
+> `datanika-beat`** — first measured 2026-09-01 ([cloud#117]) and **re-measured 2026-09-05**
+> after the `master 8ddef83c` deploy, each time with the container's own interpreter, and this
+> time with a bogus-attribute control in the same pass (`print(c.bytes_quota_enforce_typo)` →
+> `AttributeError`) so the reading cannot be a constant. `overage_charge_enable` is `True` and
+> `paddle_environment` is `production` on all three. The flag has been on since **2026-07-24**.
+>
+> ⚠️ **Do not repeat the mtime figure that stood here.** It said `.env.docker` was "unchanged at
+> `2026-07-24 11:58:49 +0300`"; it is **`2026-09-03 15:25:08 +0300`** — the box carries a
+> `.env.docker.bak.pre-localfilegate.20260903T122508Z`, so the edit is accounted for and the flag
+> values are unaffected, but the file has moved since. `stat` it rather than quoting any figure. **Nothing here flipped it and no promotion could have shown it** — the deploy
+> *preserves* `.env.docker` rather than shipping it, so the change appears in no diff.
+> **This runbook is therefore a `false → true` procedure for a value that is already `true`.**
+> Re-measure before acting; do not treat the pre-flight list below as a description of today.
+>
+> Its P5 sibling (`datanika-cloud/docs/runbooks/RUNBOOK_V2_P5_CUTOVER.md`) carries the same
+> banner for `DATANIKA_OVERAGE_CHARGE_ENABLE`, flipped by the same edit at the same timestamp.
+>
+> 🔴 **And the pre-flight is wrong in the OTHER direction too, which is newer than this banner.**
+> Every flag expectation written into §1.1, §1.2 and the P3 sibling was measured on 2026-09-05
+> and **all four were false against the running processes**:
+>
+> | claim | measured 2026-09-05 |
+> |---|---|
+> | prod `bytes_quota_enforce` is `false` (this runbook flips it) | **`True`** since 2026-07-24 |
+> | prod `dual_mode_ux_enabled` is `true`, "already live from P1" | **`False`** — the variable is absent from `.env.docker` entirely |
+> | staging `bytes_quota_enforce` is `false` (dry-run) | **`True`** on the staging app *and* worker |
+> | staging `dual_mode_ux_enabled` is `true` | **`False`** — absent from staging's env file too |
+>
+> So **P1 has never been applied to either environment**, and staging is *enforcing* rather than
+> dry-running. The checkboxes below now take the reading correctly; the values they expect are
+> the ones that were never true. Take the reading and believe it over the expectation.
+
 ## 1. Pre-flight (T-24h)
 
 All items must be green before scheduling the flip window.
@@ -19,20 +53,32 @@ All items must be green before scheduling the flip window.
 - [ ] [RUNBOOK_V2_P3_STAGING_SMOKE_TEST.md](RUNBOOK_V2_P3_STAGING_SMOKE_TEST.md) §9 sign-off complete
 - [ ] All V2 P3 Engineering tests green in CI (`strict=True` on cloud#32 xfails)
 - [ ] Dry-run log sweep on staging: zero unexpected `"bytes quota dry-run"` rejections over 48h
-- [ ] `DATANIKA_DUAL_MODE_UX_ENABLED=true` already live on prod (from P1 — confirmed via UI check)
+- [ ] `docker exec "$APP" /app/.venv/bin/python -c "from datanika.config import settings; print(settings.datanika_dual_mode_ux_enabled)"` prints `True`. 🔴 **It printed `False` on 2026-09-05.** A UI render is a proxy for the flag, not a read of it.
+
+> ⚠️ **Resolve `$APP` before running either of the probes in 1.1 and 1.2 — never hardcode a colour.** `datanika-app` is blue and `datanika-app-b` is green, and production alternates on every deploy; it was on **green** when these lines were written, so a hardcoded `docker exec datanika-app` execs into a stopped container ([core#622]). On the box:
+>
+> ```bash
+> BE=$(sed -n 's/^Define DATANIKA_BE \([0-9]*\).*/\1/p' \
+>      /etc/apache2/conf-enabled/datanika-prod-active.conf)
+> APP=$([ "$BE" = 8000 ] && echo datanika-app || echo datanika-app-b)
+> ```
+>
+> `datanika-celery` and `datanika-beat` are not blue/green and keep their names.
+>
+> ⚠️ Core's `Settings` sets **no `env_prefix`**, so the attribute is the whole env var lowercased — `settings.datanika_dual_mode_ux_enabled`, not `settings.dual_mode_ux_enabled`. Guessing the shorter name raises `AttributeError`, which looks exactly like the flag being absent.
 
 ### 1.2 Code readiness
 
-- [ ] All V2 PRs merged to `dev` and promoted to `master` on all 3 repos
-- [ ] `DATANIKA_BYTES_QUOTA_ENFORCE` env var exists in `.env.docker` on Hetzner (currently `=false`)
-- [ ] Plan seed rows updated with V2 values: Free = 10 GB, Pro = 100 GB / $0.50/GB, Enterprise = 1 TB / $0.25/GB
-- [ ] Paddle `datanika_bytes_processed` meter created (human locker — confirm with founder)
+- [ ] All V2 PRs **deployed**, not merely promoted — `git log -1` on each `master` gives the intended SHA, and the **serving container** is running it (`docker exec datanika-app cat /app/.deployed-sha` / the running image's build label). A promoted cloud tree reaches production only on the next **core** `master` push, so a cloud promotion with no core promotion behind it has not shipped.
+- [ ] `for C in "$APP" datanika-celery datanika-beat; do docker exec "$C" /app/.venv/bin/python -c "from datanika_cloud.billing.config import cloud_settings as c; print(c.bytes_quota_enforce)"; done` prints the flag's **current** value on all three, with `$APP` resolved as in the note above. ⚠️ Run a bogus-attribute control beside it (`print(c.no_such_setting)` must raise) — a probe that returns a constant reads like a resolution. **Not** `.env.docker`: a variable present in that file is not a setting the process read ([core#646]).
+- [ ] Plan rows read **off the `plans` table on the serving box** — `docker exec datanika-postgres psql -U datanika -d datanika -c "SELECT slug, bytes_included, hard_cap_bytes, overage_bytes_price_cents_per_gb FROM plans ORDER BY id;"` — and compared against the published values: Free 10 GiB hard-capped, Pro 100 GiB @ 50c/GB, Enterprise 1 TiB @ 25c/GB. 🚨 **The repository cannot answer this.** No migration creates the paid rows; they are made out of band, and Infra's rebuild-parity drill measures a from-scratch build disagreeing with production on 26 columns across 4 slugs. Every repo source (`seed_paid_plans.py`, `pricing-tiers.ts`, `SPEC_PRICING_V2`) agreeing is the state in which [cloud#177] shipped a wrong value. ⚠️ The biller uses `1024**3` — these are **GiB**, not GB.
+- [ ] Paddle `datanika_bytes_processed` meter exists **in the `production` environment** — read it from the Paddle API with the production key, not from a founder's recollection. ⚠️ `paddle_environment` resolves to `production` on all three containers ([cloud#117]), so a sandbox-only meter would satisfy a hand-check and not exist where the charge is issued.
 
 ### 1.3 Monitoring readiness
 
-- [ ] Grafana Volume Alerts group active (`volume-tenant-spike`, `volume-plan-cap-exceeded`)
-- [ ] Volume dashboard ("Datanika Volume Metrics") bind-mounted and loading
-- [ ] Revenue alerts active (`revenue-webhook-silence`, `revenue-stuck-past-due`, `revenue-mrr-drop-wow`)
+- [ ] Grafana Volume Alerts group active — read **Grafana's own provisioning API** for both rule *count* and rule *health* (`curl -s 127.0.0.1:3001/api/v1/provisioning/alert-rules`), the way the deploy's own verification step does. 🚨 A rule file on disk is not a rule in effect: `postgres-exporter`/`cadvisor`/`node-exporter` sat in **no** deploy step for six weeks with a correct config beside them ([core#616]), and three rules were green while structurally unable to fire ([core#615], [core#616], [core#622]).
+- [ ] Volume dashboard ("Datanika Volume Metrics") returns from the Grafana API on the box (`/api/search?query=Datanika%20Volume%20Metrics`) **and** its panels return series — a bind-mount present in `docker-compose.yml` says nothing about what the running container has open (single-**file** bind mounts pin the inode).
+- [ ] Revenue alerts active — same reading, from the provisioning API, asserting `health: ok` on each of the three by name. ⚠️ All rules are `noDataState: OK` filtering expressions, so *healthy ≡ NoData* and "not firing" is not evidence the rule can fire.
 - [ ] Telegram alert channel verified (send a test message)
 
 ### 1.4 Rollback readiness
@@ -52,7 +98,7 @@ All items must be green before scheduling the flip window.
 Execute during a low-traffic window (check Plausible for the quietest 2h block — typically 02:00-04:00 UTC weekdays).
 
 ```bash
-# SSH to Hetzner
+# SSH to the prod box (pointer.gr, 185.25.22.188 — Hetzner was terminated 2026-07-14)
 ssh -i ~/.ssh/id_ed25519 root@185.25.22.188
 
 # Backup current env
@@ -74,7 +120,7 @@ set -a && source .env.docker && set +a
 docker compose up -d --build app celery
 ```
 
-- [ ] `.env.docker` shows `DATANIKA_BYTES_QUOTA_ENFORCE=true`
+- [ ] `docker exec datanika-celery /app/.venv/bin/python -c "from datanika_cloud.billing.config import cloud_settings as c; print(c.bytes_quota_enforce)"` prints `True` on **every** container that reads it — `datanika-app`/`datanika-app-b`, `datanika-celery`, `datanika-beat`. 🚨 This is the post-flip verification: `grep`ping `.env.docker` (step above) confirms the *edit*, never that any process picked it up. The worker and beat are recreated separately from the blue/green swap, so one of them silently running the old value is the expected failure, not an exotic one.
 - [ ] `docker compose ps` shows `datanika-app` and `datanika-celery` healthy
 - [ ] No crash loops in first 60s (`docker logs datanika-app --tail 50`)
 
@@ -177,7 +223,7 @@ Keep a terminal open on:
 | Signal | Action |
 |--------|--------|
 | `403 quota exceeded` on a legitimate org run | Expected for Free orgs over 10 GB. Verify the modal shows correctly via browser. |
-| `403 quota exceeded` spike (>5 in 10 minutes) | Unexpected — may indicate a misconfigured plan seed. Check `SELECT * FROM plan` for correct `bytes_included` values. |
+| `403 quota exceeded` spike (>5 in 10 minutes) | Unexpected — may indicate a misconfigured plan seed. Check `SELECT slug, bytes_included, hard_cap_bytes FROM plans;` against the section 1.2 table. The table is **`plans`**, plural — this line said `plan` until 2026-09-05, which errors rather than answering. |
 | `500 Internal Server Error` on pipeline runs | Bug in IR builder or quota hook. Capture stack trace, proceed to §6 rollback. |
 | Grafana `volume-tenant-spike` fires | A single org processed >100 GB in 24h or >10× their 7-day mean. Informational — not a rollback trigger unless it's our test org. |
 | Revenue alert fires | Unrelated to V2 flip unless the flip somehow corrupted subscription state. Investigate separately. |
@@ -196,14 +242,14 @@ If the flip causes production issues that cannot be quickly diagnosed:
 ssh -i ~/.ssh/id_ed25519 root@185.25.22.188
 cd /opt/datanika/datanika
 
-# Restore the backed-up env
-cp .env.docker.bak-* .env.docker
-# OR manually set:
-# vim .env.docker → DATANIKA_BYTES_QUOTA_ENFORCE=false
+# Restore the backup you took in section 3, BY NAME. `.bak-*` is a glob and the box
+# carries older ones, so it restores whichever sorts last and may not be yours.
+cp -a .env.docker.bak-<the stamp from section 3> .env.docker
 
-# Rebuild and restart
-set -a && source .env.docker && set +a
-docker compose up -d --build app celery
+# Apply it the same way section 3 does: swap colours, then recreate the workers.
+bash scripts/deploy-bluegreen.sh --env prod
+set -a && . ./.env.docker && set +a
+docker compose up -d --force-recreate celery beat
 ```
 
 **Expected rollback time**: ~45s (build is cached from the flip 2h ago).
@@ -260,4 +306,11 @@ docker compose up -d --build app celery
 - [SPEC_GB_THROUGHPUT_METRICS.md](https://github.com/datanika-io/datanika-cloud/blob/dev/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md) — monitoring spec
 - PRICING_PIVOT_DECISIONS.md (`plans/PRICING_PIVOT_DECISIONS.md`) — Q6 hard-sunset decision
 - LAUNCH_WEEK_2026-04-28.md (`plans/growth/LAUNCH_WEEK_2026-04-28.md`) — coordinated launch plan
-- PLAN_HUMAN_LOCKERS.md (`plans/PLAN_HUMAN_LOCKERS.md`) — Paddle meter creation locker
+- The Paddle-meter locker is now a `human-locked` issue in the **private** `datanika-cloud` tracker. `plans/PLAN_HUMAN_LOCKERS.md` was **deleted** on 2026-08-31 (founder instruction); the original is archived at `archive/plans-migration-2026-08-31/`. Do not go looking for the file.
+
+[core#615]: https://github.com/datanika-io/datanika-core/issues/615
+[core#616]: https://github.com/datanika-io/datanika-core/issues/616
+[core#622]: https://github.com/datanika-io/datanika-core/issues/622
+[core#646]: https://github.com/datanika-io/datanika-core/issues/646
+[cloud#117]: https://github.com/datanika-io/datanika-cloud/issues/117
+[cloud#177]: https://github.com/datanika-io/datanika-cloud/issues/177

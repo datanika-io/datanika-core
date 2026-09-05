@@ -786,6 +786,102 @@ line also carries the whole outcome vector, so the code's precedence cannot hide
    would have shipped it without case 3; the first real subprocess invocation returned
    `exit=1, no verdict line` four times in a row.
 
+
+## 27. A control that compares two views of ONE mechanism is blind to that mechanism being wrong
+
+**(2026-09-05, [cloud#195].)** Two scanners read core's migration tree — one for column *names*, one
+for *nullability*. They had drifted: the nullability one ignored `rename_table`, so `uploads`, which
+exists only because of `op.rename_table("pipelines", "uploads")`, was represented by **one of its
+twelve columns**.
+
+The fix merged them into one traversal. The first regression control asserted **the two scanners
+agree with each other**. Then the mutation harness deleted the `rename_table` branch from the shared
+fold and reported **GREEN against a declared RED**: with one traversal, both views go equally blind,
+still agree, and the control passes.
+
+**Anchor a control on something the mechanism under test cannot influence.** Here that is
+`Base.metadata` — the model. Re-derive the expectation from the independent authority, never from a
+second reading of the same instrument.
+
+🔑 **Corollary: unifying two implementations makes them consistent, which is not the same as making
+them right — and it destroys the only cross-check you had.** If you merge duplicated logic, replace
+the implicit comparison with an external anchor in the same commit.
+
+## 28. Absence and false agreement are different failures, and the second is worse
+
+Same issue. The report predicted the invisible table would have *"no entry at all"*. It had **one**
+entry, because a later migration added a column naming the table directly — so the guard compared 1
+of 12 columns, found agreement, and reported **AGREE**.
+
+> **"Agrees on 1 of 12" and "agrees on 12 of 12" are the same green.**
+
+An absence at least looks like an absence. A partial reading looks like a complete one.
+
+**Whenever a comparison skips silently — `if key not in scanned: continue` — bound the skip set and
+assert it.** The question is not *"did anything disagree?"* but *"what did I actually examine?"*
+Where the skip set should be empty, assert `== set()`; where it legitimately is not, name its members
+so growth is a red.
+
+⚠️ **And say which question a denominator answers.** The same table read **INVISIBLE** over the
+`TimestampMixin` columns and **AGREE** over all columns. Both were correct; they answer different
+questions, and quoting one to settle the other is how a reconciliation goes wrong twice.
+
+## 29. The directory that mirrors the source is not the set of directories that consume it
+
+**(2026-09-05, [core#864].)** Test placement mirrors source, so a change to
+`datanika/tasks/pipeline_tasks.py` gets verified with `pytest tests/test_tasks/`. That ran green —
+**101 passed** — and CI then failed on two tests in `tests/test_hooks_integration.py`, which reach
+the same counter through `run_pipeline` from three levels away.
+
+Rule 19-style directory runs catch shared-fixture contamination. They do **not** find consumers, and
+the mirroring convention actively points you away from them.
+
+**Before pushing a behavioural change, sweep the whole test tree for the SHAPE, not the file.** Here
+the shape was a fixture constructing the node kind whose handling changed:
+
+```bash
+grep -rn 'resource_type.value = \|resource_type="test"' --include=*.py tests/
+```
+
+That sweep found exactly one other file, and named it in seconds. ⚠️ Grep for what the *fixtures*
+build, not for the function name — a consumer that reaches your code indirectly never mentions it.
+
+🔑 **Related, and the reason this bites hardest on "dead code":** the two failing fixtures asserted a
+combination the real dependency never produces (`resource_type="test"` with `status="success"`;
+real dbt reports `"pass"`). **A branch that is dead against reality is live against a hand-built
+mock**, so deleting dead code is exactly when hand-built fixtures break — and their breakage is the
+signal that the branch was reachable in someone's model of the world.
+
+## 30. A status that plausibly explains a stall is not the cause of it
+
+**(2026-09-05.)** A PR sat `BEHIND` for ten minutes and never entered the merge queue. `BEHIND` is a
+documented cause of exactly that — [core#997] records that auto-merge merges but will not rebase —
+so the reading was coherent, and I was one edit from writing up a refinement of the merge-queue rule.
+
+**A required check was red.** The check-run `completed_at` timestamps settled it in one call:
+
+```bash
+gh api "repos/<r>/commits/<sha>/check-runs?per_page=100" \
+  -q '.check_runs[] | "\(.name) \(.conclusion) completed=\(.completed_at)"'
+```
+
+`test` had concluded `failure` **before** the window even began. The `BEHIND` was real, downstream,
+and irrelevant.
+
+**When a familiar explanation fits, the cost of confirming it is one command — and the cost of not
+confirming it is a rule everybody follows.** Read the timestamps, not just the states: a status is a
+snapshot, and only `completed_at` tells you what was true *during* the window you observed.
+
+## 31. Anything backgrounded gets its own filename — including the second copy of itself
+
+**(2026-09-05.)** The existing rule is *"do not overwrite `<dept>_exec.sh` while a backgrounded run
+of it is in flight"* — bash reads a script incrementally from a byte offset. I obeyed it by giving a
+long poll its own file, then **started a second poll by overwriting that same file** while the first
+was still running. Exit code 2, `unexpected EOF`, from a script whose contents were valid.
+
+**The name has to be unique per *invocation*, not per purpose.** A second waiter is a second script.
+Nothing was lost here because the poll was read-only — which is the only reason this is a rule
+rather than an incident.
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
@@ -802,3 +898,6 @@ line also carries the whole outcome vector, so the code's precedence cannot hide
 [core#626]: https://github.com/datanika-io/datanika-core/issues/626
 [core#662]: https://github.com/datanika-io/datanika-core/issues/662
 [core#638]: https://github.com/datanika-io/datanika-core/issues/638
+[core#864]: https://github.com/datanika-io/datanika-core/issues/864
+[core#997]: https://github.com/datanika-io/datanika-core/issues/997
+[cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195

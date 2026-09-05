@@ -4,9 +4,13 @@
 
 **When to run**: After (a) Engineering's P1 plumbing lands (bytes quota hook, IR mode resolver, `pipeline.mode` column) and (b) `datanika-cloud` plugin extends `usage.get_summary` to populate `bytes_used`/`bytes_limit` and sets `QuotaExceededError.metric = "bytes_processed"`.
 
-**Blast radius**: Staging only (`staging.datanika.io` or equivalent Hetzner staging box). Do NOT flip the flag on `app.datanika.io` until this runbook passes.
+**Blast radius**: Staging only (`staging-app.datanika.io`, on the pointer.gr box `185.25.22.188` — the Hetzner box was terminated 2026-07-14). Do NOT flip the flag on `app.datanika.io` until this runbook passes.
 
 **Owner**: Product (runbook author) executes; QA verifies. Infra on-call paged only if the flip itself triggers a prod alert.
+
+> 🚨 **Staging and production share a host, and until 2026-09-05 every path in this file pointed at PRODUCTION.** Sections 0, 1, 2 and 8 all named `/opt/datanika/datanika/.env.docker` — that is **prod**. Staging's is **`/opt/datanika-staging/.env.docker`**, verified against the staging compose file's own `env_file:` entry on the box. Following the old text edited production's environment and then ran `docker compose up -d app` from production's directory, in a runbook whose blast radius is stated as staging only. **Check which directory you are in before you edit anything.**
+>
+> ⚠️ Staging is **blue/green too** — `8100` = `datanika-staging-app`, `8110` = `datanika-staging-app-b`. Resolve the live one with `/opt/datanika-staging/active-app.sh` rather than hardcoding either name; the checkboxes below name the blue colour.
 
 ---
 
@@ -16,19 +20,19 @@
 - [ ] Cloud PR for `usage.get_summary` bytes + `QuotaExceededError.metric` merged and promoted
 - [ ] Staging has been re-deployed with the above commits
 - [ ] You have SSH access to the staging box (or a staging `psql` equivalent)
-- [ ] You know the current staging `.env` location (typically `/opt/datanika/datanika/.env.docker`)
+- [ ] You know the current staging `.env` location: **`/opt/datanika-staging/.env.docker`**. Derive it rather than trusting this line — `grep -n -A2 env_file /opt/datanika-staging/docker-compose.yml` names it, relative to that directory. `/opt/datanika/datanika/.env.docker` is **production's**.
 
 ## 1. Seed the test tenant
 
 Create a Free-tier org at 9.8 GB of bytes-processed usage (i.e. 98% of the 10 GB cap) so the Path A modal fires on the first pipeline run that would tip over.
 
 ```bash
-# SSH to staging
-ssh root@<staging-ip>
+# SSH to staging -- it shares the production box
+ssh -i ~/.ssh/id_ed25519 root@185.25.22.188
 
-# Shell into the app container
-cd /opt/datanika/datanika
-docker compose exec app bash
+# Shell into the SERVING staging app container. /opt/datanika/datanika is PRODUCTION,
+# and `compose exec app` there names only the blue colour in any case.
+docker exec -it "$(/opt/datanika-staging/active-app.sh)" bash
 
 # Inside container — seed via Python
 uv run python <<'PY'
@@ -93,17 +97,21 @@ PY
 ## 2. Flip the flag on staging
 
 ```bash
-# On staging, edit the .env
-vim /opt/datanika/datanika/.env.docker
-# Set: DATANIKA_DUAL_MODE_UX_ENABLED=true
+# STAGING's env file. /opt/datanika/datanika/ is PRODUCTION -- check the path twice.
+cd /opt/datanika-staging
+cp -a .env.docker .env.docker.bak-$(date +%Y%m%d-%H%M)
 
-# Restart the app container to pick up the new env
-cd /opt/datanika/datanika
-set -a && source .env.docker && set +a
-docker compose up -d app
+grep -q '^DATANIKA_DUAL_MODE_UX_ENABLED=' .env.docker \
+  && sed -i 's/^DATANIKA_DUAL_MODE_UX_ENABLED=.*/DATANIKA_DUAL_MODE_UX_ENABLED=true/' .env.docker \
+  || printf 'DATANIKA_DUAL_MODE_UX_ENABLED=true\n' >> .env.docker
+
+# Staging is blue/green, so `up -d app` can start the inactive colour and leave the
+# serving one on the old environment. Swap instead.
+bash /opt/datanika-staging-src/datanika/scripts/deploy-bluegreen.sh --env staging
+docker compose -p datanika-staging up -d --force-recreate celery beat
 ```
 
-- [ ] `.env.docker` has `DATANIKA_DUAL_MODE_UX_ENABLED=true`
+- [ ] `docker exec datanika-staging-app /app/.venv/bin/python -c "from datanika.config import settings; print(settings.datanika_dual_mode_ux_enabled)"` prints `True` — the process, not `.env.docker`. A variable present in that file is not a setting the process read ([core#646]); it is why 48% of production reconnects once served a stale session.
 - [ ] App container restarted and healthy (`docker compose ps` shows `datanika-app` up)
 
 ## 3. Verify dashboard dual-dim usage bar
@@ -165,13 +173,11 @@ Trigger a non-quota error (e.g. malformed connection config) and confirm the mod
 If any of steps 3–7 fail and the issue is not a quick fix:
 
 ```bash
-# On staging — un-flip the flag
-vim /opt/datanika/datanika/.env.docker
-# Set: DATANIKA_DUAL_MODE_UX_ENABLED=false
-
-cd /opt/datanika/datanika
-set -a && source .env.docker && set +a
-docker compose up -d app
+# On staging -- un-flip the flag. STAGING's directory, not /opt/datanika/datanika.
+cd /opt/datanika-staging
+sed -i 's/^DATANIKA_DUAL_MODE_UX_ENABLED=.*/DATANIKA_DUAL_MODE_UX_ENABLED=false/' .env.docker
+bash /opt/datanika-staging-src/datanika/scripts/deploy-bluegreen.sh --env staging
+docker compose -p datanika-staging up -d --force-recreate celery beat
 ```
 
 - [ ] Flag reverted
@@ -186,7 +192,7 @@ docker compose up -d app
 - [ ] Product lead approves prod flip
 - [ ] Infra on-call aware of the flip window (for monitoring/alerting)
 
-Prod flip follows the same `vim .env.docker` + `docker compose up -d app` pattern on `app.datanika.io`. Keep a terminal open on Grafana (`datanika-grafana:3001`) for the first 15 minutes post-flip to catch any unexpected error-rate spike.
+The prod flip is **not** a `vim` + `docker compose up -d app` on `app.datanika.io` — that starts the inactive colour and can leave the serving container on the old environment. Follow [RUNBOOK_V2_P4_FLAG_FLIP.md](RUNBOOK_V2_P4_FLAG_FLIP.md) section 3, which swaps colours instead. Keep a terminal on Grafana for the first 15 minutes post-flip — and note it binds `127.0.0.1` only, so tunnel to it (`ssh -N -L 3001:127.0.0.1:3001 root@185.25.22.188`) rather than expecting `datanika-grafana:3001` to resolve from your machine.
 
 ---
 
@@ -204,3 +210,5 @@ From SPEC_DUAL_MODE_UX.md §13.2 — the 3 open questions carried on current_sta
 - [core#165](https://github.com/datanika-io/datanika-core/pull/165) — V2 P1 UI implementation
 - [plans/product/PLAN_PRODUCT.md](https://github.com/datanika-io/datanika-core/issues/734) — V2 P1 row
 - plans/product/current_state.md (`plans/product/current_state.md`) — current standing
+
+[core#646]: https://github.com/datanika-io/datanika-core/issues/646

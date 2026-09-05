@@ -23,6 +23,48 @@ from datanika.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 execution_service = ExecutionService()
 
+#: dbt node kinds whose successful execution is metered as a model run.
+#:
+#: 🚨 **``"test"`` is deliberately absent (core#864, DECIDED by Product 2026-09-04,
+#: option 2).** It was here, and it could never match: a passing dbt test node reports
+#: ``status.value == "pass"``, never ``"success"``, so the conjunction below required a
+#: node to be simultaneously a passing test and report the model success string. Test
+#: nodes have never been billable, for the life of the counter.
+#:
+#: The decision was to make the code say so, **not** to start metering them — adding
+#: ``"pass"`` to the status filter would have raised metered volume for every tenant
+#: running dbt tests, i.e. a pricing change arriving as a bug fix.
+#:
+#: ⚠️ **Deleting the arm is not cosmetic, because the arm was one dbt release from
+#: waking up.** ``tests/test_services/test_dbt_result_contract.py::TestTestNodeStatusIsNotSuccess``
+#: exists precisely because the day dbt reports ``"success"`` for a passing test, the old
+#: tuple would have started billing — a pricing change arriving as a dependency bump,
+#: which is the thing nobody would be watching for. With the arm gone that release is a
+#: non-event.
+_BILLABLE_RESOURCE_TYPES = ("model",)
+
+
+def is_billable_node(node_result) -> bool:
+    """Does this dbt node result count as one metered model run? (core#864)
+
+    Extracted from ``run_pipeline_task`` so it can be asserted against a **real** dbt
+    result rather than re-typed. It used to be an inline generator expression, and
+    ``test_the_billable_nodes_expression_still_counts`` asserted a **verbatim copy** of
+    it — which is green whatever the shipped expression does. Every other unit test of
+    the counter used bare ``MagicMock()``, and a ``MagicMock`` answers ``status.value``
+    with another ``MagicMock``, so those could not fail either way.
+
+    ``getattr`` chains rather than attribute access: ``raw_result`` is whatever dbt
+    handed back, and a node result carrying no ``node`` is not a billing event.
+    """
+    if getattr(getattr(node_result, "status", None), "value", None) != "success":
+        return False
+    node = getattr(node_result, "node", None)
+    resource_type = getattr(node, "resource_type", None)
+    if resource_type is None:
+        return False
+    return getattr(resource_type, "value", None) in _BILLABLE_RESOURCE_TYPES
+
 
 def _sync_catalog_after_pipeline(
     session: Session,
@@ -256,14 +298,9 @@ def run_pipeline(
             except Exception:
                 logger.exception("Pipeline catalog sync failed (non-fatal)")
 
-            # Count successful model + test nodes for usage metering
-            billable_nodes = sum(
-                1
-                for r in raw_result
-                if getattr(getattr(r, "status", None), "value", None) == "success"
-                and getattr(getattr(r, "node", None), "resource_type", None) is not None
-                and getattr(r.node.resource_type, "value", None) in ("model", "test")
-            )
+            # Count successful model nodes for usage metering — test nodes are not
+            # metered (core#864, Product's decision; see is_billable_node).
+            billable_nodes = sum(1 for r in raw_result if is_billable_node(r))
             # Recorded here, announced after the commit (core#522) — see the
             # `else` clause below.
             if billable_nodes > 0:

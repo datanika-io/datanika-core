@@ -159,19 +159,21 @@ class TestTheResultObjectContract:
         )
 
     def test_the_billable_nodes_expression_still_counts(self, dbt_result):
-        """The metering expression itself, copied verbatim from pipeline_tasks.py.
+        """The **shipped** predicate, against a real dbt result.
 
-        Asserted as an expression rather than as its parts, because the parts can
+        Asserted as the whole predicate rather than as its parts, because the parts can
         each be individually fine while the conjunction matches nothing.
+
+        🚨 **This used to be a verbatim COPY of the expression in `pipeline_tasks.py`,
+        and that made it green whatever the shipped code did** (core#864). It is the same
+        defect as the `MagicMock` the message below warns about, one level out: a test
+        that re-types the thing under test is asserting against itself. It now imports
+        `is_billable_node` and calls it, so a change to the real counter reaches here.
         """
+        from datanika.tasks.pipeline_tasks import is_billable_node
+
         raw_result = list(dbt_result["raw"].result)
-        billable_nodes = sum(
-            1
-            for r in raw_result
-            if getattr(getattr(r, "status", None), "value", None) == "success"
-            and getattr(getattr(r, "node", None), "resource_type", None) is not None
-            and getattr(r.node.resource_type, "value", None) in ("model", "test")
-        )
+        billable_nodes = sum(1 for r in raw_result if is_billable_node(r))
         assert billable_nodes == len(raw_result) == 1, (
             f"billable_nodes counted {billable_nodes} of {len(raw_result)} real "
             "successful model nodes. Every unit test of this counter uses "
@@ -235,21 +237,31 @@ class TestTheResultObjectContract:
 
 
 class TestTestNodeStatusIsNotSuccess:
-    """A pre-existing metering defect this file's evidence exposes (core#825).
+    """The premise behind core#864's decision, asserted against real dbt (core#825).
 
-    ``billable_nodes`` counts nodes with ``status.value == "success"`` AND
-    ``resource_type.value in ("model", "test")``. Measured against real dbt: a
-    **passing test node reports ``status.value == "pass"``**, never ``"success"``.
-    So the ``"test"`` arm of that tuple can never match, and test nodes have never
-    been billable.
+    🆕 **Rewritten 2026-09-05, because the code this described has changed and a
+    docstring that contradicts the code is worse than none.** It used to say
+    ``billable_nodes`` counts ``resource_type.value in ("model", "test")`` and that the
+    ``"test"`` arm could never match. The first half is now **false**:
+    ``_BILLABLE_RESOURCE_TYPES`` is ``("model",)`` — core#864, decided by Product
+    (option 2: dbt test nodes are **not** metered).
 
-    This is NOT caused by the dbt bump -- ``TestStatus.Pass`` has carried the value
-    ``"pass"`` for many dbt versions. It is asserted here, deliberately, in the
-    file that has the only real dbt result to assert it against, so that the
-    behaviour is *recorded* rather than rediscovered as a billing bug later.
+    What this class still asserts is unchanged and is the *premise* that made that
+    decision cheap: a **passing test node reports ``status.value == "pass"``**, never
+    ``"success"``. That is why deleting the arm changed no count, no bill and no block,
+    and it is why the change was a pure intent correction rather than a pricing move.
 
-    ⚠️ Do not "fix" this by adding ``"pass"`` to the status filter. Whether test
-    nodes should be billable is a pricing question, not an engineering one.
+    NOT caused by any dbt bump -- ``TestStatus.Pass`` has carried ``"pass"`` for many
+    dbt versions. Asserted here, in the file with the only real dbt result to assert it
+    against.
+
+    ⚠️ **What a red here means has changed too, and it is now smaller.** Before, a flip
+    to ``"success"`` would have started billing test nodes silently — a pricing change
+    arriving as a dependency bump. With the arm deleted that release is a non-event for
+    billing, and a red here means only that Product's premise no longer holds and the
+    decision is worth re-reading. Still do not "fix" it by adding ``"pass"`` to the
+    status filter: whether test nodes bill is a pricing question, and the answer on
+    record is no.
     """
 
     def test_a_passing_test_node_reports_pass_not_success(self, dbt_result):
@@ -264,7 +276,43 @@ class TestTestNodeStatusIsNotSuccess:
         statuses = {getattr(r.status, "value", None) for r in raw.result}
         assert statuses == {"pass"}, (
             f"test node statuses are {statuses}. If this is now {{'success'}}, the "
-            "'test' arm of billable_nodes has started matching and metered volume "
-            "will jump for every tenant running dbt tests -- a pricing change "
-            "arriving as a dependency bump."
+            "premise behind core#864's decision no longer holds: test nodes would be "
+            "indistinguishable from models by status alone, and the only thing keeping "
+            "them unmetered is _BILLABLE_RESOURCE_TYPES == ('model',). That is still "
+            "correct -- re-read the decision, do not widen the tuple."
+        )
+
+    def test_a_passing_test_node_is_not_metered_whatever_its_status(self, dbt_result):
+        """🔑 The property the decision actually guarantees, asserted end to end.
+
+        The assertion above is about dbt's *status vocabulary*, which is a fact about a
+        dependency. This one is about **our** meter, and it holds even if that fact
+        changes -- which is the whole value of deleting the arm rather than relying on
+        ``"pass"`` never becoming ``"success"``.
+
+        ⚠️ **Stated so nobody counts it as evidence it is not: this test is green under
+        BOTH tuples today and cannot currently go red.** A passing test node reports
+        ``"pass"``, so the status filter rejects it before the resource-type filter is
+        reached, whether or not ``"test"`` is in the tuple. It becomes discriminating
+        only in the scenario it exists for. The discriminating assertion today is
+        ``test_a_test_node_reporting_success_is_still_not_billable`` in
+        ``tests/test_tasks/test_pipeline_tasks.py``, which constructs that scenario
+        directly and goes red against the pre-decision tuple.
+        """
+        from dbt.cli.main import dbtRunner
+
+        from datanika.tasks.pipeline_tasks import is_billable_node
+
+        svc = dbt_result["svc"]
+        project = svc.get_project_path(ORG)
+        raw = dbtRunner().invoke(
+            ["test", "--project-dir", str(project), "--profiles-dir", str(project)]
+        )
+        assert raw.result, "no test nodes ran, so this proves nothing"
+        kinds = {getattr(getattr(r, "node", None), "resource_type", None) for r in raw.result}
+        assert kinds, "no node carried a resource_type, so the assertion below is vacuous"
+        billable = [r for r in raw.result if is_billable_node(r)]
+        assert not billable, (
+            f"{len(billable)} of {len(raw.result)} real dbt TEST nodes are being metered "
+            "as model runs. core#864 decided they are not billable."
         )

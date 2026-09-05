@@ -1,6 +1,7 @@
 """TDD tests for pipeline Celery tasks."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,7 +16,11 @@ from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
-from datanika.tasks.pipeline_tasks import run_pipeline
+from datanika.tasks.pipeline_tasks import (
+    _BILLABLE_RESOURCE_TYPES,
+    is_billable_node,
+    run_pipeline,
+)
 
 
 @pytest.fixture
@@ -643,3 +648,91 @@ class TestRunPipelinePredictedRuns:
 
         db_session.refresh(run)
         assert run.status == RunStatus.SUCCESS
+
+
+class TestOnlyModelNodesAreBillable:
+    """core#864 — Product DECIDED (2026-09-04, option 2): dbt test nodes are **not**
+    metered, so the dead ``"test"`` arm of the billable-node counter is deleted.
+
+    🔑 **The decision changes no count, no bill and no block today**, which is exactly why
+    it was Product's to make cheaply: a passing dbt test reports ``status.value ==
+    "pass"``, never ``"success"``, so the arm could never match. The alternative — adding
+    ``"pass"`` to the status filter — would have raised metered volume for every tenant
+    running dbt tests, i.e. a pricing change arriving as a bug fix.
+
+    🚨 **So the test that matters is not about today's dbt.** Deleting a branch that
+    cannot fire is invisible to any assertion about current behaviour. What the deletion
+    actually buys is the *future*: the day dbt reports ``"success"`` for a passing test
+    node, the old tuple would have started billing silently — a pricing change arriving
+    as a **dependency bump**, and nobody watches for those.
+    ``test_a_test_node_reporting_success_is_still_not_billable`` is that scenario, and it
+    is the one that goes red against the pre-decision code.
+
+    ⚠️ **No ``MagicMock`` anywhere here, deliberately.** The issue's own "why it went
+    unnoticed" is that every unit test of this counter used a bare ``MagicMock()``, which
+    answers ``status.value`` with another ``MagicMock`` and therefore passes whatever the
+    real values are — a checker with one possible answer. ``SimpleNamespace`` raises
+    ``AttributeError`` for anything it was not given, so a missing attribute is a failure
+    rather than a fabrication. The real-dbt end of this is
+    ``tests/test_services/test_dbt_result_contract.py``, which drives an actual ``dbt
+    run`` and now calls this same shipped function instead of a copy of it.
+    """
+
+    @staticmethod
+    def _node(status: str, resource_type: str):
+        """A node result shaped like dbt's, built from real strings, not a mock."""
+        return SimpleNamespace(
+            status=SimpleNamespace(value=status),
+            node=SimpleNamespace(resource_type=SimpleNamespace(value=resource_type)),
+        )
+
+    def test_a_successful_model_node_is_billable(self):
+        """The control. A narrowing that broke this would meter nothing at all."""
+        assert is_billable_node(self._node("success", "model")) is True
+
+    def test_a_test_node_reporting_success_is_still_not_billable(self):
+        """🔑 The assertion the decision is actually about — and the only red one.
+
+        This shape does not occur with any dbt we ship against: ``TestStatus.Pass``
+        carries ``"pass"``. It is asserted because the *old* tuple would have counted it
+        the moment that changed, and a dependency bump is the least-watched way for a
+        bill to move.
+        """
+        assert is_billable_node(self._node("success", "test")) is False, (
+            "a test node is being metered as a model run. core#864 decided (Product, "
+            "option 2) that dbt test nodes are NOT metered. If test nodes should now "
+            "bill, that is a pricing decision and it does not belong in this tuple "
+            "without one."
+        )
+
+    def test_a_passing_test_node_is_not_billable(self):
+        """Today's real shape — passes before and after, and says so.
+
+        Kept as the *documentation* of why the arm was dead, not as evidence of the fix:
+        it is green against both versions of the code.
+        """
+        assert is_billable_node(self._node("pass", "test")) is False
+
+    def test_a_failed_model_node_is_not_billable(self):
+        assert is_billable_node(self._node("error", "model")) is False
+
+    def test_a_snapshot_or_seed_node_is_not_billable(self):
+        """Neither was ever in the tuple; asserted so a widening has to justify itself."""
+        assert is_billable_node(self._node("success", "snapshot")) is False
+        assert is_billable_node(self._node("success", "seed")) is False
+
+    def test_a_node_result_with_no_node_is_not_billable(self):
+        """dbt can hand back a result carrying no node; that is not a billing event."""
+        assert is_billable_node(SimpleNamespace(status=SimpleNamespace(value="success"))) is False
+
+    def test_the_billable_set_is_exactly_model(self):
+        """🚨 Pins the decision itself, so a widening is a deliberate edit here.
+
+        If this set GREW, something added a node kind to the meter — that is a pricing
+        change and needs Product, not a commit. If it SHRANK to empty, transformation
+        runs have stopped being metered entirely.
+        """
+        assert _BILLABLE_RESOURCE_TYPES == ("model",), (
+            f"the metered dbt node kinds are now {_BILLABLE_RESOURCE_TYPES}. core#864 "
+            "settled this at ('model',). Changing it changes what customers are billed."
+        )

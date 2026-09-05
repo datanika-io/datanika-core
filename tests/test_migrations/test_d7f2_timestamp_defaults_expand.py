@@ -299,15 +299,55 @@ def test_a_null_created_at_is_backfilled_too(at_parent, roundtrip_db_url):
 
 
 def test_no_null_timestamps_remain_on_any_of_the_seven(at_parent, roundtrip_db_url):
-    """The measurement release N owes release N+1, asserted on every one of the seven
-    rather than on the one table it was convenient to seed."""
+    """The measurement release N owes release N+1 — and **what it examined, stated**.
+
+    🚨 **This docstring used to read "asserted on every one of the seven rather than on
+    the one table it was convenient to seed". That was an overclaim, and it was exactly
+    backwards.** ``at_parent`` drops and recreates ``public`` before every test, so the
+    schema is migrated up from empty: measured, the seven tables hold **1 row between
+    them** — ``plans``, from the free-plan seed migration — and the other six hold
+    **zero**. ``count(*) WHERE … IS NULL == 0`` is arithmetically true of an empty table,
+    so the loop below cannot fail for six of the seven. Iterating all seven made it read
+    like seven tables' worth of evidence.
+
+    That is the ``plans >= 5`` restore-drill failure in miniature: a count is not a
+    measurement unless something says the rows were there to count. So the populated set
+    is **pinned**, and the loop's real coverage is a stated fact rather than an
+    impression.
+
+    🔑 **The backfill itself IS armed** —
+    ``test_an_existing_null_is_backfilled_from_created_at_not_from_now`` and
+    ``test_a_null_created_at_is_backfilled_too`` insert probe rows with NULL timestamps
+    and assert they come back non-NULL, the second with an explicit control that the
+    probe really did start NULL. This test is the *census*, not the behaviour, and only
+    the census was overclaiming.
+
+    ⚠️ **Release N+1's basis is the PRODUCTION count, and it is Infra's** (core#1069
+    step 2). When it arrives it must carry **rows beside NULLs, per table** — a table
+    reading ``0 NULLs`` because it is empty and one reading ``0 NULLs`` because the
+    backfill worked are the same number and call for different confidence.
+    """
     _upgrade(at_parent, roundtrip_db_url)
+
+    census: dict[str, tuple[int, int]] = {}
     with at_parent.begin() as conn:
         for table in sorted(EXPECTED_TABLES):
+            rows = conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
             remaining = conn.execute(
                 text(f"SELECT count(*) FROM {table} WHERE created_at IS NULL OR updated_at IS NULL")
             ).scalar_one()
+            census[table] = (rows, remaining)
             assert remaining == 0, f"{table} still holds {remaining} NULL timestamp row(s)"
+
+    populated = {table for table, (rows, _) in census.items() if rows}
+    assert populated == {"plans"}, (
+        f"the tables this assertion actually examined are {sorted(populated)}, expected "
+        f"['plans'] (full census, table -> (rows, nulls): {census}).\n\n"
+        "If this GREW, the harness now seeds more of the seven and the loop above is "
+        "real evidence for them — say so and widen this set. If it SHRANK, even the one "
+        "row is gone and the loop is wholly vacuous. Either way the number release N+1 "
+        "rests on is the PRODUCTION count (core#1069 step 2, Infra's), not this one."
+    )
 
 
 # ---------------------------------------------------------------------------

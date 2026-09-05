@@ -4,7 +4,7 @@
 
 **When to run**: After (a) Engineering's P1 plumbing lands (bytes quota hook, IR mode resolver, `pipeline.mode` column) and (b) `datanika-cloud` plugin extends `usage.get_summary` to populate `bytes_used`/`bytes_limit` and sets `QuotaExceededError.metric = "bytes_processed"`.
 
-**Blast radius**: Staging only (`staging.datanika.io` or equivalent Hetzner staging box). Do NOT flip the flag on `app.datanika.io` until this runbook passes.
+**Blast radius**: Staging only (`staging-app.datanika.io`, on the pointer.gr box `185.25.22.188` — the Hetzner box was terminated 2026-07-14). Do NOT flip the flag on `app.datanika.io` until this runbook passes.
 
 **Owner**: Product (runbook author) executes; QA verifies. Infra on-call paged only if the flip itself triggers a prod alert.
 
@@ -103,7 +103,7 @@ set -a && source .env.docker && set +a
 docker compose up -d app
 ```
 
-- [ ] `.env.docker` has `DATANIKA_DUAL_MODE_UX_ENABLED=true`
+- [ ] `docker exec datanika-staging-app /app/.venv/bin/python -c "from datanika.config import settings; print(settings.datanika_dual_mode_ux_enabled)"` prints `True` — the process, not `.env.docker`. A variable present in that file is not a setting the process read ([core#646]); it is why 48% of production reconnects once served a stale session.
 - [ ] App container restarted and healthy (`docker compose ps` shows `datanika-app` up)
 
 ## 3. Verify dashboard dual-dim usage bar
@@ -204,3 +204,5 @@ From SPEC_DUAL_MODE_UX.md §13.2 — the 3 open questions carried on current_sta
 - [core#165](https://github.com/datanika-io/datanika-core/pull/165) — V2 P1 UI implementation
 - [plans/product/PLAN_PRODUCT.md](https://github.com/datanika-io/datanika-core/issues/734) — V2 P1 row
 - plans/product/current_state.md (`plans/product/current_state.md`) — current standing
+
+[core#646]: https://github.com/datanika-io/datanika-core/issues/646

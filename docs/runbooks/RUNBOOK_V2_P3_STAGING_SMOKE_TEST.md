@@ -12,10 +12,10 @@
 
 ## 0. Pre-flight
 
-- [ ] Engineering V2 P3 IR builder PRs merged to `dev` and deployed to staging
-- [ ] Cloud `bytes_processed` kwarg handlers are active on staging (cloud#33 plumbing from P1 — already on `master`)
-- [ ] `DATANIKA_DUAL_MODE_UX_ENABLED=true` set on staging `.env.docker` (from the P1 flip)
-- [ ] `DATANIKA_BYTES_QUOTA_ENFORCE=false` on staging (dry-run mode — NOT enforcing yet)
+- [ ] Engineering V2 P3 IR builder PRs **running on staging** — compare the staging container's build SHA against the merge commit, rather than reading the branch.
+- [ ] Cloud `bytes_processed` handlers are **subscribed in the worker** — `docker exec datanika-staging-celery /app/.venv/bin/python -c "import datanika.tasks.celery_app; from datanika import hooks; print(len(hooks._handlers))"` returns a non-zero count including `run.before_execute`. 🚨 **"Already on `master`" is not evidence of this.** [core#772]: the code was on `master`, in the image, and `bootstrap_cloud()` ran only in the web process — the worker dispatched into an **empty handler dict**, so run-quota, volume-quota and every run/byte metering hook had *never once* executed in production. Ask the process, and import the entrypoint **it** imports; a bare interpreter registers nothing.
+- [ ] `docker exec datanika-staging-app /app/.venv/bin/python -c "from datanika.config import settings; print(settings.datanika_dual_mode_ux_enabled)"` prints `True` (set by the P1 flip). Reading `.env.docker` confirms the file, not the process ([core#646]).
+- [ ] `docker exec datanika-staging-celery /app/.venv/bin/python -c "from datanika_cloud.billing.config import cloud_settings as c; print(c.bytes_quota_enforce)"` prints `False` on staging (dry-run mode — NOT enforcing yet). ⚠️ Check the **worker**, not only the web process: the quota hooks fire inside the worker.
 - [ ] Staging has a PostgreSQL source connection available (or create one via the e2e seed)
 - [ ] You have SSH access to the staging box
 - [ ] Grafana accessible at `staging-app.datanika.io:3001` (or port-forwarded)
@@ -214,3 +214,6 @@ Proceed to [RUNBOOK_V2_P4_FLAG_FLIP.md](RUNBOOK_V2_P4_FLAG_FLIP.md).
 - [SPEC_GB_THROUGHPUT_METRICS.md](https://github.com/datanika-io/datanika-cloud/blob/dev/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md) — Grafana dashboards + alerts
 - [RUNBOOK_V2_P1_STAGING_SMOKE_TEST.md](RUNBOOK_V2_P1_STAGING_SMOKE_TEST.md) — P1 predecessor runbook
 - [core#190](https://github.com/datanika-io/datanika-core/pull/190) — VA2 follow-up UI surfaces
+
+[core#646]: https://github.com/datanika-io/datanika-core/issues/646
+[core#772]: https://github.com/datanika-io/datanika-core/issues/772

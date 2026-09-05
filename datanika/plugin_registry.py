@@ -41,8 +41,9 @@ def get_prometheus_registry() -> CollectorRegistry:
     with per-``org_id`` labels against this registry so they're scraped via
     core's existing ``/metrics`` route without core importing any cloud
     code. Core itself only creates cardinality-safe instruments — see
-    ``plans/infra/SPEC_GB_THROUGHPUT_METRICS.md`` §3.1 for the open-core
-    split rationale.
+    ``datanika-cloud/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md`` §3.1 for the
+    open-core split rationale. (That spec lives in the cloud repo, not here —
+    it governs the plugin side of the split.)
     """
     return _DEFAULT_PROMETHEUS_REGISTRY
 

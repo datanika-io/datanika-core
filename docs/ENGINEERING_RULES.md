@@ -1034,17 +1034,25 @@ kind of assertion that cannot be checked from inside the record making it. The f
 later *and names what it overrides*; the notice names nothing. **Naming the other record is the
 timestamp.**
 
-⚠️ **When neither record names the other, neither is evidence — go to the mechanism.** Found in the
-same pass: `CLAUDE.md` says the core merge queue is *"OFF on `datanika-core`"*, rolled back and
-blocked on [core#923], while this session merged [core#1108] through that very queue. Neither text
-mentions the other, so no amount of re-reading settles it. One call does:
+⚠️ **The counter-example I first wrote here was itself an instance of this rule — and it is the
+better one.** In the same pass I claimed `CLAUDE.md` was stale on the merge queue, "quoting" it as
+*"OFF on `datanika-core`"*, rolled back on [core#923]. **It does not say that.** Line 495 on disk
+reads *"LIVE on `datanika-core` too since 2026-09-03 … after [core#923] was fixed"*, and a control
+grep for any "OFF" statement returns **0**. What I quoted was my **session-start context snapshot**,
+which records the file as of session start — not the file.
 
-```bash
-gh api repos/datanika-io/datanika-core/rulesets --jq '.[] | {name, enforcement}'
-# merge-queue-dev  active      <- and [core#923] closed 2026-09-03
-```
+🔑 **The rule above would have caught it in one step.** Line 495 *names* [core#923] and dates
+itself after the rollback I remembered. **A record that names the thing you believe supersedes it
+is the later one.** I wrote that sentence an hour before failing its own test.
 
-**`CLAUDE.md` is the stale one, and it is the file every agent reads first.**
+⚠️ **It took a THIRD independent report to stop it** — QA raised the same non-existent defect that
+morning and the coordinator measured the file twice. **Two independent reports of a defect nobody
+can reproduce is a reading, not a measurement**: treat the second report as evidence about the
+*readers*, not the file.
+
+**When records really are silent about each other, go to the mechanism** —
+`gh api repos/<owner>/<repo>/rulesets`, `git ls-remote`, the container's own interpreter — never to
+a remembered copy of a file that is sitting on disk.
 
 **Rules:**
 1. **Grep for a conflict's own resolution before escalating it.** Flagging is not escalating — name
@@ -1053,10 +1061,11 @@ gh api repos/datanika-io/datanika-core/rulesets --jq '.[] | {name, enforcement}'
 2. **Never cite an index line, a summary row, or a short form as the content of what it points at.**
    Open the target. `CLAUDE.md`'s token discipline already carves handoff files out as *ingestion,
    not inspection* — an index line is inspection wearing the file's name.
-3. **Re-derive from the mechanism when the records are silent about each other**, then fix the loser
-   in the same turn — or route it when the loser is outside your lane. `CLAUDE.md` sits in no git
-   repo, so an edit there is the single unreviewed write on the one ungated surface: report it,
-   do not patch it yourself.
+3. **Before reporting any file as stale, `cat` it.** Quote the line number and the mtime, and run a
+   control grep for the text you believe is there — mine would have returned **0** at any moment.
+4. **Never patch `CLAUDE.md` to settle a disagreement about `CLAUDE.md`.** It sits in no git repo, so
+   an edit there is the single unreviewed write on the one ungated surface. Report it — and when the
+   report turns out to be a misreading, the correct disposition is **no defect**, not a smaller edit.
 
 ## 38. A rebase-merging queue relands the parent's commits under NEW SHAs — a stacked PR does not collapse on its own
 
@@ -1091,6 +1100,36 @@ re-reads at the moment they rely on it.
 3. **Use `--force-with-lease`, never a bare `--force`** — a queue may have moved the branch.
 4. **A convenience claim written into a handoff is an instruction.** Mine was pushed before it was
    tested, and was wrong; the next agent would have inherited it as fact.
+
+## 39. Report a mechanism's status only from the field that records THAT mechanism
+
+**(2026-09-05, [core#1069].)** §37 and §38 are instances of this rule, not siblings of it. Four times
+in one session I reported a mechanism's state from an instrument that records a **different**
+mechanism. Every one was confidently worded, and every one was wrong:
+
+| what I claimed | what I read | what that actually records |
+|---|---|---|
+| "#1109's auto-merge is armed, it lands on its own" | a queue status line | the **queue**, not auto-merge |
+| "`autoMergeRequest` is null, so it is not armed" | `autoMergeRequest` | **auto-merge**, not queue membership (`mergeQueueEntry`) |
+| "#1110 needs no force-push, the merge-base moves" | merge-base behaviour under a **merge commit** | our queue merges by `REBASE` |
+| "`CLAUDE.md` is stale on the merge queue" | my **session-start context snapshot** | the file *as of session start*, not the file |
+
+🚨 **All four read as measurements.** Each named a real field or a real mechanism; none of them was
+the field that answers the question being asked. The failure mode is never *"I did not check"* — it
+is *"I checked, and the thing I checked was about something else."* That is why it survives review:
+a wrong answer sourced from a real instrument looks exactly like a right one.
+
+**Rules:**
+1. **Before quoting an instrument, say out loud what it records.** If that sentence does not contain
+   the noun in your claim, it is the wrong instrument. `autoMergeRequest` records auto-merge; the
+   question was about the queue.
+2. **A null field is not evidence a mechanism is off** — only that *this field* is unset. Enumerate
+   the fields that could carry the state (`mergeQueueEntry` **and** `autoMergeRequest`) before
+   concluding either way.
+3. **Your context is not the filesystem.** Anything injected at session start records session start;
+   the file is on disk, and `stat` costs one call.
+4. **Behaviour claims carry their configuration.** "The merge-base moves" is true under a merge
+   commit and false under rebase — name the setting the claim depends on, or do not make it.
 
 ---
 

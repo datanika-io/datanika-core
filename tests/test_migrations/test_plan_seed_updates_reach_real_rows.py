@@ -147,20 +147,65 @@ def _upgrade_node(source: str):
     return None
 
 
-def _default_literal(node):
-    """What a ``server_default=`` expression denotes: a string, ``_DROP`` or ``_UNKNOWN``."""
+def _module_string_constants(tree: ast.Module) -> dict[str, str]:
+    """Module-level ``NAME = "literal"`` bindings.
+
+    Needed because ``server_default=sa.text(_NEW_DEFAULT)`` is the spelling this
+    repository *prefers* — see ``_default_literal``'s blind spot 3.
+    """
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Constant):
+            continue
+        if not isinstance(node.value.value, str):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                out[target.id] = node.value.value
+    return out
+
+
+def _default_literal(node, consts: dict[str, str] | None = None):
+    """What a ``server_default=`` expression denotes: a string, ``_DROP`` or ``_UNKNOWN``.
+
+    ``consts`` carries the migration module's own top-level string constants, which is
+    **blind spot 3 (core#1071)** and the one that bites hardest, because it is the
+    spelling this repository asks for. ``b4d8f1a2c6e9`` and ``e8b3d5c7f2a9`` both write
+
+        _PREVIOUS_DEFAULT = "true"
+        op.alter_column("plans", "hard_cap_bytes", server_default=sa.text(_NEW_DEFAULT))
+
+    naming the value at module level *deliberately*, so ``upgrade()`` and ``downgrade()``
+    cannot drift apart. Requiring a literal inside ``sa.text()`` returned ``_UNKNOWN`` for
+    exactly that shape, and ``server_defaults()`` then left the column carrying whatever an
+    earlier declaration had given it — so ``hard_cap_bytes`` read ``true`` after a migration
+    that sets it ``false``.
+
+    🔑 The direction matters: an unreadable **SET** DEFAULT makes a newly-introduced bad
+    default invisible, which is the reassuring answer. It is the same failure as blind spots
+    1 and 2 in ``server_defaults()``, arriving through the convention rather than through a
+    regex.
+    """
     if node is None:
         return _UNKNOWN
+    consts = consts or {}
     if isinstance(node, ast.Constant):
         # `server_default="10"` — a BARE STRING. This spelling is why the guard was
         # blind to `max_schedules` and `hard_cap_runs` (core#1048), and it is the
         # spelling `j9f6g7h8i0c1`'s `create_table` uses.
         return _DROP if node.value is None else str(node.value)
+    if isinstance(node, ast.Name):
+        # `server_default=_NEW_DEFAULT`, no sa.text() wrapper.
+        return consts.get(node.id, _UNKNOWN)
     if isinstance(node, ast.Call):
         fn = node.func
         name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
-        if name == "text" and node.args and isinstance(node.args[0], ast.Constant):
-            return str(node.args[0].value)
+        if name == "text" and node.args:
+            inner = node.args[0]
+            if isinstance(inner, ast.Constant):
+                return str(inner.value)
+            if isinstance(inner, ast.Name):
+                return consts.get(inner.id, _UNKNOWN)
     return _UNKNOWN
 
 
@@ -246,6 +291,9 @@ def server_defaults(table: str = "plans", through: str | None = None) -> dict[st
             if through is not None and _name.startswith(through):
                 break
             continue
+        # The module's own top-level string constants, so a `server_default` written as a
+        # named constant is readable — see `_default_literal`, blind spot 3 (core#1071).
+        consts = _module_string_constants(ast.parse(txt))
         for node in ast.walk(upgrade):
             if (_is_op_call(node, "create_table") or _is_op_call(node, "add_column")) and _str_arg(
                 node, 0
@@ -254,7 +302,7 @@ def server_defaults(table: str = "plans", through: str | None = None) -> dict[st
                     if not _is_op_call(arg, "Column"):
                         continue
                     column = _str_arg(arg, 0)
-                    value = _default_literal(_kwarg(arg, "server_default"))
+                    value = _default_literal(_kwarg(arg, "server_default"), consts)
                     if column and value is not _UNKNOWN and value is not _DROP:
                         out[column] = value
             elif _is_op_call(node, "alter_column") and _str_arg(node, 0) == table:
@@ -265,7 +313,7 @@ def server_defaults(table: str = "plans", through: str | None = None) -> dict[st
                 # must this, or every unrelated alter_column erases a default here.
                 if column is None or kwarg is None:
                     continue
-                value = _default_literal(kwarg)
+                value = _default_literal(kwarg, consts)
                 if value is _DROP:
                     out.pop(column, None)
                 elif value is not _UNKNOWN:
@@ -459,6 +507,38 @@ def test_the_extractor_reads_a_bare_string_default():
         "core#1048 was filed for"
     )
     assert defaults.get("max_parallel_runs") == "5", "the sa.text() spelling regressed"
+
+
+def test_the_extractor_reads_a_default_written_as_a_named_constant():
+    """Blind spot 3 (core#1071) — and it is the spelling this repository *prefers*.
+
+    ``b4d8f1a2c6e9`` and ``e8b3d5c7f2a9`` both write ``server_default=sa.text(_CONST)``
+    with the value named at module level, deliberately, so ``upgrade()`` and
+    ``downgrade()`` cannot drift apart. ``_default_literal`` required a literal *inside*
+    ``sa.text()``, returned ``_UNKNOWN`` for that shape, and the column then kept whatever
+    an earlier declaration had given it.
+
+    🚨 The direction is the reassuring one: an unreadable **SET** DEFAULT leaves a
+    newly-introduced bad default invisible, so the guard reports a clean chain. That is
+    blind spots 1 and 2 again, arriving through the coding convention instead of through a
+    regex.
+
+    **Discriminating rather than merely present**: the same column reads ``true`` one
+    revision earlier, so a reading of ``false`` cannot come from anywhere except
+    ``e8b3d5c7f2a9``. Asserting only the end state would be satisfied by an extractor that
+    had never read the file, if some earlier revision happened to agree.
+    """
+    before = server_defaults(through="d7f2c8a4b1e6")
+    assert before.get("hard_cap_bytes") == "true", (
+        "hard_cap_bytes did not read `true` before e8b3d5c7f2a9, so a reading of `false` "
+        "after it proves nothing about whether the named-constant spelling is readable"
+    )
+
+    assert server_defaults().get("hard_cap_bytes") == "false", (
+        "a `server_default` written as `sa.text(_NAMED_CONSTANT)` is not being read. The "
+        "guard is reporting the pre-core#1071 default of a column the chain now sets to "
+        "false — i.e. it disagrees with the database in the direction that looks healthy."
+    )
 
 
 def test_the_extractor_models_a_dropped_default():

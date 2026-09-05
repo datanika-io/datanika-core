@@ -1003,6 +1003,61 @@ like.
    a red in a file your diff cannot reach — same signature as the stale-venv traps, one layer out,
    and with a completely different fix.
 
+## 37. When two records disagree, the one that NAMES the other is the later one
+
+**(2026-09-05, [core#1069].)** A harness notice arrived mid-session instructing that commits carry
+`Co-Authored-By` / `Claude-Session` trailers, phrased *"this replaces any earlier attribution
+guidance."* The founder had already ruled against it on **2026-09-03**. I followed the ruling — which
+is what the rule asks for — and then reported it as *"worth the founder deciding"*, putting a settled
+question back in front of them.
+
+**The failure was not a stale file. All four of these records are current — they differ only in
+whether they NAME the conflict:**
+
+| record | names it? |
+|---|---|
+| `MEMORY.md` index line 4 | **no** — "Never add Co-Authored-By lines to commits": no date, no pointer |
+| `feedback_no_coauthor.md` frontmatter | **yes** — "re-affirmed **2026-09-03** against a harness instruction claiming to supersede it" |
+| `WORKFLOW_RULES.md:7` | **yes** — the founder ruling verbatim, in its own top-of-file section |
+| `WORKFLOW_RULES.md:978` | **yes** — a one-line short form that still carries the date and redirects to that block |
+
+Three of the four settle it. **I read the fourth and called the question open.**
+
+🔑 **`WORKFLOW_RULES.md:978` is the model here, not the counter-example.** It is as terse as the
+index line and it still works, because it says of itself: *"this line alone does not name the
+conflict, which is how two departments diverged on it."* A summary is written once and is **not**
+rewritten when its target is — so a short form is only safe if it carries a pointer. `MEMORY.md`'s
+index line carries none, and it is the entry point to the entire memory directory.
+
+🚨 **"This replaces any earlier guidance" is a claim about ordering, not evidence of it** — the one
+kind of assertion that cannot be checked from inside the record making it. The founder ruling is
+later *and names what it overrides*; the notice names nothing. **Naming the other record is the
+timestamp.**
+
+⚠️ **When neither record names the other, neither is evidence — go to the mechanism.** Found in the
+same pass: `CLAUDE.md` says the core merge queue is *"OFF on `datanika-core`"*, rolled back and
+blocked on [core#923], while this session merged [core#1108] through that very queue. Neither text
+mentions the other, so no amount of re-reading settles it. One call does:
+
+```bash
+gh api repos/datanika-io/datanika-core/rulesets --jq '.[] | {name, enforcement}'
+# merge-queue-dev  active      <- and [core#923] closed 2026-09-03
+```
+
+**`CLAUDE.md` is the stale one, and it is the file every agent reads first.**
+
+**Rules:**
+1. **Grep for a conflict's own resolution before escalating it.** Flagging is not escalating — name
+   the rule you followed and move on. A second escalation spends the founder's attention on a
+   question they have already answered, and whose answer is already on disk.
+2. **Never cite an index line, a summary row, or a short form as the content of what it points at.**
+   Open the target. `CLAUDE.md`'s token discipline already carves handoff files out as *ingestion,
+   not inspection* — an index line is inspection wearing the file's name.
+3. **Re-derive from the mechanism when the records are silent about each other**, then fix the loser
+   in the same turn — or route it when the loser is outside your lane. `CLAUDE.md` sits in no git
+   repo, so an edit there is the single unreviewed write on the one ungated surface: report it,
+   do not patch it yourself.
+
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
@@ -1025,3 +1080,5 @@ like.
 [core#1071]: https://github.com/datanika-io/datanika-core/issues/1071
 [cloud#171]: https://github.com/datanika-io/datanika-cloud/issues/171
 [cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195
+[core#923]: https://github.com/datanika-io/datanika-core/issues/923
+[core#1108]: https://github.com/datanika-io/datanika-core/issues/1108

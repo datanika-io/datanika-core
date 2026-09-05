@@ -147,9 +147,39 @@ def _skips_merge_group(job: dict) -> bool:
     return "github.event_name" in cond and "merge_group" not in cond
 
 
+#: A job that CALLS a workflow whose jobs touch staging touches staging (core#975).
+#:
+#: 🚨 Without this the detector went blind at exactly the wrong moment. When
+#: `deploy-staging`, `smoke-staging` and `e2e-staging` moved into `staging.yml` behind a
+#: single caller, that caller's body is `uses: ./.github/workflows/staging.yml` — and not
+#: one of `STAGING_MARKERS` appears in it. So `test_no_job_that_touches_staging_runs_on_a_
+#: merge_group` would have stopped examining the only job that can now redeploy staging,
+#: while `test_the_staging_jobs_are_the_live_subject_of_that_rule` stayed green on
+#: `e2e-sso` alone. Deleting the caller's event gate would then have redeployed staging on
+#: **every merge-queue entry** with nothing red.
+#:
+#: Resolved through the callee rather than by adding "staging.yml" to the marker list: the
+#: markers are about what a job *does*, and a filename is not evidence of that.
+def _calls_a_staging_workflow(job: dict) -> bool:
+    uses = str(job.get("uses") or "")
+    if not uses.startswith("./"):
+        return False
+    name = uses.split("/")[-1].split("@")[0]
+    entry = WORKFLOWS_BY_NAME.get(name)
+    if entry is None:
+        return False
+    _text, doc = entry
+    return any(
+        any(marker in yaml.safe_dump(spec or {}) for marker in STAGING_MARKERS)
+        for spec in (doc.get("jobs") or {}).values()
+    )
+
+
 def _touches_staging(job: dict) -> bool:
     body = yaml.safe_dump(job)
-    return any(marker in body for marker in STAGING_MARKERS)
+    if any(marker in body for marker in STAGING_MARKERS):
+        return True
+    return _calls_a_staging_workflow(job)
 
 
 WORKFLOWS_BY_NAME = _load()
@@ -266,6 +296,42 @@ def test_the_staging_jobs_are_the_live_subject_of_that_rule():
     assert staging_jobs, "no job in ci.yml touches staging any more"
     for job_id in staging_jobs:
         assert _skips_merge_group(doc["jobs"][job_id]), job_id
+
+
+def test_the_detector_sees_a_job_that_only_calls_the_staging_workflow():
+    """The arming for `_calls_a_staging_workflow`, and it is not hypothetical (core#975).
+
+    A caller job's whole body is `uses: ./.github/workflows/staging.yml`, which contains
+    none of `STAGING_MARKERS`. Before this detector existed, the merge-queue rule above
+    examined `e2e-sso` — which still matches by marker — and silently stopped examining the
+    one job that can redeploy staging. **The vacuity guard above would have stayed green
+    throughout**, because it only asks whether *some* job matches.
+
+    So this asserts the caller specifically, by resolving it out of the real tree rather
+    than by naming it: the day the parent job is renamed, this fails loudly instead of
+    quietly measuring `e2e-sso` twice.
+    """
+    _, doc = WORKFLOWS_BY_NAME["ci.yml"]
+    callers = {
+        job_id: spec
+        for job_id, spec in doc["jobs"].items()
+        if str((spec or {}).get("uses") or "").startswith("./")
+    }
+    staging_callers = {j: s for j, s in callers.items() if _calls_a_staging_workflow(s)}
+    assert staging_callers, (
+        f"no job in ci.yml calls a workflow whose jobs touch staging. Local `uses:` jobs "
+        f"present: {sorted(callers)}. If the staging jobs came back into ci.yml this test "
+        f"is obsolete — delete it deliberately rather than letting the detector rot."
+    )
+    for job_id, spec in staging_callers.items():
+        assert not any(m in yaml.safe_dump(spec) for m in STAGING_MARKERS), (
+            f"{job_id} matches a staging marker directly, so this test is no longer "
+            f"exercising the indirect path it exists for"
+        )
+        assert _skips_merge_group(spec), (
+            f"{job_id} calls the staging workflow and does not gate on the event name, so "
+            f"every merge-queue entry would redeploy staging"
+        )
 
 
 # --------------------------------------------------------------------------------------

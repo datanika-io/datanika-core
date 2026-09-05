@@ -214,13 +214,23 @@ def staging_compose_services() -> set[str]:
 
 @pytest.fixture(scope="module")
 def staging_deployed_services() -> set[str]:
-    """Parsed from ci.yml, which carries both the primary `up -d` and its recovery retry.
+    """Parsed from whichever workflow defines `deploy-staging`, both `up -d` lines.
 
     Deliberately the whole workflow rather than a line range: the recovery path is a
     second `up -d` with `--force-recreate`, and core#762 landed with the exporter missing
     from exactly one of the two.
+
+    ⚠️ And deliberately **resolved**, not a path constant (core#975). This fixture read
+    `ci.yml` by name; the day `deploy-staging` moved into `staging.yml` it silently began
+    parsing a file with no staging deploy in it — which reads as "no service is deployed",
+    i.e. this guard's own failure mode arriving through its own coverage. Right above,
+    the comment says *"a guard's coverage is part of the guard"*; this is that sentence
+    applied to the guard that carries it.
     """
-    return _services_named_in(CI_WORKFLOW.read_text(encoding="utf-8"))
+    from tests.test_deploy._workflows import job
+
+    _name, text, _block = job("deploy-staging")
+    return _services_named_in(text)
 
 
 def test_the_staging_parsers_actually_found_something(

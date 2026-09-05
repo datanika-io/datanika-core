@@ -41,7 +41,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
@@ -59,11 +58,13 @@ def _bash() -> str:
 
 @pytest.fixture(scope="module")
 def classifier_script() -> str:
-    """The real `run:` body of the e2e-staging verdict step, straight out of `ci.yml`."""
-    doc = yaml.safe_load(CI.read_text(encoding="utf-8"))
-    job = (doc.get("jobs") or {}).get(JOB)
-    assert job is not None, f"{JOB} job vanished from ci.yml -- this guard is now testing nothing"
-    for step in job.get("steps") or []:
+    """The real `run:` body of the e2e-staging verdict step, from whichever workflow owns it.
+
+    Resolved, not hardcoded to `ci.yml` — core#975 moved this job into `staging.yml`.
+    """
+    from tests.test_deploy._workflows import job_steps
+
+    for step in job_steps(JOB):
         if step.get("name") == STEP_NAME:
             script = step.get("run")
             assert script, f"{JOB} / {STEP_NAME} has no `run:` block"

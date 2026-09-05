@@ -252,6 +252,19 @@ not run on a `master` push. The E2E reading for a promotion lands on the **post-
 push**, not on the deploy. Looking for it on the CD run finds nothing, and **nothing reads exactly
 like clean.** (`smoke` and `smoke-prod` are different jobs and *do* gate production.)
 
+🆕 **Since [core#975] the three live in `.github/workflows/staging.yml` behind ONE caller job**, so
+their check runs are named **`staging / <job>`** and the push gate is on that caller. The move exists
+because `cancel-in-progress: false` does not mean *queue everything*: GitHub keeps one running plus
+one **pending** entry per group, and a newer waiter **cancels the pending one** — three members per
+run, six when two `dev` pushes overlap. Four measured instances left a commit that was `dev`'s head
+with no honest staging reading and nothing red anywhere. ⚠️ A cancelled job is neither green nor red
+**and has zero steps in the API**, so [core#873]'s *"drop to step level"* fallback does not exist for
+it; `conclusion == "cancelled"` is the only tell, and duration does not discriminate (0 s, 92 s and
+104 s all observed). ⚠️ **An exact-name query now matches nothing** — use `test("staging")`, or strip
+the `staging / ` prefix as `scripts/verify_e2e_attribution.py` does.
+
+[core#975]: https://github.com/datanika-io/datanika-core/issues/975
+
 **Landing and cloud CI are `pull_request`-only**, so the absence of a run on a `dev` head is the
 workflow's shape, not a gap. Core is not like this.
 

@@ -504,3 +504,33 @@ class TestWrongBuildCanHideASpecFailure:
             PASS,  # b3f9761d clean
         ]
         assert streak([PASS, *measured]) == 3
+
+    # -- the `cancelled` half of the same predicate (it was shipped untested) --------------
+    #
+    # `classify_verdict` covers ("wrong_build", "cancelled"), but only `wrong_build` had a
+    # test. An untested clause in a predicate written to catch untested clauses is its own
+    # joke; worse, a later "simplification" down to `wrong_build` alone would have gone green.
+    #
+    # Reachable, not hypothetical: ci.yml's classifier runs under `if: always()`, which fires
+    # on cancellation, and a step that failed BEFORE the cancellation keeps `outcome: failure`.
+    # So `outcome: failure / job status: cancelled / verdict: cancelled` is a line the runner
+    # can really emit -- STATE=cancelled wins because it is tested first.
+
+    REAL_SHAPE_CANCELLED = (
+        "2026-09-06T21:39:34Z SSO specs outcome: failure / job status: cancelled / "
+        "verdict: cancelled"
+    )
+
+    def test_cancelled_carrying_a_failure_also_breaks_the_streak(self):
+        lines = [self.REAL_SHAPE_CANCELLED]
+        assert parse_specs_outcome(lines) == "failure"
+        assert parse_verdict_line(lines) == "cancelled"
+        assert classify_verdict("cancelled", "failure") is FAIL
+
+    def test_control_a_plain_cancellation_stays_transparent(self):
+        """The common case: cancelled before the specs ran, or cancelled while green. A
+        cancelled job is neither green nor red (`WORKFLOW_RULES`), so it must not reset."""
+        assert classify_verdict("cancelled", "success") is UNMEASURED
+        assert classify_verdict("cancelled", "skipped") is UNMEASURED
+        assert classify_verdict("cancelled", "cancelled") is UNMEASURED
+        assert classify_verdict("cancelled", None) is UNMEASURED

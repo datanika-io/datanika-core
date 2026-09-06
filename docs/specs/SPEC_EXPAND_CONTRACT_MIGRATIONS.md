@@ -105,11 +105,19 @@ holding a lock while the old version serves traffic.
 > 🚨 **Both bullets above prescribe a mechanism this repo does not have. [core#933].**
 > `op.get_context().autocommit_block()` raises a bare, message-less `AssertionError` in
 > **every** migration here: `migrations/env.py` executes `SET search_path` on the
-> connection before alembic is asked to begin a transaction, so `begin_transaction()`
-> returns a do-nothing context manager and never assigns the attribute `autocommit_block`
-> asserts on. Reproduced with a control in
+> connection, which autobegins a SQLAlchemy transaction alembic did not begin — and
+> `autocommit_block()` refuses exactly that state. Reproduced with a control in
 > `tests/test_migrations/test_autocommit_block_availability.py`; **that file goes red the
 > day #933 is fixed**, which is when this note should be deleted.
+>
+> 🔴 **Corrected 2026-09-07.** This note used to say the cause was that the `SET` runs
+> *"before alembic is asked to begin a transaction, so `begin_transaction()` … never
+> assigns the attribute `autocommit_block` asserts on."* Measured against alembic 1.18.4:
+> `_transaction` is `None` in the **working** case too, so it is not the discriminator —
+> `_in_connection_transaction()` is. **The correction matters because the old wording makes
+> [core#933]'s option 1 (*"move the `SET` inside `context.begin_transaction()`"*) look like
+> the fix, and it is not: the statement autobegins on either side.** The property is *no
+> statement may touch that connection at all*.
 >
 > Until then: a plain `CREATE INDEX` is the correct choice on a small table and the lock
 > is what you are spending — say the row count in the PR. A batched backfill bounds each

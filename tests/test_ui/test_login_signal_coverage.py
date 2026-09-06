@@ -131,9 +131,21 @@ class TestTheWhitelistIsClosed:
         assert AuthState.auth_error_reason.fget(_StubState({})) == ""
 
     def test_building_a_redirect_for_an_unknown_slug_is_an_error(self):
-        """Fails at the call site rather than as a blank page in production."""
-        with pytest.raises(ValueError):
+        """Fails at the call site rather than as a blank page in production.
+
+        ⚠️ Deliberately **not** ``ValueError`` any more (core#1113). The message is
+        an instruction to edit ``AUTH_ERROR_KEYS``, which no user can act on, so it
+        must not be renderable by ``_safe_error``. Asserting the old superclass here
+        would keep passing after a revert to ``UserFacingError``, since that is a
+        ``ValueError`` too — the stand-in has to model the new contract, not the one
+        it was written against.
+        """
+        from datanika.errors import InternalInvariantError, UserFacingError
+
+        with pytest.raises(InternalInvariantError):
             login_error_path("something_nobody_translated")
+
+        assert not issubclass(InternalInvariantError, UserFacingError)
 
     def test_building_a_redirect_for_a_known_slug_works(self):
         assert login_error_path("sso_unreachable") == "/login?auth_error=sso_unreachable"

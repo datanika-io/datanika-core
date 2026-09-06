@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.dbt_project import DbtProjectError, DbtProjectService
@@ -71,11 +72,11 @@ class PreviewResult:
     error_message: str = ""
 
 
-class TransformationNotFoundError(ValueError):
+class TransformationNotFoundError(UserFacingError):
     """Raised when a transformation doesn't exist for the given org."""
 
 
-class MissingDestinationError(ValueError):
+class MissingDestinationError(UserFacingError):
     """Raised when a transformation has no destination connection set."""
 
 

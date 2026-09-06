@@ -42,10 +42,12 @@ from urllib.parse import urlparse
 
 import requests
 
+from datanika.errors import UserFacingError
+
 _ALLOWED_SCHEMES = {"http", "https"}
 
 
-class EgressValidationError(ValueError):
+class EgressValidationError(UserFacingError):
     """Raised when a user-supplied URL points at a non-public / internal host."""
 
 

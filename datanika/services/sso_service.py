@@ -5,6 +5,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.hooks import emit
 from datanika.models.sso_config import SSOConfig, SSOProtocol
 from datanika.models.user import Organization
@@ -13,7 +14,7 @@ from datanika.services.encryption import EncryptionService
 logger = logging.getLogger(__name__)
 
 
-class SSOServiceError(ValueError):
+class SSOServiceError(UserFacingError):
     pass
 
 

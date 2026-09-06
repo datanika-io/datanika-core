@@ -25,10 +25,12 @@ import time
 from jose import jwt
 from jose.exceptions import JWTError
 
+from datanika.errors import UserFacingError
+
 logger = logging.getLogger(__name__)
 
 
-class IdTokenError(ValueError):
+class IdTokenError(UserFacingError):
     """An id_token could not be verified. Never carries provider text outward."""
 
 

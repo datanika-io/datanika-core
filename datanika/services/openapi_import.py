@@ -28,6 +28,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from datanika.errors import UserFacingError
 from datanika.services.openapi_schema import json_schema_to_column_type, resolve_ref
 
 # §7 caps — enforced before/while walking, typed errors on breach.
@@ -56,7 +57,7 @@ _INCREMENTAL_PARAMS = (
 _CURSOR_FIELDS = ("updated_at", "modified_at", "last_modified", "updated", "created_at")
 
 
-class OpenApiImportError(ValueError):
+class OpenApiImportError(UserFacingError):
     """Typed parse failure.
 
     ``code`` ∈ {``invalid_spec``, ``spec_too_large``, ``unsupported_version``,

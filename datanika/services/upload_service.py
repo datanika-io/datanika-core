@@ -6,6 +6,7 @@ from functools import partial
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.upload import Upload, UploadStatus
 from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.naming import to_snake_case, validate_name
@@ -31,7 +32,7 @@ validate_upload_name = partial(validate_name, entity_label="Upload")
 to_dataset_name = to_snake_case
 
 
-class UploadConfigError(ValueError):
+class UploadConfigError(UserFacingError):
     """Raised when upload dlt_config fails validation."""
 
 

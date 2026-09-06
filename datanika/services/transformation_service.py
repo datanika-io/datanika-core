@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.transformation import Materialization, Transformation
 from datanika.services.connection_service import (
     TRANSFORM_DESTINATION_TYPES,
@@ -15,7 +16,7 @@ from datanika.services.connection_service import (
 _MODEL_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
 
-class TransformationConfigError(ValueError):
+class TransformationConfigError(UserFacingError):
     """Raised when transformation configuration fails validation."""
 
 

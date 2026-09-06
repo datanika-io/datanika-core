@@ -7,13 +7,14 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.api_key import ApiKey
 
 KEY_PREFIX = "etf_"
 KEY_BYTES = 32
 
 
-class ApiKeyError(ValueError):
+class ApiKeyError(UserFacingError):
     """Raised when API key operations fail."""
 
 

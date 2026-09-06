@@ -56,9 +56,30 @@ def is_user_facing(exc: Exception) -> bool:
     ``add_member`` and ``save_upload``. One predicate is what stops them
     diverging again, and ``TestTheTwoStayInStep`` is what notices if they do.
 
-    A ``UserFacingError`` marker class would be the better long-term shape, but
-    that is ~30 raise sites and its own decision; this is the narrowing that
-    keeps every intended case working today.
+    🆕 **core#1094 decided for the marker class, and this predicate is the last
+    thing to change.** The rule below is still the negative one, deliberately.
+    The migration is expand/contract applied to a predicate, and the ordering is
+    the whole design — there must be no moment at which the positive test is
+    live while a raise site has not been converted, because a missed site fails
+    *silently*: the handler shows its fallback and nothing raises.
+
+    1. **expand** — ``datanika/errors.py`` gains ``UserFacingError`` and the 24
+       core classes (plus cloud's ``QuotaExceededError``) inherit it. Both rules
+       then agree on every case; behaviour is provably identical. **Done.**
+    2. **measure** — ``tests/test_errors.py`` asserts zero bare
+       ``raise ValueError(...)`` in the layers a state handler wraps, armed with
+       a control that it can still see one, and the 39 sites the census named
+       are converted. Still no behaviour change.
+    3. **contract** — this line becomes ``isinstance(exc, UserFacingError)`` and
+       the pydantic exclusion is **deleted**, not kept "just in case" (cloud#176:
+       a redundant guard also absorbs your ability to detect the class arriving
+       for real).
+
+    ⚠️ Step 3 must not reach production ahead of cloud's step 1. Cloud ships
+    *inside* the core image at a pinned ``ref: master``, so a core promotion
+    without a cloud promotion behind it would flip this predicate against a
+    ``QuotaExceededError`` that does not yet carry the marker — and every quota
+    refusal would quietly become "An error occurred".
     """
     return isinstance(exc, ValueError) and not isinstance(exc, ValidationError)
 

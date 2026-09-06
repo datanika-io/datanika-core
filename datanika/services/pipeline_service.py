@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.services.connection_service import (
     TRANSFORM_DESTINATION_TYPES,
@@ -12,7 +13,7 @@ from datanika.services.connection_service import (
 )
 
 
-class PipelineConfigError(ValueError):
+class PipelineConfigError(UserFacingError):
     """Raised when pipeline configuration fails validation."""
 
 

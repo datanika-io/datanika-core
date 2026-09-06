@@ -19,8 +19,10 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from datanika.errors import UserFacingError
 
-class FilterPushdownError(ValueError):
+
+class FilterPushdownError(UserFacingError):
     """Raised when a filter spec can't be translated to SQL."""
 
 

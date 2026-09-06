@@ -9,6 +9,8 @@ from pathlib import Path
 import yaml
 from dbt.cli.main import dbtRunner
 
+from datanika.errors import UserFacingError
+
 logger = logging.getLogger(__name__)
 
 
@@ -17,7 +19,7 @@ def _to_plain(obj):
     return json.loads(json.dumps(obj))
 
 
-class DbtProjectError(ValueError):
+class DbtProjectError(UserFacingError):
     """Raised when dbt project operations fail."""
 
 

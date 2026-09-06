@@ -5,13 +5,14 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.dependency import Dependency, NodeType
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 
 
-class DependencyConfigError(ValueError):
+class DependencyConfigError(UserFacingError):
     """Raised when dependency configuration fails validation."""
 
 

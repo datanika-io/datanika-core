@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import yaml
 
+from datanika.errors import UserFacingError
 
-class YamlImportError(ValueError):
+
+class YamlImportError(UserFacingError):
     """Raised when YAML cannot be parsed or has the wrong top-level shape."""
 
 

@@ -23,6 +23,7 @@
   "auth.full_name": "الاسم الكامل",
   "auth.create_account": "إنشاء حساب",
   "auth.or_continue_with": "أو تابع باستخدام",
+  "auth.social_creates_account": "تسجيل الدخول بهذه الطريقة يُنشئ أيضًا حسابًا إذا لم يكن لديك واحد.",
   "auth.no_account": "ليس لديك حساب؟",
   "auth.have_account": "لديك حساب بالفعل؟",
   "auth.completing_sign_in": "جارٍ إتمام تسجيل الدخول…",

@@ -23,6 +23,7 @@
   "auth.full_name": "Πλήρες όνομα",
   "auth.create_account": "Δημιουργία λογαριασμού",
   "auth.or_continue_with": "ή συνεχίστε με",
+  "auth.social_creates_account": "Η σύνδεση με αυτόν τον τρόπο δημιουργεί επίσης λογαριασμό, αν δεν έχετε.",
   "auth.no_account": "Δεν έχετε λογαριασμό;",
   "auth.have_account": "Έχετε ήδη λογαριασμό;",
   "auth.completing_sign_in": "Ολοκλήρωση σύνδεσης...",

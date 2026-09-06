@@ -270,16 +270,55 @@ def login_page() -> rx.Component:
                 width="100%",
                 spacing="3",
             ),
+            # core#1081 AC2b / SPEC_PAGE_ENTRY §3. "or continue with" is true for
+            # a returning user and SILENT for a new one — and these two controls
+            # start `/api/auth/login/<provider>`, which lands in
+            # `UserService.find_or_create_oauth_user`, whose own docstring is
+            # "Find existing user by OAuth identity or email, ELSE CREATE". It
+            # returns `is_new` because creating an account is a normal outcome of
+            # this path, so the page has to say so.
+            #
+            # Deliberately provider-agnostic and count-agnostic: naming Google and
+            # GitHub, or saying "both options", makes the sentence wrong in nine
+            # locales the day core#624 adds a third.
             rx.text(
-                _t["auth.no_account"],
-                " ",
+                _t["auth.social_creates_account"],
+                size="1",
+                color="gray",
+                text_align="center",
+                width="100%",
+            ),
+            # core#1081 AC2a / SPEC_PAGE_ENTRY §3. This was a 50x20 px link inside
+            # a `color="gray"` paragraph, beneath two 141x40 px buttons that will
+            # create an account without saying so. **The inversion was the defect**:
+            # /login is the product's fastest signup path and said it was not.
+            #
+            # ⚠️ Not a colour change. The link already rendered Radix accent blue
+            # (`rgba(0, 109, 203, 0.95)`) — the `gray` belonged to the wrapper, and
+            # a darker link would measure as done and fix nothing (§0c).
+            #
+            # `size="3"` matches the social buttons and `Sign In`, so the control
+            # is of the same ORDER rather than merely styled; `variant="soft"`
+            # keeps it below the solid primary and distinct from the outline pair.
+            # Both keys already exist in all nine locales — no new strings here.
+            rx.vstack(
+                rx.text(_t["auth.no_account"], size="2", color="gray"),
                 rx.link(
-                    _t["auth.sign_up"],
+                    rx.button(
+                        _t["auth.sign_up"],
+                        variant="soft",
+                        size="3",
+                        width="100%",
+                        type="button",
+                    ),
                     href="/signup",
                     on_click=AuthState.clear_auth_error,
+                    underline="none",
+                    width="100%",
                 ),
-                size="2",
-                color="gray",
+                spacing="2",
+                align="center",
+                width="100%",
             ),
             # #656. Rendered from the shared component rather than written
             # here, so the `is_external` (= new tab) that these off-site links

@@ -438,6 +438,41 @@ _OPERATOR_TEXT_SITES: dict[str, str] = {
 }
 
 
+def dotted_name(node: ast.expr) -> str | None:
+    """``httpx.HTTPStatusError`` stays whole; ``ConfigurationError`` stays bare.
+
+    ⚠️ Keeping only the final attribute is what a first version did, and it throws
+    away the one qualifier that makes the name resolvable. Under a resolver that
+    fails closed, that turns a legitimate third-party raise into a false red — and
+    under one that fails open it turns an unresolvable name into a pass.
+    """
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return None
+
+
+def resolve_raised(dotted: str, module, errors_module) -> object | None:
+    """Resolve a dotted name against the raising module, then datanika.errors, then
+    builtins. Returns ``None`` when it cannot be resolved, and every caller treats
+    that as a failure rather than as absence."""
+    head, *rest = dotted.split(".")
+    obj = getattr(module, head, None)
+    if obj is None:
+        obj = getattr(errors_module, head, None)
+    if obj is None:
+        obj = getattr(builtins, head, None)
+    for part in rest:
+        if obj is None:
+            return None
+        obj = getattr(obj, part, None)
+    return obj
+
+
 def raised_class_names(source: str, function: str) -> list[str]:
     """Every class name raised inside ``function``, as written.
 
@@ -455,7 +490,7 @@ def raised_class_names(source: str, function: str) -> list[str]:
                 continue
             exc = inner.exc
             call = exc.func if isinstance(exc, ast.Call) else exc
-            name = getattr(call, "id", None) or getattr(call, "attr", None)
+            name = dotted_name(call)
             if name:
                 names.append(name)
     return names
@@ -500,13 +535,7 @@ class TestOperatorTextIsOutsideValueError:
 
         offending, unresolved = [], []
         for name in raised_class_names(source, function):
-            # module attribute (`from x import Y`), then datanika.errors (the
-            # `errors.Y` dotted style), then builtins (`raise ValueError(...)`).
-            cls = getattr(module, name, None)
-            if cls is None:
-                cls = getattr(errors_module, name, None)
-            if cls is None:
-                cls = getattr(builtins, name, None)
+            cls = resolve_raised(name, module, errors_module)
             if not isinstance(cls, type):
                 unresolved.append(name)
             elif issubclass(cls, ValueError):
@@ -575,7 +604,7 @@ class TestTheOperatorTextScannerCanStillSeeOne:
         scanner walks past, and it is an ordinary import style."""
         source = 'def f():\n    raise errors.UserFacingError("x")\n'
 
-        assert raised_class_names(source, "f") == ["UserFacingError"]
+        assert raised_class_names(source, "f") == ["errors.UserFacingError"]
 
     def test_it_ignores_raises_in_other_functions(self):
         """Otherwise a neighbouring function's legitimate ``UserFacingError`` would

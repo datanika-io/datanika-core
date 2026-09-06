@@ -546,6 +546,18 @@ class AuthState(rx.State):
         return (org.id, org.name, org.slug, membership.role.value if membership.role else "")
 
     def signup(self, form_data: dict):
+        # core#1081 AC1.2 — defence in depth, and not optional. The ``on_load``
+        # guard is a page-load check; this form can still be submitted from a tab
+        # that was signed in *after* the page loaded, and everything below this
+        # line ends by replacing the live session in place.
+        #
+        # 🚨 The refusal is a redirect, never a sign-out. "Sign them out, then
+        # sign them up" is the same substitution with a friendlier name.
+        # 🚨 It is first — above the CAPTCHA check and above every database read —
+        # so a refused submission costs nothing and leaves no row behind.
+        if self._revalidate_session():
+            return rx.redirect("/")
+
         self.auth_error = ""
 
         self.signup_blocked = ""
@@ -907,3 +919,46 @@ class AuthState(rx.State):
 
         i18n = await self.get_state(I18nState)
         i18n.ensure_loaded()
+
+    async def redirect_if_signed_in(self):
+        """The credential-page guard: a live session may not sit on /login or /signup.
+
+        core#1081 AC1.1, ``docs/specs/SPEC_PAGE_ENTRY.md`` §2. Registered as
+        ``on_load`` on `/login` and `/signup` — the two routes that are neither
+        public nor protected, and whose entry rule is the **opposite** of
+        ``check_auth``'s.
+
+        🚨 **This is not ``check_auth`` with the sign flipped, and it must never
+        become that.** ``check_auth`` sends the *unauthenticated* case to
+        `/login`; on `/signup` that returns every prospect to the wall core#1081
+        and landing#512 exist to remove — and since landing PR #513, "Get Started
+        Free" in the marketing nav points at `/signup`. So the failing path here
+        does exactly nothing: no clear, no ``auth_error``, no redirect. Render
+        the form.
+
+        The harm it prevents is not a confusing page. ``signup`` never asked
+        whether a session existed and ended by overwriting the live one in place,
+        so a signed-in user who completed that form was silently re-identified —
+        new user, new org, tokens replaced, ``user_orgs`` clobbered to a single
+        entry. Their memberships survived in the database and the session stopped
+        knowing about them, which renders as an empty new tenant and reads as
+        their work being gone.
+
+        ⚠️ **``_revalidate_session`` is reused rather than reimplemented.** Two
+        definitions of "is this session valid" is how #671 happened. It is also
+        cheap on the common path: an empty ``access_token`` returns ``False``
+        immediately, with no database read and no mutation.
+
+        ⚠️ **This gives `/login` an ``on_load`` it did not have**, which moves it
+        off Reflex's ``if not load_events`` fast path — the one route measured at
+        a 57 ms paint gap. That cost is accepted, because the alternative is
+        leaving a form that discards a user's org memberships. Do not "optimise"
+        the guard off `/login` later on that basis. (`SPEC_PAGE_ENTRY` §8 asks
+        for §4 to land first on the grounds that `/login` would otherwise show a
+        bare spinner; measured, `/login` does not route through ``page_layout``
+        at all, so §4 could not cover it either way —
+        ``tests/test_ui/test_credential_page_guard.py`` pins that.)
+        """
+        if self._revalidate_session():
+            return rx.redirect("/")
+        return None

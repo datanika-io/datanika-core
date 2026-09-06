@@ -63,8 +63,13 @@ IGNORE_COLS="id created_at updated_at paddle_product_id paddle_price_id"
 # fails when the shape CHANGES, in either direction.
 #
 # 🚨 If this drill fails on the fingerprint, do NOT just paste the new value in.
-#    - fingerprint SHRANK  -> the defect is being fixed. Confirm against core#1060, update
-#                             this line in the same commit that fixes it, and close the issue.
+#    - fingerprint SHRANK  -> the defect is being fixed. Confirm against core#1060 and update
+#                             this line in the same commit that fixes it.
+#                             ⚠️ A SHRANK can be PARTIAL. This line used to say "and close the
+#                             issue", which would have been wrong on 2026-09-06: core#1071 took
+#                             the gap 26 -> 22 and core#1060 has 22 columns still open. Close
+#                             core#1060 only when the gap is EMPTY — read the printed list, not
+#                             the fact that the hash moved.
 #    - fingerprint GREW    -> a plan or a column was added that a rebuild will not reproduce.
 #                             That is a NEW instance of core#928's class. File it.
 # The gap itself is printed in full on every run regardless, so it is never only a hash.
@@ -81,28 +86,38 @@ IGNORE_COLS="id created_at updated_at paddle_product_id paddle_price_id"
 #
 # Discrimination control, same production reference, two rebuild images:
 #   :latest  head a9c4e2b7d5f3 (pre-#1047)  -> 30 columns, d40ef6fd71337e53
-#   :staging head b4d8f1a2c6e9 (post-#1047) -> 26 columns, d0e77bd8d96b9219   <- pinned
+#   :staging head b4d8f1a2c6e9 (post-#1047) -> 26 columns, d0e77bd8d96b9219   (superseded 2026-09-06)
 #
-# 🔔 KNOWN STALE AS OF 2026-09-05, and expected to fail SHRANK on its next run — core#1071.
+# RE-PINNED 2026-09-06 (core#1071) — the SHRANK the block below predicted, now MEASURED.
 # Core migration `e8b3d5c7f2a9` sets `plans.hard_cap_bytes`' server default to `false` (it was
 # `true`, which is what made a rebuilt production block Pro and Enterprise on volume mid-cycle
-# against the published FAQ). That removes the four `<paid slug>.hard_cap_bytes` lines, so:
+# against the published FAQ). That removes the four `<paid slug>.hard_cap_bytes` lines.
 #
-#   expected next reading: 22 columns, same 4 missing slugs, a fingerprint NOT computable here
+# Discrimination control, same production reference (5 live plans), two rebuild images, run on
+# the box 2026-09-06 with TEXTFILE_DIR redirected to scratch so a manual run could not clobber
+# the served metric:
+#   :latest  head d7f2c8a4b1e6 (pre-#1071)  -> 26 columns, d0e77bd8d96b9219   (reproduced the old pin)
+#   :staging head f1a4c8e2d6b3 (post-#1071) -> 22 columns, b46433131dde4c20   <- pinned
 #
-# The fingerprint is a sha256 over the live catalogue joined to production's rows, so only a run
-# on the box produces it. Re-measure against the `:staging` image once the migration is on `dev`
-# — the route that caught core#1047's four `max_schedules` lines before promotion — and re-pin in
-# that commit. 🚨 Do NOT paste a predicted value here: the whole reason this pin is trustworthy is
-# that every value it has ever held was measured. A forecast written into a baseline is a defect
-# laundered into a constant, which is the failure this block's own warning is about.
+# 🔑 The control is the half that makes this trustworthy: the SAME script against the SAME
+# production rows still returns the OLD fingerprint on the OLD image. So the move is attributable
+# to the migration and not to the drill, to production drifting, or to my having changed something
+# while measuring. A single post-fix reading could not distinguish those.
+#
+# The four lines that left are exactly `{pro,enterprise}-{monthly,annual}.hard_cap_bytes`, and the
+# missing-slug set is unchanged at 4 — so the `slugs:` half of the fingerprint input did not move
+# and the whole delta is those four lines. 26 - 4 = 22.
+#
+# 🚨 This value was MEASURED, never predicted. The previous revision of this block deliberately
+# refused to write a forecast here, and that refusal was right: a forecast written into a baseline
+# is a defect laundered into a constant. If you are re-pinning, run the drill — do not compute.
 #
 # ⚠️ `${VAR-default}`, NOT `${VAR:-default}`. With `:-` an explicitly EMPTY override falls back to
 # the pinned value, which made the "nothing pinned" branch below structurally unreachable — a
 # branch that can never fire, found by running the arm that was supposed to exercise it. With `-`
 # only an UNSET variable takes the default, so `EXPECTED_GAP= ` reaches the bootstrap path and the
 # guard is testable.
-EXPECTED_GAP="${EXPECTED_GAP-d0e77bd8d96b9219}"
+EXPECTED_GAP="${EXPECTED_GAP-b46433131dde4c20}"
 
 cleanup() {
     docker rm -f "${DB}" >/dev/null 2>&1 || true

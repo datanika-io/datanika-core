@@ -1337,7 +1337,14 @@ class ConnectionState(BaseState):
             )
 
     async def load_connections(self):
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
+            return
+
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         with get_sync_session() as session:

@@ -147,6 +147,52 @@ gh api "repos/datanika-io/<repo>/actions/runs?event=merge_group&per_page=5" \
 
 **Zero merge-group runs for your entry is the signature.** It is not "still running".
 
+### 🚨 …and the runs that DO exist all say `failure`. On this repo that is normal.
+
+The command above is the one you reach for while triaging, and **its output is a wall of red
+even when the queue is working perfectly.** Measured 2026-09-06 on `datanika-core`:
+
+```
+33964199351  failure  gh-readonly-queue/dev/pr-1110-…      PR #1110 -> MERGED
+33962725999  failure  gh-readonly-queue/dev/pr-1109-…      PR #1109 -> MERGED
+33961277694  failure  gh-readonly-queue/dev/pr-1108-…      PR #1108 -> MERGED
+…
+```
+
+**10 of the last 10 `merge_group` runs concluded `failure`, and all 10 of those PRs merged.**
+Job-level, on each of them: `lint`, `test`, `helm-lint`, `migration-roundtrip`, `image-probe`
+and `core-only-image` all `success`; `staging` and `e2e-sso` `skipped` (correctly — they are
+`dev`-push-only); **`image-cve` `failure`**, which is red repo-wide and is **not a required
+check**.
+
+🔑 **The mechanism, and it is structural rather than a misconfiguration: the run aggregates
+*every* check, while the queue gates on the *required* ones.** Those are two different
+questions, and GitHub answers them in the same vocabulary. A red run conclusion is therefore
+compatible with a perfectly healthy entry, and will stay that way for as long as any
+non-required check is red.
+
+⚠️ **The trap is that this is the shape you meet while looking for a broken queue.** Eight or
+ten consecutive `failure`s, in the exact listing this runbook sends you to, is extremely
+convincing — and it is `WORKFLOW_RULES` §13 trap 17 (*"a run-level CI conclusion cannot answer
+a question about one job"*) arriving where it costs the most. Deliberately not a relative link:
+`WORKFLOW_RULES.md` lives in the **private** `datanika-plans` repo, and a `../../../plans/…`
+path from this public repo resolves to nothing for a self-hoster and to the monorepo root for
+us — two different wrong answers.
+
+**Read the jobs, and read the PR's fate — never the run conclusion:**
+
+```bash
+# what actually ran, per job
+gh api "repos/datanika-io/<repo>/actions/runs/<id>/jobs?per_page=100" \
+  -q '.jobs[] | "\(.conclusion)\t\(.name)"'
+
+# and the only outcome that matters
+gh pr view <n> --repo datanika-io/<repo> --json state,mergedAt
+```
+
+**The verdict you want is: every *required* check `success`, and the PR `MERGED`.** If those
+two hold, the queue did its job — whatever the run header says.
+
 ---
 
 ## `strict` alongside a queue — MEASURED, and it is not what the docs left ambiguous

@@ -220,10 +220,30 @@ the spec names which, because a test suite whose members overlap is one test wit
 After a successful `remove_dependency`, `audit_logs` holds exactly **one** matching row with the
 exact shape in AC2. Same for AC1.
 
-**Kills:** the audit call being absent, and the audit call being placed *after* `session.commit()`
-inside the same `with` block — where the row is added to the session and then dropped on close.
+**Kills:** the audit call being absent.
 
-**Cannot see:** an audit row written in its own session. That row exists too, so T1 is green.
+**Cannot see:** an audit row written in its own session — that row exists too, so T1 is green.
+
+> 🚨 **CORRECTED 2026-09-07, [core#934] — T1 does NOT kill the after-`commit()` placement**, which
+> this clause claimed. Measured: really moving the `_audit` call below `session.commit()` in
+> `add_dependency` left **all nine** other tests in the file green.
+>
+> The reason is the harness, and it applies to every audit harness in this repo. The shared
+> `db_session` fixture owns the real transaction and rolls it back at teardown, so a handler's
+> `commit()` has to be stubbed to a `flush()` — otherwise it releases the savepoint and rows leak
+> into the next test. Under that stub a row added *after* `commit()` is still flushed into the same
+> transaction, and any later query finds it. In **production** the same code writes nothing: the
+> `with` block exits with no second commit and the row is discarded.
+>
+> **What does kill it** is a watermark on the stubbed `commit()` — how many audit rows were already
+> in the transaction at the moment it was called (expect 1, get 0).
+>
+> ⚠️ **Count ROWS, not objects.** The first version of that watermark asked whether an `AuditLog`
+> was in `session.identity_map` or `session.new`, and it read **False on correct code**:
+> `identity_map` is a *weak* dict, `log_action` flushes the row and returns it, and every caller
+> discards the return — so the object is collected while its row sits in the transaction. Isolated
+> probe: `identity_map` size **0**, `session.new` empty, `SELECT count(*)` = **1**. *Presence of the
+> object is not presence of the row.*
 
 ### 4.2 · T2 — one transaction, asserted structurally
 

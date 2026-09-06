@@ -723,6 +723,7 @@
   "dag.delete_reversible": "Nada fallará por ello: la tarea posterior simplemente trabajará con los datos que haya.",
   "dag.delete_confirm": "Sí, quitar dependencia",
   "dag.deleted_toast": "Dependencia eliminada. La tarea posterior ya no espera.",
+  "dag.remove_missing": "Esa dependencia no se eliminó — puede que ya no exista.",
   "uploads.destination_help": "Solo se listan los tipos de conexión en los que Datanika puede cargar. MySQL y SQLite se admiten como orígenes de extracción, pero no hay controlador de carga para ellos como destino.",
   "uploads.destination_invalid": "No se pueden cargar datos en una conexión de este tipo: solo se admite como origen. Elija uno de los destinos listados.",
   "pipelines.destination_help": "Las canalizaciones ejecutan dbt, que necesita un adaptador para el destino. Databricks y Synapse pueden recibir datos cargados pero no tienen adaptador; MySQL y SQLite son solo orígenes de extracción.",

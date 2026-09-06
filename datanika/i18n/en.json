@@ -723,6 +723,7 @@
   "dag.delete_reversible": "Nothing fails when this happens — the downstream job simply runs on whatever data is there.",
   "dag.delete_confirm": "Yes, remove dependency",
   "dag.deleted_toast": "Dependency removed. The downstream job no longer waits.",
+  "dag.remove_missing": "That dependency was not removed — it may already be gone.",
   "uploads.destination_help": "Only connection types Datanika can load into are listed. MySQL and SQLite are supported as extract sources, but there is no loader driver for them as destinations.",
   "uploads.destination_invalid": "Data cannot be loaded into this connection type — it is supported as a source only. Pick one of the listed destinations.",
   "pipelines.destination_help": "Pipelines run dbt, which needs an adapter for the target. Databricks and Synapse can receive loaded data but have no adapter; MySQL and SQLite are extract sources only.",

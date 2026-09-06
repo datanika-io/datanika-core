@@ -287,3 +287,144 @@ def test_the_classifier_discriminates(source: str, should_offend: bool) -> None:
         f"classifier said {desc!r} for {source!r}; expected "
         f"{'an offence' if should_offend else 'acceptance'}"
     )
+
+
+# ---------------------------------------------------------------------------------------
+# SPEC_AUDIT_TRAIL §2.3 — "the resource_type must be a value the reader can filter for"
+# ---------------------------------------------------------------------------------------
+#
+# The second failure mode SPEC_AUDIT_TRAIL §1 names, and the worse of the two: **an absent
+# audit log is not consulted; a lying one is believed.** Both render the same empty table.
+#
+# Measured on origin/dev @ aa078bb, 2026-09-06 — 13 resource_type values are written and
+# the filter offered 7, and the two sets did not overlap in either direction:
+#
+#   written and NOT filterable (7)  import member notification_channel org password
+#                                   session user
+#   filterable and NEVER written(1) membership
+#
+# `member` carries 7 of the 13 writes — every membership change, invitation, role change,
+# and `leave_org`. An admin asking "who removed this person?" picked `membership`, the one
+# option on screen that looks right, and got an empty table (core#1128).
+
+
+def _written_resource_types() -> tuple[set[str], list[str]]:
+    """``(literal values written, arguments this walker could not reduce)``."""
+    written: set[str] = set()
+    unresolved: list[str] = []
+
+    for root in _roots():
+        for path in _python_files(root):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            rel = path.relative_to(root.parent).as_posix()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or _callee_name(node) not in AUDIT_CALLEES:
+                    continue
+                arg = _resource_arg(node)
+                if arg is None:
+                    continue
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    written.add(arg.value)
+                else:
+                    # The chokepoint forwards its own parameter; that is the only
+                    # unresolved site today and it writes nothing of its own.
+                    unresolved.append(f"{rel}:{node.lineno} {ast.unparse(arg)}")
+    return written, unresolved
+
+
+def test_the_resource_sweep_is_armed() -> None:
+    """Guard the guard. An empty written set makes every comparison below vacuous."""
+    written, unresolved = _written_resource_types()
+    assert len(written) >= 12, (
+        f"only {len(written)} resource types found ({sorted(written)}) — is the walker "
+        "reaching datanika/?"
+    )
+    assert "member" in written, (
+        "the type carrying 7 of the writes is missing from the sweep, so the headline "
+        "finding of core#1128 could not be reproduced by this file"
+    )
+    # Only ``BaseState._audit`` forwards a variable. If this grows, a call site has
+    # started computing its resource type and the comparison below has a blind spot.
+    assert len(unresolved) <= 1, f"unresolved resource_type arguments: {unresolved}"
+
+
+def test_every_written_resource_type_is_filterable() -> None:
+    """core#1128, direction 1: a row nobody can narrow to.
+
+    A row written under a type absent from the filter is *in* the table and unreachable
+    through the only UI that reads the table. ``password`` and ``session`` are the two an
+    incident responder wants most.
+    """
+    from datanika.ui.pages.audit_logs import RESOURCE_FILTER_OPTIONS
+
+    written, _ = _written_resource_types()
+    offered = set(RESOURCE_FILTER_OPTIONS) - {"all"}
+    missing = sorted(written - offered)
+    assert not missing, (
+        "these resource types are written by call sites and cannot be filtered for on "
+        "/audit-logs, so the rows exist and the only instrument for reading them reports "
+        f"nothing (SPEC_AUDIT_TRAIL §2.3):\n  {missing}"
+    )
+
+
+def test_every_filter_option_is_something_a_call_site_writes() -> None:
+    """core#1128, direction 2: an option that matches nothing, ever.
+
+    🚨 This is the half that made the defect dangerous rather than merely incomplete. An
+    option that returns an empty table does not read as a broken filter — it reads as
+    *"nobody did it"*, which is precisely the answer the audit log exists to give
+    truthfully.
+    """
+    from datanika.ui.pages.audit_logs import RESOURCE_FILTER_OPTIONS
+
+    written, _ = _written_resource_types()
+    offered = set(RESOURCE_FILTER_OPTIONS) - {"all"}
+    orphans = sorted(offered - written)
+    assert not orphans, (
+        "these filter options are offered on /audit-logs and no call site has ever "
+        "written them, so selecting one returns an empty table that reads as 'nothing "
+        f"happened':\n  {orphans}"
+    )
+
+
+def test_every_action_filter_option_is_an_audit_action() -> None:
+    """core#1128 AC4 — the action filter is the same hand-list shape.
+
+    It happened to be correct, which is not the same as being *kept* correct: it is a
+    second copy of ``AuditAction``'s membership maintained by memory, and the adjacent
+    core#1127 is what that costs when a copy drifts.
+    """
+    from datanika.ui.pages.audit_logs import ACTION_FILTER_OPTIONS
+
+    offered = set(ACTION_FILTER_OPTIONS) - {"all"}
+    assert offered == set(VALID_VALUES), (
+        "the /audit-logs action filter and AuditAction disagree.\n"
+        f"  offered but not a member: {sorted(offered - VALID_VALUES)}\n"
+        f"  a member but not offered: {sorted(VALID_VALUES - offered)}"
+    )
+
+
+def test_the_page_renders_the_derived_lists_rather_than_its_own_literals() -> None:
+    """The lists must reach the component by name, or the constants above are decoration.
+
+    ⚠️ Asserted as a **presence** — *the option argument is one of these two names* —
+    rather than as the absence of a list literal. A ban on literals would be satisfied by
+    deleting the select altogether, and would go red on a perfectly good refactor that
+    happened to inline something unrelated. The presence form fails exactly when the page
+    stops reading the derived list, which is the regression this is for.
+    """
+    page = CORE_ROOT / "ui" / "pages" / "audit_logs.py"
+    tree = ast.parse(page.read_text(encoding="utf-8"), filename=str(page))
+    options_args = [
+        node.args[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _callee_name(node) == "searchable_select" and node.args
+    ]
+    assert len(options_args) == 2, (
+        f"expected the two filter selects on /audit-logs, found {len(options_args)}"
+    )
+    names = sorted(a.id for a in options_args if isinstance(a, ast.Name))
+    assert names == ["ACTION_FILTER_OPTIONS", "RESOURCE_FILTER_OPTIONS"], (
+        "the filter selects must be handed the derived module constants; found "
+        f"{[ast.unparse(a) for a in options_args]}"
+    )

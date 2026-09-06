@@ -564,6 +564,27 @@ Each step is independently mergeable; the ordering is about not building on a re
 ⚠️ **Step 3 after step 2 is a real constraint, not a preference.** Reversed, `/login` spends a release
 with the window and a bare spinner.
 
+### 🔴 What actually shipped: steps 1 and 3, in that order. Step 2 came third.
+
+Recorded rather than quietly reordered, because the constraint above was stated and then inverted,
+and the reasoning it rested on turned out to be **partly wrong in our favour**.
+
+`datanika/datanika.py` now registers `on_load=[AuthState.redirect_if_signed_in]` on `/login` and
+`[…, AuthState.prefill_invite_email]` on `/signup`, so both are off Reflex's zero-handler fast path —
+exactly the state §8 said to avoid until §4 had landed. §4 landed after it.
+
+**The predicted harm did not occur, and the reason is a fact §8 did not have:** neither credential
+page goes through `page_layout` at all. Their card is unconditional markup in the client bundle, not
+the false arm of an `rx.cond` on a server-resolved auth var, so there is no branch for a bare spinner
+to occupy. What §8 got right is that the *window* moved onto those two pages; what it got wrong is
+that the loading state was the thing standing between them and it.
+
+🔑 **AC4.4 is therefore no longer a precaution — it is the only thing holding that property**, and it
+is a property nobody had written down. `TestCredentialPagesDoNotAcquireThisWindow` in
+`tests/test_ui/test_page_entry_loading_state.py` pins it, with `dashboard.py` as the positive
+control. Routing either page through `page_layout` would hand a signed-out visitor a loading shell
+**on the sign-in form itself**, and every check would stay green.
+
 [core#624]: https://github.com/datanika-io/datanika-core/issues/624
 [core#639]: https://github.com/datanika-io/datanika-core/issues/639
 [core#671]: https://github.com/datanika-io/datanika-core/issues/671

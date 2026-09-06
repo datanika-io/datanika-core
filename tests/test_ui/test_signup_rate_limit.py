@@ -115,6 +115,9 @@ def _state(svc: MagicMock, *, client_ip: str = "203.0.113.9") -> MagicMock:
         default = field.default_factory() if field.default_factory else field.default
         setattr(st, name, default)
     st._get_user_service = lambda: svc
+    # core#1081 — signup refuses a live session first. Bound explicitly because a
+    # bare MagicMock would return a truthy mock and refuse every signup here.
+    st._revalidate_session = lambda: False
     st._client_ip = lambda: client_ip
     st._post_auth_redirect_target = lambda: "/"
     # A bare MagicMock returns a truthy mock for any query parameter, which

@@ -144,6 +144,16 @@ class _SignupState:
         AuthState._accept_signup_invitation, "fn", AuthState._accept_signup_invitation
     )
 
+    def _revalidate_session(self):
+        """core#1081 — signup refuses a live session before anything else.
+
+        Every test in this file is an invited or uninvited signup by a
+        signed-OUT visitor, so this is False. Bound rather than inherited,
+        because the real one reads ``access_token`` off a state this stand-in
+        does not fully model.
+        """
+        return False
+
     def _client_ip(self):
         return ""
 

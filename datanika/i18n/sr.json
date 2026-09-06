@@ -23,6 +23,7 @@
   "auth.full_name": "Пуно име",
   "auth.create_account": "Направи налог",
   "auth.or_continue_with": "или наставите преко",
+  "auth.social_creates_account": "Пријава на овај начин такође креира налог ако га немате.",
   "auth.no_account": "Немате налог?",
   "auth.have_account": "Већ имате налог?",
   "auth.completing_sign_in": "Завршавање пријаве…",

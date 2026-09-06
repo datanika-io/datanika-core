@@ -23,6 +23,7 @@
   "auth.full_name": "Полное имя",
   "auth.create_account": "Создать аккаунт",
   "auth.or_continue_with": "или продолжить с",
+  "auth.social_creates_account": "Такой вход также создаёт аккаунт, если его ещё нет.",
   "auth.no_account": "Нет аккаунта?",
   "auth.have_account": "Уже есть аккаунт?",
   "auth.completing_sign_in": "Завершение входа...",

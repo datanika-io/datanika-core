@@ -23,6 +23,7 @@
   "auth.full_name": "Full Name",
   "auth.create_account": "Create Account",
   "auth.or_continue_with": "or continue with",
+  "auth.social_creates_account": "Signing in this way also creates an account if you don't have one.",
   "auth.no_account": "Don't have an account?",
   "auth.have_account": "Already have an account?",
   "auth.completing_sign_in": "Completing sign in...",

@@ -23,6 +23,7 @@
   "auth.full_name": "Vollständiger Name",
   "auth.create_account": "Konto erstellen",
   "auth.or_continue_with": "oder weiter mit",
+  "auth.social_creates_account": "Diese Anmeldung erstellt auch ein Konto, falls Sie noch keines haben.",
   "auth.no_account": "Noch kein Konto?",
   "auth.have_account": "Bereits ein Konto?",
   "auth.completing_sign_in": "Anmeldung wird abgeschlossen...",

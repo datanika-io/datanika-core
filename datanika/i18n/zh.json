@@ -23,6 +23,7 @@
   "auth.full_name": "全名",
   "auth.create_account": "创建账户",
   "auth.or_continue_with": "或通过以下方式继续",
+  "auth.social_creates_account": "以这种方式登录时，如果您还没有账户，系统会自动创建。",
   "auth.no_account": "没有账户？",
   "auth.have_account": "已有账户？",
   "auth.completing_sign_in": "正在完成登录…",

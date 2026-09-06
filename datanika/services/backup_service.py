@@ -545,7 +545,7 @@ class BackupService:
         """
         version = data.get("version")
         if version not in SUPPORTED_BACKUP_VERSIONS:
-            raise ValueError(
+            raise UserFacingError(
                 f"Unsupported backup version {version}, expected one of {SUPPORTED_BACKUP_VERSIONS}"
             )
 
@@ -640,12 +640,12 @@ class BackupService:
 
             src_id = name_to_new_id.get(src_name)
             if src_id is None:
-                raise ValueError(
+                raise UserFacingError(
                     f"Upload '{uname}' references unknown source connection '{src_name}'"
                 )
             dst_id = name_to_new_id.get(dst_name)
             if dst_id is None:
-                raise ValueError(
+                raise UserFacingError(
                     f"Upload '{uname}' references unknown destination connection '{dst_name}'"
                 )
 
@@ -697,7 +697,7 @@ class BackupService:
             dst_name = p_data.get("destination_connection_name", "")
             dst_id = name_to_new_id.get(dst_name)
             if dst_id is None:
-                raise ValueError(
+                raise UserFacingError(
                     f"Pipeline '{pname}' references unknown destination connection '{dst_name}'"
                 )
 

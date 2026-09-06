@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.pii import InvitationPII, UserPII
 from datanika.models.user import MemberRole, Membership, User
@@ -114,7 +115,7 @@ class InvitationService:
 
         # Check if already a member (core#1010).
         if self._has_active_membership(session, org_id, email):
-            raise ValueError(f"{email} is already a member of this organization")
+            raise UserFacingError(f"{email} is already a member of this organization")
 
         # Check for existing pending invitation
         existing_inv = session.execute(
@@ -125,7 +126,7 @@ class InvitationService:
             )
         ).scalar_one_or_none()
         if existing_inv:
-            raise ValueError(f"There is already a pending invitation for {email}")
+            raise UserFacingError(f"There is already a pending invitation for {email}")
 
         token = self._auth.create_email_verification_token(
             user_id=invited_by_user_id, email=email, expires_hours=expires_days * 24

@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
 from datanika.services.execution_service import ExecutionService
@@ -104,7 +105,7 @@ class SchedulerIntegrationService:
         """Parse 5-field cron into APScheduler CronTrigger."""
         fields = cron_expression.strip().split()
         if len(fields) != 5:
-            raise ValueError(f"Expected 5 cron fields, got {len(fields)}")
+            raise UserFacingError(f"Expected 5 cron fields, got {len(fields)}")
         return CronTrigger(
             minute=fields[0],
             hour=fields[1],

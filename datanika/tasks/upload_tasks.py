@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
@@ -155,7 +156,7 @@ def run_upload(
         src_conn = get_org_connection(session, org_id, upload.source_connection_id)
         dst_conn = get_org_connection(session, org_id, upload.destination_connection_id)
         if src_conn is None or dst_conn is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Upload {upload.id} references a connection that is not available to org {org_id}"
             )
 

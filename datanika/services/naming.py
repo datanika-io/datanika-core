@@ -2,6 +2,8 @@
 
 import re
 
+from datanika.errors import UserFacingError
+
 _NAME_RE = re.compile(r"^[a-zA-Z0-9 ]+$")
 
 
@@ -9,9 +11,9 @@ def validate_name(name: str, entity_label: str) -> None:
     """Validate that *name* is non-empty and contains only alphanumeric chars + spaces."""
     stripped = name.strip()
     if not stripped:
-        raise ValueError(f"{entity_label} name cannot be empty")
+        raise UserFacingError(f"{entity_label} name cannot be empty")
     if not _NAME_RE.match(stripped):
-        raise ValueError(
+        raise UserFacingError(
             f"{entity_label} name must contain only alphanumeric characters and spaces"
         )
 

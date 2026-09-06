@@ -899,7 +899,7 @@ def _build_sa_url(config: dict, connection_type: ConnectionType, *, read_only: b
         # a value in the URL path is treated as a SID (#329).
         return f"oracle+oracledb://{userinfo}?service_name={quote_plus(config.get('database', ''))}"
 
-    raise ValueError(f"Unsupported connection type for URL building: {connection_type}")
+    raise UserFacingError(f"Unsupported connection type for URL building: {connection_type}")
 
 
 def get_org_connection(session: Session, org_id: int, conn_id: int) -> Connection | None:
@@ -1095,7 +1095,7 @@ class ConnectionService:
     ) -> tuple[list[str], list[list]]:
         """Execute a read-only SQL query. Returns (column_names, rows)."""
         if connection_type in _NON_DB_TYPES:
-            raise ValueError(f"Cannot execute SQL on {connection_type.value} connections")
+            raise UserFacingError(f"Cannot execute SQL on {connection_type.value} connections")
         url = _build_sa_url(config, connection_type)
         engine = create_engine(url)
         try:
@@ -1560,7 +1560,7 @@ class ConnectionService:
         Raises ValueError for non-SQL connection types.
         """
         if connection_type in _NON_DB_TYPES:
-            raise ValueError(f"Cannot list tables for {connection_type.value} connections")
+            raise UserFacingError(f"Cannot list tables for {connection_type.value} connections")
         url = _build_sa_url(config, connection_type)
         engine = create_engine(url)
         try:
@@ -1599,7 +1599,7 @@ class ConnectionService:
     ) -> list[dict]:
         """List columns of a table. Returns [{name, type, nullable}]."""
         if connection_type in _NON_DB_TYPES:
-            raise ValueError(f"Cannot list columns for {connection_type.value} connections")
+            raise UserFacingError(f"Cannot list columns for {connection_type.value} connections")
         url = _build_sa_url(config, connection_type)
         engine = create_engine(url)
         try:

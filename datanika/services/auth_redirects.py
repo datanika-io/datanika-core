@@ -23,6 +23,8 @@ derives its expectations from the route sources, so a slug that is not in this t
 build rather than silently rendering nothing.
 """
 
+from datanika.errors import UserFacingError
+
 # slug -> i18n key. Many-to-one on purpose; see the module docstring.
 AUTH_ERROR_KEYS: dict[str, str] = {
     # --- OAuth (services/oauth_routes.py) ---
@@ -46,12 +48,15 @@ AUTH_ERROR_KEYS: dict[str, str] = {
 def login_error_path(reason: str) -> str:
     """Return ``/login?auth_error=<reason>``.
 
-    Raises ``ValueError`` for a slug outside :data:`AUTH_ERROR_KEYS` — a redirect that would
-    render nothing is a bug at the call site, and failing here makes it a test failure
+    Raises ``UserFacingError`` for a slug outside :data:`AUTH_ERROR_KEYS` — a redirect that
+    would render nothing is a bug at the call site, and failing here makes it a test failure
     instead of a blank sign-in page in production.
     """
     if reason not in AUTH_ERROR_KEYS:
-        raise ValueError(
+        # core#1113: developer text under a marker that says user-facing. Converted
+        # here only to keep core#1094 step 2 behaviour-neutral; moving it out of
+        # ValueError's subtree is core#1113's decision, not this PR's.
+        raise UserFacingError(
             f"unknown auth error reason {reason!r}; add it to AUTH_ERROR_KEYS with an i18n key"
         )
     return f"/login?auth_error={reason}"

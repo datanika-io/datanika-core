@@ -9,8 +9,12 @@
 # Canonical copy: deploy/server/restore-drill.sh (datanika-core)
 # Invariants pinned by: tests/test_deploy/test_backup_encryption.py
 #
-# ⚠️ NOTHING DEPLOYS THIS FILE (core#747) — the copy that runs is hand-installed.
-# After changing it, install it and compare sha256 against git.
+# ✅ THIS FILE IS INSTALLED BY THE DEPLOY. `scripts/install-server-scripts.sh`
+# copies it to the path above on every push to `master` and asserts sha256
+# against this repo copy. Change it here, merge, promote. (core#747.)
+#
+# 🚨 DO NOT HAND-INSTALL IT — this banner said to until core#1117, and doing so
+# now overwrites a file the deploy manages and hash-verifies.
 #
 # ⚠️ The assertion is the whole value of this script, and its first version was
 # `plans >= 5`. That is seed data written by seed_v2_plans.py, never by a

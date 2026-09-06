@@ -281,18 +281,18 @@ moves the census. Do not go looking for a second entry to delete.
 ## §6 — Two defects found while writing this. **Neither is in scope here.**
 
 Both were found by the §2 clauses, which is the argument for writing the contract down rather than
-patching the one site that prompted it. Both are filed separately; they are named here so an
+patching the one site that prompted it. Both are filed — **[core#1127]** and **[core#1128]** — and are named here so an
 implementer of [core#934] does not silently absorb them, and so the next person to read this spec
 does not re-derive them.
 
-### 6.1 · A `transfer_ownership` audit row has never been written (§2.2)
+### 6.1 · [core#1127] — a `transfer_ownership` audit row has never been written (§2.2)
 
 `SettingsState.transfer_ownership` (`settings_state.py:457`) passes `"transfer_ownership"` as the
 action. It is not an `AuditAction` member, so `AuditAction(action)` raises and `_audit` swallows it.
 **The single highest-privilege action in the product writes no audit row**, and every check is
 green.
 
-### 6.2 · The resource-type filter and the writers disagree, in both directions (§2.3)
+### 6.2 · [core#1128] — the resource-type filter and the writers disagree, in both directions (§2.3)
 
 AST census over `datanika/`, 2026-09-06 — 13 `resource_type` values are written; the filter offers 7:
 
@@ -335,4 +335,6 @@ same correction `PII_PAYLOAD_KEYS` already made for the redactor, for the same r
 [core#735]: https://github.com/datanika-io/datanika-core/issues/735
 [core#851]: https://github.com/datanika-io/datanika-core/issues/851
 [core#934]: https://github.com/datanika-io/datanika-core/issues/934
+[core#1127]: https://github.com/datanika-io/datanika-core/issues/1127
+[core#1128]: https://github.com/datanika-io/datanika-core/issues/1128
 [core#1081]: https://github.com/datanika-io/datanika-core/issues/1081

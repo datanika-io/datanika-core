@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 
+from datanika.errors import UserFacingError
 from datanika.services.ir import IR_VERSION
 from datanika.services.ir.introspect import introspect_columns
 from datanika.services.ir.schema import IR, IRColumn, IRIncremental, IRSource, IRTarget
@@ -64,7 +65,7 @@ SAAS_TYPES = frozenset(
 FILE_TYPES = frozenset({"csv", "json", "parquet", "s3"})
 
 
-class IRBuildError(ValueError):
+class IRBuildError(UserFacingError):
     """Raised when build_ir cannot construct an IR for the given source."""
 
 

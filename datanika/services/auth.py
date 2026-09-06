@@ -3,7 +3,9 @@ from datetime import UTC, datetime, timedelta
 import bcrypt
 from jose import JWTError, jwt
 
-# The org permission model. `plans/product/SPEC_ORG_ROLES.md` is the decision of
+from datanika.errors import UserFacingError
+
+# The org permission model. `docs/specs/SPEC_ORG_ROLES.md` is the decision of
 # record; this table is the machine-readable half of it and `UserService`
 # derives its member-management checks from here rather than restating them.
 #
@@ -144,9 +146,9 @@ class AuthService:
         change form and the reset flow all route through this one function.
         """
         if len(password) < MIN_PASSWORD_LENGTH:
-            raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+            raise UserFacingError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
         if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-            raise ValueError(
+            raise UserFacingError(
                 f"Password must be at most {MAX_PASSWORD_BYTES} bytes. Accented "
                 "characters and emoji count as more than one byte each."
             )

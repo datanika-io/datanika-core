@@ -882,10 +882,355 @@ was still running. Exit code 2, `unexpected EOF`, from a script whose contents w
 **The name has to be unique per *invocation*, not per purpose.** A second waiter is a second script.
 Nothing was lost here because the poll was read-only — which is the only reason this is a rule
 rather than an incident.
+
+## 32. A guard designed to expire must be readable by the mechanism that expires it
+
+**(2026-09-05, [core#1069] / [cloud#171].)** cloud#194 gave the `TimestampMixin` nullability
+exclusion an expiry: `test_the_exclusion_has_not_outlived_its_reason` asserts the disagreement is
+*still there*, so that when core's release N+1 tightens those columns the test reds and names its own
+deletion. That is the right design — an exception with no expiry is how a guard becomes decoration.
+
+**With the migration on disk and all 14 columns genuinely tightened, all 17 tests stayed GREEN.**
+`f1a4c8e2d6b3` writes `op.alter_column(table, column, …)` inside a nested `for` over module
+constants, and the scanner read positional arguments as **literals only**.
+
+> **A guard designed to expire could not see the thing that expires it** — so the exception would
+> have sat there for ever, excusing six columns that no longer need it and standing in front of any
+> *future* disagreement on those names.
+
+**Rules:**
+1. **Run the expiry against the change that should trigger it, and watch it go red.** An expiry test
+   that has never fired is a claim about a future you have not tested.
+2. **The expiry and the mechanism must read the same artifact the same way.** Here the exclusion was
+   derived from the *model* and the expiry from a *source scanner*; only one of them could see the fix.
+3. Derivation and expiry are **both** required and neither substitutes for the other: derived stops
+   the exception widening, the expiry stops it outliving its reason.
+
+## 33. A pre-flight that can refuse a CORRECT database will be deleted under pressure
+
+**(2026-09-05, [core#1069].)** Built the same-row check anyone would want for the `timestamptz`
+conversion: `usage_ledger.created_at` inside its own `period_start`/`period_end`, both `timestamptz`
+**on the same row** — no join, so nothing to re-select, which is exactly what invalidated the
+nearest-neighbour probe it replaced.
+
+**It refused a correct database on its first run outside its own tests.** A round-trip harness seeds
+a ledger row with an arbitrary `created_at` and an arbitrary period.
+
+🔑 **The harness was not the defect.** *"A ledger row is written inside its own billing period"* is
+an **observation**, not an invariant — nothing in the schema or the code enforces it, `record_usage`
+merely computes the period from `now()`, and `e2e_admin.py` writes ledger rows directly.
+
+> **A check that can abort a production deploy must rest on an invariant.** One that can refuse a
+> correct database gets deleted under pressure — and it takes the checks beside it with it.
+
+**Rules:**
+1. **Ask what enforces the property**, not whether it currently holds. If the answer is *"nothing,
+   but it always does"*, it is an observation.
+2. **Remove it, and record it as a failed control** — with a test requiring the case it wrongly
+   refused to **pass**, or the next person re-adds it by instinct.
+3. What survives should be invariant-backed and **honest about its reach**. Ours: no NULLs, and
+   nothing later than `now()` — both properties of `server_default=now()` itself.
+
+## 34. A static scanner that reads only literals is blind to what a CONTRACT migration looks like
+
+**(2026-09-05, [core#1069] + [core#1071] — two instances in one day, in two repos.)**
+
+| the spelling | what the scanner did |
+|---|---|
+| `op.alter_column(table, column, …)` inside `for table in TABLES:` | skipped the call entirely |
+| `server_default=sa.text(_NEW_DEFAULT)`, constant at module level | returned `_UNKNOWN`, so the column kept its **previous** default |
+
+Both are the spellings this codebase *prefers*: a contract migration operates over a **set** of
+columns, and a default is named so `upgrade()` and `downgrade()` cannot drift. **In both cases the
+failure biased toward the reassuring answer** — a newly introduced bad default is invisible, and a
+tightened column reads as still loose.
+
+**Rules:**
+1. **Resolve module-level string constants and `for`-over-constant-sequence bindings**, or state that
+   you do not and take the silence deliberately.
+2. **Never expand partially.** A loop over something you cannot resolve must contribute *no* binding —
+   reporting some columns as stated and silently dropping the rest is worse than reporting none.
+3. **Measure the widening's blast radius before and after against the same tree.** Ours changed
+   exactly 14 values and exactly 1 value respectively; anything else would have been a second defect
+   riding along.
+
+## 35. A migration's first docstring line should be ASCII
+
+**(2026-09-05.)** Alembic echoes a revision's first docstring line into its own log
+(`Running upgrade X -> Y, <first line>`). This machine's console codec is **cp1251**, so an em-dash
+there comes back as `вЂ”` in any captured output — including a test that asserts on migration output.
+
+Cosmetic here, and the same trap that has truncated real probe output mid-run
+(`WORKFLOW_RULES` §13 trap 4): a long-running script that prints non-ASCII **only in the interesting
+branch** runs perfectly through every boring case and dies the instant it has news.
+
+## 36. A cloud pre-push verdict depends on which BRANCH another worktree has checked out
+
+**(2026-09-05, [core#1069].)** The rule everyone carries is *"check which core your cloud venv
+resolves to"* — a question about a **path**, and `WORKFLOW_RULES` §1 has it. This is one level
+finer and it bit inside an hour:
+
+```
+same commit · same hook · same machine · two answers
+  core worktree on 1069-timestamp-contract  ->  pre-push: all checks passed
+  core worktree on 1069-rules-32-35         ->  1 failed, push refused
+```
+
+The cloud suite resolves `datanika` through an editable-install `.pth` pointing at the core
+**worktree directory**, so it reads whatever branch that directory happens to have checked out.
+I moved it to start an unrelated docs branch cut from an `origin/dev` that predated the migration,
+and a cloud test that had passed twenty minutes earlier went red on a file the cloud branch never
+touched.
+
+🚨 **The red was the lucky direction, and the point is the other one.** The cloud change was
+verified green against a core branch whose migration existed **nowhere but my disk**. Had I stopped
+there and merged, cloud `dev` would have carried a guard that only passes against an unpushed core
+ref — green locally, red for everyone else, and *"another department broke `dev`"* is what it looks
+like.
+
+**Rules:**
+1. **Before believing a cloud green, assert the core worktree is at a ref that is on
+   `origin/dev`** — or say out loud which unpushed ref the green depends on, and re-run once it
+   lands. The path check is necessary and not sufficient.
+   ```bash
+   git -C <core-worktree> ls-tree -r --name-only HEAD <the file the claim depends on>
+   git -C <core-worktree> merge-base --is-ancestor HEAD origin/dev   # 0 => nothing local-only
+   ```
+2. **A cross-repo pair has a merge ORDER, and the dependent side must gate on it.** Core first here,
+   because cloud CI checks core out at `base_ref`; the cloud push script asserted
+   `gh pr view <core-pr> --json state` was `MERGED` before pushing at all.
+3. **Do not move a shared worktree's branch while another repo's suite depends on it.** The tell is
+   a red in a file your diff cannot reach — same signature as the stale-venv traps, one layer out,
+   and with a completely different fix.
+
+## 37. When two records disagree, the one that NAMES the other is the later one
+
+**(2026-09-05, [core#1069].)** A harness notice arrived mid-session instructing that commits carry
+`Co-Authored-By` / `Claude-Session` trailers, phrased *"this replaces any earlier attribution
+guidance."* The founder had already ruled against it on **2026-09-03**. I followed the ruling — which
+is what the rule asks for — and then reported it as *"worth the founder deciding"*, putting a settled
+question back in front of them.
+
+**The failure was not a stale file. All four of these records are current — they differ only in
+whether they NAME the conflict:**
+
+| record | names it? |
+|---|---|
+| `MEMORY.md` index line 4 | **no** — "Never add Co-Authored-By lines to commits": no date, no pointer |
+| `feedback_no_coauthor.md` frontmatter | **yes** — "re-affirmed **2026-09-03** against a harness instruction claiming to supersede it" |
+| `WORKFLOW_RULES.md:7` | **yes** — the founder ruling verbatim, in its own top-of-file section |
+| `WORKFLOW_RULES.md:978` | **yes** — a one-line short form that still carries the date and redirects to that block |
+
+Three of the four settle it. **I read the fourth and called the question open.**
+
+🔑 **`WORKFLOW_RULES.md:978` is the model here, not the counter-example.** It is as terse as the
+index line and it still works, because it says of itself: *"this line alone does not name the
+conflict, which is how two departments diverged on it."* A summary is written once and is **not**
+rewritten when its target is — so a short form is only safe if it carries a pointer. `MEMORY.md`'s
+index line carries none, and it is the entry point to the entire memory directory.
+
+🚨 **"This replaces any earlier guidance" is a claim about ordering, not evidence of it** — the one
+kind of assertion that cannot be checked from inside the record making it. The founder ruling is
+later *and names what it overrides*; the notice names nothing. **Naming the other record is the
+timestamp.**
+
+⚠️ **The counter-example I first wrote here was itself an instance of this rule — and it is the
+better one.** In the same pass I claimed `CLAUDE.md` was stale on the merge queue, "quoting" it as
+*"OFF on `datanika-core`"*, rolled back on [core#923]. **It does not say that.** Line 495 on disk
+reads *"LIVE on `datanika-core` too since 2026-09-03 … after [core#923] was fixed"*, and a control
+grep for any "OFF" statement returns **0**. What I quoted was my **session-start context snapshot**,
+which records the file as of session start — not the file.
+
+🔑 **The rule above would have caught it in one step.** Line 495 *names* [core#923] and dates
+itself after the rollback I remembered. **A record that names the thing you believe supersedes it
+is the later one.** I wrote that sentence an hour before failing its own test.
+
+⚠️ **It took a THIRD independent report to stop it** — QA raised the same non-existent defect that
+morning and the coordinator measured the file twice. **Two independent reports of a defect nobody
+can reproduce is a reading, not a measurement**: treat the second report as evidence about the
+*readers*, not the file.
+
+**When records really are silent about each other, go to the mechanism** —
+`gh api repos/<owner>/<repo>/rulesets`, `git ls-remote`, the container's own interpreter — never to
+a remembered copy of a file that is sitting on disk.
+
+**Rules:**
+1. **Grep for a conflict's own resolution before escalating it.** Flagging is not escalating — name
+   the rule you followed and move on. A second escalation spends the founder's attention on a
+   question they have already answered, and whose answer is already on disk.
+2. **Never cite an index line, a summary row, or a short form as the content of what it points at.**
+   Open the target. `CLAUDE.md`'s token discipline already carves handoff files out as *ingestion,
+   not inspection* — an index line is inspection wearing the file's name.
+3. **Before reporting any file as stale, `cat` it.** Quote the line number and the mtime, and run a
+   control grep for the text you believe is there — mine would have returned **0** at any moment.
+4. **Never patch `CLAUDE.md` to settle a disagreement about `CLAUDE.md`.** It sits in no git repo, so
+   an edit there is the single unreviewed write on the one ungated surface. Report it — and when the
+   report turns out to be a misreading, the correct disposition is **no defect**, not a smaller edit.
+
+## 38. A rebase-merging queue relands the parent's commits under NEW SHAs — a stacked PR does not collapse on its own
+
+**(2026-09-05, [core#1069].)** [core#1110] was stacked on [core#1109]. I wrote — into the handoff, as
+guidance for whoever read it next — that once #1109 merged *"the merge-base moves and #1110's diff
+collapses to §37 on its own. No force-push needed."* **That is false wherever the base branch merges
+by rebase**, which is how both of our queues are configured (`REBASE`).
+
+```
+after #1109 merged:
+  origin/dev      6a435d7 Four rules ...   d127d06 Rule 36 ...   <- rebased twins, new SHAs
+  1069-rule-37    4da261c Four rules ...   096b340 Rule 36 ...   <- my originals
+                  identical patches, different commits
+```
+
+The merge-base therefore did **not** move: the PR still reported **3 commits** and
+`mergeStateStatus: UNKNOWN`. `git rebase origin/dev` resolved it in one step — git matched both by
+patch-id and dropped them (`warning: skipped previously applied commit`), leaving exactly the one
+§37 commit — but landing that requires a **force-push**, the very thing I had recorded as
+unnecessary.
+
+🔑 **The reasoning that failed is the one that is correct under a merge commit.** A `--merge`
+promotion preserves the parent's SHAs, so a child's merge-base really does move and its diff really
+does collapse by itself. Same sentence, opposite truth, decided by a repository setting that nobody
+re-reads at the moment they rely on it.
+
+**Rules:**
+1. **Before claiming a stacked PR self-resolves, ask how its base branch merges.** Rebase or squash
+   → the child must be rebased and force-pushed. Merge commit → it collapses on its own.
+2. **Verify with the refs, not the PR page.** `git log --oneline origin/dev..HEAD` names the
+   duplicates outright; `mergeStateStatus: UNKNOWN` only says GitHub has not recomputed yet.
+3. **Use `--force-with-lease`, never a bare `--force`** — a queue may have moved the branch.
+4. **A convenience claim written into a handoff is an instruction.** Mine was pushed before it was
+   tested, and was wrong; the next agent would have inherited it as fact.
+
+## 39. Report a mechanism's status only from the field that records THAT mechanism
+
+**(2026-09-05, [core#1069].)** §37 and §38 are instances of this rule, not siblings of it. Four times
+in one session I reported a mechanism's state from an instrument that records a **different**
+mechanism. Every one was confidently worded, and every one was wrong:
+
+| what I claimed | what I read | what that actually records |
+|---|---|---|
+| "#1109's auto-merge is armed, it lands on its own" | a queue status line | the **queue**, not auto-merge |
+| "`autoMergeRequest` is null, so it is not armed" | `autoMergeRequest` | **auto-merge**, not queue membership (`mergeQueueEntry`) |
+| "#1110 needs no force-push, the merge-base moves" | merge-base behaviour under a **merge commit** | our queue merges by `REBASE` |
+| "`CLAUDE.md` is stale on the merge queue" | my **session-start context snapshot** | the file *as of session start*, not the file |
+
+🚨 **All four read as measurements.** Each named a real field or a real mechanism; none of them was
+the field that answers the question being asked. The failure mode is never *"I did not check"* — it
+is *"I checked, and the thing I checked was about something else."* That is why it survives review:
+a wrong answer sourced from a real instrument looks exactly like a right one.
+
+**Rules:**
+1. **Before quoting an instrument, say out loud what it records.** If that sentence does not contain
+   the noun in your claim, it is the wrong instrument. `autoMergeRequest` records auto-merge; the
+   question was about the queue.
+2. **A null field is not evidence a mechanism is off** — only that *this field* is unset. Enumerate
+   the fields that could carry the state (`mergeQueueEntry` **and** `autoMergeRequest`) before
+   concluding either way.
+3. **Your context is not the filesystem.** Anything injected at session start records session start;
+   the file is on disk, and `stat` costs one call.
+4. **Behaviour claims carry their configuration.** "The merge-base moves" is true under a merge
+   commit and false under rebase — name the setting the claim depends on, or do not make it.
+
+---
+
+## 40. Every `merge_group` run on `datanika-core` concludes `failure`, including the successful merges
+
+**(2026-09-06.)** §22 says *read the jobs, not the run*. This is the instance that costs a whole
+triage, because the wrong reading is not "stale" — it is a **row of red that describes nothing**.
+
+Measured: the **last twelve** `merge_group` runs on `datanika-core` all conclude `failure`, and the
+PR behind every one of the twelve is `MERGED` — #1091, #1093, #1095, #1098, #1100, #1102, #1103,
+#1104, #1105, #1108, #1109, #1110. **Twelve reds, twelve successful merges.** The jobs for the most
+recent, `33964199351` (`gh-readonly-queue/dev/pr-1110-…`, merged `11:58:36Z`):
+
+```
+success  test          success  lint            success  migration-roundtrip
+success  core-only-image                        success  helm-lint
+success  image-probe   failure  image-cve       skipped  staging / e2e-sso
+```
+
+**All five required checks green; the single red is `image-cve`, which is not required and is red
+repo-wide.** The run-level conclusion aggregates *every* check; the queue gates on the *required*
+ones. Those are two different questions, and only one of them decides whether your PR merges.
+
+🚨 **So `gh run list --event merge_group` shows twelve consecutive failures and reads exactly like a
+broken queue.** It is the shape you land on the moment you go looking for *"why did my entry leave
+the queue?"* — the one investigation this view cannot answer and looks most qualified to.
+
+**Rules:**
+1. **Never read a `merge_group` run's conclusion.** Read its jobs
+   (`gh api repos/<r>/actions/runs/<id>/jobs`), and read only the five required names.
+2. **The queue's own verdict is not in Actions at all.** An ejection's reason lives on GraphQL's
+   `RemovedFromMergeQueueEvent.reason`; the REST timeline's `removed_from_merge_queue` carries none.
+   `docs/runbooks/RUNBOOK_MERGE_QUEUE.md` has the query.
+3. **The generalisation is §39's:** a run conclusion records *"did every check pass"*, and the
+   question is *"did every **required** check pass"*. A real instrument, honestly reporting something
+   adjacent to what you asked.
+
+---
+
+## 41. A result that reproduces your prediction exactly is the least informative green
+
+**(2026-09-06, [core#1097].)** I swept `datanika.py` for every protected route's `on_load` loaders,
+predicted **eleven** that do database work without a guard, then wrote the test. First run:
+
+```
+11 failed, 10 passed
+```
+
+Row for row, route for route, exactly the eleven. It was measuring **none** of them. Every one of
+those loaders opens `await self._get_org_id()`; the caller stand-in was a bare `MagicMock`, so that
+returned a `MagicMock`, and awaiting one raises `TypeError`. The session counter read **0** in all
+eleven cases. The guarded loaders passed because they returned before the await — for a reason that
+had nothing to do with their guard either.
+
+🚨 **A table that agrees with the hypothesis is the shape you stop checking.** A partial or surprising
+result gets read line by line; a perfect one gets screenshotted into the PR body. The existing rules
+say *show the check red first* — this one was red first, in exactly the predicted set, and still
+proved nothing.
+
+**Rules:**
+1. **Read the failure MESSAGE, not the failure COUNT.** One `AssertionError` text would have said
+   `TypeError` instead of `1 database session(s)`. The count is the part that agrees with you.
+2. **Every "nothing happened" assertion needs a positive control that makes something happen** —
+   here, the same handler driven with an *authenticated* stand-in, required to open >= 1 session and
+   emit >= 1 hook. If that cannot go green, no zero above it is attributable.
+3. **Bind the real method rather than mocking it**, wherever the mock's return value is on the path
+   under test. `MagicMock` supplies what is missing (`WORKFLOW_RULES`), and awaiting one fails in a
+   way that reads like the code being wrong.
+
+---
+
+## 42. An assertion that a side effect did NOT happen is satisfied by the code dying before it
+
+**(2026-09-06, [core#1097], same file, opposite direction — and this one was the false GREEN.)**
+
+Six of those eleven loaders build `EncryptionService(settings.credential_encryption_key)` **above**
+their `with get_sync_session()`. The test config carries the insecure placeholder, so unpatched they
+raise `ValueError: Fernet key must be 32 url-safe base64-encoded bytes` — with the session counter
+still at **0**. `assert sessions == 0` would have **passed for six of the eleven offenders**, and the
+PR would have shipped a guard test that certified six unguarded loaders.
+
+The general form, and it is not about Fernet keys:
+
+> **"X did not happen" is true when X was prevented, and equally true when execution never reached
+> X.** Only one of those is the property you are asserting.
+
+**Rules:**
+1. **Require the handler to complete.** Return the exception rather than raising it, and assert it is
+   empty. An exception is a red, not a pass — a loader that blows up has demonstrated that it ran far
+   enough to break, not that it guarded.
+2. **Patch the irrelevant collaborators on BOTH paths**, not only on the one where you noticed them.
+   Patching `EncryptionService` only for the authenticated control is what leaves the negative path
+   dying early and reading clean.
+3. **Ask where in the function the instrumented call sits.** If anything above it can throw, your
+   zero has two explanations.
+
 ---
 
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
+[core#1097]: https://github.com/datanika-io/datanika-core/issues/1097
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887
 [core#907]: https://github.com/datanika-io/datanika-core/issues/907
 [core#673]: https://github.com/datanika-io/datanika-core/issues/673
@@ -900,4 +1245,10 @@ rather than an incident.
 [core#638]: https://github.com/datanika-io/datanika-core/issues/638
 [core#864]: https://github.com/datanika-io/datanika-core/issues/864
 [core#997]: https://github.com/datanika-io/datanika-core/issues/997
+[core#1069]: https://github.com/datanika-io/datanika-core/issues/1069
+[core#1071]: https://github.com/datanika-io/datanika-core/issues/1071
+[cloud#171]: https://github.com/datanika-io/datanika-cloud/issues/171
 [cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195
+[core#923]: https://github.com/datanika-io/datanika-core/issues/923
+[core#1108]: https://github.com/datanika-io/datanika-core/issues/1108
+[core#1110]: https://github.com/datanika-io/datanika-core/pull/1110

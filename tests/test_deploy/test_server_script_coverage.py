@@ -29,7 +29,8 @@ either the installer names it or `NOT_INSTALLED` explains it.
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -105,6 +106,94 @@ EOL_EXEMPT: dict[str, str] = {
 
 def _installer_text() -> str:
     return INSTALLER.read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------------------
+# core#1089: ask git for the effective attribute state, never reconstruct it.
+#
+# The predecessor of this block scanned `.gitattributes` for lines *containing* `eol=lf`
+# and then reimplemented gitattributes matching with `PurePosixPath.match`. It modelled
+# neither of the two rules that decide the answer:
+#
+#   * matching is **last-match-wins**, per attribute;
+#   * `-text` **unsets** `text`, and a rule that unsets it contains no `eol=lf` to scan for.
+#
+# So appending one line — `deploy/server/*.conf -text` — removed the pinning while the
+# guard stayed green. QA measured exactly that (core#1089).
+#
+# 🚨 And the obvious repair reproduces the defect. `git check-attr eol` still answers `lf`
+# after a `-text` append, because `eol` keeps the value the earlier rule gave it; it is
+# simply **inert**, since git only applies the conversion to files it treats as text. A
+# predicate of `eol == "lf"` therefore shells out to git and gets the same wrong answer.
+# `test_the_pinning_notices_a_later_rule_that_unsets_text` pins both halves in-suite so
+# nobody re-simplifies this back.
+# --------------------------------------------------------------------------------------
+
+
+def _git(args: list[str], cwd: Path) -> bytes:
+    """Run git and INSIST it answered.
+
+    A git that failed and a git that found nothing must never look alike: an empty stdout
+    parsed by a lenient caller is how `grep -c` on a mangled ref prints a clean `0`
+    (WORKFLOW_RULES §13 trap 13b). Anything other than a clean exit raises, so a broken
+    invocation reads as NO-VERDICT — a red — and never as a pass.
+    """
+    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed in {cwd} (rc={proc.returncode}): "
+            f"{proc.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    return proc.stdout
+
+
+def git_check_attr(paths: list[str], cwd: Path) -> dict[str, dict[str, str]]:
+    """`git check-attr -z text eol -- <paths>` → `{path: {"text": ..., "eol": ...}}`.
+
+    `-z` because the human format is `<path>: <attr>: <value>` and a path may contain a
+    colon. Decoded explicitly rather than with `text=True`: the locale codec on the dev
+    machine is cp1251 and would silently mis-decode any non-ASCII byte
+    (WORKFLOW_RULES §7).
+
+    Note the paths need not exist — `check-attr` answers by pattern, which is what lets
+    the arming test below run against a repository holding nothing but `.gitattributes`.
+    """
+    if not paths:
+        raise RuntimeError("git_check_attr called with no paths — that is a vacuous read")
+    raw = _git(["check-attr", "-z", "text", "eol", "--", *paths], cwd)
+    fields = raw.decode("utf-8").split("\0")
+    if fields and fields[-1] == "":
+        fields.pop()
+    if not fields or len(fields) % 3:
+        raise RuntimeError(
+            f"git check-attr -z returned {len(fields)} fields for {len(paths)} path(s); "
+            f"expected a multiple of 3 (<path>, <attr>, <value>)"
+        )
+    out: dict[str, dict[str, str]] = {}
+    for i in range(0, len(fields), 3):
+        out.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
+    return out
+
+
+def is_pinned_to_lf(attrs: dict[str, str]) -> bool:
+    """Is this path's effective attribute state a real LF pin?
+
+    **Both halves, and that is the whole point of core#1089.** `text: set` without
+    `eol: lf` normalises on commit but lets `core.autocrlf` decide the checkout;
+    `eol: lf` without `text: set` is inert, and is precisely the state a `-text` append
+    leaves behind.
+    """
+    return attrs.get("text") == "set" and attrs.get("eol") == "lf"
+
+
+def _deployed_files() -> list[Path]:
+    """Every file in deploy/server/ + deploy/apache/ that is not EOL-exempt."""
+    found: list[Path] = []
+    for directory in (SERVER_DIR, APACHE_DIR):
+        for path in sorted(directory.iterdir()):
+            if path.is_file() and path.name not in EOL_EXEMPT:
+                found.append(path)
+    return found
 
 
 @pytest.fixture(scope="module")
@@ -209,6 +298,15 @@ def test_the_apache_duplicates_have_not_drifted():
     `test_the_deployed_conf_files_are_pinned_to_lf` below owns the line-ending half, at the
     layer that actually decides it.
     """
+    # Anti-vacuity (core#1089 AC4, carried from the closed PR #1082): an empty or emptied
+    # APACHE_DUPLICATES makes the loop below assert nothing while still reporting green,
+    # and it is also the floor the pinning guard's own walk is measured against.
+    assert len(APACHE_DUPLICATES) >= 2, (
+        f"APACHE_DUPLICATES holds {len(APACHE_DUPLICATES)} pair(s). core#745 has two decoy "
+        f"vhosts; fewer means either one was deleted (resolve #745 and delete this test) or "
+        f"the mapping was truncated, in which case this test compares nothing."
+    )
+
     for decoy, real in APACHE_DUPLICATES.items():
         a = (SERVER_DIR / decoy).read_bytes().replace(b"\r\n", b"\n")
         b = (APACHE_DIR / real).read_bytes().replace(b"\r\n", b"\n")
@@ -239,45 +337,141 @@ def test_the_deployed_conf_files_are_pinned_to_lf():
 
     The set is derived from what is on disk, not restated, so a new deployed file is covered
     the day it is added rather than the day someone remembers this test.
+
+    🚨 **What this asserts is the state git resolves, not the rules the file appears to
+    declare** (core#1089). It used to scan `.gitattributes` for `eol=lf` substrings and
+    re-implement the matching; appending `deploy/server/*.conf -text` then removed the
+    pinning with this test still green, because `-text` carries no `eol=lf` to find and
+    last-match-wins was never modelled. `git check-attr` answers the question that is
+    actually being asked. See the block above `_git` for why `eol` alone is not the
+    predicate.
     """
-    attrs = GITATTRIBUTES.read_text(encoding="utf-8")
-    rules = {
-        line.split()[0]
-        for line in (raw.strip() for raw in attrs.splitlines())
-        if line and not line.startswith("#") and "eol=lf" in line
-    }
-    assert rules, ".gitattributes declares no eol=lf rules at all — this test is vacuous"
+    paths = _deployed_files()
 
-    def covered(rel: Path) -> bool:
-        # A rule covers a file if it matches by extension glob in the file's own directory,
-        # or by a repo-wide extension glob such as `*.sh`.
-        return any(
-            PurePosixPath(rel.as_posix()).match(rule) or PurePosixPath(rel.name).match(rule)
-            for rule in rules
-        )
-
-    checked, uncovered = 0, []
-    for directory in (SERVER_DIR, APACHE_DIR):
-        for path in sorted(directory.iterdir()):
-            if not path.is_file() or path.name in EOL_EXEMPT:
-                continue
-            checked += 1
-            rel = path.relative_to(ROOT)
-            if not covered(rel):
-                uncovered.append(rel.as_posix())
-
-    # Anti-vacuity: a walk that finds nothing passes for the wrong reason. Both directories
-    # have held files since core#747; zero here means the walk broke, not that we are clean.
-    assert checked >= len(APACHE_DUPLICATES) * 2, (
-        f"only {checked} files walked across deploy/server/ + deploy/apache/ — this test "
+    # Anti-vacuity, and it comes FIRST: a walk that finds nothing would otherwise pass by
+    # having nothing to check. Both directories have held files since core#747.
+    assert len(paths) >= len(APACHE_DUPLICATES) * 2, (
+        f"only {len(paths)} files walked across deploy/server/ + deploy/apache/ — this test "
         f"cannot have checked the {len(APACHE_DUPLICATES)} pinned vhost pairs"
     )
 
-    assert not uncovered, (
-        "These files are deployed to a Linux box but no .gitattributes rule pins them to "
-        f"LF, so `core.autocrlf` decides their bytes per checkout (core#1076): {uncovered}\n"
-        "Add a `<dir>/*.<ext> text eol=lf` rule, next to the ones already there."
+    rels = [p.relative_to(ROOT).as_posix() for p in paths]
+    resolved = git_check_attr(rels, ROOT)
+
+    unpinned = {
+        rel: resolved.get(rel, {}) for rel in rels if not is_pinned_to_lf(resolved.get(rel, {}))
+    }
+    assert not unpinned, (
+        "These files are deployed to a Linux box and git does not resolve them to a real "
+        f"LF pin (core#1076, core#1089): {unpinned}\n"
+        "A real pin is BOTH `text: set` and `eol: lf`. `text: unset` with `eol: lf` is the "
+        "shape a later `-text` rule leaves behind — the eol value survives and is inert, "
+        "because git only converts files it treats as text.\n"
+        "Fix by adding or restoring a `<dir>/*.<ext> text eol=lf` rule, and remember git "
+        "applies the LAST matching rule per attribute — a narrower rule added below wins."
     )
+
+
+def _repo_from_real_gitattributes(tmp_path: Path, extra: str = "") -> Path:
+    """A throwaway git repo carrying THIS repo's `.gitattributes` bytes, plus `extra`.
+
+    Two reasons it is a copy of the real file rather than a fixture written here:
+
+    1. **A synthetic rule set agrees with the check including where the check is wrong.**
+       The bytes come out of the artifact under test, so the arming below exercises the
+       rules we actually ship.
+    2. It is the only way to arm this without mutating a tree five departments share.
+       core PR #1085 is the standing reason: a harness that "restored" `.gitattributes`
+       with `git checkout --` threw away its author's own uncommitted rule, and only a
+       post-restore control noticed. Nothing here writes to the real tree at all.
+
+    The repo holds no files. `git check-attr` answers by pattern, so it does not need any.
+    """
+    repo = tmp_path / "probe"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], capture_output=True, check=True)
+    (repo / ".gitattributes").write_bytes(GITATTRIBUTES.read_bytes() + extra.encode("utf-8"))
+    return repo
+
+
+def test_the_pinning_notices_a_later_rule_that_unsets_text(tmp_path):
+    """core#1089's arming: the guard must fail when someone UNPINS, not merely pass today.
+
+    ⚠️ The control is deliberately an **append**, not a deletion. Deleting the `eol=lf`
+    line reds under the old string-scanning implementation *and* under this one, so it
+    cannot tell them apart and would have certified the broken guard. The append is also
+    the realistic regression: nobody deletes a rule with a comment above it explaining why
+    it exists — they add a narrower one underneath and do not know it wins.
+
+    Three assertions, and the middle one is the reason this test exists rather than a
+    comment:
+
+    * the unmutated copy resolves to a real pin — a positive control, and simultaneously
+      the proof that the pin lives in the **tracked** `.gitattributes` rather than in
+      somebody's `.git/info/attributes` or a global `core.attributesFile`, since this
+      throwaway repo has neither;
+    * `-text` leaves `text: unset` **with `eol` still reading `lf`** — the exact trap that
+      makes `eol == "lf"` a wrong predicate;
+    * and `is_pinned_to_lf` therefore rejects it.
+    """
+    probe = "deploy/server/apache-app.datanika.io.conf"
+
+    clean = git_check_attr([probe], _repo_from_real_gitattributes(tmp_path / "a"))[probe]
+    assert is_pinned_to_lf(clean), (
+        f"positive control failed: this repo's own .gitattributes does not pin {probe} "
+        f"when read in isolation — it resolved to {clean}. Either the rule has been "
+        f"removed, or the pin only appears to exist because of a LOCAL attributes file "
+        f"that CI and every other checkout will not have."
+    )
+
+    unpinned = git_check_attr(
+        [probe], _repo_from_real_gitattributes(tmp_path / "b", "\ndeploy/server/*.conf -text\n")
+    )[probe]
+
+    assert unpinned.get("eol") == "lf", (
+        "the arming premise no longer holds: after `-text`, `eol` is expected to survive "
+        f"as `lf` and it read {unpinned!r}. If git has changed this, the warning against "
+        "an `eol`-only predicate needs re-deriving before it is trusted."
+    )
+    assert unpinned.get("text") == "unset", (
+        f"`-text` did not unset `text` — it resolved to {unpinned!r}, so this control is "
+        f"no longer reproducing core#1089's mutation and proves nothing."
+    )
+    assert not is_pinned_to_lf(unpinned), (
+        "the pinning predicate accepts a state where `text` is unset. That is core#1089 "
+        "verbatim: the eol value is still `lf` and is inert, so the file is no longer "
+        "pinned and this guard would not say so."
+    )
+
+
+def test_an_eol_exempt_file_stays_out_of_the_pinning_requirement():
+    """AC3: the exemption must keep working, or the guard gets loosened on first contact.
+
+    A binary asset or a Windows-only file legitimately needs no LF pin. If exempting one
+    were impossible, the next person to add such a file would widen the predicate instead
+    — which is how a guard stops guarding. So: every `EOL_EXEMPT` name really is present
+    (a stale exemption is a claim about a file that is gone), it really is excluded from
+    the walk, and it really would fail the predicate if it were not — otherwise the
+    exemption is doing nothing and the permissive path has never been exercised.
+    """
+    assert EOL_EXEMPT, "no exemptions left — delete this test rather than let it pass vacuously"
+    walked = {p.relative_to(ROOT).as_posix() for p in _deployed_files()}
+
+    for name, reason in EOL_EXEMPT.items():
+        assert reason.strip(), f"EOL_EXEMPT[{name}] carries no reason"
+        present = [d / name for d in (SERVER_DIR, APACHE_DIR) if (d / name).is_file()]
+        assert present, (
+            f"EOL_EXEMPT names {name}, which is in neither deploy/server/ nor "
+            f"deploy/apache/. A stale exemption silently widens the next real gap."
+        )
+        for path in present:
+            rel = path.relative_to(ROOT).as_posix()
+            assert rel not in walked, f"{rel} is exempt yet still walked by the pinning guard"
+            attrs = git_check_attr([rel], ROOT)[rel]
+            assert not is_pinned_to_lf(attrs), (
+                f"{rel} is exempt but git already pins it ({attrs}). The exemption is "
+                f"then untested: drop it from EOL_EXEMPT so the guard covers the file."
+            )
 
 
 def test_the_deploy_workflow_invokes_the_installer():

@@ -471,3 +471,89 @@ is the test's subject. Under the release's mutation the *first* reason fired, th
 and the run was green. **Where a function returns a bare `None`, `False` or `[]` for several
 reasons, ask which one your assertion is currently passing on** — and assert the precondition at the
 site, so the test states what it needs instead of inheriting it from a fixture.
+
+---
+
+## 15. A correction is a claim, and it needs the same control the original needed
+
+The instinct on finding a wrong statement is to write the right one and move on. But **the
+replacement is a new assertion** — made quickly, by someone who has just been shown they were wrong
+about this exact subject, which is the worst available condition for getting it right. It arrives
+with none of the scrutiny the original got, because it *feels* like removing an error rather than
+adding one.
+
+Three shapes. All three were paid for, and the third happened inside the tooling written to prevent
+the first two.
+
+### 15a. A correction can overshoot into the opposite falsehood
+
+`docs/getting-started` promised social signup on `/signup`, where it does not exist. The correction
+declared social signup **unavailable** — and it has worked end to end on production the whole time,
+Google and GitHub both, with a negative control (`/api/auth/login/notaprovider` bounces to
+`?auth_error=unknown_provider`) proving the first two were not a catch-all. The page went from a
+false promise to a false denial.
+
+The second is the harder one to catch, because **a denial reads as caution.** Nobody audits a page
+for being too modest.
+
+> **When you correct one arm, run the control that would catch the other.** *"Says a working button
+> does nothing"* and *"says a dead button works"* are one defect — the page asserting a verdict the
+> button does not produce. Fixing one arm without checking the other only moves it.
+
+### 15b. A correction is only as good as the instrument that produced it
+
+[core#1081] filed `/login`'s sign-up affordance as `rx.text(size="2", color="gray")` — "a grey
+body-text link" — read off the component source. Measured on production off the live DOM, the link
+renders `rgba(0, 109, 203, 0.95)`: Radix accent **blue**. The grey belongs to the enclosing
+`rx.text`; the `rx.link` inside it was correct all along. The original claim was one element out.
+
+🔑 **The measurement did not just correct the claim, it replaced the argument.** Colour was never the
+problem:
+
+| control | box | area |
+|---|---|---|
+| `Sign Up` link | 50 x 20 | 1,000 px² |
+| `Google` | 141 x 40 | 5,640 px² |
+| `Sign In` | 294 x 40 | 11,760 px² |
+
+The affordance is **one fifth** the area of the Google button and **one twelfth** of Sign In. A
+restyle that satisfied the original sentence would have darkened the text and fixed nothing.
+
+> A correction that leaves the *reason* untouched has probably been re-worded rather than measured.
+
+### 15c. 🚨 The check you write to verify a correction is satisfied by the correction's own prose
+
+The sharpest instance, and it happened while shipping a PR about stale prose. `WORKFLOW_RULES.md`
+forbids `Co-Authored-By` and `Claude-Session` trailers, so the PR body said so explicitly. The
+mechanical check that the body carried none was:
+
+```bash
+grep -ciE 'co-authored-by|claude-session'      # -> 1 and 1
+```
+
+Both hits were **the sentence stating the trailers are absent.** The verifier could not distinguish a
+violation from a correct denial of one, and its natural reading — *"this body carries trailers"* —
+was exactly backwards. The structural form answers correctly:
+
+```bash
+grep -cE '^\s*(Co-Authored-By|Claude-Session)\s*:'   # -> 0. A trailer is a LINE, not a mention.
+```
+
+This is `WORKFLOW_RULES.md` §4's *"a negative assertion banning a phrase is satisfied by the phrase's
+own denial"*, arriving one layer up: not in the artifact, but **in the instrument built to check the
+artifact.** Rule 11 of this file is the same trap in a third place — a substring check over source
+satisfied by prose *about* the code. Assume it of anything you grep.
+
+### What to do
+
+1. **Name which arm you were on.** *"This was too generous"* or *"this was too cautious"* — the
+   opposite is then the thing to check before publishing.
+2. **Re-derive from the artifact the claim is about**, not from the source you first misread.
+   Computed style off the live DOM, not `color=` in the component; the running process, not the
+   manifest (rule 1).
+3. **Read your verifier's hits, not its count.** A count of 1 and a count of one-that-is-your-own-
+   denial are the same number.
+4. **State the correction on the record instead of editing it away.** The original claim is what a
+   reader would go and check, and the mechanism is usually worth more than the fix.
+
+[core#1081]: https://github.com/datanika-io/datanika-core/issues/1081

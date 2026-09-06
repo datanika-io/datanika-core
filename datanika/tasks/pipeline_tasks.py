@@ -6,6 +6,7 @@ import traceback
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
@@ -41,6 +42,14 @@ execution_service = ExecutionService()
 #: tuple would have started billing — a pricing change arriving as a dependency bump,
 #: which is the thing nobody would be watching for. With the arm gone that release is a
 #: non-event.
+#:
+#: 🚨 **Widening this tuple also requires widening the PRE-FLIGHT GATE in the same change
+#: (core#1107).** The gate is ``PipelineService.predict_run_count()``, which returns
+#: ``len(pipeline.models)`` and cannot see test, seed or snapshot nodes; cloud's Path A
+#: guarantees zero overshoot against this meter. Metering a kind the gate cannot count
+#: admits a Free org at 470/500 and then meters it to 510, past a hard cap the gate had
+#: just cleared it for. **A node kind enters the meter only when the pre-flight predictor
+#: can also count it cheaply.**
 _BILLABLE_RESOURCE_TYPES = ("model",)
 
 
@@ -241,7 +250,7 @@ def run_pipeline(
 
         dst_conn = get_org_connection(session, org_id, pipeline.destination_connection_id)
         if dst_conn is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Destination connection {pipeline.destination_connection_id} is not "
                 f"available to org {org_id}"
             )

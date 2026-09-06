@@ -26,9 +26,10 @@ from dataclasses import dataclass
 from redis import Redis
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 
 
-class RateLimitError(ValueError):
+class RateLimitError(UserFacingError):
     """Raised when an API key exceeds its rate limit."""
 
     def __init__(self, message: str, retry_after: int = 60):

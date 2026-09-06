@@ -166,7 +166,17 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
       that surfaces solely in `deploy-staging` / `smoke-staging` / `e2e-staging` — which are
       push-only, so they never gate a PR — lands on `dev` first and is caught **here**.
       `master` has no required checks at all, so this checkbox is the only thing between a
-      red `dev` and production:
+      red `dev` and production.
+
+      🆕 **They are reported as `staging / deploy-staging`, `staging / smoke-staging` and
+      `staging / e2e-staging` since core#975** — the three moved into
+      `.github/workflows/staging.yml` behind one caller job, so that a single concurrency
+      group member covers all three and a newer push can no longer displace a pending
+      verifier. The `test("staging")` filter below still matches all of them, which is why
+      the parent job is called `staging` and not something else. ⚠️ An **exact** name
+      comparison (`.name == "e2e-staging"`) now matches nothing — and matching nothing
+      reads as *"CI has not run"*, the outcome a promoter waits on rather than
+      investigates:
   ```bash
   gh run list --repo datanika-io/datanika-core --branch dev --workflow CI --limit 1 --json databaseId \
     --jq '.[0].databaseId' | xargs -I{} gh run view {} --repo datanika-io/datanika-core \
@@ -203,6 +213,15 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
       no issue** — staging is healthy, that run simply could not honestly grade it — so it is
       visible only in the job log and here. A `wrong_build` on the head is the same situation
       as an exit 1 above, and has the same answer.
+
+      🆕 **core#975 narrows the cases this can report, and the script's output is unchanged
+      on purpose.** The three jobs are now one concurrency-group member, so a newer `dev`
+      push can no longer cancel a pending verifier — the `no_reading` class that produced
+      four measured instances (a head commit with no honest verdict and nothing red) is
+      closed by construction. The script still names it, because a run cancelled as a whole
+      still produces one. Internally it strips the new `staging / ` prefix from each check
+      name so what it prints stays `smoke-staging` / `e2e-staging` / `e2e-sso`; if you write
+      your own query, remember the API now returns the composed form.
 
 - [ ] **Read the E2E result by STEP outcome, never by job conclusion** ([core#873]). The job goes
       red for artifact-upload failures and other non-test reasons; `Run gating E2E specs against

@@ -13,6 +13,7 @@ both directions: it must be True only when rows have been loaded *and* the
 catalog is empty.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -47,7 +48,17 @@ def _session_patch(db_session):
 
 
 class _St:
-    """Minimal stand-in carrying only what `load_models` touches."""
+    """Minimal stand-in carrying only what `load_models` touches.
+
+    ⚠️ **It answers `get_state`, not just `_get_org_id` (core#1097).** The loader
+    used to resolve its org through `BaseState._get_org_id`; since core#1097 it
+    reads `current_org.id` and `current_user.id` off `AuthState` directly, so a
+    signed-out visitor can be refused before any session is opened — which
+    `_get_org_id` cannot express, because it says nothing about the user.
+
+    These four tests are all about an org that *is* resolved, so both ids are
+    supplied. `_get_org_id` stays for any other handler that still uses it.
+    """
 
     def __init__(self, org_id: int):
         self._org_id = org_id
@@ -57,6 +68,12 @@ class _St:
 
     async def _get_org_id(self):
         return self._org_id
+
+    async def get_state(self, _cls):
+        return SimpleNamespace(
+            current_org=SimpleNamespace(id=self._org_id),
+            current_user=SimpleNamespace(id=1),
+        )
 
 
 @pytest.fixture

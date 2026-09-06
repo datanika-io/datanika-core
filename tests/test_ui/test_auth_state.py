@@ -259,6 +259,10 @@ class TestSignupExceptionHandling:
             # path is masked by the generic catch-all.
             invite_notice="",
             router=SimpleNamespace(page=SimpleNamespace(params={})),
+            # core#1081 — signup refuses a live session before anything else,
+            # so the stand-in has to answer _revalidate_session. These tests are
+            # all about a signed-OUT visitor, hence False.
+            _revalidate_session=lambda: False,
             _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )
@@ -307,6 +311,10 @@ class TestSignupExceptionHandling:
             # path is masked by the generic catch-all.
             invite_notice="",
             router=SimpleNamespace(page=SimpleNamespace(params={})),
+            # core#1081 — signup refuses a live session before anything else,
+            # so the stand-in has to answer _revalidate_session. These tests are
+            # all about a signed-OUT visitor, hence False.
+            _revalidate_session=lambda: False,
             _client_ip=lambda: "",
             _get_user_service=lambda: fake_svc,
         )

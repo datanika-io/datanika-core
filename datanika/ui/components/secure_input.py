@@ -41,6 +41,8 @@ any form can use them without dragging a state class into the import graph.
 
 import reflex as rx
 
+from datanika.errors import UserFacingError
+
 #: Vendor opt-outs. 1Password and LastPass ignore ``autocomplete`` entirely and
 #: look for these instead. Same egress path, same blast radius: a manager that
 #: fills the Datanika credential into ``Developer token`` sends it to Google
@@ -98,7 +100,9 @@ def autofill_attrs(token: str) -> dict[str, str]:
             it fails loudly here instead.
     """
     if token not in AUTH_AUTOFILL_TOKENS:
-        raise ValueError(
+        # core#1113: developer text under a marker that says user-facing. Converted
+        # here only to keep core#1094 step 2 behaviour-neutral.
+        raise UserFacingError(
             f"{token!r} is not a recognised autofill token. "
             f"Browsers ignore an unknown token silently, so this would look "
             f"fixed and behave exactly like the bug (core#672). "

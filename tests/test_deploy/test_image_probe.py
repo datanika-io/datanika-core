@@ -328,12 +328,18 @@ class TestImageProbeIsActuallyGating:
         tier states (core#529). The incident this guards is a *second job*
         emitting the marker; one step emitting it from four branches is not
         that.
+
+        ⚠️ Scanned across **every** CI workflow, not just `ci.yml` (core#975). The claim
+        is "exactly one owner in our CI", and scoping it to one file made it answer a
+        narrower question with the same words: when `e2e-staging` moved into
+        `staging.yml`, this read `0 steps` and failed while the correct answer was still
+        exactly one.
         """
-        yaml = pytest.importorskip("yaml")
-        doc = yaml.safe_load(_CI_WORKFLOW.read_text(encoding="utf-8"))
+        from tests.test_deploy._workflows import all_jobs
+
         owners = [
             (job_name, step.get("name"))
-            for job_name, job in doc["jobs"].items()
+            for _wf, job_name, job in all_jobs()
             for step in job.get("steps", [])
             if "INFORMATIONAL_RESULT=" in (step.get("run") or "")
         ]

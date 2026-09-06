@@ -74,7 +74,17 @@ _COSTLY = re.compile(r"playwright\s+test|(?:^|\s)pytest\s|docker\s+compose\s+-p\
 
 
 def _jobs(text: str) -> dict[str, dict]:
-    return (yaml.safe_load(text) or {}).get("jobs") or {}
+    """Jobs across a YAML *stream* — one document, or several joined by `---`.
+
+    Multi-document since core#975: the staging jobs left `ci.yml`, so the real tree is now
+    more than one file and a single-document parse would silently see fewer jobs. The
+    synthetic controls below are single documents and are unaffected.
+    """
+    merged: dict[str, dict] = {}
+    for doc in yaml.safe_load_all(text):
+        if isinstance(doc, dict):
+            merged.update(doc.get("jobs") or {})
+    return merged
 
 
 def _needs(job: dict) -> set[str]:
@@ -104,8 +114,34 @@ def _first_costly(job: dict) -> int | None:
     return None
 
 
+#: What a "reader" is. Derived from what a job DOES, not from whom it `needs` (core#975).
+#: The old predicate was `MUTATION_JOB in _needs(job)`, and the day `deploy-staging` moved
+#: into `staging.yml` two things broke at once: `e2e-sso` legitimately switched to
+#: `needs: [staging]` and stopped being recognised, and jobs in the other file were never
+#: scanned at all. A predicate keyed on a job NAME is a predicate about the workflow's
+#: shape; this one is about the staging box.
+_TOUCHES_STAGING = re.compile(r"staging-app\.datanika\.io|datanika-staging")
+
+
 def _readers(jobs: dict[str, dict]) -> dict[str, dict]:
-    return {n: j for n, j in jobs.items() if MUTATION_JOB in _needs(j)}
+    """Downstream of the mutation, OR touching the staging box. The union, deliberately.
+
+    Either half alone under-selects. `needs` alone missed `e2e-sso` the moment core#975
+    moved the mutation into a called workflow and `e2e-sso` switched to `needs: [staging]`;
+    the step-text half alone would miss a reader that drives staging through a script whose
+    hostname is in an env var. A reader that satisfies neither is not something this file
+    can reason about anyway.
+    """
+    return {
+        n: j
+        for n, j in jobs.items()
+        if n != MUTATION_JOB
+        and _steps(j)
+        and (
+            MUTATION_JOB in _needs(j)
+            or _TOUCHES_STAGING.search("\n".join(_run(s) for s in _steps(j)))
+        )
+    }
 
 
 def audit(ci_text: str) -> dict[str, list[str]]:
@@ -169,7 +205,16 @@ def audit(ci_text: str) -> dict[str, list[str]]:
 
 @pytest.fixture(scope="module")
 def ci_text() -> str:
-    return CI.read_text(encoding="utf-8")
+    """Every workflow that defines jobs, concatenated for the text-level assertions.
+
+    ⚠️ Not `ci.yml` alone (core#975). `deploy-staging`, `smoke-staging` and `e2e-staging`
+    now live in `staging.yml`; a guard reading one file by path would have found no
+    readers at all and — with `_readers` returning `{}` — reported every invariant clean.
+    """
+    return "\n---\n".join(
+        p.read_text(encoding="utf-8")
+        for p in sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    )
 
 
 @pytest.fixture(scope="module")

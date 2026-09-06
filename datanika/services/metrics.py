@@ -62,7 +62,7 @@ celery_queue_length = Gauge(
     ["queue"],
 )
 
-# --- Volume metering (V2 P1, per plans/infra/SPEC_GB_THROUGHPUT_METRICS.md §3.2) ---
+# --- Volume metering (V2 P1, per datanika-cloud/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md §3.2) ---
 # Operational histogram. Billing-neutral — deliberately NO `org_id` label
 # (per-tenant semantics live in cloud-owned counters to keep core open-source).
 # Fed from `run.*_completed` hook handlers once Engineering's V2 P1 lands.

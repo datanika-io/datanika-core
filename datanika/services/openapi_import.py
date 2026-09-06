@@ -1,9 +1,25 @@
-"""External OpenAPI 3.x spec → a ``rest_api`` connector config (P1, paste-mode).
+"""External OpenAPI 3.x spec → a ``rest_api`` connector config.
 
-See ``plans/engineering/SPEC_OPENAPI_CONNECTOR.md``. Deterministic, no network:
-the caller supplies the spec text (paste). URL fetch is deferred to P2 behind
-SSRF guards. Output feeds ``DltRunnerService._build_openapi_source`` (which
-delegates to the existing ``rest_api`` runtime) and the IR builder.
+See ``docs/specs/SPEC_OPENAPI_CONNECTOR.md``.
+
+**This module is deterministic and touches no network** — the caller supplies
+the spec text. That separation is a design property, not a phase we are waiting
+to leave: keeping the parser network-free is what makes it cheap to fuzz.
+
+URL fetch was this connector's P2 and **has shipped** — it lives in
+``openapi_fetch.py`` (core#410), which is the only place the spec path talks to
+the outside world and which carries SPEC §7's guards (https only, host must
+resolve public, every redirect hop re-checked, 10 s timeout, 5 MB cap enforced
+while streaming).
+
+⚠️ **It is reachable through the API only.** ``api_v1_routes`` accepts a
+``spec_url`` and calls ``resolve_spec``; the connector form under
+``datanika/ui/`` has no URL field at all, so in the product this connector is
+still paste-only. Do not write a docs page telling a user to paste a URL into a
+box that does not exist.
+
+Output feeds ``DltRunnerService._build_openapi_source`` (which delegates to the
+existing ``rest_api`` runtime) and the IR builder.
 """
 
 from __future__ import annotations
@@ -12,6 +28,7 @@ import json
 import re
 from dataclasses import dataclass, field
 
+from datanika.errors import UserFacingError
 from datanika.services.openapi_schema import json_schema_to_column_type, resolve_ref
 
 # §7 caps — enforced before/while walking, typed errors on breach.
@@ -40,7 +57,7 @@ _INCREMENTAL_PARAMS = (
 _CURSOR_FIELDS = ("updated_at", "modified_at", "last_modified", "updated", "created_at")
 
 
-class OpenApiImportError(ValueError):
+class OpenApiImportError(UserFacingError):
     """Typed parse failure.
 
     ``code`` ∈ {``invalid_spec``, ``spec_too_large``, ``unsupported_version``,

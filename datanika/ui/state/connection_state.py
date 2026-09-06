@@ -8,6 +8,7 @@ import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     ConnectionService,
@@ -1059,15 +1060,15 @@ class ConnectionState(BaseState):
             )
 
             if not self.form_openapi_spec.strip():
-                raise ValueError("Paste an OpenAPI spec")
+                raise UserFacingError("Paste an OpenAPI spec")
             try:
                 parsed = parse_openapi_spec(
                     self.form_openapi_spec, base_url_override=self.form_base_url or None
                 )
             except OpenApiImportError as exc:
-                raise ValueError(str(exc)) from exc
+                raise UserFacingError(str(exc)) from exc
             if not parsed.base_url:
-                raise ValueError("No base URL found in the spec — set the Base URL field")
+                raise UserFacingError("No base URL found in the spec — set the Base URL field")
             config["spec_inline"] = self.form_openapi_spec
             config["base_url"] = parsed.base_url
             config["resources"] = parsed.resources
@@ -1337,7 +1338,14 @@ class ConnectionState(BaseState):
             )
 
     async def load_connections(self):
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
+            return
+
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)
         with get_sync_session() as session:

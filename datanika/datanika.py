@@ -93,16 +93,23 @@ with get_sync_session() as _session:
     scheduler_integration.sync_all(_session)
 
 # Public pages
+# Credential pages (core#1081, docs/specs/SPEC_PAGE_ENTRY.md §1). Neither public
+# nor protected: a signed-out visitor is served, a signed-in one is sent to "/".
+#
+# The guard is the MIRROR of check_auth and deliberately not check_auth itself —
+# that one sends the *unauthenticated* case to /login, which on /signup returns
+# every prospect to the wall this pair of issues exists to remove.
 app.add_page(
     login_page,
     route="/login",
     title="Login | Datanika",
+    on_load=[AuthState.redirect_if_signed_in],
 )
 app.add_page(
     signup_page,
     route="/signup",
     title="Sign Up | Datanika",
-    on_load=[AuthState.prefill_invite_email],
+    on_load=[AuthState.redirect_if_signed_in, AuthState.prefill_invite_email],
 )
 # Account recovery (core#623). Public by design — a signed-out user is the only
 # kind that can need them, so neither carries AuthState.check_auth.

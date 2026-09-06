@@ -195,7 +195,14 @@ class PipelineState(BaseState):
         self.show_model_suggestions = False
 
     async def load_pipelines(self):
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
+            return
+
         pipeline_svc, conn_svc = self._get_services()
         exec_svc = ExecutionService()
         with get_sync_session() as session:

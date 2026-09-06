@@ -6,6 +6,7 @@ from functools import partial
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.upload import Upload, UploadStatus
 from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.naming import to_snake_case, validate_name
@@ -31,7 +32,7 @@ validate_upload_name = partial(validate_name, entity_label="Upload")
 to_dataset_name = to_snake_case
 
 
-class UploadConfigError(ValueError):
+class UploadConfigError(UserFacingError):
     """Raised when upload dlt_config fails validation."""
 
 
@@ -54,12 +55,12 @@ class UploadService:
         # Validate source connection exists
         src = self._conn_svc.get_connection(session, org_id, source_connection_id)
         if src is None:
-            raise ValueError(f"Invalid source connection {source_connection_id}: must exist")
+            raise UserFacingError(f"Invalid source connection {source_connection_id}: must exist")
 
         # Validate destination connection exists
         dst = self._conn_svc.get_connection(session, org_id, destination_connection_id)
         if dst is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Invalid destination connection {destination_connection_id}: must exist"
             )
         # core#862 / core#865. Existing is not enough — the connection has to be
@@ -72,7 +73,7 @@ class UploadService:
         # save time so the user learns while they are still looking at the form,
         # and refused HERE because `POST /api/v1/uploads` never sees the picker.
         if dst.connection_type.value not in DESTINATION_TYPES:
-            raise ValueError(
+            raise UserFacingError(
                 f"Connection {destination_connection_id} is a "
                 f"{dst.connection_type.value} connection, which Datanika can read "
                 "from but cannot load into"

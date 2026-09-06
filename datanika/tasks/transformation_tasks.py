@@ -6,6 +6,7 @@ import traceback
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
@@ -115,7 +116,7 @@ def run_transformation(
         ).scalar_one_or_none()
 
         if transformation is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Transformation not found: target_id={run.target_id}, org_id={org_id}"
             )
 

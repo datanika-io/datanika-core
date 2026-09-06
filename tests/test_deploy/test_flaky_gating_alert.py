@@ -290,14 +290,12 @@ def test_json_report_is_written_outside_the_clobbered_report_folder():
 
 
 def test_ci_runs_the_detector_and_alerts_on_flaky_gating():
-    ci = CI_YML.read_text(encoding="utf-8")
+    # Resolved rather than sliced between two hardcoded job names (core#975): `e2e-staging`
+    # now lives in `staging.yml` while `e2e-sso`, which used to be the slice's terminator,
+    # stayed in `ci.yml`.
+    from tests.test_deploy._workflows import job_text
 
-    assert "detect_flaky_gating.py" in ci, (
-        "ci.yml must run e2e/scripts/detect_flaky_gating.py after the gating run."
-    )
-
-    e2e_job = ci[ci.index("\n  e2e-staging:") :]
-    e2e_job = e2e_job[: e2e_job.index("\n  e2e-sso:")]
+    e2e_job = job_text("e2e-staging")
 
     assert "detect_flaky_gating.py" in e2e_job, "the detector must run in the e2e-staging job"
 
@@ -314,9 +312,9 @@ def test_ci_runs_the_detector_and_alerts_on_flaky_gating():
 
 def test_the_detector_runs_before_the_list_calls_that_clobber_reports():
     """Ordering is load-bearing, not cosmetic."""
-    ci = CI_YML.read_text(encoding="utf-8")
-    e2e_job = ci[ci.index("\n  e2e-staging:") :]
-    e2e_job = e2e_job[: e2e_job.index("\n  e2e-sso:")]
+    from tests.test_deploy._workflows import job_text
+
+    e2e_job = job_text("e2e-staging")
 
     # Match the STEP DECLARATION, not the phrase (QA_RULES §7). The step name is
     # also quoted inside the detector step's own comment, so a bare-phrase search

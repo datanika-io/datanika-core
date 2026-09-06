@@ -15,6 +15,7 @@ from sqlalchemy.exc import NoSuchModuleError
 from sqlalchemy.orm import Session
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.encryption import EncryptionService
@@ -284,7 +285,7 @@ _LOCAL_PATH_TYPES = _LOCAL_FILE_DB_TYPES | {
 }
 
 
-class LocalPathNotAllowedError(ValueError):
+class LocalPathNotAllowedError(UserFacingError):
     """A connection would store a local path on a deployment that forbids them.
 
     A ``ValueError`` on purpose: ``BaseState._set_error`` and ``_safe_error``

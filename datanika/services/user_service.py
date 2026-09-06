@@ -12,6 +12,7 @@ from sqlalchemy import delete, false, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 from datanika.models.audit_log import AuditAction, AuditLog
 from datanika.models.base import Base
 from datanika.models.invitation import Invitation, InvitationStatus
@@ -24,7 +25,7 @@ from datanika.services.auth import AuthService
 logger = logging.getLogger(__name__)
 
 
-class UserServiceError(ValueError):
+class UserServiceError(UserFacingError):
     pass
 
 

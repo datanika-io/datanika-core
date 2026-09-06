@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datanika.errors import UserFacingError
 from datanika.services.ir import IR_VERSION
 from datanika.services.ir.schema import IR
 
 
-class IRValidationError(ValueError):
+class IRValidationError(UserFacingError):
     """Raised when an IR document fails validation."""
 
 

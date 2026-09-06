@@ -6,11 +6,12 @@ from urllib.parse import urlencode
 import httpx
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.services.auth import AuthService
 from datanika.services.user_service import UserService
 
 
-class OAuthError(ValueError):
+class OAuthError(UserFacingError):
     """Raised when OAuth operations fail."""
 
 

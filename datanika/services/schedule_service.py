@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
 from datanika.services.pipeline_service import PipelineService
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
     from datanika.services.scheduler_integration import SchedulerIntegrationService
 
 
-class ScheduleConfigError(ValueError):
+class ScheduleConfigError(UserFacingError):
     """Raised when schedule configuration fails validation."""
 
 

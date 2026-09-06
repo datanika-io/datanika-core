@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.connection import Connection, ConnectionType
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.transformation import Materialization, Transformation
@@ -58,7 +59,7 @@ class ImportErrorCode(enum.StrEnum):
     DIRECTION_MISMATCH = "DIRECTION_MISMATCH"
 
 
-class ImportValidationError(ValueError):
+class ImportValidationError(UserFacingError):
     """Raised when backup data fails validation. Contains all collected errors."""
 
     def __init__(self, errors: list[dict]):

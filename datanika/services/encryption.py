@@ -2,8 +2,10 @@ import json
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from datanika.errors import UserFacingError
 
-class EncryptionError(ValueError):
+
+class EncryptionError(UserFacingError):
     """Raised when encryption or decryption fails."""
 
 

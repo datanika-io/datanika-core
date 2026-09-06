@@ -12,6 +12,7 @@ from dlt.sources.filesystem import filesystem, read_csv, read_parquet
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
+from datanika.errors import UserFacingError
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 
@@ -328,7 +329,7 @@ def _extract_rows_loaded(pipeline) -> int:
         return 0
 
 
-class DltRunnerError(ValueError):
+class DltRunnerError(UserFacingError):
     """Raised when dlt runner encounters an unsupported configuration."""
 
 

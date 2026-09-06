@@ -31,7 +31,36 @@
 
 **Promote `datanika-cloud` before `datanika-core`. Never the other way round.**
 
-There are now **three independent** reasons. The second costs money; the third breaks the build.
+> 🆕 **This is now ENFORCED, not requested (core#1123, 2026-09-06).** `deploy-pointer.yml` runs
+> `.github/scripts/cloud_pairing_gate.py` immediately after the core checkout and **before** the
+> cloud checkout it grades. One API call: `datanika-cloud` `compare/master...dev` must read
+> **`identical`**. Anything else — `ahead`, `behind`, `diverged`, or no readable answer at all —
+> exits non-zero and the deploy stops before the tarball is built, before the box is touched, and
+> before any image exists. **Production keeps serving what it was already serving.**
+>
+> 🚨 **A refusal means "promote `datanika-cloud`, then re-run this deploy." It does not mean
+> "override."** There is no override input, no force flag and no allow-list, and that is deliberate:
+> the repair *is* the promotion this section asks for. If you find yourself wanting to bypass it,
+> the thing you want is a cloud promotion.
+>
+> ⚠️ **It is deliberately blunt and will sometimes refuse a promotion that would have been fine.**
+> Cloud being ahead does not always mean *this* core batch needs it. The trade is asymmetric on
+> purpose: a false positive costs one cloud promotion, often of doc commits, plus a re-run. A false
+> negative costs a silent product-wide failure that no health check, smoke test or alert rule can
+> see — reason 4 below is exactly that, measured.
+>
+> ⚠️ **There is deliberately no `pull_request` check for this**, and the absence is the design. A
+> green on the promotion PR is read at exactly the moment that already failed once; a *reassuring*
+> stale reading is worse than none.
+>
+> **Recovering from a refusal** — the deploy fails at its first step, so core `master` has moved
+> while production has not:
+> 1. Promote `datanika-cloud` (`gh pr create --base master --head dev`, then `--merge --admin`).
+> 2. Re-run the failed core deploy: `gh run rerun <id> --repo datanika-io/datanika-core`.
+> 3. The gate passes and the deploy proceeds normally. Nothing else needs undoing.
+
+There are now **four independent** reasons. The second costs money; the third breaks the build; the
+fourth is the one a promoter cannot see.
 
 **1. Mechanical (always true).** Cloud ships *inside* core's image: `deploy-pointer.yml` checks the
 cloud repo out at a pinned `ref: master` and tars both trees to the box, which rebuilds. So a
@@ -125,6 +154,34 @@ assuming the other follows is how you get a production build against a half-appl
 **Establish that cloud's counterpart is on cloud `master` before core's goes.** That is the normal
 order anyway — the point is that it now has a third reason, and this one fails at *build* time on the
 box rather than quietly in a billing column.
+
+**4. Timing (measured 2026-09-06, core#1123).** The three reasons above are all about *content* —
+what is in each tree. This one is about *when you looked*, and it is the reason a promoter who has
+read and believed all three still gets it wrong.
+
+Core `dev` completed [core#1094] step 3: `is_user_facing` became the positive test
+`isinstance(exc, UserFacingError)` with the pydantic exclusion deleted. Its prerequisite is that
+cloud's `QuotaExceededError` carries that marker.
+
+| moment | event |
+|---|---|
+| **14:34:48Z** | cloud promoted to `master ed8ddfd` — `QuotaExceededError(ValueError)`, **0** files under `datanika_cloud/` mentioning `UserFacingError` |
+| **14:42Z** | the cloud half (**cloud#205**) merges to cloud `dev` — **eight minutes later** |
+| *then* | the core promotion, if it had gone, builds the image from `ed8ddfd` |
+
+`isinstance(QuotaExceededError(...), UserFacingError)` would have been **False** for every quota
+refusal, so `_safe_error` discards the real message: **every quota refusal in the product renders
+"An error occurred."** — with every container healthy, every check green and nothing to page on.
+
+🔑 **`"cloud was promoted"` and `"cloud is in the image"` are different facts that look identical on
+a branch listing.** A cloud half merging *after* a cloud promotion is invisible on every surface a
+promoter looks at during a *core* promotion: both branches read promoted, cloud CI on `dev` is
+green, and cloud `master...dev` reads `ahead_by=1` — a number nobody is checking at that moment.
+
+⚠️ **The constraint was already written down — in this runbook, in `plans/infra/current_state.md`
+and in the core promotion body — and it did not help.** What was missing was a check *at the moment
+of acting*, which is what the gate at the top of this section now is. Second instance in two days
+after [cloud#151]; the first one is why the constraint was written down at all.
 
 **Corollary for issue closure:** a cloud fix's issues close after the **core** deploy verifies it on
 the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
@@ -232,20 +289,29 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
 
 ## Promote
 
-1. Create and merge the promotion PR:
+1. Create the promotion PR, then **gate and merge in one command**:
    ```bash
    gh pr create --repo datanika-io/datanika-core --base master --head dev \
      --title "Promote dev → master: <list features>" \
      --body "Bundled release: <describe what's included>"
-   # Wait for CI to pass
-   gh pr merge <number> --repo datanika-io/datanika-core --merge --admin
+   # Wait for CI to pass, then:
+   GH_TOKEN=$(gh auth token) python3 .github/scripts/cloud_pairing_gate.py \
+     && gh pr merge <number> --repo datanika-io/datanika-core --merge --admin
    ```
+   🚨 **`&&`, not two commands** (core#1123). CD runs the same gate and CD is the refusal that
+   counts; this copy is the cheap one that keeps you out of the half-promoted state, where
+   `master` has moved and the deploy is refusing. It only earns that if the reading and the
+   merge are one action — the finding behind this gate *is* an eight-minute gap between a
+   reading and an act. If it refuses, promote `datanika-cloud` first; do not override it.
 
 2. Wait for the CD deploy to complete:
    ```bash
    gh run list --repo datanika-io/datanika-core --branch master --limit 1
    gh run watch <run_id> --repo datanika-io/datanika-core --exit-status
    ```
+   ⚠️ **Its first real step is the cloud pairing gate**, so a run that fails within a minute of
+   starting is almost certainly that and not a deploy failure. Production is untouched in that
+   case — see the recovery steps under *Order: cloud first*.
 
 ## Post-deploy (SSH to prod — pointer.gr, **not** Hetzner)
 

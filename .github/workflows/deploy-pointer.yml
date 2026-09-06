@@ -38,6 +38,34 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: datanika
+
+      # core#1123. The cloud tree that reaches production is whatever cloud `master` points
+      # at WHEN THIS JOB RUNS — see the `ref: master` pin on the next step. On 2026-09-06 a
+      # core promotion came one merge from shipping a predicate whose marker class lived only
+      # on cloud `dev`: cloud was promoted at 14:34:48Z and the cloud half of the pair merged
+      # at 14:42Z, eight minutes later. Every quota refusal in the product would have rendered
+      # "An error occurred." with every container healthy and every check green.
+      #
+      # The ordering rule was already written in the runbook, the handoff and the promotion
+      # body. It did not help. What was missing was a check AT THE MOMENT OF ACTING, and this
+      # is the only step in the promotion path that no flag walks past: `master` promotions
+      # merge with `--admin` by design (reviews=1 is unsatisfiable with one identity), so a
+      # `pull_request` check is advisory however it is labelled.
+      #
+      # 🚨 Deliberately placed BEFORE the cloud checkout, so a refusal costs nothing: no
+      # tarball, no SSH, no build, no image. Production keeps serving what it was serving.
+      #
+      # 🚨 Deliberately has no `pull_request` counterpart. A green on the promotion PR is read
+      # at exactly the moment that already failed once, and a reassuring stale reading is
+      # worse than none.
+      #
+      # A refusal means "promote datanika-cloud, then re-run this deploy" — never "override".
+      # There is no override input and the script takes no force flag.
+      - name: Gate — cloud master must be identical to cloud dev (core#1123)
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+        run: python3 datanika/.github/scripts/cloud_pairing_gate.py
+
       - name: Checkout cloud
         uses: actions/checkout@v6
         with:

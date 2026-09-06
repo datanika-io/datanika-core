@@ -41,6 +41,14 @@ execution_service = ExecutionService()
 #: tuple would have started billing — a pricing change arriving as a dependency bump,
 #: which is the thing nobody would be watching for. With the arm gone that release is a
 #: non-event.
+#:
+#: 🚨 **Widening this tuple also requires widening the PRE-FLIGHT GATE in the same change
+#: (core#1107).** The gate is ``PipelineService.predict_run_count()``, which returns
+#: ``len(pipeline.models)`` and cannot see test, seed or snapshot nodes; cloud's Path A
+#: guarantees zero overshoot against this meter. Metering a kind the gate cannot count
+#: admits a Free org at 470/500 and then meters it to 510, past a hard cap the gate had
+#: just cleared it for. **A node kind enters the meter only when the pre-flight predictor
+#: can also count it cheaply.**
 _BILLABLE_RESOURCE_TYPES = ("model",)
 
 

@@ -734,5 +734,63 @@ class TestOnlyModelNodesAreBillable:
         """
         assert _BILLABLE_RESOURCE_TYPES == ("model",), (
             f"the metered dbt node kinds are now {_BILLABLE_RESOURCE_TYPES}. core#864 "
-            "settled this at ('model',). Changing it changes what customers are billed."
+            "settled this at ('model',).\n\n"
+            "Widening this is NOT a one-line change, even with a pricing decision behind it. "
+            "The pre-flight gate is PipelineService.predict_run_count(), which returns "
+            "len(pipeline.models) and cannot see test, seed or snapshot nodes. Cloud's Path A "
+            "guarantees zero overshoot against this meter, so a meter counting what the gate "
+            "cannot see admits a Free org at 470/500 (470 + 10 <= 500) and then meters it to "
+            "510 — past a hard cap the gate had just cleared it for. Widen predict_run_count() "
+            "in the same change, or do not widen this.\n\n"
+            "The durable rule (core#864): a node kind enters the meter only when the "
+            "pre-flight predictor can also count it cheaply; the meter may never count "
+            "something the gate cannot see."
         )
+
+    def test_arming_the_billable_guard_reds_and_names_the_gate(self, monkeypatch):
+        """The guard above must tell the widener that the PRE-FLIGHT GATE also moves (core#1107).
+
+        🚨 **Why a message is worth a test.** The widening this guard stops is not vandalism,
+        it is a *legitimate* decision: Product decides test nodes should bill, someone widens
+        the tuple, the guard reds — and a message that says only *"changing it changes what
+        customers are billed"* reads, to the person holding that decision, as **"yes, that is
+        what was approved."** They ship it, and core#864's own worked example fires: a pipeline
+        of 10 models with 3 tests each is gated at 10 and metered at 40, so a Free org at
+        470/500 is admitted (``470 + 10 <= 500``) and metered to **510** — past a hard cap the
+        gate had just cleared it for.
+
+        The gate is ``PipelineService.predict_run_count()``, which returns
+        ``len(pipeline.models)`` and cannot see test/seed/snapshot nodes, while cloud's Path A
+        promises *"zero overshoot against the meter"*. Issues are not read at the moment of the
+        edit; **failure messages are** — and ``predict_run_count`` appeared nowhere in this
+        file, so nothing in the tree told the widener the gate existed.
+
+        This drives the real assertion under a real widening and reads the real message, rather
+        than grepping the source for a phrase: a substring check is satisfied by a comment, and
+        by the phrase's own denial (``WORKFLOW_RULES`` §4).
+        """
+        monkeypatch.setitem(globals(), "_BILLABLE_RESOURCE_TYPES", ("model", "seed"))
+
+        with pytest.raises(AssertionError) as exc:
+            self.test_the_billable_set_is_exactly_model()
+        message = str(exc.value)
+
+        assert "predict_run_count" in message, (
+            "the widening guard fired without naming the pre-flight gate. Whoever widened the "
+            "tuple has just been told this is a billing change — which they know, and which "
+            "they may well have been authorised to make — and NOT that "
+            "PipelineService.predict_run_count() must be widened in the same change or the "
+            "gate and the meter disagree. core#864 AC3, core#1107."
+        )
+        assert "seed" in message, (
+            "the message must show what the tuple was widened TO, or the reader cannot tell "
+            "which kind is now metered."
+        )
+
+    def test_arming_the_billable_guard_is_green_on_the_real_tuple(self):
+        """The control that stops the arming test above passing via an always-failing guard.
+
+        Narrowing a check until nothing satisfies it is a worse bug than the one it fixed, and
+        a silent one.
+        """
+        self.test_the_billable_set_is_exactly_model()

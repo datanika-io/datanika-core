@@ -67,6 +67,12 @@ makes the rebuilt default agree with production, so they disappear and the gap b
 **The new fingerprint cannot be computed from this repository** — it is a sha256 over the
 live catalogue and only the box can produce it. Infra re-measures against the ``:staging``
 image after this merges, exactly as they did for core#1047, and re-pins in that commit.
+
+✅ **Done 2026-09-06 (Infra): the pin is now ``b46433131dde4c20``, 22 columns.** Measured on
+the box against ``:staging`` (head ``f1a4c8e2d6b3``), with ``:latest`` (head ``d7f2c8a4b1e6``)
+run against the same production rows as the control — it still returned the old
+``d0e77bd8d96b9219`` / 26, which is what attributes the move to this migration rather than to
+production drifting. The predicted 22 held; the fingerprint was measured, never computed.
 """
 
 from collections.abc import Sequence

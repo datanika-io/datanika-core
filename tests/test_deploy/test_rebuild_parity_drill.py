@@ -49,6 +49,19 @@ and re-pins `EXPECTED_GAP` in that commit. Until then the drill is expected to f
 on the fingerprint with `SHRANK`, which the script's own message tells the reader to
 confirm against core#1060 rather than paste over. **Do not re-pin from a prediction.**
 
+DONE 2026-09-06 (Infra) — measured on the box, not predicted, and the prediction of
+**22** above held. `EXPECTED_GAP` is now `b46433131dde4c20`.
+
+    :latest  head d7f2c8a4b1e6 (pre-#1071)  -> 26 columns, d0e77bd8d96b9219
+    :staging head f1a4c8e2d6b3 (post-#1071) -> 22 columns, b46433131dde4c20  <- pinned
+
+🔑 The first line is the load-bearing one. It is the OLD image against the SAME
+production rows returning the OLD fingerprint, which is what attributes the move to
+the migration rather than to production drifting or to the drill changing under me.
+A single post-fix reading cannot tell those apart, and would have been accepted.
+The four departing lines are exactly `{pro,enterprise}-{monthly,annual}.hard_cap_bytes`
+and the missing-slug set is unchanged at 4, so the whole delta is those four lines.
+
 `RECORDED_DEFAULT_WOULD_GIVE` below holds the three behaviour-changing columns and is
 compared against the migration chain by
 `test_the_recorded_defaults_still_match_the_migration_tree`, so this narrative cannot

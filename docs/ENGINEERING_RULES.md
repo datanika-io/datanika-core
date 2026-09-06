@@ -1169,8 +1169,68 @@ the queue?"* — the one investigation this view cannot answer and looks most qu
 
 ---
 
+## 41. A result that reproduces your prediction exactly is the least informative green
+
+**(2026-09-06, [core#1097].)** I swept `datanika.py` for every protected route's `on_load` loaders,
+predicted **eleven** that do database work without a guard, then wrote the test. First run:
+
+```
+11 failed, 10 passed
+```
+
+Row for row, route for route, exactly the eleven. It was measuring **none** of them. Every one of
+those loaders opens `await self._get_org_id()`; the caller stand-in was a bare `MagicMock`, so that
+returned a `MagicMock`, and awaiting one raises `TypeError`. The session counter read **0** in all
+eleven cases. The guarded loaders passed because they returned before the await — for a reason that
+had nothing to do with their guard either.
+
+🚨 **A table that agrees with the hypothesis is the shape you stop checking.** A partial or surprising
+result gets read line by line; a perfect one gets screenshotted into the PR body. The existing rules
+say *show the check red first* — this one was red first, in exactly the predicted set, and still
+proved nothing.
+
+**Rules:**
+1. **Read the failure MESSAGE, not the failure COUNT.** One `AssertionError` text would have said
+   `TypeError` instead of `1 database session(s)`. The count is the part that agrees with you.
+2. **Every "nothing happened" assertion needs a positive control that makes something happen** —
+   here, the same handler driven with an *authenticated* stand-in, required to open >= 1 session and
+   emit >= 1 hook. If that cannot go green, no zero above it is attributable.
+3. **Bind the real method rather than mocking it**, wherever the mock's return value is on the path
+   under test. `MagicMock` supplies what is missing (`WORKFLOW_RULES`), and awaiting one fails in a
+   way that reads like the code being wrong.
+
+---
+
+## 42. An assertion that a side effect did NOT happen is satisfied by the code dying before it
+
+**(2026-09-06, [core#1097], same file, opposite direction — and this one was the false GREEN.)**
+
+Six of those eleven loaders build `EncryptionService(settings.credential_encryption_key)` **above**
+their `with get_sync_session()`. The test config carries the insecure placeholder, so unpatched they
+raise `ValueError: Fernet key must be 32 url-safe base64-encoded bytes` — with the session counter
+still at **0**. `assert sessions == 0` would have **passed for six of the eleven offenders**, and the
+PR would have shipped a guard test that certified six unguarded loaders.
+
+The general form, and it is not about Fernet keys:
+
+> **"X did not happen" is true when X was prevented, and equally true when execution never reached
+> X.** Only one of those is the property you are asserting.
+
+**Rules:**
+1. **Require the handler to complete.** Return the exception rather than raising it, and assert it is
+   empty. An exception is a red, not a pass — a loader that blows up has demonstrated that it ran far
+   enough to break, not that it guarded.
+2. **Patch the irrelevant collaborators on BOTH paths**, not only on the one where you noticed them.
+   Patching `EncryptionService` only for the authenticated control is what leaves the negative path
+   dying early and reading clean.
+3. **Ask where in the function the instrumented call sits.** If anything above it can throw, your
+   zero has two explanations.
+
+---
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
+[core#1097]: https://github.com/datanika-io/datanika-core/issues/1097
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887
 [core#907]: https://github.com/datanika-io/datanika-core/issues/907
 [core#673]: https://github.com/datanika-io/datanika-core/issues/673

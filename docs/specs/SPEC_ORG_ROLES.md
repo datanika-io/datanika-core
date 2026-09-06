@@ -175,7 +175,32 @@ the [core#658] fix stated once rather than as a special case.
    new owner, unlike deletion.
 3. On confirm, atomically: successor → `owner`, actor → `admin`. **Owner count is preserved
    throughout**, so R5 is never transiently violated.
-4. Audited as its own action (`transfer_ownership`), not as two `change_role` events.
+4. Audited as **one** row, not as two `change_role` events. The row is
+   `action="update"`, `resource_type="member"`, `resource_id=<successor>`, carrying both
+   `owner_user_id` values — which is what answers *"who handed this org to that account"*.
+
+   > 🚨 **This clause used to read *"audited as its own action (`transfer_ownership`)"*, and that
+   > wording is what caused [core#1127].** `AuditAction` has six members and
+   > `transfer_ownership` is not one of them, so `BaseState._audit`'s `AuditAction(action)`
+   > raised and its deliberate swallow dropped the row. **The implementation was faithful to
+   > this spec; the spec was unsatisfiable** — for the life of the product the
+   > highest-privilege action in it wrote no audit row, and every check was green.
+   >
+   > ⚠️ **Adding the member is not the repair.** `audit_logs.action` is
+   > `Enum(AuditAction, native_enum=False)`, so under blue/green the *previously deployed*
+   > container raises `LookupError` when it **reads** a value it does not know — and
+   > `/audit-logs` lists rows for a whole org, so one such row breaks the page for every
+   > reader on the old colour mid-swap. A new verb is an expand/contract pair (teach the
+   > enum to read it in release N, start writing it in N+1), which is a two-release price
+   > for a synonym. `erase_user` set the precedent this now follows: record the fact inside
+   > the existing enum.
+   >
+   > 🔑 **The general lesson, which is worth more than the string:** a spec clause naming a
+   > value from a closed vocabulary must be checked against that vocabulary, or it becomes
+   > an instruction to write a defect. `tests/test_services/test_audit_call_site_vocabulary.py`
+   > now fails on the next one at authoring time.
+   > *(Corrected 2026-09-07 by Engineering, [core#1127]. Recorded rather than silently
+   > rewritten, because the wording is the cause and deleting it hides that.)*
 
 **No acceptance handshake.** Decided, with a reason that will expire: an acceptance flow needs a
 reliable email round trip, and [core#652] establishes that email notification channels have never

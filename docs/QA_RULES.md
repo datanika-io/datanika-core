@@ -272,14 +272,47 @@ you get one row and it is the directory listing. **A gate that punishes honest n
 dishonest ones.**
 
 **Graduation is mechanical:** 3 consecutive greens on `dev`, read from the job's printed
-`INFORMATIONAL_RESULT=success` line — **never the step's own tick, which `continue-on-error` masks.**
-Then delete the marker and close the tracking issue.
+verdict line — **never the step's own tick, which `continue-on-error` masks.** Then delete the
+marker and close the tracking issue.
 
-- `empty` and `unknown` are neither green nor red and count toward nothing.
-- **A cancelled run is neither green nor red.** `dev` is busy and the concurrency group cancels
-  often. Re-read; do not assume.
+🚨 **"Consecutive" ranges over MEASURED runs, not calendar runs — and until 2026-09-06 this
+sentence did not say so, while nothing computed the streak at all.** (core#1130.) The counter
+`ci.yml` says a red *"RESETS"* existed only in a reviewer's head, and the sentence admits three
+readings that disagree on real data. Measured on the nine completed `e2e-sso` runs on `dev` that
+day: **seven carried no reading**, and four runs in which *every* SSO spec passed contributed one
+green between them, because staging had moved under them (`wrong_build`).
+
+| reading | rule | on that data |
+|---|---|---|
+| calendar | 3 *adjacent* runs, all green | **unsatisfiable** — and an unsatisfiable bar gets lowered, not met |
+| tally | 3 greens *anywhere* in the window | **already satisfied**, by greens that were never adjacent |
+| **measured** | 3 adjacent greens in the **measured subsequence** | 1 of 3 — **this is the rule** |
+
+**Run `python scripts/e2e_tier_streak.py --job <job>` rather than counting by eye.** It prints the
+per-run class, the trailing streak, how many calendar runs that streak spans, and a verdict.
+
+Two asymmetries make the measured reading honest, and they are the part to argue with rather than
+memorise:
+
+- **A run that measured nothing is transparent.** `wrong_build`, `no_verdict`, `cancelled`,
+  `empty`, `unknown` — we know these carried no reading, so they neither advance nor reset.
+- **A run we cannot read is NOT transparent.** An unrecognised verdict, or a log GitHub will no
+  longer serve, blocks the streak: we do not know what it carried, and assuming it was not a red
+  is the reassuring assumption.
+- **A streak drawn from a window that measured almost nothing reports `sparse`, not `graduate`.**
+  Three greens across a fortnight and three greens across three runs are not the same evidence,
+  and only a human should decide which one they are looking at.
+
+⚠️ **The choice of the measured reading is a judgement, not a measurement.** The tests around it
+prove the *instrument* discriminates; they cannot prove the rule is right. Say so when you cite it.
+
+⚠️ **Actions logs expire after 90 days**, so graduation evidence decays and cannot be
+reconstructed later. Record the SHAs in the spec's tier header when it graduates, the way
+`golden-path.spec.ts` does.
+
 - **A skipped job is not a flake.** Check the run's *event*: the push-only jobs do not run on a
-  `pull_request`, so a promotion PR legitimately skips them.
+  `pull_request`, so a promotion PR legitimately skips them. And a `dev` head carries a
+  `merge_group` run whose staging jobs are `skipped` **by design** — filter by `event=push`.
 
 **🚫 Demotion is not the inverse.** Moving a spec *out* of the gating tier requires an issue and is
 only ever legitimate for a spec that has **never passed**. Demoting one that used to pass hides a

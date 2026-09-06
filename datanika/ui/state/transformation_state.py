@@ -149,7 +149,14 @@ class TransformationState(BaseState):
         self.error_message = ""
 
     async def load_transformations(self):
-        org_id = await self._get_org_id()
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
+            return
+
         svc = TransformationService()
         encryption = EncryptionService(settings.credential_encryption_key)
         conn_svc = ConnectionService(encryption)

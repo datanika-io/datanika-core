@@ -5,12 +5,18 @@ it stops being broken."* core#896 was closed COMPLETED while four of them named 
 it was closed for, and nobody read them — a suite reporting `6 passed, 4 xfailed` is the same
 colour as one reporting `10 passed`.
 
-core#1025's second half is a scheduled check that reads issue numbers out of `reason=` strings
-and refuses to let a strict xfail outlive a CLOSED issue. **This file is its prerequisite**, and
-the reason is the part that is easy to skip: that check can only read the reasons it can parse,
-and **a marker whose reason it cannot parse is silently skipped — indistinguishable from a
-marker whose issue is still open.** So the second half's coverage *is* the set of readable
-reasons, and until this file existed nothing measured that set.
+core#1025's remaining half is a **scheduled, network-reading** check that resolves those issue
+numbers against GitHub and refuses to let a strict xfail outlive a CLOSED issue. **This file is
+its prerequisite**, and the reason is the part that is easy to skip: that check can only read
+the reasons it can parse, and **a marker whose reason it cannot parse is silently skipped —
+indistinguishable from a marker whose issue is still open.** So its coverage *is* the set of
+readable reasons, and until this file existed nothing measured that set.
+
+🆕 **The TABLE RESOLVER at the bottom of this file is now shipped (2026-09-06)** and it is what
+takes that coverage from **4 of 9 to 9 of 9** — by reading `AWAITING_PROVISIONING` rather than
+giving up at the call site. It is offline and deterministic, so it lives here in the `test` job;
+only the GitHub read is still unbuilt, and it is unbuilt for the tier reason core#1025 states —
+a network call must not be able to red-light an unrelated PR.
 
 ## 🚨 The correction this file exists to carry, and it is against my own earlier measurement
 
@@ -457,3 +463,267 @@ def test_every_listed_carrier_is_a_real_module_level_name(relpath: str, carrier:
         f"{relpath} has no module-level `{carrier}`. DYNAMIC_SITES is describing a tree that "
         "no longer exists."
     )
+
+
+# ===========================================================================
+# core#1025, SECOND HALF — read the TABLE, not the call site.
+#
+# The first half (everything above) pins that every strict xfail's attribution is
+# *reachable*. It stops there: for a table-driven site it accepts the site as declared and
+# never opens the table. That leaves the closed-issue check able to read **4 of 9** real
+# markers — the four static ones — because the other five are built from
+# `AWAITING_PROVISIONING` and their issue lives one indirection away, in `pin.tracking`.
+#
+# 🔑 **The remedy is not an exception list, it is to read the table.** Resolving `**_PIPEDRIVE`
+# to the module-level dict it names takes the same check from 4 of 9 to 9 of 9, and it does it
+# per ENTRY rather than per table — so a single pin losing its `tracking` reds naming that pin,
+# instead of the table as a whole still looking attributed because its four siblings are.
+#
+# ⚠️ **No count ratchet on entries here, deliberately.** A sixth dead vendor account is
+# legitimate work; a guard that reds on it would be deleted, and correctly. What is pinned is
+# scale-free: **100% attribution**, plus the claim that reading the table strictly beats reading
+# the call site — if that ever stops being true this half is doing nothing and should be removed
+# on purpose rather than left as decoration.
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class Marker:
+    """One strict xfail marker that is actually APPLIED — not one place a marker is written.
+
+    The unit error core#1025's first half corrected, now carried in the type: a call site
+    inside a `.get()` on an empty dict emits nothing, and five markers come out of one site.
+    """
+
+    relpath: str
+    #: `None` for a static marker; the table key for a table-driven one.
+    entry: str | None
+    tokens: frozenset[str]
+    #: True when the token was only reachable by following the table.
+    via_table: bool
+
+    @property
+    def label(self) -> str:
+        return f"{self.relpath}" + (f"[{self.entry}]" if self.entry else "")
+
+
+def module_bindings(tree: ast.Module) -> dict[str, ast.expr]:
+    """Module-level `NAME = <expr>` bindings, annotated or not.
+
+    Only module level: a name rebound inside a function is not what a `**SPREAD` at module
+    level resolves to, and following it would invent attribution that is not there.
+    """
+    out: dict[str, ast.expr] = {}
+    for node in tree.body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+            out[node.target.id] = node.value
+        elif isinstance(node, ast.Assign) and node.value:
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    out[target.id] = node.value
+    return out
+
+
+def tokens_reachable_from(node: ast.AST, binds: dict[str, ast.expr], depth: int = 0) -> set[str]:
+    """Every `core#N`/`cloud#N` token reachable from an expression.
+
+    Follows `Name` references and `**SPREAD` into module-level bindings, which is the whole
+    point — `AwaitingProvisioning(**_PIPEDRIVE, raises=AssertionError)` carries its issue in
+    `_PIPEDRIVE["tracking"]` and nowhere else.
+
+    `depth` is bounded so a self-referential binding cannot hang the suite. A guard that can be
+    made to spin is a guard someone disables.
+    """
+    if depth > 6:
+        return set()
+    found: set[str] = set()
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return set(ISSUE_TOKEN.findall(node.value))
+    if isinstance(node, ast.Name):
+        target = binds.get(node.id)
+        return tokens_reachable_from(target, binds, depth + 1) if target is not None else set()
+    for child in ast.iter_child_nodes(node):
+        found |= tokens_reachable_from(child, binds, depth + 1)
+    if isinstance(node, ast.Call):
+        # `**SPREAD` is a keyword with `arg=None`, which `iter_child_nodes` does reach, but
+        # spelling it out keeps the intent legible: this line is the second half.
+        for kw in node.keywords:
+            found |= tokens_reachable_from(kw.value, binds, depth + 1)
+    return found
+
+
+def table_markers(relpath: str, carrier: str, repo_root: Path) -> list[Marker]:
+    """Expand one table-driven site into the markers it actually applies, one per entry."""
+    path = repo_root / relpath
+    if not path.exists():
+        return []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    binds = module_bindings(tree)
+    table = binds.get(carrier)
+    if not isinstance(table, ast.Dict):
+        return []
+    out: list[Marker] = []
+    for key, value in zip(table.keys, table.values, strict=False):
+        name = (
+            key.value
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+            else (ast.unparse(key) if key is not None else "<**spread>")
+        )
+        out.append(
+            Marker(
+                relpath=relpath,
+                entry=str(name),
+                tokens=frozenset(tokens_reachable_from(value, binds)),
+                via_table=True,
+            )
+        )
+    return out
+
+
+def applied_markers(repo_root: Path = REPO_ROOT) -> list[Marker]:
+    """THE CENSUS. Every strict xfail marker the tree applies, with its issue tokens."""
+    out: list[Marker] = []
+    for site in strict_xfails(repo_root / "tests", "core"):
+        if not site.is_dynamic:
+            out.append(
+                Marker(
+                    relpath=site.relpath,
+                    entry=None,
+                    tokens=frozenset(ISSUE_TOKEN.findall(site.static_reason or "")),
+                    via_table=False,
+                )
+            )
+            continue
+        declared = DYNAMIC_SITES.get(site.key)
+        if declared is None:
+            # The first half already reds on this; emit an unattributed marker so this half
+            # cannot report full coverage on a tree the other half is failing.
+            out.append(Marker(site.relpath, "<undeclared site>", frozenset(), True))
+            continue
+        out.extend(table_markers(site.relpath, declared.carrier, repo_root))
+    return out
+
+
+def unresolved(markers: list[Marker]) -> list[str]:
+    """THE PREDICATE for the second half. Markers whose issue is still not discoverable."""
+    return [
+        f"{m.label} applies xfail(strict=True) but no core#N/cloud#N token is reachable from "
+        "it — not in its reason and not in the table entry it is built from. core#1025's "
+        "closed-issue check skips it silently, which is the same colour as an issue still "
+        "being open."
+        for m in markers
+        if not m.tokens
+    ]
+
+
+def test_control_the_marker_census_is_not_empty_and_covers_both_kinds() -> None:
+    """A census that found nothing would make every assertion below vacuously true."""
+    markers = applied_markers()
+    assert markers, "the marker census is empty; the scanner or the resolver has gone blind"
+    assert any(not m.via_table for m in markers), "no static marker in the census"
+    assert any(m.via_table for m in markers), (
+        "no table-driven marker in the census. That is the half this section exists for, so a "
+        "census without one is not exercising it — and would report 100% coverage trivially."
+    )
+
+
+def test_reading_the_table_resolves_every_applied_marker() -> None:
+    """THE ASSERTION: 9 of 9 today, N of N always — attribution reachable for every marker."""
+    markers = applied_markers()
+    problems = unresolved(markers)
+    assert not problems, (
+        f"{len(problems)} of {len(markers)} applied strict xfail markers have no reachable "
+        "issue:\n  " + "\n  ".join(problems)
+    )
+
+
+def test_reading_the_table_strictly_beats_reading_the_call_site() -> None:
+    """The claim that justifies this half existing at all — measured, not asserted.
+
+    If table resolution ever stops adding attribution, delete this section deliberately rather
+    than leaving it as a check that cannot discriminate.
+    """
+    markers = applied_markers()
+    from_call_site = sum(1 for m in markers if m.tokens and not m.via_table)
+    from_table = sum(1 for m in markers if m.tokens)
+    print(
+        f"strict xfail markers applied: {len(markers)}; "
+        f"attributable from the call site alone: {from_call_site}; "
+        f"attributable by reading the table: {from_table}"
+    )
+    assert from_table > from_call_site, (
+        f"reading the table resolved {from_table} markers and the call sites alone resolve "
+        f"{from_call_site} — so this half adds nothing. Either every dynamic table has been "
+        "emptied (delete this section and the DYNAMIC_SITES entries with it) or the resolver "
+        "has stopped following `**SPREAD`, in which case coverage above is passing for the "
+        "wrong reason."
+    )
+
+
+def test_arming_the_resolver_on_the_real_live_table() -> None:
+    """Drives the REAL `AWAITING_PROVISIONING`, not a fixture.
+
+    Its five pins all carry `tracking="cloud#160"` through a `**_VENDOR` spread, so this is the
+    exact indirection the second half was built to cross. A synthetic fixture would pass with a
+    resolver that only handled the shape the fixture used.
+    """
+    live = table_markers(
+        "tests/test_connector_smoke/conftest.py", "AWAITING_PROVISIONING", REPO_ROOT
+    )
+    assert live, "the real live table resolved to no markers; the resolver is not reading it"
+    assert unresolved(live) == [], f"real pins with no reachable issue: {unresolved(live)}"
+    assert all("cloud#" in t or "core#" in t for m in live for t in m.tokens)
+
+
+def test_arming_a_table_entry_that_loses_its_issue_is_caught_per_entry() -> None:
+    """The mutation that matters, and it must name the ONE pin — not the table.
+
+    A predicate asking "does this table mention an issue anywhere?" stays green when a single
+    pin loses its tracking, because four siblings still carry `cloud#160`. That is the whole
+    reason resolution is per entry.
+    """
+    src = (
+        'GOOD = {"vendor": "V", "tracking": "cloud#160"}\n'
+        'BARE = {"vendor": "W"}\n'
+        "TABLE = {\n"
+        '    "test_a": Pin(**GOOD, raises=AssertionError),\n'
+        '    "test_b": Pin(**BARE, raises=None),\n'
+        "}\n"
+    )
+    fixture = CORE_TESTS / "test_deploy" / "_table_resolver_fixture.py"
+    fixture.write_text(src, encoding="utf-8")
+    try:
+        markers = table_markers(f"tests/test_deploy/{fixture.name}", "TABLE", REPO_ROOT)
+        assert [m.entry for m in markers] == ["test_a", "test_b"]
+        problems = unresolved(markers)
+        assert len(problems) == 1, (
+            f"expected exactly the one untracked pin to be reported, got {problems}. A "
+            "table-level check would have reported none of them."
+        )
+        assert "test_b" in problems[0] and "test_a" not in problems[0]
+    finally:
+        fixture.unlink(missing_ok=True)
+
+
+def test_arming_the_resolver_does_not_follow_a_function_local_binding() -> None:
+    """Attribution must come from module level; inventing it from a local is worse than none."""
+    src = (
+        "def build():\n"
+        '    LOCAL = {"tracking": "core#1"}\n'
+        "    return LOCAL\n"
+        'TABLE = {"test_a": Pin(**LOCAL)}\n'
+    )
+    fixture = CORE_TESTS / "test_deploy" / "_local_binding_fixture.py"
+    fixture.write_text(src, encoding="utf-8")
+    try:
+        markers = table_markers(f"tests/test_deploy/{fixture.name}", "TABLE", REPO_ROOT)
+        assert markers and unresolved(markers), (
+            "the resolver resolved a token out of a FUNCTION-LOCAL binding. `**LOCAL` at "
+            "module level is a NameError at import, so any attribution read from it is "
+            "fictional — and a guard that manufactures coverage is worse than one that admits "
+            "it has none."
+        )
+    finally:
+        fixture.unlink(missing_ok=True)

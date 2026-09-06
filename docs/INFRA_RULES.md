@@ -413,6 +413,49 @@ is cp1251, and a raise mid-loop makes everything after it simply absent, which r
 empty result); `UV_NO_SYNC=1` for any hand-run suite; SSH must be the Windows binary
 `/c/Windows/System32/OpenSSH/ssh.exe`, because Git Bash's own `ssh` fails pubkey auth.
 
+### 🚨 `MSYS_NO_PATHCONV=1` and `git -C` are mutually exclusive **inside one command** — and the failure prints a clean `0` ([core#1075])
+
+This is here, and not only in `WORKFLOW_RULES` §13, because it bites **mid-session inside
+`infra_exec.sh`** — which is Infra's own surface and the one place no check can reach.
+
+```bash
+# ❌ 0 with the variable, 1 without. 0 lines read with it, 348 without.
+git -C /d/Projects/Datanika/worktrees/datanika-core-infra \
+    cat-file -p origin/master:datanika/datanika.py 2>/dev/null | grep -cE '^\s*bootstrap_cloud\(\)'
+```
+
+`<ref>:<path>` needs the variable **set** (or MSYS mangles it to `origin\master;datanika\…`); `-C`'s
+POSIX path needs it **unset** (or git dies with `cannot change to '/d/Projects/…'`). §13's traps 12
+and 13 are two *different* commands wanting opposite settings, so "scope it narrowly" works there.
+**Here it is one command, and no scoping satisfies both.**
+
+**Use the `cd` form — there is then nothing for `-C` to translate:**
+
+```bash
+cd /d/Projects/Datanika/worktrees/datanika-core-infra
+MSYS_NO_PATHCONV=1 git cat-file -p origin/master:datanika/datanika.py
+```
+
+🚨 **And never `2>/dev/null` a `git cat-file` whose output you are about to count.** The redirect eats
+the `fatal`, `grep -c` reads empty stdin, and prints `0` — **a broken command and a real measurement
+of zero are the same output.** Assert the blob is non-empty first; that is what makes the count mean
+something. Dropping `-C` while leaving the variable unset is safe *only* while every path you read is
+undotted (`origin/dev:datanika/x.py` works, `origin/dev:.github/workflows/ci.yml` does not), which is
+why this bites on the eleventh file after ten read correctly.
+
+🔑 **The half worth more than the trap.** My first write-up blamed the runbook's command, which is
+correct as written. Suspecting the zeros, I re-ran `cat-file | wc -l`, got 348 lines, and concluded
+*"the files ARE being read."* **The control had the variable unset** — it did not reproduce the
+suspected cause, so it could only ever come back healthy, and it read exactly like an exoneration.
+**A control that does not carry the suspected cause cannot exonerate anything.**
+
+⚠️ **No CI guard is possible for this**, and that was measured before it was asserted: **0 tracked
+files** in core or cloud contain the shape, while `infra_exec.sh` — outside every git repo
+(`git rev-parse --show-toplevel` from the monorepo root answers `fatal: not a git repository`) — is
+where it actually gets written. A guard would be vacuous *and* would create the belief that the
+surface is covered. **Every rule governing `<dept>_exec.sh` is a documentation rule by construction**,
+so *"we'll add a check for that"* is not available there.
+
 **A Cloudflare DNS record comment is capped at 100 characters** (API `code 9313`), and `gh api` takes
 `--jq` only — `--jq -r` is invalid, and API paths take no leading slash.
 

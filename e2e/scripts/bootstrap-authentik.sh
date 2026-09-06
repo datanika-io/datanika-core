@@ -302,13 +302,38 @@ else:
 # and turn this step green while the specs still failed on an unsigned
 # assertion — and the tempting next move from there is relaxing
 # `wantAssertionsSigned`, which is exactly the auth bypass above.
+
+# 🚨 THESE ARE TWO DIFFERENT LEGS AND THEY ARE ON DIFFERENT BINDINGS.
+# Defect 7 (core#830): they used to be ONE shell variable, so correcting the
+# Issuer for the Response leg silently moved the AuthnRequest endpoint with it.
+#
+#   leg                       who sends it                          binding
+#   ------------------------  ------------------------------------  -------------
+#   AuthnRequest  SP -> IdP   sso_routes.py `_saml_login`: a 302 to  HTTP-Redirect
+#                             `{idp_sso_url}?SAMLRequest=...`
+#   Response      IdP -> SP   authentik, governed by `sp_binding`    HTTP-POST
+#
+# `idp_entity_id` is COMPARED (against the assertion Issuer, in `_saml_parse`),
+# so it must equal the provider's `issuer` field below — the POST-binding URL,
+# because that is what authentik was configured with. `idp_sso_url` is
+# COMPARED AGAINST NOTHING; it is DIALLED. `sso_routes.py:504` declares
+# `singleSignOnService.binding` as HTTP-Redirect and `:198` implements it, so it
+# must be authentik's redirect endpoint.
+#
+# Measured on run 34048476731 with these collapsed into one: authentik answered
+# `Bad Request — The SAML request payload is missing` at .../binding/post/ with
+# the request in the query string, and the staging app logged the SAML rejection
+# ZERO times, because the assertion never left the IdP.
+SAML_ENTITY_ID="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/"
+SAML_SSO_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/redirect/"
+
 SAML_BODY="{
   \"name\": \"datanika-saml-e2e\",
   \"authorization_flow\": \"${AUTH_FLOW_PK}\",
   \"invalidation_flow\": \"${INVAL_FLOW_PK}\",
   \"acs_url\": \"${SAML_ACS_URL}\",
   \"audience\": \"${SAML_SP_ENTITY_ID}\",
-  \"issuer\": \"${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/\",
+  \"issuer\": \"${SAML_ENTITY_ID}\",
   \"sp_binding\": \"post\",
   \"signing_kp\": \"${SIGNING_KEY_PK}\",
   \"sign_assertion\": true,
@@ -330,6 +355,13 @@ p = json.load(sys.stdin)
 problems = []
 if p.get('sp_binding') != 'post':
     problems.append(f\"sp_binding is {p.get('sp_binding')!r}, not 'post' (core#830)\")
+if p.get('issuer') != '${SAML_ENTITY_ID}':
+    # The Issuer is the only value here that nothing checks until the SP validates
+    # an assertion — i.e. inside the failure this fixture exists to prevent. A PATCH
+    # can be accepted and ignored, and the symptom would be a generic
+    # 'SAML validation failed' minutes later, in another job step.
+    problems.append(f\"issuer is {p.get('issuer')!r}, not '${SAML_ENTITY_ID}' \"
+                    '(idp_entity_id is compared against this exact value)')
 if not p.get('signing_kp'):
     problems.append('signing_kp is unset, so assertions are UNSIGNED (core#768)')
 if not p.get('sign_assertion'):
@@ -354,29 +386,8 @@ ensure_object /core/applications/ datanika-saml-e2e "{
 # --- 8. Write fixture file ---
 OIDC_ISSUER="${AUTHENTIK_URL}/application/o/datanika-oidc-e2e/"
 SAML_METADATA_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/metadata/"
-# 🚨 THESE ARE TWO DIFFERENT LEGS AND THEY ARE ON DIFFERENT BINDINGS.
-# Defect 7 (core#830): they used to be ONE shell variable, so correcting the
-# Issuer for the Response leg silently moved the AuthnRequest endpoint with it.
-#
-#   leg                       who sends it                          binding
-#   ------------------------  ------------------------------------  -------------
-#   AuthnRequest  SP -> IdP   sso_routes.py `_saml_login`: a 302 to  HTTP-Redirect
-#                             `{idp_sso_url}?SAMLRequest=...`
-#   Response      IdP -> SP   authentik, governed by `sp_binding`    HTTP-POST
-#
-# `idp_entity_id` is COMPARED (against the assertion Issuer, in `_saml_parse`),
-# so it must equal the provider's `issuer` field below — the POST-binding URL,
-# because that is what authentik was configured with. `idp_sso_url` is
-# COMPARED AGAINST NOTHING; it is DIALLED. `sso_routes.py:504` declares
-# `singleSignOnService.binding` as HTTP-Redirect and `:198` implements it, so it
-# must be authentik's redirect endpoint.
-#
-# Measured on run 34048476731 with these collapsed into one: authentik answered
-# `Bad Request — The SAML request payload is missing` at .../binding/post/ with
-# the request in the query string, and the staging app logged the SAML rejection
-# ZERO times, because the assertion never left the IdP.
-SAML_ENTITY_ID="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/"
-SAML_SSO_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/redirect/"
+# SAML_ENTITY_ID and SAML_SSO_URL are set above SAML_BODY, because the provider's
+# `issuer` field is built from SAML_ENTITY_ID rather than repeating its URL.
 
 # 🚨 THE TRUST ANCHOR. Defect 4 of 5: this fixture carried a metadata URL, an
 # entity id and an SSO url — and no certificate. `seed-sso-configs.py` passes

@@ -510,3 +510,53 @@ def test_the_installer_refuses_a_truncated_list():
     )
     floor = int(re.search(r'\[\s*"\$\{installed\}"\s*-ge\s*([1-9]\d*)\s*\]', text).group(1))
     assert floor >= 5, f"the installed-count floor is {floor}; it must cover the real list"
+
+
+# ── core#1117 ────────────────────────────────────────────────────────────────────────
+# A fix that ships while its own file still documents the pre-fix world is not finished.
+#
+# core#747 landed the installer on 2026-09-04 and closed. Four scripts in deploy/server/
+# kept a banner reading "NOTHING DEPLOYS THIS FILE … after changing it, install it and
+# compare sha256 against git" — an instruction that is now actively harmful: it tells the
+# next agent to hand-copy a root-owned cron script over the file the deploy manages and
+# hash-verifies, reintroducing the drift #747 closed, while they believe they are following
+# a written procedure. It survived the fix because the fix touched a *different* file, and
+# the banner sits on the file most likely to be read by whoever edits these next.
+#
+# 🔑 The predicate is POSITIVE — "each installed script's header names its installer" —
+# never "must not contain 'NOTHING DEPLOYS'". A negative form would go red on a corrected
+# banner that *explains* the old wording, which is exactly what these four now do.
+
+HEADER_LINES = 40
+INSTALLER_NAME = "install-server-scripts.sh"
+
+
+def test_every_installed_script_header_names_its_installer(installed_names):
+    """An installed file must not claim it is uninstalled (core#1117 AC4)."""
+    checked: list[str] = []
+    silent: list[str] = []
+    for name in sorted(installed_names):
+        if not name.endswith(".sh"):
+            continue  # INSTALL_DATA carries backup-pubkey.asc, which has no comment header
+        path = SERVER_DIR / name
+        if not path.is_file():
+            continue  # test_the_installer_names_no_file_that_does_not_exist owns that case
+        checked.append(name)
+        header = "\n".join(path.read_text(encoding="utf-8").splitlines()[:HEADER_LINES])
+        if INSTALLER_NAME not in header:
+            silent.append(name)
+
+    assert len(checked) >= 4, (
+        f"only {checked} were scanned. This guard reads the INSTALL/INSTALL_DATA arrays, so "
+        f"a parser change makes it pass over an empty set — the silent green this file exists "
+        f"to prevent."
+    )
+    assert not silent, (
+        "these scripts are installed by the deploy, and their first "
+        f"{HEADER_LINES} lines never mention {INSTALLER_NAME}:\n"
+        + "".join(f"    {n}\n" for n in silent)
+        + "\nA reader editing one of them has no way to learn that the deploy installs it, "
+        "and the banner they replace it with will say what the old ones said: hand-install "
+        "and compare hashes. Say in the header that the deploy installs the file and "
+        "asserts sha256 against the repo copy (core#1117)."
+    )

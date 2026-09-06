@@ -1133,6 +1133,42 @@ a wrong answer sourced from a real instrument looks exactly like a right one.
 
 ---
 
+## 40. Every `merge_group` run on `datanika-core` concludes `failure`, including the successful merges
+
+**(2026-09-06.)** §22 says *read the jobs, not the run*. This is the instance that costs a whole
+triage, because the wrong reading is not "stale" — it is a **row of red that describes nothing**.
+
+Measured: the **last twelve** `merge_group` runs on `datanika-core` all conclude `failure`, and the
+PR behind every one of the twelve is `MERGED` — #1091, #1093, #1095, #1098, #1100, #1102, #1103,
+#1104, #1105, #1108, #1109, #1110. **Twelve reds, twelve successful merges.** The jobs for the most
+recent, `33964199351` (`gh-readonly-queue/dev/pr-1110-…`, merged `11:58:36Z`):
+
+```
+success  test          success  lint            success  migration-roundtrip
+success  core-only-image                        success  helm-lint
+success  image-probe   failure  image-cve       skipped  staging / e2e-sso
+```
+
+**All five required checks green; the single red is `image-cve`, which is not required and is red
+repo-wide.** The run-level conclusion aggregates *every* check; the queue gates on the *required*
+ones. Those are two different questions, and only one of them decides whether your PR merges.
+
+🚨 **So `gh run list --event merge_group` shows twelve consecutive failures and reads exactly like a
+broken queue.** It is the shape you land on the moment you go looking for *"why did my entry leave
+the queue?"* — the one investigation this view cannot answer and looks most qualified to.
+
+**Rules:**
+1. **Never read a `merge_group` run's conclusion.** Read its jobs
+   (`gh api repos/<r>/actions/runs/<id>/jobs`), and read only the five required names.
+2. **The queue's own verdict is not in Actions at all.** An ejection's reason lives on GraphQL's
+   `RemovedFromMergeQueueEvent.reason`; the REST timeline's `removed_from_merge_queue` carries none.
+   `docs/runbooks/RUNBOOK_MERGE_QUEUE.md` has the query.
+3. **The generalisation is §39's:** a run conclusion records *"did every check pass"*, and the
+   question is *"did every **required** check pass"*. A real instrument, honestly reporting something
+   adjacent to what you asked.
+
+---
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887

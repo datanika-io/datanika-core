@@ -328,16 +328,26 @@ class TestTheMarkerItself:
             "Schedule limit reached (2 on Free plan)"
         )
 
-    def test_the_predicate_still_accepts_it_before_the_contract_step(self):
-        """Step 1 is behaviour-identical. This is what says so.
+    def test_the_predicate_accepts_it(self):
+        """The one assertion that had to hold across all three steps, and did.
 
-        ``is_user_facing`` is unchanged in this release; both the old negative
-        rule and the new positive one accept a ``UserFacingError``. When step 3
-        flips the predicate, this assertion is the one that must still hold.
+        Under step 1's negative rule (*"a ``ValueError``, unless pydantic's"*) and
+        under step 3's positive one (``isinstance(exc, UserFacingError)``) alike,
+        a ``UserFacingError`` reaches the user. That is what made steps 1 and 2
+        behaviour-identical and what makes the flip a no-op for every carrier.
+
+        It is deliberately here rather than only in
+        ``tests/test_ui/test_safe_error_narrowing.py``: that file tests the
+        predicate, this one tests the marker, and the sentence *"the marker is
+        the thing the predicate accepts"* is the join between them.
         """
         from datanika.ui.state.base_state import is_user_facing
 
         assert is_user_facing(UserFacingError("Schedule limit reached")) is True
+        # And the contract step's other half, from this side: a bare ValueError
+        # is no longer accepted. `test_the_package_raises_no_bare_value_error`
+        # below is what says nothing in core relies on that.
+        assert is_user_facing(ValueError("Schedule limit reached")) is False
 
 
 class TestNoBareValueErrorInCore:

@@ -18,28 +18,53 @@ Found by cloud#164, on the unfixed billing page, which rendered::
     max_schedules
       Input should be a valid integer [type=int_type, input_value=None, ...]
 
-Two things this file is careful about, because both were open questions on the
-issue and both are settled by measurement rather than by reading:
+🆕 **core#1094 replaced the narrowing with a positive test**, and this file was
+rewritten with it rather than deleted. ``is_user_facing`` is now
+``isinstance(exc, UserFacingError)``; the pydantic exclusion is **gone**, not
+kept "just in case" (cloud#176: a redundant guard also absorbs your ability to
+detect the class arriving for real).
+
+⚠️ **The filename still says "narrowing".** Kept deliberately — renaming it would
+detach the history from the defect that produced it, and #1032 is the reason
+every assertion below exists.
+
+Three things this file is careful about:
 
 * **The exception is raised from a real model, never fabricated.** The whole
   finding is that a *third-party* class sits inside ``ValueError``'s subtree; a
-  test that hand-constructs the exception would encode my belief about the class
+  test that hand-constructs the exception would encode a belief about the class
   hierarchy instead of measuring it. ``test_the_premise_still_holds`` asserts the
   hierarchy separately, so if pydantic ever stops subclassing ``ValueError`` this
   file says which of its assertions became vacuous.
 * **The control is as load-bearing as the assertion.** This codebase raises
-  ``ValueError`` deliberately to carry user-facing text — quota refusals,
-  validation refusals — so a narrowing that catches too much silently replaces
+  ``UserFacingError`` deliberately to carry user-facing text — quota refusals,
+  validation refusals — so a rule that catches too *little* silently replaces
   every one of those with "An error occurred". The quota case is exercised too,
-  because ``_set_error`` reads attributes off the exception it is narrowing.
+  because ``_set_error`` reads attributes off the exception.
+* 🆕 **The behaviour change is asserted, not implied.** A bare ``ValueError`` now
+  yields the fallback. That is the whole point of the migration and it is the one
+  thing a reader would want proved rather than described:
+  ``test_a_bare_valueerror_now_yields_the_fallback``.
 """
 
+import json
+
 import pydantic
-import pydantic_core
 import pytest
 from pydantic import BaseModel
 
+from datanika.errors import UserFacingError
 from datanika.ui.state.base_state import BaseState
+
+
+class _ThirdPartyValueError(ValueError):
+    """A stand-in for the NEXT dependency that puts a class under ValueError.
+
+    Named rather than reached for, because the property being asserted is about
+    a class nobody has heard of yet -- not about pydantic, which is only the
+    instance that happened to bite us in core#1032.
+    """
+
 
 #: Substrings that only ever appear in a pydantic report. Asserting on these
 #: rather than on equality with the fallback keeps the test meaningful if the
@@ -85,34 +110,31 @@ def _carrier():
 
 class TestThePremise:
     def test_the_premise_still_holds(self):
-        """If this goes red, the narrowing below is unnecessary, not broken."""
+        """pydantic's report is a ``ValueError`` and is **not** ours.
+
+        Both halves matter. The first is why #1032 happened at all; the second is
+        why the positive rule fixes it *structurally* rather than by listing. If
+        pydantic ever stops subclassing ``ValueError`` the first assertion becomes
+        vacuous, and this file says so rather than quietly passing.
+        """
         exc = _real_validation_error()
         assert isinstance(exc, ValueError), (
-            "pydantic no longer subclasses ValueError; _safe_error's plain "
-            "isinstance branch would be correct again and this file is obsolete"
+            "pydantic no longer subclasses ValueError; #1032's defect is no longer "
+            "reachable and the assertions below describe a hazard that has gone"
         )
+        assert not isinstance(exc, UserFacingError)
 
-    def test_the_two_import_paths_name_the_same_class(self):
-        """The issue asked which of the two ``isinstance`` needs. Measured: either.
+    def test_the_rule_needs_no_list_of_theirs(self):
+        """The property the exclusion list was approximating, stated once.
 
-        ``pydantic.ValidationError`` is ``pydantic_core.ValidationError`` — the
-        same object, not an alias to a wrapper — so the production guard can use
-        the documented public name. Pinned because the issue explicitly flagged
-        it as a thing to get wrong, and because if they ever diverge the guard
-        has to be re-derived rather than assumed.
+        Any class we did not author is outside the marker **by construction**, not
+        because somebody enumerated it. Three unrelated third-party shapes, and
+        the point of the middle one is that it stands in for a class nobody has
+        heard of yet.
         """
-        assert pydantic.ValidationError is pydantic_core.ValidationError
-        assert isinstance(_real_validation_error(), pydantic.ValidationError)
-
-    def test_pydantics_other_error_classes_are_not_valueerrors(self):
-        """Scope control: only ``ValidationError`` needed narrowing.
-
-        ``PydanticUserError`` and ``PydanticSchemaGenerationError`` are outside
-        ``ValueError``'s subtree, so they already reached the fallback. Asserted
-        so a future widening of the guard has to justify itself.
-        """
-        assert not issubclass(pydantic.PydanticUserError, ValueError)
-        assert not issubclass(pydantic.PydanticSchemaGenerationError, ValueError)
+        for cls in (pydantic.ValidationError, _ThirdPartyValueError, json.JSONDecodeError):
+            assert issubclass(cls, ValueError), f"{cls} is not even in the subtree"
+            assert not issubclass(cls, UserFacingError), cls
 
 
 class TestSafeError:
@@ -132,17 +154,36 @@ class TestSafeError:
         leaked = [t for t in PYDANTIC_TELLS if t in got]
         assert leaked == [], f"pydantic internals reached the user: {leaked} in {got!r}"
 
-    def test_our_own_valueerror_still_reaches_the_user_verbatim(self):
-        """The control. A narrowing that catches too much breaks exactly this."""
-        assert BaseState._safe_error(ValueError(OURS), "An error occurred") == OURS
+    def test_our_own_marker_error_reaches_the_user_verbatim(self):
+        """The control. A rule that catches too little breaks exactly this."""
+        assert BaseState._safe_error(UserFacingError(OURS), "An error occurred") == OURS
 
-    def test_a_valueerror_subclass_of_ours_still_reaches_the_user_verbatim(self):
-        """Quota refusals are a ValueError *subclass*, so subclassing must survive."""
+    def test_a_marker_subclass_of_ours_still_reaches_the_user_verbatim(self):
+        """Quota refusals are a *subclass*, so subclassing must survive."""
 
-        class QuotaExceededError(ValueError):
+        class QuotaExceededError(UserFacingError):
             pass
 
         assert BaseState._safe_error(QuotaExceededError(OURS), "An error occurred") == OURS
+
+    def test_a_bare_valueerror_now_yields_the_fallback(self):
+        """core#1094's one behaviour change, asserted rather than described.
+
+        Before the contract step a bare ``ValueError`` reached the user; now it
+        does not. The 39 sites that relied on that were converted first, and
+        ``tests/test_errors.py``'s census is what says the set is empty -- this is
+        what says the rule actually changed.
+        """
+        assert BaseState._safe_error(ValueError(OURS), "An error occurred") == "An error occurred"
+
+    def test_a_third_party_valueerror_subclass_yields_the_fallback(self):
+        """The general property the exclusion list could only approximate.
+
+        Not pydantic -- a class the old rule had never heard of. Under the
+        negative rule this reached the user verbatim; under the positive one it
+        cannot, and nobody has to add it to anything.
+        """
+        assert BaseState._safe_error(_ThirdPartyValueError("vendor internals"), "Nope") == "Nope"
 
     def test_a_non_valueerror_still_yields_the_fallback(self):
         assert BaseState._safe_error(RuntimeError("boom"), "An error occurred") == (
@@ -170,10 +211,16 @@ class TestSetError:
         leaked = [t for t in PYDANTIC_TELLS if t in state.error_message]
         assert leaked == [], f"pydantic internals reached the user: {leaked}"
 
-    def test_our_own_valueerror_still_reaches_the_user_verbatim(self):
+    def test_our_own_marker_error_reaches_the_user_verbatim(self):
+        state = _carrier()
+        state._set_error(UserFacingError(OURS), "Failed to save schedule")
+        assert state.error_message == OURS
+
+    def test_a_bare_valueerror_now_yields_the_fallback(self):
+        """The sibling of ``_safe_error``'s. Both callers change together or neither."""
         state = _carrier()
         state._set_error(ValueError(OURS), "Failed to save schedule")
-        assert state.error_message == OURS
+        assert state.error_message == "Failed to save schedule"
 
     def test_a_quota_error_is_still_flagged_and_still_verbatim(self):
         """``_set_error``'s other two outputs must survive the narrowing.
@@ -183,7 +230,7 @@ class TestSetError:
         silently stop raising the upgrade modal.
         """
 
-        class QuotaExceededError(ValueError):
+        class QuotaExceededError(UserFacingError):
             def __init__(self, message, metric):
                 super().__init__(message)
                 self.metric = metric
@@ -208,10 +255,18 @@ class TestTheTwoStayInStep:
         ("exc_factory", "expect_verbatim"),
         [
             (_real_validation_error, False),
-            (lambda: ValueError(OURS), True),
+            (lambda: UserFacingError(OURS), True),
+            (lambda: ValueError(OURS), False),
+            (lambda: _ThirdPartyValueError("vendor internals"), False),
             (lambda: RuntimeError("boom"), False),
         ],
-        ids=["validation_error", "our_valueerror", "non_valueerror"],
+        ids=[
+            "validation_error",
+            "our_marker_error",
+            "bare_valueerror",
+            "third_party_valueerror",
+            "non_valueerror",
+        ],
     )
     def test_safe_error_and_set_error_agree(self, exc_factory, expect_verbatim):
         fallback = "Failed to do the thing"

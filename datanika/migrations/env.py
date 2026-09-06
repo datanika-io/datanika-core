@@ -64,11 +64,23 @@ def run_migrations_online() -> None:
         #
         # 🚨 This statement is why `op.get_context().autocommit_block()` raises a bare,
         # message-less AssertionError in EVERY migration in this repo (core#933). It
-        # autobegins a SQLAlchemy transaction on the connection, so the
-        # `context.begin_transaction()` below finds itself inside an external transaction,
-        # returns a do-nothing context manager, and never assigns `self._transaction` —
-        # which is the attribute `autocommit_block()` asserts on. The traceback names
-        # alembic, not us, so this line is the only place a reader arrives at unaided.
+        # autobegins a SQLAlchemy transaction that alembic did not begin, and
+        # `autocommit_block()` refuses exactly that state. The traceback names alembic,
+        # not us, so this line is the only place a reader arrives at unaided.
+        #
+        # 🔴 CORRECTED 2026-09-07. This comment used to say the cause was that the SET runs
+        # *before* `context.begin_transaction()`, "which never assigns `self._transaction`
+        # — the attribute `autocommit_block()` asserts on". Measured against alembic
+        # 1.18.4: `_transaction` is None in the WORKING case too, so it is not the
+        # discriminator. The real one is `_in_connection_transaction()`, checked on the
+        # line above that assertion.
+        #
+        # 🚨 The difference is not pedantic — it kills core#933's option 1. Moving this
+        # statement INSIDE `context.begin_transaction()` autobegins just the same and
+        # changes nothing; the property is "no statement may touch this connection at
+        # all". Only a search path set without executing SQL (connect args / URL) can
+        # satisfy it. Measured in
+        # `tests/test_migrations/test_autocommit_block_availability.py`.
         #
         # Consequence: no `CREATE INDEX CONCURRENTLY`, no `ALTER TYPE ... ADD VALUE`, and
         # no commit between backfill batches. `docs/specs/SPEC_EXPAND_CONTRACT_MIGRATIONS.md`

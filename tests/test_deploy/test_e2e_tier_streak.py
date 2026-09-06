@@ -67,6 +67,7 @@ from scripts.e2e_tier_streak import (  # noqa: E402
     VERDICT_CLASS,
     Reading,
     classify_verdict,
+    parse_specs_outcome,
     parse_verdict_line,
     streak,
     verdict_states_in_workflow,
@@ -415,3 +416,91 @@ class TestReadingRefusesToOverclaim:
         assert r.measured == 2
         assert r.total == 9
         assert r.state == "not-yet"
+
+
+# --------------------------------------------------------------------------------------
+# 5. `wrong_build` is a verdict about ATTRIBUTION, not about the specs (core#1151)
+# --------------------------------------------------------------------------------------
+
+
+class TestWrongBuildCanHideASpecFailure:
+    """The bug this class exists for was in the first version of this module.
+
+    `ci.yml`'s classifier tests attribution **before** spec outcome, deliberately::
+
+        elif [ "$ATTRIB_OUTCOME" = "failure" ] || [ "$ATTRIB_POST_OUTCOME" = "failure" ]; then
+          STATE=wrong_build
+        elif [ "$SPECS_OUTCOME" = "failure" ]; then
+          STATE=specs_failed
+
+    — *"EITHER attribution check failing means this run cannot honestly report on this commit,
+    whichever way the specs went."* Correct for the classifier, and it means `wrong_build`
+    conflates three different spec outcomes. Measured on the four runs between the last two
+    greens of 2026-09-06: two `success`, two `skipped`, and nothing stopping a `failure`.
+
+    Treating `wrong_build` as transparent was therefore reading a verdict that records
+    **attribution** as a claim about **spec outcome** — `ENGINEERING_RULES` §39.
+    """
+
+    REAL_WRONG_BUILD = (
+        "2026-09-06T21:39:34Z SSO specs outcome: success / job status: failure / "
+        "verdict: wrong_build"
+    )
+    # No such run exists in the current window, so this is synthesised -- and it is exactly
+    # the case the fix is for. The control below proves it changes the VERDICT, not just the
+    # parse, which is what separates a real arm from a satisfied regex.
+    SYNTH_FAILED_SPECS = (
+        "2026-09-06T21:39:34Z SSO specs outcome: failure / job status: failure / "
+        "verdict: wrong_build"
+    )
+
+    def test_the_specs_outcome_is_recoverable_from_the_same_line(self):
+        assert parse_specs_outcome([self.REAL_WRONG_BUILD]) == "success"
+        assert parse_specs_outcome([self.SYNTH_FAILED_SPECS]) == "failure"
+
+    def test_control_it_ignores_the_echoed_script_source(self):
+        echoed = (
+            '2026-09-06T21:39:34Z \x1b[36;1mecho "SSO specs outcome: $SPECS_OUTCOME / '
+            'job status: $JOB_STATUS / verdict: $STATE"\x1b[0m'
+        )
+        assert parse_specs_outcome([echoed]) is None
+
+    def test_wrong_build_with_passing_specs_is_still_transparent(self):
+        """The common case must not change — seven of ten runs were unmeasured that day, and
+        resetting on all of them makes the bar unsatisfiable."""
+        assert classify_verdict("wrong_build", "success") is UNMEASURED
+
+    def test_wrong_build_with_skipped_specs_is_still_transparent(self):
+        assert classify_verdict("wrong_build", "skipped") is UNMEASURED
+
+    def test_wrong_build_with_failing_specs_breaks_the_streak(self):
+        """The defect. For a graduation question the property is stability, so specs failing
+        anywhere in the window resets it — even when the failure is not attributable here."""
+        assert classify_verdict("wrong_build", "failure") is FAIL
+
+    def test_an_absent_specs_outcome_falls_back_to_the_verdict_alone(self):
+        """`INFORMATIONAL_RESULT=` lines carry no specs field. They must keep working."""
+        assert classify_verdict("wrong_build", None) is UNMEASURED
+        assert classify_verdict("success", None) is PASS
+
+    def test_the_streak_now_resets_through_a_hidden_failure(self):
+        seq_before_fix = [PASS, UNMEASURED, PASS, PASS]
+        assert streak(seq_before_fix) == 3, "arming: transparent, so the streak sails through"
+
+        # the same history with the middle run correctly classified
+        seq_after_fix = [PASS, FAIL, PASS, PASS]
+        assert streak(seq_after_fix) == 2, "and the fix stops it at the red"
+
+    def test_control_the_2026_09_06_graduate_is_not_affected(self):
+        """Anti-regression on the live reading: none of that window's `wrong_build` runs had
+        failing specs (measured — two `success`, two `skipped`), so the fix must leave the
+        real verdict alone. A fix that changes an honest reading is a different bug."""
+        measured = [
+            PASS,  # df0c391c clean
+            UNMEASURED,  # 5726b8fa no_verdict   (specs skipped)
+            UNMEASURED,  # 908307c0 wrong_build  (specs success)
+            UNMEASURED,  # ebb268a3 wrong_build  (specs skipped)
+            UNMEASURED,  # 61f194a1 wrong_build  (specs success)
+            PASS,  # b3f9761d clean
+        ]
+        assert streak([PASS, *measured]) == 3

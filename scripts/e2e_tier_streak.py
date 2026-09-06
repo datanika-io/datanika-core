@@ -130,7 +130,8 @@ _STATE_ASSIGN = re.compile(r"(?<![\w$])STATE=([a-z_][a-z0-9_]*)")
 #: unexpanded — matching that would be measuring the script rather than the run, so both
 #: patterns require a literal token where the shell source has `$STATE`.
 _SSO_VERDICT = re.compile(
-    r"SSO specs outcome: [a-z_]+ / job status: [a-z_]+ / verdict: ([a-z_]+)\s*$"
+    r"SSO specs outcome: (?P<specs>[a-z_]+) / job status: [a-z_]+ / "
+    r"verdict: (?P<verdict>[a-z_]+)\s*$"
 )
 _INFO_VERDICT = re.compile(r"(?:^|\s)INFORMATIONAL_RESULT=([a-z_]+)\s*$")
 
@@ -142,10 +143,22 @@ def verdict_states_in_workflow(run_block: str) -> set[str]:
     return set(_STATE_ASSIGN.findall(run_block))
 
 
-def classify_verdict(verdict: str | None) -> str:
-    """Map a verdict token to its class. Anything unrecognised is UNREADABLE, never a PASS."""
+def classify_verdict(verdict: str | None, specs_outcome: str | None = None) -> str:
+    """Map a verdict token to its class. Anything unrecognised is UNREADABLE, never a PASS.
+
+    `specs_outcome` disambiguates `wrong_build` (core#1151). A run whose specs FAILED is not a
+    non-measurement just because the build could not be attributed: for a *graduation* question
+    the property is stability, and specs failing anywhere in the window is exactly what should
+    reset the streak -- even when that failure belongs to somebody else's build.
+
+    ⚠️ Deliberately NOT "wrong_build always resets". Seven of ten runs were unmeasured on
+    2026-09-06; resetting on all of them makes the bar unsatisfiable, which is the failure mode
+    `docs/QA_RULES.md` §10 exists to avoid.
+    """
     if verdict is None:
         return UNREADABLE
+    if verdict in ("wrong_build", "cancelled") and specs_outcome == "failure":
+        return FAIL
     return VERDICT_CLASS.get(verdict, UNREADABLE)
 
 
@@ -171,7 +184,30 @@ def parse_verdict_line(log_lines: list[str]) -> str | None:
         for pattern in (_SSO_VERDICT, _INFO_VERDICT):
             m = pattern.search(line)
             if m:
-                found = m.group(1)
+                found = m.group("verdict") if "verdict" in m.groupdict() else m.group(1)
+    return found
+
+
+def parse_specs_outcome(log_lines: list[str]) -> str | None:
+    """`SPECS_OUTCOME` from the same classifier line the verdict comes from (core#1151).
+
+    `wrong_build` is a verdict about **attribution**, and `ci.yml` decides it *before* it looks
+    at the specs -- deliberately, since a run on the wrong build cannot report either way. So
+    the token conflates `success`, `skipped` and `failure`, and reading it alone as "this run
+    carried no reading" is a claim about the specs drawn from a field that records attribution
+    (`ENGINEERING_RULES` §39).
+
+    Returns `None` for lines that carry no such field (the `INFORMATIONAL_RESULT=` form), and
+    for the echoed script source, whose `$SPECS_OUTCOME` is unexpanded.
+    """
+    found: str | None = None
+    for raw in log_lines:
+        line = _ANSI.sub("", raw).rstrip()
+        if line.endswith('"') or line.endswith("'"):
+            continue
+        m = _SSO_VERDICT.search(line)
+        if m:
+            found = m.group("specs")
     return found
 
 
@@ -318,7 +354,9 @@ def collect(repo: str, branch: str, job_name: str, runs: int) -> list[tuple[str,
             failed += 1
         else:
             fetched += 1
-        verdict = parse_verdict_line(log.splitlines()) if log is not None else None
+        lines = log.splitlines() if log is not None else []
+        verdict = parse_verdict_line(lines) if log is not None else None
+        specs = parse_specs_outcome(lines) if log is not None else None
 
         if verdict is None and job.get("conclusion") == "cancelled":
             # A cancelled job's log is zero bytes by construction. That is a KNOWN
@@ -326,7 +364,7 @@ def collect(repo: str, branch: str, job_name: str, runs: int) -> list[tuple[str,
             # rather than reporting the reader as broken.
             verdict = "cancelled"
 
-        out.append((run["created_at"], run["head_sha"][:8], classify_verdict(verdict)))
+        out.append((run["created_at"], run["head_sha"][:8], classify_verdict(verdict, specs)))
 
     # If NOTHING could be fetched, this is an instrument failure and must be loud. Silently
     # classifying every run UNREADABLE blocks a streak, which is the safe direction — and it

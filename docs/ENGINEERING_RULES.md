@@ -1304,6 +1304,119 @@ the moment to check for an open PR, and I read it as the moment to assume there 
 
 ---
 
+## 45. A guard that encodes your THEORY OF THE CAUSE will bless any change that satisfies the theory
+
+**(2026-09-07, [core#933].)** The stopgap guard for #933 asserted, against the real `env.py`, that
+`first_execute < first_begin` — *"a statement is executed before alembic begins a transaction"*.
+That is the **theory**. The **condition** is that a statement is executed on that connection at all.
+
+Apply the issue's own option 1 — move `SET search_path` inside `context.begin_transaction()` — and
+the theory is satisfied while the defect is untouched. Measured on the real file: the guard failed
+with
+
+> *"env.py no longer executes a statement before alembic begins its transaction … If that was
+> deliberate, core#933 may be fixed"*
+
+**while `autocommit_block()` was still refused.** The file's runtime arm said *broken*, its source
+arm said *possibly fixed*, about the same tree — and the message a human reads was the wrong one.
+**A guard can certify a non-fix**, and this one was one commit from doing it.
+
+⚠️ **The control's NAME carried the theory too.** `test_it_works_when_alembic_owns_the_transaction`
+— alembic owns nothing in that arm; `_transaction` is `None` there exactly as in the failing arms.
+**A name is an assertion that nothing checks**, so it survives the mechanism being disproved and
+teaches the next reader the disproved thing.
+
+**Rules:**
+1. **Write the condition, not your account of it.** *"Any statement touches this connection"*, not
+   *"the statement comes first"*. If you cannot state the condition without narrating a mechanism,
+   you do not yet know which one you are testing.
+2. **Prove both halves against the real artifact**: the wrong fix must NOT read as fixed, and a
+   right fix must. One without the other is satisfied by a guard that cannot fire.
+3. **A failure message that speculates (`"may be fixed"`) is a liability.** Say what was measured
+   and what to do; never hand the reader a conclusion the test did not reach.
+4. This is §43 turned inward. §43 is a control that agrees with your proposition; this is a *guard*
+   that encodes it — and the guard outlives the session that wrote it.
+
+---
+
+## 46. A spec clause naming a value from a CLOSED VOCABULARY is an instruction to write a defect
+
+**(2026-09-07, [core#1127].)** `SettingsState.transfer_ownership` passed `"transfer_ownership"` as
+its audit action. Not an `AuditAction` member, so `BaseState._audit`'s deliberate swallow dropped
+the row: **the highest-privilege action in the product had no history at all**, and every check was
+green.
+
+The string was not a typo. `SPEC_ORG_ROLES.md` §3 item 4 said *"Audited as its own action
+(`transfer_ownership`)"*. **The implementation was faithful to a clause that could not be
+satisfied** — the code was compliant, the review was correct, the row was dropped anyway. Same shape
+as [core#933]/[#1133]: *an unsatisfiable checklist, ticked.*
+
+**Rules:**
+1. **When a spec names a value, check it against the vocabulary that will receive it** — an enum,
+   a filter's option list, a column's constraint. Prose does not typecheck.
+2. **Fix it at both ends.** Correcting only the call site leaves the document ready to regenerate
+   the defect the next time somebody implements from it.
+3. **Keep the old wording visible as the cause.** Deleting it hides why the code was written that
+   way, and the next reader re-derives the same "obvious" string.
+4. **Sweep for siblings once, and say the number.** One `grep` over `docs/**` for values outside the
+   vocabulary; here it found exactly one, which is worth stating precisely because it bounds the
+   problem.
+5. The durable fix is a derived guard —
+   `tests/test_services/test_audit_call_site_vocabulary.py` fails at authoring time on the next one.
+
+---
+
+## 47. Presence of the OBJECT is not presence of the ROW — `identity_map` is weak
+
+**(2026-09-07, [core#934].)** A test needed *"was an audit row already in this transaction when the
+handler committed?"* The obvious instrument —
+
+```python
+any(isinstance(o, AuditLog) for o in session.identity_map.values()) or ... session.new
+```
+
+— reads **`False` on correct code**. `Session.identity_map` is a **weak** dict; `AuditService.
+log_action` flushes the row and returns it, every caller discards the return, and the object is
+garbage-collected out of the map while its row sits in the transaction. Isolated probe:
+`identity_map` size **0**, `session.new` empty, `SELECT count(*)` = **1**.
+
+🚨 **The danger is the direction of the error.** A test that reds on correct code invites changing
+the *implementation* until it passes — so an instrument built to prove the audit rides the
+transaction could have been "fixed" by moving it out of one.
+
+**Rules:**
+1. **Ask the store, not the session.** To assert a row exists in a transaction, `SELECT` it.
+   Session collections describe object lifecycle, which is not what you are asserting.
+2. `session.new` empties at flush and `identity_map` empties at garbage collection — **both are
+   transient for reasons unrelated to your property.**
+3. When an assertion fails on code you believe is correct, **suspect the instrument before the
+   code**, and settle it with a probe outside the test harness (three lines here).
+
+---
+
+## 48. A mutant that does not mutate reports the system as perfect
+
+**(2026-09-07, [core#934].)** The mutation for *"move the `_audit` call below `session.commit()`"*
+was first written as a one-line replacement that appended a comment to the `commit()` line. It
+returned **GREEN** — and read exactly like a real finding: *"the suite cannot see this defect."*
+The conclusion happened to be true, reached by an instrument that measured nothing. Rewritten as a
+genuine two-edit move, it went red against precisely one test.
+
+**Rules:**
+1. **A mutation must change behaviour, not text.** Before believing a GREEN row in a mutation
+   matrix, confirm the mutant *does* the thing — parse it, and where it is cheap, assert the mutated
+   symbol actually moved.
+2. **GREEN in a mutation sweep is a claim about your harness first and your suite second.** RED
+   proves the test can fire; GREEN proves nothing until the mutant is shown real.
+3. Related and equally cheap to miss: **a setup or collection `ERROR` is not a red control**
+   (§41 rule 4). The first run of `test_dag_audit_trail.py` produced **9 errors, not failures** —
+   a fixture name tripped a validator and no assertion executed. Read `ERROR` vs `FAILED` before
+   claiming a red.
+4. Corollary for anchors: **assert the anchor matches exactly once before writing.** Three refusals
+   in this session were all correct (0 matches — `git ls-files --eol` says `i/lf w/crlf`; 8 and 2
+   matches — one file had eight `_audit` calls sharing a prefix). The repair is to narrow the
+   *scope* to the function's byte span, never to widen the anchor.
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1332,3 +1445,6 @@ the moment to check for an open PR, and I read it as the moment to assume there 
 [core#1108]: https://github.com/datanika-io/datanika-core/issues/1108
 [core#1109]: https://github.com/datanika-io/datanika-core/pull/1109
 [core#1110]: https://github.com/datanika-io/datanika-core/pull/1110
+[core#1127]: https://github.com/datanika-io/datanika-core/issues/1127
+[core#934]: https://github.com/datanika-io/datanika-core/issues/934
+[core#933]: https://github.com/datanika-io/datanika-core/issues/933

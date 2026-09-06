@@ -485,12 +485,22 @@ class TestTheTwoSamlLegsAreNotConflated:
         these two must be the same string — and unlike the SSO endpoint, this one
         genuinely does name the POST-binding URL, because that is what authentik
         was configured with.
+
+        ⚠️ Compares the two **values**, not their spellings. Either side may be a
+        literal URL or a ``${VAR}`` reference, and a guard that demanded they match
+        textually would go red on the correct edit that makes the provider body use
+        ``SAML_ENTITY_ID`` instead of repeating the URL.
         """
         source = _bootstrap_source()
         match = re.search(r'\\"issuer\\":\s*\\"([^\\]+)\\"', source)
         assert match, "the SAML provider body no longer sets an issuer"
 
-        assert _fixture_url("idp_entity_id") == match.group(1), (
+        issuer = match.group(1)
+        reference = re.fullmatch(r"\$\{([A-Z_]+)\}", issuer)
+        if reference:
+            issuer = _shell_assignment(reference.group(1), source)
+
+        assert _fixture_url("idp_entity_id") == issuer, (
             "the fixture's idp_entity_id and the provider's issuer have drifted "
             "apart; validation compares them and every assertion would be refused"
         )
@@ -838,4 +848,187 @@ class TestAFailedCallIsNotMistakenForSuccess:
             "a POST that returned non-zero was treated as success because it "
             "happened to print something. The helper must test the exit code, "
             f"not whether the channel is empty. Got: {result.stdout!r}"
+        )
+
+
+# --------------------------------------------------------------------------
+# The bootstrap's inline Python must survive shell expansion (core#854's shape).
+# --------------------------------------------------------------------------
+
+
+def _py_blocks() -> list[str]:
+    """Every ``py "…"`` argument in the script, as bash will tokenise it.
+
+    ``py() { python3 -c "$1"; }``, so each of these is handed to an interpreter
+    verbatim. A quoting slip inside one is not a wrong answer — it is a
+    ``SyntaxError`` that aborts the bootstrap under ``set -e``, skips steps 10-14 of
+    ``e2e-sso`` and leaves the tier **unmeasured rather than failing**. That is
+    [core#854], and it cost the whole SSO tier once.
+
+    The self-check block is separately *executed* by
+    ``TestTheScriptsOwnFixtureCheck``, which is stronger. This is the other thirteen.
+
+    Walks the escapes rather than matching a regex: the blocks carry ``\\"`` on
+    almost every line, so anything ending at the first quote reads a fragment and
+    compiles it happily.
+    """
+    source = _bootstrap_source()
+    blocks: list[str] = []
+    i = 0
+    needle = 'py "'
+    while (start := source.find(needle, i)) != -1:
+        j = start + len(needle)
+        out: list[str] = []
+        while j < len(source):
+            ch = source[j]
+            if ch == "\\" and j + 1 < len(source):
+                out.append(source[j + 1])  # bash drops the backslash
+                j += 2
+                continue
+            if ch == '"':
+                break
+            out.append(ch)
+            j += 1
+        blocks.append("".join(out))
+        i = j + 1
+    return blocks
+
+
+@pytest.mark.skipif(
+    _BASH is None, reason="bash not on PATH (CI runs ubuntu; dev boxes have Git Bash)"
+)
+class TestTheInlinePythonCompiles:
+    def test_the_scanner_finds_the_blocks(self):
+        """Positive control. A scanner returning nothing passes every test below
+        while proving nothing — the shape this file keeps finding."""
+        blocks = _py_blocks()
+
+        assert len(blocks) >= 8, f"only found {len(blocks)} py blocks; the scanner has drifted"
+        assert any("SAML provider verified" in b for b in blocks), (
+            "the provider read-back block was not collected, so the assertion this "
+            "test exists to protect is not being compiled"
+        )
+
+    @pytest.mark.parametrize("index", range(len(_py_blocks())))
+    def test_each_block_is_valid_python_after_expansion(self, index):
+        """Expand the block the way bash does, then compile it.
+
+        Shell expansion is part of the artifact: ``${SAML_ENTITY_ID}`` inside a
+        double-quoted argument is substituted before python sees it, and an f-string
+        that was valid in the file can stop being valid once a value lands inside it.
+        """
+        block = _py_blocks()[index]
+        assert "$(" not in block and "`" not in block, (
+            "this block performs command substitution; expanding it here would "
+            "execute it. Refusing rather than running (WORKFLOW_RULES §13)."
+        )
+
+        names = sorted(set(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?", block)))
+        assigns = "".join(f"{n}=x{n}\n" for n in names)
+        expanded = _run_bash(assigns + 'printf %s "' + block.replace('"', '\\"') + '"')
+        assert expanded.returncode == 0, expanded.stderr
+
+        try:
+            compile(expanded.stdout, "<bootstrap py block>", "exec")
+        except SyntaxError as exc:  # pragma: no cover - the failure message is the point
+            pytest.fail(f"block {index} does not compile after expansion: {exc}\n{expanded.stdout}")
+
+
+class TestTheIssuerIsReadBackFromTheApi:
+    """The provider read-back asserts every setting that matters — except one.
+
+    ``sp_binding``, ``signing_kp``, ``sign_assertion``, ``property_mappings`` and
+    ``name_id_mapping`` are all re-read from the API after ``ensure_object``, because
+    *"a PATCH can be accepted and ignored (an unknown field name, a read-only
+    attribute)"* — the script's own words.
+
+    ``issuer`` was not, and it is the one value here that **nothing checks until the
+    SP validates an assertion**: everything else has a symptom inside the bootstrap,
+    while a wrong Issuer surfaces as a generic ``SAML validation failed`` minutes
+    later, in another job step, on the tier that has never been green.
+    """
+
+    def test_the_read_back_asserts_the_issuer(self):
+        source = _bootstrap_source()
+
+        assert re.search(r"p\.get\('issuer'\)\s*!=\s*'\$\{SAML_ENTITY_ID\}'", source), (
+            "the provider read-back does not assert the issuer landed, so a PATCH "
+            "that was accepted and ignored would show up only as a refused assertion"
+        )
+
+    def test_the_provider_stamps_the_same_variable_the_fixture_reads(self):
+        """Anti-vacuity for the test above.
+
+        Comparing the read-back against ``${SAML_ENTITY_ID}`` says nothing unless the
+        provider body is built from that variable — otherwise the assertion compares
+        the API's answer to a value the provider was never sent.
+        """
+        source = _bootstrap_source()
+
+        assert '\\"issuer\\": \\"${SAML_ENTITY_ID}\\"' in source, (
+            "the provider body no longer builds its issuer from SAML_ENTITY_ID, so "
+            "the read-back above is comparing against an unrelated variable"
+        )
+
+
+@pytest.mark.skipif(_BASH is None, reason="bash not on PATH")
+class TestTheScriptsOwnCheckAcceptsTheValuesItWillWrite:
+    """The missing arm of ``TestTheScriptsOwnFixtureCheck``, found by a mutation.
+
+    That class executes the extracted self-check against **four synthetic URL pairs**
+    and proves the block runs and refuses the collapses. It never runs it against the
+    values the script will actually write.
+
+    🔑 The gap was not visible until a change closed the accident that hid it.
+    ``test_the_entity_id_is_the_issuer_authentik_actually_stamps`` compared the
+    fixture's resolved ``idp_entity_id`` against the provider's ``issuer`` **text** —
+    so while ``issuer`` was a literal URL and the fixture was a variable, moving
+    ``SAML_ENTITY_ID`` alone went red *incidentally*. Building the provider body from
+    the same variable is correct (one definition, and the read-back then asserts what
+    the provider was actually sent) and it removes that accident: both sides now move
+    together. Mutating ``SAML_ENTITY_ID`` to the redirect endpoint went **GREEN** —
+    predicted RED — and this test is what that row bought. `ENGINEERING_RULES` §43.
+    """
+
+    def test_the_real_entity_id_and_sso_url_pass_the_scripts_own_rule(self, tmp_path):
+        block = _fixture_self_check_block()
+        fixture = tmp_path / "sso-fixture.json"
+        fixture.write_text(
+            json.dumps(
+                {
+                    "saml": {
+                        "idp_metadata_url": "http://idp/metadata/",
+                        "idp_entity_id": _fixture_url("idp_entity_id"),
+                        "idp_sso_url": _fixture_url("idp_sso_url"),
+                        "idp_cert": "MIIB-not-a-real-cert",
+                        "sp_entity_id": "datanika",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", block.replace("${FIXTURE_FILE}", fixture.as_posix())],
+            capture_output=True,
+        )
+        stderr = result.stderr.decode("utf-8", "replace")
+
+        assert result.returncode == 0, (
+            "the script's own fixture check REFUSES the values this script writes, so "
+            f"the bootstrap would abort at the last step: {stderr}"
+        )
+
+    def test_the_two_real_values_are_not_the_same_endpoint(self):
+        """Anti-vacuity, and the property the mutation actually broke.
+
+        The test above passes on any pair the self-check accepts; this names the one
+        thing defect 7 was.
+        """
+        entity_id = _shell_assignment("SAML_ENTITY_ID")
+        sso_url = _shell_assignment("SAML_SSO_URL")
+
+        assert _binding_segment(entity_id) != _binding_segment(sso_url), (
+            f"SAML_ENTITY_ID and SAML_SSO_URL both name the "
+            f"{_binding_segment(entity_id)!r} binding — that is defect 7"
         )

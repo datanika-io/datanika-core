@@ -294,8 +294,8 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
    gh pr create --repo datanika-io/datanika-core --base master --head dev \
      --title "Promote dev → master: <list features>" \
      --body "Bundled release: <describe what's included>"
-   # Wait for CI to pass, then:
-   GH_TOKEN=$(gh auth token) python3 .github/scripts/cloud_pairing_gate.py \
+   # Wait for CI to pass, then, FROM THE WORKTREE ROOT:
+   GH_TOKEN=$(gh auth token) ./.venv/Scripts/python.exe .github/scripts/cloud_pairing_gate.py \
      && gh pr merge <number> --repo datanika-io/datanika-core --merge --admin
    ```
    🚨 **`&&`, not two commands** (core#1123). CD runs the same gate and CD is the refusal that
@@ -303,6 +303,14 @@ the serving container, not when cloud `master` moves. Use `refs #N` in a cloud p
    `master` has moved and the deploy is refusing. It only earns that if the reading and the
    merge are one action — the finding behind this gate *is* an eight-minute gap between a
    reading and an act. If it refuses, promote `datanika-cloud` first; do not override it.
+
+   ⚠️ **`python3` does not exist in Git Bash on the dev machine** — only `python`, and the
+   worktree venv above is the one that is definitely present. This line said `python3` for
+   about an hour after it was written. Under `&&` that fails *closed*, which is the right
+   direction, but `bash: python3: command not found` reads like a gate refusal rather than a
+   missing interpreter. 🚨 **The tempting repair — dropping the `&&` so the merge runs
+   anyway — reopens the exact window this gate exists to close.** Fix the interpreter, never
+   the `&&`. (`python3` is correct inside the workflow; the runner is Ubuntu.)
 
 2. Wait for the CD deploy to complete:
    ```bash

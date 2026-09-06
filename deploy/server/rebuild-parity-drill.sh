@@ -26,8 +26,13 @@
 # Canonical copy: deploy/server/rebuild-parity-drill.sh (datanika-core)
 # Invariants pinned by: tests/test_deploy/test_rebuild_parity_drill.py
 #
-# ⚠️ NOTHING DEPLOYS THIS FILE (core#747) — the copy that runs is hand-installed.
-# After changing it, install it and compare sha256 against git.
+# ✅ THIS FILE IS INSTALLED BY THE DEPLOY. `scripts/install-server-scripts.sh`
+# copies it to the path above on every push to `master` and asserts sha256
+# against this repo copy. Change it here, merge, promote. (core#747.)
+#
+# 🚨 DO NOT HAND-INSTALL IT — this banner said to until core#1117. It already
+# worked on me: I repeated it into PR #1112's commit message and body and nearly
+# hand-installed over the copy the deploy manages.
 #
 # ── Safety ───────────────────────────────────────────────────────────────────
 # The throwaway database sits on its OWN docker network. Production's postgres is on

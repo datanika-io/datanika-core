@@ -61,6 +61,24 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         # Phase 1: public schema
+        #
+        # 🚨 This statement is why `op.get_context().autocommit_block()` raises a bare,
+        # message-less AssertionError in EVERY migration in this repo (core#933). It
+        # autobegins a SQLAlchemy transaction on the connection, so the
+        # `context.begin_transaction()` below finds itself inside an external transaction,
+        # returns a do-nothing context manager, and never assigns `self._transaction` —
+        # which is the attribute `autocommit_block()` asserts on. The traceback names
+        # alembic, not us, so this line is the only place a reader arrives at unaided.
+        #
+        # Consequence: no `CREATE INDEX CONCURRENTLY`, no `ALTER TYPE ... ADD VALUE`, and
+        # no commit between backfill batches. `docs/specs/SPEC_EXPAND_CONTRACT_MIGRATIONS.md`
+        # states it where an author looks; `tests/test_migrations/
+        # test_autocommit_block_availability.py` reproduces it with a control and goes RED
+        # when it is fixed, which is when both notes must come out.
+        #
+        # ⚠️ The tenant loop below re-`SET`s per schema and has the same problem, so a fix
+        # has to cover both phases — moving only this one leaves the loop broken while the
+        # docs say it works.
         connection.execute(text("SET search_path TO public"))
         context.configure(
             connection=connection,

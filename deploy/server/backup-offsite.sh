@@ -10,11 +10,16 @@
 # Canonical copy: deploy/server/backup-offsite.sh (datanika-core)
 # Invariants pinned by: tests/test_deploy/test_backup_encryption.py
 #
-# ⚠️ NOTHING DEPLOYS THIS FILE. core#747: `deploy/server/` is referenced by no
-# workflow. The copy that runs is the hand-installed one at the path above, and
-# the two drift silently. After changing this file, install it and verify the
-# box and git agree byte-for-byte:
-#     sha256sum /opt/datanika/scripts/backup-offsite.sh
+# ✅ THIS FILE IS INSTALLED BY THE DEPLOY. `scripts/install-server-scripts.sh`
+# copies it to the path above on every push to `master` — temp file + atomic
+# rename, then a sha256 assertion against this repo copy — so the box and git
+# cannot drift silently. Change it here, merge, promote. That is the whole
+# procedure. (core#747, shipped 2026-09-04.)
+#
+# 🚨 DO NOT HAND-INSTALL IT. This banner said the opposite until core#1117 and
+# told you to scp it and compare hashes. Following that now writes over a
+# root-owned file the deploy manages and verifies — reintroducing exactly the
+# drift core#747 closed, while you believe you are being careful.
 #
 # ── Encryption at rest (core#675, 2026-08-31) ────────────────────────────────
 # The off-site leg is encrypted; the local copy is NOT. That asymmetry is

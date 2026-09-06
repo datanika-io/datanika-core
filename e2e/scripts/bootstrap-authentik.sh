@@ -354,10 +354,29 @@ ensure_object /core/applications/ datanika-saml-e2e "{
 # --- 8. Write fixture file ---
 OIDC_ISSUER="${AUTHENTIK_URL}/application/o/datanika-oidc-e2e/"
 SAML_METADATA_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/metadata/"
-# The Issuer authentik stamps into the assertion and the SSO endpoint the SP
-# redirects to must both name the POST binding now (they are compared against
-# `saml_idp_entity_id` during validation).
-SAML_SSO_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/"
+# 🚨 THESE ARE TWO DIFFERENT LEGS AND THEY ARE ON DIFFERENT BINDINGS.
+# Defect 7 (core#830): they used to be ONE shell variable, so correcting the
+# Issuer for the Response leg silently moved the AuthnRequest endpoint with it.
+#
+#   leg                       who sends it                          binding
+#   ------------------------  ------------------------------------  -------------
+#   AuthnRequest  SP -> IdP   sso_routes.py `_saml_login`: a 302 to  HTTP-Redirect
+#                             `{idp_sso_url}?SAMLRequest=...`
+#   Response      IdP -> SP   authentik, governed by `sp_binding`    HTTP-POST
+#
+# `idp_entity_id` is COMPARED (against the assertion Issuer, in `_saml_parse`),
+# so it must equal the provider's `issuer` field below — the POST-binding URL,
+# because that is what authentik was configured with. `idp_sso_url` is
+# COMPARED AGAINST NOTHING; it is DIALLED. `sso_routes.py:504` declares
+# `singleSignOnService.binding` as HTTP-Redirect and `:198` implements it, so it
+# must be authentik's redirect endpoint.
+#
+# Measured on run 34048476731 with these collapsed into one: authentik answered
+# `Bad Request — The SAML request payload is missing` at .../binding/post/ with
+# the request in the query string, and the staging app logged the SAML rejection
+# ZERO times, because the assertion never left the IdP.
+SAML_ENTITY_ID="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/post/"
+SAML_SSO_URL="${AUTHENTIK_URL}/application/saml/datanika-saml-e2e/sso/binding/redirect/"
 
 # 🚨 THE TRUST ANCHOR. Defect 4 of 5: this fixture carried a metadata URL, an
 # entity id and an SSO url — and no certificate. `seed-sso-configs.py` passes
@@ -396,7 +415,7 @@ cat > "$FIXTURE_FILE" << FIXTURE_EOF
   },
   "saml": {
     "idp_metadata_url": "${SAML_METADATA_URL}",
-    "idp_entity_id": "${SAML_SSO_URL}",
+    "idp_entity_id": "${SAML_ENTITY_ID}",
     "idp_sso_url": "${SAML_SSO_URL}",
     "idp_cert": "${SAML_IDP_CERT}",
     "sp_entity_id": "${SAML_SP_ENTITY_ID}"
@@ -413,8 +432,16 @@ missing = [k for k in ('idp_cert', 'idp_entity_id', 'idp_sso_url', 'sp_entity_id
            if not d['saml'].get(k)]
 if missing:
     sys.exit(f'fixture is missing SAML keys: {missing}')
-if 'binding/redirect' in d['saml']['idp_sso_url']:
-    sys.exit('fixture still names the redirect binding (core#830)')
+if 'sso/binding/redirect/' not in d['saml']['idp_sso_url']:
+    sys.exit('idp_sso_url must name the REDIRECT-binding endpoint: the SP sends '
+             'the AuthnRequest as a query string and the post endpoint answers '
+             'Bad Request, payload missing (core#830 defect 7)')
+if 'sso/binding/post/' not in d['saml']['idp_entity_id']:
+    sys.exit('idp_entity_id must equal the provider issuer, which is the '
+             'POST-binding url; validation compares them (core#830)')
+if d['saml']['idp_entity_id'] == d['saml']['idp_sso_url']:
+    sys.exit('idp_entity_id and idp_sso_url are the same value again; they are '
+             'two legs on two bindings (core#830 defect 7)')
 "
 
 log "Fixture written to ${FIXTURE_FILE}"

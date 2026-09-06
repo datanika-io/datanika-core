@@ -24,8 +24,12 @@
 # `noDataState: OK` mistake in a different costume.
 #
 # Canonical copy: datanika/deploy/server/export-prod-settings.sh
-# ⚠️ `deploy/server/` is applied by NO workflow (core#747).  Hand-install it and
-# compare sha256 against git, the same way restore-drill.sh is handled.
+# ✅ THIS FILE IS INSTALLED BY THE DEPLOY.  `scripts/install-server-scripts.sh`
+# copies it to the box on every push to `master` and asserts sha256 against this
+# repo copy.  Change it here, merge, promote.  (core#747, shipped 2026-09-04.)
+#
+# 🚨 DO NOT HAND-INSTALL IT — this banner said to until core#1117.  The issue
+# named three stale banners; this was a fourth, found while fixing them.
 #
 # Install:
 #   install -m 0755 export-prod-settings.sh /opt/datanika/scripts/

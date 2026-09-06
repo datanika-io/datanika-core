@@ -1198,6 +1198,12 @@ proved nothing.
 3. **Bind the real method rather than mocking it**, wherever the mock's return value is on the path
    under test. `MagicMock` supplies what is missing (`WORKFLOW_RULES`), and awaiting one fails in a
    way that reads like the code being wrong.
+4. 🆕 **`1 error` is not `1 failed`, and a mutation harness prints them in the same slot.**
+   (2026-09-06, [core#915].) A sweep row read `RED` exactly as predicted; the summary line said
+   `2 warnings, 1 error` — a **collection** error, because the mutation left a dangling expression and
+   the module stopped importing. The assertion under test never ran. Reading the colour agreed with
+   me; reading the word did not. Grep the harness output for `error` as well as `failed`, or assert
+   the failing **node id** is the one you named.
 
 ---
 
@@ -1228,7 +1234,80 @@ The general form, and it is not about Fernet keys:
 
 ---
 
+## 43. A negative control proves your INSTRUMENT works. It says nothing about your PROPOSITION
+
+**(2026-09-06, [core#830].)** Fixing SAML defect 1 (`sp_binding: "redirect"` returning the Response
+in a URL) I also moved `idp_sso_url` to authentik's POST-binding endpoint, reasoning that *"the Issuer
+and the SSO url are compared during validation."* Then I wrote a guard banning
+`/sso/binding/redirect/` anywhere in the fixture — **and gave it a negative control**, because the
+first version of the pattern had been too wide and the obvious repair is to narrow it until it sees
+nothing:
+
+```python
+def test_the_endpoint_guard_can_see_a_real_redirect_reference(self):
+    was_the_defect = '  \\"issuer\\": \\"${AUTHENTIK_URL}/…/sso/binding/redirect/\\",'
+    assert re.findall(r"\S*sso/binding/redirect/\S*", was_the_defect)
+```
+
+It passed. The regex could see a redirect endpoint. **What nothing tested was whether banning one was
+true** — and it was not. SP-initiated SAML crosses the wire twice and the two crossings choose
+bindings **independently**: the AuthnRequest leaves as a 302 with `?SAMLRequest=`, and authentik's
+POST-binding view reads `request.POST`. The next run stalled on authentik's own page —
+*"Bad Request — The SAML request payload is missing."* — and the guard held the defect in place for
+three days.
+
+Only the **Issuer** is compared (`idp.entityId`, against `<saml:Issuer>`).
+`idp.singleSignOnService.url` is dialled, never compared. One clause of that sentence was true and I
+enforced the whole of it.
+
+🚨 **This is §41's sibling and the more dangerous one.** §41 is a result that agrees with you. This is
+a *control* that agrees with you — and a control carries the authority of having been sceptical, so it
+buys the proposition a credibility the proposition never earned. Both guards written for this defect,
+in two departments, had this shape.
+
+**Rules:**
+1. **Name the proposition separately from the pattern.** "Does the regex match?" and "should this
+   string be absent?" are different questions; a control answers only the first.
+2. **A ban is a claim about the whole file; the defect is usually about one FIELD.** Prefer
+   *"`idp_sso_url` ends with `/binding/redirect/`"* over *"`binding/redirect` appears nowhere"* —
+   file-scope enforcement of a per-field property is what pinned this.
+3. **When a fix corrects one direction of a two-directional protocol, ask what the other direction
+   does.** Request and response, read and write, encode and decode. The correction that is right for
+   one is a defect in the other, and it ships looking like thoroughness.
+4. **Settle it against the real consumer's own code when you cannot run it.** authentik 2024.12's
+   `providers/saml/views/sso.py` — the tag pinned in `e2e/docker-compose.test.yml` — names the
+   channel each view reads *and* shows the response binding chosen from `provider.sp_binding`,
+   independent of the receiving view. Two `WebFetch` calls, and it closed a claim neither department
+   could reach with a container.
+
+---
+
+## 44. Before starting an issue another department holds, list its open PRs
+
+**(2026-09-06, [core#830] again, one hour later.)** QA and Engineering diagnosed and fixed the same
+SAML binding defect **independently, within the hour**, from the same artifact. Two PRs, the same two
+files. Nothing warned either of us. The **merge queue** did: [#1132] entered at position 5 reading
+`UNMERGEABLE` while [#1129] sat at position 3, and `git merge-tree` confirmed the conflict in both
+files.
+
+⚠️ **The handoff file did not fail — it said `#830` was handed to another department.** That line is
+the moment to check for an open PR, and I read it as the moment to assume there was none.
+
+**Rules:**
+1. `gh pr list --repo <r> --search "<issue number>" --state open` before the first edit. One command,
+   and `--search` finds a PR whose title never mentions the number.
+2. **Duplicate work is not settled by who is better; it is settled by who is first.** Dequeue yours,
+   comment with what is additive, and re-land the remainder as a delta on top.
+3. **What survives is what the other PR does not have.** Here: the `issuer` read-back, a compile guard
+   over all fourteen inline `py "…"` blocks, and the authentik-source reading that turned their
+   *predicted* half into a measured one. Say that in the comment rather than in a second PR.
+
+---
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
+[core#915]: https://github.com/datanika-io/datanika-core/issues/915
+[#1129]: https://github.com/datanika-io/datanika-core/pull/1129
+[#1132]: https://github.com/datanika-io/datanika-core/pull/1132
 [core#830]: https://github.com/datanika-io/datanika-core/issues/830
 [core#1097]: https://github.com/datanika-io/datanika-core/issues/1097
 [core#887]: https://github.com/datanika-io/datanika-core/issues/887
@@ -1251,4 +1330,5 @@ The general form, and it is not about Fernet keys:
 [cloud#195]: https://github.com/datanika-io/datanika-cloud/issues/195
 [core#923]: https://github.com/datanika-io/datanika-core/issues/923
 [core#1108]: https://github.com/datanika-io/datanika-core/issues/1108
+[core#1109]: https://github.com/datanika-io/datanika-core/pull/1109
 [core#1110]: https://github.com/datanika-io/datanika-core/pull/1110

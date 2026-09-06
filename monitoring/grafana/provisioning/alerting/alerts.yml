@@ -458,6 +458,167 @@ groups:
           summary: "The monthly restore drill has not passed in over 35 days"
           description: "datanika_restore_drill_last_success_timestamp_seconds is more than 35 days old on more than 3 of the last 8 samples (a 2-minute window at the 15s scrape interval). The monthly drill restores the off-site pg_dump into a throwaway database and asserts live row counts. Run /opt/datanika/scripts/restore-drill.sh on the pointer.gr box and read its output -- a stale stamp means the drill has not run OR has been failing, and those need different fixes."
 
+      # --- The rebuild-parity drill and the backup tear detector (core#1106) ---
+      #
+      # These four close the last drill with NO alert coverage at all. The restore drill
+      # above went 30 days stopped with nothing remarking, and the rebuild-parity drill is
+      # ALSO monthly -- the same failure mode with the same silence.
+      #
+      # 🚨 Two corrections to the rule set that was planned, both from measuring production
+      # rather than reading the drill's variable names. Do not "restore" either one.
+      #
+      # 1. DO NOT alert on `datanika_rebuild_parity_columns_wrong_by_default` or
+      #    `_slugs_missing`. They read **26** and **4** in production right now, and they
+      #    are SUPPOSED to: they measure the known, pinned gap tracked as core#1060. A rule
+      #    on them fires the moment it is provisioned and never stops, which is not an
+      #    alert, it is a training exercise in ignoring one.
+      #
+      # 2. `datanika_rebuild_parity_ok` is `1` in production **beside** those non-zero
+      #    numbers, and that is correct rather than a bug. `OK=1; [ -n "${FAILURES}" ] &&
+      #    OK=0` -- and `note_fail` is called for a plans SCHEMA difference, a column
+      #    diverging on a slug both sides have, or the gap FINGERPRINT moving. So `ok` means
+      #    "a from-scratch rebuild still reproduces production, including its known gap",
+      #    not "the gap is empty". That is exactly the signal worth paging on, and the
+      #    summary below says so in those words rather than "parity failed".
+      #
+      # ⚠️ And the metric is `datanika_backup_files_tar_attempts`, not
+      # `datanika_backup_tar_attempts`. My own handoff carried the second spelling, which
+      # has **0 series** in production. A rule written from it would have selected nothing
+      # for the life of the rule, and under `noDataState: OK` that reads as healthy. The
+      # name here was taken from `curl`-ing the box, not from the handoff.
+      #
+      # Duration goes in the QUERY (`count_over_time(...[2m:15s])` + `gt [3]`), never in
+      # `for:` -- core#604: on a filtering expression `reduce: last` never sees a recovery.
+      - uid: rebuild-parity-stale
+        title: Rebuild Parity Drill Stale
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time(((time() - datanika_rebuild_parity_last_run_timestamp_seconds) > 3024000)[2m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The monthly rebuild-parity drill has not run in over 35 days"
+          description: "datanika_rebuild_parity_last_run_timestamp_seconds is more than 35 days old on more than 3 of the last 8 samples. The drill builds plan rows from scratch and compares them against production, which is the only thing that would notice seed_v2_plans.py drifting away from what production serves. Run /opt/datanika/scripts/rebuild-parity-drill.sh on the pointer.gr box. A stale stamp means it stopped running OR is erroring before it writes -- read the log at /var/log/datanika-rebuild-parity.log to tell those apart."
+      - uid: rebuild-parity-failing
+        title: Rebuild Parity Drill Reports A Regression
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time((datanika_rebuild_parity_ok == 0)[2m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "A from-scratch rebuild no longer reproduces production's plan rows"
+          description: "datanika_rebuild_parity_ok is 0. That is NOT 'the known gap is non-empty' -- the gap is pinned and expected (core#1060, currently 26 columns and 4 slugs, both alarm-free by design). ok=0 means one of three things the drill treats as a real regression: the plans SCHEMA differs between production and a from-scratch build, a column DIVERGED on a slug both sides have, or the pinned gap FINGERPRINT moved. Read /var/log/datanika-rebuild-parity.log -- it names which, and the fingerprint case usually means the seed script changed and the pin needs re-reading rather than production having broken."
+      - uid: backup-files-torn
+        title: Backup Could Not Take A Consistent Volume Copy
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'count_over_time((datanika_backup_files_torn > 0)[2m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "A backed-up volume changed under tar on every attempt"
+          description: "datanika_backup_files_torn is 1 for the labelled volume, meaning tar saw files change under it on every retry, so the archive in that night's backup is internally inconsistent. The pg_dump half is unaffected; what is at risk is dbt_projects / uploaded_files. Check whether a long-running job writes to that volume at 03:00, and read datanika_backup_files_tar_attempts for how many tries it made. NOTE the metric name: it is datanika_backup_files_tar_attempts, not datanika_backup_tar_attempts -- the latter does not exist."
+
       # --- Container Restart Loop ---
       # core#615 -- this rule was structurally unable to fire for its entire life.
       #
@@ -2234,6 +2395,49 @@ groups:
         annotations:
           summary: "Backup freshness metric has disappeared"
           description: "The backup timestamp metric is absent, so Backup Stale cannot fire — backups could stop silently."
+      - uid: watchdog-rebuild-parity
+        title: "Watchdog: rebuild-parity drill metric missing"
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              expr: 'absent(datanika_rebuild_parity_last_run_timestamp_seconds)'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 60
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+              refId: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Rebuild-parity drill metric has disappeared"
+          description: "datanika_rebuild_parity_last_run_timestamp_seconds is absent, so Rebuild Parity Drill Stale cannot fire and the drill could stop silently. The staleness rule is a filtering expression under noDataState: OK, so a metric that vanishes reads exactly like a metric that is fresh -- which is why this watchdog exists rather than a lower threshold on the other rule. Check /opt/datanika/node_textfile/datanika_rebuild_parity.prom exists and that node-exporter still has --collector.textfile.directory pointed at that directory."
       - uid: watchdog-restore-drill
         title: "Watchdog: restore drill metric missing"
         condition: C

@@ -58,9 +58,11 @@ That splits every breaking change into phases across **separate releases**:
 
 - `ADD COLUMN` **nullable**, or with a `DEFAULT` (Postgres 11+ doesn't rewrite the table).
 - `CREATE TABLE`.
-- `CREATE INDEX CONCURRENTLY` (see the lock notes below).
+- `CREATE INDEX CONCURRENTLY` (see the lock notes below). ⚠️ **Not reachable from a
+  migration in this repo today — [core#933].**
 - Adding a **nullable** FK.
-- Backfilling data in batches.
+- Backfilling data in batches. ⚠️ Batching the **statements** is available; committing
+  between them is not — same cause, [core#933].
 - Widening a type (`varchar(50)` → `text`, `int` → `bigint`).
 
 ### ❌ Never in the same release as the code that needs it
@@ -100,6 +102,20 @@ holding a lock while the old version serves traffic.
   with a plain `CREATE INDEX` it takes an `ACCESS EXCLUSIVE` lock and stalls writes.
 - Backfill in **batches with commits**, never one statement over a large table.
 
+> 🚨 **Both bullets above prescribe a mechanism this repo does not have. [core#933].**
+> `op.get_context().autocommit_block()` raises a bare, message-less `AssertionError` in
+> **every** migration here: `migrations/env.py` executes `SET search_path` on the
+> connection before alembic is asked to begin a transaction, so `begin_transaction()`
+> returns a do-nothing context manager and never assigns the attribute `autocommit_block`
+> asserts on. Reproduced with a control in
+> `tests/test_migrations/test_autocommit_block_availability.py`; **that file goes red the
+> day #933 is fixed**, which is when this note should be deleted.
+>
+> Until then: a plain `CREATE INDEX` is the correct choice on a small table and the lock
+> is what you are spending — say the row count in the PR. A batched backfill bounds each
+> **statement**, not the transaction, so it is not incremental and a long one still holds
+> its locks to the end. Neither is a reason to hand-roll a commit inside a migration.
+
 ---
 
 ## One migrator at a time
@@ -121,8 +137,10 @@ Any PR containing a migration answers these:
 - [ ] Would the **currently deployed** version still run against this schema? (That is the
       `t1` question — not "does the new code work".)
 - [ ] Any `NOT NULL`, rename, drop, narrowing, or new `UNIQUE`? → must be phased.
-- [ ] Long-held locks considered; `CREATE INDEX` concurrent where the table is non-trivial.
-- [ ] Backfills batched.
+- [ ] Long-held locks considered. **`CREATE INDEX` is not concurrent here** ([core#933]) —
+      state the table's row count and say why the `ACCESS EXCLUSIVE` lock is affordable.
+- [ ] Backfills batched **by statement**; there is no commit between batches ([core#933]),
+      so a long backfill holds its locks to the end. Say how long it runs.
 - [ ] **Celery task code** also tolerant of the old *and* new shape — workers restart
       separately and lag the web swap.
 
@@ -171,3 +189,5 @@ model-style refactor cannot make it pass while comparing nothing.
 
 ⚠️ Requires `origin/master` to be fetched — `actions/checkout` is shallow by default, so the
 job does an explicit `git fetch --depth=1 origin master`.
+
+[core#933]: https://github.com/datanika-io/datanika-core/issues/933

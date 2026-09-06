@@ -55,12 +55,12 @@ class UploadService:
         # Validate source connection exists
         src = self._conn_svc.get_connection(session, org_id, source_connection_id)
         if src is None:
-            raise ValueError(f"Invalid source connection {source_connection_id}: must exist")
+            raise UserFacingError(f"Invalid source connection {source_connection_id}: must exist")
 
         # Validate destination connection exists
         dst = self._conn_svc.get_connection(session, org_id, destination_connection_id)
         if dst is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Invalid destination connection {destination_connection_id}: must exist"
             )
         # core#862 / core#865. Existing is not enough — the connection has to be
@@ -73,7 +73,7 @@ class UploadService:
         # save time so the user learns while they are still looking at the form,
         # and refused HERE because `POST /api/v1/uploads` never sees the picker.
         if dst.connection_type.value not in DESTINATION_TYPES:
-            raise ValueError(
+            raise UserFacingError(
                 f"Connection {destination_connection_id} is a "
                 f"{dst.connection_type.value} connection, which Datanika can read "
                 "from but cannot load into"

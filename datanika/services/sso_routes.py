@@ -11,6 +11,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route
 
 from datanika.config import settings
+from datanika.errors import UserFacingError
 from datanika.services.auth import AuthService
 from datanika.services.auth_redirects import login_error_path
 from datanika.services.encryption import EncryptionService
@@ -387,7 +388,7 @@ async def _oidc_exchange(request: Request, sso, svc: SSOService) -> tuple[str, s
 
     code = request.query_params.get("code", "")
     if not code:
-        raise ValueError("Missing authorization code")
+        raise UserFacingError("Missing authorization code")
 
     # Fetch discovery config
     async with httpx.AsyncClient() as client:

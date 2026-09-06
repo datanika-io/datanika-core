@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 # order-of-import-dependent, and ``test_the_derived_key_set_is_exposed_and_exact`` pins
 # the result so this cannot silently regress.
 import datanika.models  # noqa: F401
+from datanika.errors import UserFacingError
 from datanika.models.audit_log import AuditAction, AuditLog
 from datanika.models.base import Base
 from datanika.services.backup_service import REDACTED
@@ -75,10 +76,13 @@ _MAX_DEPTH = 20
 
 def _redact(value: object, depth: int, seen: frozenset[int]) -> object:
     if depth > _MAX_DEPTH:
-        raise ValueError(f"audit payload nested deeper than {_MAX_DEPTH} levels")
+        # core#1113: internal invariant text under a marker that says user-facing.
+        # Converted here only to keep core#1094 step 2 behaviour-neutral; the three
+        # audit_service sites are named on that issue.
+        raise UserFacingError(f"audit payload nested deeper than {_MAX_DEPTH} levels")
     if isinstance(value, dict):
         if id(value) in seen:
-            raise ValueError("audit payload contains a cycle")
+            raise UserFacingError("audit payload contains a cycle")
         inner = seen | {id(value)}
         return {
             key: (REDACTED if key in PII_PAYLOAD_KEYS else _redact(val, depth + 1, inner))
@@ -86,7 +90,7 @@ def _redact(value: object, depth: int, seen: frozenset[int]) -> object:
         }
     if isinstance(value, list | tuple):
         if id(value) in seen:
-            raise ValueError("audit payload contains a cycle")
+            raise UserFacingError("audit payload contains a cycle")
         inner = seen | {id(value)}
         return [_redact(item, depth + 1, inner) for item in value]
     return value

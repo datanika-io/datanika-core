@@ -1,4 +1,12 @@
-"""core#1094 step 1 — every ValueError carrier we declare must also be a UserFacingError.
+"""core#1094 — nothing in core reaches the user as a ValueError that is not the marker.
+
+Two guards, one per migration step, and they are complements rather than
+duplicates. **AC6** (`TestTheMarkerCoversWhatWeDeclare`) covers the 227 raises
+that go through a *named class*: those migrate by inheritance, and the question
+is whether every class we declare is under the marker. **AC3**
+(`TestNoBareValueErrorInCore`) covers the 39 that did not: a bare
+``raise ValueError(...)`` belongs to no class, so inheritance cannot reach it and
+only a census can. Together they are the whole surface -- 266 raise sites.
 
 ## What this file is defending
 
@@ -9,13 +17,14 @@ which arrives on a version-bump PR whose diff contains no exception handling and
 is reviewed by someone thinking about lockfiles. core#1094 replaces it with the
 positive test ``isinstance(exc, UserFacingError)``.
 
-The migration is three steps and this file guards **step 1**: the 24 core
-classes inherit the marker while the predicate is unchanged, so both rules agree
-on every case and behaviour is provably identical. Cloud's single class
-(``QuotaExceededError``) has the same guard in ``datanika-cloud``'s own
-``tests/test_errors.py`` -- deliberately a twin rather than one cross-repo
-sweep, because a per-repo guard satisfied by core and blind to cloud is the
-shape that let core#943 happen after cloud had already fixed it.
+The migration is three steps and this file guards the first two: the 24 core
+classes inherit the marker, the 37 core bare sites are converted, and the
+predicate is unchanged throughout — so both rules agree on every case and
+behaviour is provably identical until step 3 flips it. Cloud's half
+(``QuotaExceededError`` plus two bare sites) has the same pair of guards in
+``datanika-cloud``'s own ``tests/test_errors.py`` -- deliberately a twin rather
+than one cross-repo sweep, because a per-repo guard satisfied by core and blind
+to cloud is the shape that let core#943 happen after cloud had already fixed it.
 
 ## Why the assertion is made at RUNTIME and not from the source text
 
@@ -117,6 +126,66 @@ def declared_error_classes() -> dict[str, str]:
         for name, (module, bases) in declared.items()
         if any(reaches(b, frozenset({name})) for b in bases)
     }
+
+
+def bare_value_error_sites(source: str, label: str) -> list[str]:
+    """Every place ``ValueError`` is *named as an exception* in one module's source.
+
+    Two shapes, deliberately, because AC3's failure mode is a **missed** site and
+    a missed site is silent:
+
+    * ``raise ValueError`` -- a bare name with no call.
+    * **any construction** ``ValueError(...)``, raised or not.
+
+    The second is wider than "raise sites" on purpose. ``err = ValueError(msg)``
+    followed by ``raise err`` is an ordinary refactor and it walks straight past
+    a raise-only scanner -- the same class of blind spot as core#1069's
+    literal-only migration scanner (``ENGINEERING_RULES.md`` §34), which could
+    not see a contract migration because contract migrations loop over a
+    constant. Measured at the time of writing: **zero** such constructions exist,
+    so widening the predicate costs nothing today and closes the shape tomorrow.
+
+    It deliberately does **not** match ``except ValueError``, ``isinstance(e,
+    ValueError)`` or a bare annotation. Those read the class, they do not mint an
+    instance, and every one of them is correct code that must keep working --
+    ``UserFacingError`` is a ``ValueError``, so an existing ``except ValueError``
+    still catches everything it caught before. That is what makes the whole
+    migration behaviour-neutral.
+    """
+    tree = ast.parse(source, filename=label)
+    hits: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise):
+            exc = node.exc
+            if isinstance(exc, ast.Name) and exc.id == "ValueError":
+                hits.append(f"{label}:{node.lineno}")
+        if isinstance(node, ast.Call):
+            fn = node.func
+            name = getattr(fn, "id", None) or getattr(fn, "attr", None)
+            if name == "ValueError":
+                hits.append(f"{label}:{node.lineno}")
+    return sorted(set(hits))
+
+
+def bare_value_error_census() -> list[str]:
+    """The same predicate over every file in the package.
+
+    ⚠️ **Scope is the whole package minus ``migrations/``, which is wider than
+    AC3's ``services/`` + ``ui/`` + ``tasks/``.** Measured before choosing: a
+    whole-tree census and a three-layer census return the *same 37 sites* today,
+    so the wider scope costs nothing and does not depend on my model of which
+    layers a state handler can reach. ``_safe_error`` catches ``Exception``
+    around service calls, and services call models, so "the wrapped layers" is
+    not a set anyone can enumerate confidently.
+
+    Alembic revisions are excluded because they run offline from a migration
+    harness and are never caught by a state handler.
+    """
+    hits: list[str] = []
+    for path in _source_files():
+        rel = path.relative_to(_PACKAGE_ROOT.parent).as_posix()
+        hits += bare_value_error_sites(path.read_bytes().decode("utf-8"), rel)
+    return sorted(hits)
 
 
 def offenders(root: type, marker: type, package: str) -> list[str]:
@@ -269,3 +338,70 @@ class TestTheMarkerItself:
         from datanika.ui.state.base_state import is_user_facing
 
         assert is_user_facing(UserFacingError("Schedule limit reached")) is True
+
+
+class TestNoBareValueErrorInCore:
+    """AC3, core's half. Cloud's twin asserts the same over ``datanika_cloud/``.
+
+    This is what makes core#1094's contract step safe. Once the predicate reads
+    ``isinstance(exc, UserFacingError)``, a surviving ``raise ValueError(...)``
+    stops reaching the user **silently** -- the handler shows its fallback and
+    nothing raises, so there is no error, no log line and no failing test. A
+    census is the only instrument that can see that *in advance*, because the
+    diff of a missed site is empty.
+
+    The 37 sites this replaced were, by layer: services 30, tasks 3, ui 4.
+    """
+
+    def test_the_package_raises_no_bare_value_error(self):
+        sites = bare_value_error_census()
+        assert sites == [], (
+            "these sites name ValueError directly; after core#1094's contract "
+            f"step their text stops reaching the user with no error anywhere: {sites}"
+        )
+
+    def test_the_census_actually_read_the_tree(self):
+        """A scanner handed nothing reports clean.
+
+        The link-auditor instance of this trap -- a directory walker given a file
+        -- printed ``0 refs, 0 not resolving`` for a spec nobody had checked.
+        """
+        assert len(_source_files()) > 100, (
+            f"the census walked {len(_source_files())} files; it is reporting on nothing"
+        )
+
+
+class TestTheCensusCanStillSeeOne:
+    """AC3's control, in-suite so it is re-proved on every CI run.
+
+    A census that stops matching reports a clean tree, and that is the direction
+    this one fails in -- so the arming is not optional. Both polarities, because
+    a predicate narrowed until it matches nothing also stops matching real
+    violations, which is the worse bug and the silent one.
+    """
+
+    def test_it_sees_a_bare_raise(self):
+        assert bare_value_error_sites('raise ValueError("nope")\n', "x.py") == ["x.py:1"]
+
+    def test_it_sees_a_raise_with_no_call(self):
+        assert bare_value_error_sites("raise ValueError\n", "x.py") == ["x.py:1"]
+
+    def test_it_sees_a_construction_that_is_raised_later(self):
+        """The evasion a raise-only scanner walks past, and an ordinary refactor."""
+        src = 'def f():\n    err = ValueError("nope")\n    raise err\n'
+        assert bare_value_error_sites(src, "x.py") == ["x.py:2"]
+
+    def test_it_does_not_see_the_marker(self):
+        assert bare_value_error_sites('raise UserFacingError("fine")\n', "x.py") == []
+
+    def test_it_does_not_see_a_catch(self):
+        """``except ValueError`` must keep working -- the marker is a ValueError."""
+        src = "try:\n    pass\nexcept ValueError:\n    pass\n"
+        assert bare_value_error_sites(src, "x.py") == []
+
+    def test_it_does_not_see_an_isinstance_check(self):
+        assert bare_value_error_sites("isinstance(e, ValueError)\n", "x.py") == []
+
+    def test_it_does_not_see_a_class_declaration(self):
+        """``class X(ValueError)`` is AC6's business, and is now zero anyway."""
+        assert bare_value_error_sites("class X(ValueError):\n    pass\n", "x.py") == []

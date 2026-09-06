@@ -6,6 +6,7 @@ import traceback
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection
 from datanika.models.dependency import NodeType
@@ -249,7 +250,7 @@ def run_pipeline(
 
         dst_conn = get_org_connection(session, org_id, pipeline.destination_connection_id)
         if dst_conn is None:
-            raise ValueError(
+            raise UserFacingError(
                 f"Destination connection {pipeline.destination_connection_id} is not "
                 f"available to org {org_id}"
             )

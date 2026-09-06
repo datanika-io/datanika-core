@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import httpx
 from sqlalchemy import select
 
+from datanika.errors import UserFacingError
 from datanika.models.notification_channel import (
     MAX_LAST_ERROR,
     ChannelType,
@@ -39,19 +40,19 @@ _CONFIG_REQUIRED = {
 def _validate_config(ct, config):
     for f in _CONFIG_REQUIRED[ct]:
         if not config.get(f):
-            raise ValueError(f"config.{f} is required for {ct} channels")
+            raise UserFacingError(f"config.{f} is required for {ct} channels")
 
 
 def _validate_events(events):
     bad = set(events) - VALID_EVENTS
     if bad:
-        raise ValueError(f"Invalid event(s): {bad!r}. Valid: {set(VALID_EVENTS)!r}")
+        raise UserFacingError(f"Invalid event(s): {bad!r}. Valid: {set(VALID_EVENTS)!r}")
 
 
 class NotificationService:
     def create_channel(self, session, org_id, name, channel_type, config, events):
         if not name or not name.strip():
-            raise ValueError("Channel name cannot be empty")
+            raise UserFacingError("Channel name cannot be empty")
         _validate_config(channel_type, config)
         _validate_events(events)
         ch = NotificationChannel(
@@ -140,7 +141,7 @@ class NotificationService:
         if "name" in kwargs:
             n = kwargs["name"]
             if not n or not str(n).strip():
-                raise ValueError("Channel name cannot be empty")
+                raise UserFacingError("Channel name cannot be empty")
             ch.name = str(n).strip()
         if "config" in kwargs:
             _validate_config(ch.channel_type, kwargs["config"])

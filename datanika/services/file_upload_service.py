@@ -10,6 +10,7 @@ from io import BytesIO
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from datanika.errors import UserFacingError
 from datanika.models.uploaded_file import UploadedFile
 
 ALLOWED_EXTENSIONS = {"csv", "json", "parquet"}
@@ -83,7 +84,7 @@ class FileUploadService:
     def _infer_content_type(filename: str) -> str:
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         if ext not in ALLOWED_EXTENSIONS:
-            raise ValueError(
+            raise UserFacingError(
                 f"Unsupported file type '.{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
             )
         return ext
@@ -145,7 +146,7 @@ class FileUploadService:
         if "/" not in filename and "\\" not in filename:
             return
         basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
-        raise ValueError(f"File name must not contain a path. Upload it as '{basename}'.")
+        raise UserFacingError(f"File name must not contain a path. Upload it as '{basename}'.")
 
     def save_file(
         self,
@@ -156,7 +157,7 @@ class FileUploadService:
     ) -> UploadedFile:
         """Validate size, compute SHA-256, write tar.gz archive, create DB record."""
         if len(content) > self.MAX_FILE_SIZE:
-            raise ValueError(
+            raise UserFacingError(
                 f"File size ({len(content)} bytes) exceeds maximum ({self.MAX_FILE_SIZE} bytes)"
             )
 

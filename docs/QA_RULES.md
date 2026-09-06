@@ -832,3 +832,50 @@ issue. **When a job classifies badly, diff it against its siblings before design
 [core#827]: https://github.com/datanika-io/datanika-core/issues/827
 [core#895]: https://github.com/datanika-io/datanika-core/issues/895
 [core#896]: https://github.com/datanika-io/datanika-core/issues/896
+
+## 29. An acceptance criterion that fails on CORRECT code is worse than one that passes on broken code
+
+Both are defective criteria. They are not symmetric, and the asymmetry is about **what each one
+makes a person do next.**
+
+- A criterion that **passes on broken code** leaves you where you already were: no coverage, and a
+  green that means nothing. Bad, and inert.
+- A criterion that **fails on correct code** is not inert. It puts steady pressure on an engineer to
+  change a working implementation until the test goes green — and because the criterion is *"the
+  spec"*, the cheapest way to resolve the conflict is to move the **code**, not the clause.
+
+**It recruits the person into breaking the system, and every step of that looks like compliance.**
+Measured instance: three of `SPEC_AUDIT_TRAIL` §4's test-design clauses are wrong and **two go red
+against a correct implementation** (Engineering, 2026-09-07).
+
+This is the same economics as *"the cheapest way to make a floor pass is to lower it"*, running in
+the opposite direction — and it is worse, because lowering a floor is visibly a retreat while
+"making the code match the spec" is visibly a virtue.
+
+### 🚨 And a spec clause can be UNSATISFIABLE, with a faithful implementation silently broken
+
+`SPEC_ORG_ROLES.md` §3.4 named an audit action **that is not a valid enum member**.
+`transfer_ownership` wrote that string; the row was dropped. **Nothing here was a typo and no review
+was wrong** — the implementation was faithful to a clause that could not be satisfied. Code
+compliant, review correct, row gone, every check green.
+
+🔑 **A spec that names a constant is making a testable claim that the constant exists**, and nobody
+was testing it. That claim is worth a guard on its own, because it is the one class of spec defect
+where *doing exactly what you were told* is the failure mode:
+
+- **Extract every identifier a spec names — enum members, status values, metric names, env vars,
+  route paths — and resolve each against the artifact that defines it.** An unresolvable one is a
+  spec bug, found at spec-review time rather than by a dropped row in production.
+- **Where a spec prescribes a test's design, the prescription is itself a claim to check.**
+  §15 says to diff the spec against the tests; this is the case where **the spec is the thing that
+  is wrong**, so a diff that assumes the spec is the oracle reports the tests as deficient and sends
+  someone to "fix" them.
+
+⚠️ **Practical consequence for triage: when an AC and an implementation disagree, establish which
+one is wrong before doing anything.** The default assumption — the code is wrong, the spec is the
+contract — is correct most of the time and is exactly what makes the minority case expensive. Ask
+*"can this clause be satisfied at all?"* first; it is one lookup, and a `grep` of the enum answers
+it.
+
+Related: §15 (diff the spec against the tests) · §20 (check the artifact against what it represents,
+not against its own plausibility) · [core#864] (`shipped-to-prod` on undone work).

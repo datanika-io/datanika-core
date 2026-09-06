@@ -23,7 +23,7 @@ derives its expectations from the route sources, so a slug that is not in this t
 build rather than silently rendering nothing.
 """
 
-from datanika.errors import UserFacingError
+from datanika.errors import InternalInvariantError
 
 # slug -> i18n key. Many-to-one on purpose; see the module docstring.
 AUTH_ERROR_KEYS: dict[str, str] = {
@@ -48,15 +48,17 @@ AUTH_ERROR_KEYS: dict[str, str] = {
 def login_error_path(reason: str) -> str:
     """Return ``/login?auth_error=<reason>``.
 
-    Raises ``UserFacingError`` for a slug outside :data:`AUTH_ERROR_KEYS` — a redirect that
+    Raises ``InternalInvariantError`` for a slug outside :data:`AUTH_ERROR_KEYS` — a redirect that
     would render nothing is a bug at the call site, and failing here makes it a test failure
     instead of a blank sign-in page in production.
     """
     if reason not in AUTH_ERROR_KEYS:
-        # core#1113: developer text under a marker that says user-facing. Converted
-        # here only to keep core#1094 step 2 behaviour-neutral; moving it out of
-        # ValueError's subtree is core#1113's decision, not this PR's.
-        raise UserFacingError(
+        # An instruction to edit source. Unreachable from any request today — all
+        # 18 call sites pass literals, 13 distinct, every one already in
+        # AUTH_ERROR_KEYS, and `auth_state.py` filters `?auth_error=` before it can
+        # arrive. It stays a hard failure because a future caller passing a
+        # variable is exactly what the marker should not silently render (core#1113).
+        raise InternalInvariantError(
             f"unknown auth error reason {reason!r}; add it to AUTH_ERROR_KEYS with an i18n key"
         )
     return f"/login?auth_error={reason}"

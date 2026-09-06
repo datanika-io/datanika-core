@@ -60,3 +60,38 @@ class UserFacingError(ValueError):
     exceptions and they belong outside the marker, so the user gets the
     handler's fallback and the detail stays in the log.
     """
+
+
+class ConfigurationError(Exception):
+    """The operator has not configured something this code path requires.
+
+    **Deliberately not a ``ValueError``, so it is not a ``UserFacingError``**
+    (core#1113). The next action is *set the value and redeploy* — an env var,
+    a plan row, a credential — and a person on the other side of the screen can
+    do none of those. They get the handler's fallback; the detail stays in the
+    log, where ``_safe_error`` already writes it with ``_log.exception``.
+
+    ⚠️ **Moving a raise into this class is a real behaviour change and it lands
+    immediately**, because callers that catch ``ValueError`` stop catching it.
+    Check them. ``datanika_cloud``'s ``_is_terminal_paddle_error`` is the
+    instance that cost a whole design pass: it tests ``isinstance(exc,
+    ValueError)`` to mean *"our own pre-flight guard — no network attempt
+    happened, do not retry"*, and moving ``charge_subscription``'s guard out of
+    ``ValueError`` without adding this class to that arm turns a charge that can
+    never succeed into six hours of retries.
+    """
+
+
+class InternalInvariantError(Exception):
+    """Something we believed could not happen, happened.
+
+    **Deliberately not a ``ValueError``, so it is not a ``UserFacingError``**
+    (core#1113). The next action is *file a bug* — nobody outside the codebase
+    can act on it, and the text names issue numbers, dict names and source
+    identifiers.
+
+    Two classes rather than one, because the next action is the only thing that
+    earns a class: ``ConfigurationError`` is recoverable in a minute by someone
+    with shell access, and this is not recoverable at all by the person reading
+    it. Flattening them would say the same thing about both.
+    """

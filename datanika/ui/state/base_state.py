@@ -3,10 +3,10 @@
 import logging
 
 import reflex as rx
-from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from datanika.db import get_sync_session  # noqa: F401 — re-exported
+from datanika.errors import UserFacingError
 
 _log = logging.getLogger(__name__)
 
@@ -19,69 +19,75 @@ def check_role_hierarchy(current_role: str, required_role: str) -> bool:
 
 
 def is_user_facing(exc: Exception) -> bool:
-    """Is this exception's own text something we authored, and safe to show? (core#1032)
+    """Is this exception's own text something we authored, and safe to show? (core#1094)
 
-    ``ValueError`` is this codebase's deliberate carrier for user-facing text —
-    quota refusals, validation refusals, ``connection_service`` says so in a
-    docstring — so ``isinstance(exc, ValueError)`` was the right *intent*. It is
-    the wrong *boundary*, because **pydantic's ``ValidationError`` is a subclass
-    of ``ValueError``**, and it is a class we do not author.
+    ``BaseState._safe_error`` and ``BaseState._set_error`` replace a caught
+    exception with a curated fallback unless its own text is ours. This is that
+    decision, and since core#1094's contract step it is a **positive** test:
+    the exception is under :class:`datanika.errors.UserFacingError`, or it is
+    not ours.
 
-    The consequence was measured on the unfixed billing page (cloud#164), where
-    ``error_message`` became::
+    ## What this replaced, and why the old shape could only fail one way
 
-        1 validation error for SubscriptionInfo
-        max_schedules
-          Input should be a valid integer [type=int_type, input_value=None, ...]
+    core#1032 narrowed it to *"a ``ValueError``, unless it is pydantic's"* — an
+    **exclusion list**, and the list had to grow every time a dependency put a
+    new class under ``ValueError``. The failure mode is not hypothetical; it is
+    #1032 itself. ``pydantic.ValidationError`` is a ``ValueError`` subclass, so
+    pydantic's own report reached the billing page carrying ``input_value=``,
+    which echoes the offending value into a rendered string, while our
+    *"Failed to load billing data"* was passed and never used.
 
-    while the handler's own ``"Failed to load billing data"`` was passed and
-    never used. Note ``input_value=``: a pydantic report echoes the offending
-    value into a rendered string, which is not what a method called "safe error"
-    should do.
+    🔑 **The two rules fail in opposite directions, and only one is recoverable.**
+    A missed raise site under the marker shows the user the generic fallback:
+    degraded, nothing leaked, fixable. A dependency subclassing ``ValueError``
+    under the old rule renders that library's internal text verbatim, and by the
+    time anyone notices it is already on the screen. And note *when* it arrives —
+    on a version-bump PR whose diff contains no exception handling at all,
+    reviewed by someone thinking about lockfiles. There is no moment at which
+    anybody is looking at this function.
 
-    Two things settled by measurement rather than by reading, both of which the
-    issue flagged as easy to get wrong:
+    ## The pydantic exclusion is DELETED, not kept "just in case"
 
-    * ``pydantic.ValidationError`` **is** ``pydantic_core.ValidationError`` — the
-      same object, not an alias to a wrapper — so the documented public name is
-      correct here. Pinned by ``test_the_two_import_paths_name_the_same_class``.
-    * ``PydanticUserError`` and ``PydanticSchemaGenerationError`` are **not**
-      ``ValueError`` subclasses, so they already reached the fallback and this
-      needs no widening.
+    cloud#176's rule: a redundant guard also absorbs your ability to detect the
+    class arriving for real. ``isinstance(exc, UserFacingError)`` is ``False``
+    for everything we did not author — pydantic included, and every future
+    dependency too, with no list to maintain. Keeping the exclusion beside it
+    would suggest the positive test needs help, and it does not.
+
+    ## What makes the flip safe, and where the evidence lives
+
+    The migration was three ordered steps, so there was never a moment at which
+    this predicate was positive while a raise site had not been converted:
+
+    1. **expand** — the marker, and the 25 declared carriers inheriting it
+       (24 core, cloud's ``QuotaExceededError``).
+    2. **measure** — an ``ast`` census asserting **zero** bare
+       ``raise ValueError`` in either package, armed with controls proving it can
+       still see one, and the 39 sites it named converted. No behaviour change:
+       ``UserFacingError`` is a ``ValueError``, so both rules accepted every one.
+    3. **contract** — this line.
+
+    Both guards live on and both are class-wide: ``tests/test_errors.py`` in
+    core and its twin in ``datanika-cloud``. AC6's guard asks the **MRO**, not
+    the source text, because a source census of ``ValueError`` subclasses returns
+    the empty set the moment the migration succeeds and would pass vacuously
+    forever after.
+
+    ⚠️ **The one behaviour change, stated plainly.** A bare ``raise
+    ValueError(...)`` in a layer a state handler wraps no longer reaches the
+    user; they get the handler's fallback and the detail stays in the log, where
+    ``_safe_error`` already writes it with ``_log.exception``. That is intended.
+    The census is what says the set is empty today; it is also what will fail if
+    someone reintroduces one.
 
     🔑 **It is a module-level function, and both callers use it, deliberately.**
-    ``_safe_error`` and ``_set_error`` carried this branch *twice*; the issue
-    named only one of them, and fixing one would have left the identical defect
-    live on ``save_connection``, ``save_pipeline``, ``save_schedule``,
-    ``add_member`` and ``save_upload``. One predicate is what stops them
-    diverging again, and ``TestTheTwoStayInStep`` is what notices if they do.
-
-    🆕 **core#1094 decided for the marker class, and this predicate is the last
-    thing to change.** The rule below is still the negative one, deliberately.
-    The migration is expand/contract applied to a predicate, and the ordering is
-    the whole design — there must be no moment at which the positive test is
-    live while a raise site has not been converted, because a missed site fails
-    *silently*: the handler shows its fallback and nothing raises.
-
-    1. **expand** — ``datanika/errors.py`` gains ``UserFacingError`` and the 24
-       core classes (plus cloud's ``QuotaExceededError``) inherit it. Both rules
-       then agree on every case; behaviour is provably identical. **Done.**
-    2. **measure** — ``tests/test_errors.py`` asserts zero bare
-       ``raise ValueError(...)`` in the layers a state handler wraps, armed with
-       a control that it can still see one, and the 39 sites the census named
-       are converted. Still no behaviour change.
-    3. **contract** — this line becomes ``isinstance(exc, UserFacingError)`` and
-       the pydantic exclusion is **deleted**, not kept "just in case" (cloud#176:
-       a redundant guard also absorbs your ability to detect the class arriving
-       for real).
-
-    ⚠️ Step 3 must not reach production ahead of cloud's step 1. Cloud ships
-    *inside* the core image at a pinned ``ref: master``, so a core promotion
-    without a cloud promotion behind it would flip this predicate against a
-    ``QuotaExceededError`` that does not yet carry the marker — and every quota
-    refusal would quietly become "An error occurred".
+    ``_safe_error`` and ``_set_error`` carried this branch *twice*; #1032 named
+    only one of them, and fixing one would have left the identical defect live on
+    ``save_connection``, ``save_pipeline``, ``save_schedule``, ``add_member`` and
+    ``save_upload``. One predicate is what stops them diverging again, and
+    ``TestTheTwoStayInStep`` is what notices if they do.
     """
-    return isinstance(exc, ValueError) and not isinstance(exc, ValidationError)
+    return isinstance(exc, UserFacingError)
 
 
 class BaseState(rx.State):

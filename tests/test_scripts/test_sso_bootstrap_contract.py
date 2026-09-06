@@ -46,9 +46,11 @@ flip." So the tests below are ordered by how much they actually prove:
 """
 
 import importlib.util
+import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -82,6 +84,86 @@ def _source_outside_the_helper() -> str:
         "hiding real call sites from this guard"
     )
     return source[:start] + source[end:]
+
+
+_SSO_ROUTES = _REPO / "datanika" / "services" / "sso_routes.py"
+
+# authentik publishes one endpoint per SAML binding, under
+# ``/application/saml/<slug>/sso/binding/<segment>/``. This mapping is the only
+# fact in the section below that is restated rather than read out of a file, and
+# it is a property of authentik's URL layout, not of our configuration.
+_BINDING_URL_SEGMENT = {
+    "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect": "redirect",
+    "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST": "post",
+}
+
+
+def _sp_binding(service: str) -> str:
+    """The binding the SP declares for one SAML service, read from the app.
+
+    Derived rather than restated: if ``sso_routes.py`` ever changes how it dials
+    the IdP, this moves with it instead of pinning a constant that has gone
+    stale. ``singleSignOnService`` is the AuthnRequest leg (SP -> IdP);
+    ``assertionConsumerService`` is the Response leg (IdP -> SP).
+    """
+    source = _SSO_ROUTES.read_text(encoding="utf-8")
+    match = re.search(r'"' + service + r'"\s*:\s*\{[^}]*?"binding"\s*:\s*"([^"]+)"', source, re.S)
+    assert match, (
+        f"no {service}.binding found in {_SSO_ROUTES.name} — this guard is "
+        "reading nothing, which is not the same as agreeing"
+    )
+    return match.group(1)
+
+
+def _shell_assignment(name: str, source: str | None = None) -> str:
+    """The right-hand side of a top-level ``NAME="..."`` in the bootstrap."""
+    source = _bootstrap_source() if source is None else source
+    match = re.search(r"^" + name + r'="([^"\n]+)"', source, re.M)
+    assert match, f"{name} is not assigned in bootstrap-authentik.sh"
+    return match.group(1)
+
+
+def _fixture_url(key: str, source: str | None = None) -> str:
+    """Resolve one ``saml`` key of the written fixture to its shell value.
+
+    The heredoc writes ``"idp_sso_url": "${SAML_SSO_URL}"``, so the chain is
+    fixture key -> shell variable -> value. Following it is what makes this
+    guard see the defect it exists for: ``idp_entity_id`` and ``idp_sso_url``
+    were the *same* variable, so correcting one silently moved the other.
+    """
+    source = _bootstrap_source() if source is None else source
+    match = re.search(r'"' + key + r'"\s*:\s*"(\$\{([A-Z_]+)\})"', source)
+    assert match, f'the fixture heredoc does not write "{key}" from a shell variable'
+    return _shell_assignment(match.group(2), source)
+
+
+def _binding_segment(url: str) -> str | None:
+    match = re.search(r"/sso/binding/([a-z]+)/", url)
+    return match.group(1) if match else None
+
+
+_POST_URL = "http://idp:9000/application/saml/datanika-saml-e2e/sso/binding/post/"
+_REDIRECT_URL = "http://idp:9000/application/saml/datanika-saml-e2e/sso/binding/redirect/"
+
+
+def _fixture_self_check_block() -> str:
+    """The `py "..."` block that re-reads the fixture the script just wrote.
+
+    Extracted from the shipped script rather than transcribed, so the executable
+    tests below cannot drift away from what actually runs in CI.
+    """
+    source = _bootstrap_source()
+    marker = "d = json.load(open("
+    at = source.index(marker)
+    start = source.rindex('py "', 0, at) + len('py "')
+    end = source.index('\n"\n', at)
+    block = source[start:end]
+    assert "sys.exit" in block, "the extracted region is not the fixture self-check"
+    assert '"' not in block, (
+        "the self-check now contains a double quote, which would terminate the "
+        "shell string it lives in — this extraction, and the script, are broken"
+    )
+    return block
 
 
 def _load_seeder():
@@ -332,44 +414,206 @@ class TestTheSamlProviderBody:
         assert '"idp_cert": "${SAML_IDP_CERT}"' in source
         assert "view_certificate" in source, "nothing fetches the certificate"
 
-    def test_nothing_still_names_a_redirect_binding_endpoint_url(self):
-        """The Issuer and SSO url are compared during validation, so a stale
-        ``/sso/binding/redirect/`` in either place fails the Issuer check even
-        after ``sp_binding`` is corrected — a sixth defect waiting to be the next
-        single-thing-changed red.
 
-        ⚠️ **Match the endpoint, not the phrase.** The first version of this test
-        asserted ``"binding/redirect" not in source`` and went red against the
-        *fixed* script — because the script's own self-check contains the string
-        in order to **reject** it (``if 'binding/redirect' in d[...]: sys.exit``).
-        That is WORKFLOW_RULES §4's counting trap exactly: a file corrected to
-        deny an old behaviour still contains the old phrase, so a substring
-        search over-counts. The URL form (leading ``sso/``, trailing ``/``)
-        appears only in a real endpoint reference.
-        """
-        source = _bootstrap_source()
+# --------------------------------------------------------------------------
+# Defect 7: the two SAML legs are different bindings, and the fixture wrote
+# both from one variable (core#830).
+# --------------------------------------------------------------------------
 
-        endpoints = re.findall(r"\S*sso/binding/redirect/\S*", source)
 
-        assert not endpoints, f"the script still points at redirect-binding endpoints: {endpoints}"
+class TestTheTwoSamlLegsAreNotConflated:
+    """A SAML login crosses the wire twice, on two independently-chosen bindings.
 
-    def test_the_endpoint_guard_can_see_a_real_redirect_reference(self):
-        """Negative control for the test above, and it is not decoration.
+    ===========================  ===========================  ====================
+     leg                          who sends it                 binding
+    ===========================  ===========================  ====================
+     AuthnRequest (SP -> IdP)     ``_saml_login``: a 302 to     **HTTP-Redirect**
+                                  ``{idp_sso_url}?SAMLRequest=``
+     Response (IdP -> SP ACS)     authentik, per ``sp_binding``  **HTTP-POST**
+    ===========================  ===========================  ====================
 
-        The first version of that assertion was *too wide* and the obvious repair
-        is to narrow it — at which point the risk inverts and it can become too
-        narrow to see anything. Running the corrected pattern against a line in
-        the shape the defect actually took is what distinguishes "narrow" from
-        "inert".
-        """
-        was_the_defect = (
-            '  \\"issuer\\": \\"${AUTHENTIK_URL}'
-            '/application/saml/datanika-saml-e2e/sso/binding/redirect/\\",'
+    Defect 1 of this file's table fixed the *Response* leg — correctly, and for a
+    security reason that has not changed: an assertion in a URL is kept in proxy
+    logs and browser history and is replayable from either. But the same change
+    also pointed ``idp_sso_url`` at authentik's **POST**-binding endpoint, and
+    added a self-check that rejected the word ``redirect`` anywhere in it. The
+    two fields were literally one shell variable, ``SAML_SSO_URL``, so correcting
+    the Issuer moved the SSO endpoint with it.
+
+    Measured on run 34048476731 (`e9e5b510`, 2026-09-06), on both the attempt and
+    the retry — authentik's own page, captured in Playwright's error context:
+
+        heading "Bad Request"
+        paragraph "The SAML request payload is missing."
+
+    at ``.../sso/binding/post/?SAMLRequest=...&RelayState=...``. The POST-binding
+    endpoint reads its payload from the request **body**; a query string is not
+    one. Corroborated from the other end: the staging app logged
+    ``SAML validation rejected`` **zero** times over the whole container
+    lifetime, with WARNING lines from other loggers present as the control — so
+    the assertion never reached ``_saml_parse`` at all, and this issue's standing
+    description ("the callback is rejected") no longer describes the failure.
+
+    ⚠️ The guard that used to live here banned ``/sso/binding/redirect/``
+    anywhere in the script. Its *intent* was right for ``idp_entity_id`` — that
+    one is compared against the assertion's Issuer — and it was applied
+    file-wide to a property that is **per field**. Recorded rather than quietly
+    deleted: a ban scoped wider than the property it protects will forbid the
+    correct value somewhere else, and that is what happened.
+    """
+
+    def test_the_sso_endpoint_matches_the_binding_the_sp_dials_it_with(self):
+        binding = _sp_binding("singleSignOnService")
+        expected = _BINDING_URL_SEGMENT[binding]
+        url = _fixture_url("idp_sso_url")
+        segment = _binding_segment(url)
+
+        assert segment is not None, f"idp_sso_url is not an authentik SAML SSO endpoint: {url}"
+        assert segment == expected, (
+            f"the SP sends its AuthnRequest on {binding.rsplit(':', 1)[-1]}, so "
+            f"idp_sso_url must name authentik's '{expected}' endpoint; it names "
+            f"'{segment}' ({url}). authentik answers a query-string payload on "
+            "the post endpoint with 'Bad Request: The SAML request payload is "
+            "missing' and the assertion never leaves the IdP (core#830)."
         )
 
-        assert re.findall(r"\S*sso/binding/redirect/\S*", was_the_defect), (
-            "the pattern no longer matches the literal line this test exists to "
-            "catch, so it would pass against the original defect"
+    def test_the_entity_id_is_the_issuer_authentik_actually_stamps(self):
+        """The half the old guard was right about, asserted positively.
+
+        ``_saml_parse`` compares the Response's Issuer against
+        ``idp.entityId``. authentik stamps the provider's ``issuer`` field, so
+        these two must be the same string — and unlike the SSO endpoint, this one
+        genuinely does name the POST-binding URL, because that is what authentik
+        was configured with.
+        """
+        source = _bootstrap_source()
+        match = re.search(r'\\"issuer\\":\s*\\"([^\\]+)\\"', source)
+        assert match, "the SAML provider body no longer sets an issuer"
+
+        assert _fixture_url("idp_entity_id") == match.group(1), (
+            "the fixture's idp_entity_id and the provider's issuer have drifted "
+            "apart; validation compares them and every assertion would be refused"
+        )
+
+    def test_the_scripts_own_fixture_check_pins_the_request_binding(self):
+        """The script re-reads what it wrote and aborts on a mismatch.
+
+        Asserted as the **presence of the right check**, not the absence of the
+        old wording: a file corrected to deny an old behaviour still contains the
+        old phrase (WORKFLOW_RULES §4), and the previous version of this guard
+        was defeated exactly that way.
+        """
+        source = _bootstrap_source()
+        expected = _BINDING_URL_SEGMENT[_sp_binding("singleSignOnService")]
+
+        assert re.search(
+            r"if\s+'sso/binding/" + expected + r"/'\s+not in\s+d\['saml'\]\['idp_sso_url'\]"
+            r"[\s\S]{0,200}?sys\.exit",
+            source,
+        ), (
+            "the fixture self-check no longer refuses an idp_sso_url on the "
+            f"wrong binding ('{expected}' expected)"
+        )
+
+    @pytest.mark.parametrize(
+        ("sso_url", "verdict"),
+        [
+            ("${AUTHENTIK_URL}/application/saml/x/sso/binding/redirect/", "green"),
+            ("${AUTHENTIK_URL}/application/saml/x/sso/binding/post/", "red"),
+            ("${AUTHENTIK_URL}/application/saml/x/metadata/", "red"),
+        ],
+    )
+    def test_the_predicate_is_armed_against_a_synthetic_script(self, sso_url, verdict):
+        """In-suite arming, so the discrimination runs every time CI does.
+
+        A guard shown discriminating once by a hand-run harness is a claim about
+        a past session. The middle row is the shape the real defect took; the
+        last is the shape a careless de-duplication would take (pointing the SSO
+        url at the metadata URL, which has no binding segment at all).
+        """
+        synthetic = f'SAML_SSO_URL="{sso_url}"\n  "idp_sso_url": "${{SAML_SSO_URL}}",\n'
+        expected = _BINDING_URL_SEGMENT[_sp_binding("singleSignOnService")]
+        url = _fixture_url("idp_sso_url", synthetic)
+        agrees = _binding_segment(url) == expected
+
+        assert agrees is (verdict == "green"), (
+            f"the predicate answered {agrees} for {sso_url!r}, expected "
+            f"{verdict}: it cannot tell the defect from the fix"
+        )
+
+    @pytest.mark.parametrize(
+        ("entity_id", "sso_url", "must_exit"),
+        [
+            (_POST_URL, _REDIRECT_URL, False),  # the corrected fixture
+            (_POST_URL, _POST_URL, True),  # defect 7 as it shipped
+            (_REDIRECT_URL, _REDIRECT_URL, True),  # the same collapse, other way
+            (_REDIRECT_URL, _REDIRECT_URL.replace("redirect", "post"), True),
+        ],
+    )
+    def test_the_scripts_own_check_executes_and_refuses_each_shape(
+        self, tmp_path, entity_id, sso_url, must_exit
+    ):
+        """Behavioural, and the reason it exists is defect 6.
+
+        The self-check is the script's last line of defence and it runs as
+        ``python3 -c`` inside a double-quoted shell string, where a stray ``$``
+        or backtick is executed rather than quoted. A block that raises a
+        ``SyntaxError`` aborts the bootstrap and takes the whole tier down —
+        which is exactly how ``Run SSO specs`` came to be ``skipped`` for weeks.
+        Reading it would not catch that; running it does.
+
+        The block is **extracted from the real script**, not transcribed, so it
+        cannot drift away from what ships.
+        """
+        block = _fixture_self_check_block()
+        fixture = tmp_path / "sso-fixture.json"
+        fixture.write_text(
+            json.dumps(
+                {
+                    "saml": {
+                        "idp_metadata_url": "http://idp/metadata/",
+                        "idp_entity_id": entity_id,
+                        "idp_sso_url": sso_url,
+                        "idp_cert": "MIIB-not-a-real-cert",
+                        "sp_entity_id": "datanika",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", block.replace("${FIXTURE_FILE}", fixture.as_posix())],
+            capture_output=True,
+        )
+        stderr = result.stderr.decode("utf-8", "replace")
+
+        assert "SyntaxError" not in stderr and "Traceback" not in stderr, (
+            f"the self-check does not even run: {stderr}"
+        )
+        assert (result.returncode != 0) is must_exit, (
+            f"entity_id={entity_id!r} sso_url={sso_url!r} -> rc={result.returncode}, "
+            f"expected {'refusal' if must_exit else 'acceptance'}. {stderr}"
+        )
+
+    def test_the_two_legs_use_different_bindings_in_the_app(self):
+        """Positive control for the derivation itself.
+
+        If both reads returned the same value — or if the regexes silently
+        matched nothing and the mapping lookup happened to agree — every
+        assertion above would be satisfied by an instrument that is not reading
+        anything. The app declares Redirect for the request and POST for the
+        response, one line apart, and the whole point of this section is that
+        those are different.
+        """
+        request_leg = _sp_binding("singleSignOnService")
+        response_leg = _sp_binding("assertionConsumerService")
+
+        assert request_leg in _BINDING_URL_SEGMENT
+        assert response_leg in _BINDING_URL_SEGMENT
+        assert request_leg != response_leg, (
+            "sso_routes.py now declares the same binding for both SAML legs; if "
+            "that is deliberate, this section's premise needs rewriting"
         )
 
 

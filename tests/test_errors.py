@@ -51,6 +51,7 @@ agree and names the difference.
 """
 
 import ast
+import builtins
 import contextlib
 import gc
 import importlib
@@ -415,3 +416,178 @@ class TestTheCensusCanStillSeeOne:
     def test_it_does_not_see_a_class_declaration(self):
         """``class X(ValueError)`` is AC6's business, and is now zero anyway."""
         assert bare_value_error_sites("class X(ValueError):\n    pass\n", "x.py") == []
+
+
+# ==========================================================================
+# core#1113 — the seven sites whose text is for an operator or a developer.
+# ==========================================================================
+
+#: The core half of core#1113's table, as (module path -> function name). Cloud's
+#: two (``billing/paddle.py``, ``billing/e2e_admin.py``) are guarded by cloud's own
+#: twin of this file, for the reason stated at the top: a per-repo guard satisfied
+#: by core and blind to cloud is the shape that let core#943 happen.
+#:
+#: ⚠️ The pairs are named rather than derived, and that is a weakness — so
+#: ``test_every_named_function_exists_and_raises_something`` refuses a vacuous pass,
+#: and ``TestTheOperatorTextScannerCanStillSeeOne`` arms the scanner in-suite
+#: against a synthetic module in exactly the shape of a reverted site.
+_OPERATOR_TEXT_SITES: dict[str, str] = {
+    "datanika/services/audit_service.py": "_redact",
+    "datanika/services/auth_redirects.py": "login_error_path",
+    "datanika/ui/components/secure_input.py": "autofill_attrs",
+}
+
+
+def raised_class_names(source: str, function: str) -> list[str]:
+    """Every class name raised inside ``function``, as written.
+
+    Names only — resolution to a class is done by importing, because the property
+    under test is the **MRO** and a source-text answer cannot see inheritance. Same
+    reasoning as AC6's guard at the top of this file.
+    """
+    tree = ast.parse(source, filename=function)
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != function:
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Raise) or inner.exc is None:
+                continue
+            exc = inner.exc
+            call = exc.func if isinstance(exc, ast.Call) else exc
+            name = getattr(call, "id", None) or getattr(call, "attr", None)
+            if name:
+                names.append(name)
+    return names
+
+
+class TestOperatorTextIsOutsideValueError:
+    """core#1113, decided by Product 2026-09-06: option (2) for all seven.
+
+    Not a style preference. ``UserFacingError``'s docstring forbids operator and
+    developer text under the marker, and once core#1094's contract step landed the
+    marker is what decides whether a string reaches a person. These seven carried an
+    env var name, an issue number, an instruction to edit a dict, and an internal
+    invariant about a payload the user never composed.
+
+    ⚠️ **Moving a raise out of ``ValueError``'s subtree is a real behaviour change and
+    it lands immediately** — callers catching ``ValueError`` stop catching it. Checked
+    for all five core sites before the move, by reading the call sites rather than
+    trusting the issue: all 4 ``log_action`` callers pass payloads our own code built
+    (three inside ``except Exception``, the fourth a literal ``{}``); all 18
+    ``login_error_path`` callers pass literals, 13 distinct, every one already in
+    ``AUTH_ERROR_KEYS``; ``autofill_attrs`` raises at page build. No
+    ``except ValueError`` appears in any of the files involved.
+    """
+
+    @pytest.mark.parametrize(("path", "function"), sorted(_OPERATOR_TEXT_SITES.items()))
+    def test_the_site_raises_nothing_under_valueerror(self, path, function):
+        """🚨 **Fails closed on a name it cannot resolve**, and that is not tidiness.
+
+        The first version treated an unresolvable name as clean, and the mutation
+        sweep refuted it: reverting a raise to ``UserFacingError`` **without also
+        restoring the import** leaves ``getattr(module, "UserFacingError")`` returning
+        ``None``, so the offender list stayed empty and two arms came back GREEN where
+        RED was declared. That is §42's family — *"no offender found"* is true when
+        there is none and equally true when the lookup could not run.
+        """
+        import importlib
+
+        module_name = path.removesuffix(".py").replace("/", ".")
+        module = importlib.import_module(module_name)
+        errors_module = importlib.import_module("datanika.errors")
+        source = (_PACKAGE_ROOT.parent / path).read_bytes().decode("utf-8")
+
+        offending, unresolved = [], []
+        for name in raised_class_names(source, function):
+            # module attribute (`from x import Y`), then datanika.errors (the
+            # `errors.Y` dotted style), then builtins (`raise ValueError(...)`).
+            cls = getattr(module, name, None)
+            if cls is None:
+                cls = getattr(errors_module, name, None)
+            if cls is None:
+                cls = getattr(builtins, name, None)
+            if not isinstance(cls, type):
+                unresolved.append(name)
+            elif issubclass(cls, ValueError):
+                offending.append(name)
+
+        assert not unresolved, (
+            f"{path}::{function} raises {unresolved}, which resolve to no class here. "
+            "Treating that as clean is how a reverted site passes: the raise moves "
+            "back to UserFacingError while the import still names something else"
+        )
+        assert not offending, (
+            f"{path}::{function} raises {offending}, which are ValueError subclasses. "
+            "After core#1094's contract step that text renders to a user who can do "
+            "nothing with it (core#1113)"
+        )
+
+    @pytest.mark.parametrize(("path", "function"), sorted(_OPERATOR_TEXT_SITES.items()))
+    def test_every_named_function_exists_and_raises_something(self, path, function):
+        """Anti-vacuity. A renamed function makes the test above pass on an empty
+        list — the census-that-read-nothing failure, one layer in."""
+        source = (_PACKAGE_ROOT.parent / path).read_bytes().decode("utf-8")
+
+        assert raised_class_names(source, function), (
+            f"no raise found in {path}::{function} — either it was renamed or the "
+            "scanner has drifted, and either way this guard is reporting on nothing"
+        )
+
+    def test_the_open_question_annotation_is_gone(self):
+        """AC3. The ``# core#1113`` comments said the decision had not been taken.
+
+        Banned by the sentence that *made* them open questions, not by the issue
+        number: the number is still a legitimate citation for why each class is what
+        it is, and a guard banning it would forbid explaining the decision.
+        """
+        stale = [
+            path.relative_to(_PACKAGE_ROOT.parent).as_posix()
+            for path in _source_files()
+            if "keep core#1094 step 2 behaviour-neutral" in path.read_bytes().decode("utf-8")
+        ]
+
+        assert not stale, (
+            "these files still carry core#1094's temporary-conversion note, which says "
+            f"the core#1113 decision is open. It is not: {stale}"
+        )
+
+
+class TestTheOperatorTextScannerCanStillSeeOne:
+    """Product's replacement AC2, part 3: revert a site and confirm it is named.
+
+    In-suite rather than a mutation somebody ran once, for the reason the file's
+    other controls exist: a scanner that stops matching reports a clean tree.
+    """
+
+    _REVERTED = (
+        "from datanika.errors import UserFacingError\n"
+        "\n"
+        "def login_error_path(reason: str) -> str:\n"
+        '    raise UserFacingError("add it to AUTH_ERROR_KEYS with an i18n key")\n'
+    )
+
+    def test_it_names_the_class_a_reverted_site_would_raise(self):
+        assert raised_class_names(self._REVERTED, "login_error_path") == ["UserFacingError"]
+
+    def test_it_sees_a_raise_of_a_dotted_name(self):
+        """``raise errors.UserFacingError(...)`` is the evasion an attribute-blind
+        scanner walks past, and it is an ordinary import style."""
+        source = 'def f():\n    raise errors.UserFacingError("x")\n'
+
+        assert raised_class_names(source, "f") == ["UserFacingError"]
+
+    def test_it_ignores_raises_in_other_functions(self):
+        """Otherwise a neighbouring function's legitimate ``UserFacingError`` would
+        fail the site under test, and the guard gets deleted."""
+        source = (
+            'def other():\n    raise UserFacingError("a refusal for a user")\n\n'
+            'def target():\n    raise InternalInvariantError("not for a user")\n'
+        )
+
+        assert raised_class_names(source, "target") == ["InternalInvariantError"]
+
+    def test_it_reports_nothing_for_a_function_that_does_not_exist(self):
+        """The anti-vacuity test above depends on this being the empty list rather
+        than an exception."""
+        assert raised_class_names("def f():\n    pass\n", "missing") == []

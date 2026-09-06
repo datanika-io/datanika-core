@@ -723,6 +723,7 @@
   "dag.delete_reversible": "这不会导致失败——下游作业只会使用当时已有的数据运行。",
   "dag.delete_confirm": "是，移除依赖关系",
   "dag.deleted_toast": "依赖关系已移除，下游作业不再等待。",
+  "dag.remove_missing": "该依赖关系未被移除——它可能已经不存在了。",
   "uploads.destination_help": "此处仅列出 Datanika 能够写入的连接类型。MySQL 和 SQLite 支持作为抽取源，但没有可将数据写入它们的加载驱动。",
   "uploads.destination_invalid": "无法将数据加载到该类型的连接中——它仅支持作为数据源。请从列表中选择一个目标。",
   "pipelines.destination_help": "流水线通过 dbt 运行，而 dbt 需要目标端的适配器。Databricks 和 Synapse 可以接收已加载的数据，但没有适配器；MySQL 和 SQLite 仅可作为抽取源。",

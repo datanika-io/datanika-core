@@ -59,6 +59,7 @@ class AuditResourceType(enum.StrEnum):
 
     API_KEY = "api_key"
     CONNECTION = "connection"
+    DEPENDENCY = "dependency"
     IMPORT = "import"
     MEMBER = "member"
     NOTIFICATION_CHANNEL = "notification_channel"

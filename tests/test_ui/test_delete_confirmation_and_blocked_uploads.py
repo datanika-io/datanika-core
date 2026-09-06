@@ -232,11 +232,16 @@ CENSUS_DISAGREEMENT: dict[str, str] = {
         "confirmation is a typed one (SPEC_PII_SEPARATION D9), not an "
         "`alert_dialog.action`; see FORM_CONFIRMED."
     ),
-    "remove_dependency": (
-        "verb-only, and this one is a defect rather than a design: it persists "
-        "and writes no audit row at all. Filed as core#934 — the disagreement "
-        "is what surfaced it, which is the argument for keeping both lists."
-    ),
+    # `remove_dependency` was here, declared as "a defect rather than a design: it
+    # persists and writes no audit row at all. Filed as core#934." That is fixed — the
+    # handler now writes a `delete` row on `dependency` — so the two derivations agree
+    # about it and the declaration stopped being true.
+    #
+    # 🚨 Deleted rather than silenced, per SPEC_AUDIT_TRAIL §5. The moment the audit
+    # landed, `test_each_declared_disagreement_still_disagrees` went red **by design and
+    # with the right message** — that is the ratchet working, not a break to route around.
+    # A stale declaration is a hole with a reassuring comment over it, which is what this
+    # file says about its own sibling exclusions.
     "remove_model": "verb-only and form-local; see UNCONFIRMED_BY_DESIGN.",
     "remove_column_test": "verb-only and form-local; see UNCONFIRMED_BY_DESIGN.",
 }

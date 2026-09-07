@@ -534,3 +534,108 @@ class TestWrongBuildCanHideASpecFailure:
         assert classify_verdict("cancelled", "skipped") is UNMEASURED
         assert classify_verdict("cancelled", "cancelled") is UNMEASURED
         assert classify_verdict("cancelled", None) is UNMEASURED
+
+
+# --------------------------------------------------------------------------------------
+# 6. `sparse` grades DILUTION, never LENGTH (core#1154)
+# --------------------------------------------------------------------------------------
+
+
+class TestSparsenessGradesDilutionNotLength:
+    """`span` grows for two opposite reasons and the shipped predicate could not tell them apart.
+
+    A streak reaches further back either because unmeasured runs sit *between* the greens (it is
+    diluted -- what `sparse` means) or because there are simply *many* consecutive greens (the
+    opposite). Grading on `span` therefore penalised a tier for getting healthier.
+
+    🔑 The two tests this class replaces were both real and both discriminating -- and both held
+    ``n = 3`` and varied only ``span``. A predicate with two inputs was armed against one of
+    them, so every defect living in the interaction was invisible. The property that catches it
+    is monotonicity, and it cannot be stated at a fixed streak length.
+    """
+
+    def test_a_dense_streak_of_any_length_graduates(self):
+        """The measured case: `e2e-staging` on `dev`, 14 consecutive greens, nothing unmeasured.
+
+        This is the densest evidence the instrument can receive. It returned `sparse` beside the
+        sentence "drawn from a window that measured almost nothing", which was false.
+        """
+        r = Reading.from_classes([PASS] * 14, required=3)
+        assert r.measured == 14
+        assert r.gaps == 0, "no unmeasured run sits inside this window"
+        assert r.state == "graduate"
+
+    def test_a_streak_longer_than_the_gap_budget_is_still_graduatable(self):
+        """Under `span > max_span` a streak of 11+ could never graduate however dense it was.
+
+        The budget for unmeasured runs was `max_span - n`, which shrinks as the tier improves
+        and goes negative at `n = 11`. That is not a threshold, it is a ceiling on health.
+        """
+        for n in (11, 14, 40):
+            r = Reading.from_classes([PASS] * n, required=3)
+            assert r.state == "graduate", f"a perfect streak of {n} must be able to graduate"
+
+    def test_appending_a_green_never_moves_the_verdict_away_from_graduation(self):
+        """AC3 -- monotonicity, and it is the property the fixed-`n` tests could not state.
+
+        Measured on the real `e2e-sso` history: at 14 runs read the verdict was `graduate`; at
+        15 it was `sparse`. The tier had gained a sixth consecutive green.
+        """
+        history = [
+            UNMEASURED, UNMEASURED, UNMEASURED, UNMEASURED, PASS, PASS,
+            UNMEASURED, UNMEASURED, UNMEASURED, UNMEASURED, PASS,
+            UNMEASURED, PASS, PASS, PASS,
+        ]  # fmt: skip
+        seen_graduate = False
+        for k in range(3, len(history) + 1):
+            state = Reading.from_classes(history[:k], required=3).state
+            if state == "graduate":
+                seen_graduate = True
+            elif seen_graduate:
+                assert state != "sparse", (
+                    f"verdict went graduate -> sparse at {k} runs read; the only thing that "
+                    "changed is that the tier gained a green"
+                )
+
+    def test_a_genuinely_diluted_streak_is_still_refused(self):
+        """Anti-vacuity control. The fix must not simply make everything graduate.
+
+        `sparse` exists for "three greens across a fortnight"; that case must stay refused.
+        """
+        seq = [PASS] + [UNMEASURED] * 12 + [PASS, UNMEASURED, PASS]
+        r = Reading.from_classes(seq, required=3)
+        assert r.streak == 3
+        assert r.gaps == 13
+        assert r.state == "sparse"
+        assert not r.graduated, "a diluted streak must not graduate on its own"
+
+    def test_the_gap_threshold_discriminates_in_both_directions(self):
+        """A threshold narrowed until it matches nothing also stops matching real dilution."""
+        just_under = [PASS] + [UNMEASURED] * 7 + [PASS, PASS]
+        just_over = [PASS] + [UNMEASURED] * 8 + [PASS, PASS]
+        assert Reading.from_classes(just_under, required=3).state == "graduate"
+        assert Reading.from_classes(just_over, required=3).state == "sparse"
+
+    def test_the_gap_count_is_reported_so_the_two_cases_are_distinguishable(self):
+        """AC4 -- `sparse` on 0 gaps and `sparse` on 13 printed the same word.
+
+        A reader could not tell a dense streak that tripped the length ceiling from a genuinely
+        diluted one. The gap count is the field that records the property the state is about.
+        """
+        dense = Reading.from_classes([PASS] * 14, required=3)
+        diluted = Reading.from_classes([PASS] + [UNMEASURED] * 12 + [PASS, PASS], required=3)
+        assert dense.gaps == 0
+        assert diluted.gaps == 12
+        assert dense.gaps != diluted.gaps
+
+    def test_a_red_inside_the_window_still_resets_regardless_of_gaps(self):
+        """Control: the gap rule must not rescue a streak that a FAIL has broken."""
+        r = Reading.from_classes([PASS, PASS, FAIL, PASS, PASS], required=3)
+        assert r.streak == 2
+        assert r.state == "not-yet"
+
+    def test_an_unreadable_run_still_breaks_the_streak_and_is_not_a_gap(self):
+        """`UNMEASURED` is transparent; `UNREADABLE` is not, and must not be counted as a gap."""
+        r = Reading.from_classes([PASS, PASS, UNREADABLE, PASS, PASS], required=3)
+        assert r.streak == 2
+        assert r.state == "not-yet"

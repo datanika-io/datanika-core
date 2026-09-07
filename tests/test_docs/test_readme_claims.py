@@ -30,12 +30,27 @@ README = Path(__file__).resolve().parents[2] / "README.md"
 # This list covers only types held back *before* launch. Types that were offered
 # and then withdrawn are not listed here — they come from
 # ``WITHDRAWN_SOURCE_TYPES`` below, which is the service's own set.
-UNMARKETED_TYPES = {
-    # core#310 — OpenAPI source generation is behind a deferred feature and has
-    # no connector page, setup guide, or docs entry. Counting it would inflate
-    # the public number by one.
-    "openapi",
-}
+# 🔴 EMPTY since landing#519 (2026-09-07). It held ``"openapi"``, justified as
+# *"OpenAPI source generation is behind a deferred feature and has no connector
+# page, setup guide, or docs entry"* — and **every clause of that had become
+# false**: the parser, Swagger 2.0 conversion, auth extraction and paginator
+# inference all ship, ``openapi_fetch.py`` landed the deferred P2,
+# ``_build_openapi_source`` is wired into the runner, and the setup guide is
+# ``datanika-landing/src/content/connectors/openapi.md``.
+#
+# 🚨 The shape is worth more than the entry. Three separate exclusion markers
+# for ``openapi`` — this one, landing's ``connectors.ts`` omission, and
+# ``check-config-field-parity.py``'s ``UNMARKETED`` — **each justified itself by
+# an absence one of the others created.** This one cited the missing guide;
+# landing's parity skip cited the missing connector page; the missing page cited
+# neither. Three guards, all green, all pointing at each other, while a shipping
+# connector appeared in no number we publish (landing#508 / landing#519).
+#
+# **So: do not add an entry here whose reason is that some other artifact is
+# missing.** A skip earns its place by naming something that will never exist,
+# not something nobody has got round to — and if you add one, name the artifact
+# and the issue that would remove it.
+UNMARKETED_TYPES: set[str] = set()
 
 # Withdrawn types are imported, never re-listed. `connection_service` already
 # owns the set that removes a type from `SOURCE_TYPES`, `CONFIG_SCHEMAS` and the

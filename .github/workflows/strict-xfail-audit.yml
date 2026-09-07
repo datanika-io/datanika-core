@@ -1,0 +1,70 @@
+# A strict xfail must not outlive the issue it pins (core#1025, second half).
+#
+# 🚨 SCHEDULED AND DISPATCH ONLY — never `pull_request`.
+# This job reads the GitHub API. On a PR trigger, somebody closing an issue would turn an
+# unrelated department's branch red for a reason that has nothing to do with their diff.
+# core#1025 states the tier requirement explicitly and this file is the whole of it.
+#
+# ⚠️ A scheduled workflow runs the DEFAULT BRANCH's copy of itself (WORKFLOW_RULES §7). Merging
+# this to `dev` does not start it; it starts on the promotion to `master`. Verify with
+#   git show origin/master:.github/workflows/strict-xfail-audit.yml
+# and NOT by looking at the merge. `workflow_dispatch --ref dev` does use dev's copy, so it is
+# the right way to exercise this before promotion and the wrong thing to conclude from.
+name: strict-xfail-audit
+
+on:
+  schedule:
+    # 04:10 UTC daily — after the 03:00 backup and the 03:30 connector smoke, so a slow night
+    # does not stack three API-reading jobs on one runner window.
+    - cron: "10 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+concurrency:
+  group: strict-xfail-audit
+  # A verdict, not a mutation: a newer run supersedes an older one safely.
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Audit strict xfails against their issues
+        env:
+          # `cloud#N` tokens resolve against the PRIVATE datanika-cloud repo, which the default
+          # GITHUB_TOKEN cannot read. Without this the audit exits 2 (could-not-measure) rather
+          # than passing — which is the correct direction, and is asserted in the guard.
+          GH_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          python scripts/strict_xfail_issue_audit.py | tee audit.txt
+          rc=${PIPESTATUS[0]}
+
+          # 0 = clean · 1 = a closed issue is still pinned · 2 = measured nothing.
+          # 2 must NOT read as a pass: an unreadable API is the reassuring failure this whole
+          # check exists to refuse.
+          if [ "$rc" -eq 2 ]; then
+            echo "::error::The strict-xfail audit could not measure the tree. Not a pass."
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            exit "$rc"
+          fi
+
+          # A positive artifact, so "no findings" cannot be confused with "nothing ran".
+          # `grep -c` on an empty file prints 0 and exits 1; assert the line is present.
+          grep -qE '^strict xfail markers applied : [1-9][0-9]*$' audit.txt || {
+            echo "::error::The audit produced no marker census line. It reported nothing, which is not the same as reporting nothing wrong."
+            exit 1
+          }
+          echo "audit clean"

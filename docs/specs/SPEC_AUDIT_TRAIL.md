@@ -1,9 +1,11 @@
 # SPEC — The audit trail: what a mutating handler owes the record
 
-**Author:** Product · **Status:** contract, ready for Engineering · **Written:** 2026-09-06
+**Author:** Product · **Status:** implemented on `dev`, **not yet in production** · **Written:** 2026-09-06
+**Amended:** 2026-09-07 — §4 (three clauses falsified by measurement), §4.4 (the mutation table
+restated them), §6 (a branch-status ruling).
 **Binds:** Engineering. **Source of truth for:** [core#934].
-**Verified against:** `origin/dev` @ `e9e5b51` (fetched 2026-09-06), and `origin/master` @ `1bd1e5c`
-where a production claim is made.
+**Verified against:** `origin/dev` @ `e9e5b51` (fetched 2026-09-06), re-verified against
+`origin/dev` @ `dc92f45` and `origin/master` @ `5726b8f` on 2026-09-07 for every production claim.
 
 > ⚠️ **This spec decides one thing and refuses three others.** It states the contract every audit
 > writer is held to, then applies it to the one persisted mutating surface in the product that has
@@ -212,8 +214,32 @@ existing failure idiom rather than inventing a new tone; `dag.` is the key names
 
 ## §4 — Tests: what each one kills, and what it cannot
 
-Three tests. **They are not redundant** — each closes a failure the other two are satisfied by, and
-the spec names which, because a test suite whose members overlap is one test with three names.
+**Four tests.** They are not redundant — each closes a failure the others are satisfied by, and the
+spec names which, because a test suite whose members overlap is one test with four names.
+
+> 🔴 **THIS SECTION WAS WRONG IN THREE OF ITS CLAUSES, AND TWO OF THEM WENT RED ON CORRECT CODE.**
+> Written 2026-09-06 by reasoning about the harness; falsified 2026-09-06/07 by Engineering
+> *running* it, on [core#1127] and [core#934]. The corrections are inline below, each beside the
+> clause it falsifies.
+>
+> 🚨 **Read the direction of the error, not just the fact of it.** A test that reds on *broken* code
+> and a test that reds on *correct* code are not two grades of the same mistake. The second one
+> tells an implementer their working implementation is wrong, and the cheapest way to make it pass
+> is to change the implementation — so §4.2's clause, written to *prevent* a second-session audit,
+> could have produced one. **A spec clause that cannot pass against a correct implementation is a
+> defect in the spec with the failure signature of a defect in the code.**
+>
+> 🔑 **What generalises to every acceptance criterion I write, and the reason this warning is at the
+> top of the section rather than in a footnote:** all three wrong clauses share one shape — they
+> assert on **an intermediate state of the machinery** (`session.new`, `session.dirty`, "a row
+> exists after `commit()`") rather than on **the property the user is owed** ("the record and the
+> mutation stand or fall together"). Machinery states are the ones I cannot check by reading, and
+> they are the ones a harness quietly changes underneath a spec. **Prefer the invariant; make the
+> implementer choose the assertion that detects it, and require them to show the red.**
+>
+> This is `QA_RULES` §29 and [core#864] arriving in a Product artifact: *an AC that fails on correct
+> code is worse than one that passes on broken code.* Recorded here rather than only on the issue,
+> because the next person to read this section is the next person at risk of it.
 
 ### 4.1 · T1 — the happy path
 
@@ -283,25 +309,60 @@ against code that audits in a transaction of its own.
 Patch `commit` on the **first** session the handler is handed so that it raises. Assert **zero**
 audit rows *and* that the dependency is still live.
 
-**Kills:** the second-session implementation from the other side — its audit row commits before the
-outer transaction fails, so T3 finds one row and goes red.
+**Kills:** the mutation and the record coming apart under failure — a handler that leaves the edge
+removed while the audit row is gone, or the reverse.
 
 ⚠️ **"The first session" is the precision that makes T3 work.** Patching `Session.commit`
 class-wide breaks the second session too, and the mutant then passes.
 
-### 4.4 · Prove each red before you believe it
+> 🚨 **CORRECTED 2026-09-07, [core#934] — T3 does NOT kill the second-session implementation "from
+> the other side", which this clause claimed.** The claim assumed the second session commits
+> independently, so a rolled-back outer transaction would leave its audit row behind and T3 would
+> find one. **In this harness it cannot**: `tests/conftest.py` gives the suite a single SQLite
+> connection, so a "second" `get_sync_session()` inside a test *is* the same transaction and rolls
+> back with it. T3 finds zero rows and stays green against the mutant.
+>
+> **T2 is the only thing that kills that mutant** — measured twice, on [core#1127] M3 and again on
+> [core#934]. T3 remains worth having for the property restated above; it is simply not a second
+> line of defence against the one failure §4.2 covers.
+>
+> 🔑 **The general form, which is why this is written down rather than quietly fixed:** *two tests
+> that appear to attack a defect from opposite sides may both be reading the same instrument.* The
+> redundancy was an illusion produced by the fixture, not by the tests — and a spec that promises
+> two independent kills where one exists invites deleting "the redundant one", which here would have
+> deleted the only one that works. **Before claiming two tests are independent, ask what shared
+> fixture they both sit on.**
 
 Per `PRODUCT_RULES` §15b and the fifteen controls in
 `tests/test_ui/test_delete_confirmation_and_blocked_uploads.py`: **apply the mutation to the real
 file, run the named test, and check it fails *for the stated reason*.** A red for an unrelated
 reason is not a control.
 
-| mutation on the real handler | must go red |
-|---|---|
-| delete the `_audit` call | T1 |
-| move the `_audit` call into its own `get_sync_session()` block | **T2 and T3** |
-| move the `_audit` call below `session.commit()` | T1 |
-| drop the `if` on the service's return in AC2 | T1's delete case, seeded with a `dep_id` that does not exist |
+> 🔴 **THIS TABLE WAS WRONG IN TWO OF ITS FOUR ROWS, and it stayed wrong for a day after the
+> clauses above it were corrected.** The prose in §4.1 and §4.3 was fixed; **the table that an
+> implementer actually runs was not.** Corrected 2026-09-07 against Engineering's measurements on
+> [core#934].
+>
+> 🔑 **That gap is the lesson, not the two rows.** A correction applied to the *explanation* and not
+> to the *checklist* leaves the artifact people execute still carrying the falsified claim — and it
+> reads as more authoritative afterwards, because the section around it now looks freshly reviewed.
+> **When a clause is corrected, grep the spec for every other place that clause is restated**, and
+> fix the summary in the same edit. Both wrong rows here named a test that *cannot see* the
+> mutation, so an implementer applying the mutation would watch the named test stay green and
+> reasonably conclude their own implementation, not the table, was at fault.
+
+| mutation on the real handler | must go red | ⚠️ notes |
+|---|---|---|
+| delete the `_audit` call | T1 | |
+| move the `_audit` call into its own `get_sync_session()` block | **T2 only** | 🔴 was *"T2 and T3"*. T3 cannot see it — §4.3: this harness runs one SQLite connection, so the "second" session is the same transaction and rolls back with it. Measured twice, [core#1127] M3 and [core#934]. |
+| move the `_audit` call below `session.commit()` | **T4** (the commit watermark) | 🔴 was *"T1"*. T1 cannot see it — §4.1: the fixture stubs `commit()` to `flush()`, so a row added after it is still found by any later query. Measured: the mutation left **all nine** other tests green. |
+| drop the `if` on the service's return in AC2 | T1's delete case, seeded with a `dep_id` that does not exist | |
+
+**T4 — the commit watermark.** Record how many `audit_logs` rows are already in the transaction at
+the moment the stubbed `commit()` is called; expect 1, a below-`commit()` placement gives 0. It is
+the only assertion that separates "the row is in the transaction the handler committed" from "the
+row is in the transaction the *fixture* is holding open", and §4.1 has the full derivation including
+why it must count **rows, not objects**.
 
 ---
 
@@ -337,6 +398,35 @@ Both were found by the §2 clauses, which is the argument for writing the contra
 patching the one site that prompted it. Both are filed — **[core#1127]** and **[core#1128]** — and are named here so an
 implementer of [core#934] does not silently absorb them, and so the next person to read this spec
 does not re-derive them.
+
+> ### 📌 Status, ruled 2026-09-07 (Product): **fixed on `dev`, still LIVE IN PRODUCTION. §6 is not
+> resolved and must not be marked so.**
+>
+> Engineering asked whether §6 could be retired now that [PR #1144] has merged. **No — not yet**,
+> and the reason is the same rule that governs issue closure: a fix on `dev` is not a fix a user
+> has. Measured against `origin/master` (production) on 2026-09-07, not inferred from the PR:
+>
+> | | `origin/master` (live) | `origin/dev` |
+> |---|---|---|
+> | `models/audit_log.py` | **36 lines, no `AuditResourceType`** | 94 lines, `AuditResourceType` present |
+> | `ui/state/dag_state.py` `_audit` calls | **0** | 2 |
+> | `settings_state.py` ownership action | **the non-member string** | corrected, with the reason in a comment |
+>
+> **So every sentence in §6.1 and §6.2 is true of the product as shipped**, including the two that
+> read worst: the highest-privilege action in the product still writes no audit row, and an admin
+> asking *"who removed this person?"* still picks `membership` and still gets an empty table.
+>
+> **Retire §6 when the promotion that carries [PR #1144] and [PR #1146] verifies on `master`** —
+> then rewrite both clauses in the past tense with the promotion SHA, rather than deleting them.
+> §1 is the reason to keep the text at all: §6.2 *is* the worked example of failure mode B, and a
+> spec that deletes its own worked example keeps the taxonomy and loses the evidence for it.
+>
+> ⚠️ **The §2.3 clause above is correct as written and is NOT in tension with this.** §2.3 binds an
+> implementer, who works on `dev`, so it must describe `dev` — the filter list *is* derived there,
+> and telling someone to hand-edit a list that no longer exists would be the worse error. §6
+> describes what a user currently suffers. **Two sections of one spec may honestly describe two
+> branches, provided each says which branch it means.** They did not, until this note; that
+> ambiguity is what made "is §6 resolved?" a question with two defensible answers.
 
 ### 6.1 · [core#1127] — a `transfer_ownership` audit row has never been written (§2.2)
 
@@ -391,3 +481,6 @@ same correction `PII_PAYLOAD_KEYS` already made for the redactor, for the same r
 [core#1127]: https://github.com/datanika-io/datanika-core/issues/1127
 [core#1128]: https://github.com/datanika-io/datanika-core/issues/1128
 [core#1081]: https://github.com/datanika-io/datanika-core/issues/1081
+[core#864]: https://github.com/datanika-io/datanika-core/issues/864
+[PR #1144]: https://github.com/datanika-io/datanika-core/pull/1144
+[PR #1146]: https://github.com/datanika-io/datanika-core/pull/1146

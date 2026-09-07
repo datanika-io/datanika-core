@@ -308,25 +308,58 @@ FILTER_OPS = {
 }
 
 
-def _extract_rows_loaded(pipeline) -> int:
-    """Extract total rows loaded from dlt pipeline's normalize step.
+def _extract_rows_loaded(pipeline) -> int | None:
+    """Total rows loaded, or ``None`` when we could not read it (core#1170 AC3).
 
     dlt 1.21+ stores items_count in NormalizeInfo.row_counts (from the
     normalize step), not in LoadJobMetrics. We read it from the pipeline's
     last_trace after run() completes.
+
+    🚨 **``None`` is not ``0``, and this function used to return ``0`` for both.**
+    Every failure path below yielded a zero on an otherwise-green run —
+    indistinguishable from a genuinely empty load, and stored as one.
+    ``models/run.py`` deliberately pays for the distinction (``rows_loaded`` is
+    ``Mapped[int | None]``, ``nullable=True``, and its sibling
+    ``bytes_processed`` carries a comment saying ``NULL`` means *"not measured"*
+    and that writing ``0`` *"would erase that"*). This erased it anyway.
+
+    It is not cosmetic: ``ui/state/model_state.py`` decides which empty state to
+    show by asking whether any successful run loaded rows. A coerced ``0`` for
+    *"we could not read the trace"* answers that question wrongly, and the user
+    is shown a verdict derived from a number nobody measured.
+
+    ⚠️ **A measured zero must stay ``0``.** Returning ``None`` for an empty load
+    would replace one conflation with its mirror image.
+    `tests/test_services/test_rows_loaded_is_not_a_guess.py` asserts both
+    directions; the failure cases alone are satisfied by a function that always
+    returns ``None``.
     """
     try:
         trace = pipeline.last_trace
         if trace is None:
-            return 0
+            logger.warning(
+                "rows_loaded not measured: pipeline has no last_trace. The run is otherwise "
+                "fine; the count is unknown rather than zero (core#1170)."
+            )
+            return None
         normalize_info = trace.last_normalize_info
         if normalize_info is None:
-            return 0
+            logger.warning(
+                "rows_loaded not measured: trace carries no last_normalize_info. The run is "
+                "otherwise fine; the count is unknown rather than zero (core#1170)."
+            )
+            return None
         row_counts = normalize_info.row_counts
         # row_counts is {table_name: count} — exclude dlt internal tables
         return sum(v for k, v in row_counts.items() if not k.startswith("_dlt_"))
     except Exception:
-        return 0
+        # `exception` rather than `warning`: this branch means dlt's trace shape
+        # changed under us, and the traceback is the only thing that says how.
+        logger.exception(
+            "rows_loaded not measured: reading dlt's trace raised. The count is unknown "
+            "rather than zero (core#1170)."
+        )
+        return None
 
 
 class DltRunnerError(UserFacingError):

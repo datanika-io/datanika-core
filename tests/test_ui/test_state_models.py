@@ -418,16 +418,21 @@ class TestRunItem:
             status="success",
             started_at="2024-01-01",
             finished_at="2024-01-01",
-            rows_loaded=100,
+            rows_loaded="100",
             error_message="",
         )
         assert item.id == 10
         assert item.status == "success"
-        assert item.rows_loaded == 100
+        # core#1170 AC3: rendered text, not a number — the never-measured case has to
+        # be expressible on the same field, and an em dash is not an int.
+        assert item.rows_loaded == "100"
 
     def test_defaults(self):
         item = RunItem()
         assert item.id == 0
         assert item.status == ""
-        assert item.rows_loaded == 0
+        # core#1170 AC3: was `== 0`. The default is now empty text, and a row whose
+        # count was never measured renders `ROWS_NOT_MEASURED` rather than a zero
+        # nobody counted.
+        assert item.rows_loaded == ""
         assert item.error_message == ""

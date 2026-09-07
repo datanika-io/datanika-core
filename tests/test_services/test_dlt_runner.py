@@ -59,8 +59,16 @@ def _setup_pipeline_row_counts(mock_pipeline, row_counts: dict):
 # ---------------------------------------------------------------------------
 class TestExtractRowsLoaded:
     def test_no_trace(self):
+        """core#1170 AC3: this asserted ``== 0`` and that WAS the defect.
+
+        No trace means we did not measure. Zero means we measured nothing. The schema
+        distinguishes them (``rows_loaded`` is ``Mapped[int | None]``) and this test
+        used to require the code to erase the distinction.
+
+        ``test_empty_row_counts`` below still requires ``== 0`` and is what stops this
+        change from becoming the mirror-image conflation."""
         pipeline = _make_mock_pipeline(None)
-        assert _extract_rows_loaded(pipeline) == 0
+        assert _extract_rows_loaded(pipeline) is None
 
     def test_single_table(self):
         pipeline = _make_mock_pipeline({"users": 100})
@@ -81,13 +89,19 @@ class TestExtractRowsLoaded:
         assert _extract_rows_loaded(pipeline) == 100
 
     def test_empty_row_counts(self):
+        """🚨 Deliberately UNCHANGED at ``== 0`` (core#1170 AC3).
+
+        A load that ran and produced nothing is a **measured** zero. This is the test
+        that keeps the two `is None` corrections above from being satisfied by a
+        function that returns ``None`` for everything."""
         pipeline = _make_mock_pipeline({})
         assert _extract_rows_loaded(pipeline) == 0
 
     def test_no_normalize_info(self):
+        """core#1170 AC3 — same correction as ``test_no_trace``: unknown, not zero."""
         pipeline = MagicMock()
         pipeline.last_trace.last_normalize_info = None
-        assert _extract_rows_loaded(pipeline) == 0
+        assert _extract_rows_loaded(pipeline) is None
 
 
 # ---------------------------------------------------------------------------

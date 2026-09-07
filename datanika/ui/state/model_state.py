@@ -25,7 +25,7 @@ class ModelItem(BaseModel):
     schema_name: str = ""
     last_run_status: str = ""
     last_run_datetime: str = ""
-    last_run_rows: int = 0
+    last_run_rows: int | None = None
     column_count: int = 0
 
 
@@ -161,7 +161,7 @@ class ModelState(BaseState):
                         last_run_datetime=(
                             str(last_run.finished_at) if last_run and last_run.finished_at else ""
                         ),
-                        last_run_rows=last_run.rows_loaded or 0 if last_run else 0,
+                        last_run_rows=(last_run.rows_loaded if last_run else None),
                         column_count=len(entry.columns) if entry.columns else 0,
                     )
                 )
@@ -175,7 +175,9 @@ class ModelState(BaseState):
             self.loaded_without_catalog = False
             if not items:
                 self.loaded_without_catalog = any(
-                    (r.rows_loaded or 0) > 0
+                    # `is not None` first: a run whose count we could not read is not
+                    # evidence that rows arrived, and `or 0` said it was (core#1170 AC3).
+                    r.rows_loaded is not None and r.rows_loaded > 0
                     for r in exec_svc.list_runs(session, org_id, status=RunStatus.SUCCESS)
                 )
         # Set AFTER both the rows and the empty-state diagnosis, so no render can

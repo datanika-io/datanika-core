@@ -91,6 +91,25 @@ jobs:
           mv core build-context/datanika
           mv cloud build-context/datanika-cloud
 
+      # core#1140, and THIS is the path the issue is actually about. The `ref:` above pairs
+      # a v* tag's core tree with cloud's CURRENT `master`. Cut a release on a core `master`
+      # that predates a cloud-only promotion and this job pushes :v0.x.y AND :latest, green,
+      # with no assertion anywhere, as an image that dies at container start. `gh run rerun`
+      # of an older run and a workflow_dispatch on `master` have the same shape; a fresh
+      # promotion never does, because core `dev` carries the pairing by construction.
+      #
+      # Blue/green protects our box — the new colour simply never takes over. It does not
+      # protect anyone who pulls the tag. This package is private (core#1014, a founder
+      # decision and not a pending task), which bounds who that is; it does not make a
+      # broken pairing a correct thing to have in the registry, and the same bytes are the
+      # rollback artifact sitting on our own box.
+      #
+      # Placed after the reshape so the paths are the ones the Dockerfile will actually see,
+      # and before setup-buildx so a refusal costs no build and pushes no tag.
+      - name: Gate — every core symbol the cloud tree imports must exist (core#1140)
+        run: python3 build-context/datanika/.github/scripts/cross_tree_import_gate.py
+          --core build-context/datanika --cloud build-context/datanika-cloud
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR

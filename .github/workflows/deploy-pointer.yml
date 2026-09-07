@@ -83,6 +83,25 @@ jobs:
           # feature branch still gets cloud `master` — same as today, now on purpose.
           ref: master
           path: datanika-cloud
+
+      # core#1140. The gate above grades cloud's own master<->dev relationship and NEVER
+      # reads core, so no value of its inputs can express the other direction: a cloud
+      # `master` carrying an import the core tree beside it does not declare. That is what
+      # a cloud-only promotion produces — `master...dev` reads `identical`, core#1123
+      # passes, and the pair is still broken.
+      #
+      # This runs AFTER the cloud checkout because it is the first moment both trees exist.
+      # It is still before the tarball, the SSH and the build, so a refusal costs nothing
+      # and production keeps serving what it was serving.
+      #
+      # ⚠️ On this box direction B fails SAFE — bootstrap_cloud() has no try/except, so the
+      # new colour dies at import, the healthcheck never passes and deploy-bluegreen.sh
+      # refuses the repoint. This step exists to make that a named refusal in ~2 seconds
+      # instead of a wedged deploy discovered eight minutes later at step 12.
+      - name: Gate — every core symbol the cloud tree imports must exist (core#1140)
+        run: python3 datanika/.github/scripts/cross_tree_import_gate.py
+          --core datanika --cloud datanika-cloud
+
       - name: Build source tarball
         run: |
           tar czf /tmp/src.tgz --exclude-vcs --exclude='*/.venv' --exclude='datanika/.web' \

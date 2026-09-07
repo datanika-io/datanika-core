@@ -179,6 +179,44 @@ map, and falls through to the service's English.
   (`f"Not tested: no credential probe exists for {name}"`) stays English **by decision**: it is
   dynamic, and it is unreachable while `test_no_saas_type_is_undecided` holds. Say so in a comment
   so the next i18n sweep does not read it as an omission.
+- 🚨 **The English strings are NOT free to be rewritten while adding keys. See §3.3a.**
+
+### 3.3a · 🚨 These six sentences are ALREADY the source for a second corpus
+
+**Do not treat AC2 as a copy-editing opportunity.** Adding a key is additive; rewriting the English
+underneath it silently breaks documentation in another repository.
+
+`datanika-landing` shipped the corrected Test Connection copy across the guide corpus, and
+`docs/GROWTH_RULES.md` states the direction of authority explicitly:
+
+> *"A **"not tested"** verdict is neither a pass nor a failure, and copy must not render it as
+> either. … **Core's own framing is the one to reuse:** reporting an unverified connection as working
+> and reporting it as failed are the same lie told in opposite directions."*
+
+So the guides **derive from these strings**. Measured on landing `main`, 2026-09-07: the phrase
+*"not tested"* appears in **exactly six** connector guides — `rest-api`, `openapi`, `google-sheets`,
+`google-analytics`, `google-ads`, `kafka` — a **1:1 match with `SAAS_PROBE_EXEMPT`**. That is not a
+coincidence; it is the coupling.
+
+**The three terms that must not drift**, because both corpora and a landing guard now depend on them:
+
+| term | where it is load-bearing |
+|---|---|
+| **"not tested"** — the verdict's *name* | the six guides, `SPEC_TEST_CONNECTION_GUIDE_COPY.md`, `GROWTH_RULES` |
+| **neutral** — *"neither green nor red"* | `connections.py:134-153`'s `color_scheme`, and the guides' promise about what the user will see |
+| **the first pipeline run** — where verification actually happens | every one of the six guides routes the reader there |
+
+**Acceptance for AC2 therefore gains one clause:** the nine-locale keys carry **the existing English
+as `en`, unchanged**. If a sentence genuinely needs rewording, that is a **coordinated change with
+Growth**, not a side effect of an i18n sweep — the guide corpus and `tests/test-connection-copy.test.ts`
+(landing) both have to move with it.
+
+🔑 **The mechanism to be careful of is a generator, not a person.** Growth reseeded **22** guides from
+a shared template today. A template is a multiplier in both directions: it fixed 22 pages at once, and
+a wrong sentence in it would have shipped 22 times. **The product string is upstream of that template**,
+so a rewrite here propagates through a generator nobody re-reads. Same shape as `WORKFLOW_RULES` §4's
+*"a guide corrected to deny an old behaviour still contains the old words"* — one level up, at the
+thing that writes the guides.
 
 ### 3.4 · Not a defect: the API's collapse of `None`
 
@@ -374,6 +412,12 @@ Kept because each of these was believed by someone, including by me:
 4. **`docs/specs/README.md` did not index this spec's two nearest siblings.** `SPEC_AUDIT_TRAIL.md`
    and `SPEC_LOCAL_FILE_CONNECTIONS.md` were on disk and absent from the index; three status cells
    were stale. Corrected in the same change as this file.
+5. 🆕 **AC2 looked like a self-contained i18n chore and is not** (§3.3a, added 2026-09-07). These six
+   English sentences are the upstream source for six connector guides in another repository, and
+   `GROWTH_RULES` says so in as many words. **Nothing in this spec said that when AC2 was written** —
+   an implementer following AC2 as originally phrased could reasonably have tidied the English while
+   adding keys, and broken six published pages plus a landing guard, in a repo they were not working
+   in and would not have run.
 
 [core#821]: https://github.com/datanika-io/datanika-core/issues/821
 [core#823]: https://github.com/datanika-io/datanika-core/issues/823

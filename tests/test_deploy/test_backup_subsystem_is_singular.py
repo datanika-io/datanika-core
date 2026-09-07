@@ -25,7 +25,8 @@ failure, and it fires nightly.
 
 ## Three measurements that settle it, taken on production 2026-09-07
 
-1. **The verifier was inert.** It globs ``${BACKUP_DIR}/daily/*.sql.gz`` with ``BACKUP_DIR=/backups``.
+1. **The verifier was inert.** It globs ``${BACKUP_DIR}/daily/*.sql.gz`` with
+   ``BACKUP_DIR=/backups``.
    In the running ``datanika-postgres``, ``/backups`` exists and is **empty**; ``/backups/daily``
    does not exist. It has therefore never verified anything.
 2. **The two died together, and that is the whole story.** ``/backups/daily`` is missing *because*
@@ -46,7 +47,8 @@ arms the dangerous one.
 
 ## Why the assertions below are shaped this way
 
-The tempting guard is *"``scripts/verify-backup.sh`` must not exist"*. That is too narrow twice over:
+The tempting guard is *"``scripts/verify-backup.sh`` must not exist"*. That is too narrow
+twice over:
 it says nothing about the other two, and it says nothing about the property that actually matters —
 **that exactly one backup mechanism is wired**. So the assertions are:
 
@@ -195,7 +197,8 @@ def test_the_cron_shape_detector_can_actually_see_one():
     # correct repository — which is how a guard gets deleted (core#1162's lesson, other polarity).
     for benign in (
         "0 3 * * * /opt/datanika/scripts/backup-offsite.sh >> /var/log/datanika-backup.log 2>&1",
-        "0 5 1 * * /opt/datanika/scripts/restore-drill.sh >> /var/log/datanika-restore-drill.log 2>&1",
+        "0 5 1 * * /opt/datanika/scripts/restore-drill.sh"
+        " >> /var/log/datanika-restore-drill.log 2>&1",
         "docker exec datanika-postgres psql -U datanika -c 'SELECT 1'",
     ):
         assert not _CONTAINER_BACKUP_CRON.search(benign), (

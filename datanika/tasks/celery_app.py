@@ -79,11 +79,31 @@ celery_app.conf.beat_schedule = {
 # state, which can import back into `datanika.tasks.*`, and by this point
 # `celery_app` is fully defined.
 #
-# ⚠️ Requires a cloud tree where `bootstrap_cloud()` is idempotent (cloud#129
-# adds `_on_once`). The Reflex web process imports BOTH `datanika.datanika` and
-# this module, so it now reaches the call twice; against an older cloud tree
-# that double-subscribes every handler, and `model_runs` metering is
-# deliberately not deduplicated. **Promote cloud before core.**
+# ⚠️ Requires a cloud tree where `bootstrap_cloud()` is idempotent. The Reflex
+# web process imports BOTH `datanika.datanika` and this module, so it now
+# reaches the call twice; against a cloud tree with no dedup that subscribes
+# every handler twice, and `model_runs` metering is deliberately not
+# deduplicated. **Promote cloud before core.**
+#
+# 🔑 Verify the precondition with a COMMAND, not a lookup (core#808). Run before
+# promoting core, from a cloud checkout:
+#
+#     git grep -c '_on_once' origin/master -- datanika_cloud/plugin.py
+#
+# Non-zero => cloud `master` dedups and this second call site is safe. Empty
+# output => it does not; promote cloud first. Confirm the grep can discriminate
+# by running it for a string that is definitely absent (`_on_never_`) and
+# getting nothing back — a `git grep` whose pathspec is wrong is also silent,
+# and silence would otherwise read as "no dedup" and block a good promotion.
+#
+# ⚠️ This used to cite **cloud#129** for `_on_once`, and that reference was
+# wrong in the way references rot: cloud#129 is about overage functions being in
+# no schedule, says nothing about idempotence, and was OPEN — so an Infra agent
+# checking "is the precondition shipped?" met an unrelated open issue and had to
+# choose between blocking a good promotion and dismissing the note as stale.
+# `_on_once` did land in cloud#129's commit, but only as an "Also here" rider in
+# the commit body. The reachability half belongs to core#772. An issue number is
+# a lookup that can rot; a grep against the branch is a check.
 #
 # No try/except: `DATANIKA_EDITION=cloud` with no plugin installed is a
 # misconfiguration, and `datanika/datanika.py` already raises on it. A worker

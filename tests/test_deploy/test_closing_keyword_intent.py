@@ -225,6 +225,32 @@ class TestTheMessageIsNotAboutDiscipline:
     def test_it_states_the_deliberate_exception(self) -> None:
         assert "closes" in self._text()
 
+    def test_every_byte_of_the_refusal_is_ascii(self) -> None:
+        """🚨 Found by the pre-push hook, on this guard's own first push.
+
+        `render()` carried one emoji. The Windows console codec here is cp1251, so printing it
+        raises `UnicodeEncodeError` — and `render()` is called **only in the refusal path**. The
+        guard therefore crashed at exactly the moment it had a finding, and printed a traceback
+        instead of the carefully non-scolding message.
+
+        My local runs were green because `qa_exec.sh` exports `PYTHONIOENCODING=utf-8` and the
+        hook does not: **the harness's environment was supplying the thing under test.** This
+        test has no such help — it inspects the string, not the terminal.
+
+        `WORKFLOW_RULES` §13 trap 4: a decorated banner in the interesting branch is a harness
+        that dies the instant it has news, having run perfectly through every boring case.
+        """
+        text = self._text()
+        offenders = sorted({hex(ord(c)) for c in text if ord(c) > 127})
+        assert not offenders, (
+            f"the refusal text carries non-ASCII codepoints {offenders}; it is printed from a "
+            "hook whose stdout is cp1251 here, and only on the path that has a finding"
+        )
+
+    def test_control_the_ascii_check_can_see_a_non_ascii_character(self) -> None:
+        """Anti-vacuity: an assertion over an empty set passes for the wrong reason."""
+        assert [hex(ord(c)) for c in "a⚠b" if ord(c) > 127] == ["0x26a0"]
+
 
 # ======================================================================================
 # 5. No surface is exempt — the highest-risk documents are documents about this bug

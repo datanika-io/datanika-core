@@ -2581,10 +2581,23 @@ groups:
       # The metric comes from a cron on the box (`*/5`,
       # /opt/datanika/scripts/export-prod-settings.sh) writing a `.prom` file
       # into node-exporter's textfile directory. Every link in that chain can
-      # break silently: the cron can be dropped by a crontab rewrite, the
-      # textfile mount can be lost on a node-exporter recreate, the script can be
-      # left behind by a rebuild (deploy/server/ is applied by NO workflow,
-      # core#747). None of those makes anything red on its own.
+      # break silently: the cron entry can be dropped by a crontab rewrite, or
+      # the textfile mount can be lost on a node-exporter recreate. None of
+      # those makes anything red on its own.
+      #
+      # 🔴 CORRECTED 2026-09-07 (core#1117). This list used to carry a third
+      # item — "the script can be left behind by a rebuild (deploy/server/ is
+      # applied by NO workflow, core#747)". That has been false since core#747
+      # shipped on 2026-09-04: `scripts/install-server-scripts.sh` runs on every
+      # deploy and asserts sha256 after writing, so drift in the FILE is no
+      # longer one of the ways this chain breaks. The cron entry and the mount
+      # still are, which is why this rule is still needed.
+      #
+      # Why the stale line mattered more here than in a shell banner: this is
+      # the JUSTIFICATION for an alert rule, so the next person deciding whether
+      # `watchdog-prod-settings` still earns its keep reads a failure mode that
+      # no longer exists — an argument for deleting a rule that is still needed.
+      # It also misdirects triage toward the one link that is now guarded.
       #
       # absent() inverts the polarity: it returns a series precisely WHEN the
       # metric is missing.

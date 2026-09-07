@@ -37,6 +37,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 REPO = "datanika-io/datanika-core"
 WORKFLOW = ".github/workflows/ci.yml"
@@ -80,6 +81,9 @@ class Job:
     started_at: str
     completed_at: str
     conclusion: str | None
+    #: Needed to fetch the job's own classifier verdict (core#1174). Defaulted so that
+    #: existing constructions in tests keep working.
+    job_id: int = 0
 
     def started(self) -> datetime:
         return _ts(self.started_at)
@@ -95,10 +99,46 @@ def _ts(value: str) -> datetime:
 # ── the decision, with no network in it ─────────────────────────────────────────────────
 
 
-def classify(jobs: list[Job], sha: str) -> dict:
-    """Verdict per staging job for `sha`, plus what overtook it if anything did."""
+#: Verdict classes from `scripts/e2e_tier_streak.py` that mean **this job produced no reading**.
+#: `PASS` and `FAIL` are readings and stay `attributed` — a red that genuinely belongs to this
+#: commit is exactly what a promoter needs to see, and hiding it behind `no_verdict` would be
+#: the same defect pointed the other way.
+NO_READING_CLASSES = {"UNMEASURED", "UNREADABLE"}
+
+
+def classify(jobs: list[Job], sha: str, verdict_classes: dict[str, str] | None = None) -> dict:
+    """Verdict per staging job for `sha`, plus what overtook it if anything did.
+
+    `verdict_classes` maps job name -> the class its own classifier step reported, as produced
+    by `scripts/e2e_tier_streak.classify_verdict`. Passed in rather than fetched so this
+    function stays network-free, which is the property the section header promises.
+
+    ── core#1174 ────────────────────────────────────────────────────────────────────────────
+    Until 2026-09-07 this function asked exactly one question — *did a later deploy overtake
+    this job's window?* — and answered `attributed` whenever nothing had. That is a true
+    answer to a question the promoter is not asking.
+
+    Measured on `dev` head `310137d0`: `e2e-sso` failed its own step 7 ("Assert staging is
+    running THIS commit"), skipped steps 8-15, ran **zero** SSO specs, and self-classified
+    `verdict: wrong_build`. Nothing had overtaken its window, so this function reported
+    `OK e2e-sso attributed` and `main()` printed *"Every staging verdict for this commit
+    describes this commit's own build"* and exited **0** — an all-clear over a tier that had
+    measured nothing, in the last instrument a promoter reads before merging to `master`.
+
+    🔑 The two readings were never contradicting, and that is why it was invisible: *"was this
+    window overtaken?"* and *"did this job produce a reading?"* are different questions, and
+    only the first was ever asked. Nobody was wrong; the question was.
+
+    ⚠️ **A job whose log carries no classifier line is left `attributed`.** Not every job has a
+    classifier step, and treating a missing line as a failure would red `smoke-staging` on
+    every clean run — over-firing, which is how a guard gets switched off. The detail string
+    says `verdict=<none>` so the absence is visible rather than assumed away. That residual is
+    the remaining half of core#714's option 2 (tier the three jobs explicitly); this change is
+    the narrow version, which is the whole property: **refuse to grade an absent reading.**
+    """
     own = {j.name: j for j in jobs if j.head_sha == sha}
     deploy = own.get(MUTATION)
+    verdict_classes = verdict_classes or {}
     findings: dict[str, dict] = {}
 
     for name in VERIFIERS:
@@ -147,10 +187,27 @@ def classify(jobs: list[Job], sha: str) -> dict:
                 ),
             }
         else:
-            findings[name] = {
-                "verdict": "attributed",
-                "detail": f"conclusion={job.conclusion}, own deploy at {deploy.completed_at}",
-            }
+            # core#1174. The window is this commit's — now ask whether the job actually
+            # graded anything in it.
+            klass = verdict_classes.get(name)
+            if klass in NO_READING_CLASSES:
+                findings[name] = {
+                    "verdict": "no_verdict",
+                    "detail": (
+                        f"the job's own classifier reported {klass} — it produced NO reading "
+                        f"of this commit (conclusion={job.conclusion}). The window was not "
+                        f"overtaken; the job simply did not grade."
+                    ),
+                }
+            else:
+                shown = klass or "<none>"
+                findings[name] = {
+                    "verdict": "attributed",
+                    "detail": (
+                        f"conclusion={job.conclusion}, verdict={shown}, "
+                        f"own deploy at {deploy.completed_at}"
+                    ),
+                }
 
     trustworthy = all(f["verdict"] == "attributed" for f in findings.values())
     return {"sha": sha, "jobs": findings, "trustworthy": trustworthy}
@@ -197,9 +254,48 @@ def collect(repo: str, branch: str, pages: int) -> list[Job]:
                     started_at=job["started_at"],
                     completed_at=job.get("completed_at") or job["started_at"],
                     conclusion=job.get("conclusion"),
+                    job_id=job.get("id", 0),
                 )
             )
     return jobs
+
+
+def verdict_classes_for(repo: str, jobs: list[Job], sha: str) -> dict[str, str]:
+    """Each verifier's own classifier verdict, as a class (core#1174).
+
+    🔑 **The vocabulary is imported from `scripts/e2e_tier_streak.py`, never re-derived.**
+    That module already defines `wrong_build` / `no_verdict` / `cancelled` and their classes,
+    it is pinned against both workflow files in both directions by
+    `tests/test_deploy/test_e2e_tier_streak.py`, and QA fixed a real polarity defect in it on
+    2026-09-06 (`wrong_build` was transparent to the streak and could hide a spec failure).
+    Two independent definitions of the same verdict is how they drift apart, and the drift is
+    invisible until one of them is wrong at the moment it matters.
+
+    A log GitHub will not serve (cancelled job: zero bytes; anything older than 90 days: 404)
+    yields no entry, which leaves `classify()` on its existing behaviour rather than inventing
+    a verdict from an absence.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from e2e_tier_streak import (  # noqa: PLC0415
+        _gh_log_or_none,
+        classify_verdict,
+        parse_specs_outcome,
+        parse_verdict_line,
+    )
+
+    out: dict[str, str] = {}
+    for job in jobs:
+        if job.head_sha != sha or job.name not in VERIFIERS or not job.job_id:
+            continue
+        log = _gh_log_or_none(repo, job.job_id)
+        if log is None:
+            continue
+        lines = log.splitlines()
+        verdict = parse_verdict_line(lines)
+        if verdict is None:
+            continue
+        out[job.name] = classify_verdict(verdict, parse_specs_outcome(lines))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -253,7 +349,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     sha = matched.pop()
 
-    result = classify(jobs, sha)
+    result = classify(jobs, sha, verdict_classes_for(args.repo, jobs, sha))
     print(f"staging attribution for {sha[:8]} on {args.branch}\n")
     for name, finding in result["jobs"].items():
         mark = {"attributed": "OK  "}.get(finding["verdict"], "BAD ")
@@ -261,11 +357,23 @@ def main(argv: list[str] | None = None) -> int:
 
     print()
     if result["trustworthy"]:
-        print("Every staging verdict for this commit describes this commit's own build.")
+        # ⚠️ core#1174: this sentence used to print over a tier that had measured NOTHING.
+        # It now says what it actually checked, in both halves, because the old wording was
+        # true and read as an all-clear — the exact shape this script exists to catch.
+        print("Every staging verdict for this commit describes this commit's own build,")
+        print("and every job produced an actual reading.")
         return 0
-    print("::error::At least one staging verdict does NOT describe this commit (core#876).")
-    print("Re-run the deploy for this SHA and let the verifiers run against it, then re-check.")
-    print("A green that belongs to another commit is not evidence about this one.")
+
+    absent = [n for n, f in result["jobs"].items() if f["verdict"] == "no_verdict"]
+    if absent:
+        print(f"::error::{', '.join(absent)} produced NO READING of this commit (core#1174).")
+        print("The window was not overtaken — the job simply did not grade. A green here")
+        print("would be an all-clear over a tier that measured nothing.")
+        print("Re-run this commit's deploy so staging is running it, then re-run the verifier.")
+    if any(f["verdict"] not in ("attributed", "no_verdict") for f in result["jobs"].values()):
+        print("::error::At least one staging verdict does NOT describe this commit (core#876).")
+        print("Re-run the deploy for this SHA and let the verifiers run against it, then re-check.")
+        print("A green that belongs to another commit is not evidence about this one.")
     return 1
 
 

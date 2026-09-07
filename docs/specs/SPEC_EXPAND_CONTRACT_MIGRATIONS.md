@@ -58,11 +58,9 @@ That splits every breaking change into phases across **separate releases**:
 
 - `ADD COLUMN` **nullable**, or with a `DEFAULT` (Postgres 11+ doesn't rewrite the table).
 - `CREATE TABLE`.
-- `CREATE INDEX CONCURRENTLY` (see the lock notes below). ⚠️ **Not reachable from a
-  migration in this repo today — [core#933].**
+- `CREATE INDEX CONCURRENTLY` (see the lock notes below).
 - Adding a **nullable** FK.
-- Backfilling data in batches. ⚠️ Batching the **statements** is available; committing
-  between them is not — same cause, [core#933].
+- Backfilling data in batches, **with a commit between them** — see the lock notes.
 - Widening a type (`varchar(50)` → `text`, `int` → `bigint`).
 
 ### ❌ Never in the same release as the code that needs it
@@ -102,27 +100,35 @@ holding a lock while the old version serves traffic.
   with a plain `CREATE INDEX` it takes an `ACCESS EXCLUSIVE` lock and stalls writes.
 - Backfill in **batches with commits**, never one statement over a large table.
 
-> 🚨 **Both bullets above prescribe a mechanism this repo does not have. [core#933].**
-> `op.get_context().autocommit_block()` raises a bare, message-less `AssertionError` in
-> **every** migration here: `migrations/env.py` executes `SET search_path` on the
-> connection, which autobegins a SQLAlchemy transaction alembic did not begin — and
-> `autocommit_block()` refuses exactly that state. Reproduced with a control in
-> `tests/test_migrations/test_autocommit_block_availability.py`; **that file goes red the
-> day #933 is fixed**, which is when this note should be deleted.
+```python
+with op.get_context().autocommit_block():
+    op.execute("CREATE INDEX CONCURRENTLY ix_audit_logs_user_id ON audit_logs (user_id)")
+```
+
+> ✅ **This works as of [core#933] (fixed 2026-09-07).** It did not for the life of the
+> project before that: `migrations/env.py` executed `SET search_path` on the connection,
+> which autobegins a SQLAlchemy transaction alembic did not begin, and
+> `autocommit_block()` refuses exactly that state with a bare, message-less
+> `AssertionError`. The search path now arrives in libpq's startup packet, so nothing is
+> executed on that connection at all.
 >
-> 🔴 **Corrected 2026-09-07.** This note used to say the cause was that the `SET` runs
-> *"before alembic is asked to begin a transaction, so `begin_transaction()` … never
-> assigns the attribute `autocommit_block` asserts on."* Measured against alembic 1.18.4:
-> `_transaction` is `None` in the **working** case too, so it is not the discriminator —
-> `_in_connection_transaction()` is. **The correction matters because the old wording makes
-> [core#933]'s option 1 (*"move the `SET` inside `context.begin_transaction()`"*) look like
-> the fix, and it is not: the statement autobegins on either side.** The property is *no
-> statement may touch that connection at all*.
+> 🚨 **`CREATE INDEX CONCURRENTLY` can leave an INVALID index if it fails part-way**, and
+> the next deploy then dies on `relation already exists`. That risk is why a plain
+> `CREATE INDEX` is still the right call on a small table — state the row count in the PR
+> and say which you chose. Concurrency is a cost you pay for a lock you actually have.
 >
-> Until then: a plain `CREATE INDEX` is the correct choice on a small table and the lock
-> is what you are spending — say the row count in the PR. A batched backfill bounds each
-> **statement**, not the transaction, so it is not incremental and a long one still holds
-> its locks to the end. Neither is a reason to hand-roll a commit inside a migration.
+> ⚠️ **Do not hand-roll `connection.commit()` inside a migration instead.** Fifteen
+> migrations in this tree do, and they were safe only while alembic owned no transaction.
+> `env.py` now sets `transaction_per_migration=True` so each one's commit is confined to
+> its own migration — without it, a hand-rolled commit ends alembic's transaction and a
+> **later** migration's `autocommit_block()` dies with `InvalidRequestError: This
+> transaction is inactive`. Use the block; it is the supported mechanism now.
+>
+> ⚠️ **Consequence of `transaction_per_migration`, worth knowing before you rely on it:**
+> a failure part-way through `upgrade head` leaves earlier migrations **applied** and
+> recorded, rather than rolling the whole chain back. Under expand/contract each migration
+> is independently safe and a re-run resumes where it stopped — but plan the batch that
+> way rather than assuming all-or-nothing.
 
 ---
 
@@ -145,10 +151,13 @@ Any PR containing a migration answers these:
 - [ ] Would the **currently deployed** version still run against this schema? (That is the
       `t1` question — not "does the new code work".)
 - [ ] Any `NOT NULL`, rename, drop, narrowing, or new `UNIQUE`? → must be phased.
-- [ ] Long-held locks considered. **`CREATE INDEX` is not concurrent here** ([core#933]) —
-      state the table's row count and say why the `ACCESS EXCLUSIVE` lock is affordable.
-- [ ] Backfills batched **by statement**; there is no commit between batches ([core#933]),
-      so a long backfill holds its locks to the end. Say how long it runs.
+- [ ] Long-held locks considered. `CREATE INDEX CONCURRENTLY` **is** available
+      ([core#933]); say which you chose and why — for a small table a plain
+      `CREATE INDEX` is still better, because a failed concurrent build leaves an
+      INVALID index that wedges the next deploy. State the row count either way.
+- [ ] Backfills batched, **with a commit between batches** inside an autocommit block
+      if the table is large enough that holding locks to the end would matter. Say how
+      long it runs.
 - [ ] **Celery task code** also tolerant of the old *and* new shape — workers restart
       separately and lag the web swap.
 

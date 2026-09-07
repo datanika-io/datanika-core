@@ -73,11 +73,16 @@ left here is a failed deploy there.
 
 Batching
 ========
-⚠️ The loop bounds each **statement**, not the transaction. ``autocommit_block()`` is
-unavailable to every migration in this tree — ``env.py`` opens the transaction before
-alembic does (**core#933**) — so there is no commit between batches yet. Bounding the
-statement is still worth having, and the loop becomes a genuinely incremental backfill for
-free once #933 is fixed.
+⚠️ The loop bounds each **statement**, not the transaction, so this backfill is not
+incremental: it holds its locks to the end.
+
+🔴 **Corrected 2026-09-07.** This paragraph said ``autocommit_block()`` was *"unavailable
+to every migration in this tree"* because ``env.py`` opened the transaction before alembic
+did (**core#933**). **That is fixed** — the search path now arrives in libpq's startup
+packet, alembic owns its transaction, and the block works. This migration is left as it
+shipped rather than rewritten: it has already run in production, and changing what a
+released migration does is a different and much worse kind of edit than correcting what it
+SAYS. A new batched backfill should use the block and commit between batches.
 
 The batch predicate uses ``ctid`` rather than a primary key: it needs no assumption about
 what each of the seven tables calls its PK, and it is universal in Postgres. These

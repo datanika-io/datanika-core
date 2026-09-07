@@ -56,6 +56,14 @@ depends_on: str | None = None
 
 INDEX_NAME = "ix_audit_logs_user_id"
 
+# 🔴 CORRECTED 2026-09-07 (core#933 is FIXED). Everything below this line was true when
+# it was written and the CONCLUSION still stands, but its stated reason no longer does:
+# `autocommit_block()` WORKS now. `env.py` sets the search path through libpq's startup
+# packet instead of executing `SET search_path`, so alembic owns its transaction and the
+# block is available to every migration. This index stays non-concurrent on its own
+# merits — 117 rows, sub-millisecond build — and a future reader should NOT take the
+# paragraph below as evidence that CONCURRENTLY is impossible here. It is not any more.
+#
 # ⚠️ The index is created NON-concurrently, and that is a deliberate departure from D13's
 # wording. `autocommit_block()` — the mechanism D13 names, and the only way to run
 # `CREATE INDEX CONCURRENTLY` from inside alembic — **is unavailable in this repo**, and

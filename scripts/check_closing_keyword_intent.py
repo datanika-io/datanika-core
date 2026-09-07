@@ -132,6 +132,28 @@ def normalise(text: str) -> str:
     return text
 
 
+#: Every commit here carries a `[Dept]` tag in its subject (WORKFLOW_RULES §4). One appearing at
+#: the START of a later line means several messages have been concatenated.
+_SUBJECT_TAG = re.compile(r"^\[(?:Engineering|QA|Growth|Product|Infra)\]", re.M)
+
+
+def looks_concatenated(message: str) -> bool:
+    """Several commit messages fed in as one.
+
+    🚨 This manufactures the exact false positive the guard exists to avoid, and I did it to
+    myself in the final check of the very session that shipped this. ``git log --format=%B
+    <range> | ... --stdin`` is the natural thing to type; ``--stdin`` treats the whole stream as
+    ONE message, so the first commit's subject becomes the subject and every later commit's
+    subject becomes *body text*. A `refs` subject on one commit plus a `closes` subject on
+    another then reads as a contradiction inside a single message. Neither commit was wrong;
+    ``--range`` reported both clean.
+
+    Refusing is right rather than merely warning: the alternative is a confident, specific,
+    entirely fictional finding, which is worse than no answer.
+    """
+    return len(_SUBJECT_TAG.findall(message)) > 1
+
+
 def subject_of(message: str) -> str:
     return message.splitlines()[0] if message.strip() else ""
 
@@ -252,7 +274,19 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     if args.stdin:
-        items = [("(stdin)", sys.stdin.read())]
+        raw = sys.stdin.read()
+        if looks_concatenated(raw):
+            print(
+                "  closing-keyword check REFUSES this input: it carries more than one `[Dept]`\n"
+                "  subject, so it is several commit messages concatenated. `--stdin` reads ONE\n"
+                "  message, which would make an earlier commit's `closes` subject read as a later\n"
+                "  commit's body and report a contradiction that exists in neither.\n"
+                "\n"
+                "  Use:  python scripts/check_closing_keyword_intent.py --range <range>",
+                file=sys.stderr,
+            )
+            return 2
+        items = [("(stdin)", raw)]
     elif args.message_file:
         with open(args.message_file, encoding="utf-8") as fh:
             items = [(args.message_file, fh.read())]

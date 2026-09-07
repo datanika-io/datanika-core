@@ -133,7 +133,22 @@ dependencies = [
     # Redshift-as-a-source had never worked at all, and catalog introspection
     # with it. The dbt direction was unaffected, which is why nothing surfaced.
     "sqlalchemy-redshift>=1.0,<2",
-    "snowflake-sqlalchemy>=1.7,<2",
+    # Floor raised 1.7 -> 1.11.0 (core#1153). CVE-2026-15736 / GHSA-8g6f-qw9x-4q6q,
+    # HIGH — SQL injection and local file disclosure — affects 1.1.6 through 1.10.2
+    # and is fixed in 1.11.0, so the `>=1.7` we shipped admitted nothing but
+    # vulnerable releases even though the range formally reached past them.
+    #
+    # 🔑 The pin already admitted the fix and the LOCK was what sat at 1.8.2. That
+    # is the whole shape of this finding: an unbounded-below range is not a
+    # statement about what you ship. The floor is what makes a re-lock unable to
+    # walk back, and `SECURITY_FLOORS` in
+    # tests/test_security/test_dependency_advisories.py is what makes THIS line
+    # unable to be lowered silently.
+    #
+    # ⚠️ Not a constraint-dependencies entry: that block is for transitive packages
+    # with no direct pin to raise, and this one has had a direct pin since it was
+    # added. Two authorities for one package is how they drift.
+    "snowflake-sqlalchemy>=1.11.0,<2",
     "sqlalchemy-bigquery>=1.11,<2",
     "oracledb>=4.0,<5",
     # Web framework

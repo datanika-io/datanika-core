@@ -14,7 +14,7 @@ from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
-from datanika.ui.state.run_state import RunItem
+from datanika.ui.state.run_state import RunItem, _format_rows
 
 
 class DashboardStats(BaseModel):
@@ -175,7 +175,7 @@ class DashboardState(BaseState):
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
                     finished_at=str(r.finished_at) if r.finished_at else "",
-                    rows_loaded=r.rows_loaded or 0,
+                    rows_loaded=_format_rows(r.rows_loaded),
                     error_message=r.error_message or "",
                 )
                 for r in recent

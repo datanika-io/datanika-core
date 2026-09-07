@@ -1481,13 +1481,42 @@ groups:
   # deploy-via-git rule). Both are now explicit pre/post steps below.
   #
   # --- Pre-flight (MANDATORY, fail loudly if any step surfaces drift) ---
-  # 0a. SSH to Hetzner: `ssh root@46.225.214.120`
-  # 0b. Verify the server checkout is CLEAN against master:
-  #       `cd /opt/datanika/datanika && git status --porcelain`
-  #     MUST return empty. If any file is dirty, STOP — someone hot-edited the
-  #     server. Reconcile via git (commit + push + pull, or checkout --)
-  #     before touching the DB. Never run a synthetic fire on top of drift;
-  #     a CD git pull on next deploy will silently clobber the edits.
+  # 0a. SSH to prod: `ssh -i ~/.ssh/id_ed25519 root@185.25.22.188`   (pointer.gr)
+  #     🔴 CORRECTED 2026-09-07 (core#761). This said `ssh root@46.225.214.120`
+  #     — the Hetzner box, TERMINATED 2026-07-14 with its data and backups.
+  #     Production moved to pointer.gr on 2026-07-17. An incident responder
+  #     reading this reached for a machine that has not existed for eight weeks.
+  # 0b. Verify the DEPLOYED file matches the repo — someone hot-editing this very
+  #     file is what caused the 2026-04-15 incident described above, and this is
+  #     the control that exists to catch it.
+  #
+  #     🚨 CORRECTED 2026-09-07 (core#761). This step used to say:
+  #         `cd /opt/datanika/datanika && git status --porcelain`  — MUST return empty
+  #     **`/opt/datanika/datanika` is tar-transferred source with NO `.git` at all.**
+  #     Measured on the box: exit 128, and git writes to *stderr* while stdout stays
+  #     EMPTY — which is exactly what the instruction told the responder to accept as
+  #     proof of cleanliness. **The mandatory drift check passed permissively on every
+  #     run since the July migration**, on the one control added to catch server-side
+  #     hot-edits. Same shape as core#615/#616/#725: not a wrong rule, a check
+  #     structurally unable to report the condition it exists for.
+  #
+  #     Compare hashes instead, and REQUIRE BOTH to be non-empty so a broken probe is
+  #     red rather than green (this is the half the old step got backwards):
+  #
+  #       P=monitoring/grafana/provisioning/alerting/alerts.yml
+  #       BOX=$(ssh -i ~/.ssh/id_ed25519 root@185.25.22.188 \
+  #               "sha256sum /opt/datanika/datanika/$P" | cut -d' ' -f1)
+  #       REPO=$(git cat-file -p "origin/master:$P" | sha256sum | cut -d' ' -f1)
+  #       [ -n "$BOX" ] && [ -n "$REPO" ] || { echo "NO-VERDICT — one side did not hash"; exit 1; }
+  #       [ "$BOX" = "$REPO" ] && echo "MATCH $BOX" || echo "DRIFT: box=$BOX repo=$REPO"
+  #
+  #     Verified 2026-09-07: both sides `2d9a91bc…`, 117694 bytes — no drift.
+  #     Negative control, also measured: `sha256sum` on a path that does not exist
+  #     prints an error and NO hash, so the emptiness test above catches it.
+  #     ⚠️ Compare against `origin/master`, not your working tree — the box runs what
+  #     was deployed, and your tree is usually ahead of it.
+  #     If they differ, STOP. Reconcile through git and redeploy; never run a
+  #     synthetic fire on top of drift, and never hot-edit the box to match.
   # 0c. Verify no pre-existing stale rows (proves the DB starts clean):
   #       `docker exec datanika-postgres psql -U $POSTGRES_USER -d $POSTGRES_DB -c "
   #         SELECT id, status, updated_at, AGE(NOW(), updated_at) AS age

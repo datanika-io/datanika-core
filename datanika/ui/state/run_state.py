@@ -13,6 +13,24 @@ from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
 
+#: The marker a never-measured row count renders as (core#1170 AC3).
+#:
+#: ⚠️ Not translated, deliberately. `WORKFLOW_RULES` §6 lists technical identifiers and
+#: status markers under *Skip*, and an em dash is typography rather than copy — it reads the
+#: same in all nine locales. The *explanation* of what the Rows column counts is a different
+#: string and does need nine keys; that is AC4, and it is not in this change.
+ROWS_NOT_MEASURED = "—"
+
+
+def _format_rows(value: int | None) -> str:
+    """``None`` -> an em dash; a measured count -> its digits, **including zero**.
+
+    🔑 The zero branch is the point. ``str(value or "")`` and
+    ``value or ROWS_NOT_MEASURED`` both look right and both render a genuinely empty load as
+    "not measured", which is this defect's mirror image.
+    """
+    return ROWS_NOT_MEASURED if value is None else str(value)
+
 
 class RunItem(BaseModel):
     id: int = 0
@@ -22,7 +40,11 @@ class RunItem(BaseModel):
     status: str = ""
     started_at: str = ""
     finished_at: str = ""
-    rows_loaded: int = 0
+    #: Rendered text, not a number: the em dash when the count was never measured
+    #: (core#1170 AC3). Formatted in the state rather than the template on purpose —
+    #: an `rx.cond` in two pages would leave this var lying to every other reader,
+    #: and `model_state` already made a decision on the coerced value.
+    rows_loaded: str = ""
     error_message: str = ""
     logs: str = ""
 
@@ -84,7 +106,7 @@ class RunState(BaseState):
                     status=r.status.value,
                     started_at=str(r.started_at) if r.started_at else "",
                     finished_at=str(r.finished_at) if r.finished_at else "",
-                    rows_loaded=r.rows_loaded or 0,
+                    rows_loaded=_format_rows(r.rows_loaded),
                     error_message=r.error_message or "",
                     logs=r.logs or "",
                 )

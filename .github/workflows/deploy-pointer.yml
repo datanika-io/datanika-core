@@ -108,6 +108,12 @@ jobs:
             --exclude='*/node_modules' --exclude='*/__pycache__' \
             --exclude='datanika/.env' --exclude='datanika/.env.docker' \
             datanika datanika-cloud
+          # core#1178. The manifest is the ONLY record of what this deploy put on
+          # the box. reconcile-deployed-tree.sh diffs it against the previous one to
+          # remove files we shipped before and no longer ship — because `tar x`
+          # overwrites what the archive holds and removes nothing it omits.
+          tar tzf /tmp/src.tgz > /tmp/src-manifest.txt
+          echo "manifest entries: $(wc -l < /tmp/src-manifest.txt)"
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -120,6 +126,37 @@ jobs:
           chmod 600 ~/.ssh/config
       - name: Transfer source (box .env.docker preserved)
         run: cat /tmp/src.tgz | ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" 'cd /opt/datanika && tar xzf -'
+
+      # core#1178. A file deleted in git was never deleted from the box: the
+      # tarball extraction has no delete semantics, so every retirement since the
+      # 2026-07-17 host rebuild was still running in production. Measured that day:
+      # 822 files shared, 0 missing, 11 box-only — five genuinely retired, and six
+      # box-owned including .env.docker, its two operator backups and a Google
+      # OAuth client secret under .secrets/.
+      #
+      # 🚨 That measurement is why this reconciles against the PREVIOUS MANIFEST
+      # rather than against git. A "delete anything absent from the repo" rule —
+      # the obvious fix — deletes a production credential on its first run. Only
+      # paths a previous manifest recorded can ever be removed; box-owned state is
+      # structurally unreachable, not merely deny-listed.
+      #
+      # Runs after the transfer and BEFORE the build, so a bad reconcile aborts
+      # with production still serving the old container, same as core#747's install.
+      # Fails closed twice over: a manifest under 500 entries and a removal count
+      # over 50 both abort. Measured 2026-09-07 — removing EITHER guard alone still
+      # blocks the catastrophic case, which is deliberate redundancy, not accident.
+      - name: Ship deploy manifest (core#1178)
+        run: |
+          scp -i ~/.ssh/deploy /tmp/src-manifest.txt             "root@${{ secrets.POINTER_HOST }}:/opt/datanika/.deploy-manifest.incoming"
+          REMOTE_N=$(ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}"             'wc -l < /opt/datanika/.deploy-manifest.incoming')
+          LOCAL_N=$(wc -l < /tmp/src-manifest.txt)
+          echo "manifest local=$LOCAL_N remote=$REMOTE_N"
+          # ssh exiting 0 says the session closed, not that the right bytes landed.
+          [ "$REMOTE_N" = "$LOCAL_N" ] || { echo "manifest transfer truncated"; exit 1; }
+
+      - name: Reconcile deployed tree — remove what we no longer ship (core#1178)
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}"             'bash /opt/datanika/datanika/scripts/reconcile-deployed-tree.sh                /opt/datanika/.deploy-manifest.incoming --apply'
 
       # core#747. Until now `deploy/server/` was applied by NO workflow. The tarball above
       # ships it to /opt/datanika/datanika/deploy/server/, which is worse than not shipping

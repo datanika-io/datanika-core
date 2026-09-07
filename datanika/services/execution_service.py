@@ -61,7 +61,11 @@ class ExecutionService:
         session: Session,
         org_id: int,
         run_id: int,
-        rows_loaded: int,
+        # `None` = not measured, and it is NOT zero (core#1170 AC3). `rows_loaded` is
+        # `Mapped[int | None]` for exactly this reason; `_extract_rows_loaded` returns
+        # `None` when it cannot read dlt's trace, and coercing it here would put the
+        # conflation back one call later.
+        rows_loaded: int | None,
         logs: str,
         bytes_processed: int | None = None,
     ) -> Run | None:

@@ -64,8 +64,18 @@ class InvitationService:
         ``UserService.get_user_by_email`` are retired together at N+1.** They are
         deliberately not shared: a single definition would mean the mutation that
         arms this guard's regression test also disarms the guard, so the defect
-        would become untestable. ``test_refuses_when_the_identity_lookup_returns_none``
-        goes red if one is deleted without the other.
+        would become untestable.
+
+        🔴 **CORRECTED 2026-09-07.** This said
+        ``test_refuses_when_the_identity_lookup_returns_none`` *"goes red if one is
+        deleted without the other"*. **Measured by mutation: only one direction was
+        true.** Deleting the *legacy* clause reds it; breaking the *sidecar* clause
+        left it **GREEN**, because that test's fixture sets ``users.email`` and the
+        legacy half answers it. The sidecar clause — the one that must carry this
+        guard alone after N+1 — was covered by nothing.
+        ``test_refuses_a_member_whose_address_lives_only_in_the_sidecar`` covers it
+        now, and the two tests red on opposite halves. A docstring that names one
+        test for both halves is how the untested half stays untested.
 
         ⚠️ **Do not make this fail closed.** Refusing addresses we cannot resolve
         refuses every invitation to a new user, which is the feature. The failure

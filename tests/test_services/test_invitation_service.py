@@ -209,6 +209,70 @@ class TestAlreadyMemberGuardDoesNotRestOnTheIdentityLookup:
         inv = inv_svc.create_invitation(db_session, org.id, email, MemberRole.EDITOR, owner.id)
         assert inv.status == InvitationStatus.PENDING
 
+    @staticmethod
+    def _email_less_member(session, org, email: str) -> User:
+        """The MIRROR of ``_sidecar_less_member``: the address lives **only** in
+        ``user_pii``, and ``users.email`` is ``NULL``.
+
+        This is the shape N+1 leaves behind once ``users.email`` stops being
+        written, and it is constructible today — ``User.email`` is
+        ``Mapped[str | None]``, ``nullable=True`` (``models/user.py:44``).
+
+        🔑 **Built through ``make_user`` and then cleared**, rather than by writing a
+        ``UserPII`` row by hand. The hand-written version works and is what I wrote
+        first — ``test_pii_fixture_invariant.py::
+        test_the_factory_module_is_the_only_place_that_writes_the_sidecars`` caught
+        it, correctly: §8a.7 wants N+2's column drop to be **one** edit in
+        ``tests/factories.py``, and a second module growing its own sidecar write
+        undoes that. Satisfying it by widening ``ALLOWED`` would have been worse
+        still — that list is meant to reach **zero** at N+1, and this file's entry
+        is about building a sidecar-*less* row, which is the opposite of this.
+        """
+        user = make_user(session, email=email, full_name="Sidecar only", password_hash="hashed")
+        user.email = None  # N+1's shape: the address survives only in `user_pii`.
+        session.add(Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER))
+        session.flush()
+        if user.email is not None:
+            raise RuntimeError(
+                "precondition failed: users.email is set, so the legacy half of the "
+                "guard's or_ can answer this and nothing below is a measurement"
+            )
+        if session.get(UserPII, user.id) is None:
+            raise RuntimeError(
+                "precondition failed: no user_pii row, so this is the sidecar-LESS "
+                "case the test above already covers, not the sidecar-ONLY one"
+            )
+        return user
+
+    def test_refuses_a_member_whose_address_lives_only_in_the_sidecar(
+        self, db_session, inv_svc, org, owner
+    ):
+        """🔴 **The half of the guard's ``or_`` that no test covered.**
+
+        Added 2026-09-07 after a mutation found the gap: replacing
+        ``func.lower(UserPII.email) == email`` with a literal that can never match
+        left ``test_refuses_when_the_identity_lookup_returns_none`` **GREEN**,
+        because that test's fixture sets ``users.email`` and the *legacy* half
+        answers it. So the sidecar clause could have been deleted or broken and
+        nothing would have said so.
+
+        That matters more than an ordinary coverage hole, because the sidecar
+        clause is the one that has to carry the guard **after N+1**, when the
+        legacy half is retired. An untested clause taking over a security guard
+        at exactly the moment its partner is deleted is how core#1010 comes back
+        wearing the fix's own clothes.
+
+        ⚠️ This test also corrects a claim the service's docstring used to make —
+        that the criterion test *"goes red if one is deleted without the other"*.
+        Measured: deleting the **legacy** half reds it; deleting the **sidecar**
+        half did not. Both directions are covered now, one test each.
+        """
+        email = f"sidecar-only-{uuid.uuid4().hex[:6]}@test.com"
+        self._email_less_member(db_session, org, email)
+
+        with pytest.raises(ValueError, match="already a member"):
+            inv_svc.create_invitation(db_session, org.id, email, MemberRole.EDITOR, owner.id)
+
     def test_a_soft_deleted_membership_does_not_block(self, db_session, inv_svc, org, owner):
         """The third negative control: a removed member can be re-invited.
 

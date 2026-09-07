@@ -113,6 +113,20 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "quadratic querystring parsing — both reachable from unauthenticated uploads",
     ),
     "python-socketio": ("5.16.2", "CVE-2026-48804 binary attachment accumulation DoS"),
+    "snowflake-sqlalchemy": (
+        "1.11.0",
+        "CVE-2026-15736 / GHSA-8g6f-qw9x-4q6q (1.11.0) -- SQL injection and local file "
+        "disclosure, HIGH. Affects every release from 1.1.6, so every version this "
+        "project has ever shipped was inside it. This is the SQLAlchemy dialect that "
+        "backs Snowflake as an extract SOURCE, so it runs against a warehouse whose "
+        "credentials an org handed us. "
+        "⚠️ Unlike almost every other entry in this table it is a DIRECT dependency: "
+        "the floor that actually moves the resolver is the pin in "
+        "[project.dependencies], and this row is the durable re-check, not the "
+        "mechanism. A constraint-dependencies entry would be the wrong tool -- that "
+        "block is for transitive packages we do not declare, and adding a second "
+        "authority for a package that already has one is how two numbers drift apart.",
+    ),
     "soupsieve": ("2.8.4", "CVE-2026-49476 memory exhaustion and CVE-2026-49477 ReDoS"),
     # ---- Moved out of BLOCKED_BY_DBT_1_7 in core#825 --------------------
     # These six were unfixable for as long as `dbt-core>=1.7.19,<1.8` stood.

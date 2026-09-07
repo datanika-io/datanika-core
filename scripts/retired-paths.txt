@@ -1,0 +1,24 @@
+# Bootstrap graveyard for core#1178.
+#
+# The manifest in reconcile-deployed-tree.sh can only remove files a PREVIOUS
+# manifest recorded. On the box that manifest did not exist until this change,
+# so files retired between the 2026-07-17 host rebuild and now are invisible to
+# it. This list names them explicitly, once.
+#
+# 🚨 THIS LIST SHOULD NEVER GROW. Every future retirement is handled by the
+# manifest automatically. An entry added here after 2026-09-07 means somebody
+# is working around the manifest instead of fixing it.
+#
+# Every path is asserted by tests/test_deploy/test_retired_paths.py to be
+# (a) absent from the current tree and (b) recorded in git history as deleted.
+# That second assertion is what makes it impossible to use this file to delete
+# something still in use.
+#
+# Measured on the box 2026-09-07 after master fe0a9823: 822 shared, 0 missing,
+# 11 box-only — of which 5 are these and 6 are box-owned (.env.docker and its
+# two backups, .secrets/, reflex.db, assets/llms.txt) and must never be listed.
+scripts/backup-postgres.sh
+scripts/setup-backup-cron.sh
+scripts/verify-backup.sh
+tests/test_deploy/test_workflow_secret_masking_executes.py
+tests/test_migrations/test_autocommit_block_availability.py

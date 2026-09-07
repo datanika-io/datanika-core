@@ -104,6 +104,16 @@ jobs:
       - name: Staging SHA attribution controls
         run: bash scripts/test-staging-sha-stamp.sh
 
+      # core#1178. Twenty-three controls over the tree reconciler, the only mechanism
+      # in the deploy that DELETES from production. Both directions are proven in one
+      # run — it removes a file the archive omits, and it spares the box-owned set
+      # (.env.docker, its operator backups, .secrets/, reflex.db) — plus both
+      # fail-closed floors and a negative control for each. Shell, so outside pytest;
+      # gated here because a guard nobody has watched fail is not evidence, and this
+      # guard's failure mode is deleting production.
+      - name: Deployed-tree reconciler controls
+        run: bash scripts/test-reconcile-deployed-tree.sh
+
   test:
     runs-on: ubuntu-latest
     # core#841. This job runs `pytest tests/`, which collects every file in

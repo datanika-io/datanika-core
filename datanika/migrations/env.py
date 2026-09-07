@@ -1,21 +1,14 @@
 import contextlib
-import re
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from datanika.migrations.helpers import (
-    get_tenant_schemas,
-    is_public_table,
-    is_tenant_table,
-)
+from datanika.migrations.helpers import is_public_table
 from datanika.models.base import Base
 
 with contextlib.suppress(ImportError):
     import datanika_cloud.billing.models  # noqa: F401
-
-_TENANT_SCHEMA_RE = re.compile(r"^tenant_\d+$")
 
 config = context.config
 if config.config_file_name is not None:
@@ -32,12 +25,6 @@ target_metadata = Base.metadata
 def _include_public(object, name, type_, reflected, compare_to):
     if type_ == "table":
         return is_public_table(name)
-    return True
-
-
-def _include_tenant(object, name, type_, reflected, compare_to):
-    if type_ == "table":
-        return is_tenant_table(name)
     return True
 
 
@@ -129,34 +116,39 @@ def run_migrations_online() -> None:
         # SQLAlchemy 2.0 requires explicit commit for DDL to persist
         connection.commit()
 
-    # Tenant-schema discovery runs on its OWN connection, and deliberately AFTER phase 1
-    # rather than before: a public-schema migration may create a tenant schema, and the
-    # previous shape discovered them at exactly this point. It is a separate connection
-    # because phase 1's must reach alembic with nothing executed on it — putting a SELECT
-    # on the tail of it would be harmless today and is precisely the shape that comes back.
-    with _engine_with_search_path("public").connect() as connection:
-        tenant_schemas = get_tenant_schemas(connection)
-
-    # Phase 2: each tenant schema, one connection apiece.
+    # 🚨 There is no phase 2, and it is not coming back in this shape (core#1164).
     #
-    # The search path differs per schema and cannot be re-set with a statement, so this
-    # cannot be one shared connection the way it used to be. `NullPool` means each
-    # `connect()` is a real connect, which is what carries the per-schema startup packet.
-    for schema in tenant_schemas:
-        if not _TENANT_SCHEMA_RE.match(schema):
-            continue
-        with _engine_with_search_path(f'"{schema}",public').connect() as connection:
-            context.configure(
-                connection=connection,
-                target_metadata=target_metadata,
-                include_object=_include_tenant,
-                version_table_schema=schema,
-                # Same reason as phase 1 — see the note there.
-                transaction_per_migration=True,
-            )
-            with context.begin_transaction():
-                context.run_migrations()
-            connection.commit()
+    # A second phase used to walk every `tenant_*` schema and run the migrations again
+    # against each one, with its own `alembic_version`. That made `alembic upgrade head`
+    # **fail outright whenever any such schema existed** — the whole public chain replayed
+    # against the tenant schema, and unqualified DDL resolved through `search_path` back to
+    # the tables phase 1 had just migrated. Since migrations run from the container start
+    # command, the symptom was a container that could not start, reporting
+    # `column "hard_cap_runs" of relation "plans" already exists` — a message that names
+    # nothing about tenants.
+    #
+    # 🔑 **It was removed rather than repaired because it could not do its stated job even
+    # in principle**, and that was measured, not assumed:
+    #
+    #   * `is_tenant_table()` is True for **0 of the 26** tables in `Base.metadata` — every
+    #     one is in `PUBLIC_TABLES`, per the standing "all tables in public, isolated by
+    #     org_id" decision. So the loop's `include_object` admitted no table at all.
+    #     `test_migration_helpers.py::TestIsTenantTable::test_no_model_table_is_tenant`
+    #     asserts this from the other side and predates this change.
+    #   * `include_object` filters **autogenerate comparison**, never which revisions
+    #     `upgrade` executes — so the loop replayed the public chain regardless. The filter
+    #     could not have saved it even if it had admitted something.
+    #   * `TenantService`, the only code that can create such a schema, is referenced
+    #     nowhere outside `tests/test_services/test_tenant.py`.
+    #
+    # ⚠️ This is NOT a ruling that per-tenant schemas will never return. It is that this
+    # loop would not implement them: a real per-tenant feature needs a tenant-scoped
+    # revision chain, which this never had. Keeping the loop preserved the landmine, not
+    # the capability.
+    #
+    # Guarded by `tests/test_migrations/test_autocommit_block_in_a_real_migration.py::
+    # TestATenantSchemaDoesNotBreakTheDeploy`, whose negative control appends this phase
+    # back and asserts the failure returns.
 
 
 if context.is_offline_mode():

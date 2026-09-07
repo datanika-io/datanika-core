@@ -3,6 +3,12 @@
 This is core#933 **AC1**. It replaces ``test_autocommit_block_availability.py``, which
 asserted the *defect* and instructed its own deletion the day the defect went away.
 
+🆕 It also carries **core#1164** — ``TestATenantSchemaDoesNotBreakTheDeploy`` — because that
+defect lives in the same file for the same reason: ``env.py`` is the migration entrypoint,
+and the only honest way to test it is to run the real tree against a real Postgres. The
+filename is kept rather than widened; renaming a test file costs a delete-plus-add in the
+diff and buys a word.
+
 What broke, in one paragraph
 ----------------------------
 ``run_migrations_online()`` executed ``SET search_path TO public`` on the connection before
@@ -264,42 +270,96 @@ class TestAutocommitBlockRunsInARealMigration:
         )
 
 
-class TestThePhase2LoopStillReachesTheMigrations:
-    """Coverage for the tenant loop, which core#933 restructured (core#1164).
+#: The tenant phase as it stood before core#1164, appended to a copy of the fixed tree.
+#:
+#: 🚨 **Deliberately a literal, not `git show origin/dev:...`.** Reading the mutant out of a
+#: moving ref works exactly once: after this lands, `origin/dev` carries the FIXED file and
+#: the "control" silently starts asserting that the fix fails to fail. A control that stops
+#: controlling is worse than none, because it still reports green.
+#:
+#: Self-contained on purpose — it re-imports `re` and `get_tenant_schemas`, which the fixed
+#: `env.py` no longer needs, so it cannot be quietly disarmed by an import cleanup.
+_TENANT_PHASE_MUTANT = """
 
-    Phase 2 stopped sharing one connection with phase 1 and now opens one per schema. No
-    `tenant_*` schema exists any longer (all tables moved to `public`), so ordinary runs
-    never enter that loop at all — an untested loop that a refactor has just rewritten is
-    exactly what a real tenant schema would discover in production.
+# core#1164 negative control — the removed phase 2, restored.
+import re as _re1164  # noqa: E402
+from datanika.migrations.helpers import get_tenant_schemas as _gts1164  # noqa: E402
 
-    🔴 **What this asserts is NOT "the run succeeds", because it does not — and that is a
-    PRE-EXISTING bug, measured, not introduced here.** With any `tenant_*` schema present,
-    `alembic upgrade head` fails at revision ``k0g7h8i9j1d2`` with ``column
-    "hard_cap_runs" of relation "plans" already exists``. Phase 2 gives the tenant schema
-    its own empty ``alembic_version``, so the **entire** revision chain re-runs against it;
-    unqualified DDL then resolves through ``search_path`` to the ``public`` tables the
-    first phase already migrated.
 
-    Measured on 2026-09-07, same container, same scenario, two trees:
+def _core1164_tenant_phase() -> None:
+    with _engine_with_search_path("public").connect() as connection:
+        schemas = _gts1164(connection)
+    for schema in schemas:
+        if not _re1164.match(r"^tenant_\\d+$", schema):
+            continue
+        with _engine_with_search_path(f\'"{schema}",public\').connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                version_table_schema=schema,
+                transaction_per_migration=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+            connection.commit()
 
-    ==============================  ==========  ============
-    env.py                          no tenant   with tenant
-    ==============================  ==========  ============
-    ``origin/dev`` (pre-fix)        rc=0        **rc=1**
-    this branch (core#933 fix)      rc=0        **rc=1**
-    ==============================  ==========  ============
 
-    Identical failure on both, so the fix neither caused it nor cures it. Filed as
-    core#1164 rather than fixed here: repairing it is a decision about whether the
-    tenant-schema phase should exist at all, and bundling it into a transaction-semantics
-    change would make both un-bisectable.
+if not context.is_offline_mode():
+    _core1164_tenant_phase()
+"""
 
-    🔑 **So the assertion is that phase 2 gets *far enough to fail that way*** — which is a
-    positive statement about the restructured loop. A broken connection-per-schema would
-    fail earlier and differently (a connect error, a missing search path, no phase-2 output
-    at all), and this test would catch it. It also goes red the day core#1164 is fixed,
-    which is the correct moment to delete it.
+
+def _tree_with_tenant_phase_restored(tmp_path: Path) -> Path:
+    """A copy of the real tree with the removed tenant phase appended to its `env.py`."""
+    real = PROJECT_ROOT / "datanika" / "migrations"
+    dest = tmp_path / "migrations"
+    shutil.copytree(real, dest, ignore=shutil.ignore_patterns("__pycache__"))
+
+    env_py = dest / "env.py"
+    source = env_py.read_text(encoding="utf-8")
+    assert "_engine_with_search_path" in source, (
+        "env.py no longer defines _engine_with_search_path, so the appended control below "
+        "would raise NameError instead of reproducing core#1164 — it would still 'fail', "
+        "and the control would pass for entirely the wrong reason"
+    )
+    env_py.write_text(source + _TENANT_PHASE_MUTANT, encoding="utf-8")
+
+    ini = tmp_path / "alembic.ini"
+    ini.write_text(
+        (PROJECT_ROOT / "alembic.ini")
+        .read_text(encoding="utf-8")
+        .replace("script_location = datanika/migrations", f"script_location = {dest}"),
+        encoding="utf-8",
+    )
+    return ini
+
+
+class TestATenantSchemaDoesNotBreakTheDeploy:
+    """core#1164 — `alembic upgrade head` must survive a `tenant_*` schema existing.
+
+    Migrations run from the container start command, so this failure is **a container that
+    cannot start**: a wedged deploy, discovered at the worst possible moment, with a
+    traceback naming a column in `plans` rather than the loop that caused it.
+
+    The phase that caused it is removed rather than repaired, and that is not a bet on
+    per-tenant schemas never returning. It is that **the loop could not do its stated job
+    even in principle**, measured:
+
+    * ``is_tenant_table()`` returns True for **0 of the 26** tables in ``Base.metadata`` —
+      every one is in ``PUBLIC_TABLES``. So the loop's ``include_object=_include_tenant``
+      admitted no table at all. (``test_migration_helpers.py::TestIsTenantTable::
+      test_no_model_table_is_tenant`` already asserts this, from the other side.)
+    * ``include_object`` filters **autogenerate comparison**, not which revisions
+      ``upgrade`` executes — so the loop replayed the *public* chain against the tenant
+      schema regardless, which is the collision itself.
+    * ``TenantService`` — the only thing that can create such a schema — is referenced
+      nowhere outside ``tests/test_services/test_tenant.py``.
+
+    A future per-tenant-schema feature would need a tenant-scoped revision chain, which
+    this loop never had. Keeping it would preserve the landmine, not the capability.
     """
+
+    _SCHEMA = "tenant_1164"
 
     @pytest.fixture(autouse=True)
     def _leave_the_shared_database_usable(self, roundtrip_db_url):
@@ -307,54 +367,108 @@ class TestThePhase2LoopStillReachesTheMigrations:
         yield
         engine = create_engine(roundtrip_db_url)
         with engine.begin() as conn:
-            conn.execute(text('DROP SCHEMA IF EXISTS "tenant_933" CASCADE'))
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{self._SCHEMA}" CASCADE'))
         engine.dispose()
         _reset_db(roundtrip_db_url)
 
-    def test_phase_2_opens_its_connection_and_runs_migrations_in_the_tenant_schema(
-        self, roundtrip_db_url
-    ):
+    def _create_schema(self, url: str) -> None:
+        engine = create_engine(url)
+        with engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA "{self._SCHEMA}"'))
+        engine.dispose()
+
+    def _schema_exists(self, url: str) -> bool:
+        engine = create_engine(url)
+        try:
+            with engine.connect() as conn:
+                return (
+                    conn.execute(
+                        text("SELECT 1 FROM information_schema.schemata WHERE schema_name = :s"),
+                        {"s": self._SCHEMA},
+                    ).fetchone()
+                    is not None
+                )
+        finally:
+            engine.dispose()
+
+    def test_upgrade_head_succeeds_with_a_tenant_schema_present(self, roundtrip_db_url):
         first = _run_alembic(["upgrade", "head"], roundtrip_db_url)
         assert first.returncode == 0, (
             "the baseline upgrade with NO tenant schema failed, so nothing below is "
-            f"attributable to phase 2:\nstdout:\n{first.stdout}\nstderr:\n{first.stderr}"
+            f"attributable:\nstdout:\n{first.stdout}\nstderr:\n{first.stderr}"
         )
 
-        engine = create_engine(roundtrip_db_url)
-        with engine.begin() as conn:
-            conn.execute(text('CREATE SCHEMA "tenant_933"'))
-        engine.dispose()
+        self._create_schema(roundtrip_db_url)
+        # 🔑 Arming. Without this the test passes on a run where the schema was never
+        # created — i.e. it would assert nothing, greenly.
+        assert self._schema_exists(roundtrip_db_url), (
+            f"{self._SCHEMA} was not created, so the upgrade below is not being asked "
+            "the question this test exists to ask"
+        )
 
         second = _run_alembic(["upgrade", "head"], roundtrip_db_url)
 
-        assert second.returncode != 0, (
-            "`alembic upgrade head` now SUCCEEDS with a tenant_* schema present. That is "
-            "good news and this test is stale: core#1164 has been fixed (or the phase-2 "
-            "loop removed). Delete this class and say which."
-        )
-        assert "hard_cap_runs" in second.stderr, (
-            "phase 2 failed, but not at the known core#1164 collision. Something in the "
-            "restructured connection-per-schema loop is broken — the loop is supposed to "
-            "reach revision k0g7h8i9j1d2 and die on the pre-existing search_path "
-            f"resolution, not earlier.\nstdout:\n{second.stdout}\nstderr:\n{second.stderr}"
-        )
-        assert "Running upgrade" in second.stderr, (
-            "phase 2 never ran a single migration, so its connection never carried a "
-            f"usable context:\nstdout:\n{second.stdout}\nstderr:\n{second.stderr}"
+        assert second.returncode == 0, (
+            "`alembic upgrade head` failed with a tenant_* schema present (core#1164). "
+            "If the error names `hard_cap_runs` on `plans`, a tenant phase has been "
+            "reintroduced into env.py: it gives the schema its own empty alembic_version, "
+            "replays the whole public chain against it, and unqualified DDL resolves "
+            "through search_path back to the public tables.\n"
+            f"stdout:\n{second.stdout}\nstderr:\n{second.stderr}"
         )
 
-        engine = create_engine(roundtrip_db_url)
+    def test_the_tenant_schema_is_left_untouched(self, roundtrip_db_url):
+        """Succeeding by DROPPING the schema would also satisfy the test above."""
+        assert _run_alembic(["upgrade", "head"], roundtrip_db_url).returncode == 0
+        self._create_schema(roundtrip_db_url)
+        assert self._run_and_count_tables(roundtrip_db_url) == 0, (
+            "the migration run created tables inside the tenant schema. Nothing should "
+            "be writing there any more — see this class's docstring."
+        )
+        assert self._schema_exists(roundtrip_db_url), (
+            "the tenant schema vanished during `alembic upgrade head`. Succeeding by "
+            "destroying the input is not succeeding."
+        )
+
+    def _run_and_count_tables(self, url: str) -> int:
+        r = _run_alembic(["upgrade", "head"], url)
+        assert r.returncode == 0, f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+        engine = create_engine(url)
         try:
             with engine.connect() as conn:
-                present = conn.execute(
-                    text(
-                        "SELECT schema_name FROM information_schema.schemata "
-                        "WHERE schema_name = 'tenant_933'"
-                    )
-                ).fetchone()
+                return conn.execute(
+                    text("SELECT count(*) FROM information_schema.tables WHERE table_schema = :s"),
+                    {"s": self._SCHEMA},
+                ).scalar()
         finally:
             engine.dispose()
-        assert present is not None, (
-            "the tenant schema vanished during the run — phase 2 is doing something "
-            "destructive it did not do before"
+
+    def test_restoring_the_tenant_phase_brings_the_failure_back(self, roundtrip_db_url, tmp_path):
+        """🚨 The control. Without it, both tests above are satisfied by a Postgres that
+        stopped caring, an alembic that stopped replaying, or a schema never created.
+
+        This appends the removed phase to a copy of the **real** tree and asserts the
+        upgrade fails **at the known collision** — not merely that it fails, which any
+        syntax error in the appended block would also produce.
+        """
+        ini = _tree_with_tenant_phase_restored(tmp_path)
+
+        assert _run_alembic(["upgrade", "head"], roundtrip_db_url, ini).returncode == 0, (
+            "the mutated tree cannot even complete a no-tenant upgrade, so its failure "
+            "below would not be attributable to the restored phase"
+        )
+        self._create_schema(roundtrip_db_url)
+
+        r = _run_alembic(["upgrade", "head"], roundtrip_db_url, ini)
+
+        assert r.returncode != 0, (
+            "restoring the tenant phase no longer reproduces core#1164. Either alembic "
+            "changed behaviour or this control no longer patches a file shape that "
+            "exists — in both cases the two tests above are no longer attributable.\n"
+            f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
+        )
+        assert "hard_cap_runs" in r.stderr, (
+            "the mutated tree failed, but NOT at core#1164's collision — so this control "
+            "is measuring some other breakage (a NameError in the appended block would "
+            f"look like this).\nstdout:\n{r.stdout}\nstderr:\n{r.stderr}"
         )

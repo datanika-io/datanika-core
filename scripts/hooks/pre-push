@@ -91,6 +91,23 @@ else
   exit 1
 fi
 
+# --- closing-keyword intent (core#1162) ------------------------------------------------
+# A commit body that closes an issue its subject only `refs` closes it for real, on the
+# promotion. Four measured instances in three repos in one week, including one where the
+# author knew the issue had to stay open and said so in the same sentence as the reference.
+# Blocking rather than warning: 0 false positives across the measured corpora, and the cost
+# of missing one is a silently-retired issue that nobody chose to retire.
+echo "pre-push: closing-keyword intent (core#1162)"
+"$PY" scripts/check_closing_keyword_intent.py --range 'origin/dev..HEAD'
+KWRC=$?
+if [ "$KWRC" -eq 2 ]; then
+  # An unreadable range measured nothing; do not let that read as clean.
+  echo "  pre-push WARNING: could not read origin/dev..HEAD for the closing-keyword check."
+  echo "      This measured NOTHING. Re-run after 'git fetch origin' if the range is stale."
+elif [ "$KWRC" -ne 0 ]; then
+  exit 1
+fi
+
 echo "pre-push: ruff check"
 "$PY" -m ruff check datanika tests
 echo "pre-push: ruff format --check"

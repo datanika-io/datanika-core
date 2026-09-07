@@ -302,6 +302,249 @@ class TestEverySaasTypeHasAProbeDecision:
             assert url.startswith("https://"), f"{name}: {url!r}"
 
 
+#: Config keys a probe reads WITHOUT requiring — an optional override that has a
+#: default, not a credential (core#860).
+#:
+#: 🔑 This table is why `test_every_field_the_probe_reads_is_a_field_it_requires`
+#: is not simply `read <= declared`. `facebook_ads` builds its URL from
+#: `_first(c, "api_version") or _FACEBOOK_API_VERSION`, so declaring `api_version`
+#: would make an optional override MANDATORY and break every Facebook connection
+#: that (correctly) omits it. A guard that cannot tell those apart forces the wrong
+#: fix, which is worse than no guard.
+_OPTIONAL_PROBE_READS: dict[str, set[str]] = {
+    "facebook_ads": {"api_version"},
+}
+
+#: Loader fields no probe group covers — core#992's territory, not core#860's.
+#:
+#: These are **scope selectors, not credentials**: which base, which ad account,
+#: which repo. The probe deliberately hits an identity endpoint (`/whoami`, `/me`,
+#: `/user`) that does not need them, so a green Test Connection genuinely does not
+#: imply a runnable pipeline — but the remedy is a probe that exercises the
+#: resource, which is core#992, not field parity.
+#:
+#: Pinned EXACTLY rather than as a floor: a new entry means a connector grew a
+#: credential the probe never checks, and that IS core#860's defect. A removed
+#: entry means core#992 covered one and this note should shrink with it.
+_LOADER_FIELDS_NO_PROBE_COVERS: dict[str, set[str]] = {
+    "airtable": {"base_id"},
+    "facebook_ads": {"account_id"},
+    "github": {"owner", "repo"},
+    # Read by the loader but used only on the `dlt init` verified-source branch,
+    # which `_build_saas_source`'s own docstring records as dead in every
+    # deployment; the live REST fallback authenticates with Bearer, exactly as
+    # the probe does. Listed so its absence from the probe is a recorded fact
+    # rather than an oversight.
+    "zendesk": {"email"},
+}
+
+
+def _loader_config_reads() -> dict[str, set[str]]:
+    """`connection_type` -> config keys `_build_saas_source` reads for it."""
+    import ast
+    import inspect
+    import textwrap
+
+    from datanika.services import dlt_runner
+
+    src = textwrap.dedent(inspect.getsource(dlt_runner.DltRunnerService._build_saas_source))
+    branches: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "connection_type"
+            and test.comparators
+            and isinstance(test.comparators[0], ast.Constant)
+        ):
+            continue
+        keys = {
+            n.args[0].value
+            for n in ast.walk(node)
+            if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Attribute)
+            and n.func.attr == "get"
+            and isinstance(n.func.value, ast.Name)
+            and n.func.value.id == "config"
+            and n.args
+            and isinstance(n.args[0], ast.Constant)
+        }
+        branches.setdefault(test.comparators[0].value, set()).update(keys)
+    return branches
+
+
+def _probe_lambda_reads() -> dict[str, set[str]]:
+    """`connection_type` -> config keys the probe's OWN lambdas read.
+
+    `fields` is only the precondition; the request is built by `url`/`headers`/
+    `params`, and those are where a probe can quietly depend on something it never
+    declares. That is how `jira` came to read `email` and require nothing.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(cs))
+    entry = next(
+        (
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "SAAS_PROBES"
+        ),
+        None,
+    )
+    assert entry is not None, "SAAS_PROBES is no longer a module-level annotated assignment"
+
+    out: dict[str, set[str]] = {}
+    for key, value in zip(entry.keys, entry.values, strict=True):
+        reads: set[str] = set()
+        for inner_key, inner_value in zip(value.keys, value.values, strict=True):
+            if inner_key.value == "fields":
+                continue
+            for n in ast.walk(inner_value):
+                if (
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Name)
+                    and n.func.id == "_first"
+                ):
+                    reads |= {a.value for a in n.args[1:] if isinstance(a, ast.Constant)}
+                if (
+                    isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "get"
+                    and n.args
+                    and isinstance(n.args[0], ast.Constant)
+                ):
+                    reads.add(n.args[0].value)
+        out[key.value] = reads
+    return out
+
+
+def _declared(name: str) -> set[str]:
+    return {f for group in cs.SAAS_PROBES[name]["fields"] for f in group}
+
+
+class TestTheProbeAndTheLoaderReadTheSameCredentials:
+    """core#860 — nothing else couples `SAAS_PROBES` to `_build_saas_source`.
+
+    They read credentials out of the same `config`, they are ~1,400 lines apart in
+    different modules, and a divergence is silent in both directions: a green Test
+    Connection on a connection that cannot run, or a red one on a connection that can.
+
+    🚨 **Every assertion here is paired with an anti-vacuity check on its own AST walk.**
+    A rename of `connection_type`, or a `match` statement replacing the `if` chain, makes
+    every extracted set empty — at which point every difference vanishes and all three
+    tests pass while measuring nothing. That is the exact shape this file's own docstring
+    was written about, one level up.
+    """
+
+    def test_the_ast_walks_actually_matched_something(self):
+        """The arming check. If this fails, the three below prove nothing."""
+        loader = _loader_config_reads()
+        probes = _probe_lambda_reads()
+
+        # 🔴 This assertion was originally `len(loader) >= 14`, and a mutation proved it
+        # BLIND: breaking a single `if connection_type == "stripe":` branch left 15 others
+        # matching, so the arming check passed while one connector's field set had silently
+        # become empty. A threshold over a total cannot see a partial failure — and a
+        # partial failure is the likelier one, because refactors land one branch at a time.
+        # The property that actually matters is per-connector, so assert it per connector.
+        unseen = sorted(name for name in cs.SAAS_PROBES if not loader.get(name))
+        assert not unseen, (
+            f"the loader AST walk found no config reads for {unseen}. Either "
+            "_build_saas_source no longer has a `connection_type == ...` branch for them, "
+            "or the walk has been refactored out from under this guard. Repair it before "
+            "trusting anything below — an empty set makes every difference vanish."
+        )
+        assert set(probes) == set(cs.SAAS_PROBES), (
+            "the SAAS_PROBES AST walk and the imported table disagree on membership: "
+            f"{sorted(set(probes) ^ set(cs.SAAS_PROBES))}"
+        )
+        assert all(probes[n] for n in probes), (
+            f"these probes read no config key at all, which cannot be right: "
+            f"{sorted(n for n in probes if not probes[n])}"
+        )
+
+    def test_every_probe_reads_fields_the_loader_also_reads(self):
+        """A connection that tests must be a connection that can run.
+
+        This is core#860's stated acceptance. If a probe authenticates with a field the
+        loader never looks at, Test Connection is certifying a credential the pipeline
+        will not use.
+        """
+        loader = _loader_config_reads()
+        drift = {
+            name: sorted(_declared(name) - loader.get(name, set()))
+            for name in cs.SAAS_PROBES
+            if _declared(name) - loader.get(name, set())
+        }
+        assert not drift, (
+            f"these probes require credential fields the loader never reads: {drift}. "
+            "A green Test Connection would not imply a runnable connection."
+        )
+
+    def test_every_field_the_probe_reads_is_a_field_it_requires(self):
+        """A probe that reads a field it does not require gets a 401 it blames on
+        something else.
+
+        `fields` is the precondition; `url`/`headers`/`params` build the request. When
+        they disagree, the probe sends a malformed credential and reports failure against
+        whichever field it *did* require — telling the user the wrong thing about the
+        wrong field. `jira` did exactly this with `email` (core#860).
+        """
+        undeclared = {}
+        for name, reads in _probe_lambda_reads().items():
+            gap = reads - _declared(name) - _OPTIONAL_PROBE_READS.get(name, set())
+            if gap:
+                undeclared[name] = sorted(gap)
+        assert not undeclared, (
+            f"these probes read config keys they do not declare in `fields`: {undeclared}. "
+            "Either add the field (it is required) or add it to _OPTIONAL_PROBE_READS with "
+            "the default it falls back to."
+        )
+
+    def test_the_optional_table_names_only_genuinely_optional_reads(self):
+        """An entry here must still be READ, or the table is stale cover."""
+        reads = _probe_lambda_reads()
+        for name, keys in _OPTIONAL_PROBE_READS.items():
+            assert name in reads, f"_OPTIONAL_PROBE_READS names {name}, which has no probe"
+            stale = sorted(keys - reads[name])
+            assert not stale, (
+                f"_OPTIONAL_PROBE_READS[{name!r}] exempts {stale}, which the probe no longer "
+                "reads. Remove the entry — an exemption outliving its reason silently widens "
+                "the guard."
+            )
+            declared = sorted(keys & _declared(name))
+            assert not declared, (
+                f"{name} both requires and exempts {declared} — one of the two is wrong."
+            )
+
+    def test_the_loader_only_reads_what_the_probe_covers_or_a_recorded_exception(self):
+        """The other direction: a credential the run needs that the test never exercises.
+
+        Pinned EXACTLY, not as a floor. A NEW entry is core#860's defect arriving from the
+        far side; a DISAPPEARED one means core#992 covered it and the table should shrink.
+        Both must be noticed, so equality is the assertion.
+        """
+        loader = _loader_config_reads()
+        uncovered = {
+            name: sorted(loader.get(name, set()) - _declared(name))
+            for name in cs.SAAS_PROBES
+            if loader.get(name, set()) - _declared(name)
+        }
+        expected = {k: sorted(v) for k, v in _LOADER_FIELDS_NO_PROBE_COVERS.items()}
+        assert uncovered == expected, (
+            "the set of loader fields no probe covers has changed.\n"
+            f"  now     : {uncovered}\n"
+            f"  recorded: {expected}\n"
+            "A NEW entry means a connector grew a credential Test Connection never checks "
+            "(core#860). A REMOVED one means core#992 covered it — shrink the table and say "
+            "so. Do not widen the table to make this pass without deciding which it is."
+        )
+
+
 class TestMissingCredentialsAreReportedNotProbed:
     def test_an_empty_config_is_a_failure_before_any_request(self):
         session = _DeadSession()

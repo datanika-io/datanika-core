@@ -38,8 +38,58 @@ def test_retired_path_is_absent_from_the_current_tree(rel: str) -> None:
     )
 
 
+def _is_shallow() -> bool:
+    return (
+        subprocess.run(
+            ["git", "rev-parse", "--is-shallow-repository"],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+        == "true"
+    )
+
+
+@pytest.mark.parametrize("rel", _entries())
+def test_retired_path_is_not_currently_tracked(rel: str) -> None:
+    """The dangerous case, and it needs no history — so it runs in CI too.
+
+    A path that is still tracked is a live file, and listing it would delete it
+    from production on the next deploy. `git ls-tree` works on a depth-1 clone,
+    unlike `git log`, which is why this assertion carries the weight in CI.
+    """
+    out = subprocess.run(
+        ["git", "ls-tree", "--name-only", "HEAD", rel],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    assert not out, (
+        f"{rel} is listed as retired but is STILL TRACKED at HEAD. The deploy "
+        f"would delete a live file from production."
+    )
+
+
 @pytest.mark.parametrize("rel", _entries())
 def test_retired_path_is_recorded_in_git_history_as_deleted(rel: str) -> None:
+    """Stronger, but needs real history.
+
+    ⚠️ CI checks out with actions/checkout@v6 and no `fetch-depth`, i.e. depth 1,
+    so `git log --diff-filter=D` returns nothing there for every path and this
+    would fail for all of them regardless of correctness — measured on run
+    34123922773, five failures, all of them false. It is skipped on a shallow
+    clone rather than deleted, because on a full clone it catches a typo'd path
+    that never existed.
+
+    The skip is not a gap: a never-existed path is a no-op on the box (removing
+    an absent file does nothing), while the two assertions that prevent deleting
+    something real — not-tracked above, and no-box-owned-path below — run
+    everywhere.
+    """
+    if _is_shallow():
+        pytest.skip("shallow clone: git log has no history to search (see docstring)")
     out = subprocess.run(
         ["git", "log", "--diff-filter=D", "--format=%h", "-1", "--", rel],
         cwd=REPO,

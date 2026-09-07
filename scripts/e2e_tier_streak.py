@@ -45,6 +45,16 @@ mean "stable across three runs" or "the only three readings in a fortnight", and
 should decide which. Same shape as the `empty` / `unknown` / `no-evidence` states this codebase
 already uses wherever a verdict can be absent.
 
+🚨 **`sparse` grades DILUTION, never LENGTH** (core#1154). The first implementation asked
+``span > max_span`` — the number of calendar runs the streak reaches back through. That number
+grows for two opposite reasons: because unmeasured runs sit *between* the greens (diluted), or
+because there are simply *many consecutive greens* (the opposite). So the healthier a tier got,
+the more likely it was to be refused — `e2e-staging` at **14 measured greens out of 14 runs**
+returned `sparse`, any streak longer than `max_span` was unconditionally `sparse` however dense,
+and on the real `e2e-sso` history the verdict moved **`graduate` → `sparse` on the arrival of a
+sixth consecutive green**. The predicate is now ``gaps > max_gaps`` where ``gaps = span -
+streak``, which is the field that records the property the state is named for.
+
 Usage
 -----
 ::
@@ -236,6 +246,7 @@ class Reading:
     measured: int
     total: int
     span: int
+    gaps: int
     state: str
 
     @property
@@ -243,12 +254,25 @@ class Reading:
         return self.state == "graduate"
 
     @classmethod
-    def from_classes(cls, classes: list[str], *, required: int = 3, max_span: int = 10) -> Reading:
+    def from_classes(cls, classes: list[str], *, required: int = 3, max_gaps: int = 7) -> Reading:
         """Classify a history.
 
-        `max_span` bounds how many CALENDAR runs the streak may be drawn from before it is
-        reported `sparse`. It is a judgement, not a measurement, and it is exposed as a flag
-        so that whoever changes it has to say so.
+        `max_gaps` bounds how many runs may have measured NOTHING *inside* the streak's window
+        before it is reported `sparse`. It is a judgement, not a measurement, and it is exposed
+        as a flag so that whoever changes it has to say so.
+
+        🚨 **It deliberately does NOT bound the window's length** (core#1154). The predicate was
+        `span > max_span`, and `span` grows for two opposite reasons: because unmeasured runs
+        sit between the greens (diluted — what `sparse` means), or because there are simply many
+        consecutive greens (the opposite). Grading on `span` therefore penalised a tier for
+        getting healthier: `e2e-staging` at **14 measured greens out of 14 runs** — the densest
+        reading this instrument can take — returned `sparse`, and any streak longer than
+        `max_span` was unconditionally `sparse` however dense. On the real `e2e-sso` history the
+        verdict moved `graduate` → `sparse` on the arrival of a sixth consecutive green.
+
+        `gaps = span - streak` is the field that records the property the state is named for.
+        At `required=3` the old and new thresholds are the same condition (`span <= 10` ⟺
+        `gaps <= 7`), so this is behaviour-preserving everywhere the suite ever exercised it.
         """
         total = len(classes)
         measured = sum(1 for c in classes if c in (PASS, FAIL, UNREADABLE))
@@ -268,16 +292,26 @@ class Reading:
             if seen == n:
                 break
 
+        # Runs inside the streak's own window that carried no reading. This is the dilution the
+        # `sparse` state is named for; the window's absolute length is not (core#1154).
+        gaps = span - n
+
         if total < required:
             state = "no-data"
         elif n < required:
             state = "not-yet"
-        elif span > max_span:
+        elif gaps > max_gaps:
             state = "sparse"
         else:
             state = "graduate"
         return cls(
-            streak=n, required=required, measured=measured, total=total, span=span, state=state
+            streak=n,
+            required=required,
+            measured=measured,
+            total=total,
+            span=span,
+            gaps=gaps,
+            state=state,
         )
 
 
@@ -385,10 +419,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs", type=int, default=25)
     ap.add_argument("--required", type=int, default=3)
     ap.add_argument(
-        "--max-span",
+        "--max-gaps",
         type=int,
-        default=10,
-        help="calendar runs the streak may span before it reports `sparse` (a judgement)",
+        default=7,
+        help="runs inside the streak's window that may have measured NOTHING before it "
+        "reports `sparse` (a judgement). NOT a bound on the window's length — core#1154",
     )
     args = ap.parse_args(argv)
 
@@ -397,18 +432,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{created}  {sha}  {cls}")
 
     r = Reading.from_classes(
-        [c for _, _, c in history], required=args.required, max_span=args.max_span
+        [c for _, _, c in history], required=args.required, max_gaps=args.max_gaps
     )
     print()
     print(f"job            : {args.job} on {args.branch}")
     print(f"runs read      : {r.total}  (measured: {r.measured})")
-    print(f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s)")
+    print(
+        f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "
+        f"{r.gaps} of which measured nothing"
+    )
     print(f"verdict        : {r.state}")
     if r.state == "sparse":
         print(
-            "  -> the streak is real but drawn from a window that measured almost nothing.\n"
-            "     Three greens across a fortnight are not three greens across three runs.\n"
-            "     A human decides; this script will not graduate it."
+            f"  -> {r.gaps} of the {r.span} runs this streak reaches back through carried no\n"
+            "     reading. Three greens across a fortnight are not three greens across three\n"
+            "     runs. A human decides; this script will not graduate it."
         )
     if r.state == "no-data":
         print(

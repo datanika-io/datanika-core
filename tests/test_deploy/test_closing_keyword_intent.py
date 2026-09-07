@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.check_closing_keyword_intent import (  # noqa: E402
     CLOSING,
     findings,
+    looks_concatenated,
     normalise,
     render,
     subject_of,
@@ -250,6 +251,54 @@ class TestTheMessageIsNotAboutDiscipline:
     def test_control_the_ascii_check_can_see_a_non_ascii_character(self) -> None:
         """Anti-vacuity: an assertion over an empty set passes for the wrong reason."""
         assert [hex(ord(c)) for c in "a⚠b" if ord(c) > 127] == ["0x26a0"]
+
+
+# ======================================================================================
+# 8. `--stdin` must refuse a CONCATENATED stream (core#1162, found on this guard's own run)
+# ======================================================================================
+
+
+class TestConcatenatedInputIsRefused:
+    """`git log --format=%B <range> | ... --stdin` manufactures a false positive.
+
+    I did this to myself in the final check of the session that shipped the guard: two of my own
+    commits, one `refs` and one `closes`, concatenated into one stream and reported as a
+    contradiction. `--range` said both were clean, and they were. **The guard was right and my
+    invocation was wrong** — which is the failure mode this whole issue is about, one layer out.
+    """
+
+    def test_two_messages_concatenated_are_refused_not_analysed(self) -> None:
+        stream = (
+            msg("[QA] Second thing (refs #900)", "body")
+            + "\n\n"
+            + msg(f"[QA] First thing ({CLOSE} #900)", "body")
+        )
+        assert looks_concatenated(stream)
+
+    def test_one_message_is_not_refused(self) -> None:
+        """The control. A detector that refused everything would be safe and useless."""
+        assert not looks_concatenated(
+            msg("[QA] One thing (refs #900)", "Does not clos" + "e #900.")
+        )
+
+    def test_a_body_mentioning_a_dept_tag_mid_line_is_not_refused(self) -> None:
+        """It anchors to the START of a line, so prose quoting a tag does not trip it."""
+        body = "The commit titled [QA] Something was the one that did it."
+        assert not looks_concatenated(msg("[QA] One thing (refs #900)", body))
+
+    def test_the_cli_exits_2_on_a_concatenated_stream(self) -> None:
+        """Exit 2 is could-not-measure, never a pass and never a finding."""
+        stream = (
+            msg("[QA] Second (refs #900)", "b") + "\n\n" + msg(f"[QA] First ({CLOSE} #900)", "b")
+        )
+        p = subprocess.run(  # noqa: S603
+            [sys.executable, str(SCRIPT), "--stdin"],
+            input=stream.encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+        assert p.returncode == 2
+        assert b"--range" in p.stderr, "the refusal must name the mode that works"
 
 
 # ======================================================================================

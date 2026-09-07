@@ -427,8 +427,15 @@ class SettingsState(BaseState):
         """Hand ownership to another member (SPEC_ORG_ROLES §3).
 
         Owner-only, and the **only** route to `MemberRole.OWNER` outside
-        account creation. Audited as its own action rather than as two
-        `change_role` events, so the org history says what happened.
+        account creation. Audited as **one** row rather than as two
+        `change_role` events, so the org history says what happened: the
+        payload carries both `owner_user_id` values, which is what answers
+        "who handed this org to that account".
+
+        ⚠️ That row is an `update` on `member`, not a verb of its own — see
+        the comment at the `_audit` call. This docstring previously said
+        "audited as its own action", which is what made the invalid action
+        string read as deliberate for the life of the product (core#1127).
         """
         if not await self._check_role("owner"):
             return
@@ -454,7 +461,19 @@ class SettingsState(BaseState):
                     session,
                     auth_state.current_org.id,
                     auth_state.current_user.id,
-                    "transfer_ownership",
+                    # ⚠️ NOT "transfer_ownership" (core#1127). `_audit` does
+                    # `AuditAction(action)` and swallows the ValueError by
+                    # design, so a non-member string is a silently dropped row:
+                    # this call was correct in every other respect and had never
+                    # written anything. Adding an enum member instead is an
+                    # expand/contract pair, not a typo fix — `audit_logs.action`
+                    # is `Enum(..., native_enum=False)`, so the previously
+                    # deployed container raises `LookupError` when it *reads* a
+                    # value it does not know, and /audit-logs lists rows for a
+                    # whole org, so one such row breaks the page for every
+                    # reader on the old container mid-swap. `erase_user` set the
+                    # precedent: record the fact inside the existing enum.
+                    "update",
                     "member",
                     resource_id=successor_id,
                     old_values={"owner_user_id": auth_state.current_user.id},

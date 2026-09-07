@@ -60,10 +60,24 @@ watching. The six valid values are `create` · `update` · `delete` · `login` �
 
 ### 2.3 · The `resource_type` must be a value the reader can filter for
 
-`/audit-logs` filters by `resource_type` against a **hardcoded list** (`pages/audit_logs.py:43-50`).
-A row written under a type absent from that list is in the table and unreachable through the only
-UI that reads the table. Adding a new type means adding it to the filter **in the same PR**, until
-§6.2 makes the list derived.
+A row written under a type the filter does not offer is in the table and unreachable through the
+only UI that reads the table.
+
+🆕 **§6.2 is done, so the operative instruction has changed** ([core#1128], 2026-09-07). This
+clause used to read *"`/audit-logs` filters against a **hardcoded list** (`pages/audit_logs.py:43-50`)
+… adding a new type means adding it to the filter **in the same PR**, until §6.2 makes the list
+derived."* The list **is** derived now, and leaving that sentence standing would have kept sending
+implementers to hand-edit a list that no longer exists.
+
+**What a new resource type costs today:** add the member to `AuditResourceType`
+(`models/audit_log.py`) in the same PR as the writer. The filter picks it up with no second edit.
+`tests/test_services/test_audit_call_site_vocabulary.py` fails if a writer and the enum disagree in
+**either** direction — a written type nothing can filter for, or an option no call site writes.
+
+⚠️ **The call sites still pass plain strings**, deliberately: the enum is what the *reader* derives
+from, and the guard is what binds the writers to it. Binding 36 literals to enum members would be a
+wider diff for the same guarantee, and would not catch the one thing neither shape catches — a typo
+blessed into the enum alongside its writer.
 
 ### 2.4 · The payload is flat scalars under keys that are not PII keys
 
@@ -206,18 +220,57 @@ the spec names which, because a test suite whose members overlap is one test wit
 After a successful `remove_dependency`, `audit_logs` holds exactly **one** matching row with the
 exact shape in AC2. Same for AC1.
 
-**Kills:** the audit call being absent, and the audit call being placed *after* `session.commit()`
-inside the same `with` block — where the row is added to the session and then dropped on close.
+**Kills:** the audit call being absent.
 
-**Cannot see:** an audit row written in its own session. That row exists too, so T1 is green.
+**Cannot see:** an audit row written in its own session — that row exists too, so T1 is green.
+
+> 🚨 **CORRECTED 2026-09-07, [core#934] — T1 does NOT kill the after-`commit()` placement**, which
+> this clause claimed. Measured: really moving the `_audit` call below `session.commit()` in
+> `add_dependency` left **all nine** other tests in the file green.
+>
+> The reason is the harness, and it applies to every audit harness in this repo. The shared
+> `db_session` fixture owns the real transaction and rolls it back at teardown, so a handler's
+> `commit()` has to be stubbed to a `flush()` — otherwise it releases the savepoint and rows leak
+> into the next test. Under that stub a row added *after* `commit()` is still flushed into the same
+> transaction, and any later query finds it. In **production** the same code writes nothing: the
+> `with` block exits with no second commit and the row is discarded.
+>
+> **What does kill it** is a watermark on the stubbed `commit()` — how many audit rows were already
+> in the transaction at the moment it was called (expect 1, get 0).
+>
+> ⚠️ **Count ROWS, not objects.** The first version of that watermark asked whether an `AuditLog`
+> was in `session.identity_map` or `session.new`, and it read **False on correct code**:
+> `identity_map` is a *weak* dict, `log_action` flushes the row and returns it, and every caller
+> discards the return — so the object is collected while its row sits in the transaction. Isolated
+> probe: `identity_map` size **0**, `session.new` empty, `SELECT count(*)` = **1**. *Presence of the
+> object is not presence of the row.*
 
 ### 4.2 · T2 — one transaction, asserted structurally
 
-Wrap the handler's session factory. At the moment the handler calls `commit()`, assert that the
-**same** `Session` holds both the pending `AuditLog` (in `session.new`) and the mutated
-`Dependency` (in `session.dirty`).
+Wrap the handler's session factory and assert that the audit row and the mutation rode the **same**
+`Session`.
 
-**Kills:** the second-session implementation.
+> 🚨 **CORRECTED 2026-09-07, [core#1127] — the original wording could not pass against correct
+> code.** It said: *"At the moment the handler calls `commit()`, assert that the same `Session`
+> holds both the pending `AuditLog` (in `session.new`) and the mutated `Dependency` (in
+> `session.dirty`)."* The `AuditLog` **cannot** be in `session.new` at that moment:
+> `AuditService.log_action` ends in `session.add(log)` followed by `session.flush()`
+> (`audit_service.py:178-179`), so the row is already persistent before `commit()` runs. Nor is the
+> mutation still in `session.dirty` — the service flushed it earlier. Measured while implementing
+> [core#1127]: the first draft of this test failed on a **correct** implementation, reporting
+> `samples=[(False, True)]`.
+>
+> ⚠️ **That is the dangerous kind of wrong.** A red on correct code invites the implementer to
+> change the *implementation* until the test passes — so a clause written to prevent a
+> second-session audit could have produced one.
+>
+> **What discriminates instead is session identity**, and it is cheaper: count the handler's entries
+> into `get_sync_session` (exactly one) and assert the `AuditLog` was flushed on the session that
+> single entry handed out. Verified to kill the mutant it is named for — see the table below.
+
+**Kills:** the second-session implementation. **Measured, not predicted** ([core#1127] M3): against
+a handler that audits in its own `get_sync_session()` block, both row-existence assertions stayed
+**green** and only this one went red.
 
 🔑 **Why this and not "assert the row exists afterwards": a row-exists assertion is satisfied by the
 bug it is supposed to name.** This is the [core#1081] lesson restated — *the property is that both

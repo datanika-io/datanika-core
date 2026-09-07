@@ -272,14 +272,47 @@ you get one row and it is the directory listing. **A gate that punishes honest n
 dishonest ones.**
 
 **Graduation is mechanical:** 3 consecutive greens on `dev`, read from the job's printed
-`INFORMATIONAL_RESULT=success` line — **never the step's own tick, which `continue-on-error` masks.**
-Then delete the marker and close the tracking issue.
+verdict line — **never the step's own tick, which `continue-on-error` masks.** Then delete the
+marker and close the tracking issue.
 
-- `empty` and `unknown` are neither green nor red and count toward nothing.
-- **A cancelled run is neither green nor red.** `dev` is busy and the concurrency group cancels
-  often. Re-read; do not assume.
+🚨 **"Consecutive" ranges over MEASURED runs, not calendar runs — and until 2026-09-06 this
+sentence did not say so, while nothing computed the streak at all.** (core#1130.) The counter
+`ci.yml` says a red *"RESETS"* existed only in a reviewer's head, and the sentence admits three
+readings that disagree on real data. Measured on the nine completed `e2e-sso` runs on `dev` that
+day: **seven carried no reading**, and four runs in which *every* SSO spec passed contributed one
+green between them, because staging had moved under them (`wrong_build`).
+
+| reading | rule | on that data |
+|---|---|---|
+| calendar | 3 *adjacent* runs, all green | **unsatisfiable** — and an unsatisfiable bar gets lowered, not met |
+| tally | 3 greens *anywhere* in the window | **already satisfied**, by greens that were never adjacent |
+| **measured** | 3 adjacent greens in the **measured subsequence** | 1 of 3 — **this is the rule** |
+
+**Run `python scripts/e2e_tier_streak.py --job <job>` rather than counting by eye.** It prints the
+per-run class, the trailing streak, how many calendar runs that streak spans, and a verdict.
+
+Two asymmetries make the measured reading honest, and they are the part to argue with rather than
+memorise:
+
+- **A run that measured nothing is transparent.** `wrong_build`, `no_verdict`, `cancelled`,
+  `empty`, `unknown` — we know these carried no reading, so they neither advance nor reset.
+- **A run we cannot read is NOT transparent.** An unrecognised verdict, or a log GitHub will no
+  longer serve, blocks the streak: we do not know what it carried, and assuming it was not a red
+  is the reassuring assumption.
+- **A streak drawn from a window that measured almost nothing reports `sparse`, not `graduate`.**
+  Three greens across a fortnight and three greens across three runs are not the same evidence,
+  and only a human should decide which one they are looking at.
+
+⚠️ **The choice of the measured reading is a judgement, not a measurement.** The tests around it
+prove the *instrument* discriminates; they cannot prove the rule is right. Say so when you cite it.
+
+⚠️ **Actions logs expire after 90 days**, so graduation evidence decays and cannot be
+reconstructed later. Record the SHAs in the spec's tier header when it graduates, the way
+`golden-path.spec.ts` does.
+
 - **A skipped job is not a flake.** Check the run's *event*: the push-only jobs do not run on a
-  `pull_request`, so a promotion PR legitimately skips them.
+  `pull_request`, so a promotion PR legitimately skips them. And a `dev` head carries a
+  `merge_group` run whose staging jobs are `skipped` **by design** — filter by `event=push`.
 
 **🚫 Demotion is not the inverse.** Moving a spec *out* of the gating tier requires an issue and is
 only ever legitimate for a spec that has **never passed**. Demoting one that used to pass hides a
@@ -799,3 +832,50 @@ issue. **When a job classifies badly, diff it against its siblings before design
 [core#827]: https://github.com/datanika-io/datanika-core/issues/827
 [core#895]: https://github.com/datanika-io/datanika-core/issues/895
 [core#896]: https://github.com/datanika-io/datanika-core/issues/896
+
+## 29. An acceptance criterion that fails on CORRECT code is worse than one that passes on broken code
+
+Both are defective criteria. They are not symmetric, and the asymmetry is about **what each one
+makes a person do next.**
+
+- A criterion that **passes on broken code** leaves you where you already were: no coverage, and a
+  green that means nothing. Bad, and inert.
+- A criterion that **fails on correct code** is not inert. It puts steady pressure on an engineer to
+  change a working implementation until the test goes green — and because the criterion is *"the
+  spec"*, the cheapest way to resolve the conflict is to move the **code**, not the clause.
+
+**It recruits the person into breaking the system, and every step of that looks like compliance.**
+Measured instance: three of `SPEC_AUDIT_TRAIL` §4's test-design clauses are wrong and **two go red
+against a correct implementation** (Engineering, 2026-09-07).
+
+This is the same economics as *"the cheapest way to make a floor pass is to lower it"*, running in
+the opposite direction — and it is worse, because lowering a floor is visibly a retreat while
+"making the code match the spec" is visibly a virtue.
+
+### 🚨 And a spec clause can be UNSATISFIABLE, with a faithful implementation silently broken
+
+`SPEC_ORG_ROLES.md` §3.4 named an audit action **that is not a valid enum member**.
+`transfer_ownership` wrote that string; the row was dropped. **Nothing here was a typo and no review
+was wrong** — the implementation was faithful to a clause that could not be satisfied. Code
+compliant, review correct, row gone, every check green.
+
+🔑 **A spec that names a constant is making a testable claim that the constant exists**, and nobody
+was testing it. That claim is worth a guard on its own, because it is the one class of spec defect
+where *doing exactly what you were told* is the failure mode:
+
+- **Extract every identifier a spec names — enum members, status values, metric names, env vars,
+  route paths — and resolve each against the artifact that defines it.** An unresolvable one is a
+  spec bug, found at spec-review time rather than by a dropped row in production.
+- **Where a spec prescribes a test's design, the prescription is itself a claim to check.**
+  §15 says to diff the spec against the tests; this is the case where **the spec is the thing that
+  is wrong**, so a diff that assumes the spec is the oracle reports the tests as deficient and sends
+  someone to "fix" them.
+
+⚠️ **Practical consequence for triage: when an AC and an implementation disagree, establish which
+one is wrong before doing anything.** The default assumption — the code is wrong, the spec is the
+contract — is correct most of the time and is exactly what makes the minority case expensive. Ask
+*"can this clause be satisfied at all?"* first; it is one lookup, and a `grep` of the enum answers
+it.
+
+Related: §15 (diff the spec against the tests) · §20 (check the artifact against what it represents,
+not against its own plausibility) · [core#864] (`shipped-to-prod` on undone work).

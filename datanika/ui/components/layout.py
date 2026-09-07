@@ -292,6 +292,90 @@ def signed_out_panel() -> rx.Component:
     )
 
 
+def app_shell_skeleton() -> rx.Component:
+    """Shown while a protected page is entering the backend event path (#1090).
+
+    ``page_layout``'s ``is_authenticated`` false arm is reached for the whole of
+    that window, and it used to be ``rx.center(rx.spinner(size="3"))``. Entering
+    the event path costs **1933–9499 ms** on production — measured signed out,
+    five samples, and the slowest was the *control* page with one no-op
+    ``on_load`` handler. Reflex's fast path is keyed on whether any handler
+    exists, never on what one costs, so there is no payload to optimise here and
+    no "the 3.7 seconds" to quote.
+
+    ``signed_out_panel()`` below already makes the argument this component acts
+    on — *a spinner forever is indistinguishable from a hang*. #673 accepted it
+    for the session-ended branch and left the hydrating branch beside it as the
+    bare spinner it was arguing against.
+
+    🚨 **Chrome only, and that is a product decision rather than minimalism.**
+    The visitor's destination is not yet known — that is the entire problem. An
+    authenticated user is about to see this chrome filled in; a signed-out one is
+    about to be moved to ``/login``. A branded shell is honest in both branches;
+    placeholder rows, counts or chart shapes are honest in one and a fabrication
+    in the other. Nothing here links anywhere, because a link offered to a
+    visitor who may never be signed in is clickable during the window.
+
+    ⚠️ **It removes 0 ms.** It is not a performance fix and must not be described
+    as one.
+
+    The product name is deliberately *outside* the ``rx.skeleton`` shimmer:
+    Radix's Skeleton hides its children, and a real text node is what makes
+    ``first-contentful-paint`` mean *"the user saw something"*. FCP is
+    structurally blind to a spinner — no text node, no image, no SVG — which is
+    how #1090 came to be filed as a blank screen.
+    """
+    return rx.box(
+        rx.box(
+            rx.vstack(
+                rx.hstack(
+                    rx.image(src="/logo.png", width="32px", height="32px"),
+                    rx.heading(_t["app.name"], size="5"),
+                    spacing="2",
+                    align="center",
+                    padding="16px",
+                ),
+                rx.separator(),
+                rx.vstack(
+                    *[
+                        rx.skeleton(height="32px", width="100%", border_radius="6px")
+                        for _ in range(8)
+                    ],
+                    spacing="2",
+                    width="100%",
+                    padding="8px",
+                ),
+                spacing="0",
+                width="100%",
+                height="100vh",
+            ),
+            width="240px",
+            border_right="1px solid var(--gray-a5)",
+            bg="var(--gray-a2)",
+            position="fixed",
+            left="0",
+            top="0",
+        ),
+        rx.box(
+            rx.vstack(
+                rx.skeleton(height="32px", width="240px", border_radius="6px"),
+                rx.skeleton(height="140px", width="100%", border_radius="8px"),
+                rx.skeleton(height="140px", width="100%", border_radius="8px"),
+                spacing="4",
+                width="100%",
+            ),
+            margin_left="240px",
+            padding="24px",
+            width="calc(100% - 240px)",
+        ),
+        width="100%",
+        # A shimmer says nothing to assistive technology, and this is the one
+        # affordance here that costs no locale key — so AC4.3 does not trade
+        # against it.
+        custom_attrs={"aria-busy": "true"},
+    )
+
+
 def connection_lost_banner() -> rx.Component:
     """Say so when the websocket is down, on every page (#744).
 
@@ -391,16 +475,14 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
                 ),
                 rx.toast.provider(duration=3000),
             ),
-            # Not signed in. Two very different reasons land here: the page is
-            # still hydrating (spinner), or a handler just ended the session
-            # (#673).
+            # Not signed in. Two very different reasons land here, and each gets
+            # the state that says which: a handler just ended the session
+            # (#673), or the page is still entering the backend event path,
+            # which costs 1933-9499 ms on production (#1090, SPEC_PAGE_ENTRY §4).
             rx.cond(
                 AuthState.session_expired,
                 signed_out_panel(),
-                rx.center(
-                    rx.spinner(size="3"),
-                    height="100vh",
-                ),
+                app_shell_skeleton(),
             ),
         ),
     )

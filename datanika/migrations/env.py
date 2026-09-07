@@ -3,7 +3,7 @@ import re
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy import engine_from_config, pool
 
 from datanika.migrations.helpers import (
     get_tenant_schemas,
@@ -53,67 +53,106 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
-    connectable = engine_from_config(
+def _engine_with_search_path(search_path: str):
+    """An engine whose connections arrive with ``search_path`` ALREADY set (core#933).
+
+    🔑 **The search path must not be set with a statement.** Any statement executed on
+    the connection before ``context.begin_transaction()`` autobegins a SQLAlchemy
+    transaction alembic did not begin; ``begin_transaction()`` then returns a do-nothing
+    context manager without assigning ``self._transaction``, and ``autocommit_block()``
+    asserts on exactly that — a bare, message-less ``AssertionError`` raised from inside
+    alembic, on a line copied verbatim out of alembic's own documentation. That is what
+    made ``CREATE INDEX CONCURRENTLY``, ``ALTER TYPE ... ADD VALUE`` and commit-between-
+    batches unavailable to every migration in this repo.
+
+    ``options=-csearch_path=...`` is delivered in libpq's **startup packet**, so the path
+    is in force on the first statement without one having been executed to put it there.
+
+    ⚠️ **Do not "simplify" this back to a ``SET search_path`` inside
+    ``context.begin_transaction()``.** That is core#933's option 1 and it is
+    backend-dependent: measured on alembic 1.18.4, it WORKS on PostgreSQL/psycopg2 (where
+    ``begin_transaction()`` assigns ``_transaction``, so the later statement joins
+    alembic's own transaction) and FAILS on SQLite (where it does not). A fix whose
+    correctness varies by driver is how this defect regenerates. The property this
+    function has instead — *nothing is executed on the connection at all* — holds on both.
+
+    ⚠️ ``connect_args`` is passed unconditionally rather than only for PostgreSQL URLs.
+    Nothing runs ``run_migrations_online()`` against another backend (the whole test tree
+    reaches alembic through a real Postgres), and a conditional here would be a branch
+    that silently skips the fix.
+    """
+    return engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"options": f"-csearch_path={search_path}"},
     )
-    with connectable.connect() as connection:
-        # Phase 1: public schema
-        #
-        # 🚨 This statement is why `op.get_context().autocommit_block()` raises a bare,
-        # message-less AssertionError in EVERY migration in this repo (core#933). It
-        # autobegins a SQLAlchemy transaction that alembic did not begin, and
-        # `autocommit_block()` refuses exactly that state. The traceback names alembic,
-        # not us, so this line is the only place a reader arrives at unaided.
-        #
-        # 🔴 CORRECTED 2026-09-07. This comment used to say the cause was that the SET runs
-        # *before* `context.begin_transaction()`, "which never assigns `self._transaction`
-        # — the attribute `autocommit_block()` asserts on". Measured against alembic
-        # 1.18.4: `_transaction` is None in the WORKING case too, so it is not the
-        # discriminator. The real one is `_in_connection_transaction()`, checked on the
-        # line above that assertion.
-        #
-        # 🚨 The difference is not pedantic — it kills core#933's option 1. Moving this
-        # statement INSIDE `context.begin_transaction()` autobegins just the same and
-        # changes nothing; the property is "no statement may touch this connection at
-        # all". Only a search path set without executing SQL (connect args / URL) can
-        # satisfy it. Measured in
-        # `tests/test_migrations/test_autocommit_block_availability.py`.
-        #
-        # Consequence: no `CREATE INDEX CONCURRENTLY`, no `ALTER TYPE ... ADD VALUE`, and
-        # no commit between backfill batches. `docs/specs/SPEC_EXPAND_CONTRACT_MIGRATIONS.md`
-        # states it where an author looks; `tests/test_migrations/
-        # test_autocommit_block_availability.py` reproduces it with a control and goes RED
-        # when it is fixed, which is when both notes must come out.
-        #
-        # ⚠️ The tenant loop below re-`SET`s per schema and has the same problem, so a fix
-        # has to cover both phases — moving only this one leaves the loop broken while the
-        # docs say it works.
-        connection.execute(text("SET search_path TO public"))
+
+
+def run_migrations_online() -> None:
+    # Phase 1: public schema.
+    #
+    # The connection is handed to alembic untouched — see `_engine_with_search_path`.
+    # `tests/test_migrations/test_autocommit_block_in_a_real_migration.py` runs the real
+    # migration tree with an `autocommit_block()` head appended and goes RED if a
+    # statement is reintroduced here.
+    with _engine_with_search_path("public").connect() as connection:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             include_object=_include_public,
             version_table_schema="public",
+            # core#933: each migration gets its own transaction.
+            #
+            # 🔑 This is NOT tidiness and NOT alembic's generic advice — without it the
+            # search-path fix above is INCOMPLETE. **15 migrations in this tree call
+            # `connection.commit()` / `op.get_bind().commit()` inside `upgrade()`.**
+            # They could do that safely only because alembic owned no transaction:
+            # `_transaction` was None, so they were committing the connection's own
+            # autobegun one. Once env.py stops executing a statement, alembic DOES own
+            # it — and those commits end it out from under alembic. A later migration's
+            # `autocommit_block()` then reaches `self._transaction.commit()` on a dead
+            # transaction and dies with `InvalidRequestError: This transaction is
+            # inactive`. Measured: the assertion is cleared and the block still fails.
+            #
+            # Per-migration transactions confine each of those commits to its own
+            # migration, so a later one starts clean. ⚠️ Consequence worth knowing: a
+            # failure part-way through `upgrade head` now leaves earlier migrations
+            # APPLIED and recorded in `alembic_version`, instead of rolling the whole
+            # chain back. Under expand/contract each migration is independently safe
+            # and a re-run resumes from where it stopped, which is why this is the
+            # right trade — but it is a change, not a no-op.
+            transaction_per_migration=True,
         )
         with context.begin_transaction():
             context.run_migrations()
         # SQLAlchemy 2.0 requires explicit commit for DDL to persist
         connection.commit()
 
-        # Phase 2: each tenant schema
+    # Tenant-schema discovery runs on its OWN connection, and deliberately AFTER phase 1
+    # rather than before: a public-schema migration may create a tenant schema, and the
+    # previous shape discovered them at exactly this point. It is a separate connection
+    # because phase 1's must reach alembic with nothing executed on it — putting a SELECT
+    # on the tail of it would be harmless today and is precisely the shape that comes back.
+    with _engine_with_search_path("public").connect() as connection:
         tenant_schemas = get_tenant_schemas(connection)
-        for schema in tenant_schemas:
-            if not _TENANT_SCHEMA_RE.match(schema):
-                continue
-            connection.execute(text(f'SET search_path TO "{schema}", public'))
+
+    # Phase 2: each tenant schema, one connection apiece.
+    #
+    # The search path differs per schema and cannot be re-set with a statement, so this
+    # cannot be one shared connection the way it used to be. `NullPool` means each
+    # `connect()` is a real connect, which is what carries the per-schema startup packet.
+    for schema in tenant_schemas:
+        if not _TENANT_SCHEMA_RE.match(schema):
+            continue
+        with _engine_with_search_path(f'"{schema}",public').connect() as connection:
             context.configure(
                 connection=connection,
                 target_metadata=target_metadata,
                 include_object=_include_tenant,
                 version_table_schema=schema,
+                # Same reason as phase 1 — see the note there.
+                transaction_per_migration=True,
             )
             with context.begin_transaction():
                 context.run_migrations()

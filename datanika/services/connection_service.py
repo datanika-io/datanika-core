@@ -523,7 +523,16 @@ SAAS_PROBES: dict[str, dict] = {
         "headers": lambda c: {"X-Shopify-Access-Token": _first(c, "api_key", "access_token")},
     },
     "jira": {
-        "fields": (("api_key", "api_token"), ("domain",)),
+        # `email` is REQUIRED, not optional (core#860). Atlassian API-token auth is
+        # HTTP Basic over `email:token`, which is what both the probe's `headers`
+        # below and the loader's live REST path build — `dlt_runner` composes
+        # `base64(f"{email}:{api_token}")`. Without it the probe sent `Basic :token`,
+        # got a 401, and reported a credential failure for a token that was fine.
+        # Undeclared here, it was read by this entry's own lambda and required by
+        # nothing — so the user was told the wrong thing about the wrong field.
+        # ⚠️ The loader's own `raise` only lists `api_key` and `domain`; that list is
+        # likewise incomplete, and it is why this had no second reader to catch it.
+        "fields": (("api_key", "api_token"), ("domain",), ("email",)),
         "url": lambda c: f"https://{_first(c, 'domain')}.atlassian.net/rest/api/3/myself",
         "headers": lambda c: _basic(_first(c, "email"), _first(c, "api_key", "api_token")),
     },

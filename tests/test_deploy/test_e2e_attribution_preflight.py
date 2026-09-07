@@ -222,3 +222,112 @@ def test_an_unstripped_composed_name_would_be_dropped() -> None:
     from scripts.verify_e2e_attribution import MUTATION, VERIFIERS
 
     assert "staging / e2e-staging" not in (MUTATION, *VERIFIERS)
+
+
+# ── core#1174: a window nobody overtook is not the same as a reading ────────────────────
+#
+# `310137d0` on 2026-09-07. `e2e-sso` failed its own step 7 ("Assert staging is running THIS
+# commit"), SKIPPED steps 8-15, ran ZERO SSO specs, and self-classified `wrong_build`.
+# Nothing overtook its window, so the script reported `attributed` and exited 0 — an
+# all-clear over a tier that had measured nothing, in the last thing a promoter reads before
+# merging to `master`.
+#
+# The two readings were never contradicting: "was this window overtaken?" and "did this job
+# produce a reading?" are different questions, and only the first was ever asked.
+
+F = "310137d0df348f19c4db33ea62a4c44c1acc6ea1"
+
+#: Real timings from run 34107792351. Note every job is `attributed` by the ORIGINAL rule —
+#: that is the point of the fixture.
+NO_READING_HEAD = [
+    job(F, "deploy-staging", "2026-09-07T10:02:00Z", "2026-09-07T10:06:05Z", "success"),
+    job(F, "smoke-staging", "2026-09-07T10:06:10Z", "2026-09-07T10:06:40Z", "success"),
+    job(F, "e2e-staging", "2026-09-07T10:06:45Z", "2026-09-07T10:11:00Z", "success"),
+    job(F, "e2e-sso", "2026-09-07T10:06:50Z", "2026-09-07T10:13:18Z", "failure"),
+]
+
+
+def test_the_old_rule_alone_calls_the_no_reading_head_clean() -> None:
+    """The regression, stated as a test so nobody re-introduces it as a simplification.
+
+    With no verdict classes supplied, every job is `attributed` — which is exactly what
+    shipped and exactly what exited 0 over a tier that measured nothing.
+    """
+    assert verdicts(NO_READING_HEAD, F) == {
+        "smoke-staging": "attributed",
+        "e2e-staging": "attributed",
+        "e2e-sso": "attributed",
+    }
+    assert classify(NO_READING_HEAD, F)["trustworthy"] is True
+
+
+def test_a_job_that_produced_no_reading_is_refused() -> None:
+    """core#1174: the fix. `wrong_build` classifies UNMEASURED, so the job did not grade."""
+    result = classify(NO_READING_HEAD, F, {"e2e-sso": "UNMEASURED", "e2e-staging": "PASS"})
+    assert result["jobs"]["e2e-sso"]["verdict"] == "no_verdict"
+    assert result["trustworthy"] is False
+    detail = result["jobs"]["e2e-sso"]["detail"]
+    assert "NO reading" in detail, detail
+    # The distinction is the whole finding: say it was not overtaken, or a reader repairs
+    # the wrong thing by re-running a deploy that was never the problem.
+    assert "not overtaken" in detail, detail
+
+
+def test_the_two_verifiers_that_did_grade_stay_attributed() -> None:
+    """Anti-over-fire. If a no_verdict on one tier condemned the others, the guard would red
+    on every head where SSO is flaky and would be switched off within a week."""
+    result = classify(NO_READING_HEAD, F, {"e2e-sso": "UNMEASURED", "e2e-staging": "PASS"})
+    assert result["jobs"]["e2e-staging"]["verdict"] == "attributed"
+    assert result["jobs"]["smoke-staging"]["verdict"] == "attributed"
+
+
+@pytest.mark.parametrize("klass", ["UNMEASURED", "UNREADABLE"])
+def test_both_no_reading_classes_refuse(klass: str) -> None:
+    assert classify(NO_READING_HEAD, F, {"e2e-sso": klass})["jobs"]["e2e-sso"]["verdict"] == (
+        "no_verdict"
+    )
+
+
+@pytest.mark.parametrize("klass", ["PASS", "FAIL"])
+def test_a_real_reading_stays_attributed_even_when_it_is_red(klass: str) -> None:
+    """FAIL is a READING, not an absence.
+
+    A red that genuinely belongs to this commit is precisely what the promoter must see.
+    Folding it into `no_verdict` would be this same defect pointed the other way — hiding a
+    real failure behind a word that means "we do not know".
+    """
+    result = classify(NO_READING_HEAD, F, {"e2e-sso": klass})
+    assert result["jobs"]["e2e-sso"]["verdict"] == "attributed"
+    assert klass in result["jobs"]["e2e-sso"]["detail"]
+
+
+def test_a_job_with_no_classifier_line_is_left_alone() -> None:
+    """`smoke-staging` emits no verdict line. Measured: `verdict=<none>` on both a clean head
+    and the broken one. Treating that absence as a failure would red every clean run, which
+    is how a guard gets deleted — the polarity error measured three times on 2026-09-07."""
+    result = classify(NO_READING_HEAD, F, {"e2e-sso": "UNMEASURED"})
+    assert result["jobs"]["smoke-staging"]["verdict"] == "attributed"
+    assert "<none>" in result["jobs"]["smoke-staging"]["detail"]
+
+
+def test_the_clean_head_is_still_clean_with_classes_supplied() -> None:
+    """The positive control. Without it, "refuses the broken head" is satisfied by a script
+    that refuses everything."""
+    classes = {"smoke-staging": "PASS", "e2e-staging": "PASS", "e2e-sso": "PASS"}
+    assert classify(CLEAN_HEAD, E, classes)["trustworthy"] is True
+
+
+def test_the_vocabulary_is_qas_and_not_a_second_definition() -> None:
+    """Two independent definitions of `wrong_build` is how they drift apart — and QA fixed a
+    real polarity defect in theirs on 2026-09-06 (`wrong_build` was transparent to the streak
+    and could hide a spec failure). This asserts the import relationship, so a future edit
+    cannot quietly re-derive the vocabulary here."""
+    from scripts.e2e_tier_streak import UNMEASURED, UNREADABLE, VERDICT_CLASS
+    from scripts.verify_e2e_attribution import NO_READING_CLASSES
+
+    assert {UNMEASURED, UNREADABLE} == NO_READING_CLASSES
+    # The token that caused this issue must classify as a non-reading in QA's map.
+    assert VERDICT_CLASS["wrong_build"] == UNMEASURED
+    assert VERDICT_CLASS["no_verdict"] == UNMEASURED
+    # ...and a genuine reading must not.
+    assert VERDICT_CLASS["clean"] != UNMEASURED

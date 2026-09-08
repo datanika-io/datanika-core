@@ -216,3 +216,35 @@ def test_a_title_this_script_writes_round_trips() -> None:
         "an advisory we file would not be recognised as already-tracked, so it "
         "would be re-filed on every scheduled run"
     )
+
+
+def test_trivy_pin_matches_the_one_ci_already_proves_works() -> None:
+    """The mistake this catches, made on the first dispatch of this workflow.
+
+    `aquasecurity/trivy-action@0.33.1` — invented version, missing `v` prefix —
+    failed at `Set up job` with `Unable to resolve action`. Every test in this
+    file passed, because they validate the workflow's SHAPE and cannot know
+    whether an action version exists on the marketplace.
+
+    ci.yml's image-cve runs this action on every PR, so its pin is continuously
+    proven to resolve. Matching it is the cheapest available guarantee.
+
+    🚨 A wrong pin here is uniquely nasty: a scheduled workflow that fails at job
+    setup produces a red tick nobody reads, and the watchdog only asks whether a
+    schedule FIRED, never whether it succeeded — so it would report healthy
+    forever. See core#1193.
+    """
+    import re
+
+    pins: set[str] = set()
+    for path in (REPO / ".github" / "workflows").glob("*.yml"):
+        for m in re.finditer(
+            r"^\s*uses:\s*(aquasecurity/trivy-action@\S+)",
+            path.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        ):
+            pins.add(m.group(1))
+    assert len(pins) == 1, (
+        f"trivy-action is pinned inconsistently across workflows: {sorted(pins)}. "
+        f"The scheduled scan must use the pin CI already proves resolves."
+    )

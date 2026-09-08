@@ -111,6 +111,7 @@ xfail flips, same counts elsewhere. Claim C is the whole difference.
 
 import ast
 import inspect
+import re
 from pathlib import Path
 
 import yaml
@@ -485,6 +486,14 @@ class TestTheMoveNotVanishGuardCanActuallyFail:
 
 
 SCHEDULER_ENTRYPOINT = "datanika.scheduler_main"
+ALERTS = (
+    Path(__file__).resolve().parents[2]
+    / "monitoring"
+    / "grafana"
+    / "provisioning"
+    / "alerting"
+    / "alerts.yml"
+)
 HELM_SCHEDULER = (
     Path(__file__).resolve().parents[2]
     / "deploy"
@@ -714,3 +723,65 @@ class TestTheProcessCountGuardCanActuallyFail:
 # the defect); `test_the_owning_service_does_not_fork_workers` is the one that
 # would have caught it.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Being a container is only useful if something looks at it (core#653's third
+# acceptance criterion, applied to this one).
+#
+# The scheduler dying is the most silent failure this component has: every user
+# schedule simply stops, no run is created, no run FAILS, and nothing in the
+# product is in a state anyone can observe. Modelled on
+# `test_beat_singleton.py`'s pair, including the second half — core#615's
+# mistake in the other direction, where `datanika-.*` matched the staging
+# container and would have paged critical on every merge to `dev`.
+# ---------------------------------------------------------------------------
+
+
+def _scheduler_container(manifest_path: Path) -> str:
+    """The container name of whichever service RUNS the scheduler.
+
+    Found by what its command does, not by its key — the same discipline as
+    `test_beat_singleton.py`. A rename of the service must not quietly drop
+    the coverage assertion.
+    """
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    owners = [
+        service
+        for service in (manifest.get("services") or {}).values()
+        if SCHEDULER_ENTRYPOINT in str((service or {}).get("command", ""))
+    ]
+    assert len(owners) == 1, f"expected exactly one scheduler service in {manifest_path.name}"
+    return owners[0]["container_name"]
+
+
+def _container_last_seen_selectors() -> list[str]:
+    selectors = re.findall(r'container_last_seen\{name=~"([^"]+)"\}', ALERTS.read_text("utf-8"))
+    assert selectors, "no container_last_seen selector found in alerts.yml"
+    return selectors
+
+
+def test_an_alert_rule_watches_the_scheduler_container():
+    container = _scheduler_container(COMPOSE_MANIFESTS["docker-compose.yml"])
+    selectors = _container_last_seen_selectors()
+    assert any(re.fullmatch(pattern, container) for pattern in selectors), (
+        f"No container_last_seen alert selector matches `{container}`. Selectors present: "
+        f"{selectors}. An unwatched scheduler is the silent half of core#648: 5x dispatch "
+        "is loud, 0x dispatch is found by the customer. This is core#622's shape — a "
+        "`name=~` regex that omits a container watches nothing and says nothing."
+    )
+
+
+def test_the_scheduler_alert_selector_does_not_match_staging():
+    """core#615's mistake in the other direction: PromQL anchors regexes.
+
+    `datanika-.*` also matches `datanika-staging-scheduler`, which is recreated on every
+    push to `dev` — so a selector that broad pages `critical` on every merge.
+    """
+    staging = _scheduler_container(COMPOSE_MANIFESTS["deploy/staging/docker-compose.yml"])
+    for pattern in _container_last_seen_selectors():
+        assert not re.fullmatch(pattern, staging), (
+            f"alert selector `{pattern}` matches the STAGING container `{staging}`. "
+            "Staging is redeployed on every push to dev, so this pages critical on every "
+            "merge (core#615's backtested failure)."
+        )

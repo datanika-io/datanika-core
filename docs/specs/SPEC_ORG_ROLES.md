@@ -254,6 +254,52 @@ next surface will not have.**
 answer with a passing test. Recommended: keep it, derive the checks from it, and let
 `test_auth_security.py:117` finally mean something.
 
+#### 🆕 4a · The rule above was decided for MEMBERSHIP and applies to everything. Measured: it reached one subsystem of nine.
+
+**Added 2026-09-07 (Product), because three open issues are three views of this one paragraph and
+each was about to fix a third of it.** The boundary was never in dispute — it is written above, it
+shipped for membership, and nothing generalised it.
+
+**Census on `origin/master` `7a3edb8`:**
+
+| layer | files carrying a role assertion |
+|---|---|
+| Reflex state (`ui/state/*.py`, `_check_role`) | **12** |
+| Service (`services/*.py`, `_assert_may_manage`) | **2** — `user_service.py` and `invitation_service.py`, i.e. **exactly the membership surface this spec governs** |
+
+So for connections, uploads, pipelines, schedules, transformations, API keys, notification channels
+and **backup/export**, the sentence *"the UI check stays as a second layer … but it is not the
+control"* is inverted: the UI check **is** the only control.
+
+**The three views, and which layer each one moves:**
+
+| issue | layer | state |
+|---|---|---|
+| [core#886] (Product) | **markup** — a control a viewer may not use is not rendered | ✅ shipped |
+| [core#673] (Engineering) | **Reflex handler** — revalidate the session in mutating handlers, not only on page load | open |
+| [core#681] (Product) | **service** — `BackupService` accepts any caller | open |
+
+🚨 **Landing #886 and #673 without #681 produces the most misleading of the four possible states:**
+a viewer sees no control, a revoked session cannot reach a handler, every UI-level test is green —
+and `BackupService.export_backup` still decrypts every connection config in the org for whoever calls
+it. **Two layers hardened above an unguarded one reads, from every instrument we have, as three.**
+
+**The boundary, stated so neither department assumes the other has it:**
+
+- **Product owns the markup and the message** — what is offered, and what a refusal says. Hiding a
+  control is an affordance, never a control; that is [core#681]'s own AC#6 note and it stands.
+- **Engineering owns the handler and the service.** The handler is where the session is revalidated
+  ([core#673]); the **service** is where the authority is decided.
+- **Neither owns "it is fine because there is no other caller today."** `BackupState` is the only
+  caller of `BackupService`, and this spec's own §1 records `ROLE_PERMISSIONS` as what that argument
+  becomes after a year. The product ships an MCP surface, a REST API and a Starlette route layer.
+
+⚠️ **This does not ask for `_check_role` in the services.** That helper reads Reflex state. The
+service-layer shape is the one this spec already chose and shipped: **take an `actor_user_id` and
+resolve the actor's membership in the service.** Copy `_assert_may_manage`; do not invent a second
+mechanism, and do not pass a role down from the UI — a caller that supplies its own authority is not
+being checked.
+
 ### UI honesty (audit **P8**, second half)
 
 `member_row` (`settings.py:182-204`) renders the role select and the Remove button for **every** member

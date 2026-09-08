@@ -121,6 +121,27 @@ def cron_period_seconds(expr: str) -> int | None:
     return None
 
 
+#: Conclusions meaning the run EXECUTED and did not work (core#1193).
+#:
+#: ``cancelled``/``skipped``/``neutral`` are deliberately absent. A cancelled run is
+#: neither green nor red and carries zero steps in the API (core#975), so counting it
+#: as red would page on a concurrency eviction -- which this org produces routinely.
+#: ``startup_failure`` is included because that is one shape a bad ``uses:`` pin takes;
+#: cve-watch's own bad pin was recorded as plain ``failure``, but the neighbouring
+#: value costs nothing to cover and fails in exactly the same invisible way.
+RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+
+#: Consecutive red scheduled runs before this is a problem rather than weather.
+#:
+#: TWO, deliberately, matching the sensitivity this file already chose for the other
+#: question: "The 12h grace inside the script means one missed day is tolerated and
+#: two consecutive misses fire." A single red is weather -- GitHub drops queued jobs
+#: and runners flake -- and a watchdog that pages on one bad night gets retrained away
+#: within a week. Three would mean three days blind, and core#1166 exists precisely
+#: because TWO days unread was already too long.
+FAILURE_STREAK = 2
+
+
 @dataclass
 class WorkflowState:
     """One workflow, as the watchdog needs to see it."""
@@ -132,6 +153,10 @@ class WorkflowState:
     created_at: datetime
     crons: list[str] = field(default_factory=list)
     last_schedule_run: datetime | None = None
+    #: Conclusions of the most recent COMPLETED scheduled runs, newest first
+    #: (core#1193). Runs still in progress are omitted -- they have no verdict,
+    #: and counting them either way would invent one.
+    recent_conclusions: list[str] = field(default_factory=list)
     #: The workflow RECORD exists and is listed by the API, but its file is not on
     #: the default branch. See :func:`default_branch_workflow_paths` (core#982).
     file_missing: bool = False
@@ -231,6 +256,31 @@ def find_problems(
                 f"disable; something else is stopping it."
             )
 
+        # core#1193. Everything above asks whether the schedule FIRED. Nothing asked
+        # whether it WORKED, so a workflow failing at `Set up job` every night read as
+        # healthy -- which is what cve-watch would have done, and cve-watch exists
+        # because a correct red went unread for two days. Same defect, one level up,
+        # wearing the fix's name.
+        #
+        # Reported as its own finding, never folded into the staleness message: "it
+        # stopped firing" and "it fires and fails" have different causes and different
+        # fixes, and one message covering both loses that.
+        streak = 0
+        for conclusion in wf.recent_conclusions:
+            if conclusion in RED_CONCLUSIONS:
+                streak += 1
+            else:
+                break
+        if streak >= FAILURE_STREAK:
+            problems.append(
+                f"{wf.ref} has FIRED AND FAILED {streak} scheduled runs in a row "
+                f"(most recent conclusions, newest first: "
+                f"{', '.join(wf.recent_conclusions[:5])}). The schedule is alive, so "
+                f"the staleness check above cannot see this. Read the newest run's log: "
+                f"a workflow that fails at `Set up job` is usually an unresolvable "
+                f"`uses:` pin, which no static check can catch."
+            )
+
     return problems, notes
 
 
@@ -323,12 +373,25 @@ def default_branch_workflow_paths(repo: str, ref: str) -> set[str]:
     return paths
 
 
-def _last_schedule_run(repo: str, workflow_id: int | str) -> datetime | None:
+def _last_schedule_run(repo: str, workflow_id: int | str) -> tuple[datetime | None, list[str]]:
+    """Newest scheduled run's timestamp, and the recent conclusions (newest first).
+
+    ``per_page`` grew from 1 to 5 for core#1193: one run cannot show a streak, and a
+    streak is the only honest signal here -- a single red is weather.
+    """
     runs = json.loads(
-        _gh("api", f"repos/{repo}/actions/workflows/{workflow_id}/runs?event=schedule&per_page=1")
+        _gh("api", f"repos/{repo}/actions/workflows/{workflow_id}/runs?event=schedule&per_page=5")
     )
     latest = runs.get("workflow_runs") or []
-    return _ts(latest[0]["created_at"]) if latest else None
+    if not latest:
+        return None, []
+    # Only COMPLETED runs carry a verdict. An in-progress run has conclusion null,
+    # and treating that as either colour invents a reading that does not exist --
+    # the same mistake core#1174 fixed in the staging attribution checker.
+    conclusions = [
+        r["conclusion"] for r in latest if r.get("status") == "completed" and r.get("conclusion")
+    ]
+    return _ts(latest[0]["created_at"]), conclusions
 
 
 def _parse_crons(repo: str, path: str, ref: str) -> list[str]:
@@ -363,6 +426,8 @@ def collect(repo: str) -> list[WorkflowState]:
             # drop out of the watchlist without anyone noticing.
             print(f"  (skipping {repo} :: {wf['path']} -- synthesised by GitHub, not a repo file)")
             continue
+        # One API call per workflow, reused by both branches below (core#1193).
+        _sched = _last_schedule_run(repo, wf["id"])
         if wf["path"] not in present:
             # core#982. Reported, never swallowed and never guessed at: whether
             # this is harmless litter or a schedule that has stopped is decided
@@ -375,7 +440,8 @@ def collect(repo: str) -> list[WorkflowState]:
                     state=wf["state"],
                     created_at=_ts(wf["created_at"]),
                     crons=[],
-                    last_schedule_run=_last_schedule_run(repo, wf["id"]),
+                    last_schedule_run=_sched[0],
+                    recent_conclusions=_sched[1],
                     file_missing=True,
                 )
             )
@@ -391,7 +457,8 @@ def collect(repo: str) -> list[WorkflowState]:
                 state=wf["state"],
                 created_at=_ts(wf["created_at"]),
                 crons=crons,
-                last_schedule_run=_last_schedule_run(repo, wf["id"]),
+                last_schedule_run=_sched[0],
+                recent_conclusions=_sched[1],
             )
         )
     return out
@@ -442,6 +509,10 @@ def main() -> int:
         last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
         print(f"  [{wf.state:>20}] {wf.ref}")
         print(f"       cron={wf.crons}  last_schedule_run={last}")
+        if wf.recent_conclusions:
+            # core#1193. Show the verdicts the streak check reads, so the state is
+            # legible BEFORE it becomes a problem rather than only in the alert.
+            print(f"       recent scheduled conclusions (newest first): {', '.join(wf.recent_conclusions)}")
     for wf in sorted(orphans, key=lambda w: w.ref):
         last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
         print(f"  [{'FILE NOT ON DEFAULT':>20}] {wf.ref}")

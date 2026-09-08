@@ -419,6 +419,56 @@ services:
       --schedule /app/beat_state/celerybeat-schedule
     restart: unless-stopped
 
+  # --- APScheduler (core#648) ---
+  # SINGLETON. Never run two, and never fold it back into `app`.
+  #
+  # This existed as a thread inside every granian process: `datanika/datanika.py` armed a
+  # BackgroundScheduler at import, and `GRANIAN_WORKERS: "4"` means 1 arbiter + 4 workers,
+  # so FIVE schedulers polled one Postgres jobstore. APScheduler 3.x claims due jobs with a
+  # plain SELECT — no FOR UPDATE, no lease, no owner column — so every scheduler that woke
+  # inside the same window dispatched the same job. Measured by QA: 5 of 5 processes
+  # dispatching on 29 of 29 firings, and the count scaled exactly with the instance count
+  # (1, 2, 5). `max_instances: 1` and `coalesce: True` are per-process and do not cross that
+  # boundary. Blast radius is one duplicated Celery run per extra process — duplicated writes
+  # into the customer's warehouse and duplicated `bytes_processed` against their quota.
+  #
+  # Its own container rather than a thread in `celery`, for core#653's reason: a dispatch
+  # thread dying inside a live worker leaves the container `Up` and `healthy`, which is
+  # observationally identical to the bug. As a container it has a `container_last_seen`
+  # series and `container-down` already selects it.
+  #
+  # NO named volume, unlike `beat` — and that difference is deliberate, not an oversight.
+  # beat needed `beat_state` because its schedule is an INTERVAL seeded at process start, so
+  # an ephemeral state file restarts the hour on every deploy. APScheduler's jobstore is
+  # Postgres, and these are CRON triggers whose next fire time is absolute, so a restart
+  # recomputes the same instants. There is no local state to lose.
+  #
+  # No dbt/uploads mounts: it creates a Run row and calls `.delay()`. It never touches either
+  # tree — same reasoning as `beat`.
+  scheduler:
+    image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: datanika/Dockerfile
+    container_name: datanika-scheduler
+    env_file:
+      # Both optional; whichever exists wins. See the note at the top of this file (#736).
+      - path: .env
+        required: false
+      - path: .env.docker
+        required: false
+    environment:
+      # core#785 — see `app`. A venv rewritten under this process at start would take out
+      # every scheduled run while the container still read `Up`.
+      UV_NO_SYNC: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uv run python -m datanika.scheduler_main
+    restart: unless-stopped
+
   # --- Monitoring ---
 
   prometheus:

@@ -108,9 +108,18 @@ class ScheduleState(BaseState):
         conn_svc = ConnectionService(encryption)
         upload_svc = UploadService(conn_svc)
         transform_svc = TransformationService()
-        from datanika.scheduler import scheduler_integration
-
-        return ScheduleService(upload_svc, transform_svc, scheduler_integration)
+        # core#648 — deliberately NO scheduler_integration.
+        #
+        # The web tier used to pass the in-process singleton so ScheduleService could call
+        # sync_schedule()/remove_schedule() directly. That scheduler no longer exists in
+        # this process. Passing one built here would be worse than passing none: add_job()
+        # on a scheduler that was never started does not write the jobstore, it queues into
+        # _pending_jobs and is lost when the request ends — the UI would report the schedule
+        # saved and no job row would ever exist.
+        #
+        # The `schedules` row is the channel. `scheduler_main` reconciles from it every
+        # settings.scheduler_reconcile_seconds.
+        return ScheduleService(upload_svc, transform_svc)
 
     def _reset_form(self):
         self.editing_schedule_id = 0

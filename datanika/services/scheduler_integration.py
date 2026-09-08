@@ -1,5 +1,6 @@
 """SchedulerIntegrationService — bridges Schedule DB records to APScheduler jobs."""
 
+from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,6 +14,21 @@ from datanika.services.execution_service import ExecutionService
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.tasks.transformation_tasks import run_transformation_task
 from datanika.tasks.upload_tasks import run_upload_task
+
+#: Every APScheduler job this service owns is ``schedule_<Schedule.id>``.
+#: ``reconcile()`` only ever removes ids under this prefix, so the scheduler
+#: process's own reconcile heartbeat survives its own reconcile pass (core#648).
+JOB_ID_PREFIX = "schedule_"
+
+#: Process-local jobs (the reconcile heartbeat) live here rather than in the shared
+#: Postgres store. They are machinery, not user data: persisting them would leave rows
+#: in ``apscheduler_jobs``, which is the table every core#648 diagnostic counts to decide
+#: whether any schedule exists at all.
+INTERNAL_JOBSTORE = "internal"
+
+
+def _job_id(schedule_id: int) -> str:
+    return f"{JOB_ID_PREFIX}{schedule_id}"
 
 
 class SchedulerIntegrationService:
@@ -28,9 +44,16 @@ class SchedulerIntegrationService:
             },
         )
 
-    def start(self) -> None:
-        """Start the APScheduler background scheduler."""
-        self._scheduler.start()
+    def start(self, *, paused: bool = False) -> None:
+        """Start the APScheduler background scheduler.
+
+        ``paused=True`` starts a scheduler that still writes ``add_job``/``remove_job``
+        through to the shared jobstore but never dispatches. Measured on apscheduler
+        3.11.2 against real Postgres, both directions: the row appears and no dispatch
+        happens 2.5s past the run time, and a separate unpaused scheduler then picks the
+        same job up and runs it.
+        """
+        self._scheduler.start(paused=paused)
 
     def shutdown(self) -> None:
         """Gracefully shut down the scheduler."""
@@ -48,7 +71,7 @@ class SchedulerIntegrationService:
         If not is_active: remove job if exists.
         Returns the APScheduler job_id.
         """
-        job_id = f"schedule_{schedule.id}"
+        job_id = _job_id(schedule.id)
 
         if not schedule.is_active:
             existing = self._scheduler.get_job(job_id)
@@ -73,7 +96,7 @@ class SchedulerIntegrationService:
 
     def remove_schedule(self, schedule_id: int) -> bool:
         """Remove an APScheduler job. Returns True if job existed."""
-        job_id = f"schedule_{schedule_id}"
+        job_id = _job_id(schedule_id)
         existing = self._scheduler.get_job(job_id)
         if existing:
             self._scheduler.remove_job(job_id)
@@ -96,9 +119,63 @@ class SchedulerIntegrationService:
             count += 1
         return count
 
+    def schedule_internal(self, func, *, seconds: int, job_id: str) -> None:
+        """Register a repeating process-local job in a memory jobstore.
+
+        Used by the dedicated scheduler process for its reconcile heartbeat. Two jobs in
+        one: it re-reads ``schedules``, and its mere presence in the job set caps how long
+        ``BaseScheduler._process_jobs()`` tells the main loop to sleep. With an empty store
+        that wait is ``TIMEOUT_MAX`` — 49.7 days — and ``add_job`` from another process
+        does not shorten it, because ``wakeup()`` is called only on the adding instance.
+        """
+        if INTERNAL_JOBSTORE not in self._scheduler._jobstores:
+            self._scheduler.add_jobstore(MemoryJobStore(), INTERNAL_JOBSTORE)
+        self._scheduler.add_job(
+            func,
+            "interval",
+            seconds=seconds,
+            id=job_id,
+            jobstore=INTERNAL_JOBSTORE,
+            replace_existing=True,
+        )
+
+    def reconcile(self, session: Session) -> dict[str, int]:
+        """Make the jobstore match the ``schedules`` table. Returns ``{synced, removed}``.
+
+        This is the scheduler process's only input. Once the scheduler leaves the web
+        tier, ``ScheduleService`` writes the row and nothing else — no cross-process call
+        exists to tell the scheduler about it — so every change reaches APScheduler here
+        or not at all.
+
+        The half ``sync_all`` does not do is the removal. ``sync_all`` adds active
+        schedules and leaves everything else in place, which is correct while the web
+        tier deletes the job in-process at edit time and silently wrong the moment it
+        stops: a deactivated schedule would keep firing under a UI that shows it off.
+        See ``TestSyncAllAloneIsNotEnough``.
+
+        Only ids under :data:`JOB_ID_PREFIX` are removed, so the caller's own heartbeat
+        job survives — a reconcile that deleted the job which invokes it would run
+        exactly once.
+        """
+        stmt = select(Schedule).where(
+            Schedule.is_active.is_(True),
+            Schedule.deleted_at.is_(None),
+        )
+        wanted: set[str] = set()
+        for schedule in session.execute(stmt).scalars().all():
+            wanted.add(self.sync_schedule(schedule))
+
+        removed = 0
+        for job in self._scheduler.get_jobs():
+            if job.id.startswith(JOB_ID_PREFIX) and job.id not in wanted:
+                self._scheduler.remove_job(job.id)
+                removed += 1
+
+        return {"synced": len(wanted), "removed": removed}
+
     def get_job(self, schedule_id: int):
         """Get APScheduler job for a schedule. Returns None if not found."""
-        return self._scheduler.get_job(f"schedule_{schedule_id}")
+        return self._scheduler.get_job(_job_id(schedule_id))
 
     @staticmethod
     def _build_cron_trigger(cron_expression: str, timezone: str) -> CronTrigger:

@@ -125,6 +125,34 @@ celery:
       cpu: "1"
       memory: 1Gi
 
+## APScheduler — the dispatcher for user-created schedules (core#648).
+##
+## ⚠️ No `replicaCount`, for the same reason as beat and with a sharper edge: two of these
+## dispatch every due schedule twice, and the duplicate is a real pipeline run writing into
+## the user's own warehouse and counting against their byte quota. The Deployment hardcodes
+## `replicas: 1` with `strategy: Recreate`.
+##
+## ⚠️ Disabling it does not degrade anything gracefully — every schedule a user creates is
+## saved, displayed as active, and never runs. There is no alert for that; it is found by
+## the customer. Set `enabled: false` only if you dispatch schedules some other way.
+scheduler:
+  enabled: true
+  command:
+    - uv
+    - run
+    - python
+    - -m
+    - datanika.scheduler_main
+  ## It creates a Run row and calls `.delay()` — no dbt, no dlt, no file IO. Sized like
+  ## beat, which does the same amount of work against the same import graph.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
 ## Celery Beat — the periodic-task scheduler (core#653).
 ##
 ## ⚠️ There is deliberately NO `replicaCount` here. Beat is a singleton: two of them

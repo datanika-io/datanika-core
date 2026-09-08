@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # for as long as the organization exists — the sentence `datanika.io/privacy` and
     # `/trust` publish. A retention knob nobody sets is how the unenforced 90-day sweep
     # came to exist; adding one back is a landing-page change first.
+    # core#648 — how often the dedicated scheduler process re-reads `schedules`.
+    # Also caps how long APScheduler sleeps: with nothing due, `_process_jobs()`
+    # returns TIMEOUT_MAX (49.7 days) and a job added by another process does not
+    # wake it. Bounded by tests/test_services/test_scheduler_main.py.
+    scheduler_reconcile_seconds: int = 30
     maintenance_dlt_max_age_hours: int = 24
     maintenance_dbt_max_age_hours: int = 48
 

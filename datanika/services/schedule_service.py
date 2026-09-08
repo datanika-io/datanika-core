@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,9 +14,6 @@ from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 
-if TYPE_CHECKING:
-    from datanika.services.scheduler_integration import SchedulerIntegrationService
-
 
 class ScheduleConfigError(UserFacingError):
     """Raised when schedule configuration fails validation."""
@@ -28,12 +24,21 @@ class ScheduleService:
         self,
         upload_service: UploadService,
         transformation_service: TransformationService,
-        scheduler_integration: SchedulerIntegrationService | None = None,
         pipeline_service: PipelineService | None = None,
     ):
+        # core#648 — this service deliberately takes NO scheduler.
+        #
+        # It used to accept a SchedulerIntegrationService and call sync_schedule() /
+        # remove_schedule() on it after each write. That only worked because the scheduler
+        # lived in this same process, which is the defect: every granian worker had one, and
+        # APScheduler 3.x claims due jobs with an unlocked SELECT, so each fired every job.
+        #
+        # The `schedules` row is now the only channel. `datanika/scheduler_main.py`
+        # reconciles from the table every settings.scheduler_reconcile_seconds. Re-adding a
+        # scheduler argument here would put one back in the web process — kept out by
+        # tests/test_deploy/test_scheduler_singleton.py rather than by this comment.
         self._upload_svc = upload_service
         self._transform_svc = transformation_service
-        self._scheduler = scheduler_integration
         self._pipeline_svc = pipeline_service or PipelineService()
 
     def create_schedule(
@@ -62,9 +67,6 @@ class ScheduleService:
         )
         session.add(schedule)
         session.flush()
-
-        if self._scheduler is not None:
-            self._scheduler.sync_schedule(schedule)
 
         return schedule
 
@@ -101,9 +103,6 @@ class ScheduleService:
 
         session.flush()
 
-        if self._scheduler is not None:
-            self._scheduler.sync_schedule(schedule)
-
         return schedule
 
     def delete_schedule(self, session: Session, org_id: int, schedule_id: int) -> bool:
@@ -113,9 +112,6 @@ class ScheduleService:
         schedule.deleted_at = datetime.now(UTC)
         session.flush()
 
-        if self._scheduler is not None:
-            self._scheduler.remove_schedule(schedule_id)
-
         return True
 
     def toggle_active(self, session: Session, org_id: int, schedule_id: int) -> Schedule | None:
@@ -124,9 +120,6 @@ class ScheduleService:
             return None
         schedule.is_active = not schedule.is_active
         session.flush()
-
-        if self._scheduler is not None:
-            self._scheduler.sync_schedule(schedule)
 
         return schedule
 

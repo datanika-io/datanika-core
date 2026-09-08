@@ -1130,6 +1130,19 @@ a wrong answer sourced from a real instrument looks exactly like a right one.
    the file is on disk, and `stat` costs one call.
 4. **Behaviour claims carry their configuration.** "The merge-base moves" is true under a merge
    commit and false under rebase — name the setting the claim depends on, or do not make it.
+5. **The field recording a merge METHOD is on the RULESET, not on the PR** — a fifth row for the
+   table above, measured 2026-09-08. `gh pr merge <n> --auto` with no method flag recorded
+   `autoMergeRequest.mergeMethod: "MERGE"` on #1203, while the `merge-queue-dev` ruleset carries
+   `merge_method: "REBASE"` — and #1200, enqueued identically, landed with `parents: 1`, i.e. a
+   rebase with no merge commit on `dev`. Both fields are real and they disagree; only the
+   ruleset's governs. The trap is that the PR field is the one the obvious query returns, so
+   "did I enqueue this correctly?" is answered wrongly by the instrument nearest to hand:
+   ```bash
+   gh api repos/datanika-io/datanika-core/rulesets/22228000 \
+     --jq '.rules[] | select(.type=="merge_queue") | .parameters.merge_method'
+   ```
+   Corollary: do **not** "correct" it by passing `--rebase`. Under a queue that only earns a
+   warning, and the CLAUDE.md instruction to pass no method flag is right as written.
 
 ---
 

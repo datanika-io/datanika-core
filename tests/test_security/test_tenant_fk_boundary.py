@@ -861,6 +861,12 @@ class TestEveryTenantModelQueryIsOrgScoped:
             #    every tenant, and scoping them would break the feature.
             "maintenance_service.py::cleanup_orphaned_archives::UploadedFile",
             "scheduler_integration.py::sync_all::Schedule",
+            # core#648 — the dedicated scheduler process reconciles the APScheduler
+            # job set from `schedules` across every tenant; an org-scoped read here
+            # would silently run one org's schedules and no one else's. The org
+            # boundary is enforced downstream: `_dispatch_target` creates the run
+            # with the `org_id` carried on the row it dispatched.
+            "scheduler_integration.py::reconcile::Schedule",
         }
     )
 

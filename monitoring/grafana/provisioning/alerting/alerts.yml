@@ -46,7 +46,7 @@ groups:
               # ends, so `datanika-(celery|beat|postgres|redis)` matches `datanika-beat`
               # and does NOT match `datanika-staging-beat`. Staging is redeployed on every
               # push to dev; a `datanika-.*` here would page critical on every merge.
-              expr: 'count_over_time(((time() - max by (name) (container_last_seen{name=~"datanika-(celery|beat|postgres|redis)"})) > 60)[2m:15s])'
+              expr: 'count_over_time(((time() - max by (name) (container_last_seen{name=~"datanika-(celery|beat|scheduler|postgres|redis)"})) > 60)[2m:15s])'
               refId: A
           - refId: B
             relativeTimeRange:

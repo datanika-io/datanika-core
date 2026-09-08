@@ -106,7 +106,20 @@ class SchedulerIntegrationService:
     def sync_all(self, session: Session) -> int:
         """Load all active schedules from DB and sync to APScheduler.
 
-        Called on startup. Returns count of jobs synced.
+        Returns the count of jobs synced.
+
+        ⚠️ **Use :meth:`reconcile` instead. This only ADDS.**
+
+        A schedule that was deactivated or deleted keeps its APScheduler job here, so it
+        goes on firing under a UI that shows it off. That was harmless while the web tier
+        removed the job in-process at edit time; after core#648 nothing does, and
+        ``reconcile`` is the only thing that keeps the job set honest.
+
+        Kept, rather than deleted, because
+        ``TestSyncAllAloneIsNotEnough::test_sync_all_never_removes_a_stale_job``
+        characterises this behaviour on the real code — that test is the evidence that
+        ``reconcile`` is necessary rather than merely nicer, and it needs a subject.
+        Nothing in production calls this.
         """
         stmt = select(Schedule).where(
             Schedule.is_active.is_(True),
@@ -128,8 +141,9 @@ class SchedulerIntegrationService:
         that wait is ``TIMEOUT_MAX`` — 49.7 days — and ``add_job`` from another process
         does not shorten it, because ``wakeup()`` is called only on the adding instance.
         """
-        if INTERNAL_JOBSTORE not in self._scheduler._jobstores:
+        if not getattr(self, "_internal_jobstore_added", False):
             self._scheduler.add_jobstore(MemoryJobStore(), INTERNAL_JOBSTORE)
+            self._internal_jobstore_added = True
         self._scheduler.add_job(
             func,
             "interval",

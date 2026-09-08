@@ -658,6 +658,28 @@ class TestTheProcessCountGuardCanActuallyFail:
             "# `app.replicaCount` is a knob; this component must never follow it\n"
         )
 
+    def test_a_second_environment_block_is_not_a_mutation(self):
+        """A near-miss worth keeping, because it argues for WEAKENING a working guard.
+
+        Mutation-testing ``test_the_owning_service_does_not_fork_workers`` first reported it
+        BLIND: injecting ``GRANIAN_WORKERS`` into the scheduler service left the test green.
+        The guard was fine. The mutation was not — it appended a **second**
+        ``environment:`` key to a service that already had one, and PyYAML (like docker
+        compose) keeps the LAST duplicate key, so the injected variable was discarded before
+        the guard ever saw it.
+
+        Recorded as a test rather than a comment because the wrong conclusion is the
+        attractive one: "the guard cannot see this, so relax it". Read the mutation before
+        believing a green.
+        """
+        parsed = yaml.safe_load(
+            'svc:\n  environment:\n    GRANIAN_WORKERS: "4"\n  environment:\n    UV_NO_SYNC: "1"\n'
+        )
+        assert _env_keys(parsed["svc"]) == {"UV_NO_SYNC"}, (
+            "duplicate-key handling changed; a mutation that appends a second "
+            "`environment:` block may now be real, and the note above is stale"
+        )
+
     def test_the_helm_file_the_assertions_read_exists(self):
         """`read_text` on a missing file raises rather than passing, but a *renamed*
         template would be a silent pass elsewhere, so pin the path."""

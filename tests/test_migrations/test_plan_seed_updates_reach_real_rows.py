@@ -61,16 +61,6 @@ _UNKNOWN = object()
 # (slug, column) pairs known to land on the wrong value and NOT corrected here.
 # Each entry is a decision with a reason, not a silence.
 KNOWN_UNCORRECTED: dict[tuple[str, str], str] = {
-    ("pro-monthly", "rate_limit_rpm"): (
-        "core#928. NOT corrected deliberately. Unlike max_parallel_runs and sso_enabled, this "
-        "one has no published value behind it: the burst claim was DELETED rather than "
-        "implemented (core#703), so the April migration's 120 is an intent with nothing "
-        "corroborating it. Restoring it is a Product decision, not a repair — and an "
-        "idempotent UPDATE is only safe when the target value is unambiguous."
-    ),
-    ("enterprise-monthly", "rate_limit_rpm"): (
-        "core#928. Same as pro-monthly above — 300 has no published counterpart."
-    ),
     # ── Surfaced by the core#1048 widening. Four columns, one slug, one migration. ──
     #
     # These were invisible to the old extractor for one reason only: their defaults are
@@ -458,10 +448,15 @@ def corrected_pairs() -> set[tuple[str, str]]:
         PUBLISHED_MAX_PARALLEL_RUNS,
         SSO_ENABLED_SLUGS,
     )
+    from datanika.migrations.versions.g7h8i9j0k1l2_correct_paid_plan_rate_limits import (
+        PUBLISHED_RATE_LIMIT_RPM,
+    )
 
-    return {(slug, "max_parallel_runs") for slug in PUBLISHED_MAX_PARALLEL_RUNS} | {
-        (slug, "sso_enabled") for slug in SSO_ENABLED_SLUGS
-    }
+    return (
+        {(slug, "max_parallel_runs") for slug in PUBLISHED_MAX_PARALLEL_RUNS}
+        | {(slug, "sso_enabled") for slug in SSO_ENABLED_SLUGS}
+        | {(slug, "rate_limit_rpm") for slug in PUBLISHED_RATE_LIMIT_RPM}
+    )
 
 
 def test_the_extractor_is_armed():
@@ -646,6 +641,13 @@ def test_the_guard_still_sees_the_defect_it_was_written_for():
         *KNOWN_UNCORRECTED,
         ("enterprise-monthly", "max_parallel_runs"),
         ("enterprise-monthly", "sso_enabled"),
+        # core#928. Named explicitly for the same reason the two above are: they moved
+        # from KNOWN_UNCORRECTED into a correction migration, and a corpus derived only
+        # from KNOWN_UNCORRECTED SHRINKS every time a pair is fixed — so the control
+        # would keep passing over steadily less. The set this checks must not depend on
+        # how many pairs are still outstanding.
+        ("pro-monthly", "rate_limit_rpm"),
+        ("enterprise-monthly", "rate_limit_rpm"),
     ]:
         assert pair in found, (
             f"{pair} is no longer detected as silently-wrong. If it was genuinely "

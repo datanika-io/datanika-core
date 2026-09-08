@@ -657,3 +657,145 @@ class TestTheWatchdogReportsItsOwnBreakage:
         body = _WATCHDOG.read_text(encoding="utf-8")
         assert "nothing was verified" in body
         assert "the detector is down" in body
+
+
+class TestFiresAndFails:
+    """core#1193 — the half this suite could not see.
+
+    Before this, 52 tests passed over a script that read only ``created_at`` off the
+    latest scheduled run and never read ``conclusion``. A workflow failing at
+    ``Set up job`` every night therefore read as perfectly healthy, because it fired.
+    That is what ``cve-watch`` would have done on an unresolvable ``uses:`` pin — and
+    ``cve-watch`` exists because a correct red went unread for two days.
+
+    🚨 The suite's own comprehensiveness was the problem: it exercised the comparator
+    thoroughly on the question it knew about. Coverage of the wrong question is not
+    coverage.
+    """
+
+    def test_two_reds_in_a_row_is_a_problem(self):
+        problems, _ = wd.find_problems(
+            [_wf(recent_conclusions=["failure", "failure", "success"])], NOW
+        )
+        assert any("FIRED AND FAILED" in p for p in problems)
+
+    def test_one_red_is_weather_and_must_not_fire(self):
+        """A watchdog that pages on one bad night gets retrained away within a week."""
+        problems, _ = wd.find_problems(
+            [_wf(recent_conclusions=["failure", "success", "success"])], NOW
+        )
+        assert not any("FIRED AND FAILED" in p for p in problems)
+
+    def test_a_streak_must_be_consecutive_from_the_newest_run(self):
+        """Two reds separated by a green is a recovered workflow, not a broken one."""
+        problems, _ = wd.find_problems(
+            [_wf(recent_conclusions=["success", "failure", "failure"])], NOW
+        )
+        assert not any("FIRED AND FAILED" in p for p in problems)
+
+    def test_cancelled_is_not_red(self):
+        """core#975: a cancelled run is neither green nor red and carries zero steps.
+
+        This org evicts queued runs routinely, so counting cancellation as failure
+        would page on concurrency rather than on a defect.
+        """
+        problems, _ = wd.find_problems(
+            [_wf(recent_conclusions=["cancelled", "cancelled", "cancelled"])], NOW
+        )
+        assert not any("FIRED AND FAILED" in p for p in problems)
+
+    @pytest.mark.parametrize("bad", ["failure", "timed_out", "startup_failure"])
+    def test_every_red_conclusion_counts(self, bad):
+        problems, _ = wd.find_problems([_wf(recent_conclusions=[bad, bad])], NOW)
+        assert any("FIRED AND FAILED" in p for p in problems)
+
+    def test_no_history_is_not_a_failure_streak(self):
+        """A brand-new workflow has fired zero times; that is the staleness question."""
+        problems, _ = wd.find_problems([_wf(recent_conclusions=[])], NOW)
+        assert not any("FIRED AND FAILED" in p for p in problems)
+
+    def test_the_finding_is_separate_from_the_staleness_finding(self):
+        """Different causes, different fixes — one message covering both loses that."""
+        problems, _ = wd.find_problems([_wf(recent_conclusions=["failure", "failure"])], NOW)
+        red = [p for p in problems if "FIRED AND FAILED" in p]
+        assert len(red) == 1
+        assert "stopped firing" not in red[0]
+        assert "The schedule is alive" in red[0]
+
+    def test_the_message_names_the_conclusions_so_it_is_actionable(self):
+        problems, _ = wd.find_problems([_wf(recent_conclusions=["failure", "timed_out"])], NOW)
+        red = next(p for p in problems if "FIRED AND FAILED" in p)
+        assert "failure" in red and "timed_out" in red
+
+    def test_it_is_a_problem_not_a_note(self):
+        """Notes do not fail the run. A cron that never works must fail it."""
+        problems, notes = wd.find_problems([_wf(recent_conclusions=["failure", "failure"])], NOW)
+        assert any("FIRED AND FAILED" in p for p in problems)
+        assert not any("FIRED AND FAILED" in n for n in notes)
+
+
+class TestConclusionCollection:
+    """The collector must not invent a verdict for a run that has none."""
+
+    def test_in_progress_runs_are_omitted_not_counted(self, monkeypatch):
+        """core#1174's lesson: `conclusion: null` is neither green nor red.
+
+        A run still executing has no verdict. Counting it as red would page on a
+        workflow that is merely slow; counting it as green would mask a streak.
+        """
+        payload = {
+            "workflow_runs": [
+                {"created_at": "2026-08-30T10:00:00Z", "status": "in_progress", "conclusion": None},
+                {
+                    "created_at": "2026-08-29T10:00:00Z",
+                    "status": "completed",
+                    "conclusion": "failure",
+                },
+                {
+                    "created_at": "2026-08-28T10:00:00Z",
+                    "status": "completed",
+                    "conclusion": "failure",
+                },
+            ]
+        }
+        monkeypatch.setattr(wd, "_gh", lambda *a, **k: json.dumps(payload))
+        ts, conclusions = wd._last_schedule_run("o/r", 1)
+        assert conclusions == ["failure", "failure"], (
+            "an in-progress run must not appear in the conclusion list at all"
+        )
+        assert ts is not None
+
+    def test_it_fetches_more_than_one_run_or_a_streak_is_unobservable(self):
+        """`per_page=1` cannot show two consecutive reds. This is the whole fix."""
+        src = _MODULE_PATH.read_text(encoding="utf-8")
+        assert "per_page=1&" not in src and 'per_page=1"' not in src, (
+            "per_page=1 makes FAILURE_STREAK>=2 permanently unreachable"
+        )
+        assert "event=schedule&per_page=5" in src
+
+    def test_an_empty_listing_yields_no_conclusions(self, monkeypatch):
+        monkeypatch.setattr(wd, "_gh", lambda *a, **k: json.dumps({"workflow_runs": []}))
+        ts, conclusions = wd._last_schedule_run("o/r", 1)
+        assert ts is None and conclusions == []
+
+
+def test_strict_xfail_audit_installs_what_its_script_imports():
+    """core#1193's first catch: that workflow had never once succeeded.
+
+    `strict_xfail_issue_audit.py` imports a helper from
+    tests/test_deploy/test_strict_xfail_reasons_name_an_issue.py, which imports
+    pytest at module level. The workflow ran setup-python and nothing else, so its
+    single run in history died on `ModuleNotFoundError: No module named 'pytest'`.
+
+    It would have failed nightly forever while the watchdog reported it healthy,
+    because it FIRED. This asserts the install step exists and precedes the audit.
+    """
+    wf = (_WATCHDOG.parent / "strict-xfail-audit.yml").read_text(encoding="utf-8")
+    doc = yaml.safe_load(wf)
+    steps = doc["jobs"]["audit"]["steps"]
+    runs = [str(s.get("run", "")) for s in steps]
+    install = next((i for i, r in enumerate(runs) if "pip install" in r and "pytest" in r), None)
+    audit = next((i for i, r in enumerate(runs) if "strict_xfail_issue_audit.py" in r), None)
+    assert install is not None, "the audit's pytest dependency is never installed"
+    assert audit is not None, "the audit script is never invoked"
+    assert install < audit, "pytest is installed after the step that needs it"

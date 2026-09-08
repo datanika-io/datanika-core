@@ -5,7 +5,6 @@ import reflex as rx
 from datanika.config import settings as _settings
 from datanika.logging_config import setup_logging
 from datanika.plugin_registry import plugin_head_components
-from datanika.scheduler import scheduler_integration
 from datanika.ui.pages.audit_logs import audit_logs_page
 from datanika.ui.pages.auth_complete import auth_complete_page
 from datanika.ui.pages.connections import connections_page
@@ -30,7 +29,6 @@ from datanika.ui.state.account_state import AccountState
 from datanika.ui.state.api_key_state import ApiKeyState
 from datanika.ui.state.audit_state import AuditState
 from datanika.ui.state.auth_state import AuthState
-from datanika.ui.state.base_state import get_sync_session
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.dag_state import DagState
 from datanika.ui.state.dashboard_state import DashboardState
@@ -87,10 +85,16 @@ if _settings.datanika_edition == "cloud":
 
     init_cloud(app)
 
-# Start APScheduler and sync all active schedules from DB
-scheduler_integration.start()
-with get_sync_session() as _session:
-    scheduler_integration.sync_all(_session)
+# core#648 — APScheduler is NOT armed here.
+#
+# This module is imported by every granian process (1 arbiter + GRANIAN_WORKERS), so a
+# start() here produced five schedulers against one jobstore that does no locking, and
+# every due job was dispatched five times. The scheduler now runs in its own container:
+# `datanika/scheduler_main.py`, compose service `scheduler`.
+#
+# The web tier writes `schedules` rows and nothing else; the scheduler process reconciles
+# from that table. Do not re-add a start() here — tests/test_deploy/test_scheduler_singleton.py
+# fails if this file arms a scheduler at import.
 
 # Public pages
 # Credential pages (core#1081, docs/specs/SPEC_PAGE_ENTRY.md §1). Neither public

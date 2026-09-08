@@ -307,7 +307,7 @@ jobs:
       - name: Recreate celery worker, beat and the celery exporter
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery beat celery-exporter'
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose up -d celery beat scheduler celery-exporter'
 
       # Assert the colour that is actually SERVING is healthy — not a hardcoded container
       # name, which is what made the old check meaningless once colours alternate.

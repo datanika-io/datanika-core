@@ -34,6 +34,49 @@ import pytest
 _SOURCE_ROOT = pathlib.Path(__file__).resolve().parents[1] / "datanika"
 _DISPATCH_FUNCS = {"emit", "announce", "collect_events"}
 
+#: Choke points that FORWARD to a dispatcher: name -> index of the event-name argument.
+#:
+#: 🚨 core#657 AC4 moved the three ``run.*_completed`` announces behind
+#: ``ExecutionService.announce_completion``, because the call sites had been passing
+#: ``status="success"`` as a hardcoded literal and billing users for runs they cancelled.
+#: A scanner that knows only the direct form finds **nothing** for those three events —
+#: and ``test_handlers_can_bind_what_their_emitters_send`` *skips* events it cannot find
+#: (``if event not in emitted: continue``), so the contract stops being checked without
+#: anything going red. ``test_source_scan_finds_the_run_events`` is the floor that caught
+#: exactly this, in CI, after a local run scoped to two directories missed it.
+_FORWARDERS = {"announce_completion": 3}
+
+
+def _forwarder_injected_kwargs() -> dict[str, set[str]]:
+    """What each forwarder adds to the payload itself, read from ITS OWN source.
+
+    ``announce_completion`` supplies ``session``, ``org_id``, ``run_id`` and — the whole
+    point of core#657 AC4 — ``status``, read from the run rather than hardcoded. Those are
+    genuinely sent, so a handler must be able to bind them.
+
+    ⚠️ Reporting only the call-site kwargs would not break this file, it would **weaken**
+    it: a smaller expected set makes the binding assertion easier to satisfy. A guard that
+    quietly asks less is the failure mode this module exists to prevent.
+
+    Derived rather than listed, because a hand-maintained list is precisely what this
+    module's docstring says it refuses to depend on.
+    """
+    injections: dict[str, set[str]] = {}
+    for path in _SOURCE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef) or fn.name not in _FORWARDERS:
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Call):
+                    continue
+                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if name in _DISPATCH_FUNCS:
+                    injections.setdefault(fn.name, set()).update(
+                        kw.arg for kw in node.keywords if kw.arg is not None
+                    )
+    return injections
+
 
 def _emitted_kwargs_by_event() -> dict[str, set[str]]:
     """Map event name -> kwargs it is dispatched with, by reading the source.
@@ -43,6 +86,7 @@ def _emitted_kwargs_by_event() -> dict[str, set[str]]:
     Call sites that compute the event name dynamically are skipped — there are
     none today, and a literal is what makes this checkable.
     """
+    injected = _forwarder_injected_kwargs()
     found: dict[str, set[str]] = {}
     for path in _SOURCE_ROOT.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -51,12 +95,18 @@ def _emitted_kwargs_by_event() -> dict[str, set[str]]:
                 continue
             func = node.func
             name = getattr(func, "id", None) or getattr(func, "attr", None)
-            if name not in _DISPATCH_FUNCS or not node.args:
+            if name in _DISPATCH_FUNCS:
+                index, extra = 0, set()
+            elif name in _FORWARDERS:
+                index, extra = _FORWARDERS[name], injected.get(name, set())
+            else:
                 continue
-            event = node.args[0]
+            if len(node.args) <= index:
+                continue
+            event = node.args[index]
             if not isinstance(event, ast.Constant) or not isinstance(event.value, str):
                 continue
-            kwargs = {kw.arg for kw in node.keywords if kw.arg is not None}
+            kwargs = {kw.arg for kw in node.keywords if kw.arg is not None} | extra
             found.setdefault(event.value, set()).update(kwargs)
     return found
 
@@ -84,6 +134,34 @@ class TestEveryHandlerBindsItsEvent:
         assert "run.upload_completed" in events
         assert "run.models_completed" in events
         assert "run.transformation_completed" in events
+
+    def test_the_forwarder_scan_finds_its_injected_kwargs(self):
+        """Floor for the forwarder machinery itself.
+
+        If this returned an empty set the three events would still be *found*, but with a
+        smaller kwarg set — and a smaller set makes the binding assertion below easier to
+        satisfy. A guard that quietly asks less does not go red.
+        """
+        injected = _forwarder_injected_kwargs()
+        assert "announce_completion" in injected, (
+            "the forwarder scan found no dispatch call inside announce_completion — "
+            "every kwarg it injects would be missing from the contract below"
+        )
+        assert {"session", "org_id", "run_id", "status"} <= injected["announce_completion"]
+
+    def test_the_run_events_still_carry_status(self):
+        """`status` is what cloud's `_is_billable` reads (core#657 AC4).
+
+        It moved from the call sites into the forwarder, so it is exactly the kwarg a
+        naive rescan would drop.
+        """
+        events = _emitted_kwargs_by_event()
+        for event in (
+            "run.upload_completed",
+            "run.models_completed",
+            "run.transformation_completed",
+        ):
+            assert "status" in events[event], f"{event} is no longer scanned as sending status"
 
     def test_handlers_can_bind_what_their_emitters_send(self, registered_handlers):
         emitted = _emitted_kwargs_by_event()

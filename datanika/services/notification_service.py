@@ -477,7 +477,17 @@ def register_hooks(service):
     from datanika import hooks
 
     def _on_run_completed(session, org_id, run_id, status, error_message=None, **kw):
-        evt = "run_failure" if status == "failed" else "run_success"
+        if status == "failed":
+            evt = "run_failure"
+        elif status != "success":
+            # core#657. `cancelled` reaches here now; it used to arrive as a
+            # hardcoded "success" from the task. Telling a user their run SUCCEEDED
+            # after they stopped it is the same lie as billing them for it, arriving
+            # by a different channel. Anything that is not a success and not a
+            # failure gets no completion notification.
+            return
+        else:
+            evt = "run_success"
         pl = {"run_id": run_id, "status": status, "error_message": error_message}
         service.notify(session, org_id, evt, pl)
 
@@ -485,9 +495,15 @@ def register_hooks(service):
     hooks.on("run.models_completed", _on_run_completed)
     hooks.on("run.transformation_completed", _on_run_completed)
     # Failures arrive on their own event, not on `run.*_completed` with
-    # status="failed" (core#465). datanika-cloud's four metering handlers
-    # subscribe to those three and call `record_usage` unconditionally —
-    # none of them check `status` — so reusing them would bill the user for
-    # a run that failed. The separation is structural rather than a status
-    # check we would be trusting another repo's handlers to keep.
+    # status="failed" (core#465). The separation is structural rather than a
+    # status check we would be trusting another repo's handlers to keep, and
+    # that argument stands on its own.
+    #
+    # 🔴 Corrected core#657: this used to add that cloud's metering handlers
+    # "call `record_usage` unconditionally — none of them check `status`".
+    # **False since cloud#84.** `billing/meter.py`'s `_is_billable` gates all
+    # four, and its docstring names `cancelled` explicitly. The claim about the
+    # other repository had gone stale in the direction that flatters us — it
+    # described cloud as more careless than it is, while core was the one
+    # announcing a hardcoded status.
     hooks.on("run.failed", _on_run_completed)

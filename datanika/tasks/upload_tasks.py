@@ -380,18 +380,21 @@ def run_upload(
         # and here, the run is under-metered rather than over-metered. That is
         # the right direction to fail — and the comment below was only ever
         # strictly true at this point.
-        from datanika.hooks import announce
-
         # `announce`, not `emit`: the run is already complete, so no subscriber
         # may veto it or starve the ones behind it (core#456). session/run_id/
         # status are what the notification handlers need to say *which* run
         # succeeded — without them the feature is alive but says nothing.
-        announce(
+        #
+        # core#657 AC4 — `status` is deliberately NOT passed. `announce_completion`
+        # reads it from the run. It used to be the literal "success", and a run the
+        # user CANCELLED still reaches this line, because nothing worker-side stops
+        # it. cloud's `_is_billable` gate is correct and rejects "cancelled" — it was
+        # simply handed a falsehood, and the user was billed for a run they stopped.
+        execution_service.announce_completion(
+            session,
+            org_id,
+            run_id,
             "run.upload_completed",
-            session=session,
-            org_id=org_id,
-            run_id=run_id,
-            status="success",
             target_type="upload",
             target_id=upload.id,
             table_count=table_count,

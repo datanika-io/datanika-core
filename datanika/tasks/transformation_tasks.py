@@ -195,15 +195,13 @@ def run_transformation(
         # ledger row on its own session so the rollback did not undo it. `else`
         # makes the ordering structural and still runs before `finally` closes
         # the session the handlers receive.
-        from datanika.hooks import announce
-
-        # See upload_tasks: announced, not emitted (core#456).
-        announce(
+        # See upload_tasks: announced, not emitted (core#456), and `status` read from
+        # the run rather than hardcoded (core#657 AC4).
+        execution_service.announce_completion(
+            session,
+            org_id,
+            run_id,
             "run.transformation_completed",
-            session=session,
-            org_id=org_id,
-            run_id=run_id,
-            status="success",
             target_type="transformation",
             target_id=transformation.id,
         )

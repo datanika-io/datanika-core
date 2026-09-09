@@ -147,6 +147,37 @@ class TestTheUploadRunCarriesItsMode:
         assert type(spy.call_args.kwargs["mode"]) is str
 
 
+def _announced_event(node) -> str | None:
+    """The completion event a call announces, or ``None``.
+
+    Two shapes, and the second is why this helper exists. ``announce(event, ...)`` puts the
+    event **first**; ``ExecutionService.announce_completion(session, org_id, run_id, event,
+    ...)`` — the core#657 AC4 choke point — puts it **fourth**.
+
+    🚨 This guard previously matched only a bare ``ast.Name`` called ``announce``. The moment
+    the tasks moved behind the choke point it found **nothing**, and a structural guard that
+    finds nothing *passes*. It was caught only because a sibling assertion required a non-empty
+    result. Recognise both shapes rather than either one.
+    """
+    import ast
+
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Name) and func.id == "announce":
+        index = 0
+    elif getattr(func, "attr", None) == "announce_completion":
+        index = 3
+    else:
+        return None
+    if len(node.args) <= index:
+        return None
+    arg = node.args[index]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value
+    return None
+
+
 class TestModeIsNotFabricatedWhereItDoesNotExist:
     """core#910 step 2 asks for "the equivalent" from pipeline/transformation.
 
@@ -171,14 +202,10 @@ class TestModeIsNotFabricatedWhereItDoesNotExist:
         found: set[str] = set()
         hits = 0
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            if _announced_event(node) != event:
                 continue
-            if node.func.id != "announce" or not node.args:
-                continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and first.value == event:
-                hits += 1
-                found |= {kw.arg for kw in node.keywords if kw.arg}
+            hits += 1
+            found |= {kw.arg for kw in node.keywords if kw.arg}
         assert hits == 1, (
             f"expected exactly one announce({event!r}) in {module_name}, found {hits} — "
             f"the extractor is not reading what this test claims to check"

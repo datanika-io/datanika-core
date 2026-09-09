@@ -331,3 +331,53 @@ def test_the_vocabulary_is_qas_and_not_a_second_definition() -> None:
     assert VERDICT_CLASS["no_verdict"] == UNMEASURED
     # ...and a genuine reading must not.
     assert VERDICT_CLASS["clean"] != UNMEASURED
+
+
+class TestTheCallerNamesItsTier:
+    """core#1205, second half — the caller side of QA's parser fix.
+
+    QA made `parse_verdict_line` refuse a two-tier log unless the caller names a
+    tier. That is the correct shape. But this pre-flight was never updated, so it
+    kept hitting the `auto` default and, the moment that fix landed, raised
+    `AmbiguousVerdictError` on every `e2e-staging` log — the promotion gate crashed
+    instead of reporting.
+
+    🔑 The tier differs BY CALLER on the same log, and that is the whole lesson of
+    #1205. `e2e_tier_streak.py` asks `informational`, because it measures whether
+    that tier is stable enough to graduate. A promotion asks `gating`: *did the
+    specs that gate a release pass?* Reading the other one is how a clean tier was
+    reported to a promoter as FAIL.
+    """
+
+    def _source(self) -> str:
+        return (
+            Path(__file__).resolve().parents[2] / "scripts" / "verify_e2e_attribution.py"
+        ).read_text(encoding="utf-8")
+
+    def test_it_passes_a_tier_rather_than_relying_on_auto(self) -> None:
+        src = self._source()
+        assert "parse_verdict_line(lines, tier=" in src, (
+            "the pre-flight calls parse_verdict_line without naming a tier; on a "
+            "two-tier log that now raises AmbiguousVerdictError and the promotion "
+            "gate crashes instead of reporting"
+        )
+        assert "parse_verdict_line(lines)" not in src, (
+            "a bare parse_verdict_line(lines) call remains — that is the core#1205 shape"
+        )
+
+    def test_a_promotion_asks_the_gating_tier_not_the_informational_one(self) -> None:
+        """The specific misread: informational is `continue-on-error` by design."""
+        src = self._source()
+        assert '"gating"' in src, (
+            "the pre-flight does not ask for the gating tier. A promotion's question "
+            "is whether the release-gating specs passed; the informational tier is "
+            "continue-on-error and is red on essentially every run."
+        )
+        assert '"informational"' not in src, (
+            "the pre-flight names the informational tier — that is the tier whose red "
+            "was reported as a gating FAIL in core#1205"
+        )
+
+    def test_sso_logs_still_use_the_sso_tier(self) -> None:
+        """e2e-sso emits no INFORMATIONAL_RESULT line, but naming it is still right."""
+        assert '"sso" if "sso" in job.name' in self._source()

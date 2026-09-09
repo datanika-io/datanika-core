@@ -291,7 +291,22 @@ def verdict_classes_for(repo: str, jobs: list[Job], sha: str) -> dict[str, str]:
         if log is None:
             continue
         lines = log.splitlines()
-        verdict = parse_verdict_line(lines)
+        # core#1205, second half. `parse_verdict_line` now REFUSES a log carrying two
+        # tiers unless the caller names one — QA's fix, and the right shape. This
+        # caller never named one, so after that landed it raised `AmbiguousVerdictError`
+        # on every `e2e-staging` log and the promotion pre-flight crashed instead of
+        # reporting. Fixed here rather than by loosening the parser: the refusal is
+        # correct and the missing name was the defect.
+        #
+        # 🔑 The tier differs BY CALLER on the same log, which is the whole lesson.
+        # `e2e_tier_streak.py` asks `informational` (it measures graduation of that
+        # tier); a promotion asks **`gating`** — "did the specs that gate a release
+        # pass?". Reading the other one is how a clean tier was reported as FAIL.
+        #
+        # `smoke-staging` emits neither pattern, so `gating` yields None, which
+        # `classify()` already renders as `verdict=<none>` rather than a reading.
+        tier = "sso" if "sso" in job.name else "gating"
+        verdict = parse_verdict_line(lines, tier=tier)
         if verdict is None:
             continue
         out[job.name] = classify_verdict(verdict, parse_specs_outcome(lines))

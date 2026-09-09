@@ -165,6 +165,83 @@ other and none of them looks at the third layer.**
 That is why Engineering posted the census as an addendum on [core#673] rather than only on
 [core#681], and it is why this spec exists rather than eight issues.
 
+## §7 — What a refusal says, per surface
+
+The 26 REST endpoints answer a **script**; the Reflex handlers answer a **person**. Those are not the
+same message, and sharing one string gives a poor version of both.
+
+### 7.1 · REST — a typed code, a stable shape
+
+**`403`**, with the typed-error shape `api_v1_routes.py` already uses for `409 not_cancellable`:
+
+```json
+{"error": "insufficient_role", "message": "This operation requires the admin role.", "required_role": "admin"}
+```
+
+- **`403`, not `404`.** Within an org, a `viewer` can already *list* the resource, so hiding its
+  existence buys nothing and costs the caller the one fact that lets them fix the problem.
+- **`404` stays for cross-org**, unchanged — the org-scoped lookup returns nothing and that is
+  correct. ⚠️ **Do not merge the two paths**: the difference between *"not yours"* and *"not allowed"*
+  is the whole reason `403` is safe here.
+- **`required_role` is a field, not prose.** A script retries or escalates on it; parsing an English
+  sentence to decide is how integrations break on a copy edit.
+
+### 7.2 · Reflex — a sentence a person can act on
+
+`error_message` on the state, rendered by the existing callout. It names **what was refused**, **what
+role is needed**, and **who can grant it** — because a user who reads *"insufficient permissions"* has
+been told they have a problem and not how to end it.
+
+> *"Only an admin can delete a connection. Ask an owner or admin of {org} to do it, or to change your
+> role."*
+
+- **All nine locales.** This is callout text; `WORKFLOW_RULES` §6 puts it under Translate.
+- ⚠️ **One key per threshold, not one per handler.** 25 handlers, three thresholds — `editor`,
+  `admin`, `owner`. Interpolate the operation. 25 near-identical keys is 225 translations that drift.
+- 🚨 **Do not reuse the REST `message` string here, or the reverse.** The moment they are one key, a
+  copy edit for the human changes what a script sees, and the i18n pass translates a machine field.
+
+### 7.3 · The refusal is not a new oracle, and the ordering that keeps it that way
+
+Check the role **after** the org-scoped lookup and **before** the mutation. Any other order leaks:
+checking the role first means a cross-org probe returns `403` rather than `404`, which confirms the
+resource exists somewhere.
+
+⚠️ This is the mirror of `SPEC_SIGNUP_ENUMERATION` D5, where the limit had to come **before** the
+existence lookup. **The right order is not a general rule; it is decided per surface by what the
+refusal would otherwise disclose.**
+
+---
+
+## §8 — 🚨 The branch this contract cannot avoid, and it is UNANSWERED
+
+`plans/security/API_KEY_ROLE_INTERSECTION_2026-09-09.md` records that a key's scopes are never
+intersected with its owner's current role, and the coordinator has put that to the founder. **It is
+open, and §4's mechanism cannot be neutral on it.**
+
+§4 says the service takes an **`actor_user_id`** and resolves that actor's membership. On the REST
+path the only actor is **`api_key.user_id`**. So:
+
+| branch | what the REST path passes | consequence |
+|---|---|---|
+| **A — intersect** | `api_key.user_id` | The service resolves that user's **current** membership. **A key minted by an admin who was later demoted stops working**, at an unpredictable moment, with no deploy. This is the industry norm and the honest answer. |
+| **B — do not intersect** | something else, or nothing | The service check must be **bypassable from REST** — which is a hole in the control this whole spec exists to add. Or the REST path keeps scope-only authorization, which is **a per-surface rule**, i.e. exactly the defect. |
+| **C — grandfather** | `api_key.user_id`, with keys minted before a cutoff exempt | Branch A with a migration. The exemption **must carry an expiry**, or it is branch B wearing a date. |
+
+🔑 **Branch B is close to unbuildable without reintroducing the defect**, so the decision is more
+forced than it looks — and saying that is more useful than pretending three options are open.
+
+**Until it is answered:** implement §1–§7 **for the Reflex path**, and leave the REST wiring behind
+the branch. ⚠️ **Do not pick a branch by implementing one** — passing `api_key.user_id` is branch A,
+and it is a decision whether or not anyone calls it one. **AC6 is the criterion that makes the branch
+visible**; if it is deferred for this reason, say *that*, rather than deferring it silently.
+
+⚠️ **And do not read a green Reflex-only implementation as this spec being satisfied.** That is §6's
+hazard exactly: hardening one more layer while the 26 endpoints are untouched moves the same number
+from *"two layers of three"* to *"three of four"*.
+
+---
+
 [core#651]: https://github.com/datanika-io/datanika-core/issues/651
 [core#673]: https://github.com/datanika-io/datanika-core/issues/673
 [core#681]: https://github.com/datanika-io/datanika-core/issues/681

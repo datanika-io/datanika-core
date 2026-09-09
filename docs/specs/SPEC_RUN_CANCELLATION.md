@@ -68,6 +68,46 @@ one control we hand the user for free. **Meter what was processed up to the stop
 after.** If partial usage cannot be measured at the point of stopping, say so in the PR — that changes
 the answer, and I would rather decide it than have it default.
 
+> ## 🔴 D2 ANSWERED, 2026-09-09 — and the answer is that cancellation makes NO billing promise yet
+>
+> D2 ends: *"If partial usage cannot be measured at the point of stopping, say so in the PR — that
+> changes the answer, and I would rather decide it than have it default."* **Engineering said so**
+> ([core#657] AC4), rather than letting a green imply cancellation is respected. This is the decision
+> that invitation asked for.
+>
+> **Measured on `origin/dev`:** `complete_run` **emits no hook at all** — its own comment says so —
+> and `run.upload_completed` / `run.models_completed` / `run.transformation_completed` are
+> `announce`d from the **tasks**, afterwards. Cloud's metering handlers hang off those. And nothing
+> today makes the worker stop: there is no `task_id` column and no revocation, so a cancelled run
+> **runs to completion and meters the whole of it**.
+>
+> ### The decision
+>
+> **The bill follows the work, not the request.** A run whose worker completed consumed the bytes and
+> the destination did the writing; billing them is honest accounting, not a defect. **Option (b) —
+> bill nothing — stays rejected** for the reason D2 already gives: it is a cancel-to-avoid-billing
+> hole on the one control we hand the user for free.
+>
+> **So until a checkpoint mechanism exists, cancelling does not reduce the bill, and the product must
+> say so rather than let the user infer otherwise.**
+>
+> 🚨 **AC2 landing makes this MORE likely to surprise someone, not less.** Today a cancelled run is
+> overwritten to `success` by `complete_run`, so the row and the invoice agree — wrongly, but they
+> agree. Once the overwrite is refused, the run visibly reads **`cancelled`** while the usage is
+> metered in full. **The status becomes honest and the billing silently does not**, and that gap is
+> exactly where a user stops reading and starts assuming.
+>
+> ### What changes in this spec
+>
+> - **D2's "meter nothing after the stop" is aspirational until there is a stop.** It describes the
+>   target state, reached by §3's checkpoint work — not the state after AC2.
+> - **The cancel dialog and the API response must carry it.** D3 already requires a plain sentence
+>   about partial data staying where it is; **billing needs its own sentence beside it**, because a
+>   user who cancels to stop a charge and reads only about data has had their actual question
+>   answered by silence.
+> - 🔴 **AC11 is corrected below** — as written it could not pass, and it would have gone red against
+>   a correct implementation.
+
 ### D3 — Partially loaded data stays where it is, and we say so plainly *(new)*
 
 A run stopped mid-load has already written rows to the destination. We do **not** attempt to roll
@@ -294,8 +334,21 @@ carried forward and renumbered here.
 8. **A stuck `cancelling` run is reaped** (§3.1) and the reaper's window is asserted.
 9. **The UI control ships in the same PR**, with §5.3's affordance/enforcement pair and i18n ×9.
 10. **D3's sentence appears in the API reference, the docs page and the dialog**, worded the same.
-11. **Metering (D2), if the cloud plugin is loaded**: a cancelled run records its partial usage and no
-    more.
+11. 🔴 **Metering (D2) — CORRECTED 2026-09-09. As written this AC could not pass, and it would have
+    gone red against a correct implementation.** It said *"a cancelled run records its partial usage
+    and no more"*, which presumes a stop the product cannot perform: there is no `task_id` and no
+    revocation, so the worker runs to completion and meters all of it.
+
+    **The criterion is now:** *a cancelled run's metered usage equals what was actually processed* —
+    which today is the whole run, and after the §3 checkpoint work is the partial. **Assert the
+    identity, not a fraction.** An AC that names "partial" pins a number the implementation cannot
+    produce, and the cheapest way to make it pass is to stop metering — which is option (b), the one
+    D2 rejects.
+
+12. **The billing sentence is present** wherever the cancellation sentence is — dialog, API response
+    body, docs page — and says that cancelling does not reduce the bill for work already done.
+    ⚠️ **Assert it on all three**, because D3's data sentence and this one will be written together
+    and are easy to ship on two surfaces out of three.
 
 ---
 

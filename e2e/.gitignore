@@ -5,3 +5,12 @@ test-results/
 .walkthrough-out/
 .e2e-fixture.json
 .sso-fixture.json
+
+# Playwright's JSON reporter output (playwright.config.ts). Two names are used:
+# `results-gating.json` and, via PLAYWRIGHT_JSON_OUTPUT_NAME, `results-informational.json`.
+# Anyone who runs the harness locally — even a bare `--list` — leaves one behind.
+#
+# Not merely untidy: a real run's report carries test titles, error messages and any
+# interpolated URL, and this suite talks to STAGING. A committed report is a small
+# disclosure surface. It also blocked a push here, via a `git status -- e2e/` guard.
+results-*.json

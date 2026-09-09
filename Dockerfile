@@ -229,6 +229,44 @@ RUN uv cache clean && \
 # does `from mcp.server.fastmcp import FastMCP`.
 RUN /app/.venv/bin/python -c "import importlib.metadata as m; import datanika_mcp.server, datanika_mcp.client, datanika_mcp.session; print('/mcp surface imports OK -- mcp', m.version('mcp'), 'datanika-mcp', m.version('datanika-mcp'))"
 
+# Assert the OTHER THREE entrypoints, for the same reason (core#1201).
+#
+# This is one image with four commands run against it, and until now exactly one of
+# them was asserted here. `datanika_mcp` is a sub-import of the app, so the line above
+# proves a slice of the `app` path and nothing about the rest:
+#
+#   app / app_b   reflex run                                        <- partly covered above
+#   celery        celery -A datanika.tasks.celery_app:celery_app worker -E
+#   beat          celery -A datanika.tasks.celery_app:celery_app beat
+#   scheduler     python -m datanika.scheduler_main                 (core#648)
+#
+# The two least-covered are exactly the two that serve no HTTP, so unlike `app` they
+# have no pre-repoint assertion in front of them: `deploy-bluegreen.sh` checks /healthz
+# and /mcp against the target's own backend port before repointing Apache, and a worker
+# that cannot import is discovered by `container-restart-loop` -- i.e. AFTER production
+# has no worker.
+#
+# 🚨 ONE PROCESS PER ENTRYPOINT, deliberately, and not one interpreter importing all
+# three. Ask the process, and import the entrypoint IT imports (WORKFLOW_RULES §13).
+# Importing them together would also invent an order that does not exist in production:
+# core#832 records that `celery_app.py` imports `bootstrap_cloud` at module level while
+# `plugin.py` imports back into `datanika.ui.state.auth_state`, which reaches
+# `celery_app` again. The real entrypoints happen to import in a safe order; a combined
+# probe is a new one, and a build failing on a cycle production never takes is worse
+# than no assertion -- it fails on correct code (docs/QA_RULES.md §29).
+#
+# Runs in `final`, i.e. AFTER the variant graft, so it asserts the variant being built.
+# On `variant-core` there is no `datanika_cloud`, and `celery_app`'s cloud import sits
+# behind `if settings.datanika_edition == "cloud"`, so a plain import is correct there
+# too -- but CI builds both (`image-probe` cloud, `core-only-image` core) and that is
+# what verifies it rather than this comment.
+RUN set -eu; \
+    for mod in datanika.datanika datanika.tasks.celery_app datanika.scheduler_main; do \
+      /app/.venv/bin/python -c "import $mod" \
+        || { echo "entrypoint module '$mod' does not import in this image"; exit 1; }; \
+      echo "entrypoint imports OK: $mod"; \
+    done
+
 EXPOSE 3000 8000
 
 CMD ["uv", "run", "reflex", "run", "--env", "prod"]

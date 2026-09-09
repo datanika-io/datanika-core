@@ -29,6 +29,27 @@ def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
     return session.execute(stmt).scalar_one_or_none()
 
 
+def is_cancelled(run: Run) -> bool:
+    """Has this run already reached the one terminal state a later report must not undo?
+
+    core#657. ``POST /api/v1/runs/{id}/cancel`` returned 200 with ``status: cancelled``
+    while the worker ran on and then called ``complete_run``, which set ``SUCCESS``
+    unconditionally. So the cancellation was cosmetic and transient: the row flipped back,
+    and a caller who re-read it saw its own cancellation undone.
+
+    ⚠️ ``==``, not ``is``. ``RunStatus`` is a ``StrEnum``, so a member and its string value
+    compare equal; identity would silently stop matching if this column ever round-trips as
+    a bare string, and it would fail *open* — back to overwriting.
+
+    🚨 Deliberately only ``CANCELLED``. Whether a terminal ``SUCCESS`` or ``FAILED`` should
+    also be write-once is a real question — ``append_logs`` exists because post-completion
+    work must not change status — but it is a wider contract change across call sites this
+    did not audit, and core#657 AC2 asks for this one. Pinned by
+    ``TestTheGuardIsNarrow::test_a_success_run_is_not_protected_by_this_change``.
+    """
+    return run.status == RunStatus.CANCELLED
+
+
 class ExecutionService:
     def create_run(
         self,
@@ -79,8 +100,18 @@ class ExecutionService:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
-        run.status = RunStatus.SUCCESS
-        run.finished_at = datetime.now(UTC)
+        # core#657 AC2. Only `status` and `finished_at` are withheld -- they are the
+        # cancellation's own record. The observational fields below are still written:
+        # they are the evidence of what the worker did before it was told to stop, and
+        # AC3 asks the product to say what happened to partially-loaded data.
+        #
+        # 🚨 This does NOT stop metering, and reading it that way is the easy mistake:
+        # this method emits no hook at all. `run.*_completed` fires from the TASKS, after
+        # this returns (upload_tasks.py, pipeline_tasks.py, transformation_tasks.py), so a
+        # cancelled run still bills. That is core#657 AC4 and it is still open.
+        if not is_cancelled(run):
+            run.status = RunStatus.SUCCESS
+            run.finished_at = datetime.now(UTC)
         run.rows_loaded = rows_loaded
         run.logs = logs
         if bytes_processed is not None:
@@ -99,11 +130,21 @@ class ExecutionService:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
-        run.status = RunStatus.FAILED
-        run.finished_at = datetime.now(UTC)
+        # core#657 AC2, same shape as `complete_run`: the error is recorded, the terminal
+        # CANCELLED is not overwritten.
+        cancelled = is_cancelled(run)
+        if not cancelled:
+            run.status = RunStatus.FAILED
+            run.finished_at = datetime.now(UTC)
         run.error_message = error_message
         run.logs = logs
         session.flush()
+
+        # A run the user cancelled that then errors is not a failure they need paging
+        # about -- `run.failed` reaches Slack, email and in-app. Announcing here would
+        # generate a false alarm out of the user's own cancellation.
+        if cancelled:
+            return run
 
         # A failed run has never produced a notification — Slack, email or
         # in-app. Both handlers already branch on `status == "failed"`, but

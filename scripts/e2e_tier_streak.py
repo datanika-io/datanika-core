@@ -118,7 +118,27 @@ INFORMATIONAL_VERDICTS: dict[str, str] = {
     "unknown": UNMEASURED,
 }
 
-#: Verdict token -> class. **Both vocabularies**, because one policy is emitted by two jobs.
+#: `staging.yml`, `e2e-staging`, step "Classify what this job's result means" — the **GATING**
+#: tier. Identical to the SSO vocabulary except that a spec failure is spelled `gating_failed`.
+#:
+#: 🚨 This map did not exist until core#1205, and its absence was not a gap in coverage — it was
+#: a WRONG ANSWER. `parse_verdict_line` tried the SSO and informational patterns in turn and
+#: returned the LAST match over the whole log. An `e2e-staging` log carries no gating pattern to
+#: match, so the scan fell through to `INFORMATIONAL_RESULT=` and reported the **informational,
+#: explicitly non-gating** tier as the gating verdict. A promotion pre-flight read
+#: `conclusion=success, verdict=FAIL` on a run whose own log said
+#: `gating step outcome: success / job status: success / verdict: clean`, 21 of 21 steps green.
+GATING_VERDICTS: dict[str, str] = {
+    "clean": PASS,
+    "infra_only": PASS,
+    "gating_failed": FAIL,
+    "wrong_build": UNMEASURED,
+    "no_verdict": UNMEASURED,
+    "cancelled": UNMEASURED,
+}
+
+#: Verdict token -> class. **All three vocabularies**, because one policy is emitted by two jobs
+#: and `e2e-staging` emits two tiers of its own.
 #:
 #: `tests/test_deploy/test_e2e_tier_streak.py` pins this against the two workflow files in
 #: BOTH directions, and the second direction is the one that matters:
@@ -129,7 +149,15 @@ INFORMATIONAL_VERDICTS: dict[str, str] = {
 #:   control, and it is derived rather than a floor. A floor of "at least 5 states" was the
 #:   first attempt and it was measured tolerating the exact regression it existed to catch:
 #:   the classifier emits six, so dropping one left five and the control stayed green.
-VERDICT_CLASS: dict[str, str] = {**SSO_VERDICTS, **INFORMATIONAL_VERDICTS}
+VERDICT_CLASS: dict[str, str] = {**SSO_VERDICTS, **GATING_VERDICTS, **INFORMATIONAL_VERDICTS}
+
+#: Tier -> the vocabulary that tier's classifier emits. The caller names the tier it is asking
+#: about; nothing infers it from whatever the log happens to contain.
+VERDICTS_BY_TIER: dict[str, dict[str, str]] = {
+    "sso": SSO_VERDICTS,
+    "gating": GATING_VERDICTS,
+    "informational": INFORMATIONAL_VERDICTS,
+}
 
 #: `STATE=<token>` assignments in a shell block. Anchored to an assignment so that a *read*
 #: (`[ "$JOB_STATUS" = "success" ]`) cannot enter the vocabulary.
@@ -144,6 +172,26 @@ _SSO_VERDICT = re.compile(
     r"verdict: (?P<verdict>[a-z_]+)\s*$"
 )
 _INFO_VERDICT = re.compile(r"(?:^|\s)INFORMATIONAL_RESULT=([a-z_]+)\s*$")
+
+#: `staging.yml`'s gating classifier. Same shape as the SSO line, different nouns — and its
+#: absence is what core#1205 was.
+_GATING_VERDICT = re.compile(
+    r"gating step outcome: (?P<specs>[a-z_]+) / job status: [a-z_]+ / "
+    r"verdict: (?P<verdict>[a-z_]+)\s*$"
+)
+
+#: Tier -> the pattern that tier's classifier prints.
+_PATTERN_BY_TIER = {"sso": _SSO_VERDICT, "gating": _GATING_VERDICT, "informational": _INFO_VERDICT}
+
+
+class AmbiguousVerdictError(RuntimeError):
+    """The log carries more than one tier's verdict and the caller did not say which it wants.
+
+    Raised rather than guessed. core#1205 is what guessing looks like: an `e2e-staging` log
+    carries a gating verdict AND an informational one, and picking whichever matched last
+    reported the non-gating tier as the gating result — to a promotion pre-flight.
+    """
+
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -172,30 +220,56 @@ def classify_verdict(verdict: str | None, specs_outcome: str | None = None) -> s
     return VERDICT_CLASS.get(verdict, UNREADABLE)
 
 
-def parse_verdict_line(log_lines: list[str]) -> str | None:
-    """The verdict token from a job log, or `None` if the log does not carry one.
+def parse_verdict_line(log_lines: list[str], *, tier: str = "auto") -> str | None:
+    """The verdict token for ONE TIER of a job log, or `None` if that tier printed none.
 
     `None` is the honest answer for an empty log (a cancelled job's log is zero bytes) and for
     a log whose classifier never ran. It is deliberately not a class: the caller decides
     whether an absent line is UNMEASURED (because the job conclusion explains it) or
     UNREADABLE.
 
-    The **last** match wins. The classifier line appears twice in a normal log — once as the
-    echoed script source inside the `##[group]Run` header, and once as real output — and only
-    the second describes this run.
+    The **last** match wins *within a tier*. The classifier line appears twice in a normal log —
+    once as the echoed script source inside the `##[group]Run` header, and once as real output —
+    and only the second describes this run.
+
+    🚨 **`tier` is the fix for core#1205 and it is the whole point.** This used to try every
+    pattern and return the last that matched anywhere in the log. On an `e2e-staging` log that
+    silently answered a question nobody asked: the informational tier's result, handed to a
+    promotion pre-flight that was asking about the **gating** tier. *Report a mechanism's status
+    only from the field that records THAT mechanism.*
+
+    `tier="auto"` is kept for the single-tier logs where it is unambiguous (`e2e-sso` emits no
+    `INFORMATIONAL_RESULT=` line at all — measured: 0 occurrences across SSO logs, against 5 in a
+    staging log, so the two cannot be confused). Where a log carries **more than one** tier's
+    verdict, `auto` raises rather than picking. That is the case that was wrong.
     """
-    found: str | None = None
+    per_tier: dict[str, str] = {}
     for raw in log_lines:
         line = _ANSI.sub("", raw).rstrip("\r\n")
         # The echoed source ends in a quote and carries `$STATE`; requiring the line to END at
         # the token rejects it without having to model the header's shape.
         if line.endswith('"') or line.endswith("'"):
             continue
-        for pattern in (_SSO_VERDICT, _INFO_VERDICT):
+        for name, pattern in _PATTERN_BY_TIER.items():
             m = pattern.search(line)
             if m:
-                found = m.group("verdict") if "verdict" in m.groupdict() else m.group(1)
-    return found
+                # The LAST match wins within a tier: the classifier line appears twice, once as
+                # echoed source in the `##[group]Run` header and once as real output.
+                per_tier[name] = m.group("verdict") if "verdict" in m.groupdict() else m.group(1)
+
+    if tier != "auto":
+        if tier not in _PATTERN_BY_TIER:
+            raise ValueError(f"unknown tier {tier!r}; expected one of {sorted(_PATTERN_BY_TIER)}")
+        return per_tier.get(tier)
+
+    if len(per_tier) > 1:
+        raise AmbiguousVerdictError(
+            f"this log carries {len(per_tier)} tiers' verdicts ({', '.join(sorted(per_tier))}) "
+            "and no tier was named. Pass tier='gating' or tier='informational' — picking one "
+            "silently is core#1205, where the informational result was reported as the gating "
+            "verdict to a promotion pre-flight."
+        )
+    return next(iter(per_tier.values()), None)
 
 
 def parse_specs_outcome(log_lines: list[str]) -> str | None:
@@ -389,7 +463,12 @@ def collect(repo: str, branch: str, job_name: str, runs: int) -> list[tuple[str,
         else:
             fetched += 1
         lines = log.splitlines() if log is not None else []
-        verdict = parse_verdict_line(lines) if log is not None else None
+        # Name the tier. This script's question is about GRADUATION, so on `e2e-staging` it
+        # wants the INFORMATIONAL tier — that is the tier specs graduate out of — and on
+        # `e2e-sso` the SSO one. Stating it is the core#1205 fix: the old call took whichever
+        # verdict matched last, which on a staging log is now ambiguous by construction.
+        tier = "sso" if "sso" in job_name else "informational"
+        verdict = parse_verdict_line(lines, tier=tier) if log is not None else None
         specs = parse_specs_outcome(lines) if log is not None else None
 
         if verdict is None and job.get("conclusion") == "cancelled":

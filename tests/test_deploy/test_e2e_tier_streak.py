@@ -59,12 +59,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.e2e_tier_streak import (  # noqa: E402
     FAIL,
+    GATING_VERDICTS,
     INFORMATIONAL_VERDICTS,
     PASS,
     SSO_VERDICTS,
     UNMEASURED,
     UNREADABLE,
     VERDICT_CLASS,
+    AmbiguousVerdictError,
     Reading,
     classify_verdict,
     parse_specs_outcome,
@@ -639,3 +641,109 @@ class TestSparsenessGradesDilutionNotLength:
         r = Reading.from_classes([PASS, PASS, UNREADABLE, PASS, PASS], required=3)
         assert r.streak == 2
         assert r.state == "not-yet"
+
+
+# --------------------------------------------------------------------------------------
+# 7. A verdict belongs to a TIER, and the caller must name it (core#1205)
+# --------------------------------------------------------------------------------------
+
+
+class TestTheVerdictIsReadPerTier:
+    """`parse_verdict_line` used to try every pattern and return the last that matched.
+
+    On an `e2e-staging` log that silently answered a question nobody asked. There was no
+    gating pattern at all, so the scan fell through to `INFORMATIONAL_RESULT=` and reported
+    the **informational, explicitly non-gating** tier as the gating verdict — to a promotion
+    pre-flight, which printed `conclusion=success, verdict=FAIL` for a run whose own log said
+    `gating step outcome: success / job status: success / verdict: clean`, 21 of 21 steps green.
+
+    🔑 88 tests passed before and after the fix. That is the tell worth keeping: a suite that
+    reads identically on both sides of a real defect did not cover it. These are the ones that
+    would have.
+    """
+
+    #: A staging log carries BOTH tiers. That is the whole difficulty.
+    STAGING = [
+        "gating step outcome: failure / job status: failure / verdict: gating_failed",
+        "INFORMATIONAL_RESULT=unknown",
+    ]
+    SSO_ONLY = ["SSO specs outcome: success / job status: success / verdict: clean"]
+
+    def test_the_gating_tier_is_readable_at_all(self) -> None:
+        """The pattern that did not exist. Without it every question about gating fell through."""
+        assert parse_verdict_line(self.STAGING, tier="gating") == "gating_failed"
+
+    def test_the_informational_tier_is_read_separately(self) -> None:
+        assert parse_verdict_line(self.STAGING, tier="informational") == "unknown"
+
+    def test_the_two_tiers_disagree_on_this_log_which_is_why_the_bug_existed(self) -> None:
+        """The regression, stated as the property: on a real staging log the two tiers return
+        DIFFERENT verdicts, so picking one silently is picking wrong half the time."""
+        gating = parse_verdict_line(self.STAGING, tier="gating")
+        info = parse_verdict_line(self.STAGING, tier="informational")
+        assert gating != info
+        assert VERDICT_CLASS[gating] == FAIL
+        assert VERDICT_CLASS[info] == UNMEASURED
+
+    def test_auto_refuses_a_log_carrying_two_tiers_rather_than_guessing(self) -> None:
+        """The fix. Guessing is what core#1205 was; raising is what it becomes."""
+        with pytest.raises(AmbiguousVerdictError, match="no tier was named"):
+            parse_verdict_line(self.STAGING)
+
+    def test_auto_still_works_where_it_is_unambiguous(self) -> None:
+        """Measured before relying on it: `e2e-sso` logs carry **0** `INFORMATIONAL_RESULT=`
+        lines (against 5 in a staging log), so an SSO log cannot be ambiguous and existing
+        callers keep working."""
+        assert parse_verdict_line(self.SSO_ONLY) == "clean"
+
+    def test_an_unknown_tier_is_an_error_not_a_silent_none(self) -> None:
+        """A typo'd tier returning `None` would read as 'this job printed no verdict'."""
+        with pytest.raises(ValueError, match="unknown tier"):
+            parse_verdict_line(self.STAGING, tier="informationnal")
+
+    def test_control_a_log_with_neither_line_is_still_none(self) -> None:
+        assert parse_verdict_line(["nothing to see"], tier="gating") is None
+
+
+class TestTheGatingVocabularyIsCoupledToTheWorkflow:
+    """Same two-way coupling the SSO and informational vocabularies already have.
+
+    A third vocabulary added without it would be exactly the gap that produced core#1205: a map
+    that looks like coverage and drifts from the classifier it claims to describe.
+    """
+
+    @staticmethod
+    def _gating_states() -> set[str]:
+        text = STAGING_YML.read_text(encoding="utf-8")
+        return verdict_states_in_workflow(text)
+
+    def test_every_state_the_gating_classifier_emits_is_classified(self) -> None:
+        emitted = self._gating_states()
+        known = set(VERDICT_CLASS)
+        unclassified = emitted - known
+        assert not unclassified, (
+            f"`staging.yml` can emit {sorted(unclassified)}, which `e2e_tier_streak.py` does "
+            "not classify — an unknown verdict reads as UNREADABLE and blocks a streak."
+        )
+
+    def test_every_gating_verdict_this_script_knows_is_still_in_the_workflow(self) -> None:
+        """The backward direction, and the one that catches a vocabulary outliving its emitter."""
+        emitted = self._gating_states()
+        stale = set(GATING_VERDICTS) - emitted
+        assert not stale, (
+            f"`GATING_VERDICTS` names {sorted(stale)}, which `staging.yml` no longer emits."
+        )
+
+    def test_control_the_workflow_scan_is_not_empty(self) -> None:
+        """An empty scan would make both assertions above vacuously true."""
+        assert len(self._gating_states()) >= 4, (
+            f"only {len(self._gating_states())} STATE token(s) found in staging.yml"
+        )
+
+    def test_the_gating_vocabulary_differs_from_the_sso_one_where_it_should(self) -> None:
+        """They are near-identical, which is why copying one for the other is tempting and
+        wrong: a spec failure is `gating_failed` here and `specs_failed` there."""
+        assert "gating_failed" in GATING_VERDICTS
+        assert "gating_failed" not in SSO_VERDICTS
+        assert "specs_failed" in SSO_VERDICTS
+        assert "specs_failed" not in GATING_VERDICTS

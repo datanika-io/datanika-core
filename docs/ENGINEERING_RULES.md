@@ -1593,6 +1593,81 @@ liveness).
    `scheduler_main: 0`, in the same container by the same method, is what converts "found
    nothing" into "measured nothing there" (§7, §25 — this is that rule arriving from the other
    direction).
+## 54. Renaming a call shape disables every static guard that matches on it — and they fail OPEN
+
+**(2026-09-10, [core#657] AC4.)** Moving three `announce("run.*_completed", …)` calls behind a
+choke point, `ExecutionService.announce_completion(session, org_id, run_id, event, …)`, blinded
+**three** separate static guards at once. Each matched a bare `ast.Name` called `announce` with the
+event at `args[0]`; the new form is an `ast.Attribute` with the event at `args[3]`.
+
+| guard | what it stops watching |
+|---|---|
+| `test_metering_after_commit.py` | [core#522] — metering must follow the commit |
+| `test_metering_dimensions.py` | [core#910] — `mode` only on the upload event |
+| `test_hooks_contract.py` | [core#456] — every handler can bind what its emitter sends |
+
+**The third is the instructive one.** Its consumer does `if event not in emitted: continue`, so a
+scan that finds nothing **skips silently**. It went red only because of a floor test whose own
+docstring reads *"Guard the guard: if the scan finds nothing, it proves nothing."* Two of the three
+survived on floors like that. A static guard has no natural failure signal: finding nothing and
+finding everything-is-fine are the same green.
+
+**Rules:**
+
+1. **Before a rename, enumerate every guard that matches the old shape — all of them, in one
+   pass.** `grep -rln '"<name>"' tests/` costs one command; discovering them one CI cycle at a time
+   costs one cycle each and tempts you to relax the third one.
+2. **Every scanning guard needs a floor** (§25): assert it found a known-present thing. Without it
+   the guard reports success from an empty result set for the rest of its life.
+3. 🔑 **Re-teaching a scanner is not "make it find something again" — it is "make it find the same
+   thing".** `announce_completion` *injects* `session`, `org_id`, `run_id` and `status`, so a scan
+   reading only call-site kwargs would have found the events and reported a **smaller** set — and a
+   smaller expected set makes the binding assertion *easier* to satisfy. That is a guard quietly
+   asking less, which never goes red. **Verify by diffing the scanner's output against the
+   pre-refactor revision**: here all five `run.*` events came back byte-identical (3/3, 7/7, 7/7,
+   6/6, 9/9), which is the claim worth making rather than "the tests pass".
+4. **Derive a forwarder's injected values from its own source, never from a list in the test.** A
+   hand-maintained list is the thing these scanners exist to replace.
+5. ⚠️ **Do not scope a regression run by the directories the change touched.** I ran
+   `tests/test_tasks/ tests/test_services/` — reasoning about which code I had edited — and the
+   third guard lives at the `tests/` root. **The directories a change touches are not the
+   directories that watch it.** CI's whole-tree run is what caught it.
+
+## 55. A correct gate, handed a falsehood, bills the user
+
+**(2026-09-10, [core#657] AC4.)** I went to build a billing gate for cancelled runs. One already
+existed and was **right the whole time**: `datanika-cloud`'s `_is_billable(status) -> status ==
+"success"`, gating all four metering handlers since cloud#84, with a docstring naming this exact
+case — *"`cancelled` is not billable either."*
+
+Core announced `status="success"` as a **hardcoded literal** from all three task call sites. Because
+nothing worker-side asks about cancellation, a run the user stopped reached the ordinary success
+path and the correct gate was handed a lie. The user was charged.
+
+🔑 **The symmetry is the memorable half, and it is worth stating as a general hazard:** each
+repository carried a stale belief about the other, and they pointed **opposite ways**.
+
+- cloud's docstring: *"the `run.*_completed` events are announced solely from success paths"* —
+  an assumption it explicitly recorded as unenforceable from where it sat, and which had become
+  false.
+- core's comment: cloud's handlers *"call `record_usage` unconditionally — none of them check
+  `status`"* — false since cloud#84, and **false in the direction that flatters us**, describing
+  the other repo as more careless than it is while core was the one lying.
+
+**Rules:**
+
+1. **A gate is only as true as its most upstream input.** Auditing the gate proves nothing about
+   the value reaching it. Trace the argument to where it is *produced*, and check whether anything
+   verified it there.
+2. **A literal passed to another system's decision function is an assertion you are making on its
+   behalf.** `status="success"` is not a default; it is a claim about a run, made by code that did
+   not look at the run. Prefer reading the value even when the call site "obviously" knows it.
+3. **A comment describing another repository is undated evidence and rots silently** — nothing in
+   either CI can fail when it goes stale. When you rely on one, re-read the other repo's source
+   rather than its description here, and correct the description in the same commit.
+4. **Suspect hardest the stale belief that flatters you.** Of the two above, the dangerous one was
+   core's: it justified a structural decision by assuming the other side was careless, which is the
+   version nobody re-checks.
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1626,3 +1701,6 @@ liveness).
 [core#933]: https://github.com/datanika-io/datanika-core/issues/933
 [core#648]: https://github.com/datanika-io/datanika-core/issues/648
 [core#660]: https://github.com/datanika-io/datanika-core/issues/660
+[core#522]: https://github.com/datanika-io/datanika-core/issues/522
+[core#456]: https://github.com/datanika-io/datanika-core/issues/456
+[core#910]: https://github.com/datanika-io/datanika-core/issues/910

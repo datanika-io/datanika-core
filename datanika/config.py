@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     # returns TIMEOUT_MAX (49.7 days) and a job added by another process does not
     # wake it. Bounded by tests/test_services/test_scheduler_main.py.
     scheduler_reconcile_seconds: int = 30
+    # core#1199 — the scheduler process exposes its own /metrics on this port.
+    # It MUST serve them itself: it is a third process with no Starlette app, and a
+    # counter incremented here but served from `app` is core#704 verbatim (collected,
+    # discarded, and green). Also named in docker-compose.yml and
+    # monitoring/prometheus.yml; tests/test_deploy/test_scheduler_metrics_scrape.py
+    # asserts all three agree.
+    scheduler_metrics_port: int = 9810
     maintenance_dlt_max_age_hours: int = 24
     maintenance_dbt_max_age_hours: int = 48
 

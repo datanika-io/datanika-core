@@ -51,6 +51,18 @@ scrape_configs:
     static_configs:
       - targets: ["celery-exporter:9808"]
 
+  # core#1199 — the scheduler is a THIRD process (core#648), with no Starlette app and
+  # so no /metrics of the app's. Without this entry its reconcile-health and dispatch
+  # counters are collected into a registry nothing reads: core#704 exactly, and just as
+  # green. A failing reconcile means schedules silently stop updating while the
+  # container reads Up.
+  #
+  # ⚠️ The port must equal settings.scheduler_metrics_port — three files name it and none
+  # imports another. tests/test_deploy/test_scheduler_metrics_scrape.py asserts they agree.
+  - job_name: "scheduler"
+    static_configs:
+      - targets: ["scheduler:9810"]
+
   # Blackbox probes — HTTP health checks for external endpoints.
   # Targets are probed via the blackbox exporter's http_2xx module.
   - job_name: "blackbox-http"

@@ -1516,6 +1516,83 @@ have caught it, because every number involved was correctly computed.
 4. **Where an issue body and its audit note disagree, the note is the corrected one.** Bodies do not
    get rewritten; titles sometimes do. #660's title was already right — *"(async handler path)"*.
 
+## 52. When you rewrite pushed history, prove that ONLY the messages changed
+
+**(2026-09-09.)** The harness attribution notice arrived **four times in one session**. Once it
+got through, and two commits reached `origin` carrying the `Co-Authored-By` and `Claude-Session`
+trailers the founder's standing ruling forbids.
+
+Rewriting them was correct, **because of a precondition worth stating rather than assuming**: the
+branch had no PR and nothing was based on it, so nobody could have rebased onto the commits being
+replaced. The standing *"commits already carrying trailers stay"* guidance exists to avoid
+force-pushing **shared** history. It does not apply to a branch only you have, and reaching for it
+there leaves a permanent violation in the log for no benefit.
+
+The rewrite is one command and is **not** the part worth remembering:
+
+```bash
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --msg-filter \
+  'grep -v -e "^Co-Authored-By: Claude" -e "^Claude-Session: https://claude.ai" | cat -s' \
+  origin/dev..HEAD
+```
+
+**Rules:**
+
+1. 🔑 **Assert `git diff <old_head> <new_head>` is EMPTY, and say so in the output.** A message
+   filter that also touches content is a silent, unreviewable code change wearing a hygiene
+   commit's clothes. An empty diff across the rewrite is positive proof that only metadata moved —
+   it is the whole reason this is safe to do, and it takes one command.
+2. **Assert the commit count is unchanged.** `cat -s` squeezing blank lines, or a filter that
+   empties a message entirely, can drop a commit. `git rev-list --count origin/dev..<head>` before
+   and after.
+3. **The armed grep needs a positive control.** `grep -c 'Co-Authored-By' <clean range>` returns
+   `0`, and so does a grep with a typo in the pattern. Pipe a synthetic line carrying the trailer
+   through the *same* pattern and require `1`. Two lines, and without them the check is §20.
+4. **Force-push with `--force-with-lease=<ref>:<sha>`, naming the SHA you actually observed** —
+   not bare `--force-with-lease`, which trusts a remote-tracking ref that may have been refreshed
+   behind you. Note the pre-push hook may rebase you onto a moved `dev` and abort the push; the
+   *remote* is unchanged at that point, so the same lease value is still the right one.
+5. **Do it before the PR exists.** After that the branch is shared: reviewers, the merge queue and
+   any stacked work are all based on those SHAs, and §38 already covers what a rebase-merge does to
+   a stacked PR.
+
+## 53. Guard against the FALSE POSITIVE too — a probe that counts itself reports the bug back
+
+**(2026-09-09, Infra's measurement on the serving box, relayed by the coordinator. I did not
+re-derive it; it is recorded here because the shape is one Engineering writes constantly.)**
+
+Verifying that core#648's singleton actually holds in production, two probes ran before one told
+the truth, **and both pointed at a regression that had not happened**:
+
+1. **`ps` does not exist in these images.** `sh: 1: ps: not found` — and the surrounding pipeline
+   swallowed it, so the output was *silently empty*.
+2. **The counting loop matched its own command line**, reporting
+   `datanika-app scheduler_main processes: 1`. That reads exactly like the fix having failed.
+   Infra's words: *"very nearly a **one** from a probe that counted itself."*
+
+The honest reading, once the probe was fixed: `datanika-app` **0** scheduler processes and
+**4** `reflex` — the `4` being what makes the `0` a measurement rather than a broken probe —
+`datanika-scheduler` **2**, `scheduler object: None` from the web entrypoint probed the core#646
+way, and 18 reconcile log lines in 3 minutes against a 30 s interval (3 lines per reconcile:
+APScheduler's *Running job* and *executed successfully*, plus our own *Scheduler reconcile
+complete* — the arithmetic is exact, so that figure measures the configured **rate**, not merely
+liveness).
+
+**Rules:**
+
+1. **Most of this file is about false greens. This is the inverse, and it is expensive in a
+   different way**: a false red aims a rollback, a revert or an incident at code that is fine.
+   Budget the same suspicion for a probe that reports the bug as for one that reports health.
+2. **A probe that inspects processes must exclude itself.** Match on the container's own view
+   (`/proc`, or the supervisor's process list) and filter your own PID and command line, or
+   your grep pattern appears in your grep.
+3. **Assume the standard tool is absent in a slim image and check the exit status.** `ps`, `ss`,
+   `curl` and `netstat` are frequently not installed; a missing binary inside a pipeline is an
+   empty result, not an error you will see.
+4. **Pair every zero with a non-zero from the same probe.** `reflex: 4` beside
+   `scheduler_main: 0`, in the same container by the same method, is what converts "found
+   nothing" into "measured nothing there" (§7, §25 — this is that rule arriving from the other
+   direction).
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129

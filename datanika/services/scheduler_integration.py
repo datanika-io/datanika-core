@@ -11,6 +11,7 @@ from datanika.errors import UserFacingError
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
 from datanika.services.execution_service import ExecutionService
+from datanika.services.scheduler_metrics import record_dispatch
 from datanika.tasks.pipeline_tasks import run_pipeline_task
 from datanika.tasks.transformation_tasks import run_transformation_task
 from datanika.tasks.upload_tasks import run_upload_task
@@ -219,11 +220,19 @@ class SchedulerIntegrationService:
             run = exec_svc.create_run(session, org_id, node_type, target_id)
             session.commit()
 
+            # core#1199 — counted per branch, not after the chain, so an unhandled
+            # target_type records nothing rather than recording a dispatch that did
+            # not happen. This is the series that would have made core#648 visible
+            # from outside: 5 dispatches per firing is obvious in a counter and was
+            # obvious in nothing else.
             if target_type == "upload":
                 run_upload_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
+                record_dispatch(target_type)
             elif target_type == "transformation":
                 run_transformation_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
+                record_dispatch(target_type)
             elif target_type == "pipeline":
                 run_pipeline_task.delay(run_id=run.id, org_id=org_id, scheduled=True)
+                record_dispatch(target_type)
         finally:
             session.close()

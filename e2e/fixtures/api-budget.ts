@@ -122,6 +122,28 @@ function currentWindow(): number {
   return Math.floor(Date.now() / 1000 / 60);
 }
 
+/**
+ * The window we may safely *act* in — our clock, less the skew allowance (core#1209).
+ *
+ * 🚨 `BOUNDARY_SKEW_MS`'s own docstring above states this hazard exactly: *"Resuming a moment
+ * early would put the first request of the new window back into the exhausted one."* That
+ * guard was applied in `waitForWindow()` and **not** in `reserve()`'s passive rollover, which
+ * reset `spent` to 0 the instant our clock crossed a minute. So the comment described the bug
+ * and the code prevented it on one of the two paths that face it.
+ *
+ * What that cost: six `tenant-jwt-boundary` specs failed together on `9d77d48`, reporting one
+ * `30/30` followed by five **`1/30`** — the server 429ing requests the harness had barely
+ * spent, because our window had rolled and theirs had not. None of the six reached the
+ * authorization check they exist to test, so the tenant boundary was left **unverified** while
+ * the run read as a boundary failure.
+ *
+ * For the first `BOUNDARY_SKEW_MS` of a new minute this still returns the previous window, so
+ * `reserve()` keeps counting against the allowance the server is still enforcing.
+ */
+function safeWindow(): number {
+  return Math.floor((Date.now() - BOUNDARY_SKEW_MS) / 1000 / 60);
+}
+
 export class ApiRateLimitExceeded extends Error {
   constructor(subject: string, detail: string, serverSaid: string) {
     super(
@@ -169,7 +191,9 @@ export class ApiBudget {
   /** Reserve one request against `subject`, waiting for the window if needed. */
   private async reserve(subject: string): Promise<void> {
     const s = this.state(subject);
-    const now = currentWindow();
+    // `safeWindow()`, not `currentWindow()` — core#1209. Rolling on our own clock resets the
+    // counter while the server is still enforcing the previous window.
+    const now = safeWindow();
     if (now !== s.window) {
       s.window = now;
       s.spent = 0;
@@ -215,10 +239,34 @@ export class ApiBudget {
     this.calibrate(subject, response);
     if (response.status() === 429) {
       const s = this.state(subject);
+      const what = label ?? `${fetchOptions.method ?? "GET"} ${url}`;
+
+      // A 429 while our own count is well under the allowance is not an overspend — it is our
+      // window model disagreeing with the server's, and the SERVER is authoritative (core#1209).
+      // Wait for its window and try once more.
+      //
+      // 🔑 Exactly once, and only from a low count. A blanket retry would hide a real allowance
+      // regression, which is the thing core#699's explicit budget exists to surface; a retry
+      // that never fires leaves the false red in place. Persisting at low spend is a genuine
+      // finding and still throws, with the message saying which of the two it was.
+      if (s.spent < s.limit) {
+        await this.waitForWindow(subject, s);
+        await this.reserve(subject);
+        const retry = await request.fetch(url, fetchOptions);
+        this.calibrate(subject, retry);
+        if (retry.status() !== 429) return retry;
+        throw new ApiRateLimitExceeded(
+          subject,
+          `${what} — 429 AFTER waiting for the server's window, with the harness at ` +
+            `${s.spent}/${s.limit}. This is not clock skew: the server is refusing a budget ` +
+            `it should be granting. Do not raise the constant — find out why.`,
+          (await retry.text()).slice(0, 300),
+        );
+      }
+
       throw new ApiRateLimitExceeded(
         subject,
-        `${label ?? `${fetchOptions.method ?? "GET"} ${url}`} — the harness ` +
-          `believed it had spent ${s.spent}/${s.limit} requests this minute.`,
+        `${what} — the harness believed it had spent ${s.spent}/${s.limit} requests this minute.`,
         (await response.text()).slice(0, 300),
       );
     }

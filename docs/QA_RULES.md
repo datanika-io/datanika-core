@@ -879,3 +879,73 @@ it.
 
 Related: §15 (diff the spec against the tests) · §20 (check the artifact against what it represents,
 not against its own plausibility) · [core#864] (`shipped-to-prod` on undone work).
+
+
+## 30. Test the object the process SERVES, not the object your module defines
+
+A test builds the app by importing the module that constructs it. A server builds the app by
+running its entrypoint. When those two differ, every test in the file can be right about a
+thing that is not what ships — and nothing anywhere is red.
+
+**Measured, core#896, 2026-09-09.** The path-cardinality fix shipped on 2026-09-03. Six days
+later production was still minting one Prometheus series per scanner path: `/api/.env`,
+`/api/test`, `/api/v1/openapi.js`, all raw, all `404`, all created by a container that had
+started with an empty registry that morning. The bucket the fix exists to create, `<other>`,
+had **never appeared** — not in any scrape, not in 10 h of `query_range`.
+
+The same image, driven in a throwaway process in the same container, was correct: five
+requests, two series, `<other>` and `/api/v1/pipelines/:id`. The code was right. The tests were
+right. The thing that runs was neither.
+
+```
+granian --interface asgi --factory /app/datanika/datanika.py:app
+```
+
+`--factory` means the server **calls** `app`. Reflex's `App.__call__` returns a *new* Starlette
+that mounts `app._api` at `""`, and a `Mount`'s child scope carries `endpoint` — the mounted
+application — updated into the scope in place. So the normaliser's first line,
+`if "endpoint" not in scope: return UNMATCHED_PATH_LABEL`, cannot fire in production. A matched
+request overwrites `endpoint` with its own handler and is labelled correctly; an unmatched one
+keeps the outer app's endpoint and falls through to a branch that echoes the raw request path.
+
+### The two gaps, and why closing one is not closing the other
+
+This file already had a helper written against exactly this hazard — and it stopped one layer
+short, which is the part worth carrying:
+
+| gap | question | what closes it |
+|---|---|---|
+| **install** | is the middleware wired the way production wires it? | build the app, then `add_middleware`, as `datanika.py` does — not `Middleware(Starlette(...))` |
+| **serve** | is that app the one the process runs? | build what the **entrypoint's factory returns**, not what the module defines |
+
+`_production_shaped_app()` closed the install gap and its docstring says why: *"A fix that
+passes its whole suite and does nothing where it ships is this project's signature defect; this
+helper is what makes it impossible here."* It was still one `Mount` away from the served object,
+and the defect lived in that gap. **A helper named for production is a claim, not a measurement.**
+
+### Why every other signal agreed
+
+- Staging's live label set was `/api/v1/pipelines/:id`, `/api/v1/connections/:id`,
+  `/api/v1/uploads/:id` — **templated throughout, exactly what a working fix produces.** It
+  looked that way because the E2E suite only ever requests routes that exist. The one thing the
+  fix exists to do was the one thing nothing exercised against a real server.
+- `<other>` being absent from production reads as *"no unmatched traffic"*, which is also what
+  a working fix looks like on a quiet box. Only pairing it with *"and here are three raw 404
+  labels from the same registry"* tells the two apart. Cf. §1.
+
+### The check
+
+Before believing a test about request handling, answer in one lookup: **what does the container
+actually run?** `docker inspect -f '{{.Config.Cmd}}'`, then the real argv from `/proc` — the
+compose command can be a wrapper that execs something else, and here it was
+(`reflex run` → `granian --factory`). If the argv names a factory, an entrypoint attribute, or a
+module path you do not construct in your tests, that difference is untested surface.
+
+⚠️ Do not settle this by reading the framework. I built the scope by hand and asserted
+`_normalize_path` returned `<other>` — with a scope I had constructed without `endpoint`. That
+is the gate asserting itself. The measurement that settled it was 16 real requests through the
+real server, at a path that was **already** a label value so the experiment could not make the
+cardinality worse.
+
+Related: §1 (what a signal records) · §2 (any green you have not forced red) · §6 (validate
+against the real consumer) · §21 (ask what changed about the instrument).

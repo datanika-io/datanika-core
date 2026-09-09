@@ -269,21 +269,54 @@ class TestApiEndpointSyncHandler:
         """Core E12 guarantee: sync handlers run in a thread pool, so a slow
         handler does NOT block a concurrent request on the same worker.
 
-        Simulation: 2 requests where each handler sleeps 0.2s. If they were
-        serialized (pre-E12 path), total time >= 0.4s. In the threadpool,
-        they overlap and total time stays close to 0.2s.
+        🔑 **Overlap is asserted with a barrier, not a wall clock (core#1210).**
+        Both handlers must be *inside* the handler at the same moment for the
+        barrier to trip. That is the property; a duration is only a proxy for it.
+
+        The two instruments fail in opposite ways, and the asymmetry is the whole
+        point:
+
+        * A wall-clock bound gets *less* reliable as you give it room. The previous
+          assertion was ``elapsed < 0.35`` against a serialized reference the test's
+          own comment put at ``~0.4s`` — 0.05s of headroom against thread-scheduling
+          jitter on a shared runner. Raising the bound to survive load walks it past
+          0.4s, at which point it no longer detects serialization at all.
+        * A barrier gets *more* reliable as you give it room. Under real concurrency
+          it trips as soon as the second request arrives, however slow the machine;
+          under serialization the second request cannot even start until the first
+          returns, so **no timeout is generous enough to make it pass.** The timeout
+          below is therefore deliberately 25x the work it waits on.
+
+        Both observed failures measured **slower than serialization itself would
+        predict** — 0.54s on core#1210's report and 0.70s here — which is the one
+        thing that rules out the cause the old message named.
+
+        ``elapsed`` is still measured, and still reported when this fails. It is a
+        diagnostic and never an assertion: it is what tells a reader whether the
+        machine was slow, and that is exactly the question a bound on it cannot
+        answer.
         """
         import threading
         import time
 
-        call_enter = threading.Event()
+        # 25x the ~0.2s of work the old test slept for. Safe in both directions:
+        # generous under load, and irrelevant under serialization.
+        barrier_timeout_s = 5.0
+
+        overlapped = threading.Barrier(2)
         handler_calls = []
+        outcomes = []
 
         @api_endpoint()
         def slow_handler(request, api_key, session):
             handler_calls.append(threading.get_ident())
-            call_enter.set()
-            time.sleep(0.2)
+            try:
+                overlapped.wait(timeout=barrier_timeout_s)
+                outcomes.append("overlapped")
+            except threading.BrokenBarrierError:
+                # Either this handler waited the full timeout alone, or it arrived
+                # after another one already gave up. Both mean: not concurrent.
+                outcomes.append("alone")
             return JSONResponse({"thread": threading.get_ident()})
 
         with (
@@ -313,16 +346,21 @@ class TestApiEndpointSyncHandler:
             start = time.monotonic()
             t1.start()
             t2.start()
-            t1.join(timeout=2.0)
-            t2.join(timeout=2.0)
+            t1.join(timeout=barrier_timeout_s + 5.0)
+            t2.join(timeout=barrier_timeout_s + 5.0)
             elapsed = time.monotonic() - start
 
             assert len(results) == 2
             assert all(r.status_code == 200 for r in results)
             # Two distinct threads executed the handlers.
             assert len(set(handler_calls)) == 2
-            # Overlap: total < 2 × 0.2 + margin. Serialized would be ~0.4s.
-            assert elapsed < 0.35, f"handlers serialized (elapsed={elapsed:.2f}s)"
+            # And they were inside the handler at the same time.
+            assert outcomes == ["overlapped", "overlapped"], (
+                f"handlers did not overlap: {outcomes} (elapsed={elapsed:.2f}s). "
+                "`alone` means a handler sat on the barrier while no second handler "
+                "arrived, which only happens if the pool serialized them. Unlike the "
+                "duration, this verdict does not change with how loaded the runner is."
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -364,15 +364,13 @@ def run_pipeline(
         # `models_completed` stays None when dbt failed or nothing billable
         # ran, so neither case announces.
         if models_completed is not None:
-            from datanika.hooks import announce
-
-            # See upload_tasks: announced, not emitted (core#456).
-            announce(
+            # See upload_tasks: announced, not emitted (core#456), and `status` read
+            # from the run rather than hardcoded (core#657 AC4).
+            execution_service.announce_completion(
+                session,
+                org_id,
+                run_id,
                 "run.models_completed",
-                session=session,
-                org_id=org_id,
-                run_id=run_id,
-                status="success",
                 target_type="pipeline",
                 target_id=pipeline.id,
                 count=models_completed,

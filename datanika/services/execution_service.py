@@ -175,6 +175,48 @@ class ExecutionService:
         )
         return run
 
+    def announce_completion(
+        self, session: Session, org_id: int, run_id: int, event: str, **payload
+    ) -> bool:
+        """Announce a ``run.*_completed`` event carrying the run's REAL status.
+
+        core#657 AC4. All three task call sites passed ``status="success"`` as a **hardcoded
+        literal**, and a run the user CANCELLED still reaches them — nothing worker-side asks
+        whether it was cancelled, so the work continues to its ordinary success path.
+
+        The billing gate was never missing. ``datanika-cloud``'s ``billing/meter.py`` has gated
+        on this field since cloud#84 (``_is_billable`` → ``status == "success"``) and its
+        docstring anticipated this case exactly: *"`cancelled` is not billable either."* What it
+        also recorded is the assumption it could not enforce from another repository — *"the
+        `run.*_completed` events are announced solely from success paths"*. Cancellation made
+        that false, so a correct gate was handed a falsehood and the user was charged for a run
+        they stopped.
+
+        Reading the status here rather than at each call site is the point: three literals is
+        how a fourth arrives. Same reasoning as ``fail_run``'s announce, which lives in this
+        service so a sixth caller cannot forget it.
+        ``tests/test_services/test_cancelled_run_is_not_billed.py`` fails on a hardcoded status
+        anywhere under ``datanika/tasks/``.
+
+        Returns ``False`` without announcing when the run does not resolve within ``org_id`` —
+        the tenancy predicate applies here as everywhere else.
+        """
+        run = get_org_run(session, org_id, run_id)
+        if run is None:
+            return False
+
+        from datanika.hooks import announce
+
+        announce(
+            event,
+            session=session,
+            org_id=org_id,
+            run_id=run_id,
+            status=getattr(run.status, "value", run.status),
+            **payload,
+        )
+        return True
+
     def append_logs(self, session: Session, org_id: int, run_id: int, text: str) -> Run | None:
         """Add a line to a finished run's logs.
 

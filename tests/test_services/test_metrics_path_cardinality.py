@@ -126,6 +126,7 @@ import inspect
 import re
 from collections.abc import Iterable
 
+import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Mount, Route
@@ -1128,4 +1129,142 @@ async def test_module_prose_about_identifiers_is_true() -> None:
         "the module's prose says these identifier kinds are replaced with "
         f"placeholders, and they are not: {broken}. Prose a reader will act on is "
         "a specification; this one points a reader at closing core#896 as stale."
+    )
+
+
+# ---------------------------------------------------------------------------
+# core#896, second pass: the shape granian actually SERVES.
+#
+# Everything above this line — and every probe I wrote before reading `/proc` —
+# exercises `app._api`. That is the object `datanika.py` installs the middleware
+# on, and it is NOT the object the container serves.
+#
+#     granian --interface asgi --factory /app/datanika/datanika.py:app
+#
+# `--factory` means granian CALLS `app`. Reflex 0.8.26's `App.__call__` ends:
+#
+#     top_asgi_app = Starlette(lifespan=self._run_lifespan_tasks)
+#     top_asgi_app.mount("", asgi_app)          # asgi_app is app._api
+#     return top_asgi_app
+#
+# So a request meets an outer `Mount("")` before it reaches our middleware, and a
+# Mount's child scope carries `endpoint` — the mounted *application*. The scope is
+# updated in place, so by the time `_normalize_path` runs, `endpoint` is present for
+# MATCHED AND UNMATCHED REQUESTS ALIKE. Its first line —
+#
+#     if "endpoint" not in scope: return UNMATCHED_PATH_LABEL
+#
+# — can therefore never fire in production. A matched request overwrites `endpoint`
+# with its own handler and is labelled correctly, which is why staging looks perfect;
+# an unmatched one keeps the outer app's endpoint, misses the template index, and
+# falls through to `_redact_path_params(path, {})`, which returns the RAW PATH.
+#
+# Measured on prod 2026-09-09, container started 14:24:04Z with an empty registry:
+# `/api/.env`, `/api/test` and `/api/v1/openapi.js` all present as raw 404 labels,
+# `<other>` absent from every scrape and from 10h of query_range. 16 driven requests
+# moved the raw counter and created no bucket.
+# ---------------------------------------------------------------------------
+
+
+def _served_shaped_app(routes=None):  # noqa: ANN001, ANN202
+    """One layer further out than :func:`_production_shaped_app`.
+
+    That helper closed the **install** gap — the middleware is added the way
+    `datanika.py` adds it, so the endpoint index is populated the way production
+    populates it. This one closes the **serve** gap, which is the layer production
+    actually runs and which the install-shape helper cannot see.
+
+    The two are not interchangeable and the difference is not cosmetic: driven
+    through :func:`_production_shaped_app` a scanner path lands on ``<other>``, and
+    driven through this one it lands on itself.
+    """
+    top = Starlette()
+    top.mount("", _production_shaped_app(routes))
+    return top
+
+
+def test_a_mount_puts_an_endpoint_in_scope_for_a_path_it_does_not_route() -> None:
+    """The premise of the xfail below, characterised instead of assumed.
+
+    If a future Starlette stops putting ``endpoint`` in a Mount's child scope, the
+    xfail becomes an XPASS and reads as *"someone fixed core#896"* — when in fact the
+    library moved underneath it. This test is what distinguishes those two, so read
+    it before believing either.
+    """
+    inner = _served_shaped_app()
+    mounted = Mount("", app=inner)
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/.env",
+        "root_path": "",
+        "headers": [],
+        "query_string": b"",
+    }
+    match, child_scope = mounted.matches(scope)
+
+    assert getattr(match, "name", str(match)) == "FULL", (
+        f"Mount('') did not fully match {scope['path']!r} (got {match!r}); the served "
+        "shape below is then not the shape production runs and the xfail's reason is stale"
+    )
+    assert "endpoint" in child_scope, (
+        "Mount no longer supplies `endpoint`, so `_normalize_path`'s first line CAN "
+        "fire in production. core#896's mechanism has changed — re-measure before "
+        "trusting the marker below."
+    )
+    assert child_scope.get("root_path") == "", (
+        f"Mount('') moved root_path to {child_scope.get('root_path')!r}; a non-empty "
+        "move would route through the `<mounted>` branch instead, which is bounded — "
+        "a different bug from the one recorded here"
+    )
+
+
+async def test_control_the_install_shape_still_buckets_an_unmatched_path() -> None:
+    """The control. Without it, the xfail below could be a broken harness.
+
+    Same corpus, same driver, same assertion — one layer in. This must stay green:
+    it is what says the difference is the **shape**, not the test.
+    """
+    label = await _label_via(_production_shaped_app(), REAL_SCANNER_PATHS[0])
+    assert label == UNMATCHED_PATH_LABEL, (
+        f"{REAL_SCANNER_PATHS[0]!r} metered as {label!r} under the install shape. The "
+        "install-shape path is supposed to be the working one; if this fails, the "
+        "xfail below is measuring a broken harness rather than core#896."
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "core#896: `_normalize_path`'s unmatched gate cannot fire under the object "
+        "granian serves, because Reflex's outer `Mount('')` has already put `endpoint` "
+        "in the scope. Live in production; remove this marker with the fix."
+    ),
+)
+async def test_unmatched_paths_collapse_to_one_bucket_when_served_the_way_granian_serves_it() -> (
+    None
+):
+    """core#896 AC1, restated against the object the container actually serves.
+
+    ``test_unmatched_paths_collapse_to_one_bucket`` above asserts the same criterion
+    one layer in, and passes. **Both are true.** That is the finding: the fix works on
+    `app._api` and does nothing where it ships, and no green anywhere said so —
+    staging's live label set is templated throughout (`/api/v1/pipelines/:id`, …)
+    because the E2E suite only ever requests routes that exist.
+    """
+    distinct = set(SCANNER_PATHS)
+    if len(distinct) != 50:
+        raise HarnessError(
+            f"the corpus holds {len(distinct)} distinct paths, not 50; core#896's "
+            "AC1 is stated over 50 and the number is part of the criterion"
+        )
+
+    app = _served_shaped_app()
+    landed = {await _label_via(app, path) for path in sorted(distinct)}
+
+    assert len(landed) <= 1, (
+        f"50 distinct unmatched paths landed on {len(landed)} label values when the app "
+        "is served the way granian serves it. Each is ~14 Prometheus series once the "
+        f"histogram is counted. Sample: {sorted(v for v in landed if v)[:3]}"
     )

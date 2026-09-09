@@ -467,6 +467,15 @@ services:
       redis:
         condition: service_healthy
     command: uv run python -m datanika.scheduler_main
+    ports:
+      # core#1199 — this process serves its OWN /metrics; it has no Starlette app, and a
+      # counter incremented here but served from `app` is core#704 verbatim (collected,
+      # discarded, permanently green).
+      #
+      # ⚠️ This publish is for debugging from the box only and is NOT in the scrape path:
+      # Prometheus reaches it as `scheduler:9810` over the compose network, which needs no
+      # published port. 127.0.0.1 because pointer.gr is shared with co-tenants.
+      - "127.0.0.1:9810:9810"
     restart: unless-stopped
 
   # --- Monitoring ---

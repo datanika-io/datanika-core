@@ -42,6 +42,11 @@ from types import FrameType
 from datanika.config import settings
 from datanika.db import get_sync_session
 from datanika.scheduler import scheduler_integration
+from datanika.services.scheduler_metrics import (
+    record_reconcile_failure,
+    record_reconcile_success,
+    start_metrics_server,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +58,27 @@ _stop = threading.Event()
 
 
 def reconcile_once() -> dict[str, int]:
-    """Re-read `schedules` and make the jobstore match it."""
+    """Re-read `schedules` and make the jobstore match it.
+
+    Both outcomes are recorded (core#1199). APScheduler catches whatever this raises,
+    logs it, and KEEPS THE JOB SCHEDULED -- correct, since one bad row must not kill
+    the dispatcher, but it means a permanently failing reconcile looks exactly like a
+    healthy one: container Up, known schedules still firing, nothing new ever learned.
+    Observed raising every 5s for the life of a process while every signal read green.
+
+    The exception is re-raised rather than swallowed: APScheduler's log line is the
+    only place the *reason* appears, and the metric is deliberately not a substitute
+    for it.
+    """
     session = get_sync_session()
     try:
         result = scheduler_integration.reconcile(session)
+    except Exception:
+        record_reconcile_failure()
+        raise
     finally:
         session.close()
+    record_reconcile_success()
     logger.info(
         "Scheduler reconcile complete",
         extra={"synced": result["synced"], "removed": result["removed"]},
@@ -94,6 +114,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _handle_signal)
+    # Before bootstrap(), which runs a reconcile immediately: the boot reconcile is an
+    # ordinary one to fail, and exposing afterwards would guarantee that the single
+    # most interesting failure is the one with nothing listening (core#1199).
+    start_metrics_server(settings.scheduler_metrics_port)
     bootstrap()
     _stop.wait()
     scheduler_integration.shutdown()

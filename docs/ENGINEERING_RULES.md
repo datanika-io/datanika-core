@@ -1130,6 +1130,19 @@ a wrong answer sourced from a real instrument looks exactly like a right one.
    the file is on disk, and `stat` costs one call.
 4. **Behaviour claims carry their configuration.** "The merge-base moves" is true under a merge
    commit and false under rebase — name the setting the claim depends on, or do not make it.
+5. **The field recording a merge METHOD is on the RULESET, not on the PR** — a fifth row for the
+   table above, measured 2026-09-08. `gh pr merge <n> --auto` with no method flag recorded
+   `autoMergeRequest.mergeMethod: "MERGE"` on #1203, while the `merge-queue-dev` ruleset carries
+   `merge_method: "REBASE"` — and #1200, enqueued identically, landed with `parents: 1`, i.e. a
+   rebase with no merge commit on `dev`. Both fields are real and they disagree; only the
+   ruleset's governs. The trap is that the PR field is the one the obvious query returns, so
+   "did I enqueue this correctly?" is answered wrongly by the instrument nearest to hand:
+   ```bash
+   gh api repos/datanika-io/datanika-core/rulesets/22228000 \
+     --jq '.rules[] | select(.type=="merge_queue") | .parameters.merge_method'
+   ```
+   Corollary: do **not** "correct" it by passing `--rebase`. Under a queue that only earns a
+   warning, and the CLAUDE.md instruction to pass no method flag is right as written.
 
 ---
 
@@ -1417,6 +1430,92 @@ genuine two-edit move, it went red against precisely one test.
    matches — one file had eight `_audit` calls sharing a prefix). The repair is to narrow the
    *scope* to the function's byte span, never to widen the anchor.
 
+## 49. A green in-process control is not evidence against a cross-process race — and cannot be its regression test
+
+**(2026-09-08, [core#648].)** `datanika/datanika.py` armed a `BackgroundScheduler` at module level,
+so every Granian process ran one against a shared Postgres jobstore — **1 arbiter + 4 workers = 5**.
+APScheduler 3.x claims a due job with a plain `SELECT`: no `FOR UPDATE`, no lease, no owner column.
+QA measured it cross-process at **5 of 5 instances dispatching on 29 of 29 firings**, with the
+dispatch count scaling exactly with the instance count (1, 2, 5).
+
+**Five schedulers started inside ONE process produced ONE dispatcher.** That green is not weak
+evidence, it is *anti*-evidence, and the reason is worth stating exactly: `max_instances` and
+`coalesce` are **per-process**. An in-process harness therefore runs the defect through the very
+suppressor whose per-process scope *is* the defect — it cannot reach the boundary it is meant to be
+testing, and it fails in the reassuring direction.
+
+**Rules:**
+
+1. **A concurrency claim inherits the process topology of the harness that produced it.** State the
+   topology beside the number, every time. "5 instances, 5 processes" and "5 instances, 1 process"
+   are different measurements with the same words available to describe them.
+2. **A cross-process defect cannot have an in-process regression test.** Do not accept one as the
+   guard. Guard the *topology* instead — assert that exactly one process is configured to own the
+   scheduler — which is what the `tests/test_deploy/` guards do here, and what
+   `test_beat_singleton.py` already did for `beat`.
+3. **Record corroboration when it is genuinely independent.** QA declined to write this probe as a
+   pytest for the same reason, reached from the opposite direction: two departments, no shared draft,
+   same conclusion. Write that down, or the next reader re-derives it.
+
+## 50. The obvious fix for "runs 5×" is "never runs" — and no guard in the suite was watching for it
+
+**(2026-09-08, [core#648].)** Moving the scheduler into its own container severs the call that kept
+it current. `ScheduleService` called `sync_schedule()` on a scheduler **in its own process**; across
+a process boundary that has nowhere to land, and APScheduler offers no cross-process notification.
+Measured on 3.11.2 against real Postgres: a job written by *another* instance, due in 2 s, produced
+**0 dispatches at t+3, t+6 and t+10 s** — and one explicit `wakeup()` then ran it immediately, which
+is the control proving it was only asleep. `_main_loop` waits on `_process_jobs()`, which with
+nothing due returns `TIMEOUT_MAX` — **49.7 days**.
+
+**5× is loud. 0× is found by the customer**, weeks later, and arrives as "my schedule never ran"
+rather than as anything resembling a deploy.
+
+🔑 **Every guard in the suite asserted where the scheduler STARTS. None asserted that it still
+LEARNS anything.** Cardinality-over-services counted 1 correctly throughout the defect — and would
+have counted 1 just as correctly for a scheduler that dispatched nothing at all.
+
+**Rules:**
+
+1. When a fix **relocates** a component, enumerate what the old location was silently providing. An
+   in-process call is a dependency no import graph shows and no type checker reports.
+2. Anything with a run loop needs a **liveness** assertion distinct from its **placement**
+   assertion: *does it pick up a change written by someone else?* Placement is the cheap one to
+   write and it answers a different question.
+3. **A method that does most of the job is a trap, not a partial solution.** `sync_all()` only ever
+   ADDS, so a schedule the user deactivates keeps its job and keeps firing — the UI showing it off
+   while it runs. That was masked while the web tier removed the job in-process at edit time.
+   `reconcile()` re-reads the table and, by existing in the job set, bounds the main loop's sleep.
+   Put the warning at the definition, where someone about to call it will read it.
+
+## 51. A mutation score is a property of (module, *test selection*) — never of the module
+
+**(2026-09-08, [core#660].)** The issue body quotes **6 of 23 applicable mutants killed — a 26%
+mutation score** for `api_middleware.py`. That is real arithmetic over the wrong set: the selection
+omitted `tests/test_services/test_tier4_agent.py::TestIdempotencyKey`, which covers the sync path
+properly, through the real `api_endpoint` decorator via a Starlette `TestClient`. Adding that one
+file moved the module to **11 of 23 (48%)** and killed exactly the sync-path mutants. As the audit
+note's own headline puts it: *the omission, not the score, is the finding.*
+
+**I then reproduced the error by building my own probe selection from the issue body.** My first
+"after" number was measured against the wrong baseline and would have read as a substantially bigger
+win than it was. Caught before it reached the PR, but only just — and nothing in the harness would
+have caught it, because every number involved was correctly computed.
+
+**Rules:**
+
+1. **Quote the selection with every score.** A bare percentage is not a measurement, it is a
+   measurement with its second argument dropped.
+2. **Before treating a low score as a finding, ask which covering tests are missing from the run.**
+   A surviving mutant means *"no test in this selection killed it"* — which is not the claim
+   *"no test kills it"*, and only the second one is a defect.
+3. **Scores over a changed file are not comparable.** The whole-module re-run scored **24 of 34
+   (70.6%)** against the audit's 11/23, but `api_middleware.py` grew from 23 to 34 applicable
+   mutants in between: those are denominators over different files. The comparable measurement is
+   the targeted one — **one tree, one selection, before and after** (here 0 of 3 → 3 of 3 on the
+   async idempotency block).
+4. **Where an issue body and its audit note disagree, the note is the corrected one.** Bodies do not
+   get rewritten; titles sometimes do. #660's title was already right — *"(async handler path)"*.
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1448,3 +1547,5 @@ genuine two-edit move, it went red against precisely one test.
 [core#1127]: https://github.com/datanika-io/datanika-core/issues/1127
 [core#934]: https://github.com/datanika-io/datanika-core/issues/934
 [core#933]: https://github.com/datanika-io/datanika-core/issues/933
+[core#648]: https://github.com/datanika-io/datanika-core/issues/648
+[core#660]: https://github.com/datanika-io/datanika-core/issues/660

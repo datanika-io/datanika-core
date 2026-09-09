@@ -200,6 +200,24 @@ services:
       --schedule /app/beat_state/celerybeat-schedule
     restart: unless-stopped
 
+  # core#648 — SINGLETON, see the long note in the prod docker-compose.yml.
+  # Staging runs GRANIAN_WORKERS: "2", so it had the same defect at 3x rather than 5x.
+  scheduler:
+    image: ghcr.io/datanika-io/datanika-core:staging
+    container_name: datanika-staging-scheduler
+    env_file:
+      - .env.docker
+    environment:
+      # core#785 — see the prod docker-compose.yml.
+      UV_NO_SYNC: "1"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: uv run python -m datanika.scheduler_main
+    restart: unless-stopped
+
 volumes:
   staging_pgdata:
   staging_redisdata:

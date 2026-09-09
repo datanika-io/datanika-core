@@ -1,7 +1,16 @@
 """core#648 — the scheduler must not be started by importing the app.
 
-`datanika/datanika.py` calls ``scheduler_integration.start()`` and ``sync_all()``
-as **module-level statements**, so every process that imports the app gets its own
+🟢 **FIXED.** ``datanika/datanika.py`` no longer arms anything; the scheduler runs
+in its own container (``datanika/scheduler_main.py``, compose service ``scheduler``).
+Both strict xfails below were removed along with the defect, and
+``TestExactlyOneProcessOwnsTheScheduler`` — the process-count half this file
+deliberately deferred until a shape was chosen — is now written against the shape that
+was chosen.
+
+What it was
+-----------
+``datanika/datanika.py`` called ``scheduler_integration.start()`` and ``sync_all()``
+as **module-level statements**, so every process that imported the app got its own
 APScheduler against one lock-free jobstore. Measured, twice, at two different
 worker counts:
 
@@ -11,8 +20,10 @@ staging, ``GRANIAN_WORKERS: "2"``    **3** ``Scheduler started``
 ===================================  ==========================
 
 so the count is ``GRANIAN_WORKERS + 1`` (the granian parent imports too), and a
-scheduled run can fire up to that many times. Latent only because prod currently
-has zero active schedules.
+scheduled run could fire that many times. QA then demonstrated it behaviourally:
+**5 of 5 instances dispatched on 29 of 29 firings**, and the dispatch count scaled
+exactly with the instance count (1, 2, 5) — the signature of the lock-free read and of
+nothing else. Latent in prod only because it had zero active schedules.
 
 Why this test is shaped the way it is
 -------------------------------------
@@ -100,9 +111,9 @@ xfail flips, same counts elsewhere. Claim C is the whole difference.
 
 import ast
 import inspect
+import re
 from pathlib import Path
 
-import pytest
 import yaml
 
 APP_MODULE = Path(__file__).resolve().parents[2] / "datanika" / "datanika.py"
@@ -271,14 +282,9 @@ class TestTheGuardCanActuallyFail:
 
 
 class TestTheSchedulerIsNotArmedByImport:
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "core#648: datanika.py starts APScheduler at import, so every granian "
-            "worker gets one against a lock-free shared jobstore "
-            "(GRANIAN_WORKERS + 1 instances). Remove this marker with the fix."
-        ),
-    )
+    # The strict xfail that lived here was removed with the fix, which is the property
+    # it was shaped for: it flipped to XPASS the moment `datanika.py` stopped arming, so
+    # the coverage could not ship switched off.
     def test_datanika_py_does_not_arm_the_scheduler_at_import(self):
         offenders = _module_level_scheduler_calls(APP_MODULE.read_text(encoding="utf-8"))
         assert not offenders, (
@@ -289,10 +295,6 @@ class TestTheSchedulerIsNotArmedByImport:
             "that owns it — see core#648."
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="core#648: the web tier still mutates the in-process scheduler it owns",
-    )
     def test_the_web_tier_does_not_mutate_a_scheduler_it_owns(self):
         """The other half of the same coupling, and the half that makes this
         Engineering work rather than a compose change.
@@ -474,15 +476,228 @@ class TestTheMoveNotVanishGuardCanActuallyFail:
         appearing in a *second* module, which is this bug all over again one
         level up. Do not delete the assertion to make it pass.
         """
-        assert [_dotted(p) for p in _modules_that_arm_the_scheduler()] == ["datanika.datanika"], (
+        assert [_dotted(p) for p in _modules_that_arm_the_scheduler()] == [
+            "datanika.scheduler_main"
+        ], (
             "the set of modules that arm the scheduler changed. If a fix moved "
             "it, update the expected list. If it is now armed in two places, "
             "that is core#648 again."
         )
 
 
+SCHEDULER_ENTRYPOINT = "datanika.scheduler_main"
+ALERTS = (
+    Path(__file__).resolve().parents[2]
+    / "monitoring"
+    / "grafana"
+    / "provisioning"
+    / "alerting"
+    / "alerts.yml"
+)
+HELM_SCHEDULER = (
+    Path(__file__).resolve().parents[2]
+    / "deploy"
+    / "helm"
+    / "datanika"
+    / "templates"
+    / "scheduler-deployment.yaml"
+)
+
+
+def _services_running_the_scheduler(manifest: dict) -> list[str]:
+    return [
+        name
+        for name, service in (manifest.get("services") or {}).items()
+        if SCHEDULER_ENTRYPOINT in str((service or {}).get("command", ""))
+    ]
+
+
+def _helm_directives(source: str) -> str:
+    """The template with its `#` comment lines removed.
+
+    Not optional, and it failed on its first run without it. The template explains
+    itself by naming ``app.replicaCount`` — the value this component must never
+    follow — so a bare substring search for ``replicaCount`` matches the sentence
+    forbidding it. Same shape as ``test_deploy_service_coverage.py``, which parsed a
+    service called `won` out of prose, and as every phrase ban defeated by its own
+    denial: search what the tool executes, not what the file says.
+    """
+    return "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _env_keys(service: dict) -> set[str]:
+    """compose accepts `environment:` as a mapping OR a list of `K=V` strings."""
+    env = (service or {}).get("environment") or {}
+    if isinstance(env, dict):
+        return set(env)
+    return {str(entry).split("=", 1)[0] for entry in env}
+
+
+class TestExactlyOneProcessOwnsTheScheduler:
+    """The invariant the defect actually violated — 5 *processes*, not 5 services.
+
+    Deliberately absent while the fix was unwritten, because two of the three candidate
+    shapes would have made a correct fix fail it (see the note at the bottom of this file,
+    kept for the reasoning). The shape chosen is **a dedicated single-process container**,
+    so the assertion is now writable and these are it.
+
+    ⚠️ Cardinality over *services* is the weak half and is not sufficient on its own: it
+    counted 1 throughout the defect, because the multiplier was ``GRANIAN_WORKERS``, not a
+    duplicated service. ``test_the_owning_service_does_not_fork_workers`` is the half that
+    would actually have caught this.
+    """
+
+    def test_exactly_one_service_per_manifest_runs_the_scheduler(self):
+        for label, manifest_path in COMPOSE_MANIFESTS.items():
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            owners = _services_running_the_scheduler(manifest)
+            assert owners == ["scheduler"], (
+                f"{label} has {len(owners)} service(s) running {SCHEDULER_ENTRYPOINT} "
+                f"({owners or 'none'}); it must be exactly one, named `scheduler`. Two "
+                "services dispatch every due job twice — core#648 one level up. Zero means "
+                "no schedule runs anywhere, which is silent."
+            )
+
+    def test_the_owning_service_does_not_fork_workers(self):
+        """The whole defect in one assertion.
+
+        `app` runs `reflex run` under granian with `GRANIAN_WORKERS: "4"`, so ONE service
+        was FIVE schedulers and a cardinality check passed throughout. If the scheduler
+        entrypoint ever moves onto a service that forks workers, the count goes back up
+        with nothing else changing.
+        """
+        for label, manifest_path in COMPOSE_MANIFESTS.items():
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            for name, service in (manifest.get("services") or {}).items():
+                command = str((service or {}).get("command", ""))
+                if SCHEDULER_ENTRYPOINT not in command:
+                    continue
+                assert "GRANIAN_WORKERS" not in _env_keys(service), (
+                    f"{label}:{name} runs the scheduler AND sets GRANIAN_WORKERS. That is "
+                    "core#648 exactly: one service, N processes, N dispatches per firing."
+                )
+                assert "reflex run" not in command and "celery" not in command, (
+                    f"{label}:{name} runs the scheduler alongside another server "
+                    f"({command!r}). It owns its own process — see core#653 for why a "
+                    "dispatch thread inside a live server is worse rather than better: the "
+                    "container reads Up and healthy either way."
+                )
+
+    def test_the_helm_scheduler_is_pinned_to_one_replica(self):
+        source = _helm_directives(HELM_SCHEDULER.read_text(encoding="utf-8"))
+        assert "replicas: 1" in source, (
+            "the scheduler Deployment must hardcode `replicas: 1`; the chart exposes "
+            "`app.replicaCount` and this is the component that must never follow it"
+        )
+        assert "replicaCount" not in source, (
+            "the scheduler replica count is a value, so a self-hoster can scale it. Two "
+            "schedulers dispatch every user schedule twice — into their warehouse and "
+            "against their byte quota. A footgun with a friendly name (core#648)."
+        )
+
+    def test_the_helm_scheduler_does_not_roll(self):
+        source = _helm_directives(HELM_SCHEDULER.read_text(encoding="utf-8"))
+        assert "type: Recreate" in source, (
+            "a RollingUpdate runs the old and new scheduler together for the length of the "
+            "rollout, which is a double-dispatch window on every upgrade"
+        )
+
+
+class TestTheProcessCountGuardCanActuallyFail:
+    """Each assertion above, shown to discriminate.
+
+    Against synthetic manifests rather than by mutating the real files: the assertions read
+    files, and a guard-the-guard that rewrites them cannot run beside anything else that
+    reads them.
+    """
+
+    def test_it_would_see_two_owning_services(self):
+        manifest = {
+            "services": {
+                "scheduler": {"command": f"uv run python -m {SCHEDULER_ENTRYPOINT}"},
+                "scheduler2": {"command": f"uv run python -m {SCHEDULER_ENTRYPOINT}"},
+            }
+        }
+        assert _services_running_the_scheduler(manifest) != ["scheduler"]
+
+    def test_it_would_see_zero_owning_services(self):
+        """The deletion direction — nothing runs it at all."""
+        assert (
+            _services_running_the_scheduler({"services": {"app": {"command": "reflex run"}}}) == []
+        )
+
+    def test_it_finds_the_real_owner(self):
+        """Arming check. If the entrypoint string stops matching the real command, every
+        assertion above is vacuously true over an empty set."""
+        manifest = yaml.safe_load(
+            COMPOSE_MANIFESTS["docker-compose.yml"].read_text(encoding="utf-8")
+        )
+        assert _services_running_the_scheduler(manifest) == ["scheduler"]
+
+    def test_the_granian_check_would_fire_on_the_defect_shape(self):
+        """The pre-fix arrangement as a manifest: one service, N processes."""
+        service = {
+            "command": f"uv run python -m {SCHEDULER_ENTRYPOINT}",
+            "environment": {"GRANIAN_WORKERS": "4"},
+        }
+        assert "GRANIAN_WORKERS" in _env_keys(service)
+
+    def test_the_granian_check_reads_list_form_environments(self):
+        """compose accepts a list; blindness to it would silently pass the defect shape."""
+        service = {"environment": ["GRANIAN_WORKERS=4", "UV_NO_SYNC=1"]}
+        assert "GRANIAN_WORKERS" in _env_keys(service)
+
+    def test_the_replica_check_would_fire_on_a_templated_replica_count(self):
+        """The state it exists to reject: someone makes it a knob."""
+        templated = "spec:\n  replicas: {{ .Values.scheduler.replicaCount }}\n"
+        assert "replicaCount" in _helm_directives(templated)
+        assert "replicas: 1" not in _helm_directives(templated)
+
+    def test_the_stripper_does_not_hide_a_real_directive(self):
+        """The opposite error: stripping too much would make both Helm assertions
+        vacuous, and a vacuous assertion here reads exactly like a pinned replica."""
+        source = "# replicas: 1 in a comment\nspec:\n  replicas: 1\n"
+        stripped = _helm_directives(source)
+        assert "replicas: 1" in stripped
+        assert "in a comment" not in stripped
+
+    def test_the_stripper_removes_the_comment_that_broke_this_test(self):
+        """Verbatim from the real template. Without the stripper this is a false red."""
+        assert "replicaCount" not in _helm_directives(
+            "# `app.replicaCount` is a knob; this component must never follow it\n"
+        )
+
+    def test_a_second_environment_block_is_not_a_mutation(self):
+        """A near-miss worth keeping, because it argues for WEAKENING a working guard.
+
+        Mutation-testing ``test_the_owning_service_does_not_fork_workers`` first reported it
+        BLIND: injecting ``GRANIAN_WORKERS`` into the scheduler service left the test green.
+        The guard was fine. The mutation was not — it appended a **second**
+        ``environment:`` key to a service that already had one, and PyYAML (like docker
+        compose) keeps the LAST duplicate key, so the injected variable was discarded before
+        the guard ever saw it.
+
+        Recorded as a test rather than a comment because the wrong conclusion is the
+        attractive one: "the guard cannot see this, so relax it". Read the mutation before
+        believing a green.
+        """
+        parsed = yaml.safe_load(
+            'svc:\n  environment:\n    GRANIAN_WORKERS: "4"\n  environment:\n    UV_NO_SYNC: "1"\n'
+        )
+        assert _env_keys(parsed["svc"]) == {"UV_NO_SYNC"}, (
+            "duplicate-key handling changed; a mutation that appends a second "
+            "`environment:` block may now be real, and the note above is stale"
+        )
+
+    def test_the_helm_file_the_assertions_read_exists(self):
+        """`read_text` on a missing file raises rather than passing, but a *renamed*
+        template would be a silent pass elsewhere, so pin the path."""
+        assert HELM_SCHEDULER.exists(), f"{HELM_SCHEDULER} is missing"
+        assert "kind: Deployment" in HELM_SCHEDULER.read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
-# ⚠️ Deliberately NOT in this file: "exactly one process arms the scheduler".
+# ⚠️ Kept for the reasoning, now satisfied: "exactly one process arms the scheduler".
 #
 # That is the invariant the defect actually violates — 5 processes, not 5
 # services — and it is derivable from the manifests, since `instances =
@@ -499,6 +714,74 @@ class TestTheMoveNotVanishGuardCanActuallyFail:
 # of the three candidate fixes is not coverage, it is a vote — and this file has
 # already shipped one detector whose prose and code disagreed about precisely
 # this (see the module docstring). The process-count assertion belongs in the PR
-# that implements the fix, written against the shape that was chosen. The spec
-# for it is on core#648.
+# that implements the fix, written against the shape that was chosen.
+#
+# 🟢 That PR is the one that added `TestExactlyOneProcessOwnsTheScheduler`
+# above. The shape chosen was the first bullet — a dedicated single-process
+# container — so the assertion became writable. Note which half does the work:
+# the cardinality-over-services test is the WEAK one (it counted 1 all through
+# the defect); `test_the_owning_service_does_not_fork_workers` is the one that
+# would have caught it.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Being a container is only useful if something looks at it (core#653's third
+# acceptance criterion, applied to this one).
+#
+# The scheduler dying is the most silent failure this component has: every user
+# schedule simply stops, no run is created, no run FAILS, and nothing in the
+# product is in a state anyone can observe. Modelled on
+# `test_beat_singleton.py`'s pair, including the second half — core#615's
+# mistake in the other direction, where `datanika-.*` matched the staging
+# container and would have paged critical on every merge to `dev`.
+# ---------------------------------------------------------------------------
+
+
+def _scheduler_container(manifest_path: Path) -> str:
+    """The container name of whichever service RUNS the scheduler.
+
+    Found by what its command does, not by its key — the same discipline as
+    `test_beat_singleton.py`. A rename of the service must not quietly drop
+    the coverage assertion.
+    """
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    owners = [
+        service
+        for service in (manifest.get("services") or {}).values()
+        if SCHEDULER_ENTRYPOINT in str((service or {}).get("command", ""))
+    ]
+    assert len(owners) == 1, f"expected exactly one scheduler service in {manifest_path.name}"
+    return owners[0]["container_name"]
+
+
+def _container_last_seen_selectors() -> list[str]:
+    selectors = re.findall(r'container_last_seen\{name=~"([^"]+)"\}', ALERTS.read_text("utf-8"))
+    assert selectors, "no container_last_seen selector found in alerts.yml"
+    return selectors
+
+
+def test_an_alert_rule_watches_the_scheduler_container():
+    container = _scheduler_container(COMPOSE_MANIFESTS["docker-compose.yml"])
+    selectors = _container_last_seen_selectors()
+    assert any(re.fullmatch(pattern, container) for pattern in selectors), (
+        f"No container_last_seen alert selector matches `{container}`. Selectors present: "
+        f"{selectors}. An unwatched scheduler is the silent half of core#648: 5x dispatch "
+        "is loud, 0x dispatch is found by the customer. This is core#622's shape — a "
+        "`name=~` regex that omits a container watches nothing and says nothing."
+    )
+
+
+def test_the_scheduler_alert_selector_does_not_match_staging():
+    """core#615's mistake in the other direction: PromQL anchors regexes.
+
+    `datanika-.*` also matches `datanika-staging-scheduler`, which is recreated on every
+    push to `dev` — so a selector that broad pages `critical` on every merge.
+    """
+    staging = _scheduler_container(COMPOSE_MANIFESTS["deploy/staging/docker-compose.yml"])
+    for pattern in _container_last_seen_selectors():
+        assert not re.fullmatch(pattern, staging), (
+            f"alert selector `{pattern}` matches the STAGING container `{staging}`. "
+            "Staging is redeployed on every push to dev, so this pages critical on every "
+            "merge (core#615's backtested failure)."
+        )

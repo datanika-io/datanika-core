@@ -92,6 +92,10 @@ _SKIP_PREFIXES = ("/_next/", "/static/", "/metrics", "/healthz", "/readyz")
 # Every request that matched no route shares this one label value.
 UNMATCHED_PATH_LABEL = "<other>"
 
+#: Distinguishes "the key was absent" from "the key held None".
+#: Used as the identity baseline for `endpoint` — see `_normalize_path` (core#896).
+_MISSING = object()
+
 # Appended to a mount's prefix. A Mount matches, then hands an arbitrary tail to
 # a sub-application that reports nothing about what it matched, so the tail is
 # caller-controlled and cannot become part of a label value.
@@ -209,6 +213,11 @@ class PrometheusMiddleware:
         # served the request. Comparing against "" instead would mislabel every
         # request whenever the server itself is mounted under a prefix.
         root_path_before = scope.get("root_path") or ""
+        # Same idiom, same reason, one key over (core#896). An outer `Mount` puts the
+        # MOUNTED APPLICATION in `endpoint` before this middleware ever runs, so mere
+        # presence says nothing. What says the inner router matched is that the value
+        # CHANGED across the call.
+        endpoint_before = scope.get("endpoint", _MISSING)
 
         async def send_wrapper(message: dict) -> None:
             nonlocal status_code
@@ -220,7 +229,9 @@ class PrometheusMiddleware:
             await self.app(scope, receive, send_wrapper)
         finally:
             duration = time.perf_counter() - start
-            normalized = _normalize_path(path, scope, root_path_before, self._templates)
+            normalized = _normalize_path(
+                path, scope, root_path_before, self._templates, endpoint_before
+            )
             http_requests_total.labels(method, normalized, str(status_code)).inc()
             http_request_duration_seconds.labels(method, normalized).observe(duration)
 
@@ -230,6 +241,7 @@ def _normalize_path(
     scope: Scope,
     root_path_before: str = "",
     templates: Mapping[int, str] | None = None,
+    endpoint_before: object = _MISSING,
 ) -> str:
     """Reduce a request path to the route template the router matched.
 
@@ -260,8 +272,33 @@ def _normalize_path(
     has no search direction to get wrong. ``templates`` is that index; when it does
     not contain the endpoint (two routes sharing one handler, or a route added after
     the middleware was constructed) the search below still runs, unchanged.
+
+    🔴 **core#896, second pass: PRESENCE of ``endpoint`` is not evidence of a match,
+    and the previous gate could never fire in production.**
+
+    granian runs ``--factory``, so it *calls* ``app``; Reflex 0.8.26's ``App.__call__``
+    returns a different Starlette that does ``mount("", app._api)``. A ``Mount``'s child
+    scope carries ``endpoint`` — the mounted **application** — and Starlette updates the
+    scope in place. So ``endpoint`` is present for matched and unmatched requests alike
+    by the time this runs. ``if "endpoint" not in scope`` was therefore dead code where
+    it shipped, and an unmatched path fell through to ``_redact_path_params(path, {})``,
+    which returns the **raw path** — out of the branch whose own comment reads *"bounded
+    and imprecise beats precise and unbounded"*.
+
+    What discriminates is that a matched request **overwrites** ``endpoint`` with its own
+    handler, so the value CHANGES across the call. That is the same idiom this function
+    already uses for ``root_path``, one key over. Measured in all four cells — bare and
+    mounted x matched and unmatched — and it is the only one of the two conditions that
+    is correct in all four.
+
+    ⚠️ **Not** ``endpoint is not a route``. That is the mirror-image mistake: it fires on
+    matched requests whose endpoint the index cannot name (two routes sharing a handler),
+    collapsing real templates into ``<other>`` — which satisfies every cardinality
+    criterion while blinding every SLI in ``docs/slo_instruments.yml``. Identity against
+    the pre-routing value cannot do that, because a matched request always moved.
     """
-    if "endpoint" not in scope:
+    endpoint_after = scope.get("endpoint", _MISSING)
+    if endpoint_after is _MISSING or endpoint_after is endpoint_before:
         return UNMATCHED_PATH_LABEL
 
     path_params = scope.get("path_params") or {}

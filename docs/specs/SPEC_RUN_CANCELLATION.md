@@ -108,6 +108,62 @@ the answer, and I would rather decide it than have it default.
 > - 🔴 **AC11 is corrected below** — as written it could not pass, and it would have gone red against
 >   a correct implementation.
 
+> ## 🔴 D2 RE-ANSWERED, 2026-09-10 — my answer above was right about the OUTCOME and wrong about the MECHANISM, and the difference is a change in another repository
+>
+> Yesterday I decided *"the bill follows the work, not the request"* and wrote that **cancelling does
+> not reduce the bill** until checkpoints exist. That reasoning assumed the default was *bill in
+> full*. **It is the opposite.** Engineering measured cloud's gate; I verified it on
+> `datanika-cloud origin/dev c5d6e60`:
+>
+> ```python
+> def _is_billable(status: str) -> bool:      # billing/meter.py:33-59, four call sites
+>     return status == "success"
+> ```
+>
+> and its docstring says so in as many words: *"Deliberately `!= "success"` rather than
+> `== "failed"`: **`cancelled` is not billable either**."*
+>
+> Core announces `status="success"` **hardcoded** (`upload_tasks.py:394`). So today a cancelled run
+> bills in full **only because core is lying to the gate**. The moment core tells the truth, a
+> cancelled run announces `cancelled`, `_is_billable` returns `False`, and it bills **nothing** —
+> **option (b), the exact cancel-to-avoid-billing hole D2 rejects.**
+>
+> 🚨 **And AC12 would have shipped the opposite of what happens.** My round-7 answer told the copy to
+> say *"cancelling does not reduce the bill"*. Written against the honest status, it reduces it to
+> **zero**. **A billing sentence that is wrong is worse than no billing sentence**, and it would have
+> been reviewed as the careful half of the change.
+>
+> ### The decision, which reconciles both repositories
+>
+> **The discriminator is whether the data stays** — and this spec already answers that:
+>
+> | status | billable? | why |
+> |---|---|---|
+> | `success` | yes | unchanged |
+> | **`cancelled`** | **yes, for what was processed** | 🔑 **D3 promises the partial data stays where it is. The user keeps it.** Billing nothing for data they keep is the hole; billing for data they keep is coherent |
+> | `failed` | **no** | nothing usable landed. Cloud's existing behaviour, and correct |
+> | anything else | **no** | keep cloud's default — *"a status this code has never seen should not be charged for by default"* |
+>
+> **So cloud's gate is right about `failed` and wrong about `cancelled`, for one reason: it was
+> written before this spec existed and lumped the two non-success statuses together.** `cancelled`
+> and `failed` differ in the only respect billing cares about — whether the customer ended up with
+> the bytes.
+>
+> ### ⚠️ This is a cross-repo change and the order is load-bearing
+>
+> **Cloud first.** `_is_billable` must accept `cancelled` **before** core starts announcing the real
+> status, or there is a window in which every cancelled run bills nothing — the hole, shipped
+> deliberately, for the length of a deploy gap.
+>
+> That happens to agree with `CLAUDE.md`'s standing rule (*promote cloud before core*), but **the
+> reasons are different and both must hold**: that rule is about cloud shipping inside core's image;
+> this one is about a billing gate seeing a status it refuses.
+>
+> 🔑 **The general shape, because it will recur:** core owns the *fact* (what the run's status is) and
+> cloud owns the *policy* (what that status costs). **A change to the fact silently re-decides the
+> policy** whenever the policy was written against the old fact — and no test in either repository
+> sees both halves.
+
 ### D3 — Partially loaded data stays where it is, and we say so plainly *(new)*
 
 A run stopped mid-load has already written rows to the destination. We do **not** attempt to roll
@@ -345,10 +401,19 @@ carried forward and renumbered here.
     produce, and the cheapest way to make it pass is to stop metering — which is option (b), the one
     D2 rejects.
 
-12. **The billing sentence is present** wherever the cancellation sentence is — dialog, API response
-    body, docs page — and says that cancelling does not reduce the bill for work already done.
-    ⚠️ **Assert it on all three**, because D3's data sentence and this one will be written together
-    and are easy to ship on two surfaces out of three.
+12. 🔴 **CORRECTED 2026-09-10.** This said the copy must state *"cancelling does not reduce the bill
+    for work already done"*. Against the honest status that is **backwards** — see D2's re-answer: the
+    default is to bill **nothing**.
+
+    **The billing sentence is present** wherever the cancellation sentence is — dialog, API response
+    body, docs page — and says **you are billed for what was processed before the run stopped**.
+    ⚠️ **Assert it on all three**: D3's data sentence and this one will be written together and are
+    easy to ship on two surfaces out of three.
+
+13. 🚨 **Cross-repo, and cloud goes first.** A cancelled run's usage is metered. Assert it against
+    `_is_billable`, not against a mock — the whole defect is that the two repositories disagreed
+    about what `cancelled` costs, and a mock in either repo agrees with whoever wrote it.
+    ⚠️ **A test that only proves `failed` is unbilled passes today and proves nothing about this.**
 
 ---
 

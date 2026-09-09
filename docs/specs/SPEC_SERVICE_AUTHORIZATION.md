@@ -213,7 +213,64 @@ refusal would otherwise disclose.**
 
 ---
 
-## §8 — 🚨 The branch this contract cannot avoid, and it is UNANSWERED
+## §8 — ✅ DECIDED 2026-09-10: **branch A. The intersection is adopted.**
+
+> **Founder decision, recorded on [core#681].** An API key's authority is intersected with its
+> owner's **current** org role at authentication time. The three branches below are kept as the
+> record of what was weighed; **branch A is the answer** and B and C are closed.
+>
+> **What that means concretely:** the REST path passes `api_key.user_id` as the `actor_user_id`, the
+> service resolves that user's membership as it stands, and **a key minted by an admin who was later
+> demoted stops working.** That is the intended behaviour, not a regression to be reported.
+>
+> **Condition attached to the decision:** the refusal must **name the cause** — §7.1's `403` with a
+> `required_role` field. 🚨 **Not a `401`, and nothing a caller would read as "expired" or
+> "revoked".** A key that stops working for a reason the response does not state is the same defect
+> this spec is about, arriving in the error path: the caller retries, re-mints, and never learns the
+> role is the problem.
+
+### 8a · The two questions the decision left open, answered
+
+**Q1 — the scope↔role granularity gap. Do scopes need splitting?**
+
+The gap is real: `connections:write` covers create, edit **and** delete, while §1 reserves deletion
+for `admin`. So an `editor` holding that scope can, today, delete via REST what the UI refuses them.
+
+**Decision: do not split the scope vocabulary. The service check closes this by itself.**
+
+Once `ConnectionService.delete_connection` resolves the actor's membership and requires `admin`, an
+editor's key is refused **whatever its scopes say**. The two vocabularies are not competing:
+
+> **The scope grants *reach*; the role grants *authority*. The effective permission is the
+> intersection, and a coarse scope stops mattering the moment it is no longer sufficient on its own.**
+
+🔑 **So the granularity gap is a symptom of the missing service check, not an independent problem** —
+and splitting scopes would be a breaking API change bought to fix something §4 already fixes.
+
+⚠️ **This answer is conditional on §4 being implemented where it says.** A check that lands in the
+Reflex handler instead leaves the gap open *and* removes the reason to split scopes. **If the service
+work is descoped, Q1 reopens** — say so rather than letting the answer outlive its premise.
+
+**Q2 — existing keys: intersected on next use, or grandfathered?**
+
+**Decision: intersected on next use. No grandfather clause.**
+
+- Grandfathering needs a cutoff **and an expiry**, or it is branch B wearing a date — this spec's own
+  §8 table says so, and an exemption without an expiry is a permanent second authorization path.
+- **At this scale it protects nobody.** Zero paying users, five internal orgs; every key in existence
+  is ours. The cost of the exemption path is permanent, the benefit expires immediately.
+- ⚠️ **The count was not queried** — that is a production read and Infra's. It is stated as a
+  *reason*, not a measurement, and the decision does not turn on it: even a non-zero count is
+  internal, and internal keys are the ones we can re-mint without telling anyone.
+
+🚨 **Silent breakage at an unrelated moment is the whole cost of this decision, and §7.1 is what
+converts it from silent to legible.** A key that stops working must say **`403 insufficient_role`
+with the role it needed** — never a bare 401. **If §7.1 is descoped, this decision's only mitigation
+goes with it.**
+
+---
+
+## §9 — The branches that were weighed *(historical — see §8)*
 
 `plans/security/API_KEY_ROLE_INTERSECTION_2026-09-09.md` records that a key's scopes are never
 intersected with its owner's current role, and the coordinator has put that to the founder. **It is
@@ -231,10 +288,18 @@ path the only actor is **`api_key.user_id`**. So:
 🔑 **Branch B is close to unbuildable without reintroducing the defect**, so the decision is more
 forced than it looks — and saying that is more useful than pretending three options are open.
 
-**Until it is answered:** implement §1–§7 **for the Reflex path**, and leave the REST wiring behind
-the branch. ⚠️ **Do not pick a branch by implementing one** — passing `api_key.user_id` is branch A,
-and it is a decision whether or not anyone calls it one. **AC6 is the criterion that makes the branch
-visible**; if it is deferred for this reason, say *that*, rather than deferring it silently.
+> ✅ **RESOLVED — branch A, 2026-09-10.** The paragraph below said *"implement §1–§7 for the Reflex
+> path and leave the REST wiring behind the branch"*. **That no longer applies: build both.** AC6 is
+> now an ordinary acceptance criterion rather than the thing that makes a branch visible.
+>
+> 🔑 **Kept because the mechanism is the transferable part.** Marking the branch — rather than
+> building around it or quietly picking one — is what made it decidable, and *"implementing it as
+> specified adopts branch A whether or not anyone calls it a decision"* is the sentence that forced
+> the choice into the open. That is what a marked branch is for.
+
+*(Superseded, kept as the record:)* **Until it is answered:** implement §1–§7 **for the Reflex path**,
+and leave the REST wiring behind the branch. ⚠️ **Do not pick a branch by implementing one** —
+passing `api_key.user_id` is branch A, and it is a decision whether or not anyone calls it one.
 
 ⚠️ **And do not read a green Reflex-only implementation as this spec being satisfied.** That is §6's
 hazard exactly: hardening one more layer while the 26 endpoints are untouched moves the same number

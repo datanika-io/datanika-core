@@ -171,6 +171,37 @@ class TestMeteringFollowsTheCommit:
         assert spy_hooks == ["run.upload_completed"]
 
 
+def _announced_event(node) -> str | None:
+    """The completion event a call announces, or ``None``.
+
+    Two shapes, and the second is why this helper exists. ``announce(event, ...)`` puts the
+    event **first**; ``ExecutionService.announce_completion(session, org_id, run_id, event,
+    ...)`` — the core#657 AC4 choke point — puts it **fourth**.
+
+    🚨 This guard previously matched only a bare ``ast.Name`` called ``announce``. The moment
+    the tasks moved behind the choke point it found **nothing**, and a structural guard that
+    finds nothing *passes*. It was caught only because a sibling assertion required a non-empty
+    result. Recognise both shapes rather than either one.
+    """
+    import ast
+
+    if not isinstance(node, ast.Call):
+        return None
+    func = node.func
+    if isinstance(func, ast.Name) and func.id == "announce":
+        index = 0
+    elif getattr(func, "attr", None) == "announce_completion":
+        index = 3
+    else:
+        return None
+    if len(node.args) <= index:
+        return None
+    arg = node.args[index]
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value
+    return None
+
+
 class TestStructuralOrdering:
     @pytest.mark.parametrize(
         "module",
@@ -200,13 +231,9 @@ class TestStructuralOrdering:
             if not isinstance(node, ast.Try) or not node.orelse:
                 continue
             for inner in ast.walk(ast.Module(body=node.orelse, type_ignores=[])):
-                if (
-                    isinstance(inner, ast.Call)
-                    and getattr(inner.func, "id", None) == "announce"
-                    and inner.args
-                    and isinstance(inner.args[0], ast.Constant)
-                ):
-                    announced_in_else.add(inner.args[0].value)
+                event = _announced_event(inner)
+                if event is not None:
+                    announced_in_else.add(event)
 
         metered_here = announced_in_else & set(METERED_EVENTS)
         assert metered_here, (

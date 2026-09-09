@@ -117,8 +117,13 @@ class TestAHealthyReconcileIsRecorded:
 
 
 class TestAFailingReconcileIsRecorded:
-    def test_it_does_NOT_advance_the_last_success_timestamp(self, counts):
-        """The load-bearing one. A gauge that moves on failure records nothing."""
+    def test_it_does_not_advance_the_last_success_timestamp(self, counts):
+        """The load-bearing one: it must NOT move.
+
+        A freshness gauge that advances on failure records nothing at all -- every
+        alert built on it would read healthy for exactly the failure it exists to
+        catch. (Named lowercase for N802; the emphasis is the point of the test.)
+        """
         before = _sample("datanika_scheduler_reconcile_last_success_timestamp_seconds")
         with (
             patch.object(scheduler_main, "scheduler_integration") as sched,
@@ -277,7 +282,7 @@ class TestTheProcessExposesItsOwnMetrics:
             "in tests/test_deploy/test_scheduler_metrics_scrape.py"
         )
 
-    def test_the_server_starts_BEFORE_the_first_reconcile(self):
+    def test_the_server_starts_before_the_first_reconcile(self):
         """Order is load-bearing: the boot reconcile can be the one that fails.
 
         `bootstrap()` runs a reconcile immediately. If exposition started after it, a

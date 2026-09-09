@@ -126,7 +126,6 @@ import inspect
 import re
 from collections.abc import Iterable
 
-import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Mount, Route
@@ -1233,15 +1232,6 @@ async def test_control_the_install_shape_still_buckets_an_unmatched_path() -> No
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "core#896: `_normalize_path`'s unmatched gate cannot fire under the object "
-        "granian serves, because Reflex's outer `Mount('')` has already put `endpoint` "
-        "in the scope. Live in production; remove this marker with the fix."
-    ),
-)
 async def test_unmatched_paths_collapse_to_one_bucket_when_served_the_way_granian_serves_it() -> (
     None
 ):
@@ -1268,3 +1258,56 @@ async def test_unmatched_paths_collapse_to_one_bucket_when_served_the_way_grania
         "is served the way granian serves it. Each is ~14 Prometheus series once the "
         f"histogram is counted. Sample: {sorted(v for v in landed if v)[:3]}"
     )
+
+
+async def test_a_matched_route_the_index_cannot_name_is_not_bucketed() -> None:
+    """🔑 The mirror-image mistake, armed — and the obvious version of this does NOT arm it.
+
+    core#896's defect was a gate whose condition could never be true. The over-correction is
+    a gate that fires on matched requests too: *"bucket whenever the index cannot name the
+    endpoint."* That also makes 50 unmatched paths land on one value, so it **satisfies the
+    xfail-turned-test above completely** while collapsing real templates into ``<other>`` —
+    every cardinality criterion met, every SLI in ``docs/slo_instruments.yml`` blinded.
+
+    ⚠️ I first armed this with ``/api/auth/sso/login/login`` on the default table and the
+    mutant **SURVIVED**: that endpoint *is* in the index, so a bucket-if-unindexed gate never
+    reaches it. The colliding-path tests do not discriminate either — for a shared endpoint on
+    a colliding path the correct answer is ``<other>`` anyway
+    (``test_two_routes_sharing_an_endpoint_fall_back_instead_of_guessing``).
+
+    The case that discriminates needs **both**: an endpoint the index deliberately drops (two
+    routes, one handler) **and** a value redaction can place unambiguously. Then the correct
+    answer is a real template, and only a gate that over-fires returns ``<other>``.
+    """
+    shared = _distinct_endpoint("shared")
+    routes = [
+        Route("/api/auth/sso/login/{org_slug}", shared),
+        Route("/api/twin/sso/login/{org_slug}", shared),
+    ]
+    label = await _label_via(_served_shaped_app(routes), "/api/auth/sso/login/acme")
+    assert label == "/api/auth/sso/login/:org_slug", (
+        f"a MATCHED route metered as {label!r} under the served shape. Its endpoint serves "
+        "two templates so the index drops it, but `acme` occurs once and redaction resolves "
+        f"it exactly. {UNMATCHED_PATH_LABEL!r} here means the unmatched gate is firing on "
+        "matched requests — bounded, and blind."
+    )
+
+
+async def test_the_simple_matched_case_is_still_templated_under_the_served_shape() -> None:
+    """Kept, but recorded as NOT the mirror control — the mutation probe showed it survives.
+
+    It still earns its place: it is the one that fails if the *index* stops being populated
+    under the served shape, which is a different bug from the gate over-firing.
+    """
+    label = await _label_via(_served_shaped_app(), "/api/auth/sso/login/login")
+    assert label == "/api/auth/sso/login/:org_slug", (
+        f"a MATCHED route metered as {label!r} under the served shape. If it is "
+        f"{UNMATCHED_PATH_LABEL!r}, the unmatched gate is now firing on matched "
+        "requests — bounded, and blind."
+    )
+
+
+async def test_a_matched_route_is_not_bucketed_under_the_install_shape_either() -> None:
+    """The same direction one layer in, so a regression can be located rather than just seen."""
+    label = await _label_via(_production_shaped_app(), "/api/auth/sso/login/login")
+    assert label == "/api/auth/sso/login/:org_slug"

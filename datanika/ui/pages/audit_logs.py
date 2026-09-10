@@ -37,7 +37,21 @@ def _log_row(log: AuditLogItem) -> rx.Component:
         rx.table.cell(rx.badge(log.action)),
         rx.table.cell(log.resource_type),
         rx.table.cell(log.resource_id),
-        rx.table.cell(log.ip_address),
+        # core#694. Was `log.ip_address` — a column that has never held a value in any
+        # production row, rendered beside two columns that hold every value and were
+        # shown nowhere. The page could say *that* something happened and never *what
+        # changed*, while the data to answer it had been collected all along.
+        rx.table.cell(
+            rx.cond(
+                log.truncated,
+                rx.tooltip(
+                    rx.text(log.changes),
+                    content=log.changes_full,
+                    max_width="480px",
+                ),
+                rx.text(log.changes),
+            )
+        ),
     )
 
 
@@ -86,7 +100,7 @@ def audit_logs_page() -> rx.Component:
                             rx.table.column_header_cell(_t["audit.action"]),
                             rx.table.column_header_cell(_t["audit.resource_type"]),
                             rx.table.column_header_cell(_t["audit.resource_id"]),
-                            rx.table.column_header_cell(_t["audit.ip_address"]),
+                            rx.table.column_header_cell(_t["audit.changes"]),
                         ),
                     ),
                     rx.table.body(

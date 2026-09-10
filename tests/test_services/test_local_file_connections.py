@@ -37,6 +37,7 @@ from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
     _IN_MEMORY_PATHS,
     _LOCAL_FILE_DB_TYPES,
+    SAAS_PROBE_EXEMPT,
     ConnectionService,
     _build_sa_url,
     _connect_args,
@@ -416,7 +417,40 @@ def test_every_reason_the_service_produces_has_a_key(tmp_path):
     en = _locale("datanika/i18n", "en")
     for reason, key in _VERDICT_KEYS.items():
         assert key in en, f"reason {reason!r} maps to {key!r}, which en.json does not define"
-    assert set(_VERDICT_KEYS.values()) == set(NEW_KEYS)
+    # core#1170 AC3.3 added a SECOND family of reasons, and this assertion used to
+    # read `set(_VERDICT_KEYS.values()) == set(NEW_KEYS)`.
+    #
+    # 🚨 **That was stricter than this test's own name and its own docstring.** The
+    # name claims *every reason the service produces has a key*; the docstring names
+    # the other direction as *no orphan key*. Neither says "no key outside the
+    # local-file five" — but a hardcoded list is what that equality actually
+    # asserted, so it failed on a new reason arriving **with** its key, which is
+    # precisely the thing this file exists to require. The assertion encoded which
+    # change had shipped most recently rather than an invariant.
+    #
+    # ⚠️ Drive the exempt branch the way `produced` drives the local-file branch.
+    # Building the expected set from `SAAS_PROBE_EXEMPT` alone would compare the
+    # constant against the mapping that same constant produces, and could not fail:
+    # the service derives its slug from that dict, so a revert to the old 2-tuple
+    # (reason `""`) has to be caught by *calling* the service, not by reading it.
+    # `{"probe": ...}` is non-empty on purpose — `test_connection_verdict` returns
+    # early on a falsy config, before the branch under test (measured, core#1170).
+    exempt = {
+        ConnectionService.test_connection_verdict(
+            {"probe": "not-empty"}, ConnectionType(name)
+        ).reason
+        for name in SAAS_PROBE_EXEMPT
+    }
+    assert exempt == {f"not_tested_{name}" for name in SAAS_PROBE_EXEMPT}, (
+        f"the exempt branch produces {sorted(exempt)}"
+    )
+
+    reachable = produced | {"driver_unavailable"} | exempt
+    assert set(_VERDICT_KEYS) == reachable, (
+        "every mapped reason must be one something can actually produce — "
+        f"orphans: {sorted(set(_VERDICT_KEYS) - reachable)}; "
+        f"unmapped: {sorted(reachable - set(_VERDICT_KEYS))}"
+    )
 
 
 def test_a_verdict_that_interpolates_carries_its_argument(tmp_path):

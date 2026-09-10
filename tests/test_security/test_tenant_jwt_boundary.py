@@ -59,11 +59,11 @@ BEARER_A = "etf_key_org_a"
 BEARER_B = "etf_key_org_b"
 
 
-def _fake_key(org_id: int, key_id: int) -> MagicMock:
+def _fake_key(org_id: int, key_id: int, user_id: int = 1) -> MagicMock:
     key = MagicMock()
     key.id = key_id
     key.org_id = org_id
-    key.user_id = 1
+    key.user_id = user_id
     key.name = f"Key org {org_id}"
     key.scopes = None
     return key
@@ -120,8 +120,28 @@ def _boundary_env():
     a_ids = _seed_a_resources(session, enc)
     session.flush()
 
-    key_a = _fake_key(ORG_A_ID, key_id=1)
-    key_b = _fake_key(ORG_B_ID, key_id=2)
+    # core#681: the key's owner must be a REAL member of its org -- the services these
+    # routes call resolve the actor's current role, and `_fake_key`'s `user_id = 1` names
+    # nobody. Without this every mutating route answers 403 `insufficient_role`, which is
+    # the check working and not the boundary being tested here.
+    #
+    # `admin` because these tests drive the whole lifecycle; the SUBJECT of this file is
+    # the tenancy boundary, so the role must never be the thing that refuses.
+    from datanika.models.user import MemberRole, Membership
+    from tests.factories import make_user
+
+    actor_a = make_user(session, email="boundary-a@test.io", password_hash="x")
+    actor_b = make_user(session, email="boundary-b@test.io", password_hash="x")
+    session.add_all(
+        [
+            Membership(user_id=actor_a.id, org_id=ORG_A_ID, role=MemberRole.ADMIN),
+            Membership(user_id=actor_b.id, org_id=ORG_B_ID, role=MemberRole.ADMIN),
+        ]
+    )
+    session.flush()
+
+    key_a = _fake_key(ORG_A_ID, key_id=1, user_id=actor_a.id)
+    key_b = _fake_key(ORG_B_ID, key_id=2, user_id=actor_b.id)
 
     def _auth_dispatch(_session, raw_key, required_scope=None):
         if raw_key == BEARER_A:

@@ -78,6 +78,26 @@ def _patch_auth(fake_api_key, rate_limit_ok):
         Base.metadata.create_all(engine)
         session = SASession(engine)
 
+        # core#681: the services these routes call now resolve the actor's CURRENT role, and
+        # on the REST path the only actor is `api_key.user_id` (branch A). So the key's owner
+        # has to be a real member with a real role -- without it every mutating route here
+        # refuses, correctly.
+        #
+        # 🔑 That is not scaffolding to work around the check: it means these tests now drive
+        # the authorization path for real instead of past it. `admin` because this fixture
+        # backs the whole file, including the delete routes §1 reserves for admin.
+        from datanika.models.user import MemberRole, Membership, Organization
+        from tests.factories import make_user
+
+        session.add(Organization(id=fake_api_key.org_id, name="Test Org", slug="test-org-api-v1"))
+        session.flush()
+        _actor = make_user(session, email="apikey-owner@test.io", password_hash="x")
+        session.add(
+            Membership(user_id=_actor.id, org_id=fake_api_key.org_id, role=MemberRole.ADMIN)
+        )
+        session.flush()
+        fake_api_key.user_id = _actor.id
+
         # Build properly initialized services for tests
         enc = EncryptionService(Fernet.generate_key().decode())
         conn_svc = ConnectionService(enc)

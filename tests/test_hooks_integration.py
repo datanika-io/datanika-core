@@ -20,7 +20,7 @@ from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.services.user_service import UserService
-from tests.factories import make_user
+from tests.factories import make_org_admin, make_user
 
 
 @pytest.fixture(autouse=True)
@@ -229,6 +229,7 @@ class TestUploadHookEmission:
             "S",
             ConnectionType.POSTGRES,
             {"host": "src", "port": 5432},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         dst = conn_svc.create_connection(
             db_session,
@@ -236,6 +237,7 @@ class TestUploadHookEmission:
             "D",
             ConnectionType.BIGQUERY,
             {"project": "p", "dataset": "d"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         upload = upload_svc.create_upload(
             db_session,
@@ -413,6 +415,7 @@ class TestConnectionBeforeCreateHook:
                 "My DB",
                 ConnectionType.POSTGRES,
                 {"host": "localhost"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_no_handler_allows_create(self, db_session, conn_svc):
@@ -427,6 +430,7 @@ class TestConnectionBeforeCreateHook:
             "My DB",
             ConnectionType.POSTGRES,
             {"host": "localhost"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.id is not None
 
@@ -450,6 +454,7 @@ class TestScheduleBeforeCreateHook:
             "S",
             ConnectionType.POSTGRES,
             {"host": "src", "port": 5432},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         dst = conn_svc.create_connection(
             db_session,
@@ -457,6 +462,7 @@ class TestScheduleBeforeCreateHook:
             "D",
             ConnectionType.BIGQUERY,
             {"project": "p", "dataset": "d"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         upload = upload_svc.create_upload(
             db_session,

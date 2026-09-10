@@ -121,3 +121,33 @@ def make_invitation(
     session.add(InvitationPII(invitation_id=invitation.id, email=email))
     session.flush()
     return invitation
+
+
+def make_org_admin(session: Session, org_id: int, *, email: str | None = None) -> int:
+    """An `admin` member of ``org_id``, returned as a user id. For tests whose subject is NOT
+    authorization.
+
+    core#681 made the connection and backup services resolve the actor's **current** role, so
+    a test that mutates through them needs a real membership row rather than an invented id.
+
+    ⚠️ This is not a way around the check — the check runs, and passes, because the actor
+    genuinely holds the role. A helper that bypassed authorization would be the thing
+    `SPEC_SERVICE_AUTHORIZATION` §4 forbids arriving through the test suite instead of the
+    product.
+
+    `admin` because these call sites span the whole lifecycle, including the deletions §1
+    reserves for admin. A test that wants to assert a *refusal* should build its own actor at
+    the role it means, not reach for this.
+    """
+    import uuid
+
+    from datanika.models.user import MemberRole, Membership
+
+    user = make_user(
+        session,
+        email=email or f"org-admin-{uuid.uuid4().hex[:8]}@test.io",
+        password_hash="x",
+    )
+    session.add(Membership(user_id=user.id, org_id=org_id, role=MemberRole.ADMIN))
+    session.flush()
+    return user.id

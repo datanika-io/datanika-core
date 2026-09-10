@@ -18,7 +18,7 @@ import httpx
 import pytest
 from starlette.applications import Starlette
 
-from datanika.models.user import Organization, User
+from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
 from datanika.services.mcp_oauth import MCP_RESOURCE_PATH, McpOAuthService
 from datanika.services.mcp_oauth_routes import mcp_oauth_routes
@@ -81,10 +81,16 @@ def org(db_session) -> Organization:
 
 
 @pytest.fixture
-def user(db_session) -> User:
-    return make_user(
+def user(db_session, org) -> User:
+    row = make_user(
         db_session, email="routes@example.com", full_name="Routes User", password_hash="h"
     )
+    # core#681: the person completing a consent flow IS a member of the org -- that is the
+    # real scenario, and `mint_consent_key` requires membership. Adding it makes this
+    # fixture MORE truthful rather than working around the check.
+    db_session.add(Membership(user_id=row.id, org_id=org.id, role=MemberRole.ADMIN))
+    db_session.flush()
+    return row
 
 
 @pytest.fixture

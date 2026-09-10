@@ -69,7 +69,23 @@ jobs:
             datanika-io/datanika-landing
 
       - name: File an issue when a schedule has stopped
-        if: steps.check.outcome == 'failure'
+        # core#1243. This used to read `steps.check.outcome == 'failure'`, which is true
+        # only when the check step RAN and returned non-zero. If anything BEFORE it fails
+        # -- checkout, setup-python, `pip install pyyaml` -- the check step never runs,
+        # `steps.check.outcome` is EMPTY, this step is SKIPPED, and the job ends red
+        # having filed nothing.
+        #
+        # That is core#691 one level up, inside the very thing built to catch core#691's
+        # class: a red scheduled run is EXACTLY what a correct detection looks like (the
+        # filing path deliberately ends in `exit 1`), so "broke before it could look" and
+        # "found a dead cron" produced the same colour AND the same absence of a new
+        # issue. Measured on run 34395255144: that red run WAS a correct detection --
+        # which is exactly why a genuinely broken one would not have stood out.
+        #
+        # `!= 'success'` covers both '' (never ran) and 'failure' (ran and crashed).
+        # `!cancelled()` keeps a cancelled run from filing: a cancelled job is neither
+        # green nor red and carries no steps, so it proves nothing in either direction.
+        if: ${{ !cancelled() && steps.check.outcome != 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -95,10 +111,15 @@ jobs:
           # it reports findings through, under a DIFFERENT title, so the two are
           # one glance apart in the issue list rather than one log-dive apart.
           if [ ! -f problems.md ]; then
-            echo "::error::The watchdog exited non-zero but wrote no problems.md."
+            echo "::error::No problems.md was written, so NOTHING WAS VERIFIED."
             echo "::error::That means it failed to RUN, not that it found a fault."
             echo "::error::Check the step above -- most likely the token cannot"
             echo "::error::read one of the repos, or the workflows API changed."
+            echo "::error::check step outcome: '${{ steps.check.outcome }}'"
+            echo "::error::  failure -> the check ran and crashed; read its log."
+            echo "::error::  (empty) -> the check NEVER RAN: a step before it failed"
+            echo "::error::             (checkout/setup-python/pip), so this run"
+            echo "::error::             inspected nothing at all."
 
             broken=$(gh issue list --state open \
               --search "in:title Scheduled workflow watchdog is failing to run" \
@@ -107,6 +128,9 @@ jobs:
             {
               printf 'The watchdog ran and could not complete a check, so **nothing was verified '
               printf 'this run** -- this is not a report that a cron has stopped.\n\n'
+              printf 'Check step outcome: `%s`. An EMPTY value means the check never ran' "${{ steps.check.outcome }}"
+              printf ' at all, because a step before it failed -- so this run inspected'
+              printf ' nothing.\n\n'
               printf 'Run: %s/%s/actions/runs/%s\n\n' \
                 "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
               printf 'While this issue is open, the absence of a "Scheduled workflow stopped '
@@ -148,3 +172,96 @@ jobs:
             --title "Scheduled workflow stopped firing" \
             --body-file /tmp/body.md
           exit 1
+
+  # ---------------------------------------------------------------------------
+  # core#1256. `e2e-sso` produced NO READING on five consecutive commits and CI
+  # concluded `success` on every one. That is not a defect -- it is core#876's
+  # guard refusing to grade someone else's build after a newer push redeployed
+  # staging out from under the verifier. The defect is that nobody sees the
+  # ACCUMULATION: `e2e-sso` is not a required check (read from the protection API,
+  # not from memory), so the SSO tier -- an Enterprise-only auth path, and the
+  # surface this project already shipped a P0 auth bypass on -- can go blind
+  # indefinitely with nothing red anywhere.
+  #
+  # Measured over 50 runs on `dev`: 23 produced no reading (46%), in blackouts of
+  # 5, 5 and 7. The trigger is push CADENCE, not carelessness, so a convention
+  # cannot fix it. Threshold 3 comes from that distribution -- run lengths were
+  # [1, 1, 2, 2, 5, 5, 7], a clean break with nothing at 3 or 4 -- and 3 is not a
+  # new magic number: it is the graduation bar, so a tier unmeasured 3 runs in a
+  # row could not have graduated anything even if every spec passed.
+  #
+  # NOT made a required check, deliberately: that blocks every merge during any
+  # normal burst with no PR at fault, which is the `image-cve` mistake.
+  #
+  # WHY THIS JOB LIVES HERE rather than in a workflow of its own: a new scheduled
+  # workflow is a new thing that can silently never fire -- which is the OTHER
+  # half of core#1256. This file already fires daily and is itself watched.
+  e2e-measurement-gap:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Read how long each E2E tier has gone without a reading
+        id: gap
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          for job in e2e-sso e2e-staging; do
+            echo "=== $job"
+            rc=0
+            python scripts/e2e_tier_streak.py --job "$job" --branch dev \
+              --runs 40 --max-unmeasured 3 | tee "out-$job.txt" || rc=$?
+            echo "exit=$rc"
+            # Exit 2 is BLIND. Exit 1 is merely "not graduated", which is the normal
+            # resting state of an informational tier and must never file an issue.
+            if [ "$rc" = "2" ]; then echo "$job" >> blind.txt; fi
+            # core#691, restated one level down: a crash is also non-zero. Assert a
+            # POSITIVE artifact -- the summary line the reader always prints -- so
+            # "it found a gap" and "it could not run" are not one signal.
+            grep -q "^unmeasured " "out-$job.txt" || echo "$job" >> broken.txt
+          done
+          if [ -f broken.txt ]; then exit 3; fi
+          if [ -f blind.txt ]; then exit 2; fi
+
+      - name: File an issue when a tier has gone blind
+        if: steps.gap.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f broken.txt ]; then
+            echo "::error::The gap reader exited non-zero and printed no summary line."
+            echo "::error::That means it failed to RUN, not that a tier went blind."
+            echo "::error::While this is broken, the absence of a blindness issue means"
+            echo "::error::nothing: the detector is down, not the tiers proven measured."
+            exit 1
+          fi
+          existing=$(gh issue list --state open --json number --jq '.[0].number // empty' \
+            --search "in:title An E2E tier went unmeasured")
+          {
+            printf 'One or more E2E tiers produced **no reading** for 3+ consecutive runs on '
+            printf '`dev`.\n\n'
+            printf 'Nothing is red, and that is the point: this is the ABSENCE of a '
+            printf 'measurement, which reads exactly like a pass. Each unmeasured run refused '
+            printf 'to grade because a newer push had redeployed staging out from under it '
+            printf '(core#876) -- the guard working. What was missing is anyone seeing the '
+            printf 'accumulation.\n\n'
+            printf '```\n'
+            cat out-*.txt
+            printf '```\n\nRun: %s/%s/actions/runs/%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > blind.md
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file blind.md
+          else
+            gh issue create --title "[QA] An E2E tier went unmeasured for 3+ consecutive runs" \
+              --body-file blind.md
+          fi

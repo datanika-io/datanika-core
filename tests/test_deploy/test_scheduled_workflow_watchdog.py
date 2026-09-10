@@ -268,10 +268,41 @@ class TestAgainstTheRealWorkflows:
         assert doc["permissions"]["issues"] == "write"
 
     def test_the_reporting_step_runs_when_the_check_fails(self):
-        """`continue-on-error` on the check, or the report step never runs."""
-        body = _WATCHDOG.read_text(encoding="utf-8")
-        assert "continue-on-error: true" in body
-        assert re.search(r"steps\.check\.outcome\s*==\s*'failure'", body)
+        """`continue-on-error` on the check, or the report step never runs.
+
+        core#1243. Both assertions here used to read the file as ONE STRING, and
+        both had stopped discriminating by the time that was noticed:
+
+        * ``"continue-on-error: true" in body`` -- a second job was appended to
+          this workflow that supplies its own, so the substring is present even
+          if the ``check`` step loses the property entirely.
+        * ``steps.check.outcome == 'failure'`` -- the gate was replaced, and the
+          commit explaining WHY quotes the old expression in a comment. The
+          regex matched the comment. The test stayed green across the exact
+          change it existed to notice.
+
+        Both now read the PARSED document and address the specific step by id,
+        so a comment cannot satisfy them and a sibling job cannot either.
+        """
+        doc = yaml.safe_load(_WATCHDOG.read_text(encoding="utf-8"))
+        steps = doc["jobs"]["watchdog"]["steps"]
+
+        check = [s for s in steps if s.get("id") == "check"]
+        assert len(check) == 1, "the filing gate reads steps.check -- that id must exist"
+        assert check[0].get("continue-on-error") is True, (
+            "without continue-on-error the job dies at the check and never files"
+        )
+
+        filing = [s for s in steps if "File an issue" in str(s.get("name", ""))]
+        assert len(filing) == 1
+        gate = str(filing[0]["if"])
+        assert "steps.check.outcome" in gate, "the gate must still key off the check step"
+        assert "== 'failure'" not in gate, (
+            "an equality gate misses the case where the check NEVER RAN (core#1243)"
+        )
+        assert "!= 'success'" in gate, (
+            "the gate must fire on '' (never ran) as well as 'failure' (ran and failed)"
+        )
 
 
 # ---------------------------------------------------------------------------

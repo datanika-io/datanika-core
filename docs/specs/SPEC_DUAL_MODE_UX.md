@@ -650,24 +650,30 @@ Per PRICING_PIVOT_DECISIONS.md (`plans/PRICING_PIVOT_DECISIONS.md`) Q6 (HARD SUN
 > nothing reaches — which is how `SPEC_SERVICE_AUTHORIZATION` §7.1's refusal came to be **observed in
 > production traffic and still not in effect**.
 >
-> ⚠️ **Four of these are negative claims over an unbounded surface** — *"without seeing the word ELT
-> **anywhere on the screen**"*, *"no upgrade CTAs **anywhere**"*, *"no banner appears **anywhere**"*.
-> A negative over an unbounded surface cannot be asserted at all; it can only be asserted over a
-> **named, enumerated** one. §15a bounds each.
+> ⚠️ **THREE of these were negative claims over an unbounded surface** — criteria **1, 7 and 11**,
+> which said *"without seeing the word ELT anywhere on the screen"*, *"no upgrade CTAs anywhere"* and
+> *"no banner appears anywhere"*. **All three are rewritten**; §15b defines the surface they are
+> asserted over and the controls each needs.
+>
+> 🔴 **This line said "four" until 2026-09-10 and I wrote it.** Re-derived by counting rather than
+> recalling: criterion **5** ("Pro/Enterprise orgs do **not** see this modal") is also a negative, but
+> over a **bounded** surface — one modal, one flow — so it was assertable as written and is not in
+> this set. **A negative is not the problem; an unbounded one is**, and conflating them inflates the
+> count and points work at a criterion that did not need it.
 
 When Engineering + Cloud are ready to ship, these are the UX acceptance tests this spec demands:
 
-1. **Novice first-pipeline flow** — user with no pipelines can create and run a pipeline end-to-end without seeing the word "ELT" anywhere on the screen.
+1. **Novice first-pipeline flow** — a user with 0 pipelines can create and run a pipeline end-to-end, and the word **ELT** appears on **no page of the derived route set** (§15b) while they do it. Case-insensitive, matched as a **whole word** — `ELT` must not match inside `DELETE`. ⚠️ **Anti-vacuity control: expert mode with ELT selected MUST be in the same sweep and MUST be found.** Without it the sweep passes when it renders nothing.
 2. **Expert mode control** — user can pick ETL or ELT explicitly; the choice persists; the next run uses the selected mode.
 3. **Cost pre-visibility** — on the pipeline form, the cost panel shows a number (or "—" if genuinely unknown) before the first run.
 4. **Cost post-visibility** — on any run detail page after a successful run, the Cost field is populated and the value is within 30% of what the usage ledger records for that run.
 5. **Quota block at 100% — Free tier only** (Path A per §8.3) — a Free-tier org whose `predicted_bytes` would exceed the remaining quota sees the modal before the run starts. Pro/Enterprise orgs do **not** see this modal; their runs proceed and accrue overage.
 6. **Quota breach mid-run** (Path B) — a run that exceeds mid-way completes, notifies via Notification Center within 60 seconds, and updates the dashboard bar.
-7. **No Pro→Enterprise upgrade CTAs anywhere** (per Q3 SILENT) — dashboard usage bar shows color shift only (no CTA) for Pro/Enterprise orgs at 80%+; `volume_quota_warning_80` notification has no Upgrade button for Pro/Enterprise recipients.
+7. **No Pro→Enterprise upgrade CTAs on the derived route set** (per Q3 SILENT) — for a Pro **and** an Enterprise org at 80%+, no page in §15b's set and no `volume_quota_warning_80` notification body contains a link or button whose target is the upgrade route. The dashboard usage bar shifts colour only. ⚠️ **Anti-vacuity control: the same sweep against a FREE org must FIND the CTA.** A selector that matches nothing satisfies this criterion perfectly.
 8. **ELT nudge shows** — a test pipeline with ≥5 runs and ≥20 GB in the last 30 days shows the banner on the pipeline detail page. Banner text is savings-oriented per Q1 ("save ~$X/month"), not tax-neutral.
 9. **ELT nudge dismissal** — after clicking ×, the banner does not reappear for 30 days on the same pipeline.
 10. **i18n parity** — all 59 new keys exist in all 9 locales; the parity test passes.
-11. **Pipeline back-compat** — on deploy day, existing pipeline rows back-fill to `mode = 'etl'` and run identically to pre-deploy. Post-cutover, the dashboard shows the dual-dimension bar for all orgs (no legacy single-dim bar state). No in-app "you were migrated" banner appears anywhere — cutover is invisible to users.
+11. **Pipeline back-compat** — on deploy day, existing pipeline rows back-fill to `mode = 'etl'` and run identically to pre-deploy. Post-cutover the dashboard shows the dual-dimension bar for all orgs (no legacy single-dim state), and **no page of the derived route set** carries a migration notice — cutover is invisible to users. ⚠️ **Anti-vacuity control: the sweep must find a *different*, known-present banner** (the ELT nudge on a qualifying pipeline), or it proves only that it found no banners of any kind.
 12. **Agent MCP tool** — `estimate_run_cost(pipeline_id)` returns a non-null estimate for any pipeline with ≥1 successful run; `estimate_cost_for_config(...)` returns a non-null estimate for the stripe-to-postgres template inputs.
 
 ### 15a. What asserts each of the above
@@ -704,6 +710,52 @@ way that rule prescribes, not by scraping a screenshot or trusting a CSS-hidden 
 With per-agent local E2E stacks landing, *"the E2E suite is green"* is about to be ambiguous about
 **which** suite. Name the suite and the tier (gating vs informational) when these are written; a
 criterion satisfied only in a local stack nobody else runs is not satisfied.
+
+### 15b. The derived route set — and why these three cannot be hand-listed
+
+Criteria 1, 7 and 11 are **negative claims**: they assert a term or a control is *absent*. A negative
+is only meaningful over a **stated** surface, and *"anywhere on the screen"* is not one — which is
+what these three said until 2026-09-10.
+
+🚨 **The surface is DERIVED from the application's own router, never written out here.**
+
+```python
+# every literal route= passed to app.add_page in datanika/datanika.py
+routes = {kw.value.value
+          for node in ast.walk(ast.parse(SRC))
+          if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_page"
+          for kw in node.keywords
+          if kw.arg == "route" and isinstance(kw.value, ast.Constant)}
+```
+
+**20 routes today.** ⚠️ **A hand-written page list is rejected**, and not on style grounds: the
+failure mode is a page added six months from now that nobody adds to the list, and that failure is
+**silent and reassuring** — the sweep still passes, having simply not looked. This codebase has been
+burned by hand lists twice already: `ACTION_FILTER_OPTIONS` drifted in **both** directions at once
+(offering a resource type nothing writes, omitting the one carrying 7 of 13), and `PII_PAYLOAD_KEYS`
+carries the same lesson in its own docstring — *"a hand list is what this whole change is
+correcting."*
+
+**Three assertions every one of these sweeps must carry**, in this order:
+
+1. **The route set is non-empty**, and its size matches the router's own count. A sweep over an empty
+   enumeration passes in perfect silence — the same shape as a fresh container reporting `<other>`
+   because nothing has run on it yet, not because nothing is wrong.
+2. **Each page actually rendered.** A page that raised, redirected to login, or returned an empty
+   body is *clean* of the forbidden term, and clean for the wrong reason. Assert a floor on rendered
+   content per page before concluding anything about absence.
+3. **The anti-vacuity control named in the criterion is FOUND.** Each of 1, 7 and 11 names a case
+   where the thing *is* expected. If the sweep cannot find it where it must be, the sweep is broken
+   and its absences mean nothing.
+
+🔑 **The general rule, because it outlives this spec:** *a negative over an unbounded surface cannot
+be asserted at all — only over an enumerated one, and the enumeration must be derived, non-empty, and
+proven able to find a positive.* (`PRODUCT_RULES` §16.)
+
+⚠️ **Two of the twenty routes are pre-auth** (`/login`, `/signup`, `/forgot-password`,
+`/reset-password`) and two are parameterised (`/models/[id]`). Say which subset a given sweep covers
+and why — *"all routes"* is not the same claim as *"all routes a signed-in user can reach"*, and #1
+means the second.
 
 ## 16. Cross-team handoff
 

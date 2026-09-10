@@ -1,4 +1,5 @@
 import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
+import { assertApiOrigin, expectApiJson } from "../fixtures/api-origin";
 
 /**
  * Staging-flavored port of tests/test_security/test_tenant_jwt_boundary.py
@@ -25,9 +26,26 @@ import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
  * do NOT "just fix the assertion." Escalate to Engineering and file a
  * CVE-grade issue.
  *
- * Seed extensions shipped in core#172 (2026-04-16). Org B + API keys are
- * always seeded (no opt-in flags needed). global-setup.ts maps all 25
+ * Seed extensions shipped in core#172 (2026-04-16). global-setup.ts maps the
  * seed fields to DATANIKA_E2E_* env vars. .skip markers removed in QU2.
+ *
+ * 🔴 CORRECTED 2026-09-10 (core#1209). This block said API keys are *always*
+ * seeded, 'no opt-in flags needed'. They are not: `e2e_seed.py` gates them behind
+ * `E2E_SEED_INCLUDE_API_KEYS=1` and otherwise emits the fields as EMPTY STRINGS.
+ * Org B's *resources* are always seeded, which is what makes the wrong half
+ * plausible. Without the flag every probe here dies in `mustEnv` — 27 red, and the
+ * cause named in this comment is not the cause.
+ *
+ * Running it locally (verified end to end 2026-09-10, 28/28):
+ *
+ *   DATANIKA_E2E_BASE_URL=http://127.0.0.1:3100   <- the PROXY, never :3000
+ *   E2E_SEED_INCLUDE_API_KEYS=1
+ *   DATANIKA_E2E_SLOW=1
+ *   DATABASE_URL_SYNC + CREDENTIAL_ENCRYPTION_KEY + SECRET_KEY from the stack
+ *
+ * ⚠️ :3000 is the SPA and answers /api/v1/* with 200 text/html. The first test in
+ * this file refuses on that, because the own-resource CONTROL below is satisfied by
+ * a 200 and would otherwise vouch for a run that measured nothing.
  */
 // @slow — 25 routes × 2 tests × real HTTP = expensive.
 // @slow. Runs wherever DATANIKA_E2E_SLOW=1 is set — which is EVERY
@@ -120,6 +138,14 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
   // bounded by one minute, so the per-test timeout has to clear it.
   test.describe.configure({ timeout: 120_000 });
 
+  // core#1209. Runs before any probe: prove the origin in front of us serves the API.
+  // A stack without the one-origin proxy answers /api/v1/* with 200 + the SPA, and the
+  // own-resource control below is satisfied by that. Measured, all three origins:
+  //   frontend :3000 -> 200 text/html   backend :8000 -> 401 json   proxy :3100 -> 401 json
+  test("precondition: this origin serves the API, not the SPA", async ({ request }) => {
+    await assertApiOrigin(request);
+  });
+
   for (const route of MUTATION_ROUTES) {
     const id = `${route.method} ${route.pathTemplate}`;
     test(`${id} — org A cannot mutate org B resource`, async ({ request, apiBudget }) => {
@@ -206,5 +232,13 @@ test.describe("Tenant JWT boundary: /api/v1/* mutation surface @slow", () => {
       label: "sanity: org B reads its own connection",
     });
     expect(response.status()).toBe(200);
+    // core#1209: a 200 alone is satisfied by the SPA, and this is the CONTROL — the
+    // assertion whose entire job is to say the endpoint works, so the 404s above mean
+    // isolation rather than a broken route. Vouching for that on HTML is worse than
+    // not vouching at all.
+    const body = (await expectApiJson(response, "org B reads its own connection")) as {
+      id?: number;
+    };
+    expect(Number(body.id)).toBe(Number(victimId));
   });
 });

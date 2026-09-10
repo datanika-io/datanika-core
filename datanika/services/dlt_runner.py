@@ -534,11 +534,18 @@ SAAS_PAGINATORS: dict[str, dict] = {
 #: that a client-level paginator would introduce. Not "unsure" — a reason.
 #:
 #: A paginator is configured on the **client**, so it applies to every resource
-#: the connector defines. Both entries below have default resources whose
-#: pagination contracts differ from one another, and for both the damage from
+#: the connector defines. **Each** entry below has default resources whose
+#: pagination contracts differ from one another, and for each the damage from
 #: guessing is worse than the truncation this table exists to fix. The real fix
 #: for these is per-resource ``endpoint.paginator`` entries, which is a larger
 #: change than this one.
+#:
+#: 🔴 **This said "Both entries below" while the dict held one** — ``salesforce``
+#: moved out and the count did not follow (core#1170 AC6). A stale count in a
+#: comment *about completeness* is the smallest possible instance of the defect
+#: this whole spec is about, so it is stated rather than quietly edited. **Do not
+#: reintroduce a count here**: the number is one `len()` away and prose cannot be
+#: kept in sync with a dict by anything but attention.
 SAAS_PAGINATION_EXEMPT: dict[str, str] = {
     "jira": (
         "`rest/api/3/search` is offset-paginated (startAt/maxResults) while "

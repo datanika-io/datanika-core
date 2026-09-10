@@ -31,9 +31,16 @@ backed by `UserService._assert_may_manage`. That is the whole of the enforced se
 | **schedules** | `save_schedule`, `toggle_schedule` | `delete_schedule` |
 | **transformations** | `save_transformation` | `delete_transformation` |
 | **dag** | `add_dependency` | `remove_dependency` |
-| **api keys** | — | `create_api_key`, `revoke_api_key` |
+| **api keys** | — | `create_api_key`, `revoke_api_key` 🚨 **see §10 before wiring** |
 | **notification channels** | — | `save_channel`, `edit_channel`, `toggle_channel_active`, `delete_channel` |
 | **backup / export** | — | `export_backup`, `handle_restore_upload` |
+
+🚨 **`create_api_key` has TWO callers and they are not the same act — read §10 before applying the
+`admin` threshold to it.** `mcp_oauth.py:378` mints through this method, so wiring it as written
+**removes Remote MCP from every viewer and editor**. §10 decides: the general minting surface keeps
+`admin`; the OAuth consent path gets its own entry point at `member`, with three structural
+constraints. Escalated by Engineering rather than absorbed, which is why it was caught before it
+shipped.
 
 🔴 **Correction to a number in circulation.** This census has been relayed as *"16 state-layer files"*.
 It is **12**, on `master` and on `dev`, and `SPEC_ORG_ROLES` §4a says 12. (Engineering's [core#673]
@@ -308,6 +315,85 @@ with the role it needed** — never a bare 401. **If §7.1 is descoped, this dec
 goes with it.**
 
 ---
+
+## §10 — ✅ DECIDED 2026-09-10: **obtaining MCP access for yourself is not the same act as minting a key**
+
+**Escalated by Engineering** while wiring api keys, and correctly: §1 puts `create_api_key` at
+`admin`, `mcp_oauth.py:378` mints through that same method, so wiring it as written **removes MCP
+from every viewer and editor in the product**. They flagged it rather than absorbing it.
+
+### The decision
+
+**`create_api_key` keeps `admin`. The OAuth consent path gets its own service entry point at
+`member`.** They share a code path today; that is an implementation accident, not a decision.
+
+⚠️ **The answer is NOT "lower the threshold."** Engineering's constraint stands as written — *"a
+viewer minting an `admin`-scoped key would make every other wiring decorative."* The threshold on the
+general minting surface is non-negotiable. What follows is a **distinction**, and it is measured
+rather than argued.
+
+### Why the two acts differ — three measurements, not three opinions
+
+**1. There is no admin-class scope in the MCP vocabulary.** `mcp_oauth.py` draws every grant from
+`_READ_SCOPES` (8) and `_WRITE_SCOPES` (7), and all fifteen are `<resource>:<read|write>` —
+`catalog`, `connections`, `notifications`, `pipelines`, `runs`, `schedules`, `transformations`,
+`uploads`. **No `members`, no `settings`, no `api_keys`, no `sso`.** 🚨 **The specific risk Engineering
+named is structurally unreachable on this path**: a consent flow cannot mint an admin-scoped key,
+because no such scope exists to request. `narrow_scope` additionally grants *no more than was asked
+for*.
+
+**2. Authority is already capped at the owner's current role, and that is shipped.** §8's
+intersection is **implemented**, not merely decided — `api_middleware.py:49` states a key "is now
+intersected with its owner's *current* org role, so a working key stops working at a [role change]".
+So a viewer's MCP key **acts as a viewer**, whatever its scopes say. Completing an MCP flow gets a
+viewer *exactly the authority they already have in the UI*, over a different transport.
+
+**3. Delegability differs, and that is what the `admin` gate is actually protecting.** A key minted
+on the API-keys page is a bearer credential the minter names and can hand to anything. An MCP grant
+is the product of a PKCE flow **the user personally completed**, bound to a registered `client_id`
+and `redirect_uri`, recorded as an `OAuthGrant` row the user can see and revoke. The general gate
+guards *"who may create org-wide bearer credentials"*; it does not follow that it guards *"who may
+use their own account from an MCP client"*.
+
+**Refusing the second prevents no escalation and removes a shipped feature.**
+
+### What the new entry point must carry, or it is a bypass rather than a distinction
+
+A second method that simply skips the check is the shape §4 forbids. Three structural constraints
+make `member` safe here, and **all three are load-bearing**:
+
+1. **Self-issue only** — it mints for `actor_user_id` and refuses any other `user_id`. This is what
+   makes `member` correct: a viewer may obtain access *for themselves* and cannot provision anyone.
+2. **Scopes narrowed unconditionally** — it calls `narrow_scope` itself and does **not** accept a
+   caller-supplied scope list. A parameter here would reintroduce exactly the risk §10 relies on
+   being absent.
+3. **Grant-bound** — reachable only from the consent flow, creating the `OAuthGrant` in the same
+   transaction. A key with no grant row is a general key wearing this method's name.
+
+🚨 **And it MUST still emit `api_key.before_create`.** That hook is how cloud enforces
+`plans.max_api_keys` — a **priced** dimension ([core#706]). A second entry point that skips the emit
+turns MCP consent into an **uncapped key factory** on a metered surface, which is a billing hole
+rather than an authorization one and would not show up in any authorization test.
+
+### The witness (`PRODUCT_RULES` §16)
+
+Both halves, or the test proves only that something is permitted:
+
+- Drive the **consent endpoint** as a `viewer` → a grant is issued and the resulting key
+  authenticates against a `:read` endpoint.
+- Drive **`create_api_key`** (the general path) as a `viewer` → **`403`** with
+  `error == "insufficient_role"` and `required_role == "admin"` (§7.1).
+- **Anti-vacuity control:** an `admin` succeeds on **both**. Without it the pair passes on a build
+  where key creation is broken outright.
+- **Cap control:** an org at `max_api_keys` is refused on the consent path too.
+
+### The alternative, named so it can be chosen instead
+
+If the founder prefers **MCP as an admin-only capability**, that is coherent — but it is then a
+**product decision that must be published**, not a consequence discovered by a viewer whose client
+stops working. It would require a line on the MCP docs page and in the consent-screen copy saying so.
+**What is not acceptable is the silent version**, where the feature simply fails for two thirds of
+roles and the refusal says `insufficient_role` about a key the user never asked to mint.
 
 ## §9 — The branches that were weighed *(historical — see §8)*
 

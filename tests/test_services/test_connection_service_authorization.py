@@ -30,7 +30,7 @@ from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.authorization import InsufficientRoleError
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
-from tests.factories import make_org_admin, make_user
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -174,23 +174,8 @@ class TestTheActorCannotBeOmittedOrSwallowed:
         conn = _make(svc, db_session, org, editor)
         with pytest.raises(TypeError):
             if method == "create":
-                svc.create_connection(
-                    db_session,
-                    org.id,
-                    "N",
-                    ConnectionType.POSTGRES,
-                    {},
-                    actor_user_id=make_org_admin(db_session, org.id),
-                )
+                svc.create_connection(db_session, org.id, "N", ConnectionType.POSTGRES, {})
             elif method == "update":
-                svc.update_connection(
-                    db_session,
-                    org.id,
-                    conn.id,
-                    name="x",
-                    actor_user_id=make_org_admin(db_session, org.id),
-                )
+                svc.update_connection(db_session, org.id, conn.id, name="x")
             else:
-                svc.delete_connection(
-                    db_session, org.id, conn.id, actor_user_id=make_org_admin(db_session, org.id)
-                )
+                svc.delete_connection(db_session, org.id, conn.id)

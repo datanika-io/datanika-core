@@ -1442,6 +1442,7 @@ class ConnectionState(BaseState):
                             session,
                             org_id,
                             self.editing_conn_id,
+                            actor_user_id=user_id,
                             name=self.form_name,
                             connection_type=ConnectionType(self.form_type),
                             config=config,
@@ -1467,6 +1468,7 @@ class ConnectionState(BaseState):
                             ConnectionType(self.form_type),
                             config,
                             source_template_slug=self.selected_template_slug or None,
+                            actor_user_id=user_id,
                         )
                         self._audit(
                             session,
@@ -1587,7 +1589,7 @@ class ConnectionState(BaseState):
             old_values = (
                 {"name": conn.name, "connection_type": conn.connection_type.value} if conn else {}
             )
-            svc.delete_connection(session, org_id, conn_id)
+            svc.delete_connection(session, org_id, conn_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,

@@ -69,7 +69,23 @@ jobs:
             datanika-io/datanika-landing
 
       - name: File an issue when a schedule has stopped
-        if: steps.check.outcome == 'failure'
+        # core#1243. This used to read `steps.check.outcome == 'failure'`, which is true
+        # only when the check step RAN and returned non-zero. If anything BEFORE it fails
+        # -- checkout, setup-python, `pip install pyyaml` -- the check step never runs,
+        # `steps.check.outcome` is EMPTY, this step is SKIPPED, and the job ends red
+        # having filed nothing.
+        #
+        # That is core#691 one level up, inside the very thing built to catch core#691's
+        # class: a red scheduled run is EXACTLY what a correct detection looks like (the
+        # filing path deliberately ends in `exit 1`), so "broke before it could look" and
+        # "found a dead cron" produced the same colour AND the same absence of a new
+        # issue. Measured on run 34395255144: that red run WAS a correct detection --
+        # which is exactly why a genuinely broken one would not have stood out.
+        #
+        # `!= 'success'` covers both '' (never ran) and 'failure' (ran and crashed).
+        # `!cancelled()` keeps a cancelled run from filing: a cancelled job is neither
+        # green nor red and carries no steps, so it proves nothing in either direction.
+        if: ${{ !cancelled() && steps.check.outcome != 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -95,10 +111,15 @@ jobs:
           # it reports findings through, under a DIFFERENT title, so the two are
           # one glance apart in the issue list rather than one log-dive apart.
           if [ ! -f problems.md ]; then
-            echo "::error::The watchdog exited non-zero but wrote no problems.md."
+            echo "::error::No problems.md was written, so NOTHING WAS VERIFIED."
             echo "::error::That means it failed to RUN, not that it found a fault."
             echo "::error::Check the step above -- most likely the token cannot"
             echo "::error::read one of the repos, or the workflows API changed."
+            echo "::error::check step outcome: '${{ steps.check.outcome }}'"
+            echo "::error::  failure -> the check ran and crashed; read its log."
+            echo "::error::  (empty) -> the check NEVER RAN: a step before it failed"
+            echo "::error::             (checkout/setup-python/pip), so this run"
+            echo "::error::             inspected nothing at all."
 
             broken=$(gh issue list --state open \
               --search "in:title Scheduled workflow watchdog is failing to run" \
@@ -107,6 +128,9 @@ jobs:
             {
               printf 'The watchdog ran and could not complete a check, so **nothing was verified '
               printf 'this run** -- this is not a report that a cron has stopped.\n\n'
+              printf 'Check step outcome: `%s`. An EMPTY value means the check never ran' "${{ steps.check.outcome }}"
+              printf ' at all, because a step before it failed -- so this run inspected'
+              printf ' nothing.\n\n'
               printf 'Run: %s/%s/actions/runs/%s\n\n' \
                 "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
               printf 'While this issue is open, the absence of a "Scheduled workflow stopped '

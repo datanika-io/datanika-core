@@ -27,6 +27,7 @@ from datanika.services.backup_service import (
 from datanika.services.connection_service import SECRET_CONFIG_KEYS, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -76,7 +77,14 @@ def loaded_connection(db_session, conn_svc, org):
     config["keyfile_json"] = json.dumps(
         {"type": "service_account", "private_key": "SEKRIT-nested-private-key-4f9a2b"}
     )
-    return conn_svc.create_connection(db_session, org.id, "Loaded", ConnectionType.POSTGRES, config)
+    return conn_svc.create_connection(
+        db_session,
+        org.id,
+        "Loaded",
+        ConnectionType.POSTGRES,
+        config,
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
 
 
 class TestExportLeaksNothing:
@@ -120,6 +128,7 @@ class TestRedactionRoundTrips:
             upload_svc,
             backup,
             {("connection", "Loaded"): "overwrite"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
 
         after = encryption.decrypt(
@@ -131,10 +140,22 @@ class TestRedactionRoundTrips:
         self, db_session, encryption, conn_svc, upload_svc, org, loaded_connection
     ):
         backup = BackupService.export_backup(db_session, org.id, encryption)
-        conn_svc.delete_connection(db_session, org.id, loaded_connection.id)
+        conn_svc.delete_connection(
+            db_session,
+            org.id,
+            loaded_connection.id,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
 
         result = BackupService.import_backup(
-            db_session, org.id, encryption, conn_svc, upload_svc, backup, {}
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            backup,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
 
         created = next(c for c in conn_svc.list_connections(db_session, org.id))
@@ -151,14 +172,29 @@ class TestRedactionRoundTrips:
         self, db_session, encryption, conn_svc, upload_svc, org
     ):
         conn_svc.create_connection(
-            db_session, org.id, "Plain", ConnectionType.POSTGRES, {"host": "h"}
+            db_session,
+            org.id,
+            "Plain",
+            ConnectionType.POSTGRES,
+            {"host": "h"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         backup = BackupService.export_backup(db_session, org.id, encryption)
         conn_svc.delete_connection(
-            db_session, org.id, conn_svc.list_connections(db_session, org.id)[0].id
+            db_session,
+            org.id,
+            conn_svc.list_connections(db_session, org.id)[0].id,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         result = BackupService.import_backup(
-            db_session, org.id, encryption, conn_svc, upload_svc, backup, {}
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            backup,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["credentials_required"] == []
 
@@ -172,6 +208,7 @@ class TestRedactionRoundTrips:
             "Legacy",
             ConnectionType.POSTGRES,
             {"host": "old", "password": "real-password"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         data = {
             "version": 2,
@@ -194,6 +231,7 @@ class TestRedactionRoundTrips:
             upload_svc,
             data,
             {("connection", "Legacy"): "overwrite"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         cfg = encryption.decrypt(
             conn_svc.get_connection(db_session, org.id, existing.id).config_encrypted
@@ -221,7 +259,14 @@ class TestRedactionRoundTrips:
             "uploads": [],
         }
         result = BackupService.import_backup(
-            db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            data,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["connections_imported"] == 1
 
@@ -258,10 +303,25 @@ class TestOrgProvenance:
     ):
         """Moving config between orgs is legitimate — the warning is a speed bump, not a wall."""
         conn_svc.create_connection(
-            db_session, other_org.id, "Portable", ConnectionType.POSTGRES, {"host": "h"}
+            db_session,
+            other_org.id,
+            "Portable",
+            ConnectionType.POSTGRES,
+            {"host": "h"},
+            # admin of OTHER_ORG -- the connection is created there. The blanket
+            # substitution used `org.id` and the service refused, correctly: authority
+            # does not travel between orgs.
+            actor_user_id=make_org_admin(db_session, other_org.id),
         )
         backup = BackupService.export_backup(db_session, other_org.id, encryption)
         result = BackupService.import_backup(
-            db_session, org.id, encryption, conn_svc, upload_svc, backup, {}
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            backup,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["connections_imported"] == 1

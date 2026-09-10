@@ -110,8 +110,11 @@ class TestDeletionNeedsAdmin:
         conn = _make(svc, db_session, org, admin)
         assert svc.delete_connection(db_session, org.id, conn.id, actor_user_id=admin) is True
 
-    def test_an_EDITOR_cannot_delete(self, svc, db_session, org, editor):
-        """The discriminating case: editor passes every other threshold in this file."""
+    def test_an_editor_cannot_delete(self, svc, db_session, org, editor):
+        """The discriminating case: an EDITOR passes every other threshold in this file.
+
+        (Lowercased for N802; the emphasis is the point of the test.)
+        """
         conn = _make(svc, db_session, org, editor)
         with pytest.raises(InsufficientRoleError) as exc:
             svc.delete_connection(db_session, org.id, conn.id, actor_user_id=editor)

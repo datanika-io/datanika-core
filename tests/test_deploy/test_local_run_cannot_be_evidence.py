@@ -100,6 +100,7 @@ MARKER_ALLOWLIST = frozenset(
         "e2e/tests/a11y-sweep.spec.ts",  # comment: read the marker, not the tick
         "e2e/tests/golden-path.spec.ts",  # comment: how it graduated
         "e2e/scripts/informational_spec_results.py",  # emits the per-spec marker (core#1221)
+        "tests/test_deploy/test_per_spec_graduation.py",  # its tests (core#1221)
     }
 )
 

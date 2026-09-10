@@ -1,8 +1,32 @@
 # UX Spec — Contextual Tooltips (Onboarding Slice 3)
 
-> **Status**: spec draft — not yet coded
-> **Tracks**: `PLAN_PRODUCT.md` → P0 Onboarding Experience → bullet 3
-> **Author**: Product agent, 2026-04-12
+> **Status**: ✅ **SHIPPED** — component and all 8 keys live; 8 of 8 placements now in the product.
+> **Author**: Product agent, 2026-04-12 · **Last verified**: 2026-09-10
+>
+> 🔴 **This header read *"spec draft — not yet coded"* until 2026-09-10, while
+> `ui/components/info_tooltip.py`, eight keys in nine locales and five placements had been live for
+> months.** It also pointed at `PLAN_PRODUCT.md`, retired 2026-08-31 ([core#781]). ⚠️ **A spec that
+> understates what shipped invites someone to build it a second time; one that overstates invites
+> someone to skip a check.** I read this line while scoping [core#1170] AC4.3 and had to go measure
+> `rx.tooltip` usage to find out it was false.
+>
+> 🆕 **[core#1242] — three of the eight placements were never built, and the fix changed their
+> form.** `write_disposition_{append,replace,merge}` were scoped below as tooltips on the individual
+> **select options**; only the select itself ever got one, so 27 translated strings were reachable
+> from no screen. **They now ship as an inline `rx.match` hint under the select** rather than as
+> option tooltips: a tooltip inside an open dropdown is hover-only and touch-hostile, `rx.select.item`
+> appears **nowhere** in this codebase, and `pipelines.py:236` already established `rx.match` as the
+> house pattern for a per-choice hint. **The user reads the explanation of the option they chose, at
+> the moment they choose it, without hovering anything.**
+>
+> Consequence for the registry: those three left `TOOLTIP_KEYS`, which describes what the **tooltip
+> component** renders. `tests/test_ui/test_info_tooltip.py` now asserts **every registered key is
+> passed to `info_tooltip` somewhere in the UI** — an assertion that could not be written before,
+> because it would have been red on arrival.
+
+[core#781]: https://github.com/datanika-io/datanika-core/issues/781
+[core#1170]: https://github.com/datanika-io/datanika-core/issues/1170
+[core#1242]: https://github.com/datanika-io/datanika-core/issues/1242
 
 ---
 

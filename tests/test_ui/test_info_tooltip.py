@@ -14,6 +14,7 @@ to bump.
 
 import json
 import pathlib
+import re
 
 import pytest
 
@@ -21,13 +22,11 @@ import datanika.ui
 from datanika.ui.components.info_tooltip import TOOLTIP_KEYS, info_tooltip
 
 LOCALES = ("en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr")
-I18N_DIR = pathlib.Path(datanika.ui.__file__).parent.parent / "i18n"
+UI_DIR = pathlib.Path(datanika.ui.__file__).parent
+I18N_DIR = UI_DIR.parent / "i18n"
 
 EXPECTED_KEYS = (
     "tooltip.write_disposition",
-    "tooltip.write_disposition_append",
-    "tooltip.write_disposition_replace",
-    "tooltip.write_disposition_merge",
     "tooltip.incremental_cursor",
     "tooltip.schema_contract",
     "tooltip.load_mode",
@@ -52,6 +51,31 @@ class TestTooltipKeys:
         """Replaces `len(TOOLTIP_KEYS) == 8`. No literal to remember to bump."""
         assert len(TOOLTIP_KEYS) == len(set(TOOLTIP_KEYS)), "a key is registered twice"
         assert len(TOOLTIP_KEYS) == len(EXPECTED_KEYS)
+
+    def test_every_registered_key_is_actually_placed_in_the_ui(self):
+        """🆕 core#1242. **This assertion could not be written until today.**
+
+        It would have been **red on arrival**: three registered keys —
+        ``write_disposition_{append,replace,merge}`` — were passed to
+        ``info_tooltip`` nowhere, so 27 translated strings were reachable from no
+        screen. Filing it rather than writing a failing guard was deliberate: **an
+        assertion that fails the moment it is written teaches the next person to
+        delete it.**
+
+        The three are now placed (as an inline hint, see the component docstring)
+        and are out of this registry, so the property finally holds and can be
+        enforced.
+        """
+        used = set()
+        for path in sorted(UI_DIR.rglob("*.py")):
+            used |= set(re.findall(r'info_tooltip\(\s*"([^"]+)"', path.read_text(encoding="utf-8")))
+        assert used, "the scanner found no info_tooltip call sites — it proves nothing"
+
+        unplaced = set(TOOLTIP_KEYS) - used
+        assert not unplaced, (
+            f"registered but rendered nowhere: {sorted(unplaced)} — each is a set of "
+            "nine translations reachable from no screen"
+        )
 
     @pytest.mark.parametrize("locale", LOCALES)
     def test_every_registered_tooltip_resolves_in_every_locale(self, locale):

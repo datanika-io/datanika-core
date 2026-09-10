@@ -31,6 +31,7 @@ from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture(autouse=True)
@@ -61,10 +62,20 @@ def setup_upload(db_session, upload_svc, conn_svc, encryption):
     db_session.add(org)
     db_session.flush()
     src = conn_svc.create_connection(
-        db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432}
+        db_session,
+        org.id,
+        "S",
+        ConnectionType.POSTGRES,
+        {"host": "src", "port": 5432},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"}
+        db_session,
+        org.id,
+        "D",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = upload_svc.create_upload(
         db_session, org.id, "test", "desc", src.id, dst.id, {"write_disposition": "append"}

@@ -14,6 +14,7 @@ from datanika.services.upload_service import (
     to_dataset_name,
     validate_upload_name,
 )
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -56,6 +57,7 @@ def source_conn(conn_svc, db_session, org):
         "Source DB",
         ConnectionType.POSTGRES,
         {"host": "src"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 
@@ -67,6 +69,7 @@ def dest_conn(conn_svc, db_session, org):
         "Dest DB",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 
@@ -78,6 +81,7 @@ def both_conn(conn_svc, db_session, org):
         "Both DB",
         ConnectionType.POSTGRES,
         {"host": "both"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 
@@ -259,6 +263,7 @@ class TestListUploads:
             "S2",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, other_org.id),
         )
         other_dst = conn_svc.create_connection(
             db_session,
@@ -266,6 +271,7 @@ class TestListUploads:
             "D2",
             ConnectionType.BIGQUERY,
             {"project": "p", "dataset": "d"},
+            actor_user_id=make_org_admin(db_session, other_org.id),
         )
         svc.create_upload(
             db_session,

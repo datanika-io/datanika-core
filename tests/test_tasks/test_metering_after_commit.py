@@ -37,6 +37,7 @@ from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.user import Organization
 from datanika.services.encryption import EncryptionService
+from tests.factories import make_org_admin
 
 #: The events datanika-cloud subscribes its metering handlers to.
 METERED_EVENTS = (
@@ -83,10 +84,20 @@ def upload_run(db_session):
     db_session.flush()
 
     src = conn_svc.create_connection(
-        db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432}
+        db_session,
+        org.id,
+        "S",
+        ConnectionType.POSTGRES,
+        {"host": "src", "port": 5432},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
-        db_session, org.id, "D", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"}
+        db_session,
+        org.id,
+        "D",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = upload_svc.create_upload(
         db_session, org.id, "test", "desc", src.id, dst.id, {"write_disposition": "append"}

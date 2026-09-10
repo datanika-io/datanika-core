@@ -46,6 +46,7 @@ from datanika.services.connection_service import (
     is_local_filesystem_location,
 )
 from datanika.services.encryption import EncryptionService
+from tests.factories import make_org_admin
 
 KEY = "3Zq7Yq5wJvXk9nR2mT8pL4sV6dC0bN1hG5jF7aE3uI0="
 
@@ -146,7 +147,14 @@ def test_a_local_path_is_refused_at_save(db_session, svc, org, forbid, ct):
     """Every type that carries a filesystem location, not just the two filed."""
     key = "bucket_url" if ct in {ConnectionType.CSV, ConnectionType.JSON} else "path"
     with pytest.raises(LocalPathNotAllowedError) as exc:
-        svc.create_connection(db_session, org.id, f"local {ct.value}", ct, {key: "/tmp/thing"})
+        svc.create_connection(
+            db_session,
+            org.id,
+            f"local {ct.value}",
+            ct,
+            {key: "/tmp/thing"},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
     assert "Upload the file" in str(exc.value), (
         "the refusal must name a route that works, not merely refuse"
     )
@@ -166,7 +174,14 @@ def test_the_same_save_succeeds_when_local_paths_are_permitted(db_session, svc, 
     upgrade — the people this feature was built for.
     """
     key = "bucket_url" if ct in {ConnectionType.CSV, ConnectionType.JSON} else "path"
-    conn = svc.create_connection(db_session, org.id, f"ok {ct.value}", ct, {key: "/tmp/thing"})
+    conn = svc.create_connection(
+        db_session,
+        org.id,
+        f"ok {ct.value}",
+        ct,
+        {key: "/tmp/thing"},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
     assert conn.id
 
 
@@ -174,7 +189,12 @@ def test_a_remote_bucket_is_unaffected(db_session, svc, org, forbid):
     """A bucket URL means the same thing in both containers, so it is not the
     thing being refused."""
     conn = svc.create_connection(
-        db_session, org.id, "remote csv", ConnectionType.CSV, {"bucket_url": "s3://b/p/"}
+        db_session,
+        org.id,
+        "remote csv",
+        ConnectionType.CSV,
+        {"bucket_url": "s3://b/p/"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     assert conn.id
 
@@ -188,6 +208,7 @@ def test_a_database_connection_is_unaffected(db_session, svc, org, forbid):
         "pg",
         ConnectionType.POSTGRES,
         {"host": "db", "port": 5432, "user": "u", "password": "p", "database": "analytics"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     assert conn.id
 
@@ -203,11 +224,22 @@ def test_update_is_refused_too(db_session, svc, org, permit, forbid):
 
     settings.datanika_allow_local_file_paths = True
     conn = svc.create_connection(
-        db_session, org.id, "duck", ConnectionType.DUCKDB, {"path": "/tmp/a.duckdb"}
+        db_session,
+        org.id,
+        "duck",
+        ConnectionType.DUCKDB,
+        {"path": "/tmp/a.duckdb"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     settings.datanika_allow_local_file_paths = False
     with pytest.raises(LocalPathNotAllowedError):
-        svc.update_connection(db_session, org.id, conn.id, config={"path": "/tmp/b.duckdb"})
+        svc.update_connection(
+            db_session,
+            org.id,
+            conn.id,
+            config={"path": "/tmp/b.duckdb"},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
 
 
 def test_update_of_an_unrelated_field_is_not_refused(db_session, svc, org, monkeypatch):
@@ -220,10 +252,21 @@ def test_update_of_an_unrelated_field_is_not_refused(db_session, svc, org, monke
 
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", True)
     conn = svc.create_connection(
-        db_session, org.id, "duck", ConnectionType.DUCKDB, {"path": "/tmp/a.duckdb"}
+        db_session,
+        org.id,
+        "duck",
+        ConnectionType.DUCKDB,
+        {"path": "/tmp/a.duckdb"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", False)
-    updated = svc.update_connection(db_session, org.id, conn.id, name="renamed")
+    updated = svc.update_connection(
+        db_session,
+        org.id,
+        conn.id,
+        name="renamed",
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
     assert updated is not None
     assert updated.name == "renamed"
 
@@ -239,11 +282,20 @@ def test_repointing_a_local_row_at_a_bucket_is_allowed(db_session, svc, org, mon
 
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", True)
     conn = svc.create_connection(
-        db_session, org.id, "csv", ConnectionType.CSV, {"bucket_url": "/srv/incoming"}
+        db_session,
+        org.id,
+        "csv",
+        ConnectionType.CSV,
+        {"bucket_url": "/srv/incoming"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", False)
     updated = svc.update_connection(
-        db_session, org.id, conn.id, config={"bucket_url": "s3://bucket/incoming/"}
+        db_session,
+        org.id,
+        conn.id,
+        config={"bucket_url": "s3://bucket/incoming/"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     assert updated is not None
 
@@ -269,6 +321,7 @@ def test_an_existing_local_path_row_still_loads_and_lists(db_session, svc, org, 
         "legacy duckdb",
         ConnectionType.DUCKDB,
         {"path": "/app/dbt_projects/_docs_samples/warehouse.duckdb"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     conn_id = conn.id
     db_session.flush()
@@ -287,10 +340,20 @@ def test_deleting_a_local_path_row_still_works(db_session, svc, org, monkeypatch
 
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", True)
     conn = svc.create_connection(
-        db_session, org.id, "legacy", ConnectionType.SQLITE, {"path": "/tmp/legacy.sqlite"}
+        db_session,
+        org.id,
+        "legacy",
+        ConnectionType.SQLITE,
+        {"path": "/tmp/legacy.sqlite"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     monkeypatch.setattr(settings, "datanika_allow_local_file_paths", False)
-    assert svc.delete_connection(db_session, org.id, conn.id) is True
+    assert (
+        svc.delete_connection(
+            db_session, org.id, conn.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
+        is True
+    )
 
 
 # --------------------------------------------------------------------------
@@ -442,6 +505,7 @@ def test_the_upload_route_still_works_under_the_ban(db_session, svc, org, forbid
         "uploaded csv",
         ConnectionType.CSV,
         {"uploaded_file_id": 7, "file_name": "customers.csv"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     assert conn.id
 
@@ -459,5 +523,6 @@ def test_an_empty_location_is_not_refused(db_session, svc, org, forbid):
         "empty location",
         ConnectionType.CSV,
         {"bucket_url": "", "uploaded_file_id": 9},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     assert conn.id

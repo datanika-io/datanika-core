@@ -19,6 +19,7 @@ from datanika.services.dependency_service import DependencyService
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -63,6 +64,7 @@ def upload(upload_svc, conn_svc, db_session, org):
         "SrcCheck",
         ConnectionType.POSTGRES,
         {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
         db_session,
@@ -70,6 +72,7 @@ def upload(upload_svc, conn_svc, db_session, org):
         "DstCheck",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return upload_svc.create_upload(db_session, org.id, "checkupload", "desc", src.id, dst.id, {})
 
@@ -82,6 +85,7 @@ def upload2(upload_svc, conn_svc, db_session, org):
         "Src2Check",
         ConnectionType.POSTGRES,
         {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
         db_session,
@@ -89,6 +93,7 @@ def upload2(upload_svc, conn_svc, db_session, org):
         "Dst2Check",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return upload_svc.create_upload(
         db_session,

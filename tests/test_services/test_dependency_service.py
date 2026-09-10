@@ -12,6 +12,7 @@ from datanika.services.dependency_service import DependencyConfigError, Dependen
 from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -58,13 +59,21 @@ def other_org(db_session):
 
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
-    src = conn_svc.create_connection(db_session, org.id, "Src", ConnectionType.POSTGRES, {"h": "x"})
+    src = conn_svc.create_connection(
+        db_session,
+        org.id,
+        "Src",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
     dst = conn_svc.create_connection(
         db_session,
         org.id,
         "Dst",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
 
@@ -77,6 +86,7 @@ def upload2(upload_svc, conn_svc, db_session, org):
         "Src2",
         ConnectionType.POSTGRES,
         {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
         db_session,
@@ -84,6 +94,7 @@ def upload2(upload_svc, conn_svc, db_session, org):
         "Dst2",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return upload_svc.create_upload(db_session, org.id, "pipe2", "desc", src.id, dst.id, {})
 

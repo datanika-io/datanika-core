@@ -533,7 +533,22 @@ def main() -> int:
                 f"branch -- see the notices above and decide which reading applies."
             )
         else:
-            print("\nAll scheduled workflows are active and firing.")
+            # core#1256, same shape as the orphan carve-out above and found by
+            # running this script as a POSITIVE control rather than trusting it:
+            # `scheduled-post-liveness.yml` printed `last_schedule_run=never` and the
+            # closing line one screen below said every workflow was firing. Both
+            # statements were true of different things, which is what makes a summary
+            # that over-claims worse than one that is simply wrong.
+            never = [w for w in scheduled if w.last_schedule_run is None]
+            if never:
+                print(
+                    f"\nAll {len(scheduled)} scheduled workflows are active, and none is "
+                    f"overdue. {len(never)} has never fired at all and is still inside its "
+                    "budget -- see the notices above. `active` is not evidence of firing; "
+                    "only the runs endpoint is."
+                )
+            else:
+                print("\nAll scheduled workflows are active and firing.")
         return 0
 
     print()

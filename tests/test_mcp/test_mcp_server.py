@@ -104,7 +104,11 @@ class TestWriteGuard:
         srv._allow_write = False
         srv._client = AsyncMock()
         with pytest.raises(RuntimeError, match="Write access required"):
-            await srv.create_connection("test", "postgres", {"host": "localhost"})
+            await srv.create_connection(
+                "test",
+                "postgres",
+                {"host": "localhost"},
+            )
 
     async def test_trigger_pipeline_calls_require_write(self):
         import datanika_mcp.server as srv
@@ -172,7 +176,11 @@ class TestWriteToolsCallClient:
         mock_client.create_connection.return_value = {"id": 1, "name": "test"}
         srv._client = mock_client
 
-        result = await srv.create_connection("test", "postgres", {"host": "localhost"})
+        result = await srv.create_connection(
+            "test",
+            "postgres",
+            {"host": "localhost"},
+        )
         mock_client.create_connection.assert_awaited_once_with(
             "test", "postgres", {"host": "localhost"}
         )

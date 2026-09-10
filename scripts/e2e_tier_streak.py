@@ -161,6 +161,15 @@ LOCAL_VERDICT = "local_environment"
 #: stay exactly as strict as they were.
 LOCAL_VERDICTS: dict[str, str] = {LOCAL_VERDICT: LOCAL}
 
+#: `informational_spec_results.py`'s vocabulary (core#1221). `no_evidence` is what an empty or
+#: unreadable report produces — a report carrying no spec at all, which is what a crashed or
+#: misdirected run leaves behind. It is UNMEASURED, never a green.
+INFORMATIONAL_SPEC_VERDICTS: dict[str, str] = {
+    "success": PASS,
+    "failure": FAIL,
+    "no_evidence": UNMEASURED,
+}
+
 #: Verdict token -> class. **All three vocabularies**, because one policy is emitted by two jobs
 #: and `e2e-staging` emits two tiers of its own.
 #:
@@ -185,6 +194,7 @@ VERDICT_CLASS: dict[str, str] = {
     **SSO_VERDICTS,
     **GATING_VERDICTS,
     **INFORMATIONAL_VERDICTS,
+    **INFORMATIONAL_SPEC_VERDICTS,
     **LOCAL_VERDICTS,
 }
 
@@ -215,6 +225,13 @@ _INFO_VERDICT = re.compile(r"(?:^|\s)INFORMATIONAL_RESULT=([a-z_]+)\s*$")
 _GATING_VERDICT = re.compile(
     r"gating step outcome: (?P<specs>[a-z_]+) / job status: [a-z_]+ / "
     r"verdict: (?P<verdict>[a-z_]+)\s*$"
+)
+
+#: `e2e/scripts/informational_spec_results.py`, one line per spec FILE (core#1221).
+#: Graduation is per spec; the tier line is one boolean for the whole tier, so a new spec
+#: entering zeroed every incumbent and one red spec blocked everyone.
+_INFO_SPEC_VERDICT = re.compile(
+    r"(?:^|\s)INFORMATIONAL_SPEC_RESULT=(?P<spec>[^:\s]+):(?P<verdict>[a-z_]+)\s*$"
 )
 
 #: Tier -> the pattern that tier's classifier prints.
@@ -407,6 +424,62 @@ def parse_specs_outcome(log_lines: list[str]) -> str | None:
     return found
 
 
+def parse_spec_verdicts(log_lines: list[str]) -> dict[str, str]:
+    """`spec file -> verdict token` from a log's per-spec lines. Empty when it carries none.
+
+    An empty dict means *"this run predates core#1221"*, which is a different fact from
+    *"this run graded no spec"* — the caller has to tell them apart, and
+    :func:`classify_for_spec` is where that happens.
+    """
+    found: dict[str, str] = {}
+    for raw in log_lines:
+        line = _ANSI.sub("", raw).rstrip()
+        if line.endswith('"') or line.endswith("'"):
+            continue
+        m = _INFO_SPEC_VERDICT.search(line)
+        if m:
+            found[m.group("spec")] = m.group("verdict")
+    return found
+
+
+def classify_for_spec(spec: str, per_spec: dict[str, str], tier_verdict: str | None) -> str:
+    """What ONE spec's run means, from a log that may or may not carry per-spec lines.
+
+    🚨 **The asymmetry is the whole fix, and it is not symmetric on purpose.**
+
+    A run that carries per-spec lines answers directly. A run that predates them carries only
+    the tier's boolean, and the two directions of that boolean do **not** carry the same
+    information about one spec:
+
+    * tier ``success`` -> this spec passed. A green tier means every spec in it was green,
+      so the attribution is sound.
+    * tier ``failure`` -> **UNMEASURED, not FAIL.** The line says *something* in the tier
+      failed and cannot say what. Grading it as this spec's failure is exactly the defect
+      core#1221 is about, one level down: it is how ``reflex-wire.spec.ts`` lost seven greens
+      to a spec that arrived beside it.
+
+    ⚠️ UNMEASURED is transparent to the streak, so an incumbent's history survives — and
+    ``Reading.from_classes`` then reports it ``sparse`` once the unattributable runs
+    outnumber ``max_gaps``, which is the correct answer: *the streak is intact and nobody has
+    measured it lately; a human decides.* That fell out of core#1154's fix rather than being
+    added here, which is the reason to trust it.
+
+    A spec absent from a run that DID carry per-spec lines is UNMEASURED too: it did not run,
+    or did not exist yet. Neither is a failure.
+    """
+    if per_spec:
+        token = per_spec.get(spec)
+        if token is None:
+            return UNMEASURED
+        return VERDICT_CLASS.get(token, UNREADABLE)
+
+    if tier_verdict == "success":
+        return PASS
+    if tier_verdict == "failure":
+        return UNMEASURED
+    return classify_verdict(tier_verdict)
+
+
 def streak(classes: list[str]) -> int:
     """Trailing consecutive PASSes over the MEASURED subsequence.
 
@@ -545,7 +618,9 @@ def _gh_log_or_none(repo: str, job_id: int) -> str | None:
     return out.stdout if out.returncode == 0 else None
 
 
-def collect(repo: str, branch: str, job_name: str, runs: int) -> list[tuple[str, str, str]]:
+def collect(
+    repo: str, branch: str, job_name: str, runs: int, spec: str | None = None
+) -> list[tuple[str, str, str]]:
     """`(created_at, short_sha, class)` per completed run, oldest first.
 
     ``event=push`` is not optional. A `dev` head carries a `merge_group` run too, whose staging
@@ -589,7 +664,22 @@ def collect(repo: str, branch: str, job_name: str, runs: int) -> list[tuple[str,
             # rather than reporting the reader as broken.
             verdict = "cancelled"
 
-        out.append((run["created_at"], run["head_sha"][:8], classify_verdict(verdict, specs)))
+        # core#1232's veto composes with core#1221's per-spec reading, and it has to be
+        # applied HERE rather than inside either classifier: a log that attests to a
+        # non-CI environment says nothing about production whichever question is asked of
+        # it, and a per-spec green from a laptop is exactly the false verdict with a build
+        # behind it that #1232 exists to refuse.
+        where = attested_environment(lines) if log is not None else None
+        if where is not None and where != CI_ENVIRONMENT:
+            klass = LOCAL
+        elif spec is not None:
+            klass = classify_for_spec(
+                spec, parse_spec_verdicts(lines), parse_verdict_line(lines, tier="informational")
+            )
+        else:
+            klass = classify_verdict(verdict, specs)
+
+        out.append((run["created_at"], run["head_sha"][:8], klass))
 
     # If NOTHING could be fetched, this is an instrument failure and must be loud. Silently
     # classifying every run UNREADABLE blocks a streak, which is the safe direction — and it
@@ -608,6 +698,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--branch", default="dev")
     ap.add_argument("--job", default="e2e-sso", help="job name substring (e2e-sso, e2e-staging)")
     ap.add_argument("--runs", type=int, default=25)
+    ap.add_argument(
+        "--spec",
+        help="grade ONE informational spec file (e.g. reflex-wire.spec.ts) instead of the "
+        "whole tier — core#1221. Graduation is per spec; the tier line is one boolean.",
+    )
     ap.add_argument("--required", type=int, default=3)
     ap.add_argument(
         "--max-gaps",
@@ -618,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    history = collect(args.repo, args.branch, args.job, args.runs)
+    history = collect(args.repo, args.branch, args.job, args.runs, spec=args.spec)
     for created, sha, cls in history:
         print(f"{created}  {sha}  {cls}")
 
@@ -626,7 +721,10 @@ def main(argv: list[str] | None = None) -> int:
         [c for _, _, c in history], required=args.required, max_gaps=args.max_gaps
     )
     print()
-    print(f"job            : {args.job} on {args.branch}")
+    subject = f"{args.job} on {args.branch}"
+    if args.spec:
+        subject += f"   spec: {args.spec}"
+    print(f"job            : {subject}")
     print(f"runs read      : {r.total}  (measured: {r.measured})")
     print(
         f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "

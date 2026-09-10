@@ -127,7 +127,14 @@ class BackupState(BaseState):
         try:
             with get_sync_session() as session:
                 result = BackupService.import_backup(
-                    session, org_id, encryption, conn_svc, upload_svc, data, resolutions
+                    session,
+                    org_id,
+                    encryption,
+                    conn_svc,
+                    upload_svc,
+                    data,
+                    resolutions,
+                    actor_user_id=user_id,
                 )
                 self._audit(
                     session,

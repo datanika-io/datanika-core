@@ -1709,6 +1709,47 @@ it reports a defect that is not there. Both are instrument errors and both look 
    `_rate_limit_svc` and reached **real Redis**; all six tests failed *including* both controls.
    Reading that as "the fix does not work" would have been wrong twice — about the fix, and about
    what the run measured. Count the controls before reading the failures.
+## 57. A broad `except` upstream of a typed refusal makes the refusal inert — and both look shipped
+
+**(2026-09-10, [core#681], and it is [core#896]'s shape a second time.)** §7.1 of
+`SPEC_SERVICE_AUTHORIZATION` requires a `403` carrying a `required_role` **field**, produced by
+`api_middleware`. Wiring the service to raise `InsufficientRoleError` and the middleware to render
+it looked complete, and was not:
+
+```python
+except (ValueError, Exception) as exc:      # api_v1_routes, around the service call
+    return _error(400, str(exc))
+```
+
+`InsufficientRoleError` is a `UserFacingError`, which is a `ValueError`. So the route handler
+answered **first**, the refusal became a `400` with a prose message, and the middleware's §7.1
+handler — the thing that produces the `403` — **could never run**. Both halves were present, both
+tested in isolation, and the contract was not met.
+
+🔑 **That is core#896 restated one layer up.** There, `if "endpoint" not in scope` could never be
+true because an outer `Mount` had already populated the scope. Here, a handler could never see the
+exception because an inner `except` had already consumed it. The general form is:
+
+> **A guard is inert if anything upstream of it already answers.** Reading the guard tells you
+> nothing; you have to ask what reaches it.
+
+**Rules:**
+
+1. **When you add a typed exception, grep every `except` between the raise site and the intended
+   handler** — including `except ValueError` where the type is a `ValueError` subclass, which is
+   the easy one to miss because the code says nothing about your class. `datanika/errors.py`'s
+   hierarchy makes `UserFacingError` a `ValueError` deliberately; that is useful for rendering and
+   a trap for routing.
+2. 🚨 **Do not audit this by reading `except` blocks.** There are 20+ in `api_v1_routes` alone, and
+   seven more subsystems have to pass through them. **Drive the endpoint and read the status
+   code.** An endpoint-level test per subsystem catches swallowing empirically, at the only place
+   the answer is authoritative; reading excepts catches the ones you thought to look at.
+3. **Re-raise explicitly and say why at the site.** `except InsufficientRoleError: raise` with a
+   comment naming the handler it is being preserved for, because the next person to widen that
+   `except` will not otherwise know something depends on the exception escaping.
+4. **Corollary for the layer boundary**: an exception type is part of an interface between two
+   layers, so it needs the same treatment as a status code or a field name — not "an error we
+   throw", but "a value the outer layer is contracted to receive".
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1746,3 +1787,4 @@ it reports a defect that is not there. Both are instrument errors and both look 
 [core#456]: https://github.com/datanika-io/datanika-core/issues/456
 [core#910]: https://github.com/datanika-io/datanika-core/issues/910
 [core#681]: https://github.com/datanika-io/datanika-core/issues/681
+[core#896]: https://github.com/datanika-io/datanika-core/issues/896

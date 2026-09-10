@@ -335,6 +335,24 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "S"]
 # for example, S301 (pickle) or S324 (weak hash) in a test still fails.
 "tests/**" = ["S101", "S104", "S105", "S106", "S107", "S108", "S603", "S607", "S608"]
 
+# Operator tools (core#1237). Until now `scripts/` was linted by NEITHER gate — both
+# named `datanika tests` — so the three programs that decide whether a promotion may
+# proceed (`verify_e2e_attribution.py`, `e2e_tier_streak.py`,
+# `check_closing_keyword_intent.py`) had no style or safety signal at all.
+#
+# Three rules, and only three, for the same reasons `tests/**` carries them:
+#   S101 — `assert` is how these scripts state an invariant they intend to die on. A
+#          probe that continues past a broken precondition reports a clean result about
+#          nothing, which is the failure this whole directory exists to avoid.
+#   S603/S607 — shelling out to `gh`, `git`, `docker` and `ssh` IS the job. Every one is
+#          a fixed argv built in this repo; none takes a shell string.
+#
+# ⚠️ Deliberately NOT a blanket `"S"`. S608 (SQL) and S324 (weak hash) were the four real
+# findings here and each is fixed or suppressed at its own line with a reason, so a
+# genuine one arriving tomorrow is still caught. A blanket exemption would have hidden
+# all four and taken about the same effort.
+"scripts/**" = ["S101", "S603", "S607"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

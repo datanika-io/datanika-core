@@ -260,6 +260,39 @@ def upload_form() -> rx.Component:
                         on_change=UploadState.set_form_write_disposition,
                         width="100%",
                     ),
+                    # core#1242. These three strings existed in nine locales and were
+                    # rendered on no screen: SPEC_CONTEXTUAL_TOOLTIPS scoped them as
+                    # tooltips on the individual select *options*, and only the select
+                    # itself ever got one.
+                    #
+                    # They ship as an inline hint rather than as option tooltips, which
+                    # is a deliberate change from that spec. A tooltip inside an open
+                    # dropdown is hover-only and touch-hostile, and `rx.select.item`
+                    # appears **nowhere** in this codebase — composing a select purely to
+                    # host them would introduce a new pattern for one field. `rx.match`
+                    # on the current value is the established one: `pipelines.py:236`
+                    # does exactly this for the dbt command hints.
+                    #
+                    # The user reads the explanation of the option they have chosen, at
+                    # the moment they choose it, without hovering anything.
+                    rx.match(
+                        UploadState.form_write_disposition,
+                        (
+                            "append",
+                            rx.text(_t["tooltip.write_disposition_append"], size="1", color="gray"),
+                        ),
+                        (
+                            "replace",
+                            rx.text(
+                                _t["tooltip.write_disposition_replace"], size="1", color="gray"
+                            ),
+                        ),
+                        (
+                            "merge",
+                            rx.text(_t["tooltip.write_disposition_merge"], size="1", color="gray"),
+                        ),
+                        rx.fragment(),
+                    ),
                     # Primary key (merge + single_table only)
                     rx.cond(
                         (UploadState.form_write_disposition == "merge")

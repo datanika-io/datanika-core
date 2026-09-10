@@ -305,7 +305,19 @@ class ConnectionItem(BaseModel):
     id: int = 0
     name: str = ""
     connection_type: str = ""
-    test_status: str = ""  # "" = untested, "ok" = success, "fail" = failure
+    #: ``""`` = nobody has asked · ``"ok"`` = success · ``"fail"`` = failure ·
+    #: ``"untested"`` = we asked and the honest answer is *we cannot know from
+    #: here* (core#1170 AC3.2).
+    #:
+    #: 🚨 The fourth value is NOT a synonym for ``""``. Collapsing them is the
+    #: defect this AC exists to fix: pressing **Test** on a probe-exempt
+    #: connection used to leave the row byte-identical to never having pressed
+    #: it, so AC3.3's six keys x nine locales rendered nowhere.
+    test_status: str = ""
+    #: The translated sentence behind an ``"untested"`` verdict; empty for every
+    #: other status. The row has nowhere else to say *why*, and a neutral icon
+    #: with no explanation is a new silence rather than an honest answer.
+    test_note: str = ""
     #: How many live uploads / pipelines / transformations point at this
     #: connection, and their names, so the delete dialog can say what it is
     #: about to break rather than deleting silently (core#804, core#805).
@@ -1430,6 +1442,7 @@ class ConnectionState(BaseState):
                             session,
                             org_id,
                             self.editing_conn_id,
+                            actor_user_id=user_id,
                             name=self.form_name,
                             connection_type=ConnectionType(self.form_type),
                             config=config,
@@ -1455,6 +1468,7 @@ class ConnectionState(BaseState):
                             ConnectionType(self.form_type),
                             config,
                             source_template_slug=self.selected_template_slug or None,
+                            actor_user_id=user_id,
                         )
                         self._audit(
                             session,
@@ -1575,7 +1589,7 @@ class ConnectionState(BaseState):
             old_values = (
                 {"name": conn.name, "connection_type": conn.connection_type.value} if conn else {}
             )
-            svc.delete_connection(session, org_id, conn_id)
+            svc.delete_connection(session, org_id, conn_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,
@@ -1674,25 +1688,43 @@ class ConnectionState(BaseState):
         # icon showing whatever it showed before — including a previous green
         # tick — rather than reporting the failure (core#608 / core#609).
         try:
-            ok, _msg = ConnectionService.test_connection(config, conn.connection_type)
+            verdict = ConnectionService.test_connection_verdict(config, conn.connection_type)
         except Exception:
             logger.exception(
                 "Connection test crashed for saved connection %s (%s)",
                 conn_id,
                 conn.connection_type.value,
             )
-            ok = False
-        # core#821: an untested type gets no row icon at all — `""` is the
-        # column's existing 'no verdict' state. Showing a red cross for a
-        # connection nobody checked would be a fresh false claim.
-        if ok is None:
-            self._set_row_test_status(conn_id, "")
+            verdict = ConnectionVerdict(
+                False, "The connection test failed unexpectedly — please report this"
+            )
+        # core#821 gave this branch `None`; core#1170 AC3.2 gives it words.
+        #
+        # 🚨 It used to set `""` — the column's *nobody asked* state — so pressing
+        # **Test** on a probe-exempt connection was observationally identical to
+        # never pressing it. The verdict was correct and arrived nowhere.
+        #
+        # Showing a red cross instead would be the opposite lie, and that is why
+        # this takes a fourth status rather than reusing `fail`: refusing to
+        # guess is not a failure. `_verdict_message` is the same translator the
+        # form path uses, so the six AC3.3 keys reach this surface in all nine
+        # locales rather than only in the service's English.
+        if verdict.ok is None:
+            self._set_row_test_status(conn_id, "untested", await self._verdict_message(verdict))
         else:
-            self._set_row_test_status(conn_id, "ok" if ok else "fail")
+            self._set_row_test_status(conn_id, "ok" if verdict.ok else "fail")
 
-    def _set_row_test_status(self, conn_id: int, status: str):
-        """Update test_status for a specific connection row."""
+    def _set_row_test_status(self, conn_id: int, status: str, note: str = ""):
+        """Update test_status — and its explanation — for one connection row.
+
+        ⚠️ ``note`` defaults to empty and is written on **every** call, so a
+        later real verdict clears a stale *"not tested"* sentence. Leaving the
+        old note in place would caption a green tick with the reason we once
+        could not test it.
+        """
         self.connections = [
-            item.model_copy(update={"test_status": status}) if item.id == conn_id else item
+            item.model_copy(update={"test_status": status, "test_note": note})
+            if item.id == conn_id
+            else item
             for item in self.connections
         ]

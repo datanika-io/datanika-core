@@ -20,6 +20,7 @@ from datanika.models.pipeline import DbtCommand
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
+from datanika.services.authorization import InsufficientRoleError
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -268,8 +269,21 @@ def create_connection(request, api_key, session):
         return _error(400, f"Invalid connection_type: {ct}")
     try:
         conn = _get_conn_svc().create_connection(
-            session, api_key.org_id, name, connection_type, config
+            session,
+            api_key.org_id,
+            name,
+            connection_type,
+            config,
+            actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        # 🚨 Must NOT be swallowed here. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the broad handler below would turn a permissions
+        # refusal into a 400 with a prose message -- and `api_middleware`'s §7.1 handler,
+        # which produces the 403 carrying `required_role`, would never see it. That is
+        # core#896's shape again: a gate that cannot fire because something upstream
+        # already answered.
+        raise
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_connection(conn), status_code=201)
@@ -332,7 +346,11 @@ def update_connection(request, api_key, session):
     if "config" in data:
         kwargs["config"] = data["config"]
     try:
-        conn = _get_conn_svc().update_connection(session, api_key.org_id, conn_id, **kwargs)
+        conn = _get_conn_svc().update_connection(
+            session, api_key.org_id, conn_id, actor_user_id=api_key.user_id, **kwargs
+        )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection above
     except ValueError as exc:
         return _error(400, str(exc))
     if conn is None:
@@ -343,7 +361,9 @@ def update_connection(request, api_key, session):
 @api_endpoint(required_scope="connections:write")
 def delete_connection(request, api_key, session):
     conn_id = int(request.path_params["id"])
-    if not _get_conn_svc().delete_connection(session, api_key.org_id, conn_id):
+    if not _get_conn_svc().delete_connection(
+        session, api_key.org_id, conn_id, actor_user_id=api_key.user_id
+    ):
         return _error(404, "Connection not found")
     return JSONResponse({"deleted": True})
 
@@ -1399,7 +1419,9 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
     return errors
 
 
-def _execute_validated_import(session, org_id: int, data: dict) -> dict[str, list[int]]:
+def _execute_validated_import(
+    session, org_id: int, data: dict, *, actor_user_id: int
+) -> dict[str, list[int]]:
     """Phase-1..4 creation shared by JSON and YAML import endpoints.
 
     Caller must have already validated ``data`` via
@@ -1426,6 +1448,7 @@ def _execute_validated_import(session, org_id: int, data: dict) -> dict[str, lis
             name=c["name"],
             connection_type=ConnectionType(c["connection_type"]),
             config=c["config"],
+            actor_user_id=actor_user_id,
         )
         session.flush()
         conn_name_to_id[c["name"]] = conn.id
@@ -1513,7 +1536,9 @@ def bulk_import(request, api_key, session):
     if errors:
         return JSONResponse({"errors": errors}, status_code=400)
 
-    created = _execute_validated_import(session, api_key.org_id, data)
+    created = _execute_validated_import(
+        session, api_key.org_id, data, actor_user_id=api_key.user_id
+    )
     return JSONResponse({"created": created}, status_code=201)
 
 
@@ -1570,7 +1595,9 @@ def bulk_import_yaml(request, api_key, session):
     if errors:
         return JSONResponse({"errors": errors}, status_code=400)
 
-    created = _execute_validated_import(session, api_key.org_id, data)
+    created = _execute_validated_import(
+        session, api_key.org_id, data, actor_user_id=api_key.user_id
+    )
     return JSONResponse({"created": created}, status_code=201)
 
 

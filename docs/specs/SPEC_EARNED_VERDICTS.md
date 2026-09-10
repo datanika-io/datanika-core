@@ -132,7 +132,15 @@ when the product cannot test, it says so in a third colour. Two clauses make it 
 
 ### 3.2 · AC1 — a "not tested" verdict must be visible on **every** surface that offers the button
 
-🚨 **Live defect.** `ConnectionState.test_saved_connection` (`connection_state.py:1663`) reads:
+- ✅ **SHIPPED 2026-09-10.** `test_saved_connection` now calls `test_connection_verdict`,
+  routes the neutral verdict to a fourth row status `"untested"` — deliberately **not** `""` —
+  and carries the translated sentence in `ConnectionItem.test_note`, rendered as a tooltip on a
+  neutral `circle_dashed` marker. Guarded by
+  `tests/test_ui/test_saved_connection_says_what_it_knows.py` (8 tests, five mutations exercised).
+  ⚠️ **Until this shipped, §3.3's six keys × nine locales rendered on no screen in the product** —
+  the vocabulary existed and was unreachable.
+
+🚨 **Live defect (as measured before the fix).** `ConnectionState.test_saved_connection` (`connection_state.py:1663`) reads:
 
 ```python
 ok, _msg = ConnectionService.test_connection(config, conn.connection_type)
@@ -270,9 +278,13 @@ this one already carries the third state additively.
 
 ### 4.1 · The measurement
 
-`ExecutionService.complete_run` (`execution_service.py:59-85`) sets `run.status = RunStatus.SUCCESS`
-**unconditionally**. There is no predicate on rows, on `load_info`, or on anything else. The only
-route to a non-success terminal status is an exception reaching `upload_tasks.py:344`.
+🔴 **CORRECTED 2026-09-10 — the unconditional half is no longer true, and the correction narrows
+this section rather than retiring it.** [core#657] AC2 shipped, so `complete_run` now reads
+`if not is_cancelled(run):` (`execution_service.py:112`) before setting `SUCCESS`. **What this
+section is about is unchanged**: there is still no predicate on *rows* or on `load_info`, so a run
+that loaded nothing, or whose count could not be read, still terminates `SUCCESS`. The cancellation
+guard closed a different falsehood. The only other route to a non-success terminal status remains an
+exception reaching `upload_tasks.py:344`.
 
 `RunStatus` has five members and none of them is partial:
 
@@ -322,6 +334,14 @@ So a never-measured run and a genuinely-empty run both render `0`.
   already makes a decision (`(r.rows_loaded or 0) > 0`) on the coerced value.
 
 ### 4.3 · AC4 — the "Rows" column must say what it counts
+
+- ✅ **SHIPPED 2026-09-10.** One key (`tooltip.rows_loaded`), nine locales, **both pages** —
+  `runs.py` and `dashboard.py` — via the existing `info_tooltip()` helper, header word **Rows**
+  unchanged. The copy carries both claims: rows *this run wrote to the destination*, not rows
+  available at source and not a completeness check; and what the em dash means, since [core#1170]
+  AC3 made an unmeasured count render as `—` rather than a false `0`.
+  ⚠️ **I nearly shipped only `runs.py` and only the dash clause.** Both misses were caught by
+  re-reading this section rather than working from memory of it.
 
 `runs.py:74` and `dashboard.py:63` render `r.rows_loaded` under a header reading exactly **"Rows"**
 (`runs.rows`, `dashboard.rows`). Nothing qualifies it — no tooltip, no footnote, no help text.

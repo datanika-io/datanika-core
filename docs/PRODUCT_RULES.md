@@ -298,6 +298,36 @@ arguments is referenced without parentheses, so there is no `ast.Call` node), th
 would have gone **green on it** — certifying as guarded the one handler whose documentation states it
 is not.
 
+### 11a. 🆕 It recurred on 2026-09-10, in the same shape, on the person writing the rule
+
+This rule said it was *"recorded because the shape will recur, not because it is live."* It recurred
+within the day, in [core#694], and the token was again inside the comment explaining the removal:
+
+```python
+assert "log.ip_address" not in src   # audit_logs.py
+```
+
+`ip_address` had been removed from the page and the row model. The test failed anyway, on the comment
+that explains **why** it was removed — *"Was `log.ip_address` — a column that has never held a value
+in any production row"*. 🔑 **A source grep cannot tell a reference from a mention, and prose about a
+removal is indistinguishable from the removal not having happened.**
+
+⚠️ **Note which direction it failed in, because it is the lucky one.** Here the false answer was
+*"still present"* — alarming, immediately investigated, cost minutes. The same check written as
+`assert "log.changes" in src` would have gone **green on a comment** promising the feature, with the
+feature absent. **The reassuring direction is the one to design against.**
+
+The fix is the same one rule 10 reaches for: assert on the parsed tree, not the text.
+
+```python
+attrs = {n.attr for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Attribute)}
+assert "changes" in attrs, "the extractor sees no attributes — it proves nothing"
+assert "ip_address" not in attrs
+```
+
+The first assertion is not decoration: a walker that silently matches nothing satisfies the second one
+in perfect silence.
+
 🚨 **Closing a matcher gap can therefore make a guard newly, silently wrong.** Widening what a check
 *sees* is not a safe operation on a check that decides by string containment. Ask, before widening:
 *of the things this will now examine, which ones talk about themselves?*
@@ -555,5 +585,45 @@ satisfied by prose *about* the code. Assume it of anything you grep.
    denial are the same number.
 4. **State the correction on the record instead of editing it away.** The original claim is what a
    reader would go and check, and the mechanism is usually worth more than the fix.
+
+## 16. An AC that names an outcome must name what *asserts* the outcome
+
+Engineering, 2026-09-10, while wiring `SPEC_SERVICE_AUTHORIZATION` §7.1. Their half of this is
+`ENGINEERING_RULES` §57 — *"a broad `except` upstream of a typed refusal makes the refusal inert, and
+both look shipped"*. An inner `except (ValueError, Exception)` in `api_v1_routes` was converting the
+typed refusal into a **400 with prose**, so the handler §7.1 specifies would never have been reached.
+
+**The Product-side lesson is about how the criterion was written, not about the bug.** §7.1 says the
+caller receives `403` with `{"code": "insufficient_role", "required_role": …}`. That is a statement
+about an outcome, and it is silently conditional on every layer between the service and the response
+being willing to let it through. The spec named the shape and named nothing that would *notice* the
+shape not arriving.
+
+> **If an acceptance criterion says the user sees X, it has to say what asserts that they do —
+> naming the entry point that is driven and the artifact that is read.** *"The refusal renders as
+> `403 {code: …}`"* is not a criterion; **"drive `POST /api/v1/<x>` with a key whose owner lacks the
+> role and assert the response body's `code`"** is.
+
+🚨 **An outcome that was *observed* is not an outcome that is *asserted*.** §7.1's refusal was seen
+working in real production traffic — a genuine `403` carrying the right body — and Engineering
+**refused to count it**, correctly. Traffic that happens to exercise a path proves the path worked
+once, on one subsystem, on one day. One of eight is wired; the security fix is not in effect, and an
+AC marked satisfied by an accident would have said it was.
+
+**How to write it instead.** Every outcome AC gets three parts, and the third is the one usually
+missing:
+
+1. **The outcome** — what the user or caller ends up with.
+2. **The entry point** — the real one, driven the way a user or client drives it, never the function
+   that would produce the outcome if called directly.
+3. **The witness** — the artifact actually read, and *where it is read from*: a response body, a
+   rendered DOM node, a row in the database. If the witness can be produced without the outcome
+   having occurred, it is not a witness.
+
+⚠️ **Corollary, and it is the reason this is a Product rule rather than a QA one.** The layer that
+renders X is frequently owned by someone other than the person writing the spec. So *"the user sees
+X"* silently delegates the hardest part of the criterion — reachability — to whoever implements it,
+and they will reasonably read it as satisfied once the rendering code exists. Naming the witness is
+how the spec keeps that question.
 
 [core#1081]: https://github.com/datanika-io/datanika-core/issues/1081

@@ -15,6 +15,7 @@ from datanika.services.backup_service import (
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def sample_connections(db_session, conn_svc, org):
         "My Postgres",
         ConnectionType.POSTGRES,
         {"host": "localhost", "port": 5432, "user": "admin", "password": "secret123"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
         db_session,
@@ -57,6 +59,7 @@ def sample_connections(db_session, conn_svc, org):
         "Target DWH",
         ConnectionType.BIGQUERY,
         {"project": "my-proj", "dataset": "raw", "service_account_json": '{"key": "val"}'},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return src, dst
 
@@ -109,7 +112,9 @@ class TestExportBackup:
         self, db_session, encryption, conn_svc, org, sample_connections, sample_upload
     ):
         src, dst = sample_connections
-        conn_svc.delete_connection(db_session, org.id, src.id)
+        conn_svc.delete_connection(
+            db_session, org.id, src.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         backup = BackupService.export_backup(db_session, org.id, encryption)
         names = {c["name"] for c in backup["connections"]}
         assert "My Postgres" not in names
@@ -165,7 +170,14 @@ class TestImportBackup:
             ],
         )
         result = BackupService.import_backup(
-            db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            data,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["connections_imported"] == 2
         assert result["uploads_imported"] == 1
@@ -200,7 +212,16 @@ class TestImportBackup:
                 },
             ],
         )
-        BackupService.import_backup(db_session, org.id, encryption, conn_svc, upload_svc, data, {})
+        BackupService.import_backup(
+            db_session,
+            org.id,
+            encryption,
+            conn_svc,
+            upload_svc,
+            data,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         uploads = upload_svc.list_uploads(db_session, org.id)
         assert len(uploads) == 1
         up = uploads[0]
@@ -218,6 +239,7 @@ class TestImportBackup:
             "Existing",
             ConnectionType.POSTGRES,
             {"host": "old"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         data = self._make_backup(
             connections=[
@@ -237,6 +259,7 @@ class TestImportBackup:
             upload_svc,
             data,
             {("connection", "Existing"): "skip"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["skipped"] == 1
         assert result["connections_imported"] == 0
@@ -253,6 +276,7 @@ class TestImportBackup:
             "Overwrite Me",
             ConnectionType.POSTGRES,
             {"host": "old"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         data = self._make_backup(
             connections=[
@@ -272,6 +296,7 @@ class TestImportBackup:
             upload_svc,
             data,
             {("connection", "Overwrite Me"): "overwrite"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["connections_imported"] == 1
         conn = conn_svc.get_connection(db_session, org.id, existing.id)
@@ -286,6 +311,7 @@ class TestImportBackup:
             "Dupe",
             ConnectionType.POSTGRES,
             {"host": "old"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         data = self._make_backup(
             connections=[
@@ -305,6 +331,7 @@ class TestImportBackup:
             upload_svc,
             data,
             {("connection", "Dupe"): "rename"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert result["connections_imported"] == 1
         conns = conn_svc.list_connections(db_session, org.id)
@@ -316,7 +343,14 @@ class TestImportBackup:
         data = self._make_backup(version=99)
         with pytest.raises(ValueError, match="version"):
             BackupService.import_backup(
-                db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+                db_session,
+                org.id,
+                encryption,
+                conn_svc,
+                upload_svc,
+                data,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_import_missing_connection_reference(
@@ -344,7 +378,14 @@ class TestImportBackup:
         )
         with pytest.raises(ImportValidationError) as exc_info:
             BackupService.import_backup(
-                db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+                db_session,
+                org.id,
+                encryption,
+                conn_svc,
+                upload_svc,
+                data,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
         assert any(
             e["code"] == ImportErrorCode.UNKNOWN_CONNECTION_REF for e in exc_info.value.errors
@@ -361,6 +402,7 @@ class TestDetectConflicts:
             "PG",
             ConnectionType.POSTGRES,
             {"host": "h"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         dst = conn_svc.create_connection(
             db_session,
@@ -368,6 +410,7 @@ class TestDetectConflicts:
             "BQ",
             ConnectionType.BIGQUERY,
             {"project": "p", "dataset": "d"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         upload_svc.create_upload(db_session, org.id, "My Upload", None, src.id, dst.id, {})
         data = {
@@ -890,7 +933,14 @@ class TestValidateBackup:
         )
         with pytest.raises(ImportValidationError):
             BackupService.import_backup(
-                db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+                db_session,
+                org.id,
+                encryption,
+                conn_svc,
+                upload_svc,
+                data,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_no_partial_state_on_error(self, db_session, encryption, conn_svc, upload_svc, org):
@@ -906,7 +956,14 @@ class TestValidateBackup:
         )
         with pytest.raises(ImportValidationError):
             BackupService.import_backup(
-                db_session, org.id, encryption, conn_svc, upload_svc, data, {}
+                db_session,
+                org.id,
+                encryption,
+                conn_svc,
+                upload_svc,
+                data,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
         # No connections should have been created
         conns = conn_svc.list_connections(db_session, org.id)

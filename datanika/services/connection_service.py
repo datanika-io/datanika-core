@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from datanika.config import settings
 from datanika.errors import UserFacingError
 from datanika.models.connection import Connection, ConnectionDirection, ConnectionType
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.encryption import EncryptionService
 from datanika.services.naming import validate_name
@@ -941,9 +943,27 @@ class ConnectionService:
         connection_type: ConnectionType,
         config: dict,
         source_template_slug: str | None = None,
+        *,
+        actor_user_id: int,
     ) -> Connection:
         from datanika.hooks import emit
 
+        # core#681 / SPEC_SERVICE_AUTHORIZATION §1: `editor` for the ordinary lifecycle.
+        #
+        # Before the quota emit, deliberately. An actor who may not create should not consume
+        # a quota check, and a quota refusal must not mask an authorization one -- the two
+        # answers send the caller to different people.
+        #
+        # `actor_user_id` is keyword-only and REQUIRED. A default of `None` would make a
+        # forgetful caller refuse in production, which reads as a permissions bug for a
+        # legitimate admin; required makes it a TypeError at the call site.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="create_connection",
+        )
         emit("connection.before_create", session=session, org_id=org_id)
         validate_connection_name(name)
         # SSRF pre-flight gate (core#338): reject connectors whose user-supplied
@@ -1065,11 +1085,29 @@ class ConnectionService:
         return names
 
     def update_connection(
-        self, session: Session, org_id: int, conn_id: int, **kwargs
+        self, session: Session, org_id: int, conn_id: int, *, actor_user_id: int, **kwargs
     ) -> Connection | None:
+        """Edit a connection. Requires `editor` (core#681).
+
+        🚨 `actor_user_id` is an EXPLICIT parameter and must stay one. Declared after
+        `**kwargs`, or relied on without declaring it at all, it is absorbed into `kwargs`,
+        matches none of the branches below, and is silently ignored -- so every call site
+        looks like it passes an actor while nothing is checked. Pinned by
+        `test_update_does_not_swallow_the_actor`.
+        """
         conn = self.get_connection(session, org_id, conn_id)
         if conn is None:
             return None
+
+        # §7.3: after the org-scoped lookup, before the mutation. Checking first would turn a
+        # cross-org probe into a refusal, which confirms the resource exists somewhere.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="update_connection",
+        )
 
         if "name" in kwargs:
             validate_connection_name(kwargs["name"])
@@ -1088,10 +1126,26 @@ class ConnectionService:
         session.flush()
         return conn
 
-    def delete_connection(self, session: Session, org_id: int, conn_id: int) -> bool:
+    def delete_connection(
+        self, session: Session, org_id: int, conn_id: int, *, actor_user_id: int
+    ) -> bool:
+        """Soft-delete a connection. Requires `admin` (core#681, §1's table).
+
+        §2's rule: admin for deletion. The threshold is MOVED here, not re-decided -- §5 AC1
+        is explicit that changing one while moving it is a separate change with its own
+        argument.
+        """
         conn = self.get_connection(session, org_id, conn_id)
         if conn is None:
             return False
+        # §7.3: after the lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_connection",
+        )
         conn.deleted_at = datetime.now(UTC)
         session.flush()
         return True

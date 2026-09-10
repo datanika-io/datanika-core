@@ -50,6 +50,7 @@ from datanika.services.transformation_service import (
     TransformationService,
 )
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -71,7 +72,14 @@ def org(db_session):
 
 
 def _conn(conn_svc, db_session, org, conn_type: ConnectionType):
-    return conn_svc.create_connection(db_session, org.id, conn_type.value, conn_type, {})
+    return conn_svc.create_connection(
+        db_session,
+        org.id,
+        conn_type.value,
+        conn_type,
+        {},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
 
 
 class TestPipelinesRefuseANonDbtDestination:

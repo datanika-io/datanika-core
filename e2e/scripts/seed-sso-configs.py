@@ -18,13 +18,14 @@ from pathlib import Path
 # Add project root to path so we can import datanika
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from sqlalchemy import select  # noqa: E402
+
 from datanika.config import settings  # noqa: E402
 from datanika.db import get_sync_session  # noqa: E402
 from datanika.models.sso_config import SSOConfig  # noqa: E402
 from datanika.models.user import Organization  # noqa: E402
 from datanika.services.encryption import EncryptionService  # noqa: E402
 from datanika.services.sso_service import SSOService  # noqa: E402
-from sqlalchemy import select  # noqa: E402
 
 FIXTURE_PATH = Path(__file__).parent.parent / ".sso-fixture.json"
 
@@ -73,11 +74,18 @@ def main():
     with get_sync_session() as s:
         # --- OIDC org ---
         oidc_org = _ensure_org(s, "E2E Fixture", "e2e-fixture")
-        _ensure_sso(s, svc, oidc_org.id, "oidc", "Authentik OIDC", {
-            "issuer_url": fixture["oidc"]["issuer_url"],
-            "client_id": fixture["oidc"]["client_id"],
-            "client_secret": fixture["oidc"]["client_secret"],
-        })
+        _ensure_sso(
+            s,
+            svc,
+            oidc_org.id,
+            "oidc",
+            "Authentik OIDC",
+            {
+                "issuer_url": fixture["oidc"]["issuer_url"],
+                "client_id": fixture["oidc"]["client_id"],
+                "client_secret": fixture["oidc"]["client_secret"],
+            },
+        )
         print(f"OIDC: org_id={oidc_org.id} slug=e2e-fixture")
 
         # --- SAML org ---
@@ -91,9 +99,7 @@ def main():
 
 
 def _ensure_org(s, name: str, slug: str) -> Organization:
-    org = s.execute(
-        select(Organization).where(Organization.slug == slug)
-    ).scalar_one_or_none()
+    org = s.execute(select(Organization).where(Organization.slug == slug)).scalar_one_or_none()
     if not org:
         org = Organization(name=name, slug=slug)
         s.add(org)

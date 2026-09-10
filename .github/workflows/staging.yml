@@ -531,6 +531,21 @@ jobs:
             echo "::notice::Informational E2E specs failed (not gating). Graduation counter resets to 0."
           fi
 
+      # core#1221. The line above is ONE boolean for the whole tier, and QA_RULES
+      # §10 graduates PER SPEC. So a new spec entering zeroed every incumbent's
+      # progress (`reflex-wire.spec.ts` went from seven consecutive greens to
+      # nothing, having done nothing), and one persistently-red new spec made
+      # graduation impossible for everyone while it was red — with §10 *requiring*
+      # new specs to enter, so the churn that reset the counter was by design.
+      #
+      # Emitted IN ADDITION to `INFORMATIONAL_RESULT=`, never instead of it: every
+      # log older than this step carries only the tier line, and
+      # tests/test_deploy/test_image_probe.py asserts exactly one step owns it.
+      - name: Report per-spec informational results
+        if: always()
+        working-directory: e2e
+        run: python3 scripts/informational_spec_results.py results-informational.json
+
       # A green tick above is not evidence that anything ran — that is exactly
       # how core#484 hid for months. Print the collected count so the run log
       # carries the number, and fail if it collapses back toward the fast subset.

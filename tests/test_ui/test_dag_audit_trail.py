@@ -69,6 +69,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState
+from tests.factories import make_org_admin
 
 ACTOR_ID = 77
 
@@ -96,9 +97,21 @@ def org(db_session):
 @pytest.fixture
 def graph(db_session, org, svc):
     dep_svc, conn_svc = svc
-    src = conn_svc.create_connection(db_session, org.id, "Src", ConnectionType.POSTGRES, {"h": "x"})
+    src = conn_svc.create_connection(
+        db_session,
+        org.id,
+        "Src",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
     dst = conn_svc.create_connection(
-        db_session, org.id, "Dst", ConnectionType.BIGQUERY, {"project": "p", "dataset": "d"}
+        db_session,
+        org.id,
+        "Dst",
+        ConnectionType.BIGQUERY,
+        {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = UploadService(conn_svc).create_upload(
         db_session, org.id, "nightly orders", "desc", src.id, dst.id, {}

@@ -307,22 +307,37 @@ def _connections_table_loaded() -> rx.Component:
                     rx.table.cell(conn.connection_type),
                     rx.table.cell(
                         rx.hstack(
-                            rx.icon(
+                            # core#1170 AC3.2. Four states, not three: nobody
+                            # asked · we asked and cannot know · pass · fail.
+                            #
+                            # ⚠️ Every icon tag here is a LITERAL, deliberately.
+                            # `rx.icon(rx.cond(...))` returns a `DynamicIcon`,
+                            # which is never checked against `LUCIDE_ICON_LIST`
+                            # — measured — so a typo in a dynamic tag is
+                            # invisible in both directions. core#701's guard
+                            # (warn + substitute `circle_help`) only ever fires
+                            # on the literal form.
+                            rx.cond(
+                                conn.test_status == "",
+                                rx.fragment(),
                                 rx.cond(
-                                    conn.test_status == "ok",
-                                    "circle-check",
-                                    "circle-x",
-                                ),
-                                color=rx.cond(
-                                    conn.test_status == "ok",
-                                    "green",
-                                    "red",
-                                ),
-                                size=16,
-                                visibility=rx.cond(
-                                    conn.test_status != "",
-                                    "visible",
-                                    "hidden",
+                                    conn.test_status == "untested",
+                                    rx.tooltip(
+                                        rx.icon(
+                                            "circle_dashed",
+                                            color="var(--slate-9)",
+                                            size=16,
+                                            cursor="help",
+                                        ),
+                                        content=conn.test_note,
+                                        side="right",
+                                        max_width="320px",
+                                    ),
+                                    rx.cond(
+                                        conn.test_status == "ok",
+                                        rx.icon("circle_check", color="green", size=16),
+                                        rx.icon("circle_x", color="red", size=16),
+                                    ),
                                 ),
                             ),
                             rx.button(

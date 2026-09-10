@@ -221,8 +221,12 @@ half-implementation fails.
    does both — a test covering only the create path passes on the broken implementation.)*
 8. **All 12 keys in all 9 locale files**, and `grep -rn 'rx.toast("' datanika/ui/` returns **zero**
    hardcoded strings. *(D6. The count is the check; the two known sites are not.)*
-9. **No toast is emitted on a failed mutation.** Force a quota refusal and confirm the user sees the
-   error and **no** success toast. 🚨 *(This is the [core#872] failure mode running backwards, and it
+9. **No toast is emitted on a failed mutation.** Force a quota refusal; assert the state's
+   `error_message` **names the quota** and that no success toast was yielded.
+   ⚠️ *"Confirm the user sees the error"* was the old wording and it is satisfied by **any** visible
+   error, including the generic *"Contact the website administrator"* Reflex emits when a handler
+   raises — which is a different bug wearing this criterion's uniform. Read the message, not its
+   presence. (`PRODUCT_RULES` §16.) 🚨 *(This is the [core#872] failure mode running backwards, and it
    has a known shape in this codebase: a success toast placed at the end of a `try` body reports a
    caught failure as a success unless the `except` returns first. The `except` must return.)*
 

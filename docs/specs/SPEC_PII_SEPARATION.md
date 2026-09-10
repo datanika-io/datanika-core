@@ -454,6 +454,43 @@ the reason is worth stating because it will be asked again:
   zero — it errors. And `CREATE INDEX CONCURRENTLY` on `user_id` is instant now and an online build
   later, on a table nothing purges.
 
+## 2d. ✅ RESOLVED 2026-09-10 — `uploaded_files.original_name`, the last unanswered column ([core#676])
+
+The one column [core#676] left open. It is **`String(500)` of free text the user typed**, and
+filenames routinely carry a name — `jane_smith_contacts.xlsx`. The question was whether it joins the
+`*_pii` split.
+
+**It does not, and it needs no new mechanism: it is org-scoped content already covered by the org
+lifecycle.**
+
+`uploaded_files` records **no person**. Its columns are `id, original_name, content_type, file_size,
+file_hash, archive_path, org_id, created_at, updated_at, deleted_at`, and its **only** foreign key is
+`org_id → organizations.id`. `FileUploadService` constructs the row with `org_id` and nothing else.
+So *"this user's uploads"* is **not a set the system can compute**, and any erasure rule phrased over
+one is unimplementable.
+
+What covers it instead:
+
+| path | outcome |
+|---|---|
+| user erased, **sole member** of the org | `erase_user` → `delete_org` → soft-deletes all **17** tables from `org_scoped_core_tables()`, which **includes `uploaded_files`** |
+| org deleted directly | the same derived sweep |
+| user erased, **shared** org | the row remains — **correctly**: the upload belongs to the org, which still exists and whose other members may rely on it |
+
+🚨 **Do not re-open this by grepping `erase_user` for `uploaded_files` and finding nothing.** That is
+exactly how it was nearly mis-decided: the count is **0**, and it is 0 **by construction**, because
+`delete_org` iterates a **derived** table list and names no table by hand. **A zero from a name-count
+over derived code is not evidence of absence** — call `org_scoped_core_tables()` instead.
+
+⚠️ **The residue is not this column's.** Soft-delete leaves the row, and the filename, in the database
+with `deleted_at` set. Whether that satisfies *"removed within 30 days"* is the **same** question
+`runs.logs` raises in [core#1196], with the same answer: soft-delete is the retention model, `/privacy`
+describes it, and #1196's D2 decided against a time-based purge. **One decision about one retention
+model — not a per-column question**, and it should not be re-litigated column by column.
+
+[core#676]: https://github.com/datanika-io/datanika-core/issues/676
+[core#1196]: https://github.com/datanika-io/datanika-core/issues/1196
+
 ## 3. Decisions
 
 ### D1 · One PII sidecar table per parent, named `<parent>_pii`. Not one polymorphic table.

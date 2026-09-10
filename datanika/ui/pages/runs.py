@@ -4,6 +4,7 @@ import reflex as rx
 
 from datanika.config import settings
 from datanika.ui.components.elt_nudge_card import elt_nudge_card
+from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.run_state import RunState
@@ -55,7 +56,19 @@ def runs_table() -> rx.Component:
                 rx.table.column_header_cell(_t["common.status"]),
                 rx.table.column_header_cell(_t["runs.started"]),
                 rx.table.column_header_cell(_t["runs.finished"]),
-                rx.table.column_header_cell(_t["runs.rows"]),
+                # core#1170 AC4.3. AC4.2 made the count honest — `None` for
+                # "not measured" instead of a coerced 0 — and `_format_rows`
+                # renders that as an em dash. Nothing said what the dash meant,
+                # so an unmeasured count became indistinguishable from a
+                # genuinely empty load: the same conflation, moved one layer out.
+                rx.table.column_header_cell(
+                    rx.hstack(
+                        rx.text(_t["runs.rows"]),
+                        info_tooltip("tooltip.rows_loaded"),
+                        spacing="1",
+                        align="center",
+                    )
+                ),
                 rx.table.column_header_cell(_t["runs.error"]),
                 rx.table.column_header_cell(_t["runs.logs"]),
             ),

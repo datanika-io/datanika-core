@@ -15,6 +15,7 @@ TOOLTIP_KEYS = (
     "tooltip.schema_contract",
     "tooltip.load_mode",
     "tooltip.materialization",
+    "tooltip.rows_loaded",
 )
 
 _KEYS_FOR_SCANNER = (
@@ -26,6 +27,7 @@ _KEYS_FOR_SCANNER = (
     _t["tooltip.schema_contract"],
     _t["tooltip.load_mode"],
     _t["tooltip.materialization"],
+    _t["tooltip.rows_loaded"],
 )
 
 

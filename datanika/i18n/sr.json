@@ -580,6 +580,7 @@
   "tooltip.schema_contract": "Понашање при промени шеме: evolve = прилагођавање, freeze = одбијање, discard_value = нове колоне null.",
   "tooltip.load_mode": "full_database = све табеле. single_table = једна табела са детаљном контролом.",
   "tooltip.materialization": "Начин изградње модела: view = поглед, table = табела, incremental = нови редови, ephemeral = CTE.",
+  "tooltip.rows_loaded": "Редова које је ово покретање уписало у одредиште — не редова доступних у извору, нити провера потпуности. Црта (—) значи да број није могао да се прочита: покретање је можда ипак успело, само је број непознат.",
   "notifications.center.title": "Обавештења",
   "notifications.center.empty": "Нема обавештења за сада",
   "notifications.center.mark_all_read": "Означи све као прочитано",

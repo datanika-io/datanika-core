@@ -580,6 +580,7 @@
   "tooltip.schema_contract": "Τι γίνεται όταν αλλάζει η δομή: evolve = προσαρμογή, freeze = απόρριψη, discard_value = μηδενισμός νέων στηλών.",
   "tooltip.load_mode": "full_database = όλοι οι πίνακες. single_table = ένας πίνακας με λεπτομερή έλεγχο.",
   "tooltip.materialization": "Πώς χτίζεται το μοντέλο: view = SQL view, table = πίνακας, incremental = νέες γραμμές, ephemeral = CTE.",
+  "tooltip.rows_loaded": "Γραμμές που έγραψε αυτή η εκτέλεση στον προορισμό — όχι οι διαθέσιμες γραμμές στην πηγή, ούτε έλεγχος πληρότητας. Η παύλα (—) σημαίνει ότι το πλήθος δεν μπόρεσε να διαβαστεί: η εκτέλεση μπορεί να πέτυχε, απλώς ο αριθμός είναι άγνωστος.",
   "notifications.center.title": "Ειδοποιήσεις",
   "notifications.center.empty": "Δεν υπάρχουν ειδοποιήσεις",
   "notifications.center.mark_all_read": "Σήμανση όλων ως αναγνωσμένων",

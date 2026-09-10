@@ -580,6 +580,7 @@
   "tooltip.schema_contract": "Comportamiento ante cambios de esquema: evolve = adaptar, freeze = rechazar, discard_value = nulificar nuevas columnas.",
   "tooltip.load_mode": "full_database = todas las tablas. single_table = una tabla con control detallado.",
   "tooltip.materialization": "Cómo dbt construye el modelo: view = vista, table = tabla, incremental = filas nuevas, ephemeral = CTE inline.",
+  "tooltip.rows_loaded": "Filas que esta ejecución escribió en el destino, no las filas disponibles en el origen ni una comprobación de integridad. Un guion (—) significa que no se pudo leer el número: la ejecución puede haber tenido éxito igualmente, solo se desconoce la cantidad.",
   "notifications.center.title": "Notificaciones",
   "notifications.center.empty": "Sin notificaciones aún",
   "notifications.center.mark_all_read": "Marcar todo como leído",

@@ -580,6 +580,7 @@
   "tooltip.schema_contract": "源架构变化时的行为。evolve = 自动适应，freeze = 拒绝，discard_value = 新列置空。",
   "tooltip.load_mode": "full_database = 同步所有表。single_table = 单表，精细控制写入和主键。",
   "tooltip.materialization": "dbt 构建方式：view = 视图，table = 物理表，incremental = 仅新增行，ephemeral = 内联 CTE。",
+  "tooltip.rows_loaded": "本次运行写入目标端的行数——不是源端可用的行数，也不是完整性校验。破折号（—）表示无法读取该数字：运行仍可能已成功，只是行数未知。",
   "notifications.center.title": "通知",
   "notifications.center.empty": "暂无通知",
   "notifications.center.mark_all_read": "全部标为已读",

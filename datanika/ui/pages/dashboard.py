@@ -5,6 +5,7 @@ import reflex as rx
 from datanika.config import settings
 from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.components.getting_started_checklist import getting_started_checklist
+from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.i18n_state import I18nState
@@ -47,7 +48,18 @@ def recent_runs_table() -> rx.Component:
                     rx.table.column_header_cell(_t["dashboard.target"]),
                     rx.table.column_header_cell(_t["common.status"]),
                     rx.table.column_header_cell(_t["dashboard.started"]),
-                    rx.table.column_header_cell(_t["dashboard.rows"]),
+                    # core#1170 AC4.3 — "both pages". The dashboard renders the
+                    # same normalize-step count under the same bare "Rows"
+                    # header, so qualifying it on one page and not the other
+                    # leaves the unqualified copy on the page a new user lands on.
+                    rx.table.column_header_cell(
+                        rx.hstack(
+                            rx.text(_t["dashboard.rows"]),
+                            info_tooltip("tooltip.rows_loaded"),
+                            spacing="1",
+                            align="center",
+                        )
+                    ),
                 ),
             ),
             rx.table.body(

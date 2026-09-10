@@ -14,6 +14,8 @@ from datanika.models.notification_channel import (
     NotificationChannel,
 )
 from datanika.models.pii import NotificationChannelPII
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 
 logger = logging.getLogger(__name__)
 VALID_EVENTS = frozenset(
@@ -50,7 +52,18 @@ def _validate_events(events):
 
 
 class NotificationService:
-    def create_channel(self, session, org_id, name, channel_type, config, events):
+    def create_channel(
+        self, session, org_id, name, channel_type, config, events, *, actor_user_id: int
+    ):
+        # core#681 §1: admin throughout -- the row holds the Slack webhook URL or the
+        # Telegram bot token, so it is the credential family, not the lifecycle one.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="create_channel",
+        )
         if not name or not name.strip():
             raise UserFacingError("Channel name cannot be empty")
         _validate_config(channel_type, config)
@@ -134,10 +147,21 @@ class NotificationService:
         )
         return list(session.execute(stmt).scalars().all())
 
-    def update_channel(self, session, channel_id, org_id, **kwargs):
+    def update_channel(self, session, channel_id, org_id, *, actor_user_id: int, **kwargs):
+        # ⚠️ Note the argument order: (session, channel_id, org_id), NOT the
+        # (session, org_id, ...) shape every other service in this issue uses. A tool that
+        # assumed the common shape would derive an actor from `channel_id`.
         ch = self._get_channel(session, channel_id, org_id)
         if ch is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="update_channel",
+        )
         if "name" in kwargs:
             n = kwargs["name"]
             if not n or not str(n).strip():
@@ -155,10 +179,17 @@ class NotificationService:
         self._sync_channel_pii(session, ch)
         return ch
 
-    def delete_channel(self, session, channel_id, org_id):
+    def delete_channel(self, session, channel_id, org_id, *, actor_user_id: int):
         ch = self._get_channel(session, channel_id, org_id)
         if ch is None:
             return False
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_channel",
+        )
         ch.deleted_at = datetime.now(UTC)
         session.flush()
         return True

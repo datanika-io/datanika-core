@@ -15,7 +15,8 @@ from datanika.models.connection import Connection, ConnectionType
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
 from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
-from datanika.models.user import Organization
+from datanika.models.user import MemberRole, Organization
+from datanika.services.authorization import assert_org_role
 from datanika.services.connection_service import SECRET_CONFIG_KEYS, ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineService
@@ -397,14 +398,32 @@ class BackupService:
         return resolved, needs_credentials
 
     @staticmethod
-    def export_backup(session: Session, org_id: int, encryption: EncryptionService) -> dict:
+    def export_backup(
+        session: Session,
+        org_id: int,
+        encryption: EncryptionService,
+        *,
+        actor_user_id: int,
+    ) -> dict:
         """Export all non-deleted connections and uploads for an org.
+
+        🚨 ``admin`` (core#681 §1). This decrypts **every connection config in the org** for
+        whoever calls it. Redaction keeps the secrets out; the infrastructure map stays
+        (core#651). That is the credential family, and it is the one row of §1's table with
+        a live legal edge rather than only an operational one.
 
         Every value under a key in :data:`SENSITIVE_KEYS` is replaced with
         :data:`REDACTED`. Nothing else is filtered, so treat any *new* field that
         can hold a credential as needing a ``format: password`` marker in
         ``CONFIG_SCHEMAS`` — that is what feeds this set.
         """
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="export_backup",
+        )
         conns = list(
             session.execute(
                 select(Connection).where(

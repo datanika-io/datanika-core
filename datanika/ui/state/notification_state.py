@@ -157,6 +157,7 @@ class NotificationState(BaseState):
                         session,
                         self.editing_id,
                         auth.current_org.id,
+                        actor_user_id=auth.current_user.id,
                         name=self.form_name,
                         config=config,
                         events=events,
@@ -174,6 +175,7 @@ class NotificationState(BaseState):
                     ch = svc.create_channel(
                         session,
                         auth.current_org.id,
+                        actor_user_id=auth.current_user.id,
                         name=self.form_name,
                         channel_type=ct,
                         config=config,
@@ -206,7 +208,9 @@ class NotificationState(BaseState):
             with get_sync_session() as session:
                 ch_info = next((c for c in self.channels if c.id == channel_id), None)
                 old_values = {"name": ch_info.name} if ch_info else {}
-                svc.delete_channel(session, channel_id, auth.current_org.id)
+                svc.delete_channel(
+                    session, channel_id, auth.current_org.id, actor_user_id=auth.current_user.id
+                )
                 self._audit(
                     session,
                     auth.current_org.id,
@@ -240,6 +244,7 @@ class NotificationState(BaseState):
                     session,
                     channel_id,
                     auth.current_org.id,
+                    actor_user_id=auth.current_user.id,
                     is_active=not ch_item.is_active,
                 )
                 session.commit()

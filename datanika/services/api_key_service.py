@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.api_key import ApiKey
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 
 KEY_PREFIX = "etf_"
 KEY_BYTES = 32
@@ -27,8 +29,23 @@ class ApiKeyService:
         name: str,
         scopes: list[str] | None = None,
         expires_at: datetime | None = None,
+        *,
+        actor_user_id: int,
     ) -> tuple[ApiKey, str]:
         """Create an API key. Returns (ApiKey, raw_key).
+
+        🚨 ``admin`` (core#681 §1: the object IS a credential), and this is the check the
+        whole issue turns on. A key's authority is its scopes at the moment it was minted,
+        permanently, and ``ApiKey`` carries no role — so a **viewer able to mint an
+        admin-scoped key would make every other wiring in this issue decorative**. The
+        intersection at authentication time bounds what a key can do; this bounds who can
+        create one at all, and neither is sufficient alone.
+
+        ⚠️ ``user_id`` is the key's **owner**; ``actor_user_id`` is **who is minting it**.
+        They are frequently the same person and must not be conflated in code: taking the
+        actor from ``user_id`` would let a caller name its own authority, which is exactly
+        what `SPEC_SERVICE_AUTHORIZATION` §4 forbids.
+
 
         The raw key is only available at creation time — only the hash is stored.
 
@@ -50,6 +67,16 @@ class ApiKeyService:
         immediately and behaviour is unchanged.
         """
         from datanika.hooks import emit
+
+        # Before the quota emit: an actor who may not mint should not consume a quota
+        # check, and a quota refusal must not mask an authorization one.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="create_api_key",
+        )
 
         emit("api_key.before_create", session=session, org_id=org_id, user_id=user_id)
 
@@ -127,8 +154,10 @@ class ApiKeyService:
         )
         return list(session.execute(stmt).scalars().all())
 
-    def revoke_api_key(self, session: Session, org_id: int, key_id: int) -> bool:
-        """Soft-delete an API key. Returns True if found and revoked."""
+    def revoke_api_key(
+        self, session: Session, org_id: int, key_id: int, *, actor_user_id: int
+    ) -> bool:
+        """Soft-delete an API key. Returns True if found and revoked. Requires ``admin``."""
         stmt = select(ApiKey).where(
             ApiKey.id == key_id,
             ApiKey.org_id == org_id,
@@ -137,6 +166,14 @@ class ApiKeyService:
         api_key = session.execute(stmt).scalar_one_or_none()
         if api_key is None:
             return False
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="revoke_api_key",
+        )
         api_key.deleted_at = datetime.now(UTC)
         session.flush()
         return True

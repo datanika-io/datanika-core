@@ -66,6 +66,11 @@ class ApiKeyState(BaseState):
                     session,
                     org_id=auth_state.current_org.id,
                     user_id=auth_state.current_user.id,
+                    # Same person, different roles in the sentence: `user_id` is the key's
+                    # OWNER, `actor_user_id` is who is minting it. Equal here and not
+                    # interchangeable -- taking the actor from `user_id` would let a caller
+                    # name its own authority (§4).
+                    actor_user_id=auth_state.current_user.id,
                     name=self.new_key_name.strip(),
                 )
                 self._audit(
@@ -96,7 +101,12 @@ class ApiKeyState(BaseState):
             with get_sync_session() as session:
                 key_info = next((k for k in self.keys if k.id == key_id), None)
                 old_values = {"name": key_info.name} if key_info else {}
-                svc.revoke_api_key(session, auth_state.current_org.id, key_id)
+                svc.revoke_api_key(
+                    session,
+                    auth_state.current_org.id,
+                    key_id,
+                    actor_user_id=auth_state.current_user.id,
+                )
                 self._audit(
                     session,
                     auth_state.current_org.id,

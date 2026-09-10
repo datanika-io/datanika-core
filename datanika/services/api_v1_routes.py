@@ -1275,7 +1275,10 @@ def create_notification_channel(request, api_key, session):
             channel_type=ct,
             config=data.get("config", {}),
             events=data.get("events", []),
+            actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection
     except ValueError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_channel(ch), status_code=201)
@@ -1290,7 +1293,11 @@ def update_notification_channel(request, api_key, session):
         if key in data:
             kwargs[key] = data[key]
     try:
-        ch = _notif_svc.update_channel(session, cid, api_key.org_id, **kwargs)
+        ch = _notif_svc.update_channel(
+            session, cid, api_key.org_id, actor_user_id=api_key.user_id, **kwargs
+        )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection
     except ValueError as exc:
         return _error(400, str(exc))
     if ch is None:
@@ -1301,7 +1308,7 @@ def update_notification_channel(request, api_key, session):
 @api_endpoint(required_scope="notifications:write")
 def delete_notification_channel(request, api_key, session):
     cid = int(request.path_params["id"])
-    if not _notif_svc.delete_channel(session, cid, api_key.org_id):
+    if not _notif_svc.delete_channel(session, cid, api_key.org_id, actor_user_id=api_key.user_id):
         return _error(404, "Notification channel not found")
     return JSONResponse({"deleted": True})
 

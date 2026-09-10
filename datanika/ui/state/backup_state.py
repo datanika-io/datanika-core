@@ -47,10 +47,18 @@ class BackupState(BaseState):
         org_id = await self._get_org_id()
         if not org_id:
             return
+        # core#681: the export needs the ACTOR, not only the role gate above. The gate is
+        # the UI's second layer; the service is the control, and it is what the REST and
+        # MCP surfaces would inherit if either ever exposed an export.
+        from datanika.ui.state.auth_state import AuthState
+
+        auth_state = await self.get_state(AuthState)
         encryption = EncryptionService(settings.credential_encryption_key)
         try:
             with get_sync_session() as session:
-                backup = BackupService.export_backup(session, org_id, encryption)
+                backup = BackupService.export_backup(
+                    session, org_id, encryption, actor_user_id=auth_state.current_user.id
+                )
         except Exception as e:
             self.error_message = self._safe_error(e, "Failed to export backup")
             return

@@ -228,4 +228,27 @@ if [ "$RAN_FULL" = "1" ] && [ -f uv.lock ] && [ -d .venv ]; then
   sha256sum uv.lock 2>/dev/null | cut -d" " -f1 > "$LOCK_STAMP" || true
 fi
 
-echo "pre-push: all checks passed"
+# core#1265. This line used to read `pre-push: all checks passed` -- with no mention of
+# scope, as the LAST thing printed, after pytest output long enough to scroll the scope
+# announcement at the top out of view. Both halves were individually true and jointly
+# misleading: the hook correctly runs a NARROW scope by founder decision (#964), then
+# correctly reports that all the checks it ran passed. What a reader carries away is
+# "green".
+#
+# It was reported as "full tree green via the pre-push hook" in PR bodies more than once;
+# the real full-tree run was 25 failed, 12 errors. CI caught it, so nothing merged -- but a
+# PR was armed on a misread signal, and every department uses this hook.
+#
+# The scope is NOT widened here: the full suite measured 1105.95s against 79.89s, and a
+# ~17-minute pre-push gets bypassed, which is a guard that does not run while still wearing
+# a guard's name. What changes is that the FINAL verdict now names its own scope, and the
+# narrow case says outright what it is not. Pinned by tests/test_deploy/test_pre_push_scope.py.
+if [ "$RAN_TESTS" != "1" ]; then
+  echo "pre-push: checks passed -- pytest was SKIPPED ENTIRELY (no test evidence at all)"
+elif [ "$RAN_FULL" = "1" ]; then
+  echo "pre-push: checks passed -- pytest scope: tests (FULL TREE)"
+else
+  echo "pre-push: checks passed -- pytest scope: $PYTEST_SCOPE ONLY"
+  echo "pre-push: this is NOT the full tree. Do not report it as a full-suite run."
+  echo "pre-push: for the full tree:  DATANIKA_PREPUSH_FULL=1 git push"
+fi

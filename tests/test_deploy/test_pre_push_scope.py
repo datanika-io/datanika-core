@@ -154,3 +154,108 @@ class TestTheSixChecksCiCannotDoAreStillPresent:
     )
     def test_check_survives_the_trim(self, hook_text: str, needle: str, what: str) -> None:
         assert needle in hook_text, f"the trim removed {what}, which CI cannot replace"
+
+
+class TestTheFinalVerdictNamesItsOwnScope:
+    """core#1265. The hook's LAST line used to be `pre-push: all checks passed`.
+
+    Everything above this class pins which scope gets *selected*. Nothing pinned what
+    the hook *claims* when it finishes -- and that is where the misreport came from.
+    Both halves were individually correct: the hook runs a narrow scope by founder
+    decision (#964), then reports that all the checks it ran passed. The scope IS
+    announced -- at the top, before pytest output long enough to scroll it away. What
+    a reader carries away is the last line, and the last line said "all checks passed".
+
+    It was reported as "full tree green via the pre-push hook" in PR bodies more than
+    once. The real full-tree run was 25 failed, 12 errors.
+
+    These assertions are about the OUTPUT, not the selection, and the behavioural ones
+    execute the real block rather than matching text -- a text match cannot tell a
+    working branch from a broken one.
+    """
+
+    FINAL_BLOCK = re.compile(
+        r'^if \[ "\$RAN_TESTS" != "1" \]; then$.*?^fi$',
+        re.MULTILINE | re.DOTALL,
+    )
+
+    def _run(self, hook_text: str, **variables: str) -> str:
+        """Execute the real verdict block with its state variables set.
+
+        Uses the SAME invocation shape as TestScopeSelectionActuallyBehaves above:
+        the absolute path from shutil.which plus an explicit encoding. Invoking a
+        bare "bash" from Windows Python resolved to something that ran the script
+        but dropped every assignment -- `X="1"` then `echo $X` printed nothing --
+        so all three cases took the first branch and it looked like the HOOK was
+        wrong. A harness that silently mis-executes blames its subject, which is
+        the failure this whole class is about, one layer down.
+        """
+        bash = shutil.which("bash")
+        if not bash:
+            pytest.skip("bash unavailable")
+        m = self.FINAL_BLOCK.search(hook_text)
+        assert m, "could not locate the final verdict block"
+        newline = chr(10)
+        assigns = newline.join(f'{k}="{v}"' for k, v in variables.items()) + newline
+        r = subprocess.run(
+            [bash, "-c", assigns + m.group(0)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert r.returncode == 0, f"final block aborted: {r.stderr}"
+        # Anti-vacuity: an empty stdout would satisfy every "not in" assertion below.
+        assert r.stdout.strip(), "verdict block produced NO output -- harness is broken"
+        return r.stdout
+
+    def test_the_bare_all_checks_passed_claim_is_gone(self, hook_text):
+        """The exact phrasing that licensed 'full tree green'. It must not come back.
+
+        Checked against EXECUTABLE lines only. The first draft of this assertion read
+        the whole file and went red immediately -- on the comment that explains why the
+        phrase was removed. That is the same collision, in the opposite direction, as
+        the watchdog guard whose regex matched the comment describing the change it
+        existed to catch (core#1243): a file that documents its own history will contain
+        the strings its guards ban, and a whole-file match cannot tell prose from code.
+        """
+        code_lines = [line for line in hook_text.splitlines() if not line.lstrip().startswith("#")]
+        assert not any("all checks passed" in line for line in code_lines), (
+            "the unqualified completion claim is back in executable code; "
+            "it reads as full-tree evidence"
+        )
+        # Anti-vacuity: the comment stripper must not be eating the whole script.
+        assert any("RAN_FULL" in line for line in code_lines), "stripper removed too much"
+        assert len(code_lines) > 60, f"only {len(code_lines)} executable lines survived"
+
+    def test_narrow_run_says_outright_that_it_is_not_the_full_tree(self, hook_text):
+        out = self._run(hook_text, RAN_TESTS="1", RAN_FULL="0", PYTEST_SCOPE="tests/test_deploy")
+        assert "tests/test_deploy ONLY" in out
+        assert "NOT the full tree" in out, (
+            "the narrow verdict must refuse the full-tree reading in its own words"
+        )
+        assert "DATANIKA_PREPUSH_FULL=1" in out, "it must say how to get the full tree"
+
+    def test_full_run_says_full_tree(self, hook_text):
+        out = self._run(hook_text, RAN_TESTS="1", RAN_FULL="1", PYTEST_SCOPE="tests")
+        assert "FULL TREE" in out
+        assert "NOT the full tree" not in out, "the full run must not disclaim itself"
+
+    def test_skipped_run_does_not_imply_tests_ran(self, hook_text):
+        """`RUN_TESTS != 1` prints a verdict too. It must not read as test evidence."""
+        out = self._run(hook_text, RAN_TESTS="0", RAN_FULL="0", PYTEST_SCOPE="tests/test_deploy")
+        assert "SKIPPED" in out
+        assert "ONLY" not in out and "FULL TREE" not in out, (
+            "a skipped run must claim no scope at all, not a narrow one"
+        )
+
+    def test_the_three_verdicts_are_mutually_distinguishable(self, hook_text):
+        """Anti-vacuity: if two states print the same thing, the tests above pass
+        while the output has stopped carrying the distinction they exist to check."""
+        skipped = self._run(
+            hook_text, RAN_TESTS="0", RAN_FULL="0", PYTEST_SCOPE="tests/test_deploy"
+        )
+        narrow = self._run(hook_text, RAN_TESTS="1", RAN_FULL="0", PYTEST_SCOPE="tests/test_deploy")
+        full = self._run(hook_text, RAN_TESTS="1", RAN_FULL="1", PYTEST_SCOPE="tests")
+        assert len({skipped, narrow, full}) == 3, (
+            f"verdicts collapsed: skipped={skipped!r} narrow={narrow!r} full={full!r}"
+        )

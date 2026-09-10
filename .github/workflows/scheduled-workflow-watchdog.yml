@@ -233,10 +233,31 @@ jobs:
           if [ -f blind.txt ]; then exit 2; fi
 
       - name: File an issue when a tier has gone blind
-        if: steps.gap.outcome == 'failure'
+        # core#1260, the shape Infra repaired one level up in this same file.
+        # `== 'failure'` is true only when the step RAN and returned non-zero. If
+        # checkout or setup-python fails, the outcome is EMPTY, this step is SKIPPED,
+        # and the job ends red having filed nothing -- which is byte-identical to a
+        # correct detection, since that path also ends red. core#691 inside the thing
+        # built to catch core#691's class.
+        #
+        # `!= 'success'` covers '' (never ran) and 'failure' (ran and found something).
+        # `!cancelled()` declines on a cancelled run, which is neither and carries no
+        # steps in the API.
+        if: ${{ !cancelled() && steps.gap.outcome != 'success' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Widening the gate (core#1260) means this step now also runs when the
+          # reader NEVER RAN -- checkout or setup-python died -- in which case there
+          # are no artifacts at all. Filing a blindness issue on that would be a
+          # fabricated finding, and `cat out-*.txt` would print nothing while looking
+          # like a report. Say which of the three it is.
+          if [ ! -f blind.txt ] && [ ! -f broken.txt ]; then
+            echo "::error::The gap reader produced no artifacts, so it never ran."
+            echo "::error::Nothing was measured. This is not a report that a tier went"
+            echo "::error::blind -- it is this job failing before it could look."
+            exit 1
+          fi
           if [ -f broken.txt ]; then
             echo "::error::The gap reader exited non-zero and printed no summary line."
             echo "::error::That means it failed to RUN, not that a tier went blind."

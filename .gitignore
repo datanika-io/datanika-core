@@ -243,12 +243,3 @@ problems.md
 # design (SPEC_PII_SEPARATION §8a: Step A is measured against uncommitted fixture
 # changes), so its post-run check is scoped to the files it mutated.
 .n1-mutation-probe-state/
-
-# Playwright report files written by a LOCAL run (core#1197 / core#1232).
-# These share their names with the artifacts CI's flaky detector reads:
-# `.github/workflows/staging.yml` runs `detect_flaky_gating.py results-gating.json`
-# with `if: always()` and a path relative to the checkout, and the detector has no
-# freshness guard. A committed local report is therefore readable by CI on any run
-# that fails before writing its own — which is exactly the shape core#1232 exists to
-# prevent, arriving by file rather than by workflow run.
-e2e/results-*.json

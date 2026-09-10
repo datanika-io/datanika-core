@@ -39,13 +39,16 @@ here serves **more rows than fit in one page** and asserts the count.
   reasoned exemption.
 """
 
+import ast
 import http.server
 import json
+import pathlib
 import threading
 
 import pytest
 
 import datanika.services.dlt_runner as dlt_runner
+import datanika.tasks.upload_tasks as upload_tasks
 from datanika.services.dlt_runner import DltRunnerError, DltRunnerService
 
 #: Total customers the fake Stripe account holds. Must exceed PAGE_SIZE — a
@@ -459,3 +462,77 @@ class TestEverySaasConnectorHasAPaginatorDecision:
             DltRunnerService._rest_api_fallback(
                 "https://api.example.com/", None, [{"name": "x", "endpoint": {"path": "x"}}]
             )
+
+
+class TestAnExemptConnectorSaysSoOnTheRun:
+    """core#1170 AC6 — the exemption is a trade, and the user pays half of it.
+
+    `jira` is deliberately left to dlt's auto-detection: an offset paginator would
+    page `rest/api/3/search` correctly and then re-request the unpaginated
+    `project` array forever. **That trade is right and this suite affirms it.**
+
+    What was wrong is that its consequence lived only in a source comment. A run
+    came back `SUCCESS` with a row count, and nothing on it said the table might
+    be short — a verdict the product had not earned the right to present
+    unqualified, which is `SPEC_EARNED_VERDICTS`' whole subject.
+
+    ⚠️ **Asserted on the task's source rather than by driving a Jira load**, which
+    needs a live vendor account. The property that actually matters is that the
+    note is **derived**: a hardcoded `"jira"` would pass a behavioural test *on
+    jira* and leave entry two silent — which is precisely the failure this AC
+    names, and the one a per-connector test cannot see.
+    """
+
+    def test_the_note_is_derived_from_the_table_and_not_from_a_literal(self):
+        """⚠️ Asserted on the AST. A substring check here is satisfied by a COMMENT.
+
+        The first version of this test read `"SAAS_PAGINATION_EXEMPT" in src`, and
+        a mutation that replaced the lookup with `None` while leaving the name in
+        a trailing comment **passed it** — `PRODUCT_RULES` §11, hit inside the
+        guard written to prevent it. Only the mutation showed that; the test was
+        green on code that had stopped consulting the table entirely.
+        """
+        src = pathlib.Path(upload_tasks.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        assert names, "the AST walk found no names at all — it proves nothing"
+        assert "SAAS_PAGINATION_EXEMPT" in names, (
+            "the upload task does not REFERENCE the exemption table (a mention in a "
+            "comment does not count), so an exempt connector's run says nothing "
+            "about being unpaginated"
+        )
+
+        appends = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "append_logs"
+        ]
+        assert len(appends) >= 3, (
+            f"{len(appends)} append_logs call(s): the two catalog warnings plus this "
+            "note. Fewer means the note is not written onto the run."
+        )
+
+        literals = {
+            n.value
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        }
+        for name in dlt_runner.SAAS_PAGINATION_EXEMPT:
+            assert name not in literals, (
+                f"{name!r} appears as a string literal in the upload task. A literal "
+                "covers the entry that existed when it was written and leaves the "
+                "next one silent — derive it from SAAS_PAGINATION_EXEMPT instead."
+            )
+
+    def test_the_lookup_discriminates(self):
+        """Anti-vacuity: an empty table would satisfy every assertion above."""
+        assert dlt_runner.SAAS_PAGINATION_EXEMPT, (
+            "the exemption table is empty — the test above asserts nothing"
+        )
+        for name, reason in dlt_runner.SAAS_PAGINATION_EXEMPT.items():
+            assert reason and reason.strip(), f"{name} is exempt with no stated reason"
+        assert dlt_runner.SAAS_PAGINATION_EXEMPT.get("postgres") is None, (
+            "a non-exempt connector resolved to a reason — the note would fire on "
+            "runs that are correctly paginated"
+        )

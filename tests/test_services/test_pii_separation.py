@@ -31,7 +31,6 @@ from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService, hash_invitation_token
 from datanika.services.notification_service import NotificationService
 from datanika.services.user_service import UserService, UserServiceError
-from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -166,7 +165,7 @@ class TestInvitationTokenHashing:
 
 class TestNotificationChannelExtraction:
     def test_the_recipient_is_mirrored_into_the_sidecar(self, svc, db_session):
-        _, org = _register(svc, db_session, "ops@example.com", "Ops Person")
+        owner, org = _register(svc, db_session, "ops@example.com", "Ops Person")
         ch = NotificationService().create_channel(
             db_session,
             org.id,
@@ -174,7 +173,7 @@ class TestNotificationChannelExtraction:
             channel_type=ChannelType.EMAIL,
             config={"email": "alerts@example.com"},
             events=["run_failure"],
-            actor_user_id=make_org_admin(db_session, org.id),
+            actor_user_id=owner.id,
         )
         pii = db_session.get(NotificationChannelPII, ch.id)
         assert pii is not None and pii.recipient == "alerts@example.com"
@@ -285,7 +284,7 @@ class TestErasure:
             channel_type=ChannelType.EMAIL,
             config={"email": "sweepme@example.com"},
             events=["run_failure"],
-            actor_user_id=make_org_admin(db_session, org.id),
+            actor_user_id=user.id,
         )
         db_session.flush()
         svc.erase_user(db_session, user.id)
@@ -457,7 +456,7 @@ class TestOrgDeletion:
             channel_type=ChannelType.EMAIL,
             config={"email": "alerts2@example.com"},
             events=["run_failure"],
-            actor_user_id=make_org_admin(db_session, org.id),
+            actor_user_id=user.id,
         )
         counts = svc.delete_org(db_session, org.id)
         db_session.flush()

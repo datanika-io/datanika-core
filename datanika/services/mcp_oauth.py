@@ -381,6 +381,16 @@ class McpOAuthService:
             user_id=user_id,
             name=f"MCP: {client.client_name}"[:255],
             scopes=granted,
+            # The actor is the user completing the OAuth flow -- the same person the key
+            # is minted for.
+            #
+            # 🚨 CONSEQUENCE, and it is user-visible: `create_api_key` now requires
+            # `admin` (core#681 §1 -- the object IS a credential), so a viewer or editor
+            # completing this flow is now REFUSED and cannot obtain MCP access at all.
+            # That follows from the threshold §1 records rather than from anything decided
+            # here, and it is flagged rather than absorbed because MCP is a user-facing
+            # feature and this removes it for non-admins.
+            actor_user_id=user_id,
         )
 
         code = _CODE_PREFIX + secrets.token_urlsafe(32)

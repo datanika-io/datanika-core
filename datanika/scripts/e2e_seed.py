@@ -459,18 +459,21 @@ def _build_fixture(session: Session) -> SeedResult:
             session,
             org_id=org.id,
             user_id=user.id,
+            actor_user_id=user.id,
             name=FIXTURE_API_KEY_NAME_A,
         )
         key_b, raw_b = api_key_svc.create_api_key(
             session,
             org_id=org_b.id,
             user_id=org_b_user.id,
+            actor_user_id=org_b_user.id,
             name=FIXTURE_API_KEY_NAME_B,
         )
         key_ro, raw_ro = api_key_svc.create_api_key(
             session,
             org_id=org.id,
             user_id=user.id,
+            actor_user_id=user.id,
             name=FIXTURE_API_KEY_NAME_READONLY,
             scopes=FIXTURE_READONLY_SCOPES,
         )

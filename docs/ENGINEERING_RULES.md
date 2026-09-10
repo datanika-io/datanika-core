@@ -1668,6 +1668,47 @@ repository carried a stale belief about the other, and they pointed **opposite w
 4. **Suspect hardest the stale belief that flatters you.** Of the two above, the dangerous one was
    core's: it justified a structural decision by assuming the other side was careless, which is the
    version nobody re-checks.
+## 56. A mislabelled mutation is not a survivor — mutate duplicated logic as a PAIR
+
+**(2026-09-10, [core#681].)** `api_middleware` implements the same handler logic twice, once async
+and once sync. Having wired an `except InsufficientRoleError` into both, I probed it with:
+
+```python
+base.replace(CATCH, "", 1)          # "remove it from the SYNC path only"
+```
+
+and ran the **sync** test. It reported **SURVIVED**, which reads as *"the sync path is not
+covered."* It was not covered by that run because `str.replace(..., 1)` removes the **first**
+occurrence — the **async** path — so the mutation and the test named different halves. The sync
+catch was still there and the sync test passed for the correct reason.
+
+That is §48 in a new costume. §48 says *a mutant that does not mutate reports the system as
+perfect*; this one mutated fine and was **pointed at the wrong subject**, which fails the other way:
+it reports a defect that is not there. Both are instrument errors and both look like findings.
+
+**The honest form is a pair, and both halves carry weight:**
+
+| mutation | its own path's test | the other path's test |
+|---|---|---|
+| remove the async catch | **must fail** | **must pass** |
+| remove the sync catch | **must fail** | **must pass** |
+
+**Rules:**
+
+1. **Address duplicated logic by index or by span, never by an ordinal count you did not check.**
+   `replace(x, "", 1)` is a claim about document order. Locate both occurrences (`s.index`, then
+   `s.index(x, i+1)`) and mutate a *named* one.
+2. 🔑 **Assert the OTHER side stays green.** Without it, a mutation that breaks everything —
+   deleting a shared import, corrupting the module — kills the target test and looks like rigour.
+   *"My test went red"* is only evidence when something that should not have moved didn't.
+3. **State the topology in the probe's own output.** *"each removal must kill its own test and
+   leave the other green"* printed beside the result is what made the second run readable; the
+   first run's label was the only thing that was wrong, and nothing in the output contradicted it.
+4. **Corollary for a suite, not just a mutant: reds where the CONTROLS should be green are a
+   harness fault, not a finding.** The first draft of the same session's REST test did not patch
+   `_rate_limit_svc` and reached **real Redis**; all six tests failed *including* both controls.
+   Reading that as "the fix does not work" would have been wrong twice — about the fix, and about
+   what the run measured. Count the controls before reading the failures.
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1704,3 +1745,4 @@ repository carried a stale belief about the other, and they pointed **opposite w
 [core#522]: https://github.com/datanika-io/datanika-core/issues/522
 [core#456]: https://github.com/datanika-io/datanika-core/issues/456
 [core#910]: https://github.com/datanika-io/datanika-core/issues/910
+[core#681]: https://github.com/datanika-io/datanika-core/issues/681

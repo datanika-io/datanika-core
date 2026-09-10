@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from datanika.models.user import MemberRole, Membership, Organization, User
+from datanika.errors import InternalInvariantError
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.authorization import InsufficientRoleError, assert_org_role
+from tests.factories import make_user
 
 
 @pytest.fixture
@@ -36,10 +38,13 @@ def other_org(db_session):
     return o
 
 
-def _member(db_session, org, role: MemberRole, email: str) -> User:
-    user = User(email=email, password_hash="x", full_name=email)
-    db_session.add(user)
-    db_session.flush()
+def _member(db_session, org, role: MemberRole, email: str):
+    """Through ``tests.factories``, not ``User(...)`` directly.
+
+    SPEC_PII_SEPARATION §8a.2: constructing a guarded model directly produces a row the
+    dual-write invariant says cannot exist. CI caught my first draft doing exactly that.
+    """
+    user = make_user(db_session, email=email, password_hash="x")
     db_session.add(Membership(user_id=user.id, org_id=org.id, role=role))
     db_session.flush()
     return user
@@ -147,9 +152,7 @@ class TestItFailsClosed:
             )
 
     def test_a_non_member_is_refused(self, db_session, org):
-        user = User(email="stranger@x.io", password_hash="x", full_name="s")
-        db_session.add(user)
-        db_session.flush()
+        user = make_user(db_session, email="stranger@x.io", password_hash="x")
         with pytest.raises(InsufficientRoleError):
             assert_org_role(
                 db_session, org.id, user.id, required=MemberRole.EDITOR, operation="save_connection"
@@ -170,7 +173,7 @@ class TestItFailsClosed:
         caller to obtain the role `"editorr"`, which does not exist.
         """
         user = _member(db_session, org, MemberRole.ADMIN, "typo@x.io")
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(InternalInvariantError) as exc:
             assert_org_role(
                 db_session, org.id, user.id, required="editorr", operation="save_connection"
             )

@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from datanika.errors import UserFacingError
+from datanika.errors import InternalInvariantError, UserFacingError
 from datanika.models.user import MemberRole, Membership
 from datanika.services.auth import ROLE_RANK
 
@@ -98,9 +98,17 @@ def assert_org_role(
     """
     required_value = getattr(required, "value", required)
     if required_value not in ROLE_RANK:
-        # Not a UserFacingError: an unknown threshold is a programming error, and §2 says a
-        # fourth threshold is a Product question rather than something to invent here.
-        raise ValueError(f"Unknown role threshold {required_value!r}")
+        # Deliberately NOT a UserFacingError, and deliberately not a bare `ValueError`.
+        #
+        # An unknown threshold is a programming error: §2 says a fourth threshold is a
+        # Product question rather than something to invent here. Rendering it to the user
+        # would produce a 403 telling a caller to obtain a role that does not exist.
+        #
+        # A bare `ValueError` is refused by core#1094's contract (`test_errors.py`), and
+        # correctly: since that step, `is_user_facing` accepts only `UserFacingError`, so a
+        # bare one's text stops reaching the user while no error surfaces anywhere. CI
+        # caught this on the first push -- the guard is right and I was wrong.
+        raise InternalInvariantError(f"Unknown role threshold {required_value!r}")
 
     if actor_user_id is None:
         raise InsufficientRoleError(required_role=required_value, operation=operation)

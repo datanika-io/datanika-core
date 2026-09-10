@@ -28,6 +28,7 @@ from starlette.responses import JSONResponse
 from datanika.config import settings
 from datanika.db import get_sync_session
 from datanika.services.api_key_service import ApiKeyService
+from datanika.services.authorization import InsufficientRoleError
 from datanika.services.client_ip import resolve_client_ip
 from datanika.services.rate_limit_service import RateLimitService
 
@@ -39,6 +40,40 @@ _rate_limit_svc = RateLimitService()
 
 def _get_session():
     return get_sync_session()
+
+
+def _insufficient_role(exc) -> JSONResponse:
+    """`403` carrying ``required_role`` as a FIELD — SPEC_SERVICE_AUTHORIZATION §7.1.
+
+    🚨 **This is the only mitigation the core#681 intersection decision has.** A key's authority
+    is now intersected with its owner's *current* org role, so a working key stops working at a
+    moment nobody associates with the key: no deploy, nothing about the key changed, someone
+    edited a membership row. A refusal that does not name the cause turns that into a mystery
+    instead of a one-step support answer.
+
+    ⚠️ Nothing here may read as *expired*, *revoked* or *invalid* — a caller told that re-mints a
+    key that was never the problem, and the new one fails identically.
+
+    ⚠️ **Envelope**: the spec's illustration shows a flat body, while its own operative sentence
+    says *"the typed-error shape `api_v1_routes.py` already uses for `409 not_cancellable`"* —
+    which is nested under ``error``. The nested one wins: it is what every other typed error on
+    this surface emits, and a second envelope shape costs more than a wording mismatch.
+    ENGINEERING_RULES §16 — name the one you picked rather than picking quietly.
+
+    ⚠️ `403`, not `404`, and not merged with the cross-org path: within an org a viewer can
+    already *list* the resource, so hiding it buys nothing and costs the caller the one fact that
+    lets them fix it. Cross-org stays `404` (§7.3).
+    """
+    return JSONResponse(
+        {
+            "error": {
+                "code": "insufficient_role",
+                "message": str(exc),
+                "required_role": exc.required_role,
+            }
+        },
+        status_code=403,
+    )
 
 
 def _error(status: int, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
@@ -317,6 +352,16 @@ async def _run_async_handler(
                 session.rollback()
             else:
                 session.commit()
+        except InsufficientRoleError as exc:
+            # §7.1. Without this the refusal falls to `except Exception` below and becomes a
+            # 500 -- which reads as OUR bug rather than as an answer, and is strictly worse
+            # than the bare 401 the spec already forbids. Rolled back like any rejection.
+            session.rollback()
+            logger.info(
+                "API refusal: insufficient role",
+                extra={"operation": exc.operation, "required_role": exc.required_role},
+            )
+            return _insufficient_role(exc)
         except Exception:
             logger.exception("API handler error")
             session.rollback()
@@ -395,6 +440,16 @@ def _run_sync_handler(
                 session.rollback()
             else:
                 session.commit()
+        except InsufficientRoleError as exc:
+            # §7.1. Without this the refusal falls to `except Exception` below and becomes a
+            # 500 -- which reads as OUR bug rather than as an answer, and is strictly worse
+            # than the bare 401 the spec already forbids. Rolled back like any rejection.
+            session.rollback()
+            logger.info(
+                "API refusal: insufficient role",
+                extra={"operation": exc.operation, "required_role": exc.required_role},
+            )
+            return _insufficient_role(exc)
         except Exception:
             logger.exception("API handler error")
             session.rollback()

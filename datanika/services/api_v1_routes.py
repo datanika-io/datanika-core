@@ -522,6 +522,12 @@ def create_upload(request, api_key, session):
             dlt_config=data.get("dlt_config", {}),
             actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        # §7.1 belongs to api_middleware. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the handler below would turn a permissions refusal
+        # into a 400 and the 403 carrying `required_role` would never be produced.
+        # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
+        raise
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_upload(upload), status_code=201)
@@ -539,6 +545,12 @@ def update_upload(request, api_key, session):
         upload = _get_upload_svc().update_upload(
             session, api_key.org_id, upload_id, **kwargs, actor_user_id=api_key.user_id
         )
+    except InsufficientRoleError:
+        # §7.1 belongs to api_middleware. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the handler below would turn a permissions refusal
+        # into a 400 and the 403 carrying `required_role` would never be produced.
+        # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
+        raise
     except ValueError as exc:
         return _error(400, str(exc))
     if upload is None:
@@ -672,6 +684,12 @@ def create_pipeline(request, api_key, session):
             custom_selector=data.get("custom_selector"),
             actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        # §7.1 belongs to api_middleware. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the handler below would turn a permissions refusal
+        # into a 400 and the 403 carrying `required_role` would never be produced.
+        # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
+        raise
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_pipeline(pipeline), status_code=201)
@@ -696,6 +714,12 @@ def update_pipeline(request, api_key, session):
         pipeline = _pipeline_svc.update_pipeline(
             session, api_key.org_id, pipeline_id, **kwargs, actor_user_id=api_key.user_id
         )
+    except InsufficientRoleError:
+        # §7.1 belongs to api_middleware. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the handler below would turn a permissions refusal
+        # into a 400 and the 403 carrying `required_role` would never be produced.
+        # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
+        raise
     except ValueError as exc:
         return _error(400, str(exc))
     if pipeline is None:
@@ -967,6 +991,12 @@ def create_schedule(request, api_key, session):
             is_active=data.get("is_active", True),
             actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        # §7.1 belongs to api_middleware. `InsufficientRoleError` is a `UserFacingError`,
+        # which is a `ValueError`, so the handler below would turn a permissions refusal
+        # into a 400 and the 403 carrying `required_role` would never be produced.
+        # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
+        raise
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_schedule(s), status_code=201)

@@ -76,7 +76,16 @@ def upload(upload_svc, conn_svc, db_session, org):
         {"project": "p", "dataset": "d"},
         actor_user_id=make_org_admin(db_session, org.id),
     )
-    return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(
+        db_session,
+        org.id,
+        "pipe",
+        "desc",
+        src.id,
+        dst.id,
+        {},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
 
 
 @pytest.fixture
@@ -88,7 +97,14 @@ def transformation(transform_svc, db_session, org):
 
 class TestCreateSchedule:
     def test_upload_schedule(self, svc, db_session, org, upload):
-        s = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        s = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert isinstance(s, Schedule)
         assert isinstance(s.id, int)
         assert s.target_type == NodeType.UPLOAD
@@ -99,27 +115,60 @@ class TestCreateSchedule:
 
     def test_transformation_schedule(self, svc, db_session, org, transformation):
         s = svc.create_schedule(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            "30 2 * * 1",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert s.target_type == NodeType.TRANSFORMATION
         assert s.target_id == transformation.id
 
     def test_invalid_cron(self, svc, db_session, org, upload):
         with pytest.raises(ScheduleConfigError, match="cron"):
-            svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "bad")
+            svc.create_schedule(
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                upload.id,
+                "bad",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_nonexistent_upload(self, svc, db_session, org):
         with pytest.raises(ScheduleConfigError, match="target"):
-            svc.create_schedule(db_session, org.id, NodeType.UPLOAD, 99999, "0 * * * *")
+            svc.create_schedule(
+                db_session,
+                org.id,
+                NodeType.UPLOAD,
+                99999,
+                "0 * * * *",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_nonexistent_transformation(self, svc, db_session, org):
         with pytest.raises(ScheduleConfigError, match="target"):
-            svc.create_schedule(db_session, org.id, NodeType.TRANSFORMATION, 99999, "0 * * * *")
+            svc.create_schedule(
+                db_session,
+                org.id,
+                NodeType.TRANSFORMATION,
+                99999,
+                "0 * * * *",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestGetSchedule:
     def test_existing(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         fetched = svc.get_schedule(db_session, org.id, created.id)
         assert fetched is not None
         assert fetched.id == created.id
@@ -128,12 +177,28 @@ class TestGetSchedule:
         assert svc.get_schedule(db_session, org.id, 99999) is None
 
     def test_wrong_org(self, svc, db_session, org, other_org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert svc.get_schedule(db_session, other_org.id, created.id) is None
 
     def test_soft_deleted(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
-        svc.delete_schedule(db_session, org.id, created.id)
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.delete_schedule(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert svc.get_schedule(db_session, org.id, created.id) is None
 
 
@@ -143,24 +208,57 @@ class TestListSchedules:
         assert result == []
 
     def test_multiple(self, svc, db_session, org, upload, transformation):
-        svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
         svc.create_schedule(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            "30 2 * * 1",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         result = svc.list_schedules(db_session, org.id)
         assert len(result) == 2
 
     def test_excludes_deleted(self, svc, db_session, org, upload, transformation):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
-        svc.create_schedule(
-            db_session, org.id, NodeType.TRANSFORMATION, transformation.id, "30 2 * * 1"
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_schedule(db_session, org.id, created.id)
+        svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.TRANSFORMATION,
+            transformation.id,
+            "30 2 * * 1",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.delete_schedule(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_schedules(db_session, org.id)
         assert len(result) == 1
 
     def test_filters_by_org(self, svc, db_session, org, other_org, upload):
-        svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         # Create upload in other org for a schedule there
         result = svc.list_schedules(db_session, other_org.id)
         assert result == []
@@ -168,35 +266,94 @@ class TestListSchedules:
 
 class TestUpdateSchedule:
     def test_update_cron(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
-        updated = svc.update_schedule(db_session, org.id, created.id, cron_expression="30 2 * * *")
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        updated = svc.update_schedule(
+            db_session,
+            org.id,
+            created.id,
+            cron_expression="30 2 * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated is not None
         assert updated.cron_expression == "30 2 * * *"
 
     def test_update_timezone(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
-        updated = svc.update_schedule(db_session, org.id, created.id, timezone="US/Eastern")
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        updated = svc.update_schedule(
+            db_session,
+            org.id,
+            created.id,
+            timezone="US/Eastern",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.timezone == "US/Eastern"
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.update_schedule(db_session, org.id, 99999, timezone="UTC") is None
+        assert (
+            svc.update_schedule(
+                db_session,
+                org.id,
+                99999,
+                timezone="UTC",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+            is None
+        )
 
     def test_invalid_cron_rejected(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         with pytest.raises(ScheduleConfigError, match="cron"):
-            svc.update_schedule(db_session, org.id, created.id, cron_expression="bad")
+            svc.update_schedule(
+                db_session,
+                org.id,
+                created.id,
+                cron_expression="bad",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestDeleteSchedule:
     def test_sets_deleted_at(self, svc, db_session, org, upload):
-        created = svc.create_schedule(db_session, org.id, NodeType.UPLOAD, upload.id, "0 * * * *")
-        result = svc.delete_schedule(db_session, org.id, created.id)
+        created = svc.create_schedule(
+            db_session,
+            org.id,
+            NodeType.UPLOAD,
+            upload.id,
+            "0 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        result = svc.delete_schedule(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is True
         db_session.refresh(created)
         assert created.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        result = svc.delete_schedule(db_session, org.id, 99999)
+        result = svc.delete_schedule(
+            db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is False
 
 
@@ -209,8 +366,11 @@ class TestToggleActive:
             upload.id,
             "0 * * * *",
             is_active=True,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        toggled = svc.toggle_active(db_session, org.id, created.id)
+        toggled = svc.toggle_active(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert toggled is not None
         assert toggled.is_active is False
 
@@ -222,13 +382,21 @@ class TestToggleActive:
             upload.id,
             "0 * * * *",
             is_active=False,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        toggled = svc.toggle_active(db_session, org.id, created.id)
+        toggled = svc.toggle_active(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert toggled is not None
         assert toggled.is_active is True
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.toggle_active(db_session, org.id, 99999) is None
+        assert (
+            svc.toggle_active(
+                db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is None
+        )
 
 
 class TestValidateCron:

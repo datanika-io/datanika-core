@@ -65,6 +65,7 @@ class TestCreatePipeline:
             "desc",
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert isinstance(pipe, Pipeline)
         assert isinstance(pipe.id, int)
@@ -91,6 +92,7 @@ class TestCreatePipeline:
             dest_conn.id,
             DbtCommand.BUILD,
             models=models,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.models == models
         assert pipe.command == DbtCommand.BUILD
@@ -104,6 +106,7 @@ class TestCreatePipeline:
             dest_conn.id,
             DbtCommand.RUN,
             full_refresh=True,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.full_refresh is True
 
@@ -116,6 +119,7 @@ class TestCreatePipeline:
             dest_conn.id,
             DbtCommand.RUN,
             custom_selector="tag:nightly",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.custom_selector == "tag:nightly"
 
@@ -128,6 +132,7 @@ class TestCreatePipeline:
                 None,
                 dest_conn.id,
                 DbtCommand.RUN,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_whitespace_name_rejected(self, svc, db_session, org, dest_conn):
@@ -139,6 +144,7 @@ class TestCreatePipeline:
                 None,
                 dest_conn.id,
                 DbtCommand.RUN,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_invalid_models_rejected(self, svc, db_session, org, dest_conn):
@@ -151,6 +157,7 @@ class TestCreatePipeline:
                 dest_conn.id,
                 DbtCommand.RUN,
                 models=[{"bad": "format"}],
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
 
@@ -163,6 +170,7 @@ class TestGetPipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         found = svc.get_pipeline(db_session, org.id, pipe.id)
         assert found is not None
@@ -179,6 +187,7 @@ class TestGetPipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert svc.get_pipeline(db_session, other_org.id, pipe.id) is None
 
@@ -190,8 +199,11 @@ class TestGetPipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_pipeline(db_session, org.id, pipe.id)
+        svc.delete_pipeline(
+            db_session, org.id, pipe.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert svc.get_pipeline(db_session, org.id, pipe.id) is None
 
 
@@ -200,20 +212,62 @@ class TestListPipelines:
         assert svc.list_pipelines(db_session, org.id) == []
 
     def test_multiple(self, svc, db_session, org, dest_conn):
-        svc.create_pipeline(db_session, org.id, "A", None, dest_conn.id, DbtCommand.RUN)
-        svc.create_pipeline(db_session, org.id, "B", None, dest_conn.id, DbtCommand.BUILD)
+        svc.create_pipeline(
+            db_session,
+            org.id,
+            "A",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_pipeline(
+            db_session,
+            org.id,
+            "B",
+            None,
+            dest_conn.id,
+            DbtCommand.BUILD,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert len(svc.list_pipelines(db_session, org.id)) == 2
 
     def test_excludes_deleted(self, svc, db_session, org, dest_conn):
-        p1 = svc.create_pipeline(db_session, org.id, "A", None, dest_conn.id, DbtCommand.RUN)
-        svc.create_pipeline(db_session, org.id, "B", None, dest_conn.id, DbtCommand.BUILD)
-        svc.delete_pipeline(db_session, org.id, p1.id)
+        p1 = svc.create_pipeline(
+            db_session,
+            org.id,
+            "A",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_pipeline(
+            db_session,
+            org.id,
+            "B",
+            None,
+            dest_conn.id,
+            DbtCommand.BUILD,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.delete_pipeline(
+            db_session, org.id, p1.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_pipelines(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "B"
 
     def test_filters_by_org(self, svc, db_session, org, other_org, dest_conn):
-        svc.create_pipeline(db_session, org.id, "A", None, dest_conn.id, DbtCommand.RUN)
+        svc.create_pipeline(
+            db_session,
+            org.id,
+            "A",
+            None,
+            dest_conn.id,
+            DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert svc.list_pipelines(db_session, other_org.id) == []
 
 
@@ -226,8 +280,15 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_pipeline(db_session, org.id, pipe.id, name="New")
+        updated = svc.update_pipeline(
+            db_session,
+            org.id,
+            pipe.id,
+            name="New",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated is not None
         assert updated.name == "New"
 
@@ -239,8 +300,15 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_pipeline(db_session, org.id, pipe.id, command=DbtCommand.BUILD)
+        updated = svc.update_pipeline(
+            db_session,
+            org.id,
+            pipe.id,
+            command=DbtCommand.BUILD,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.command == DbtCommand.BUILD
 
     def test_updates_models(self, svc, db_session, org, dest_conn):
@@ -251,9 +319,16 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         models = [{"name": "orders", "upstream": False, "downstream": False}]
-        updated = svc.update_pipeline(db_session, org.id, pipe.id, models=models)
+        updated = svc.update_pipeline(
+            db_session,
+            org.id,
+            pipe.id,
+            models=models,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.models == models
 
     def test_updates_full_refresh(self, svc, db_session, org, dest_conn):
@@ -264,8 +339,15 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_pipeline(db_session, org.id, pipe.id, full_refresh=True)
+        updated = svc.update_pipeline(
+            db_session,
+            org.id,
+            pipe.id,
+            full_refresh=True,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.full_refresh is True
 
     def test_updates_status(self, svc, db_session, org, dest_conn):
@@ -276,17 +358,28 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         updated = svc.update_pipeline(
             db_session,
             org.id,
             pipe.id,
             status=PipelineStatus.ACTIVE,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert updated.status == PipelineStatus.ACTIVE
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.update_pipeline(db_session, org.id, 99999, name="X") is None
+        assert (
+            svc.update_pipeline(
+                db_session,
+                org.id,
+                99999,
+                name="X",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+            is None
+        )
 
     def test_invalid_models_rejected(self, svc, db_session, org, dest_conn):
         pipe = svc.create_pipeline(
@@ -296,9 +389,16 @@ class TestUpdatePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(PipelineConfigError, match="models"):
-            svc.update_pipeline(db_session, org.id, pipe.id, models="not a list")
+            svc.update_pipeline(
+                db_session,
+                org.id,
+                pipe.id,
+                models="not a list",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestDeletePipeline:
@@ -310,13 +410,24 @@ class TestDeletePipeline:
             None,
             dest_conn.id,
             DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        assert svc.delete_pipeline(db_session, org.id, pipe.id) is True
+        assert (
+            svc.delete_pipeline(
+                db_session, org.id, pipe.id, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is True
+        )
         db_session.refresh(pipe)
         assert pipe.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.delete_pipeline(db_session, org.id, 99999) is False
+        assert (
+            svc.delete_pipeline(
+                db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is False
+        )
 
 
 class TestBuildSelector:

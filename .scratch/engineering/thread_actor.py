@@ -26,7 +26,17 @@ import ast
 import pathlib
 import sys
 
-TARGETS = {"create_connection", "update_connection", "delete_connection", "import_backup"}
+TARGETS = {
+    "create_connection", "update_connection", "delete_connection", "import_backup",
+    "create_upload", "update_upload", "delete_upload",
+    "create_pipeline", "update_pipeline", "delete_pipeline",
+    "create_schedule", "update_schedule", "delete_schedule", "toggle_active",
+}
+
+#: Namesakes live here: MCP exposes TOOLS with these names and unrelated signatures, and
+#: Reflex state classes expose HANDLERS with them. Nothing in the syntax distinguishes
+#: either from the service method, so they are excluded by path rather than detected.
+EXCLUDE = ("tests/test_mcp",)
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -35,6 +45,8 @@ def _call_name(node: ast.Call) -> str | None:
 
 
 def patch(path: pathlib.Path) -> tuple[int, list[str]]:
+    if any(d in path.as_posix() for d in EXCLUDE):
+        return 0, [f"{path.name}: EXCLUDED (namesakes -- MCP tools, not the service)"]
     raw = path.read_bytes()
     nl = "\r\n" if raw.count(b"\r\n") else "\n"
     src = raw.replace(b"\r\n", b"\n").decode("utf-8")

@@ -100,7 +100,14 @@ def upload_run(db_session):
         actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = upload_svc.create_upload(
-        db_session, org.id, "test", "desc", src.id, dst.id, {"write_disposition": "append"}
+        db_session,
+        org.id,
+        "test",
+        "desc",
+        src.id,
+        dst.id,
+        {"write_disposition": "append"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     run = ExecutionService().create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
     return org, run, encryption

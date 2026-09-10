@@ -535,8 +535,21 @@ class BackupService:
         conflict_resolutions: dict,
         pipeline_svc: PipelineService | None = None,
         transformation_svc: TransformationService | None = None,
+        *,
+        actor_user_id: int,
     ) -> dict:
         """Import connections, uploads, pipelines, and transformations from a backup dict.
+
+        ``actor_user_id`` is threaded through to the services this calls, which enforce
+        their own role (core#681). **Required, not defaulted:** this method creates and
+        overwrites connections -- objects that hold credentials -- and a restore that
+        authorized itself is the hole SPEC_SERVICE_AUTHORIZATION §4 forbids: *a caller
+        that supplies its own authority is not being checked.*
+
+        ⚠️ This service carried **no actor at all** before core#681. That is why wiring
+        connections was a design change rather than the 25th mechanical edit: the identity
+        had to be threaded from ``backup_state``, where it already existed for the audit
+        row and was simply never passed down.
 
         ``conflict_resolutions`` maps ``("connection"|"upload"|"pipeline"|"transformation", name)``
         to ``"skip"|"overwrite"|"rename"``.
@@ -588,6 +601,7 @@ class BackupService:
                         session,
                         org_id,
                         target_id,
+                        actor_user_id=actor_user_id,
                         name=name,
                         connection_type=ConnectionType(c_data["connection_type"]),
                         config=config,
@@ -617,6 +631,7 @@ class BackupService:
                 name,
                 ConnectionType(c_data["connection_type"]),
                 config,
+                actor_user_id=actor_user_id,
             )
             if needs_credentials:
                 credentials_required.append(name)

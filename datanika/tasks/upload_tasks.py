@@ -16,7 +16,11 @@ from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
-from datanika.services.dlt_runner import DltRunnerService, destination_dataset_name
+from datanika.services.dlt_runner import (
+    SAAS_PAGINATION_EXEMPT,
+    DltRunnerService,
+    destination_dataset_name,
+)
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService, get_org_run
 from datanika.services.naming import to_snake_case
@@ -280,6 +284,33 @@ def run_upload(
             logs=logs,
             bytes_processed=bytes_processed,
         )
+
+        # core#1170 AC6. `jira` is deliberately left to dlt's auto-detection: an
+        # offset paginator would page `rest/api/3/search` correctly and then
+        # re-request the unpaginated `project` array forever, and a hang is worse
+        # than a short table. **That trade is right.** What was wrong is that its
+        # consequence lived only in a source comment — a user whose table came
+        # back short had nothing on the run saying why, which is this spec's
+        # subject exactly: a verdict (SUCCESS, n rows) the product had not earned
+        # the right to present without qualification.
+        #
+        # ⚠️ Derived from `SAAS_PAGINATION_EXEMPT`, never from a literal, so a
+        # second entry is covered on the day it is added rather than the day
+        # someone remembers this line exists.
+        #
+        # Diagnostics only, and deliberately: status and `rows_loaded` are
+        # untouched. The load did succeed; what is uncertain is whether it is
+        # complete, and saying so is not the same as calling it a failure.
+        pagination_note = SAAS_PAGINATION_EXEMPT.get(src_conn.connection_type.value)
+        if pagination_note:
+            execution_service.append_logs(
+                session,
+                org_id,
+                run_id,
+                f"NOTE: Datanika does not paginate '{src_conn.connection_type.value}' "
+                "requests, so this table may be short if the source returned more than "
+                f"one page. Why: {pagination_note}",
+            )
 
         table_count = 1  # fallback
         try:

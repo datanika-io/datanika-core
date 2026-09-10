@@ -300,6 +300,11 @@ status member and each closes a live falsehood.
 
 ### 4.2 · AC3 — a count we failed to read is not zero
 
+- ✅ **SHIPPED (Engineering).** `_extract_rows_loaded(pipeline) -> int | None` returns `None` on
+  every unreadable-trace path, **zero** `rows_loaded or 0` coercions remain in `ui/`, and
+  `tests/test_services/test_rows_loaded_is_not_a_guess.py` asserts **both** directions — a measured
+  zero must stay `0`, or the fix replaces one conflation with its mirror image.
+
 🚨 **Live defect, two halves.**
 
 **The extractor.** `_extract_rows_loaded` (`dlt_runner.py:311-329`) ends:
@@ -358,6 +363,13 @@ claim, and in the [core#823] incident it read `18` while the source held `23`.
 
 ### 4.4 · AC5 — pin the dlt default our run status depends on
 
+- ✅ **SHIPPED, and better than this AC asked for.** It asked for a *pin*;
+  `test_raise_on_failed_jobs_is_true_as_resolved` asserts the **resolved** loader config instead —
+  `_resolved_loader_config(...).raise_on_failed_jobs is True`. 🔑 **A version pin constrains what is
+  installed; this constrains what is in effect**, which is the thing our run status actually depends
+  on, and it survives a config file or env var setting it back to `False`. The suite carries the
+  `is False` case too, so the assertion is known able to fail.
+
 Per §0c: `SUCCESS` is honest only because `dlt`'s `raise_on_failed_jobs` defaults to `True`. Nothing
 in our tree states that, and it was `False` before dlt 1.0.
 
@@ -372,6 +384,13 @@ in our tree states that, and it was `False` before dlt 1.0.
   reader will go looking for the bug it prevents.
 
 ### 4.5 · AC6 — a connector we know does not paginate must say so in the run
+
+- ✅ **SHIPPED 2026-09-10.** `upload_tasks.py` appends a note derived from
+  `SAAS_PAGINATION_EXEMPT` via the existing `execution_service.append_logs`, diagnostics only —
+  status and `rows_loaded` untouched. The stale *"Both entries below"* comment is corrected and the
+  replacement makes **no count claim at all**. Guarded by `TestAnExemptConnectorSaysSoOnTheRun`,
+  armed 4/4. ⚠️ **Draft 1 of that guard was satisfied by a COMMENT** — `PRODUCT_RULES` §11 again;
+  it now asserts on the AST.
 
 `SAAS_PAGINATION_EXEMPT` holds **one** entry, `jira`, with a good reason:
 an offset paginator would page `search` correctly and then re-request the unpaginated `project`

@@ -644,6 +644,17 @@ Per PRICING_PIVOT_DECISIONS.md (`plans/PRICING_PIVOT_DECISIONS.md`) Q6 (HARD SUN
 
 ## 15. Acceptance criteria (implementation phase)
 
+> 🚨 **Every criterion below names an OUTCOME. §15a names what ASSERTS it, and a criterion with no
+> entry there is not ready to implement.** (`PRODUCT_RULES` §16.) This is not pedantry: a criterion
+> phrased as *"the user sees X"* is satisfied by anything that renders X, on any path, including one
+> nothing reaches — which is how `SPEC_SERVICE_AUTHORIZATION` §7.1's refusal came to be **observed in
+> production traffic and still not in effect**.
+>
+> ⚠️ **Four of these are negative claims over an unbounded surface** — *"without seeing the word ELT
+> **anywhere on the screen**"*, *"no upgrade CTAs **anywhere**"*, *"no banner appears **anywhere**"*.
+> A negative over an unbounded surface cannot be asserted at all; it can only be asserted over a
+> **named, enumerated** one. §15a bounds each.
+
 When Engineering + Cloud are ready to ship, these are the UX acceptance tests this spec demands:
 
 1. **Novice first-pipeline flow** — user with no pipelines can create and run a pipeline end-to-end without seeing the word "ELT" anywhere on the screen.
@@ -658,6 +669,41 @@ When Engineering + Cloud are ready to ship, these are the UX acceptance tests th
 10. **i18n parity** — all 59 new keys exist in all 9 locales; the parity test passes.
 11. **Pipeline back-compat** — on deploy day, existing pipeline rows back-fill to `mode = 'etl'` and run identically to pre-deploy. Post-cutover, the dashboard shows the dual-dimension bar for all orgs (no legacy single-dim bar state). No in-app "you were migrated" banner appears anywhere — cutover is invisible to users.
 12. **Agent MCP tool** — `estimate_run_cost(pipeline_id)` returns a non-null estimate for any pipeline with ≥1 successful run; `estimate_cost_for_config(...)` returns a non-null estimate for the stripe-to-postgres template inputs.
+
+### 15a. What asserts each of the above
+
+**The three parts of a criterion** (`PRODUCT_RULES` §16): the outcome, the **entry point** driven the
+way a user drives it, and the **witness** — the artifact actually read, and where it is read from. The
+outcomes are in §15; the other two are here.
+
+| # | Entry point driven | Witness read |
+|---|---|---|
+| 1 | Signup → create pipeline → run, as a user with **0** pipelines | The rendered text of the **enumerated** page set: `/pipelines`, `/pipelines/new`, the run detail, the dashboard. **Case-insensitive**, and matched as a **word** — `ELT` must not match inside `DELETE` or `ELTP`. |
+| 2 | Set the mode control, reload, trigger a run | `Pipeline.mode` in the DB **and** the mode the executed run actually took — not the form field, which is the thing under test |
+| 3 | Open `/pipelines/new`, fill the form, do **not** submit | The cost panel's text node: a digit sequence **or** the em dash. ⚠️ Assert **which**: "shows a number or —" is satisfied by either, so the test must know which case it set up |
+| 4 | Complete a run, open its detail page | The Cost field's value vs the `UsageLedger` row for that `run_id`, within 30% |
+| 5 | Free-tier org at quota, submit a run | The modal is present **and** no `Run` row was created. ⚠️ *"Before the run starts"* is an ordering claim; the **absence of the run row** is what makes it assertable |
+| 6 | Pro org, run that breaches mid-way | Three separate witnesses: run ends `SUCCESS`; a `Notification` row exists within 60 s; the dashboard bar's value changed. **Assert all three** — the criterion reads as one outcome and is three |
+| 7 | Pro **and** Enterprise org at 80%+ | The **enumerated** surfaces: the dashboard usage bar component, and the `volume_quota_warning_80` notification body. Assert **no** anchor/button whose target is the upgrade route. ⚠️ Free tier is the **negative control** — it *must* carry the CTA, or the test passes because nothing renders CTAs at all |
+| 8 | Pipeline with ≥5 runs and ≥20 GB in 30 days, open its detail page | The banner is present **and** its text matches the savings token, not merely that a banner exists |
+| 9 | Dismiss, then reload; and again at day 29 and day 31 | Banner absent at 29, present at 31. ⚠️ Assert the **day-31 return**: a banner that never comes back also passes "does not reappear for 30 days" |
+| 10 | — | The parity test itself. Already witnessed |
+| 11 | Deploy-day rows, before and after | `mode == 'etl'` on pre-existing rows; the dual-dimension bar renders; and for *"no migration banner **anywhere**"*, the **enumerated** post-login page set |
+| 12 | Call each MCP tool | A non-null estimate in the tool's response envelope |
+
+🚨 **Criteria 1, 7 and 11 are the ones to get right, because a negative claim fails silently in the
+reassuring direction.** If the page-set enumeration is wrong — a page missing from the list, a
+selector that matches nothing — the assertion passes. **Each needs an anti-vacuity control: a page
+where the term IS expected must be in the set and must be found**, or the sweep proves only that it
+swept nothing. (`PRODUCT_RULES` §11a: the reassuring direction is the one to design against.)
+
+⚠️ **`innerText` is blind in three specific ways** (`PRODUCT_RULES` §5) — read the rendered text the
+way that rule prescribes, not by scraping a screenshot or trusting a CSS-hidden node to be absent.
+
+⚠️ **To QA, and this now matters: §16 delegates these to `SPEC_VOLUME_METERING_TESTS` as E2E cases.**
+With per-agent local E2E stacks landing, *"the E2E suite is green"* is about to be ambiguous about
+**which** suite. Name the suite and the tier (gating vs informational) when these are written; a
+criterion satisfied only in a local stack nobody else runs is not satisfied.
 
 ## 16. Cross-team handoff
 

@@ -113,6 +113,17 @@ defect being present. This has already earned its keep here: the first version o
 ``SCANNER_PATHS`` held 46 paths where the criterion names 50, and the guard said
 so instead of quietly xfailing.
 
+⚠️ **A varying count across scrapes of these metrics is core#895, NOT instability in
+core#896's fix.** Measured on production 2026-09-10: six `Connection: close` reads of one
+app counter returned `1, 2, 7, 1, 1, 2`, while a **single-process** exporter read the same
+way over the same interval returned `1, 1, 1, 1, 1, 1` with 31 stable series. Production
+runs `GRANIAN_WORKERS=4` with no `PROMETHEUS_MULTIPROC_DIR`, so each worker keeps its own
+registry and a scrape is answered by whichever one accepted the connection.
+
+The spread is stated here because this is the file someone opens when a label count looks
+unstable, and the first reading — *"the cardinality fix is flapping"* — is wrong. Probe:
+`plans/qa/notes/probe-895-ac1-per-process-counters.sh`, control included.
+
 core#896 AC3 is asserted here in the only form pytest can hold: a ceiling on the
 label values the middleware can *produce*, derived from the route table rather
 than written down as a number. The production half — a ceiling on

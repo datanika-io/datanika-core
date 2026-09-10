@@ -1244,7 +1244,20 @@ class ConnectionService:
 
         reason = SAAS_PROBE_EXEMPT.get(name)
         if reason is not None:
-            return None, reason
+            # core#1170 AC3.3. The third element is a machine-readable SLUG, not an
+            # i18n key -- `ConnectionVerdict.reason`'s own docstring draws that line,
+            # and the UI owns slug -> key in `connection_state._VERDICT_KEYS`.
+            #
+            # The slug is DERIVED from `name` rather than stored beside the sentence:
+            # a second column in SAAS_PROBE_EXEMPT would be a hand-maintained parallel
+            # list, and a guard over it would be asserting a mapping against the copy
+            # of it that produced the mapping.
+            #
+            # `message` is unchanged and stays the English developer sentence -- it is
+            # what the REST API and the logs get (`ConnectionVerdict.message`). The UI
+            # string is separate, shorter, and written for a user.
+            # See SPEC_EARNED_VERDICTS 3.3.
+            return None, reason, f"not_tested_{name}"
 
         probe = SAAS_PROBES.get(name)
         if probe is None:

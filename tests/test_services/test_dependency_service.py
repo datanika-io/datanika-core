@@ -75,7 +75,16 @@ def upload(upload_svc, conn_svc, db_session, org):
         {"project": "p", "dataset": "d"},
         actor_user_id=make_org_admin(db_session, org.id),
     )
-    return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(
+        db_session,
+        org.id,
+        "pipe",
+        "desc",
+        src.id,
+        dst.id,
+        {},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
 
 
 @pytest.fixture
@@ -96,7 +105,16 @@ def upload2(upload_svc, conn_svc, db_session, org):
         {"project": "p", "dataset": "d"},
         actor_user_id=make_org_admin(db_session, org.id),
     )
-    return upload_svc.create_upload(db_session, org.id, "pipe2", "desc", src.id, dst.id, {})
+    return upload_svc.create_upload(
+        db_session,
+        org.id,
+        "pipe2",
+        "desc",
+        src.id,
+        dst.id,
+        {},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
 
 
 @pytest.fixture

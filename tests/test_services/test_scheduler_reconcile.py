@@ -38,6 +38,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
 from datanika.services.scheduler_integration import SchedulerIntegrationService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -193,6 +194,7 @@ class TestASavedScheduleStillReachesTheScheduler:
         created = schedule_svc.create_schedule(
             db_session,
             org_id=1,
+            actor_user_id=make_org_admin(db_session, 1),
             target_type=NodeType.UPLOAD,
             target_id=10,
             cron_expression="*/5 * * * *",
@@ -218,6 +220,7 @@ class TestASavedScheduleStillReachesTheScheduler:
         created = schedule_svc.create_schedule(
             db_session,
             org_id=1,
+            actor_user_id=make_org_admin(db_session, 1),
             target_type=NodeType.UPLOAD,
             target_id=10,
             cron_expression="*/5 * * * *",
@@ -227,7 +230,12 @@ class TestASavedScheduleStillReachesTheScheduler:
         svc.reconcile(db_session)
         assert f"schedule_{created.id}" in _job_ids(svc)
 
-        schedule_svc.delete_schedule(db_session, org_id=1, schedule_id=created.id)
+        schedule_svc.delete_schedule(
+            db_session,
+            org_id=1,
+            schedule_id=created.id,
+            actor_user_id=make_org_admin(db_session, 1),
+        )
         db_session.flush()
         svc.reconcile(db_session)
         assert f"schedule_{created.id}" not in _job_ids(svc), (

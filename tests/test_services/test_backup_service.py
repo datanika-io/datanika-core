@@ -75,6 +75,7 @@ def sample_upload(db_session, upload_svc, org, sample_connections):
         src.id,
         dst.id,
         {"mode": "full_database", "write_disposition": "append"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 
@@ -412,7 +413,16 @@ class TestDetectConflicts:
             {"project": "p", "dataset": "d"},
             actor_user_id=make_org_admin(db_session, org.id),
         )
-        upload_svc.create_upload(db_session, org.id, "My Upload", None, src.id, dst.id, {})
+        upload_svc.create_upload(
+            db_session,
+            org.id,
+            "My Upload",
+            None,
+            src.id,
+            dst.id,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         data = {
             "version": 1,
             "connections": [

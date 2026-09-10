@@ -114,7 +114,14 @@ def graph(db_session, org, svc):
         actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = UploadService(conn_svc).create_upload(
-        db_session, org.id, "nightly orders", "desc", src.id, dst.id, {}
+        db_session,
+        org.id,
+        "nightly orders",
+        "desc",
+        src.id,
+        dst.id,
+        {},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     transformation = TransformationService().create_transformation(
         db_session, org.id, "dds_orders", "SELECT 1", Materialization.VIEW

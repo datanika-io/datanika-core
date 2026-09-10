@@ -90,14 +90,26 @@ class TestPipelinesRefuseANonDbtDestination:
         conn = _conn(conn_svc, db_session, org, ConnectionType.DATABRICKS)
         with pytest.raises(PipelineConfigError, match="no dbt adapter"):
             PipelineService().create_pipeline(
-                db_session, org.id, "p", None, conn.id, DbtCommand.RUN
+                db_session,
+                org.id,
+                "p",
+                None,
+                conn.id,
+                DbtCommand.RUN,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_synapse_is_refused_for_the_same_reason(self, conn_svc, db_session, org):
         conn = _conn(conn_svc, db_session, org, ConnectionType.SYNAPSE)
         with pytest.raises(PipelineConfigError, match="no dbt adapter"):
             PipelineService().create_pipeline(
-                db_session, org.id, "p", None, conn.id, DbtCommand.RUN
+                db_session,
+                org.id,
+                "p",
+                None,
+                conn.id,
+                DbtCommand.RUN,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_postgres_still_works(self, conn_svc, db_session, org):
@@ -105,7 +117,13 @@ class TestPipelinesRefuseANonDbtDestination:
         refusal that refuses everything — which is the more likely bug."""
         conn = _conn(conn_svc, db_session, org, ConnectionType.POSTGRES)
         pipeline = PipelineService().create_pipeline(
-            db_session, org.id, "p", None, conn.id, DbtCommand.RUN
+            db_session,
+            org.id,
+            "p",
+            None,
+            conn.id,
+            DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipeline.destination_connection_id == conn.id
 
@@ -115,9 +133,23 @@ class TestPipelinesRefuseANonDbtDestination:
         good = _conn(conn_svc, db_session, org, ConnectionType.POSTGRES)
         bad = _conn(conn_svc, db_session, org, ConnectionType.DATABRICKS)
         svc = PipelineService()
-        pipeline = svc.create_pipeline(db_session, org.id, "p", None, good.id, DbtCommand.RUN)
+        pipeline = svc.create_pipeline(
+            db_session,
+            org.id,
+            "p",
+            None,
+            good.id,
+            DbtCommand.RUN,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         with pytest.raises(PipelineConfigError, match="no dbt adapter"):
-            svc.update_pipeline(db_session, org.id, pipeline.id, destination_connection_id=bad.id)
+            svc.update_pipeline(
+                db_session,
+                org.id,
+                pipeline.id,
+                destination_connection_id=bad.id,
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_the_message_names_the_type_and_the_reason(self, conn_svc, db_session, org):
         """A refusal the user cannot act on is a different bug.
@@ -130,7 +162,13 @@ class TestPipelinesRefuseANonDbtDestination:
         conn = _conn(conn_svc, db_session, org, ConnectionType.DATABRICKS)
         with pytest.raises(PipelineConfigError) as exc:
             PipelineService().create_pipeline(
-                db_session, org.id, "p", None, conn.id, DbtCommand.RUN
+                db_session,
+                org.id,
+                "p",
+                None,
+                conn.id,
+                DbtCommand.RUN,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
         assert "databricks" in str(exc.value)
         assert "dbt" in str(exc.value)
@@ -185,7 +223,14 @@ class TestUploadsRefuseADestinationDltCannotLoadInto:
         dst = _conn(conn_svc, db_session, org, ConnectionType.MYSQL)
         with pytest.raises(ValueError, match="cannot load into"):
             UploadService(conn_svc).create_upload(
-                db_session, org.id, "u", None, src.id, dst.id, {"mode": "full_database"}
+                db_session,
+                org.id,
+                "u",
+                None,
+                src.id,
+                dst.id,
+                {"mode": "full_database"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_sqlite_is_refused(self, conn_svc, db_session, org):
@@ -193,7 +238,14 @@ class TestUploadsRefuseADestinationDltCannotLoadInto:
         dst = _conn(conn_svc, db_session, org, ConnectionType.SQLITE)
         with pytest.raises(ValueError, match="cannot load into"):
             UploadService(conn_svc).create_upload(
-                db_session, org.id, "u", None, src.id, dst.id, {"mode": "full_database"}
+                db_session,
+                org.id,
+                "u",
+                None,
+                src.id,
+                dst.id,
+                {"mode": "full_database"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_databricks_is_accepted_here(self, conn_svc, db_session, org):
@@ -206,7 +258,14 @@ class TestUploadsRefuseADestinationDltCannotLoadInto:
         src = _conn(conn_svc, db_session, org, ConnectionType.POSTGRES)
         dst = _conn(conn_svc, db_session, org, ConnectionType.DATABRICKS)
         upload = UploadService(conn_svc).create_upload(
-            db_session, org.id, "uok", None, src.id, dst.id, {"mode": "full_database"}
+            db_session,
+            org.id,
+            "uok",
+            None,
+            src.id,
+            dst.id,
+            {"mode": "full_database"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert upload.destination_connection_id == dst.id
 
@@ -221,6 +280,13 @@ class TestUploadsRefuseADestinationDltCannotLoadInto:
         src = _conn(conn_svc, db_session, org, ConnectionType.MYSQL)
         dst = _conn(conn_svc, db_session, org, ConnectionType.POSTGRES)
         upload = UploadService(conn_svc).create_upload(
-            db_session, org.id, "umysqlsrc", None, src.id, dst.id, {"mode": "full_database"}
+            db_session,
+            org.id,
+            "umysqlsrc",
+            None,
+            src.id,
+            dst.id,
+            {"mode": "full_database"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert upload.source_connection_id == src.id

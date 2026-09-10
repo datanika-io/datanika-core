@@ -79,6 +79,7 @@ def upload(upload_svc, conn_svc, db_session, org):
         src.id,
         dst.id,
         {},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 

@@ -12,8 +12,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.factories import make_org_admin
-
 
 @pytest.fixture(autouse=True)
 def _add_mcp_to_path():
@@ -110,7 +108,6 @@ class TestWriteGuard:
                 "test",
                 "postgres",
                 {"host": "localhost"},
-                actor_user_id=make_org_admin("test", "postgres"),
             )
 
     async def test_trigger_pipeline_calls_require_write(self):
@@ -183,7 +180,6 @@ class TestWriteToolsCallClient:
             "test",
             "postgres",
             {"host": "localhost"},
-            actor_user_id=make_org_admin("test", "postgres"),
         )
         mock_client.create_connection.assert_awaited_once_with(
             "test", "postgres", {"host": "localhost"}

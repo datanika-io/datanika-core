@@ -75,6 +75,21 @@ def _patch_auth(fake_api_key, rate_limit_ok):
         Base.metadata.create_all(engine)
         session = SASession(engine)
 
+        # core#681: the key's owner must be a real member -- these routes call services that
+        # resolve the actor's CURRENT role. Without it every mutating route here answers 403
+        # `insufficient_role`, which is the system working, not the test being wrong.
+        from datanika.models.user import MemberRole, Membership, Organization
+        from tests.factories import make_user
+
+        session.add(Organization(id=fake_api_key.org_id, name="Test Org", slug="test-org-imp"))
+        session.flush()
+        _actor = make_user(session, email="owner-imp@test.io", password_hash="x")
+        session.add(
+            Membership(user_id=_actor.id, org_id=fake_api_key.org_id, role=MemberRole.ADMIN)
+        )
+        session.flush()
+        fake_api_key.user_id = _actor.id
+
         enc = EncryptionService(Fernet.generate_key().decode())
         conn_svc = ConnectionService(enc)
         upload_svc = UploadService(conn_svc)

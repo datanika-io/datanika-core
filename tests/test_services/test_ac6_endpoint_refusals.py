@@ -48,11 +48,16 @@ from starlette.testclient import TestClient
 
 from datanika.models.base import Base
 from datanika.models.connection import ConnectionType
+from datanika.models.dependency import NodeType
+from datanika.models.pipeline import DbtCommand
 from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
+from datanika.services.pipeline_service import PipelineService
 from datanika.services.rate_limit_service import RateLimitResult
+from datanika.services.schedule_service import ScheduleService
+from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from tests.factories import make_user
 
@@ -67,19 +72,43 @@ _RATE_OK = RateLimitResult(
 #: schedules, transformations, api keys, notification channels, backup/export — each need one
 #: `editor` row and, where §1's table reserves deletion for admin, one `admin` row.
 CASES = [
-    ("connections", "POST", "/api/v1/connections", "create", "editor", MemberRole.VIEWER),
-    ("connections", "PUT", "/api/v1/connections/{id}", "update", "editor", MemberRole.VIEWER),
-    ("connections", "DELETE", "/api/v1/connections/{id}", None, "admin", MemberRole.EDITOR),
+    ("connections", "POST", "/api/v1/connections", "conn_create", "editor", MemberRole.VIEWER),
+    ("connections", "PUT", "/api/v1/connections/{conn}", "rename", "editor", MemberRole.VIEWER),
+    ("connections", "DELETE", "/api/v1/connections/{conn}", None, "admin", MemberRole.EDITOR),
+    ("uploads", "POST", "/api/v1/uploads", "upload_create", "editor", MemberRole.VIEWER),
+    ("uploads", "PUT", "/api/v1/uploads/{upload}", "rename", "editor", MemberRole.VIEWER),
+    ("uploads", "DELETE", "/api/v1/uploads/{upload}", None, "admin", MemberRole.EDITOR),
+    ("pipelines", "POST", "/api/v1/pipelines", "pipeline_create", "editor", MemberRole.VIEWER),
+    ("pipelines", "PUT", "/api/v1/pipelines/{pipeline}", "rename", "editor", MemberRole.VIEWER),
+    ("pipelines", "DELETE", "/api/v1/pipelines/{pipeline}", None, "admin", MemberRole.EDITOR),
+    ("schedules", "POST", "/api/v1/schedules", "schedule_create", "editor", MemberRole.VIEWER),
+    ("schedules", "DELETE", "/api/v1/schedules/{schedule}", None, "admin", MemberRole.EDITOR),
 ]
 
-BODIES = {
-    "create": {
-        "name": "New",
-        "connection_type": "postgres",
-        "config": {"host": "h", "port": 5432, "database": "d", "user": "u", "password": "p"},
-    },
-    "update": {"name": "renamed"},
-}
+PG = {"host": "h", "port": 5432, "database": "d", "user": "u", "password": "p"}
+
+
+def _body(key: str, ids: dict) -> dict | None:
+    """Bodies are built per-request because three of them reference fixture ids."""
+    return {
+        "conn_create": {"name": "New", "connection_type": "postgres", "config": PG},
+        "rename": {"name": "renamed"},
+        "upload_create": {
+            "name": "U2",
+            "source_connection_id": ids["conn"],
+            "destination_connection_id": ids["conn"],
+        },
+        "pipeline_create": {
+            "name": "P2",
+            "destination_connection_id": ids["conn"],
+            "command": "run",
+        },
+        "schedule_create": {
+            "target_type": "upload",
+            "target_id": ids["upload"],
+            "cron_expression": "0 * * * *",
+        },
+    }.get(key)
 
 
 @contextlib.contextmanager
@@ -112,15 +141,48 @@ def _surface(actor_role: MemberRole):
     enc = EncryptionService(Fernet.generate_key().decode())
     conn_svc = ConnectionService(enc)
     upload_svc = UploadService(conn_svc)
-    existing = conn_svc.create_connection(
+    pipeline_svc = PipelineService()
+    transform_svc = TransformationService()
+    schedule_svc = ScheduleService(upload_svc, transform_svc, pipeline_service=pipeline_svc)
+    conn = conn_svc.create_connection(
+        session, ORG_ID, "Existing", ConnectionType.POSTGRES, PG, actor_user_id=setup_admin.id
+    )
+    session.flush()
+    upload = upload_svc.create_upload(
         session,
         ORG_ID,
-        "Existing",
-        ConnectionType.POSTGRES,
-        {"host": "h", "port": 5432, "database": "d", "user": "u", "password": "p"},
+        "Existing upload",
+        None,
+        conn.id,
+        conn.id,
+        {},
+        actor_user_id=setup_admin.id,
+    )
+    pipeline = pipeline_svc.create_pipeline(
+        session,
+        ORG_ID,
+        "Existing pipeline",
+        None,
+        conn.id,
+        DbtCommand.RUN,
         actor_user_id=setup_admin.id,
     )
     session.flush()
+    schedule = schedule_svc.create_schedule(
+        session,
+        ORG_ID,
+        NodeType.UPLOAD,
+        upload.id,
+        "0 * * * *",
+        actor_user_id=setup_admin.id,
+    )
+    session.flush()
+    ids = {
+        "conn": conn.id,
+        "upload": upload.id,
+        "pipeline": pipeline.id,
+        "schedule": schedule.id,
+    }
 
     key = MagicMock()
     key.id = 1
@@ -141,11 +203,12 @@ def _surface(actor_role: MemberRole):
         patch("datanika.services.api_middleware._get_session", fake_session),
         patch.object(routes_mod, "_get_conn_svc", return_value=conn_svc),
         patch.object(routes_mod, "_get_upload_svc", return_value=upload_svc),
+        patch.object(routes_mod, "_get_schedule_svc", return_value=schedule_svc),
     ):
         mock_svc.authenticate_api_key.return_value = key
         mock_rl.get_limit_for_org.return_value = 60
         mock_rl.check_rate_limit.return_value = _RATE_OK
-        yield TestClient(Starlette(routes=api_v1_routes)), existing.id
+        yield TestClient(Starlette(routes=api_v1_routes)), ids
 
     session.close()
     engine.dispose()
@@ -166,8 +229,8 @@ def test_an_under_privileged_key_is_refused(
     subsystem, method, path, body_key, required_role, below
 ):
     """AC6. The refusal must be a `403` naming the role — not a `401`, `400`, `404` or `500`."""
-    with _surface(below) as (client, conn_id):
-        resp = _drive(client, method, path.format(id=conn_id), BODIES.get(body_key))
+    with _surface(below) as (client, ids):
+        resp = _drive(client, method, path.format(**ids), _body(body_key, ids))
 
     assert resp.status_code == 403, (
         f"{subsystem} {method} {path} answered {resp.status_code} for a {below.value} — "
@@ -203,8 +266,8 @@ def test_a_key_whose_owner_holds_the_role_is_not_refused(
     also what catches an actor who is refused for **not being a member at all** — that would
     produce a `403` and pass the test above while testing nothing about the role.
     """
-    with _surface(MemberRole.ADMIN) as (client, conn_id):
-        resp = _drive(client, method, path.format(id=conn_id), BODIES.get(body_key))
+    with _surface(MemberRole.ADMIN) as (client, ids):
+        resp = _drive(client, method, path.format(**ids), _body(body_key, ids))
 
     assert resp.status_code != 403, (
         f"{subsystem} {method} refused an ADMIN with {resp.text[:200]} — the refusal is not "
@@ -221,7 +284,7 @@ def test_the_table_covers_every_wired_subsystem():
     while the others shipped would report AC6 satisfied for work nobody did.
     """
     covered = {c[0] for c in CASES}
-    assert covered == {"connections"}, (
+    assert covered == {"connections", "uploads", "pipelines", "schedules"}, (
         f"AC6 table covers {sorted(covered)}. Raise this assertion as each subsystem is wired "
         "— uploads, pipelines, schedules, transformations, api keys, notification channels, "
         "backup/export — so the table cannot silently lag the wiring."

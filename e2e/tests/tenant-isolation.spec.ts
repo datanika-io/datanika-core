@@ -1,4 +1,5 @@
 import { test, expect, ORG_A_KEY, ORG_B_KEY } from "../fixtures/auth";
+import { assertApiOrigin, expectApiJson } from "../fixtures/api-origin";
 
 /**
  * Multi-tenant READ isolation at the HTTP edge.
@@ -144,5 +145,10 @@ test.describe("Tenant isolation: org A cannot read org B @slow", () => {
       label: "sanity: org B reads its own connection",
     });
     expect(res.status()).toBe(200);
+    // core#1209 — see the note in tenant-jwt-boundary.spec.ts. The SPA is a 200.
+    const own = (await expectApiJson(res, "org B reads its own connection")) as {
+      id?: number;
+    };
+    expect(Number(own.id)).toBe(Number(ownId));
   });
 });

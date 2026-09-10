@@ -14,7 +14,7 @@ What the rule is, and what it deliberately is not
 
 🚨 **"No Latin characters in ``sr.json``" is the obvious rule and it is wrong.**
 Measured over the real file: **88 values legitimately mix scripts inside a single
-string** — ``api_keys.new = "Нови API кључ"``, ``audit.ip_address = "IP адреса"``,
+string** — ``api_keys.new = "Нови API кључ"``, ``connections.spreadsheet_url = "URL табеле"``,
 ``connections.aws_access_key = "ИД кључа за приступ AWS"``. Latin acronyms inside
 Cyrillic Serbian prose are correct Serbian. A rule that flagged those would arrive
 with 88 false positives, acquire an allowlist on day one, and become a gate turned

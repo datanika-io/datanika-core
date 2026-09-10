@@ -234,6 +234,7 @@ class ScheduleState(BaseState):
                         target_id=target_id,
                         cron_expression=self.form_cron,
                         timezone=self.form_timezone,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -256,6 +257,7 @@ class ScheduleState(BaseState):
                         target_id,
                         self.form_cron,
                         timezone=self.form_timezone,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -330,7 +332,7 @@ class ScheduleState(BaseState):
         user_id = auth_state.current_user.id
         svc = self._get_schedule_service()
         with get_sync_session() as session:
-            schedule = svc.toggle_active(session, org_id, schedule_id)
+            schedule = svc.toggle_active(session, org_id, schedule_id, actor_user_id=user_id)
             if schedule:
                 self._audit(
                     session,
@@ -360,7 +362,7 @@ class ScheduleState(BaseState):
                 if schedule
                 else {}
             )
-            svc.delete_schedule(session, org_id, schedule_id)
+            svc.delete_schedule(session, org_id, schedule_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,

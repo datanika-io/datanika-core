@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from datanika.errors import UserFacingError
 from datanika.models.dependency import NodeType
 from datanika.models.schedule import Schedule
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
@@ -50,9 +52,21 @@ class ScheduleService:
         cron_expression: str,
         timezone: str = "UTC",
         is_active: bool = True,
+        *,
+        actor_user_id: int,
     ) -> Schedule:
         from datanika.hooks import emit
 
+        # core#681 §1: editor. Before the quota emit -- an actor who may not create should
+        # not consume a quota check, and a quota refusal must not mask an authorization
+        # one, because the two send the caller to different people.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="create_schedule",
+        )
         emit("schedule.before_create", session=session, org_id=org_id)
         self.validate_cron_expression(cron_expression)
         self.validate_target(session, org_id, target_type, target_id)
@@ -87,11 +101,19 @@ class ScheduleService:
         return list(session.execute(stmt).scalars().all())
 
     def update_schedule(
-        self, session: Session, org_id: int, schedule_id: int, **kwargs
+        self, session: Session, org_id: int, schedule_id: int, *, actor_user_id: int, **kwargs
     ) -> Schedule | None:
         schedule = self.get_schedule(session, org_id, schedule_id)
         if schedule is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="update_schedule",
+        )
 
         if "cron_expression" in kwargs:
             self.validate_cron_expression(kwargs["cron_expression"])
@@ -105,19 +127,39 @@ class ScheduleService:
 
         return schedule
 
-    def delete_schedule(self, session: Session, org_id: int, schedule_id: int) -> bool:
+    def delete_schedule(
+        self, session: Session, org_id: int, schedule_id: int, *, actor_user_id: int
+    ) -> bool:
         schedule = self.get_schedule(session, org_id, schedule_id)
         if schedule is None:
             return False
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_schedule",
+        )
         schedule.deleted_at = datetime.now(UTC)
         session.flush()
 
         return True
 
-    def toggle_active(self, session: Session, org_id: int, schedule_id: int) -> Schedule | None:
+    def toggle_active(
+        self, session: Session, org_id: int, schedule_id: int, *, actor_user_id: int
+    ) -> Schedule | None:
         schedule = self.get_schedule(session, org_id, schedule_id)
         if schedule is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="toggle_schedule",
+        )
         schedule.is_active = not schedule.is_active
         session.flush()
 

@@ -322,6 +322,34 @@ than the problem the tier solves.
 **`continue-on-error` quarantines the verdict, never the execution.** A quarantined test that stops
 running stops telling you when it starts passing — that is a disabled test with better PR.
 
+### The streak is PER SPEC, and until 2026-09-10 the signal was not
+
+🚨 This section has always graduated **per spec**. `staging.yml` emitted **one boolean for the
+whole tier**, and nothing connected the two. Both consequences happened:
+
+* a new spec entering zeroed every incumbent's progress — `reflex-wire.spec.ts` went from
+  **seven** consecutive greens to nothing, having done nothing;
+* while one new spec stayed red, **no** spec in the tier could graduate — and this section
+  *requires* new specs to enter, so the churn that reset the counter was by design.
+
+**A counter that resets whenever the thing it counts is added to is not a counter.**
+
+`e2e/scripts/informational_spec_results.py` now emits one `INFORMATIONAL_SPEC_RESULT=<file>:<verdict>`
+line per spec file, and `scripts/e2e_tier_streak.py --spec <file>` reads it. Ask for a spec by name;
+asking for the tier answers a question this section does not pose.
+
+⚠️ **Older logs carry only the tier line, and its two directions are not symmetric.** A green tier
+attributes to every spec in it. A **red** tier attributes to **nothing** — it says something failed
+and cannot say what — so it grades `UNMEASURED`, never `FAIL`. Grading it as a particular spec's
+failure is the original defect one level down. An incumbent's history therefore survives, and
+`Reading.from_classes` reports it `sparse` once those unattributable runs outnumber `max_gaps`,
+which is the honest answer: *the streak is intact and nobody has measured it lately; a human
+decides.*
+
+⚠️ **This bears on [core#1130]'s founder decision.** The `measured` reading was adopted on the
+assumption that the streak measures what it claims. It did not, for any tier holding more than one
+spec. The rule was sound; its input was not.
+
 ## 11. A skip is in neither tier and counts toward nothing
 
 Print the tier split. **"46 passed" reads like full coverage until you look** and find 16 skips
@@ -832,6 +860,8 @@ issue. **When a job classifies badly, diff it against its siblings before design
 [core#827]: https://github.com/datanika-io/datanika-core/issues/827
 [core#895]: https://github.com/datanika-io/datanika-core/issues/895
 [core#896]: https://github.com/datanika-io/datanika-core/issues/896
+[core#1130]: https://github.com/datanika-io/datanika-core/issues/1130
+[core#864]: https://github.com/datanika-io/datanika-core/issues/864
 
 ## 29. An acceptance criterion that fails on CORRECT code is worse than one that passes on broken code
 

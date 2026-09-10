@@ -109,9 +109,9 @@ elif [ "$KWRC" -ne 0 ]; then
 fi
 
 echo "pre-push: ruff check"
-"$PY" -m ruff check datanika tests scripts
+"$PY" -m ruff check datanika tests scripts e2e/scripts
 echo "pre-push: ruff format --check"
-"$PY" -m ruff format --check datanika tests scripts
+"$PY" -m ruff format --check datanika tests scripts e2e/scripts
 # --- is this venv stale against uv.lock? (#557) ----------------------------------------
 # A venv that predates a dependency added on dev fails in a way that points at the wrong
 # thing entirely: adding duckdb-engine (#494) produced

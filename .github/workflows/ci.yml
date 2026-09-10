@@ -91,10 +91,10 @@ jobs:
           uv pip install --system -e . --no-deps
 
       - name: Ruff check
-        run: ruff check datanika tests scripts --exclude "datanika/migrations"
+        run: ruff check datanika tests scripts e2e/scripts --exclude "datanika/migrations"
 
       - name: Ruff format check
-        run: ruff format --check datanika tests scripts --exclude "datanika/i18n"
+        run: ruff format --check datanika tests scripts e2e/scripts --exclude "datanika/i18n"
 
       # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of
       # which assert a REFUSAL — including the two shapes that read as green: no stamp on

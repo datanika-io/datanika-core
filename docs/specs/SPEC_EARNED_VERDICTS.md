@@ -171,7 +171,13 @@ The mechanism to fix it already exists and is one line of data. `_verdict_messag
 map, and falls through to the service's English.
 
 **Acceptance:**
-- Each of the six exempt types carries a `reason` slug, and each slug a key in **all nine** locales.
+- ✅ **SHIPPED 2026-09-10.** Each of the six exempt types carries a `reason` slug derived from the
+  connector name (`not_tested_<name>`), and each slug a key in **all nine** locales — 742 → 748 keys
+  per file, parity green. `_test_saas_source`'s exempt branch returns a 3-tuple;
+  `ConnectionVerdict(*...)` already splatted, so nothing else changed.
+  ⚠️ **The slug is derived, not stored beside the sentence.** A second column in `SAAS_PROBE_EXEMPT`
+  would be a hand-maintained parallel list, and a guard over it would assert a mapping against the
+  copy of it that produced the mapping.
 - ⚠️ **These are `callout text`, which `WORKFLOW_RULES` §6 lists under Translate** — not the
   "dynamic error messages" it lists under Skip. They are six fixed sentences, one per connector, and
   they are the entire content of that surface.
@@ -206,10 +212,42 @@ coincidence; it is the coupling.
 | **neutral** — *"neither green nor red"* | `connections.py:134-153`'s `color_scheme`, and the guides' promise about what the user will see |
 | **the first pipeline run** — where verification actually happens | every one of the six guides routes the reader there |
 
-**Acceptance for AC2 therefore gains one clause:** the nine-locale keys carry **the existing English
-as `en`, unchanged**. If a sentence genuinely needs rewording, that is a **coordinated change with
-Growth**, not a side effect of an i18n sweep — the guide corpus and `tests/test-connection-copy.test.ts`
-(landing) both have to move with it.
+> 🔴 **CORRECTED 2026-09-10, on implementing it — and the correction makes the constraint NARROWER,
+> not looser.** This clause said the keys must carry *"the existing English as `en`, unchanged"*.
+> **Shipped: they do not, and they should not.**
+>
+> **Two measurements changed the answer.**
+>
+> 1. **The guides PARAPHRASE; they do not quote.** Measured on landing `main`: the sentences
+>    *"belongs with the Google helpers, not in this service"* and *"resource paths live on the
+>    upload"* appear **0 times** across `src/content/connectors/`. What the guides assert is the
+>    **behaviour** — *"returns a neutral **not tested** verdict with that reason"*. **So the coupling
+>    is on the verdict's existence and neutrality, not on its wording.**
+> 2. **`ConnectionVerdict` already separates the two**, and its own docstring says so: `message` is
+>    *"English, for the API, the logs and any caller with no locale"*, while the UI owns
+>    `reason` → key. **They were never meant to be the same string.**
+>
+> 🚨 **And preserving the English verbatim would have shipped an implementation detail to users.**
+> The `google_sheets` message reads *"…which belongs with the Google helpers, **not in this
+> service**"*. That is a sentence about **our code layout**. A user cannot act on it, and it is in
+> the one place a user goes when they are already confused.
+>
+> **What actually holds:**
+>
+> - **`message` is unchanged** — byte for byte. The API, the logs and the guides see exactly what
+>   they saw before, so nothing downstream moves.
+> - **The UI string is new copy**, shorter, and written to say *what happened and what to do next*.
+> - **The three terms in the table above still may not drift** — *"not tested"*, **neutral**, and
+>   *the first run*. Those are what the guides actually depend on, and all six new strings carry
+>   them.
+>
+> 🔑 **The original clause was right about the hazard and wrong about the mechanism.** The hazard is
+> a generator reseeding 22 guides from copy that moved underneath it. The mechanism protecting
+> against it is **not** "never touch the English" — it is *"do not move the terms the guides assert"*.
+> A blanket freeze would have locked in a sentence about the Google helpers forever.
+
+*(Superseded, kept as the record:)* **Acceptance for AC2 therefore gains one clause:** the nine-locale
+keys carry **the existing English as `en`, unchanged**.
 
 🔑 **The mechanism to be careful of is a generator, not a person.** Growth reseeded **22** guides from
 a shared template today. A template is a multiplier in both directions: it fixed 22 pages at once, and

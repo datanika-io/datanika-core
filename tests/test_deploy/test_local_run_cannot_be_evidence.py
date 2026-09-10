@@ -69,7 +69,22 @@ MARKERS = {
     "gating": "gating step outcome:",
     "sso": "SSO specs outcome:",
     "informational": "INFORMATIONAL_RESULT=",
+    # core#1221: graduation is per spec, so there is now a per-spec marker too. Registering
+    # it here is not paperwork — an unregistered marker is one a local runner may print
+    # freely, which is this file's whole subject.
+    "informational_spec": "INFORMATIONAL_SPEC_RESULT=",
 }
+
+#: Emitters that legitimately print a marker from OUTSIDE `.github/workflows/`.
+#:
+#: The workflow exclusion below assumed every emitter lived in a workflow. core#1221 broke
+#: that assumption on purpose: the per-spec verdict is computed by reading a JSON report,
+#: which is a program, and a program parked in a `run:` block is a recipe in prose
+#: (core#1197). So the exclusion is now a NAMED set — and
+#: :func:`test_every_sanctioned_emitter_is_actually_invoked_by_a_workflow` gives it a
+#: property rather than leaving it an allowlist: an emitter no workflow runs is a script
+#: that can print evidence and never does, which is indistinguishable from a local runner.
+SANCTIONED_EMITTERS = frozenset({"e2e/scripts/informational_spec_results.py"})
 
 #: Files that may mention a marker, measured 2026-09-09. Two emit them; the rest parse, test or
 #: document them. Adding an entry is deliberate — which is the property, not the paperwork.
@@ -84,6 +99,7 @@ MARKER_ALLOWLIST = frozenset(
         "docs/QA_RULES.md",  # the tier policy
         "e2e/tests/a11y-sweep.spec.ts",  # comment: read the marker, not the tick
         "e2e/tests/golden-path.spec.ts",  # comment: how it graduated
+        "e2e/scripts/informational_spec_results.py",  # emits the per-spec marker (core#1221)
     }
 )
 
@@ -115,6 +131,8 @@ def _prints_a_marker(rel: str, line: str) -> bool:
     indistinguishable from a staging run the moment its output is captured.
     """
     if rel.startswith(".github/workflows/") or rel.startswith("tests/"):
+        return False
+    if rel in SANCTIONED_EMITTERS:
         return False
     if not rel.startswith(EXECUTABLE_ROOTS):
         return False
@@ -242,6 +260,30 @@ def test_control_the_predicate_ignores_the_fixture_that_made_it_fire() -> None:
     assert not _prints_a_marker("tests/test_deploy/test_e2e_tier_streak.py", fixture)
     # ...and it is still not allowed to appear in an unlisted file at all:
     assert "tests/test_deploy/test_e2e_tier_streak.py" in MARKER_ALLOWLIST
+
+
+def test_every_sanctioned_emitter_is_actually_invoked_by_a_workflow() -> None:
+    """🔑 What makes SANCTIONED_EMITTERS a property rather than an allowlist.
+
+    A script that can print graduation evidence and that no workflow runs is a script whose
+    output can only ever have come from a person's machine — which is precisely the thing
+    this file refuses. Same shape as `test_server_script_coverage.py`: an installer nothing
+    invokes is the bug one level up and looks identical to a fix.
+    """
+    workflows = chr(10).join(
+        wf.read_text(encoding="utf-8", errors="replace")
+        for wf in (REPO_ROOT / ".github" / "workflows").glob("*.yml")
+    )
+    for rel in sorted(SANCTIONED_EMITTERS):
+        assert (REPO_ROOT / rel).exists(), (
+            f"{rel} is sanctioned to print a marker and does not exist"
+        )
+        name = rel.rsplit("/", 1)[-1]
+        assert name in workflows, (
+            f"{rel} may print a verdict marker but no workflow invokes it. Either wire it "
+            "into CI or take it off SANCTIONED_EMITTERS — a marker only a human can produce "
+            "is the definition of what this file exists to reject."
+        )
 
 
 def test_the_local_token_is_emitted_by_no_workflow() -> None:

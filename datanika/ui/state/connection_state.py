@@ -40,6 +40,20 @@ _VERDICT_KEYS = {
     "file_unopenable": "connections.test_file_unopenable",
     "file_in_memory": "connections.test_file_in_memory",
     "driver_unavailable": "connections.test_driver_unavailable",
+    # core#1170 AC3.3 -- the six probe-exempt SaaS types. Until these existed the
+    # product had no vocabulary for an honest "we don't know": `_test_saas_source`
+    # returned a bare 2-tuple, `reason` took its default "", the map was missed, and
+    # every locale fell through to the service's English.
+    #
+    # These strings are NOT translations of `ConnectionVerdict.message`. That one
+    # stays as the English developer sentence for the API and the logs; these are
+    # written for a user and say what to do next. SPEC_EARNED_VERDICTS 3.3.
+    "not_tested_rest_api": "connections.test_not_tested_rest_api",
+    "not_tested_openapi": "connections.test_not_tested_openapi",
+    "not_tested_google_sheets": "connections.test_not_tested_google_sheets",
+    "not_tested_google_analytics": "connections.test_not_tested_google_analytics",
+    "not_tested_google_ads": "connections.test_not_tested_google_ads",
+    "not_tested_kafka": "connections.test_not_tested_kafka",
 }
 
 #: Refusal `reason` → i18n key. Same split and the same two reasons as

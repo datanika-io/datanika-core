@@ -92,6 +92,16 @@ FAIL = "FAIL"
 UNMEASURED = "UNMEASURED"
 #: A run produced no reading we can recover. Breaks the streak — see the module docstring.
 UNREADABLE = "UNREADABLE"
+#: A run that executed somewhere that is **not** the deployed system — a per-agent local
+#: stack, a developer's laptop. It may be perfectly green; it describes a different machine.
+#: **Breaks the streak**, and that is not the same call as `UNMEASURED` (core#1232).
+#:
+#: 🔑 `wrong_build`, `no_verdict` and `cancelled` are UNMEASURED because they are **CI's own
+#: report about a CI run**: the stream is trusted and the run simply did not grade. `LOCAL`
+#: says the *stream* is not trusted. Transparent would hide that a reader is looking at a
+#: source it should not be reading, and a contaminated history would read clean — which is
+#: the failure this class exists for, not the one UNMEASURED handles.
+LOCAL = "LOCAL"
 
 #: `ci.yml`, `e2e-sso`, step "Classify what this job's result means".
 SSO_VERDICTS: dict[str, str] = {
@@ -137,6 +147,20 @@ GATING_VERDICTS: dict[str, str] = {
     "cancelled": UNMEASURED,
 }
 
+#: The one environment value that means *"the deployed system, reached the way CI reaches it"*.
+#: Anything else a run attests to is not that, and is graded `LOCAL` — including a value nobody
+#: has thought of yet, which is the direction that fails closed.
+CI_ENVIRONMENT = "staging"
+
+#: The token an environment veto produces. **Deliberately in no tier's vocabulary**, and
+#: `tests/test_deploy/test_local_run_cannot_be_evidence.py` asserts it appears in **no workflow**
+#: — that absence is its defining property, not an exemption from the anti-vacuity control.
+LOCAL_VERDICT = "local_environment"
+
+#: Its own map, kept separate so the workflow-derived controls over the three tier vocabularies
+#: stay exactly as strict as they were.
+LOCAL_VERDICTS: dict[str, str] = {LOCAL_VERDICT: LOCAL}
+
 #: Verdict token -> class. **All three vocabularies**, because one policy is emitted by two jobs
 #: and `e2e-staging` emits two tiers of its own.
 #:
@@ -145,11 +169,24 @@ GATING_VERDICTS: dict[str, str] = {
 #:
 #: * forward — every token a classifier can emit must appear here, so a new verdict state is
 #:   triaged deliberately instead of being silently absorbed as UNREADABLE;
-#: * backward — every token here must still be found in the workflow. That is the anti-vacuity
-#:   control, and it is derived rather than a floor. A floor of "at least 5 states" was the
-#:   first attempt and it was measured tolerating the exact regression it existed to catch:
-#:   the classifier emits six, so dropping one left five and the control stayed green.
-VERDICT_CLASS: dict[str, str] = {**SSO_VERDICTS, **GATING_VERDICTS, **INFORMATIONAL_VERDICTS}
+#: * backward — every token in each TIER map must still be found in the workflow. That is the
+#:   anti-vacuity control, and it is derived rather than a floor. A floor of "at least 5 states"
+#:   was the first attempt and it was measured tolerating the exact regression it existed to
+#:   catch: the classifier emits six, so dropping one left five and the control stayed green.
+#:
+#: ⚠️ **Those controls are scoped to the three TIER maps, not to this union** — corrected
+#: 2026-09-09 when core#1232 added a token no workflow emits and all 92 tests stayed green.
+#: They were right and this comment was wrong: read literally it promised a guarantee over
+#: `VERDICT_CLASS` that nothing checked, which would have told the next reader that
+#: `local_environment` was covered. `LOCAL_VERDICTS` sits outside them **on purpose** and has
+#: the opposite control instead — `test_local_run_cannot_be_evidence.py` asserts its token
+#: appears in **no** workflow, because that absence is what makes it un-forgeable by CI.
+VERDICT_CLASS: dict[str, str] = {
+    **SSO_VERDICTS,
+    **GATING_VERDICTS,
+    **INFORMATIONAL_VERDICTS,
+    **LOCAL_VERDICTS,
+}
 
 #: Tier -> the vocabulary that tier's classifier emits. The caller names the tier it is asking
 #: about; nothing infers it from whatever the log happens to contain.
@@ -182,6 +219,44 @@ _GATING_VERDICT = re.compile(
 
 #: Tier -> the pattern that tier's classifier prints.
 _PATTERN_BY_TIER = {"sso": _SSO_VERDICT, "gating": _GATING_VERDICT, "informational": _INFO_VERDICT}
+
+#: The name of the marker a run uses to say where it ran. One definition, because the emitter
+#: and the parser must be the same string: a local runner that hardcodes it would keep working
+#: after a rename here, and the veto would be silently disarmed while everything stayed green.
+ENVIRONMENT_MARKER = "E2E_ENVIRONMENT"
+
+#: What a run says about where it ran. `E2E_ENVIRONMENT=<value>`, same shape as the other
+#: markers so it survives the same log mangling. The echoed shell source carries `$VAR`, which
+#: the character class rejects, so this reads the executed line and not the script.
+_ENVIRONMENT = re.compile(rf"(?:^|\s){ENVIRONMENT_MARKER}=(?P<env>[a-z0-9_-]+)\s*$")
+
+
+def environment_attestation(environment: str) -> str:
+    """The line a runner prints to say where it executed. **Call this; do not hardcode it.**
+
+    ```sh
+    python -c "from scripts.e2e_tier_streak import environment_attestation as a; print(a('local'))"
+    ```
+
+    A local runner emitting `environment_attestation("local")` is graded `LOCAL` by every
+    consumer of this module — it cannot advance a graduation streak and it cannot satisfy the
+    promotion pre-flight. That is the point: **the way to make a local run honest is to say so
+    once, in a string this module owns.**
+
+    ⚠️ It refuses a value the parser could not read back. A marker that does not match
+    :data:`_ENVIRONMENT` prints fine, reaches a log, and is *silently invisible* to the veto —
+    which is a local run that looks exactly like a staging one, produced by the very call that
+    was supposed to prevent it.
+    """
+    line = f"{ENVIRONMENT_MARKER}={environment}"
+    if _ENVIRONMENT.search(line) is None:
+        raise ValueError(
+            f"{environment!r} cannot be read back by the environment veto "
+            f"(allowed: lowercase letters, digits, `_`, `-`). A line the parser cannot read "
+            f"is one the veto cannot act on, so this would produce a local run that reads as "
+            f"a staging one."
+        )
+    return line
 
 
 class AmbiguousVerdictError(RuntimeError):
@@ -220,6 +295,31 @@ def classify_verdict(verdict: str | None, specs_outcome: str | None = None) -> s
     return VERDICT_CLASS.get(verdict, UNREADABLE)
 
 
+def attested_environment(log_lines: list[str]) -> str | None:
+    """Where this run says it executed, or `None` if it did not say.
+
+    `None` is **not** proof of CI and this function does not claim otherwise — every log
+    written before core#1232 is silent, and grading silence as `LOCAL` would red the entire
+    history. Silence is covered by a different mechanism:
+    `tests/test_deploy/test_local_run_cannot_be_evidence.py` asserts that nothing outside
+    `.github/workflows/` can print a verdict marker at all, so a silent log cannot have come
+    from a local runner in the first place. **One guard fails closed on presence, the other on
+    absence; neither is sufficient alone.**
+
+    The last attestation wins, for the same reason the verdict line's does: the classifier's
+    source is echoed into the `##[group]Run` header before it is executed.
+    """
+    found: str | None = None
+    for raw in log_lines:
+        line = _ANSI.sub("", raw).rstrip()
+        if line.endswith('"') or line.endswith("'"):
+            continue
+        m = _ENVIRONMENT.search(line)
+        if m:
+            found = m.group("env")
+    return found
+
+
 def parse_verdict_line(log_lines: list[str], *, tier: str = "auto") -> str | None:
     """The verdict token for ONE TIER of a job log, or `None` if that tier printed none.
 
@@ -242,7 +342,19 @@ def parse_verdict_line(log_lines: list[str], *, tier: str = "auto") -> str | Non
     `INFORMATIONAL_RESULT=` line at all — measured: 0 occurrences across SSO logs, against 5 in a
     staging log, so the two cannot be confused). Where a log carries **more than one** tier's
     verdict, `auto` raises rather than picking. That is the case that was wrong.
+
+    🚨 **An environment attestation naming anything but `CI_ENVIRONMENT` is a VETO, not a
+    fallback** (core#1232). It is read first and it wins over every verdict line in the log,
+    including one that appears **after** it and says `clean`. A fallback would be the core#1205
+    defect in a new costume: a green further down the file outvoting the line that says the
+    green describes a different machine. Local stacks make that ordering ordinary — the suite
+    prints its own result after the harness prints where it ran — so the veto has to be
+    order-independent, and this one is.
     """
+    where = attested_environment(log_lines)
+    if where is not None and where != CI_ENVIRONMENT:
+        return LOCAL_VERDICT
+
     per_tier: dict[str, str] = {}
     for raw in log_lines:
         line = _ANSI.sub("", raw).rstrip("\r\n")

@@ -105,6 +105,12 @@ def _ts(value: str) -> datetime:
 #: the same defect pointed the other way.
 NO_READING_CLASSES = {"UNMEASURED", "UNREADABLE"}
 
+#: A reading of something that is not the deployed system (core#1232). Reported separately from
+#: `no_verdict` on purpose: the promoter's next move differs. `no_verdict` says *"go get a
+#: reading"*; this says *"a reading exists and it is of the wrong machine"*, which is the more
+#: dangerous of the two precisely because there is a build behind it.
+LOCAL_CLASS = "LOCAL"
+
 
 def classify(jobs: list[Job], sha: str, verdict_classes: dict[str, str] | None = None) -> dict:
     """Verdict per staging job for `sha`, plus what overtook it if anything did.
@@ -190,7 +196,17 @@ def classify(jobs: list[Job], sha: str, verdict_classes: dict[str, str] | None =
             # core#1174. The window is this commit's — now ask whether the job actually
             # graded anything in it.
             klass = verdict_classes.get(name)
-            if klass in NO_READING_CLASSES:
+            if klass == LOCAL_CLASS:
+                findings[name] = {
+                    "verdict": "local_run",
+                    "detail": (
+                        "this job's log attests to an environment that is not the deployed "
+                        "one, so its result describes a different machine — different image, "
+                        "different network, no Apache, no blue/green. It may well be green; "
+                        "it is not this commit's staging verdict."
+                    ),
+                }
+            elif klass in NO_READING_CLASSES:
                 findings[name] = {
                     "verdict": "no_verdict",
                     "detail": (

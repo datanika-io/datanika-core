@@ -7,7 +7,7 @@ import pytest
 from datanika.models.api_key import ApiKey
 from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
-from tests.factories import make_user
+from tests.factories import make_org_admin, make_user
 
 
 @pytest.fixture
@@ -37,7 +37,12 @@ def user(db_session):
 class TestCreateApiKey:
     def test_basic(self, svc, db_session, org, user):
         key, raw_key = svc.create_api_key(
-            db_session, org.id, user.id, "My Key", scopes=["pipeline:read"]
+            db_session,
+            org.id,
+            user.id,
+            "My Key",
+            scopes=["pipeline:read"],
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert isinstance(key, ApiKey)
         assert isinstance(key.id, int)
@@ -49,16 +54,31 @@ class TestCreateApiKey:
         assert key.scopes == ["pipeline:read"]
 
     def test_no_scopes(self, svc, db_session, org, user):
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "Full Access")
+        key, _ = svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "Full Access",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert key.scopes is None
 
     def test_with_expiry(self, svc, db_session, org, user):
         expires = datetime.now(UTC) + timedelta(days=30)
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "Temp", expires_at=expires)
+        key, _ = svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "Temp",
+            expires_at=expires,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert key.expires_at is not None
 
     def test_key_hash_is_stored(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert key.key_hash
         assert len(key.key_hash) > 0
         assert key.key_hash != raw_key
@@ -66,7 +86,9 @@ class TestCreateApiKey:
 
 class TestAuthenticateApiKey:
     def test_valid_key(self, svc, db_session, org, user):
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.authenticate_api_key(db_session, raw_key)
         assert result is not None
         assert result.name == "K"
@@ -77,36 +99,65 @@ class TestAuthenticateApiKey:
 
     def test_expired_key(self, svc, db_session, org, user):
         past = datetime.now(UTC) - timedelta(days=1)
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "Expired", expires_at=past)
+        _, raw_key = svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "Expired",
+            expires_at=past,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         result = svc.authenticate_api_key(db_session, raw_key)
         assert result is None
 
     def test_revoked_key(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
-        svc.revoke_api_key(db_session, org.id, key.id)
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        svc.revoke_api_key(
+            db_session, org.id, key.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.authenticate_api_key(db_session, raw_key)
         assert result is None
 
     def test_updates_last_used_at(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert key.last_used_at is None
         svc.authenticate_api_key(db_session, raw_key)
         db_session.refresh(key)
         assert key.last_used_at is not None
 
     def test_scope_check(self, svc, db_session, org, user):
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K", scopes=["pipeline:read"])
+        _, raw_key = svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "K",
+            scopes=["pipeline:read"],
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         result = svc.authenticate_api_key(db_session, raw_key, required_scope="pipeline:read")
         assert result is not None
 
     def test_scope_mismatch(self, svc, db_session, org, user):
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K", scopes=["pipeline:read"])
+        _, raw_key = svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "K",
+            scopes=["pipeline:read"],
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         result = svc.authenticate_api_key(db_session, raw_key, required_scope="pipeline:run")
         assert result is None
 
     def test_no_scopes_allows_all(self, svc, db_session, org, user):
         """A key with no scopes (None) allows any scope."""
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "Full")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "Full", actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.authenticate_api_key(db_session, raw_key, required_scope="pipeline:run")
         assert result is not None
 
@@ -115,14 +166,18 @@ class TestLastUsedAtDebounce:
     """Debounce: skip the UPDATE if last_used_at was written within 60s."""
 
     def test_first_auth_writes_last_used_at(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert key.last_used_at is None
         svc.authenticate_api_key(db_session, raw_key)
         db_session.refresh(key)
         assert key.last_used_at is not None
 
     def test_second_auth_within_60s_skips_write(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         svc.authenticate_api_key(db_session, raw_key)
         db_session.refresh(key)
         first_ts = key.last_used_at
@@ -133,7 +188,9 @@ class TestLastUsedAtDebounce:
         assert key.last_used_at == first_ts
 
     def test_auth_after_debounce_window_writes(self, svc, db_session, org, user):
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         svc.authenticate_api_key(db_session, raw_key)
         db_session.refresh(key)
 
@@ -156,15 +213,25 @@ class TestListApiKeys:
         assert svc.list_api_keys(db_session, org.id) == []
 
     def test_multiple(self, svc, db_session, org, user):
-        svc.create_api_key(db_session, org.id, user.id, "A")
-        svc.create_api_key(db_session, org.id, user.id, "B")
+        svc.create_api_key(
+            db_session, org.id, user.id, "A", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        svc.create_api_key(
+            db_session, org.id, user.id, "B", actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_api_keys(db_session, org.id)
         assert len(result) == 2
 
     def test_excludes_revoked(self, svc, db_session, org, user):
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "A")
-        svc.create_api_key(db_session, org.id, user.id, "B")
-        svc.revoke_api_key(db_session, org.id, key.id)
+        key, _ = svc.create_api_key(
+            db_session, org.id, user.id, "A", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        svc.create_api_key(
+            db_session, org.id, user.id, "B", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        svc.revoke_api_key(
+            db_session, org.id, key.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_api_keys(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "B"
@@ -173,8 +240,16 @@ class TestListApiKeys:
         other_org = Organization(name="Other", slug="other-apikey")
         db_session.add(other_org)
         db_session.flush()
-        svc.create_api_key(db_session, org.id, user.id, "A")
-        svc.create_api_key(db_session, other_org.id, user.id, "B")
+        svc.create_api_key(
+            db_session, org.id, user.id, "A", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        svc.create_api_key(
+            db_session,
+            other_org.id,
+            user.id,
+            "B",
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
         result = svc.list_api_keys(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "A"
@@ -182,18 +257,37 @@ class TestListApiKeys:
 
 class TestRevokeApiKey:
     def test_sets_deleted_at(self, svc, db_session, org, user):
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "K")
-        result = svc.revoke_api_key(db_session, org.id, key.id)
+        key, _ = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        result = svc.revoke_api_key(
+            db_session, org.id, key.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is True
         db_session.refresh(key)
         assert key.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.revoke_api_key(db_session, org.id, 99999) is False
+        assert (
+            svc.revoke_api_key(
+                db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is False
+        )
 
     def test_wrong_org(self, svc, db_session, org, user):
         other_org = Organization(name="Other", slug="other-revoke")
         db_session.add(other_org)
         db_session.flush()
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "K")
-        assert svc.revoke_api_key(db_session, other_org.id, key.id) is False
+        key, _ = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        assert (
+            svc.revoke_api_key(
+                db_session,
+                other_org.id,
+                key.id,
+                actor_user_id=make_org_admin(db_session, other_org.id),
+            )
+            is False
+        )

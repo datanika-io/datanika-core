@@ -507,6 +507,12 @@ class Reading:
     span: int
     gaps: int
     state: str
+    #: The worst run of consecutive UNMEASURED runs anywhere in the window (core#1256).
+    #: `trailing_` is "are we blind RIGHT NOW"; `longest_` is "did we go blind at all since
+    #: the last look" -- and a daily watchdog needs the second, because a gap that has since
+    #: ended is exactly the one nobody notices.
+    longest_unmeasured: int = 0
+    trailing_unmeasured: int = 0
 
     @property
     def graduated(self) -> bool:
@@ -536,6 +542,21 @@ class Reading:
         total = len(classes)
         measured = sum(1 for c in classes if c in (PASS, FAIL, UNREADABLE))
         n = streak(classes)
+
+        # core#1256. UNMEASURED specifically -- not UNREADABLE, not LOCAL. Those two BLOCK
+        # the streak, so a run of them is already loud. UNMEASURED is transparent by design
+        # (that is what makes it the right class for `wrong_build`), and transparency is
+        # exactly why a run of them accumulates with nothing red anywhere.
+        longest_unmeasured = 0
+        run_len = 0
+        trailing_unmeasured = 0
+        for c in classes:
+            run_len = run_len + 1 if c == UNMEASURED else 0
+            longest_unmeasured = max(longest_unmeasured, run_len)
+        for c in reversed(classes):
+            if c != UNMEASURED:
+                break
+            trailing_unmeasured += 1
 
         # How many calendar runs the trailing streak reaches back through.
         span = 0
@@ -571,6 +592,8 @@ class Reading:
             span=span,
             gaps=gaps,
             state=state,
+            longest_unmeasured=longest_unmeasured,
+            trailing_unmeasured=trailing_unmeasured,
         )
 
 
@@ -705,6 +728,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--required", type=int, default=3)
     ap.add_argument(
+        "--max-unmeasured",
+        type=int,
+        default=None,
+        help="exit 2 when this many runs IN A ROW produced no reading (core#1256). Off "
+        "by default: the graduation question and the blindness question are different "
+        "questions, and a caller asks for one of them.",
+    )
+    ap.add_argument(
         "--max-gaps",
         type=int,
         default=7,
@@ -742,6 +773,36 @@ def main(argv: list[str] | None = None) -> int:
             f"  -> fewer than {r.required} completed runs were read. This is NOT 'the tier is\n"
             "     red' — it is 'there is nothing here to read'."
         )
+
+    # core#1256. Printed unconditionally, because the number nobody asked for is the one
+    # that was invisible: this tier read 23 of 50 runs as UNMEASURED and nothing was red.
+    blind = r.total - r.measured
+    pct = (100.0 * blind / r.total) if r.total else 0.0
+    print(
+        f"unmeasured     : {blind} of {r.total} runs ({pct:.0f}%)   "
+        f"longest run of consecutive non-readings: {r.longest_unmeasured}   "
+        f"trailing: {r.trailing_unmeasured}"
+    )
+
+    if args.max_unmeasured is not None and r.longest_unmeasured >= args.max_unmeasured:
+        print()
+        print(
+            f"BLIND: {r.longest_unmeasured} consecutive runs produced no reading of this "
+            f"tier (threshold {args.max_unmeasured})."
+        )
+        print(
+            "  Nothing here is red, and that is the point: this is the ABSENCE of a "
+            "measurement, which reads exactly like a pass. Each of those runs refused to "
+            "grade because a newer push had redeployed staging out from under it "
+            "(core#876) - the guard working. What was missing is anyone seeing the "
+            "accumulation."
+        )
+        print(
+            f"  A tier unmeasured for {args.max_unmeasured} runs in a row cannot graduate "
+            "anything even if every spec passed, because the bar is three consecutive "
+            "greens."
+        )
+        return 2
     return 0 if r.graduated else 1
 
 

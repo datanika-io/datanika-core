@@ -677,6 +677,7 @@ class BackupService:
                         description=u_data.get("description"),
                         dlt_config=u_data.get("dlt_config", {}),
                         status=UploadStatus(u_data.get("status", "draft")),
+                        actor_user_id=actor_user_id,
                     )
                     imported_uploads += 1
                     continue
@@ -694,6 +695,7 @@ class BackupService:
                 src_id,
                 dst_id,
                 u_data.get("dlt_config", {}),
+                actor_user_id=actor_user_id,
             )
             imported_uploads += 1
 
@@ -732,6 +734,7 @@ class BackupService:
                         full_refresh=p_data.get("full_refresh", False),
                         models=p_data.get("models", []),
                         custom_selector=p_data.get("custom_selector"),
+                        actor_user_id=actor_user_id,
                     )
                     imported_pipelines += 1
                     continue
@@ -751,6 +754,7 @@ class BackupService:
                 full_refresh=p_data.get("full_refresh", False),
                 models=p_data.get("models"),
                 custom_selector=p_data.get("custom_selector"),
+                actor_user_id=actor_user_id,
             )
             imported_pipelines += 1
 

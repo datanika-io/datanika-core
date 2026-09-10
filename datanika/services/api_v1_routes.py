@@ -520,6 +520,7 @@ def create_upload(request, api_key, session):
             source_connection_id=int(data["source_connection_id"]),
             destination_connection_id=int(data["destination_connection_id"]),
             dlt_config=data.get("dlt_config", {}),
+            actor_user_id=api_key.user_id,
         )
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
@@ -535,7 +536,9 @@ def update_upload(request, api_key, session):
         if key in data:
             kwargs[key] = data[key]
     try:
-        upload = _get_upload_svc().update_upload(session, api_key.org_id, upload_id, **kwargs)
+        upload = _get_upload_svc().update_upload(
+            session, api_key.org_id, upload_id, **kwargs, actor_user_id=api_key.user_id
+        )
     except ValueError as exc:
         return _error(400, str(exc))
     if upload is None:
@@ -546,7 +549,9 @@ def update_upload(request, api_key, session):
 @api_endpoint(required_scope="uploads:write")
 def delete_upload(request, api_key, session):
     upload_id = int(request.path_params["id"])
-    if not _get_upload_svc().delete_upload(session, api_key.org_id, upload_id):
+    if not _get_upload_svc().delete_upload(
+        session, api_key.org_id, upload_id, actor_user_id=api_key.user_id
+    ):
         return _error(404, "Upload not found")
     return JSONResponse({"deleted": True})
 
@@ -665,6 +670,7 @@ def create_pipeline(request, api_key, session):
             full_refresh=data.get("full_refresh", False),
             models=data.get("models"),
             custom_selector=data.get("custom_selector"),
+            actor_user_id=api_key.user_id,
         )
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
@@ -687,7 +693,9 @@ def update_pipeline(request, api_key, session):
         except ValueError:
             return _error(400, f"Invalid command: {data['command']}")
     try:
-        pipeline = _pipeline_svc.update_pipeline(session, api_key.org_id, pipeline_id, **kwargs)
+        pipeline = _pipeline_svc.update_pipeline(
+            session, api_key.org_id, pipeline_id, **kwargs, actor_user_id=api_key.user_id
+        )
     except ValueError as exc:
         return _error(400, str(exc))
     if pipeline is None:
@@ -698,7 +706,9 @@ def update_pipeline(request, api_key, session):
 @api_endpoint(required_scope="pipelines:write")
 def delete_pipeline(request, api_key, session):
     pipeline_id = int(request.path_params["id"])
-    if not _pipeline_svc.delete_pipeline(session, api_key.org_id, pipeline_id):
+    if not _pipeline_svc.delete_pipeline(
+        session, api_key.org_id, pipeline_id, actor_user_id=api_key.user_id
+    ):
         return _error(404, "Pipeline not found")
     return JSONResponse({"deleted": True})
 
@@ -955,6 +965,7 @@ def create_schedule(request, api_key, session):
             cron_expression=data["cron_expression"],
             timezone=data.get("timezone", "UTC"),
             is_active=data.get("is_active", True),
+            actor_user_id=api_key.user_id,
         )
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
@@ -970,7 +981,9 @@ def update_schedule(request, api_key, session):
         if key in data:
             kwargs[key] = data[key]
     try:
-        s = _get_schedule_svc().update_schedule(session, api_key.org_id, sid, **kwargs)
+        s = _get_schedule_svc().update_schedule(
+            session, api_key.org_id, sid, **kwargs, actor_user_id=api_key.user_id
+        )
     except ValueError as exc:
         return _error(400, str(exc))
     if s is None:
@@ -981,7 +994,9 @@ def update_schedule(request, api_key, session):
 @api_endpoint(required_scope="schedules:write")
 def delete_schedule(request, api_key, session):
     sid = int(request.path_params["id"])
-    if not _get_schedule_svc().delete_schedule(session, api_key.org_id, sid):
+    if not _get_schedule_svc().delete_schedule(
+        session, api_key.org_id, sid, actor_user_id=api_key.user_id
+    ):
         return _error(404, "Schedule not found")
     return JSONResponse({"deleted": True})
 
@@ -1464,6 +1479,7 @@ def _execute_validated_import(
             source_connection_id=conn_name_to_id[u["source_connection_name"]],
             destination_connection_id=conn_name_to_id[u["destination_connection_name"]],
             dlt_config=u.get("dlt_config", {}),
+            actor_user_id=actor_user_id,
         )
         session.flush()
         created["uploads"].append(upload.id)
@@ -1483,6 +1499,7 @@ def _execute_validated_import(
             full_refresh=p.get("full_refresh", False),
             models=p.get("models"),
             custom_selector=p.get("custom_selector"),
+            actor_user_id=actor_user_id,
         )
         session.flush()
         created["pipelines"].append(pipeline.id)

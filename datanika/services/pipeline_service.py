@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.pipeline import DbtCommand, Pipeline, PipelineStatus
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 from datanika.services.connection_service import (
     TRANSFORM_DESTINATION_TYPES,
     get_org_connection,
@@ -27,10 +29,19 @@ class PipelineService:
         destination_connection_id: int,
         command: DbtCommand,
         *,
+        actor_user_id: int,
         full_refresh: bool = False,
         models: list[dict] | None = None,
         custom_selector: str | None = None,
     ) -> Pipeline:
+        # core#681 §1: editor for the ordinary lifecycle.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="create_pipeline",
+        )
         if not name or not name.strip():
             raise PipelineConfigError("Pipeline name cannot be empty")
         if models is None:
@@ -70,11 +81,19 @@ class PipelineService:
         return list(session.execute(stmt).scalars().all())
 
     def update_pipeline(
-        self, session: Session, org_id: int, pipeline_id: int, **kwargs
+        self, session: Session, org_id: int, pipeline_id: int, *, actor_user_id: int, **kwargs
     ) -> Pipeline | None:
         pipeline = self.get_pipeline(session, org_id, pipeline_id)
         if pipeline is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="update_pipeline",
+        )
 
         if "name" in kwargs:
             if not kwargs["name"] or not kwargs["name"].strip():
@@ -100,10 +119,20 @@ class PipelineService:
         session.flush()
         return pipeline
 
-    def delete_pipeline(self, session: Session, org_id: int, pipeline_id: int) -> bool:
+    def delete_pipeline(
+        self, session: Session, org_id: int, pipeline_id: int, *, actor_user_id: int
+    ) -> bool:
         pipeline = self.get_pipeline(session, org_id, pipeline_id)
         if pipeline is None:
             return False
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_pipeline",
+        )
         pipeline.deleted_at = datetime.now(UTC)
         session.flush()
         return True

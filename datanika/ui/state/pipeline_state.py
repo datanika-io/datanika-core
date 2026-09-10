@@ -296,6 +296,7 @@ class PipelineState(BaseState):
                         full_refresh=self.form_full_refresh,
                         models=models,
                         custom_selector=self.form_custom_selector or None,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -317,6 +318,7 @@ class PipelineState(BaseState):
                         full_refresh=self.form_full_refresh,
                         models=models,
                         custom_selector=self.form_custom_selector or None,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -432,7 +434,7 @@ class PipelineState(BaseState):
             old_values = (
                 {"name": pipeline.name, "command": pipeline.command.value} if pipeline else {}
             )
-            pipeline_svc.delete_pipeline(session, org_id, pipeline_id)
+            pipeline_svc.delete_pipeline(session, org_id, pipeline_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,

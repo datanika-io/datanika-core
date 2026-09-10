@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.factories import make_org_admin
+
 
 @pytest.fixture(autouse=True)
 def _add_mcp_to_path():
@@ -94,7 +96,9 @@ class TestSessionWriteGuard:
             use_session(DatanikaSession(client=client, allow_write=False)),
             pytest.raises(RuntimeError, match="Write access required"),
         ):
-            await srv.create_connection("t", "postgres", {"host": "h"})
+            await srv.create_connection(
+                "t", "postgres", {"host": "h"}, actor_user_id=make_org_admin("t", "postgres")
+            )
 
         client.create_connection.assert_not_awaited()
 
@@ -108,7 +112,9 @@ class TestSessionWriteGuard:
         srv._allow_write = False
 
         with use_session(DatanikaSession(client=client, allow_write=True)):
-            result = await srv.create_connection("t", "postgres", {"host": "h"})
+            result = await srv.create_connection(
+                "t", "postgres", {"host": "h"}, actor_user_id=make_org_admin("t", "postgres")
+            )
 
         client.create_connection.assert_awaited_once_with("t", "postgres", {"host": "h"})
         assert '"id": 7' in result

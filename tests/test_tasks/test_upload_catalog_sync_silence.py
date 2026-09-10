@@ -32,6 +32,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
 from datanika.tasks.upload_tasks import run_upload
+from tests.factories import make_org_admin
 
 #: The destination fixture below is BigQuery with ``dataset: "d"`` — the schema
 #: name the warning has to name, because "which schema did you look in" is the
@@ -57,7 +58,12 @@ def setup_upload(db_session, encryption):
     db_session.flush()
 
     src = conn_svc.create_connection(
-        db_session, org.id, "S", ConnectionType.POSTGRES, {"host": "src", "port": 5432}
+        db_session,
+        org.id,
+        "S",
+        ConnectionType.POSTGRES,
+        {"host": "src", "port": 5432},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     dst = conn_svc.create_connection(
         db_session,
@@ -65,6 +71,7 @@ def setup_upload(db_session, encryption):
         "D",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": DESTINATION_DATASET},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     upload = upload_svc.create_upload(
         db_session, org.id, "test", "desc", src.id, dst.id, {"write_disposition": "append"}

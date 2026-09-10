@@ -10,6 +10,7 @@ from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService, infer_direction
 from datanika.services.egress_guard import EgressValidationError
 from datanika.services.encryption import EncryptionService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -47,6 +48,7 @@ class TestCreateConnection:
             "My DB",
             ConnectionType.POSTGRES,
             {"host": "localhost", "port": 5432},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert isinstance(conn, Connection)
         assert isinstance(conn.id, int)
@@ -60,6 +62,7 @@ class TestCreateConnection:
             "My DB",
             ConnectionType.POSTGRES,
             {"host": "localhost"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         # The raw encrypted field should not contain the plaintext
         assert "localhost" not in conn.config_encrypted
@@ -74,6 +77,7 @@ class TestCreateConnection:
             "X",
             ConnectionType.MYSQL,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.org_id == org.id
 
@@ -84,6 +88,7 @@ class TestCreateConnection:
             "X",
             ConnectionType.REST_API,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.connection_type == ConnectionType.REST_API
         # REST_API is source-only, so direction should be SOURCE
@@ -102,6 +107,7 @@ class TestCreateConnection:
                 "Internal API",
                 ConnectionType.REST_API,
                 {"base_url": "http://internal.corp.example"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_rejects_base_url_resolving_to_metadata_ip(self, svc, db_session, org):
@@ -115,6 +121,7 @@ class TestCreateConnection:
                 "Metadata Grab",
                 ConnectionType.REST_API,
                 {"base_url": "http://169.254.169.254/latest/meta-data/"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_allows_rest_api_public_base_url(self, svc, db_session, org):
@@ -125,6 +132,7 @@ class TestCreateConnection:
                 "Public API",
                 ConnectionType.REST_API,
                 {"base_url": "https://api.public.example"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
         assert conn.connection_type == ConnectionType.REST_API
 
@@ -132,7 +140,12 @@ class TestCreateConnection:
         """DB connectors (no base_url) never hit the egress guard."""
         with patch("datanika.services.connection_service.validate_egress_host") as mock_guard:
             svc.create_connection(
-                db_session, org.id, "My DB", ConnectionType.POSTGRES, {"host": "localhost"}
+                db_session,
+                org.id,
+                "My DB",
+                ConnectionType.POSTGRES,
+                {"host": "localhost"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
         mock_guard.assert_not_called()
 
@@ -145,6 +158,7 @@ class TestGetConnection:
             "X",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         fetched = svc.get_connection(db_session, org.id, created.id)
         assert fetched is not None
@@ -160,6 +174,7 @@ class TestGetConnection:
             "X",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert svc.get_connection(db_session, other_org.id, created.id) is None
 
@@ -170,8 +185,11 @@ class TestGetConnection:
             "X",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_connection(db_session, org.id, created.id)
+        svc.delete_connection(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert svc.get_connection(db_session, org.id, created.id) is None
 
 
@@ -184,6 +202,7 @@ class TestGetConnectionConfig:
             "X",
             ConnectionType.POSTGRES,
             config,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         result = svc.get_connection_config(db_session, org.id, created.id)
         assert result == config
@@ -204,6 +223,7 @@ class TestListConnections:
             "A",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         svc.create_connection(
             db_session,
@@ -211,6 +231,7 @@ class TestListConnections:
             "B",
             ConnectionType.MYSQL,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         result = svc.list_connections(db_session, org.id)
         assert len(result) == 2
@@ -222,6 +243,7 @@ class TestListConnections:
             "A",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         svc.create_connection(
             db_session,
@@ -229,8 +251,11 @@ class TestListConnections:
             "B",
             ConnectionType.MYSQL,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_connection(db_session, org.id, created.id)
+        svc.delete_connection(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_connections(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "B"
@@ -242,6 +267,7 @@ class TestListConnections:
             "A",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         svc.create_connection(
             db_session,
@@ -249,6 +275,7 @@ class TestListConnections:
             "B",
             ConnectionType.MYSQL,
             {},
+            actor_user_id=make_org_admin(db_session, other_org.id),
         )
         result = svc.list_connections(db_session, org.id)
         assert len(result) == 1
@@ -263,8 +290,15 @@ class TestUpdateConnection:
             "Old",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_connection(db_session, org.id, created.id, name="New")
+        updated = svc.update_connection(
+            db_session,
+            org.id,
+            created.id,
+            name="New",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated is not None
         assert updated.name == "New"
 
@@ -275,6 +309,7 @@ class TestUpdateConnection:
             "X",
             ConnectionType.POSTGRES,
             {"host": "old"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         old_encrypted = created.config_encrypted
         updated = svc.update_connection(
@@ -282,12 +317,22 @@ class TestUpdateConnection:
             org.id,
             created.id,
             config={"host": "new"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert updated.config_encrypted != old_encrypted
         assert encryption.decrypt(updated.config_encrypted) == {"host": "new"}
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.update_connection(db_session, org.id, 99999, name="X") is None
+        assert (
+            svc.update_connection(
+                db_session,
+                org.id,
+                99999,
+                name="X",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+            is None
+        )
 
     def test_preserves_unchanged_fields(self, svc, db_session, org):
         created = svc.create_connection(
@@ -296,9 +341,16 @@ class TestUpdateConnection:
             "Keep",
             ConnectionType.POSTGRES,
             {"host": "keep"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         old_encrypted = created.config_encrypted
-        updated = svc.update_connection(db_session, org.id, created.id, name="Changed")
+        updated = svc.update_connection(
+            db_session,
+            org.id,
+            created.id,
+            name="Changed",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.name == "Changed"
         assert updated.config_encrypted == old_encrypted
 
@@ -311,15 +363,20 @@ class TestDeleteConnection:
             "X",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        result = svc.delete_connection(db_session, org.id, created.id)
+        result = svc.delete_connection(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is True
         # Verify deleted_at is set by querying directly
         db_session.refresh(created)
         assert created.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        result = svc.delete_connection(db_session, org.id, 99999)
+        result = svc.delete_connection(
+            db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is False
 
     def test_idempotent(self, svc, db_session, org):
@@ -329,9 +386,14 @@ class TestDeleteConnection:
             "X",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_connection(db_session, org.id, created.id)
-        result = svc.delete_connection(db_session, org.id, created.id)
+        svc.delete_connection(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
+        result = svc.delete_connection(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is False
 
 
@@ -713,6 +775,7 @@ class TestConnectionNameValidation:
             "My DB 1",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.name == "My DB 1"
 
@@ -724,6 +787,7 @@ class TestConnectionNameValidation:
                 "   ",
                 ConnectionType.POSTGRES,
                 {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_special_chars_rejected(self, svc, db_session, org):
@@ -734,6 +798,7 @@ class TestConnectionNameValidation:
                 "My-DB!",
                 ConnectionType.POSTGRES,
                 {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_create_rejects_invalid(self, svc, db_session, org):
@@ -744,6 +809,7 @@ class TestConnectionNameValidation:
                 "",
                 ConnectionType.POSTGRES,
                 {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_update_rejects_invalid_name(self, svc, db_session, org):
@@ -753,9 +819,16 @@ class TestConnectionNameValidation:
             "Valid",
             ConnectionType.POSTGRES,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(ValueError, match="alphanumeric"):
-            svc.update_connection(db_session, org.id, conn.id, name="bad@name")
+            svc.update_connection(
+                db_session,
+                org.id,
+                conn.id,
+                name="bad@name",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestInferDirection:
@@ -790,16 +863,43 @@ class TestInferDirection:
         assert infer_direction(ConnectionType.S3) == ConnectionDirection.SOURCE
 
     def test_auto_direction_on_create(self, svc, db_session, org):
-        conn = svc.create_connection(db_session, org.id, "PG", ConnectionType.POSTGRES, {})
+        conn = svc.create_connection(
+            db_session,
+            org.id,
+            "PG",
+            ConnectionType.POSTGRES,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert conn.direction == ConnectionDirection.BOTH
 
-        conn2 = svc.create_connection(db_session, org.id, "BQ", ConnectionType.BIGQUERY, {})
+        conn2 = svc.create_connection(
+            db_session,
+            org.id,
+            "BQ",
+            ConnectionType.BIGQUERY,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert conn2.direction == ConnectionDirection.DESTINATION
 
     def test_auto_direction_on_update_type(self, svc, db_session, org):
-        conn = svc.create_connection(db_session, org.id, "X", ConnectionType.POSTGRES, {})
+        conn = svc.create_connection(
+            db_session,
+            org.id,
+            "X",
+            ConnectionType.POSTGRES,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert conn.direction == ConnectionDirection.BOTH
-        svc.update_connection(db_session, org.id, conn.id, connection_type=ConnectionType.BIGQUERY)
+        svc.update_connection(
+            db_session,
+            org.id,
+            conn.id,
+            connection_type=ConnectionType.BIGQUERY,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert conn.direction == ConnectionDirection.DESTINATION
 
 
@@ -878,7 +978,14 @@ class TestSourceTemplateSlug:
     """
 
     def test_default_source_template_slug_is_none(self, svc, db_session, org):
-        conn = svc.create_connection(db_session, org.id, "Plain", ConnectionType.POSTGRES, {})
+        conn = svc.create_connection(
+            db_session,
+            org.id,
+            "Plain",
+            ConnectionType.POSTGRES,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert conn.source_template_slug is None
 
     def test_stores_source_template_slug(self, svc, db_session, org):
@@ -889,6 +996,7 @@ class TestSourceTemplateSlug:
             ConnectionType.SHOPIFY,
             {},
             source_template_slug="shopify-to-postgres",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.source_template_slug == "shopify-to-postgres"
 
@@ -899,7 +1007,13 @@ class TestSourceTemplateSlug:
         # a secondary `!= ""` filter and every non-template connection
         # would show up as a phantom template-origin row.
         conn = svc.create_connection(
-            db_session, org.id, "X", ConnectionType.MYSQL, {}, source_template_slug=""
+            db_session,
+            org.id,
+            "X",
+            ConnectionType.MYSQL,
+            {},
+            source_template_slug="",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert conn.source_template_slug is None
 
@@ -920,6 +1034,7 @@ class TestConsumeTemplateFirstRun:
             ConnectionType.POSTGRES,
             {"host": "localhost"},
             source_template_slug=slug,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
 
     def test_returns_slug_on_first_call(self, svc, db_session, org):

@@ -13,6 +13,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.schedule_service import ScheduleConfigError, ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -59,13 +60,21 @@ def other_org(db_session):
 
 @pytest.fixture
 def upload(upload_svc, conn_svc, db_session, org):
-    src = conn_svc.create_connection(db_session, org.id, "Src", ConnectionType.POSTGRES, {"h": "x"})
+    src = conn_svc.create_connection(
+        db_session,
+        org.id,
+        "Src",
+        ConnectionType.POSTGRES,
+        {"h": "x"},
+        actor_user_id=make_org_admin(db_session, org.id),
+    )
     dst = conn_svc.create_connection(
         db_session,
         org.id,
         "Dst",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return upload_svc.create_upload(db_session, org.id, "pipe", "desc", src.id, dst.id, {})
 

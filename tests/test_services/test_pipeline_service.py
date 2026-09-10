@@ -9,6 +9,7 @@ from datanika.models.user import Organization
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineConfigError, PipelineService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -51,6 +52,7 @@ def dest_conn(conn_svc, db_session, org):
         "Dest DB",
         ConnectionType.BIGQUERY,
         {"project": "p", "dataset": "d"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 

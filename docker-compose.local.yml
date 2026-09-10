@@ -1,0 +1,50 @@
+# Local-development overlay — NEVER deployed (core#1197).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d \
+#       postgres redis app celery scheduler proxy
+#
+# Then point the E2E suite at the proxy, which is the only origin that behaves the way
+# staging does:
+#
+#   DATANIKA_E2E_BASE_URL=http://localhost:3100 npx playwright test
+#
+# WHY A SEPARATE FILE AND NOT A `profiles:` ENTRY IN docker-compose.yml
+# ---------------------------------------------------------------------
+# Two guards constrain every service in `docker-compose.yml`, from opposite directions:
+# `test_deploy_service_coverage.py` asks "is this named by some deploy step?" and
+# `test_selfhost_quickstart.py` asks "does a plain `up -d` start only what the application
+# needs?". A local-only dev proxy answers *neither* question well — it is deliberately in no
+# deploy step, and it is not part of a self-hoster's stack.
+#
+# Putting it here says that in the file layout rather than in a comment. ⚠️ Both guards read
+# `docker-compose.yml` *only*, so this file is outside their reach — which is precisely why
+# `test_local_proxy_mirrors_vhost.py` adds the matching inverse assertion: this file must
+# never be referenced by a deploy step, and its route table must not drift from the vhost.
+# Skipping that test would make this an evasion of the guards instead of an expression of
+# what they are for.
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    container_name: datanika-local-proxy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      # 3100, not 3000 — the app publishes 3000/8000 directly and those stay reachable, so
+      # you can still probe either tier without the proxy in the way when diagnosing.
+      - "127.0.0.1:3100:80"
+    volumes:
+      - ./deploy/local/nginx-local-proxy.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      # Asks the PROXY whether the BACKEND answers, so a green healthcheck means the
+      # merged origin works — not merely that nginx started.
+      # ⚠️ 127.0.0.1, not `localhost`: nginx's `listen 80` binds IPv4 only, while
+      # busybox wget resolves `localhost` to ::1 first and gets "Connection refused"
+      # against a proxy that is serving correctly. Measured — 13 consecutive failures
+      # while curl through the published port returned 200.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

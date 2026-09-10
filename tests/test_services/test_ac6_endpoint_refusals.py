@@ -37,6 +37,7 @@ three.
 from __future__ import annotations
 
 import contextlib
+import pathlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,11 +50,13 @@ from starlette.testclient import TestClient
 from datanika.models.base import Base
 from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
+from datanika.models.notification_channel import ChannelType
 from datanika.models.pipeline import DbtCommand
 from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
+from datanika.services.notification_service import NotificationService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.rate_limit_service import RateLimitResult
 from datanika.services.schedule_service import ScheduleService
@@ -83,6 +86,30 @@ CASES = [
     ("pipelines", "DELETE", "/api/v1/pipelines/{pipeline}", None, "admin", MemberRole.EDITOR),
     ("schedules", "POST", "/api/v1/schedules", "schedule_create", "editor", MemberRole.VIEWER),
     ("schedules", "DELETE", "/api/v1/schedules/{schedule}", None, "admin", MemberRole.EDITOR),
+    (
+        "channels",
+        "POST",
+        "/api/v1/notifications/channels",
+        "channel_create",
+        "admin",
+        MemberRole.EDITOR,
+    ),
+    (
+        "channels",
+        "PUT",
+        "/api/v1/notifications/channels/{channel}",
+        "rename",
+        "admin",
+        MemberRole.EDITOR,
+    ),
+    (
+        "channels",
+        "DELETE",
+        "/api/v1/notifications/channels/{channel}",
+        None,
+        "admin",
+        MemberRole.EDITOR,
+    ),
 ]
 
 PG = {"host": "h", "port": 5432, "database": "d", "user": "u", "password": "p"}
@@ -102,6 +129,12 @@ def _body(key: str, ids: dict) -> dict | None:
             "name": "P2",
             "destination_connection_id": ids["conn"],
             "command": "run",
+        },
+        "channel_create": {
+            "name": "C2",
+            "channel_type": "slack",
+            "config": {"webhook_url": "https://hooks.slack.com/services/AC6"},
+            "events": ["run_failure"],
         },
         "schedule_create": {
             "target_type": "upload",
@@ -144,6 +177,7 @@ def _surface(actor_role: MemberRole):
     pipeline_svc = PipelineService()
     transform_svc = TransformationService()
     schedule_svc = ScheduleService(upload_svc, transform_svc, pipeline_service=pipeline_svc)
+    notif_svc = NotificationService()
     conn = conn_svc.create_connection(
         session, ORG_ID, "Existing", ConnectionType.POSTGRES, PG, actor_user_id=setup_admin.id
     )
@@ -177,7 +211,18 @@ def _surface(actor_role: MemberRole):
         actor_user_id=setup_admin.id,
     )
     session.flush()
+    channel = notif_svc.create_channel(
+        session,
+        ORG_ID,
+        actor_user_id=setup_admin.id,
+        name="Existing channel",
+        channel_type=ChannelType.SLACK,
+        config={"webhook_url": "https://hooks.slack.com/services/EXISTING"},
+        events=["run_failure"],
+    )
+    session.flush()
     ids = {
+        "channel": channel.id,
         "conn": conn.id,
         "upload": upload.id,
         "pipeline": pipeline.id,
@@ -284,8 +329,46 @@ def test_the_table_covers_every_wired_subsystem():
     while the others shipped would report AC6 satisfied for work nobody did.
     """
     covered = {c[0] for c in CASES}
-    assert covered == {"connections", "uploads", "pipelines", "schedules"}, (
+    assert covered == {"connections", "uploads", "pipelines", "schedules", "channels"}, (
         f"AC6 table covers {sorted(covered)}. Raise this assertion as each subsystem is wired "
         "— uploads, pipelines, schedules, transformations, api keys, notification channels, "
         "backup/export — so the table cannot silently lag the wiring."
+    )
+
+
+#: §1 names eight subsystems. Two of them have NO REST surface at all.
+REFLEX_ONLY = {"api keys", "backup/export"}
+
+
+def test_the_two_reflex_only_subsystems_still_have_no_rest_surface():
+    """🔑 The honest AC9 statement, asserted rather than written down.
+
+    AC6 is *"one REST endpoint per subsystem driven with a key whose owner lacks the role"*.
+    **API keys and backup/export expose no REST endpoint**, so for those two AC6 is
+    **INAPPLICABLE, not unmet** — and recording it as met would be exactly the defect Product
+    fixed in AC6 itself: a criterion satisfied by something that is not the thing.
+
+    ⚠️ Inapplicable is **not** uncovered. Both enforce in the service and are covered by
+    service-level tests; what is missing is the *driven-endpoint witness*, and
+    *"enforced, witness not obtainable at the endpoint layer"* is a different sentence from
+    *"AC6 met"*.
+
+    This is asserted so the claim cannot go stale silently: the day someone adds an API-key or
+    backup route, this fails and forces an AC6 row rather than leaving a subsystem with a
+    service check and no endpoint evidence.
+    """
+    routes_src = (
+        pathlib.Path(__file__).resolve().parents[2] / "datanika" / "services" / "api_v1_routes.py"
+    ).read_text(encoding="utf-8")
+    route_lines = [ln for ln in routes_src.splitlines() if ln.strip().startswith("Route(")]
+    assert route_lines, "no routes parsed — this assertion would be vacuous"
+
+    offenders = [
+        ln.strip()
+        for ln in route_lines
+        if any(w in ln.lower() for w in ("api-key", "api_key", "apikey", "backup", "export"))
+    ]
+    assert not offenders, (
+        "a REST route now exists for a subsystem recorded as Reflex-only, so AC6 is no longer "
+        "inapplicable for it and needs a row in CASES:\n  " + "\n  ".join(offenders)
     )

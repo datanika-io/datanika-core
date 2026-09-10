@@ -27,6 +27,8 @@ import pathlib
 import sys
 
 TARGETS = {
+    "create_api_key", "revoke_api_key",
+    "create_channel", "update_channel", "delete_channel", "export_backup",
     "create_connection", "update_connection", "delete_connection", "import_backup",
     "create_upload", "update_upload", "delete_upload",
     "create_pipeline", "update_pipeline", "delete_pipeline",
@@ -37,6 +39,15 @@ TARGETS = {
 #: Reflex state classes expose HANDLERS with them. Nothing in the syntax distinguishes
 #: either from the service method, so they are excluded by path rather than detected.
 EXCLUDE = ("tests/test_mcp",)
+
+#: Which POSITIONAL argument carries `org_id`, per method.
+#:
+#: ⚠️ The default is 1, because `(session, org_id, ...)` is the shape every service in this
+#: issue uses -- except `NotificationService`, whose `update_channel`/`delete_channel` are
+#: `(session, channel_id, org_id)`. A tool assuming the common shape derives the actor from
+#: `channel_id`, producing an admin of an org that is really a channel id. Nothing in the
+#: syntax says which shape a call has, so the exception is DECLARED, not detected.
+ORG_ARG_INDEX = {"update_channel": 2, "delete_channel": 2}
 
 
 def _call_name(node: ast.Call) -> str | None:
@@ -68,8 +79,12 @@ def patch(path: pathlib.Path) -> tuple[int, list[str]]:
         if len(node.args) < 2:
             skipped.append(f"{path.name}:{node.lineno} ({_call_name(node)}) — org not positional")
             continue
+        idx = ORG_ARG_INDEX.get(_call_name(node), 1)
+        if len(node.args) <= idx:
+            skipped.append(f"{path.name}:{node.lineno} ({_call_name(node)}) — org not positional")
+            continue
         sess = ast.get_source_segment(src, node.args[0])
-        org = ast.get_source_segment(src, node.args[1])
+        org = ast.get_source_segment(src, node.args[idx])
         if not sess or not org:
             skipped.append(f"{path.name}:{node.lineno} — could not read args")
             continue

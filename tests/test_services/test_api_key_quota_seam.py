@@ -25,7 +25,7 @@ from datanika import hooks
 from datanika.models.api_key import ApiKey
 from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
-from tests.factories import make_user
+from tests.factories import make_org_admin, make_user
 
 
 @pytest.fixture
@@ -59,7 +59,9 @@ class TestTheSeamExists:
         seen = []
         clean_hooks.on("api_key.before_create", lambda **kw: seen.append(kw))
 
-        ApiKeyService().create_api_key(db_session, org.id, user.id, "k")
+        ApiKeyService().create_api_key(
+            db_session, org.id, user.id, "k", actor_user_id=make_org_admin(db_session, org.id)
+        )
 
         assert len(seen) == 1, "api_key.before_create was not emitted"
         assert seen[0]["org_id"] == org.id
@@ -86,7 +88,9 @@ class TestTheSeamExists:
         clean_hooks.on("api_key.before_create", refuse)
 
         with pytest.raises(RefusedError):
-            ApiKeyService().create_api_key(db_session, org.id, user.id, "k")
+            ApiKeyService().create_api_key(
+                db_session, org.id, user.id, "k", actor_user_id=make_org_admin(db_session, org.id)
+            )
 
     def test_a_vetoed_creation_writes_no_row(self, db_session, org_and_user, clean_hooks):
         """The assertion that pins the *ordering*, not just the exception.
@@ -104,7 +108,9 @@ class TestTheSeamExists:
         clean_hooks.on("api_key.before_create", refuse)
 
         with pytest.raises(RuntimeError):
-            ApiKeyService().create_api_key(db_session, org.id, user.id, "k")
+            ApiKeyService().create_api_key(
+                db_session, org.id, user.id, "k", actor_user_id=make_org_admin(db_session, org.id)
+            )
 
         db_session.flush()
         assert _count_keys(db_session, org.id) == 0, (
@@ -118,7 +124,9 @@ class TestTheSeamExists:
         way for key creation to fail.
         """
         org, user = org_and_user
-        key, raw = ApiKeyService().create_api_key(db_session, org.id, user.id, "k")
+        key, raw = ApiKeyService().create_api_key(
+            db_session, org.id, user.id, "k", actor_user_id=make_org_admin(db_session, org.id)
+        )
 
         assert key.id is not None
         assert raw.startswith("etf_")
@@ -136,7 +144,9 @@ class TestTheSeamExists:
             observed.append(_count_keys(kw["session"], org.id))
 
         clean_hooks.on("api_key.before_create", count_rows)
-        ApiKeyService().create_api_key(db_session, org.id, user.id, "k")
+        ApiKeyService().create_api_key(
+            db_session, org.id, user.id, "k", actor_user_id=make_org_admin(db_session, org.id)
+        )
 
         assert observed == [0], (
             f"the handler saw {observed} existing keys — it must run before the new row "

@@ -512,7 +512,8 @@ def main() -> int:
         if wf.recent_conclusions:
             # core#1193. Show the verdicts the streak check reads, so the state is
             # legible BEFORE it becomes a problem rather than only in the alert.
-            print(f"       recent scheduled conclusions (newest first): {', '.join(wf.recent_conclusions)}")
+            recent = ", ".join(wf.recent_conclusions)
+            print(f"       recent scheduled conclusions (newest first): {recent}")
     for wf in sorted(orphans, key=lambda w: w.ref):
         last = wf.last_schedule_run.isoformat() if wf.last_schedule_run else "never"
         print(f"  [{'FILE NOT ON DEFAULT':>20}] {wf.ref}")

@@ -149,9 +149,7 @@ def parse_pins(text: str) -> dict[str, str]:
     return pins
 
 
-def pin_drift(
-    locked: dict[str, str], installed: dict[str, str]
-) -> list[tuple[str, str, str]]:
+def pin_drift(locked: dict[str, str], installed: dict[str, str]) -> list[tuple[str, str, str]]:
     """Packages the lock names that the image installed at a DIFFERENT version.
 
     Only the intersection is compared, and that is deliberate:
@@ -282,9 +280,7 @@ def main() -> int:
         paths = result.stdout.strip()
         print(f"    routes: {paths}")
         if "/mcp" not in paths:
-            failures.append(
-                f"B: mcp_routes imported but exposes no /mcp path — got {paths}"
-            )
+            failures.append(f"B: mcp_routes imported but exposes no /mcp path — got {paths}")
     else:
         stderr = (result.stderr or result.stdout).strip()
         tail = stderr.splitlines()

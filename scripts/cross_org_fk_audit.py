@@ -63,7 +63,13 @@ def main() -> int:
 
         counts = {}
         for t in sorted(org_tables):
-            counts[t] = conn.execute(text(f'SELECT count(*) FROM "{t}"')).scalar_one()
+            # noqa: S608 justified -- `t` comes from ORG_TABLES_SQL, i.e. the database's
+            # own catalog, and this script has no request path into it. Same shape as the
+            # `datanika/migrations/**` exemption, and narrow so a genuine interpolation of
+            # caller data elsewhere in this file is still caught.
+            counts[t] = conn.execute(
+                text(f'SELECT count(*) FROM "{t}"')  # noqa: S608
+            ).scalar_one()
         print("\nrow counts:")
         for t, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
             print(f"  {t:<28} {c}")
@@ -89,8 +95,10 @@ def main() -> int:
         print(f"\nFK pairs examined: {len(pairs)}")
         for conname, child, parent, ccol, pcol in pairs:
             n_child = counts.get(child, 0)
+            # noqa: S608 justified -- child/parent/ccol/pcol are read from `pg_constraint`,
+            # not from any caller. See the note above.
             q = text(
-                f'SELECT count(*) FROM "{child}" c '
+                f'SELECT count(*) FROM "{child}" c '  # noqa: S608
                 f'JOIN "{parent}" p ON p."{pcol}" = c."{ccol}" '
                 f'WHERE c."{ccol}" IS NOT NULL AND c.org_id IS DISTINCT FROM p.org_id'
             )

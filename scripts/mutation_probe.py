@@ -85,7 +85,11 @@ class Store:
         self.sentinel = state_dir / "SENTINEL"
 
     def _blob_name(self, rel: Path) -> str:
-        return hashlib.sha1(str(rel).encode()).hexdigest()[:16] + "__" + rel.name
+        # Content-addresses a scratch FILENAME, never a credential or a signature.
+        # `usedforsecurity=False` states that in the code, so the next reader does not
+        # have to decide whether a bare suppression comment was reasoned or reflexive.
+        digest = hashlib.sha1(str(rel).encode(), usedforsecurity=False).hexdigest()
+        return digest[:16] + "__" + rel.name
 
     def save_original(self, repo: Path, rel: Path) -> bytes:
         """Persist pristine bytes BEFORE the caller writes a mutant. Returns them."""

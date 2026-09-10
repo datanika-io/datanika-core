@@ -13,4 +13,12 @@ test-results/
 # Not merely untidy: a real run's report carries test titles, error messages and any
 # interpolated URL, and this suite talks to STAGING. A committed report is a small
 # disclosure surface. It also blocked a push here, via a `git status -- e2e/` guard.
+#
+# Infra, core#1197 — a second reason, and the sharper one. `results-gating.json` is the name CI's
+# flaky detector READS: `.github/workflows/staging.yml` runs `detect_flaky_gating.py
+# results-gating.json` with `if: always()`, at a path relative to the checkout, and the detector
+# has no freshness guard. So a committed local report is readable by CI on any run that fails
+# BEFORE writing its own — not hypothetical: a `grepInvert` drop and a missing module each
+# produced `Total: 0 tests in 0 files` on 2026-09-10, and a zero-test run writes no report and
+# exits 0. That is core#1232's shape arriving by file rather than by workflow run.
 results-*.json

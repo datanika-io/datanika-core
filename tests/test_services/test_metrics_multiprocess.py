@@ -24,15 +24,28 @@ matches production.
 
 ⚠️ Six SLOs, not five
 ---------------------
-`docs/slo_instruments.yml` has **six** ``source: app`` entries. Five carried
-``blocked_by``; the sixth (`error-rate-slos-webhook-handler-paddle-http-5xx`) did not, and was
-reading NO_VERDICT only because its sufficiency query counts **successful** Paddle webhooks and
-that count is 0 at 0 paying users — shielded by an accident of traffic, not by a guard. All six
-`blocked_by` keys, `BLOCKED_BASELINE`, and
-`test_every_app_sourced_slo_is_blocked_while_core_895_is_open` are removed in this same change,
-because a fix that ships beside a test asserting it has not shipped leaves five unguarded and
-the sixth blocked forever — and a stuck NO_VERDICT reads as *"no instrument"*, which is the
-failure core#721 existed to end.
+`docs/slo_instruments.yml` has **six** ``source: app`` entries and every one of them carries
+``blocked_by`` today, so this change removes **six** keys — the entire population, not a sample.
+(A seventh match for `blocked_by` in that file is the field's own description in the header
+comment. It stays: the mechanism is general and outlives this fix. Counting it would be the
+third time in this work that a grep total included a comment.)
+
+The count is spelled out because it was **five** for a while, and the reason matters. When
+core#908 wrote the guard, the sixth entry
+(`error-rate-slos-webhook-handler-paddle-http-5xx`) had been missed — the key was applied
+entry-by-entry from memory rather than as a rule. It was not yet producing a wrong verdict, but
+only because its sufficiency query counts **successful** Paddle webhooks and that count is 0 at
+0 paying users: shielded by an accident of traffic, not by a guard. The first real webhook would
+have flipped it to a PASS computed from an instrument we had measured to be broken. The guard is
+what added the sixth key, and that is why all six exist to be removed here.
+
+Removed in this same change: the six keys, and
+`test_every_app_sourced_slo_is_blocked_while_core_895_is_open` — an open-issue guard that
+outlives its issue inverts into a guard against the fix. **`BLOCKED_BASELINE` is kept**, as an
+empty set: `blocked_by` is a general ratchet, and an empty baseline asserts there is no blocked
+instrument today, which is a claim that can fail. A fix that shipped beside a test asserting it
+had not shipped would leave five unguarded and the sixth blocked forever — and a stuck
+NO_VERDICT reads as *"no instrument"*, which is the failure core#721 existed to end.
 """
 
 from __future__ import annotations

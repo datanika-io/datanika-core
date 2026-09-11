@@ -49,11 +49,42 @@ We do not have a perf harness today. The numbers below are derived from:
 These are **targets**, not guarantees. Missing an SLO is a signal to
 investigate, not an auto-page.
 
+> ## 🚨 The throughput figures below are INHERITED, not measured on this hardware
+>
+> **Marked 2026-09-11 ([core#778]).** Every load figure in this document traces to
+> `plans/infra/LOAD_TEST_BASELINE_2026-04-21.md`, whose header reads:
+>
+> ```
+> Server: Hetzner CPX31, 8 GB RAM, 4 vCPU, Ubuntu 24.04
+> ```
+>
+> **That machine was terminated on 2026-07-14** and production moved to pointer.gr
+> on 2026-07-17 — a different host, a different network path, and **Apache instead
+> of nginx**. The newest *conclusive* datum is Run 5/6 of **2026-04-18** (~48 req/s
+> sustained); Runs 7 and 8 are marked INCONCLUSIVE and **Run 9 was never executed**.
+>
+> ⚠️ **An unmarked inherited claim is indistinguishable from a measurement.** These
+> read as bars we have cleared. **They are bars a machine we no longer own once
+> cleared.** Until a run happens on the current host, treat every rps number here as
+> provenance, not evidence.
+>
+> Two further facts, measured 2026-09-11, that bear on when that run can happen:
+>
+> * **There is no k6 script in this repository**, and k6 is **not installed** on the
+>   box — so the 2026-04-21 baseline is **not reproducible even in principle**,
+>   independently of the hardware being gone. A tracked profile
+>   (`tests/load/`) is the prerequisite, not the run.
+> * **Staging and production are the same machine** (`s538673`, 4 vCPU, 24
+>   containers, load average 2.16/2.98/3.18, 2 GiB available, shared with
+>   co-tenants). A load test against staging **is** load on production's hardware,
+>   so any figure obtained live is a **floor under contention**, not a capacity
+>   ceiling — and must say so in those words wherever it is recorded.
+
 ## Service-level indicators
 
 | Category | Indicator | Target (p95) | Target (p99) | Measurement |
 |---|---|---|---|---|
-| **REST API — read** | `/api/v1/meta/*`, `/api/v1/connections`, `/api/v1/pipelines` GET | **200 ms** | 500 ms | k6 against staging at 50 rps sustained |
+| **REST API — read** | `/api/v1/meta/*`, `/api/v1/connections`, `/api/v1/pipelines` GET | **200 ms** | 500 ms | k6 against staging at 50 rps sustained ⚠️ inherited, see callout |
 | **REST API — write** | `POST /api/v1/connections`, `POST /api/v1/pipelines` | **500 ms** | 1500 ms | k6 at 10 rps sustained |
 | **Auth** | `/api/v1/auth/signup`, `/api/v1/auth/login` | **800 ms** | 2000 ms | k6 at 5 rps sustained (bcrypt is the floor) |
 | **Agent API** | `/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/meta/agent-tiers` | **150 ms** | 400 ms | k6 at 20 rps sustained |
@@ -65,8 +96,8 @@ investigate, not an auto-page.
 
 | Subsystem | Metric | Target |
 |---|---|---|
-| **REST API** | Sustained throughput before p95 regression | **≥ 100 rps** on `/api/v1/meta/*` |
-| **Celery worker** | Simple pipeline runs (DuckDB → DuckDB, ~1k rows) | **≥ 60 runs/min** on the prod box (8 GB RAM) |
+| **REST API** | Sustained throughput before p95 regression | **≥ 100 rps** on `/api/v1/meta/*` ⚠️ inherited, see callout |
+| **Celery worker** | Simple pipeline runs (DuckDB → DuckDB, ~1k rows) | **≥ 60 runs/min** ⚠️ inherited — "the prod box (8 GB RAM)" named here is the **terminated** Hetzner CPX31, not `s538673` |
 | **Celery worker** | Upload → staging runs (~10k rows, local CSV) | **≥ 20 runs/min** |
 | **Scheduler** | Schedule dispatch latency (fire time → task enqueue) | **p95 < 500 ms** |
 | **Signup → first event** | user hits submit → first Reflex event round-trip | **p95 < 1500 ms** |

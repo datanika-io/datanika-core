@@ -195,8 +195,8 @@ class ExecutionService:
         Reading the status here rather than at each call site is the point: three literals is
         how a fourth arrives. Same reasoning as ``fail_run``'s announce, which lives in this
         service so a sixth caller cannot forget it.
-        ``tests/test_services/test_cancelled_run_is_not_billed.py`` fails on a hardcoded status
-        anywhere under ``datanika/tasks/``.
+        ``tests/test_services/test_cancelled_run_announces_its_real_status.py`` fails on a
+        hardcoded status anywhere under ``datanika/tasks/``.
 
         Returns ``False`` without announcing when the run does not resolve within ``org_id`` —
         the tenancy predicate applies here as everywhere else.

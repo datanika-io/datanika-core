@@ -212,7 +212,7 @@ CANCELLING = "cancelling"      # non-terminal: the stop was requested, the worke
 |---|---|---|
 | `pending` | cancel requested | **`cancelled`** — terminal immediately; no worker has started |
 | `running` | cancel requested | **`cancelling`** |
-| `cancelling` | worker reaches a checkpoint and exits | **`cancelled`** (terminal) |
+| `cancelling` | worker reaches a checkpoint and exits | **`cancelled`** (terminal) — ⚠️ **no such checkpoint exists today; see §7.2** |
 | `cancelling` | worker finishes its work before noticing | **`cancelled`** — see below |
 | `cancelling` | worker dies / never acknowledges | **`cancelled`** by the reaper (§3.1) |
 | `cancelling` | cancel requested again | **`cancelling`** — idempotent, still `200` |
@@ -374,9 +374,52 @@ carried forward and renumbered here.
    nothing — the bug is that `complete_run` overwrites the cancellation, so the test must cancel a
    task that is **already executing**, let the worker run to its natural end, and then assert the
    final row. *If that test is hard to write, that difficulty is the bug.*
-2. **The worker actually stops.** Assert on an effect the run *would* have had and did not — the
-   destination table stops growing, or the cancellation checkpoint is reached. **Not** on the API
-   response: a `200` is precisely what we get today while nothing happens.
+2. 🔴 **NOT BUILDABLE TODAY — split, 2026-09-11.** This read: *"**The worker actually stops.**
+   Assert on an effect the run would have had and did not — the destination table stops growing, or
+   the cancellation checkpoint is reached. **Not** on the API response: a `200` is precisely what we
+   get today while nothing happens."*
+
+   **Engineering reported that §3 is not tractable as one piece, and they are right.** Measured on
+   `origin/dev`, all three zero:
+
+   | | |
+   |---|---|
+   | `checkpoint` in `services/` + `tasks/` | **0** |
+   | `revoke(` / `terminate=` anywhere in `datanika/` | **0** |
+   | `is_cancelled` inside `dlt_runner.py` / `dbt_runner.py` | **0** |
+
+   Both engines do their work in **one call**, and §6 rules out revocation **deliberately**. So
+   nothing between *"cancel requested"* and *"work finished"* can observe the request. **A criterion
+   that no code path can satisfy is not a criterion**, and carrying it is `SPEC_EARNED_VERDICTS` §5.1
+   pointed at this spec.
+
+   **2a — buildable now: the pre-flight checkpoint.** Read `is_cancelled` immediately before invoking
+   the engine. Covers `pending → cancelled` and the window between dequeue and first byte.
+
+   **2b — deferred: the mid-flight stop.** The original criterion, unchanged in intent, unsatisfiable
+   until an engine call can be interrupted.
+
+   🚨 **The discriminator, because shipping 2a and reporting 2b is the defect Engineering warned
+   about — and the original wording already contains the test.** *"The destination table stops
+   growing"* separates them by itself:
+
+   - **Pre-flight stop → the destination receives NOTHING.** Row count **0**; the engine never ran.
+   - **Mid-flight stop → the destination holds a PARTIAL load.** Row count **> 0** and then stable —
+     which is also exactly what D3 promises the user keeps.
+
+   **So the assertion for 2b is `0 < rows < total`, and a pre-flight implementation fails it by
+   returning 0.** An implementation of 2a cannot accidentally pass 2b, which is the property that
+   makes splitting them safe rather than cosmetic.
+
+   ⚠️ **2a must be reported as 2a.** *"Cancellation works"* on a queued-only stop is the same class of
+   claim as a green run with no rows: true of what was measured, false of what the reader will infer.
+
+   **Un-defer trigger for 2b, and it has a reader:** it becomes buildable when either engine's
+   execution stops being a single opaque call — per-resource or chunked execution, which is
+   `SPEC_ELT_IR_ARCHITECTURE`'s territory. **Whoever changes that call shape is already standing in
+   the exact place a checkpoint goes**, so the trigger does not depend on anyone remembering this
+   spec. ⚠️ If that work is abandoned, 2b becomes *"deferred indefinitely, no watcher"* and should say
+   so in those words ([core#735]).
 3. **Negative controls: an ordinary run still ends `SUCCESS`, and a failing one still ends `FAILED`.**
    The fix touches the completion path every run takes.
 4. **The status-set guard of §4 exists and was demonstrated red** against a throwaway eighth status.

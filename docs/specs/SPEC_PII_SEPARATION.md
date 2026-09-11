@@ -1150,7 +1150,21 @@ gates it). Per WORKFLOW_RULES §6 (`plans/WORKFLOW_RULES.md`), dynamic error mes
 | `org.delete_confirm` | Type the organization name to confirm |
 | `org.delete_subscription_note` | The subscription is cancelled first. Billing records are kept for 7 years. |
 
-**22 keys.** `account.` and `org.` prefixes both already exist. Reuse `auth.current_password` from
+**22 keys.** 🔴 **CORRECTED 2026-09-11 — this sentence carried TWO false claims, and both were
+mechanically checkable ([core#1150]).** It read: *"`account.` and `org.` prefixes both already exist.
+Reuse `auth.current_password` from SPEC_PASSWORD_RESET…"*
+
+* **`auth.current_password` does not exist.** The key is **`account.current_password`**, which is what
+  `SPEC_PASSWORD_RESET` §396 names and what `en.json` holds. An implementer following the instruction
+  verbatim references a key under a namespace that does not hold it, and Reflex renders the **raw key
+  string** — in all nine locales.
+* **The `org.` prefix does not "already exist": it holds ZERO keys.** `account.` holds 27.
+
+🔑 **Neither is a typo in the ordinary sense, and no review would have caught either** — doing exactly
+what the clause said *was* the failure. That is [core#1150]'s thesis, found on this spec by resolving
+every identifier the `SPEC_*.md` corpus names against the artifact that defines it.
+
+Reuse **`account.current_password`** from
 SPEC_PASSWORD_RESET rather than declaring a second key for the same field.
 
 ## 6. 🔗 What this changes about [core#651] — flag to Engineering, who are fixing it now

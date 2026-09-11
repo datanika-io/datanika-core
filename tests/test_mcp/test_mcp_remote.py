@@ -85,7 +85,10 @@ class TestBearerAuth:
         captured = {}
 
         class _FakeClient:
-            def __init__(self, base_url, token):
+            # **kwargs so a new keyword at the mcp_routes call site (core#1279 added
+            # `trust_env`) does not fail this test for a reason unrelated to its subject.
+            # The trust_env dimension itself is asserted in test_mcp_client_proxy.py.
+            def __init__(self, base_url, token, **kwargs):
                 captured["base_url"] = base_url
                 captured["token"] = token
 
@@ -152,7 +155,7 @@ class TestToolRouting:
         # AsyncMock: the client is awaited from the tool body (core#388).
         fake_client = AsyncMock()
         fake_client.list_connections.return_value = {"connections": [{"id": 1, "name": "pg"}]}
-        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: fake_client)
+        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token, **kwargs: fake_client)
 
         asgi, lifespan = make_remote_transport()
         app = routes.BearerSessionApp(asgi)
@@ -175,7 +178,7 @@ class TestToolRouting:
 
     async def test_write_tool_blocked_read_only(self, monkeypatch):
         fake_client = AsyncMock()
-        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: fake_client)
+        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token, **kwargs: fake_client)
 
         asgi, lifespan = make_remote_transport()
         app = routes.BearerSessionApp(asgi)
@@ -215,7 +218,7 @@ class TestToolRouting:
         """The wording above can only differ if the transport reaches the session."""
         from datanika_mcp.session import current_session
 
-        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token: AsyncMock())
+        monkeypatch.setattr(routes, "DatanikaClient", lambda base_url, token, **kwargs: AsyncMock())
         seen = {}
 
         async def inner(scope, receive, send):

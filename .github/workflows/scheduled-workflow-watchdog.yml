@@ -201,6 +201,13 @@ jobs:
     permissions:
       contents: read
       issues: write
+      # Downloading a JOB LOG needs `actions: read`. Listing workflows and runs does
+      # not -- which is why the `watchdog` job beside this one has read runs happily
+      # for weeks on the same token scope, and why the gap was invisible until a job
+      # actually asked for a log. Measured in run 34519257514: the runner banner
+      # printed `Contents: read / Issues: write / Metadata: read` and nothing else,
+      # `watchdog` succeeded, and this job failed 18 of 18 log fetches.
+      actions: read
     steps:
       - uses: actions/checkout@v6
 

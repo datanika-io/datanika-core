@@ -621,7 +621,28 @@ def _gh(path: str, *, raw: bool = False) -> object:
     return out.stdout if raw else json.loads(out.stdout)
 
 
-def _gh_log_or_none(repo: str, job_id: int) -> str | None:
+#: The exact refusal a newer `gh` prints for a response containing terminal escapes.
+#: Matched rather than version-sniffed: the flag may be spelled differently tomorrow, but
+#: the reason gh gives is what actually tells us to retry.
+ESCAPE_GUARD = "terminal escape sequences"
+
+
+def _gh_logs(repo: str, job_id: int, *, allow_escapes: bool):  # noqa: ANN202
+    """One `gh api` call for a job log, with or without the escape-sequence opt-in."""
+    cmd = ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"]
+    if allow_escapes:
+        cmd.append("--allow-escape-sequences")
+    return subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _gh_log_or_none(repo: str, job_id: int) -> tuple[str | None, str]:
     """A job's raw log, or `None` when GitHub will not serve it.
 
     Not every completed job has a retrievable log: a **cancelled** job's is zero bytes, and
@@ -629,16 +650,28 @@ def _gh_log_or_none(repo: str, job_id: int) -> str | None:
     crash, and — more importantly — neither is a reason to report a pass. The caller turns
     `None` into UNMEASURED when the job conclusion explains it and UNREADABLE otherwise, and
     UNREADABLE blocks a streak.
+
+    The REASON is returned, not discarded (core#1273). This used to answer `None` for
+    every failure alike, so when the CI job running it could fetch NOTHING the operator
+    was told "18 attempts, all failed" and not one word about why. A 404 (expired or
+    cancelled) and a 403 (this token may not read job logs) are the same answer here and
+    need opposite responses -- and the missing half cost a diagnosis that one line of
+    stderr would have ended.
     """
-    out = subprocess.run(  # noqa: S603
-        ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    return out.stdout if out.returncode == 0 else None
+    out = _gh_logs(repo, job_id, allow_escapes=False)
+    if out.returncode != 0 and ESCAPE_GUARD in (out.stderr or ""):
+        # core#1273. Actions logs carry ANSI escapes, and a newer `gh` REFUSES to emit a
+        # response containing them unless told to. Measured: gh 2.89.0 here has no such
+        # flag and fetches fine; the runner's newer gh failed 19 of 19 with this message
+        # and nothing else. So the reader worked on the author's machine and could never
+        # have worked in CI -- try plain first (old gh), and retry only when gh itself
+        # says that is the reason.
+        out = _gh_logs(repo, job_id, allow_escapes=True)
+    if out.returncode == 0:
+        return out.stdout, ""
+    # core#1273. Whitespace-normalised with split()/join so no newline escape is needed.
+    reason = " ".join((out.stderr or "").split())[:200]
+    return None, reason or f"gh exited {out.returncode} with no stderr"
 
 
 def collect(
@@ -653,6 +686,7 @@ def collect(
     payload = _gh(f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}")
     out: list[tuple[str, str, str]] = []
     fetched = failed = 0
+    reasons: list[str] = []  # core#1273: why each fetch failed, so the guard can say
     for run in payload.get("workflow_runs", []):  # type: ignore[union-attr]
         if run.get("path") != WORKFLOW or run.get("status") != "completed":
             continue
@@ -667,9 +701,11 @@ def collect(
         if job is None or job.get("status") != "completed":
             continue
 
-        log = _gh_log_or_none(repo, job["id"])
+        log, why = _gh_log_or_none(repo, job["id"])
         if log is None:
             failed += 1
+            if why and why not in reasons:
+                reasons.append(why)
         else:
             fetched += 1
         lines = log.splitlines() if log is not None else []
@@ -708,9 +744,13 @@ def collect(
     # classifying every run UNREADABLE blocks a streak, which is the safe direction — and it
     # reads identically to a tier that is genuinely never measured.
     if failed and not fetched:
+        detail = "; ".join(reasons[:3]) or "no stderr captured"
         raise SystemExit(
             f"could not fetch a single job log ({failed} attempts, all failed). "
-            "This says nothing about the tier — fix the reader before reading the verdict."
+            "This says nothing about the tier - fix the reader before reading the verdict. "
+            f"gh said: {detail} "
+            "(403 = this token may not read job logs; a workflow job needs `actions: read`. "
+            "404 = expired or cancelled, which is ordinary.)"
         )
     return list(reversed(out))
 

@@ -42,7 +42,6 @@ slos:
   service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     queries:
       p95: >-
         histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
@@ -74,7 +73,6 @@ slos:
   service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     queries:
       p95: >-
         histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
@@ -91,7 +89,6 @@ slos:
   service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     queries:
       p95: >-
         histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
@@ -126,7 +123,6 @@ slos:
   service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     queries:
       p95: >-
         histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{
@@ -326,7 +322,6 @@ slos:
   error-rate-slos-any-5xx-on-rest-api:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     query: >-
       sum(increase(http_requests_total{status=~"5.."}[1h]))
       / clamp_min(sum(increase(http_requests_total[1h])), 1)
@@ -340,7 +335,6 @@ slos:
   error-rate-slos-webhook-handler-paddle-http-5xx:
     status: measured
     source: app
-    blocked_by: "core#895 (per-process HTTP metrics)"
     query: 'sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"5.."}[30d]))'
     samples_query: >-
       sum(increase(http_requests_total{path=~"/api/webhooks/.*", status=~"2.."}[30d]))

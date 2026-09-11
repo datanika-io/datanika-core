@@ -110,7 +110,16 @@ def test_the_resolver_is_reachable_from_where_each_job_actually_runs_it():
     """
     ci = CI.read_text("utf-8")
     jobs = _jobs_using_the_resolver(ci)
-    assert set(jobs) == {"image-probe", "image-cve"}, f"unexpected job set: {sorted(jobs)}"
+    # Pinned, not counted: an exact set keeps a parsing failure that finds ZERO jobs from
+    # passing this vacuously, and makes a new consumer of the resolver a deliberate edit
+    # rather than a silent inheritance. `cloud-suite` joined on 2026-09-11 (core#1290) --
+    # it pairs cloud against the same resolved ref for the same core#923 reason.
+    assert set(jobs) == {"image-probe", "image-cve", "cloud-suite"}, (
+        f"unexpected job set: {sorted(jobs)}. A new job invoking the resolver must be "
+        "added here deliberately: the checks below (checkout path vs working-directory) "
+        "are what stop it exiting 127 with no diagnostic, which is how this shipped "
+        "broken once."
+    )
 
     for name, body in jobs.items():
         checkout = re.search(r"- name: Checkout core \(this repo\).*?path: (\S+)", body, re.DOTALL)
@@ -141,7 +150,17 @@ def test_the_resolver_is_reachable_from_where_each_job_actually_runs_it():
             f"{name}: {run_line.group(1)} does not exist in the repository"
         )
 
-    assert ci.count("ref: ${{ steps.cloudref.outputs.ref }}") == 2
+    # DERIVED, not restated. This was `== 2`, which is a number that has to be edited by
+    # hand every time a job joins -- and a hand-edited count is satisfied by bumping it,
+    # which is the one change that makes the guard agree with whatever it finds. The
+    # property is one resolved cloud checkout per job that resolves a cloud ref, so say
+    # that. (core#1290 added the third job and this line is why it needed no thought.)
+    assert ci.count("ref: ${{ steps.cloudref.outputs.ref }}") == len(jobs), (
+        f"{len(jobs)} jobs resolve a cloud ref but "
+        f"{ci.count('ref: ${{ steps.cloudref.outputs.ref }}')} cloud checkouts use it. "
+        "Every job that resolves the ref must also check cloud out AT that ref, or it "
+        "pairs against the wrong branch (core#923)."
+    )
     # The old expression must be gone from the cloud checkouts. Scoped to the `ref:` key:
     # the comment above the step quotes it deliberately, and a guard that reds on its own
     # documentation teaches people to delete the documentation.

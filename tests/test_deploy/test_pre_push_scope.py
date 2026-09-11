@@ -34,6 +34,7 @@ under ``set -e`` rather than pattern-matching for a shape whose danger is positi
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -85,14 +86,49 @@ class TestScopeSelectionActuallyBehaves:
         if not bash:
             pytest.skip("bash unavailable")
         script = f'set -e\n{env_line}\n{block}\necho "SCOPE=$PYTEST_SCOPE"\n'
+        # Each case's environment must be `env_line` and nothing else. This file runs
+        # inside the hook it tests, so without the scrub an agent pushing with
+        # DATANIKA_PREPUSH_FULL=1 -- the documented way to get a full-tree pre-push --
+        # leaked that variable into the "default" case and turned this guard red.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("DATANIKA_PREPUSH")}
         return subprocess.run(
-            [bash, "-c", script], capture_output=True, text=True, encoding="utf-8"
+            [bash, "-c", script],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            env=env,
         )
 
     def test_default(self, hook_text: str) -> None:
         r = self._run(self._block(hook_text), "")
         assert r.returncode == 0, f"scope block aborted under set -e: {r.stderr}"
         assert "SCOPE=tests/test_deploy" in r.stdout
+
+    def test_default_survives_being_run_from_a_full_scope_pre_push(
+        self, hook_text: str, monkeypatch
+    ) -> None:
+        """This file runs inside the very hook it tests, so the pusher's env must not decide.
+
+        `DATANIKA_PREPUSH_FULL=1` is the documented way to get a full-tree pre-push, and it is
+        what the coordinator asks for before landing anything near this hook. Under it, the
+        subshell below inherited the variable and the *default* case took the full branch --
+        so `test_default` failed, `-x` stopped the run, and the push was refused. A guard that
+        goes red precisely when you follow the instruction it documents is not a guard; it is
+        a reason to stop following the instruction, which is the outcome that matters.
+
+        Fails in the alarming direction rather than the reassuring one, so nothing unsafe
+        shipped. It still has to be fixed: the alternative is every department learning that
+        the full-scope flag "is broken" and pushing narrow.
+        """
+        monkeypatch.setenv("DATANIKA_PREPUSH_FULL", "1")
+        monkeypatch.setenv("DATANIKA_PREPUSH_SCOPE", "tests/test_a_scope_nobody_asked_for")
+        r = self._run(self._block(hook_text), "")
+        assert r.returncode == 0, f"scope block aborted under set -e: {r.stderr}"
+        assert "SCOPE=tests/test_deploy" in r.stdout, (
+            "the ambient environment leaked into the scope-selection subshell, so this case "
+            f"was not the default one it claims to be: {r.stdout!r}. Each case's environment "
+            "must come from env_line alone."
+        )
 
     def test_full_override(self, hook_text: str) -> None:
         r = self._run(self._block(hook_text), "export DATANIKA_PREPUSH_FULL=1")

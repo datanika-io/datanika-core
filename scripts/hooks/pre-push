@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 # pre-push hook — runs lint + tests before every push.
-# Mirrors the CI gate (ruff check, ruff format --check, pytest).
+# Mirrors the CI gate for `ruff check` and `ruff format --check`.
+#
+# WARNING (core#1268): pytest here is NARROWER than CI's, by design.
+#   this hook:  pytest tests/test_deploy      (core#964, founder decision)
+#   CI `test`:  pytest tests/                 (the whole tree, and a REQUIRED check)
+#
+#   So "the pre-push hook passed" is NOT "the tree is green". It was read that way and
+#   reported as a full-tree green several times; the real run was 25 failed, 12 errors.
+#   Nothing malfunctioned -- the old wording of this line claimed pytest was mirrored.
+#   For a full run: DATANIKA_PREPUSH_FULL=1 (or DATANIKA_PREPUSH_SCOPE=<paths>).
+#
+#   Held by tests/test_hooks/test_pre_push_scope_honesty.py, which derives BOTH scopes
+#   rather than restating them, so this comment cannot drift from the code under it.
 # Install: git config core.hooksPath scripts/hooks
 set -e
 

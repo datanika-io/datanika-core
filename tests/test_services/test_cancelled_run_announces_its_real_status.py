@@ -1,30 +1,40 @@
-"""core#657 AC4 — a cancelled run must not be billed.
+"""core#657 AC4 — a cancelled run announces its REAL status.
 
-The gate was never missing. It was being fed a literal.
-------------------------------------------------------
-`datanika-cloud`'s `billing/meter.py` has gated on status since cloud#84:
+🔴 This docstring asserted the opposite until 2026-09-11, and it cost three re-derivations
+--------------------------------------------------------------------------------------------
+It opened *"a cancelled run must not be billed"*, quoted cloud's `_is_billable` as
+`return status == "success"`, and cited the three announce sites as
+`upload_tasks.py:394`, `pipeline_tasks.py:375`, `transformation_tasks.py:206`.
+
+**Every one of those was stale**, and because prose is what people read, all three were
+independently reported as current measurements — by Growth, by Product and by the coordinator,
+who between them nearly put a question to the founder about charging users for work they had
+asked to stop. The real line numbers are 428 / 373 / 204, and none of those calls passes a
+status at all.
+
+⚠️ **The specific hazard is CROSS-REPO QUOTATION.** Core's suite cannot fail when cloud
+changes, so a snippet quoted from the other repository is a claim with **no test behind it in
+either repo**. `cloud#211` moved `cancelled` to the billable side on 2026-09-09 and nothing
+here could notice. If you quote the other repo, date the quote and name the ref.
+
+What is actually true, measured on cloud `origin/master` `cb16d2ab`
+-------------------------------------------------------------------
+`billing/meter.py` reads a **total** map through an allowlist default:
+
+    BILLING_POLICY = {"success": True, "cancelled": True, "failed": False, ...}
 
     def _is_billable(status: str) -> bool:
-        return status == "success"
+        return BILLING_POLICY.get(status, False)
 
-and all four handlers call it — `handle_model_runs`, `handle_upload_runs`,
-`handle_transformation_run`, `handle_bytes_processed`. Its docstring anticipated this exact
-case in its own words: *"Deliberately `!= "success"` rather than `== "failed"`: **`cancelled`
-is not billable either**, and a status this code has never seen should not be charged for by
-default."*
+**`cancelled` is BILLABLE**, per `SPEC_RUN_CANCELLATION` D2's re-answer — *the bill follows the
+work, not the request* — because D3 promises the partially loaded data stays and the user keeps
+it. Billing nothing would be option (b), which D2 rejects by name: cancel late, keep the data,
+pay nothing.
 
-It also names the assumption it could not enforce, from the other repository:
-
-    That worked only because of a property of *core*, in another repository: the
-    `run.*_completed` events are announced solely from success paths. Nothing here
-    enforced or recorded that assumption.
-
-**That assumption is false, and core#657 is why.** A run can be CANCELLED while the worker
-runs on — nothing worker-side asks — and the worker then reaches its ordinary success path and
-announces `status="success"`, a **hardcoded literal**, at all three sites
-(`upload_tasks.py:394`, `pipeline_tasks.py:375`, `transformation_tasks.py:206`).
-
-So the user cancels, cloud's correct gate is handed the string `"success"`, and we charge them.
+So the defect this file guards is **not** "a cancelled run gets billed". It is that core used to
+announce a **hardcoded** `status="success"` from all three task sites, so cloud's gate — whatever
+policy it holds — was deciding on a falsehood. A gate handed a lie cannot be correct, in either
+direction.
 
 What this file asserts
 ----------------------

@@ -247,6 +247,7 @@ class TestUploadHookEmission:
             src.id,
             dst.id,
             {"write_disposition": "append"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
         return org, upload, run, encryption
@@ -472,6 +473,7 @@ class TestScheduleBeforeCreateHook:
             src.id,
             dst.id,
             {"write_disposition": "append"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
 
         transform_svc = TransformationService()
@@ -493,6 +495,7 @@ class TestScheduleBeforeCreateHook:
                 NodeType.UPLOAD,
                 upload.id,
                 "*/5 * * * *",
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_no_handler_allows_create(self, db_session, setup_schedule):
@@ -504,6 +507,7 @@ class TestScheduleBeforeCreateHook:
             NodeType.UPLOAD,
             upload.id,
             "*/5 * * * *",
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert schedule.id is not None
 

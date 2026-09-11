@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.upload import Upload, UploadStatus
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
 from datanika.services.naming import to_snake_case, validate_name
 
@@ -49,7 +51,17 @@ class UploadService:
         source_connection_id: int,
         destination_connection_id: int,
         dlt_config: dict,
+        *,
+        actor_user_id: int,
     ) -> Upload:
+        # core#681 / SPEC_SERVICE_AUTHORIZATION §1: editor for the ordinary lifecycle.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="create_upload",
+        )
         validate_upload_name(name)
 
         # Validate source connection exists
@@ -111,11 +123,19 @@ class UploadService:
         return list(session.execute(stmt).scalars().all())
 
     def update_upload(
-        self, session: Session, org_id: int, upload_id: int, **kwargs
+        self, session: Session, org_id: int, upload_id: int, *, actor_user_id: int, **kwargs
     ) -> Upload | None:
         upload = self.get_upload(session, org_id, upload_id)
         if upload is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="update_upload",
+        )
 
         if "dlt_config" in kwargs:
             self.validate_upload_config(kwargs["dlt_config"])
@@ -131,10 +151,20 @@ class UploadService:
         session.flush()
         return upload
 
-    def delete_upload(self, session: Session, org_id: int, upload_id: int) -> bool:
+    def delete_upload(
+        self, session: Session, org_id: int, upload_id: int, *, actor_user_id: int
+    ) -> bool:
         upload = self.get_upload(session, org_id, upload_id)
         if upload is None:
             return False
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_upload",
+        )
         upload.deleted_at = datetime.now(UTC)
         session.flush()
         return True

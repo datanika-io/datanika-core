@@ -136,12 +136,58 @@ def test_control_a_neighbouring_threshold_is_not_equivalent() -> None:
 # ── the surfacing ────────────────────────────────────────────────────────────────────────
 
 
+def _workflow_doc() -> dict:
+    import yaml
+
+    return yaml.safe_load(WATCHDOG.read_text(encoding="utf-8"))
+
+
+def _step_by_name(prefix: str) -> dict:
+    """Address a step by its name, not by position — a step inserted above must not
+    silently repoint every assertion at a different step."""
+    return next(
+        s
+        for s in _workflow_doc()["jobs"]["e2e-measurement-gap"]["steps"]
+        if str(s.get("name", "")).startswith(prefix)
+    )
+
+
+def _strip_comments(shell: str) -> str:
+    """Drop whole-line `#` comments.
+
+    Not a shell parser: a `#` inside a quoted string survives, which is the safe
+    direction — it can only make an assertion stricter, never vacuous.
+    """
+    return "\n".join(line for line in shell.splitlines() if not line.lstrip().startswith("#"))
+
+
+def _shell_of(step_id: str) -> str:
+    """The EXECUTABLE shell of one step, addressed by `id`, with comments removed.
+
+    🚨 core#1260. The first version of the assertions below joined every step's `run` into
+    one string and searched it. Two ways that stops discriminating, both of which have now
+    happened in this repo:
+
+    * a **comment** containing the expression satisfies the search — Infra's sibling guard
+      matched the comment a PR added *explaining why the gate moved*, so it passed across
+      the exact edit it existed to notice;
+    * a **second job** appended to the file supplies its own copy, so the assertion stays
+      green even if the step it is about loses the property entirely.
+
+    Addressing by `id` closes the second; stripping comments closes the first. There is no
+    AST for shell-inside-YAML, so `test_control_the_extractor_rejects_a_comment_only_match`
+    is what stands in for one.
+    """
+    step = next(
+        s for s in _workflow_doc()["jobs"]["e2e-measurement-gap"]["steps"] if s.get("id") == step_id
+    )
+    return _strip_comments(str(step.get("run", "")))
+
+
 class TestItSurfacesSomewhereThatFires:
     @staticmethod
     def _workflow() -> dict:
-        import yaml
-
-        return yaml.safe_load(WATCHDOG.read_text(encoding="utf-8"))
+        return _workflow_doc()
 
     def test_the_gap_job_lives_in_a_workflow_that_already_fires(self) -> None:
         """🔑 Not a new scheduled workflow.
@@ -168,25 +214,72 @@ class TestItSurfacesSomewhereThatFires:
         assert step.get("continue-on-error") is True
 
     def test_a_crash_and_a_finding_are_different_signals(self) -> None:
-        """core#691, one level down. A crash is also non-zero, so the job asserts a POSITIVE
-        artifact — the summary line the reader always prints — before believing a finding."""
-        body = "\n".join(
-            str(s.get("run", "")) for s in self._workflow()["jobs"]["e2e-measurement-gap"]["steps"]
-        )
+        """core#691, one level down. A crash is also non-zero, so the job asserts a
+        POSITIVE artifact — the summary line the reader always prints — before believing
+        a finding."""
+        body = _shell_of("gap")
         assert "broken.txt" in body, "no separate channel for 'it could not run'"
-        assert 'grep -q "^unmeasured "' in body, (
-            "nothing asserts the reader actually produced its summary line, so a crash and a "
-            "gap would be one signal"
+        assert "grep -q" in body and "unmeasured" in body, (
+            "nothing asserts the reader actually produced its summary line, so a crash "
+            "and a gap would be one signal"
         )
 
     def test_not_graduated_is_not_a_finding(self) -> None:
-        """Exit 1 means *not yet three greens*, the normal resting state of an informational
-        tier. Filing an issue on it would page every single day, and the guard would be off
-        within a week."""
-        body = "\n".join(
-            str(s.get("run", "")) for s in self._workflow()["jobs"]["e2e-measurement-gap"]["steps"]
+        """Exit 1 means *not yet three greens*, the normal resting state of an
+        informational tier. Filing on it would page every day and the guard would be
+        switched off within a week."""
+        body = _shell_of("gap")
+        assert '= "2"' in body, "the job must key on exit 2 specifically, not on any non-zero exit"
+
+    def test_the_filing_gate_covers_the_step_never_running(self) -> None:
+        """core#1260, the shape Infra repaired one level up in this same file.
+
+        `== 'failure'` is true only when the step RAN and returned non-zero. If checkout
+        or setup-python dies, the outcome is EMPTY, the filing step is SKIPPED, and the
+        job ends red having filed nothing — byte-identical to a correct detection,
+        because that path also ends red.
+        """
+        gate = str(_step_by_name("File an issue").get("if", ""))
+        assert "!= 'success'" in gate, (
+            f"gate is {gate!r}. An equality gate misses the case where the step NEVER "
+            "RAN, which is the case that looks exactly like a correct detection."
         )
-        assert '"$rc" = "2"' in body, "the job must key on exit 2 specifically, not on non-zero"
+        assert "cancelled()" in gate, (
+            "a cancelled run is neither green nor red and carries no steps in the API; "
+            "filing on it would manufacture a finding out of an absence"
+        )
+
+    def test_a_run_that_produced_no_artifacts_is_not_reported_as_a_finding(self) -> None:
+        """The case the widened gate introduces: the filing step now also runs when the
+        reader never executed, so there are no artifacts at all. Filing a blindness issue
+        then would be a fabricated finding, and `cat out-*.txt` would print nothing while
+        looking like a report."""
+        body = _strip_comments(str(_step_by_name("File an issue").get("run", "")))
+        assert "! -f blind.txt" in body and "! -f broken.txt" in body, (
+            "the filing step does not distinguish 'no artifacts at all' from a finding"
+        )
+
+
+def test_control_the_extractor_rejects_a_comment_only_match() -> None:
+    """🔑 The anti-vacuity assertion for the extractor itself.
+
+    Product hit the substring-check defect three times in one day — the third inside the
+    guard written to prevent the first two — and only mutation exposed any of them. There
+    is no AST for shell-inside-YAML, so this stands in for one: prove the extractor cannot
+    be satisfied by a comment, and prove stripping comments does not eat the real line.
+    """
+    commented = '  # if [ "$rc" = "2" ]; then echo blind; fi\n  echo hello'
+    assert '= "2"' not in _strip_comments(commented), (
+        "a commented-out gate satisfied the extractor; every assertion built on it would "
+        "then be green against code that does not contain the gate at all"
+    )
+
+    live = '  if [ "$rc" = "2" ]; then echo blind; fi'
+    assert '= "2"' in _strip_comments(live), (
+        "stripping comments must not strip the real line — that would make every "
+        "assertion vacuously FALSE instead of vacuously true, which is the failure that "
+        "gets a guard deleted rather than trusted"
+    )
 
 
 def test_control_the_workflow_file_is_the_one_that_is_watched() -> None:

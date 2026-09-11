@@ -23,6 +23,7 @@ from datanika.models.notification import NotificationType
 from datanika.models.notification_channel import ChannelType, NotificationChannel
 from datanika.models.user import Organization
 from datanika.services.in_app_notification_service import InAppNotificationService
+from tests.factories import make_org_admin
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -248,6 +249,7 @@ class TestNotificationServiceQuotaEvent:
         ch = svc.create_channel(
             db_session,
             org_id=org.id,
+            actor_user_id=make_org_admin(db_session, org.id),
             name="billing-slack",
             channel_type=ChannelType.SLACK,
             config={"webhook_url": "https://hooks.slack.com/services/BILL"},

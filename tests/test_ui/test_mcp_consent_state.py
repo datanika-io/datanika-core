@@ -36,7 +36,7 @@ from starlette.applications import Starlette
 
 import datanika.ui.state.mcp_consent_state as consent_module
 from datanika.models.mcp_oauth import OAuthGrant
-from datanika.models.user import Organization
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.auth import AuthService
 from datanika.services.mcp_oauth import McpOAuthService
 from datanika.services.mcp_oauth_routes import mcp_oauth_routes
@@ -572,6 +572,11 @@ def session_jwt(backend) -> str:
     user = make_user(
         backend, email="consent@example.com", full_name="Consent User", password_hash="h"
     )
+    # core#681: the person completing a consent flow IS a member of the org -- that is the
+    # real scenario, and `mint_consent_key` requires membership. Adding it makes this
+    # fixture MORE truthful rather than working around the check.
+    backend.add(Membership(user_id=user.id, org_id=org.id, role=MemberRole.ADMIN))
+    backend.flush()
     return AuthService(_SECRET).create_access_token(user_id=user.id, org_id=org.id)
 
 

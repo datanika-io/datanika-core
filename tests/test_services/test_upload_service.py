@@ -95,6 +95,7 @@ class TestCreateUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert isinstance(upload, Upload)
         assert isinstance(upload.id, int)
@@ -111,6 +112,7 @@ class TestCreateUpload:
             source_conn.id,
             dest_conn.id,
             config,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.dlt_config == config
 
@@ -124,6 +126,7 @@ class TestCreateUpload:
                 99999,
                 dest_conn.id,
                 {},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_both_direction_works_as_source(self, svc, db_session, org, both_conn, dest_conn):
@@ -135,6 +138,7 @@ class TestCreateUpload:
             both_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.source_connection_id == both_conn.id
 
@@ -147,6 +151,7 @@ class TestCreateUpload:
             source_conn.id,
             both_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert pipe.destination_connection_id == both_conn.id
 
@@ -161,6 +166,7 @@ class TestGetUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         fetched = svc.get_upload(db_session, org.id, created.id)
         assert fetched is not None
@@ -178,6 +184,7 @@ class TestGetUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert svc.get_upload(db_session, other_org.id, created.id) is None
 
@@ -190,8 +197,11 @@ class TestGetUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_upload(db_session, org.id, created.id)
+        svc.delete_upload(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert svc.get_upload(db_session, org.id, created.id) is None
 
 
@@ -208,6 +218,7 @@ class TestListUploads:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         svc.create_upload(
             db_session,
@@ -217,6 +228,7 @@ class TestListUploads:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert len(svc.list_uploads(db_session, org.id)) == 2
 
@@ -229,6 +241,7 @@ class TestListUploads:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         svc.create_upload(
             db_session,
@@ -238,8 +251,11 @@ class TestListUploads:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_upload(db_session, org.id, p1.id)
+        svc.delete_upload(
+            db_session, org.id, p1.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_uploads(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "B"
@@ -255,6 +271,7 @@ class TestListUploads:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         # Create connections for other org
         other_src = conn_svc.create_connection(
@@ -281,6 +298,7 @@ class TestListUploads:
             other_src.id,
             other_dst.id,
             {},
+            actor_user_id=make_org_admin(db_session, other_org.id),
         )
         result = svc.list_uploads(db_session, org.id)
         assert len(result) == 1
@@ -297,8 +315,15 @@ class TestUpdateUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_upload(db_session, org.id, created.id, name="New")
+        updated = svc.update_upload(
+            db_session,
+            org.id,
+            created.id,
+            name="New",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated is not None
         assert updated.name == "New"
 
@@ -311,17 +336,28 @@ class TestUpdateUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         updated = svc.update_upload(
             db_session,
             org.id,
             created.id,
             status=UploadStatus.ACTIVE,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert updated.status == UploadStatus.ACTIVE
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.update_upload(db_session, org.id, 99999, name="X") is None
+        assert (
+            svc.update_upload(
+                db_session,
+                org.id,
+                99999,
+                name="X",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+            is None
+        )
 
     def test_config_re_validates(self, svc, db_session, org, source_conn, dest_conn):
         created = svc.create_upload(
@@ -332,6 +368,7 @@ class TestUpdateUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(UploadConfigError):
             svc.update_upload(
@@ -339,6 +376,7 @@ class TestUpdateUpload:
                 org.id,
                 created.id,
                 dlt_config={"write_disposition": "invalid"},
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
 
@@ -352,13 +390,24 @@ class TestDeleteUpload:
             source_conn.id,
             dest_conn.id,
             {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        assert svc.delete_upload(db_session, org.id, created.id) is True
+        assert (
+            svc.delete_upload(
+                db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is True
+        )
         db_session.refresh(created)
         assert created.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.delete_upload(db_session, org.id, 99999) is False
+        assert (
+            svc.delete_upload(
+                db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is False
+        )
 
 
 class TestValidateUploadConfig:
@@ -753,24 +802,68 @@ class TestToDatasetName:
 class TestCreateUploadNameValidation:
     def test_rejects_special_chars(self, svc, db_session, org, source_conn, dest_conn):
         with pytest.raises(ValueError, match="alphanumeric"):
-            svc.create_upload(db_session, org.id, "my-pipe!", "d", source_conn.id, dest_conn.id, {})
+            svc.create_upload(
+                db_session,
+                org.id,
+                "my-pipe!",
+                "d",
+                source_conn.id,
+                dest_conn.id,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_rejects_empty_name(self, svc, db_session, org, source_conn, dest_conn):
         with pytest.raises(ValueError, match="cannot be empty"):
-            svc.create_upload(db_session, org.id, "", "d", source_conn.id, dest_conn.id, {})
+            svc.create_upload(
+                db_session,
+                org.id,
+                "",
+                "d",
+                source_conn.id,
+                dest_conn.id,
+                {},
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestUpdateUploadNameValidation:
     def test_rejects_special_chars(self, svc, db_session, org, source_conn, dest_conn):
         created = svc.create_upload(
-            db_session, org.id, "Valid Name", "d", source_conn.id, dest_conn.id, {}
+            db_session,
+            org.id,
+            "Valid Name",
+            "d",
+            source_conn.id,
+            dest_conn.id,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(ValueError, match="alphanumeric"):
-            svc.update_upload(db_session, org.id, created.id, name="bad-name!")
+            svc.update_upload(
+                db_session,
+                org.id,
+                created.id,
+                name="bad-name!",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_accepts_valid_name(self, svc, db_session, org, source_conn, dest_conn):
         created = svc.create_upload(
-            db_session, org.id, "Old Name", "d", source_conn.id, dest_conn.id, {}
+            db_session,
+            org.id,
+            "Old Name",
+            "d",
+            source_conn.id,
+            dest_conn.id,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_upload(db_session, org.id, created.id, name="New Name 2")
+        updated = svc.update_upload(
+            db_session,
+            org.id,
+            created.id,
+            name="New Name 2",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.name == "New Name 2"

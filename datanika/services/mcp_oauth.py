@@ -375,12 +375,20 @@ class McpOAuthService:
 
         granted = self._narrow_scope(scope)
 
-        api_key, raw_key = self._keys.create_api_key(
+        api_key, raw_key = self._keys.mint_consent_key(
             session,
             org_id=org_id,
             user_id=user_id,
             name=f"MCP: {client.client_name}"[:255],
             scopes=granted,
+            # The actor is the user completing the OAuth flow -- the same person the key
+            # is minted for.
+            #
+            # `mint_consent_key`, not `create_api_key`: minting a key FOR THE ORG is a
+            # credential-management act and keeps `admin`; completing a consent flow is
+            # OBTAINING ACCESS FOR YOURSELF and requires membership. Product's
+            # distinction, resolved after this path was flagged rather than absorbed.
+            actor_user_id=user_id,
         )
 
         code = _CODE_PREFIX + secrets.token_urlsafe(32)

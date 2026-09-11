@@ -75,6 +75,7 @@ def setup_upload(upload_svc, conn_svc, exec_svc, db_session, encryption):
         src.id,
         dst.id,
         {"write_disposition": "append"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
     return org, upload, run, encryption
@@ -286,6 +287,7 @@ class TestRunUploadTask:
             src.id,
             dst.id,
             {"write_disposition": "append"},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
 
@@ -335,7 +337,14 @@ class TestRunUploadTask:
             actor_user_id=make_org_admin(db_session, org.id),
         )
         upload = upload_svc.create_upload(
-            db_session, org.id, "Fallback Name", "desc", src.id, dst.id, {}
+            db_session,
+            org.id,
+            "Fallback Name",
+            "desc",
+            src.id,
+            dst.id,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         run = exec_svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
 

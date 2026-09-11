@@ -75,12 +75,15 @@ def sample_upload(db_session, upload_svc, org, sample_connections):
         src.id,
         dst.id,
         {"mode": "full_database", "write_disposition": "append"},
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 
 class TestExportBackup:
     def test_export_masks_sensitive_fields(self, db_session, encryption, org, sample_connections):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         conns = backup["connections"]
         pg = next(c for c in conns if c["name"] == "My Postgres")
         assert pg["config"]["password"] == REDACTED
@@ -92,17 +95,23 @@ class TestExportBackup:
         assert bq["config"]["project"] == "my-proj"
 
     def test_export_includes_all_connections(self, db_session, encryption, org, sample_connections):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         names = {c["name"] for c in backup["connections"]}
         assert names == {"My Postgres", "Target DWH"}
 
     def test_export_includes_all_uploads(self, db_session, encryption, org, sample_upload):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert len(backup["uploads"]) == 1
         assert backup["uploads"][0]["name"] == "Daily Sync"
 
     def test_export_uploads_reference_by_name(self, db_session, encryption, org, sample_upload):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         up = backup["uploads"][0]
         assert up["source_connection_name"] == "My Postgres"
         assert up["destination_connection_name"] == "Target DWH"
@@ -115,7 +124,9 @@ class TestExportBackup:
         conn_svc.delete_connection(
             db_session, org.id, src.id, actor_user_id=make_org_admin(db_session, org.id)
         )
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         names = {c["name"] for c in backup["connections"]}
         assert "My Postgres" not in names
         # Upload referencing deleted connection should still be excluded
@@ -126,7 +137,9 @@ class TestExportBackup:
     def test_export_has_version_and_timestamp(
         self, db_session, encryption, org, sample_connections
     ):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert backup["version"] == BACKUP_VERSION
         assert "exported_at" in backup
 
@@ -412,7 +425,16 @@ class TestDetectConflicts:
             {"project": "p", "dataset": "d"},
             actor_user_id=make_org_admin(db_session, org.id),
         )
-        upload_svc.create_upload(db_session, org.id, "My Upload", None, src.id, dst.id, {})
+        upload_svc.create_upload(
+            db_session,
+            org.id,
+            "My Upload",
+            None,
+            src.id,
+            dst.id,
+            {},
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         data = {
             "version": 1,
             "connections": [

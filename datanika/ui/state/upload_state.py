@@ -411,6 +411,7 @@ class UploadState(BaseState):
                         source_connection_id=src_id,
                         destination_connection_id=dst_id,
                         dlt_config=config,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -434,6 +435,7 @@ class UploadState(BaseState):
                         src_id,
                         dst_id,
                         config,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -668,7 +670,7 @@ class UploadState(BaseState):
         with get_sync_session() as session:
             upload = upload_svc.get_upload(session, org_id, upload_id)
             old_values = {"name": upload.name} if upload else {}
-            upload_svc.delete_upload(session, org_id, upload_id)
+            upload_svc.delete_upload(session, org_id, upload_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,

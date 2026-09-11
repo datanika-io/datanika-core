@@ -6,7 +6,7 @@ import pytest
 
 from datanika.models.user import Organization
 from datanika.services.api_key_service import ApiKeyService
-from tests.factories import make_user
+from tests.factories import make_org_admin, make_user
 
 
 @pytest.fixture
@@ -38,7 +38,9 @@ class TestKeyLeakagePrevention:
 
     def test_raw_key_not_stored_in_db(self, svc, db_session, org, user):
         """The raw key must not be stored — only the SHA-256 hash."""
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         # The hash should NOT be the raw key
         assert key.key_hash != raw_key
         # The raw key should not appear anywhere in the key object's string fields
@@ -47,7 +49,9 @@ class TestKeyLeakagePrevention:
 
     def test_list_keys_does_not_contain_raw_key(self, svc, db_session, org, user):
         """list_api_keys should never return raw key values."""
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         keys = svc.list_api_keys(db_session, org.id)
         for key in keys:
             assert raw_key not in (key.key_hash or "")
@@ -57,7 +61,9 @@ class TestKeyLeakagePrevention:
 
     def test_key_hash_is_sha256_hex(self, svc, db_session, org, user):
         """Key hash should be exactly 64 hex chars (SHA-256)."""
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, _ = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert len(key.key_hash) == 64
         assert all(c in "0123456789abcdef" for c in key.key_hash)
 
@@ -67,19 +73,27 @@ class TestBruteForceResistance:
 
     def test_key_prefix_present(self, svc, db_session, org, user):
         """Keys start with 'etf_' prefix for easy identification in logs."""
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert raw_key.startswith("etf_")
 
     def test_key_entropy_sufficient(self, svc, db_session, org, user):
         """Raw key must be long enough to resist brute force (32+ bytes of randomness)."""
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         # etf_ prefix + 32 bytes URL-safe base64 = etf_ + ~43 chars
         assert len(raw_key) >= 40
 
     def test_keys_are_unique(self, svc, db_session, org, user):
         """Two keys created in sequence must be different."""
-        _, raw1 = svc.create_api_key(db_session, org.id, user.id, "K1")
-        _, raw2 = svc.create_api_key(db_session, org.id, user.id, "K2")
+        _, raw1 = svc.create_api_key(
+            db_session, org.id, user.id, "K1", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        _, raw2 = svc.create_api_key(
+            db_session, org.id, user.id, "K2", actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert raw1 != raw2
 
     def test_invalid_key_format_rejected(self, svc, db_session, org, user):
@@ -93,7 +107,9 @@ class TestBruteForceResistance:
 
     def test_partial_key_rejected(self, svc, db_session, org, user):
         """A prefix of a valid key should not authenticate."""
-        _, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        _, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         partial = raw_key[:20]
         assert svc.authenticate_api_key(db_session, partial) is None
 
@@ -107,8 +123,12 @@ class TestCrossOrgKeyIsolation:
         db_session.add(other_org)
         db_session.flush()
 
-        key, _ = svc.create_api_key(db_session, org.id, user.id, "K")
-        result = svc.revoke_api_key(db_session, other_org.id, key.id)
+        key, _ = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
+        result = svc.revoke_api_key(
+            db_session, other_org.id, key.id, actor_user_id=make_org_admin(db_session, other_org.id)
+        )
         assert result is False
 
     def test_list_keys_does_not_leak_other_orgs(self, svc, db_session, org, user):
@@ -117,8 +137,20 @@ class TestCrossOrgKeyIsolation:
         db_session.add(other_org)
         db_session.flush()
 
-        svc.create_api_key(db_session, org.id, user.id, "OrgA Key")
-        svc.create_api_key(db_session, other_org.id, user.id, "OrgB Key")
+        svc.create_api_key(
+            db_session,
+            org.id,
+            user.id,
+            "OrgA Key",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_api_key(
+            db_session,
+            other_org.id,
+            user.id,
+            "OrgB Key",
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
 
         a_keys = svc.list_api_keys(db_session, org.id)
         b_keys = svc.list_api_keys(db_session, other_org.id)
@@ -133,7 +165,9 @@ class TestCrossOrgKeyIsolation:
 
     def test_authenticated_key_returns_correct_org_id(self, svc, db_session, org, user):
         """After authentication, the key's org_id must match the owning org."""
-        key, raw_key = svc.create_api_key(db_session, org.id, user.id, "K")
+        key, raw_key = svc.create_api_key(
+            db_session, org.id, user.id, "K", actor_user_id=make_org_admin(db_session, org.id)
+        )
         authenticated = svc.authenticate_api_key(db_session, raw_key)
         assert authenticated is not None
         assert authenticated.org_id == org.id

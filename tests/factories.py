@@ -138,6 +138,17 @@ def make_org_admin(session: Session, org_id: int, *, email: str | None = None) -
     `admin` because these call sites span the whole lifecycle, including the deletions §1
     reserves for admin. A test that wants to assert a *refusal* should build its own actor at
     the role it means, not reach for this.
+
+    🚨 **This is NOT inert: it ADDS A MEMBER, and membership is load-bearing elsewhere.**
+    `UserService.erase_user` refuses for *"the only owner of a **shared** org"*, and
+    "shared" means more than one member — so dropping this helper into a test whose org had
+    exactly one member silently converts a solo org into a shared one and changes what
+    erasure does. That broke three PII-separation tests, and the failure named the org, not
+    the helper.
+
+    **Prefer the org's existing owner** where the test already has one. It is both
+    side-effect-free and the more truthful actor: the person who owns the org is who would
+    really be doing this.
     """
     import uuid
 

@@ -91,7 +91,11 @@ class TestExportLeaksNothing:
     def test_no_secret_value_appears_anywhere_in_the_serialized_export(
         self, db_session, encryption, org, loaded_connection
     ):
-        blob = json.dumps(BackupService.export_backup(db_session, org.id, encryption))
+        blob = json.dumps(
+            BackupService.export_backup(
+                db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+            )
+        )
         leaked = sorted(k for k, v in _secret_values().items() if v in blob)
         assert not leaked, f"secret values present in plaintext in the export: {leaked}"
         assert "SEKRIT-nested-private-key-4f9a2b" not in blob, (
@@ -99,7 +103,9 @@ class TestExportLeaksNothing:
         )
 
     def test_benign_fields_survive(self, db_session, encryption, org, loaded_connection):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         cfg = backup["connections"][0]["config"]
         assert cfg["host"] == "db.example.com"
         assert cfg["port"] == 5432
@@ -107,7 +113,9 @@ class TestExportLeaksNothing:
     def test_redacted_keys_are_marked_with_the_sentinel(
         self, db_session, encryption, org, loaded_connection
     ):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         cfg = backup["connections"][0]["config"]
         for key in _secret_values():
             assert cfg[key] == REDACTED, f"{key} was not marked redacted"
@@ -118,7 +126,9 @@ class TestRedactionRoundTrips:
         self, db_session, encryption, conn_svc, upload_svc, org, loaded_connection
     ):
         before = encryption.decrypt(loaded_connection.config_encrypted)
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
 
         BackupService.import_backup(
             db_session,
@@ -139,7 +149,9 @@ class TestRedactionRoundTrips:
     def test_creating_from_a_redacted_backup_omits_the_secret_rather_than_storing_the_sentinel(
         self, db_session, encryption, conn_svc, upload_svc, org, loaded_connection
     ):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         conn_svc.delete_connection(
             db_session,
             org.id,
@@ -179,7 +191,9 @@ class TestRedactionRoundTrips:
             {"host": "h"},
             actor_user_id=make_org_admin(db_session, org.id),
         )
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         conn_svc.delete_connection(
             db_session,
             org.id,
@@ -273,7 +287,9 @@ class TestRedactionRoundTrips:
 
 class TestOrgProvenance:
     def test_export_names_the_org_it_came_from(self, db_session, encryption, org):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert backup["org"]["id"] == org.id
         assert backup["org"]["name"] == "Acme Redaction"
         assert backup["org"]["slug"] == "acme-redaction"
@@ -282,11 +298,18 @@ class TestOrgProvenance:
         assert BACKUP_VERSION >= 3
 
     def test_same_org_is_not_foreign(self, db_session, encryption, org):
-        backup = BackupService.export_backup(db_session, org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session, org.id, encryption, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert BackupService.foreign_org(backup, org.id) == ""
 
     def test_a_backup_from_another_org_is_reported(self, db_session, encryption, org, other_org):
-        backup = BackupService.export_backup(db_session, other_org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session,
+            other_org.id,
+            encryption,
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
         assert BackupService.foreign_org(backup, org.id) == "Other Co"
 
     def test_a_v2_backup_without_provenance_is_not_reported_as_foreign(self, org):
@@ -313,7 +336,12 @@ class TestOrgProvenance:
             # does not travel between orgs.
             actor_user_id=make_org_admin(db_session, other_org.id),
         )
-        backup = BackupService.export_backup(db_session, other_org.id, encryption)
+        backup = BackupService.export_backup(
+            db_session,
+            other_org.id,
+            encryption,
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
         result = BackupService.import_backup(
             db_session,
             org.id,

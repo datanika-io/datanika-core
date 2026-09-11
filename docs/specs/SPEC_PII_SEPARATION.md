@@ -1329,6 +1329,20 @@ and the expand migration backfilled every pre-existing row.
 sidecar. It is a defect in the *fixtures*, and it matters because the fixtures are the gate: the
 pre-push hook and CI are what stand between N+1 and `dev`.
 
+🔴 **CORRECTED 2026-09-10 — the pre-push hook is NOT one of those two gates for this test, and naming
+it as one overstates the protection.** Measured, not relayed: `scripts/hooks/pre-push:165` runs
+`PYTEST_SCOPE="${DATANIKA_PREPUSH_SCOPE:-tests/test_deploy}"`, widened only by
+`DATANIKA_PREPUSH_FULL=1`. That is a **founder decision** (#964) with a stated cost — the full suite
+measured **1105.95s** against **79.89s** for `tests/test_deploy` — not a defect to fix here.
+
+`tests/test_pii_fixture_invariant.py` lives at `tests/` root, **not** under `tests/test_deploy/`, so
+**the hook does not run it.** What does is CI's `test` job: `pytest tests/ --tb=short -q`
+(`ci.yml:200`), which collects the whole tree.
+
+⚠️ **So the fixture guard has exactly ONE gate, not two**, and it fires only after a push. A local
+`git push` succeeding says nothing about it. If you want it before the push, run it — or set
+`DATANIKA_PREPUSH_FULL=1` and accept the 17 minutes.
+
 ⚠️ **The seed's shape is wrong under N already**, not only under N+1 — it produces users the
 dual-write invariant says cannot exist. It is survivable this release, which is exactly why nobody
 noticed.

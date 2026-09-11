@@ -303,8 +303,23 @@ def verdict_classes_for(repo: str, jobs: list[Job], sha: str) -> dict[str, str]:
     for job in jobs:
         if job.head_sha != sha or job.name not in VERIFIERS or not job.job_id:
             continue
-        log = _gh_log_or_none(repo, job.job_id)
+        # core#1285. `_gh_log_or_none` returns `(log, reason)` since core#1273 -- the
+        # reason is returned rather than discarded, because answering `None` for every
+        # failure alike once cost a diagnosis that one line of stderr would have ended.
+        # This caller still unpacked it as a bare string and died with
+        # "'tuple' object has no attribute 'splitlines'" -- the SECOND time this
+        # pre-flight has crashed on a change to that module's contract (see the
+        # core#1205 note just below). A crash is neither a pass nor a refusal: it is
+        # no reading at all, from the gate whose entire job is to produce one.
+        log, why = _gh_log_or_none(repo, job.job_id)
         if log is None:
+            # Surfaced, not swallowed. `classify()` keeps its existing behaviour for a
+            # job with no verdict class, which is correct -- but an operator reading
+            # 'no verdict' deserves to know the log was unreadable and why.
+            print(
+                f"  note: no log for {job.name} ({why}); its verdict class is unavailable",
+                file=sys.stderr,
+            )
             continue
         lines = log.splitlines()
         # core#1205, second half. `parse_verdict_line` now REFUSES a log carrying two

@@ -165,7 +165,14 @@ class BearerSessionApp:
             await _send_401(send)
             return
 
-        client = DatanikaClient(self._base_url, credential)
+        # core#1279. `trust_env=False` because `self._base_url` is THIS application's own
+        # loopback address -- it is calling itself, and no proxy can improve that route.
+        # With httpx's default (`True`), an operator's HTTP_PROXY captures the self-call and
+        # every `tools/call` fails while the container reads healthy -- core#388's signature.
+        # ⚠️ Scoped HERE rather than changed in the client's default on purpose: the stdio
+        # entry point targets a real remote host and must keep honouring the user's proxy.
+        # `tests/test_mcp/test_mcp_client_proxy.py` asserts BOTH directions.
+        client = DatanikaClient(self._base_url, credential, trust_env=False)
         # allow_write reflects what a human consented to at the OAuth consent
         # screen (core#442) — never the transport, and never an inference from
         # the key's own scopes. transport="remote" shapes the refusal wording

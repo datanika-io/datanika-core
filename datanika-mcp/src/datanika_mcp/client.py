@@ -22,12 +22,38 @@ class DatanikaClient:
     raising ``httpx.HTTPStatusError`` on 4xx/5xx.
     """
 
-    def __init__(self, base_url: str, api_key: str, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float = 30.0,
+        *,
+        trust_env: bool = True,
+    ) -> None:
+        """Build the client.
+
+        ``trust_env`` controls whether ambient proxy configuration is honoured (core#1279).
+
+        **The default is `True` and must stay `True`**: the stdio entry point
+        (``server.py``'s ``main``) points this client at a *real remote* Datanika, and a user
+        running it from inside a corporate network needs their proxy used. Turning it off
+        globally would cut off exactly the people the parameter exists to protect.
+
+        The **hosted** transport passes ``trust_env=False``, because there the base URL is this
+        application's own loopback address: it is calling itself, and no proxy can improve that
+        route. With the default, an operator's ``HTTP_PROXY`` captures the self-call, every
+        ``tools/call`` fails while ``initialize``/``tools/list`` keep working and the container
+        reads healthy — [core#388]'s signature, which took a week to characterise the first time.
+
+        ⚠️ Asking the operator to add loopback to a bypass list instead would be asking them to
+        configure around a decision this code should not have made.
+        """
         self._base = base_url.rstrip("/")
         self._http = httpx.AsyncClient(
             base_url=self._base,
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout,
+            trust_env=trust_env,
         )
 
     async def aclose(self) -> None:

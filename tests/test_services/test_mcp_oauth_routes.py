@@ -416,7 +416,9 @@ class TestResourceServerAcceptsIssuedTokens:
         seen = {}
 
         class _FakeClient:
-            def __init__(self, base_url, key):
+            # **kwargs so a new keyword at the mcp_routes call site (core#1279 added
+            # `trust_env`) does not fail this test for a reason unrelated to its subject.
+            def __init__(self, base_url, key, **kwargs):
                 seen["key"] = key
 
             async def aclose(self):
@@ -458,7 +460,9 @@ class TestResourceServerAcceptsIssuedTokens:
         seen = {}
 
         class _FakeClient:
-            def __init__(self, base_url, key):
+            # **kwargs so a new keyword at the mcp_routes call site (core#1279 added
+            # `trust_env`) does not fail this test for a reason unrelated to its subject.
+            def __init__(self, base_url, key, **kwargs):
                 seen["key"] = key
 
             async def aclose(self):

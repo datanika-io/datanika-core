@@ -1190,7 +1190,26 @@ jobs:
           DATANIKA_E2E_SAML_ORG_SLUG: e2e-fixture-saml
           DATANIKA_STAGING_CF_ACCESS_CLIENT_ID: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_ID }}
           DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET: ${{ secrets.DATANIKA_STAGING_CF_ACCESS_CLIENT_SECRET }}
+          # core#1130 AC1/AC2. Playwright exits 0 when every collected test SKIPS, so this
+          # step's outcome cannot tell a full green from a run that executed no IdP spec at
+          # all. The report is what carries the count.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results-sso.json
         run: npx playwright test sso-
+
+      # core#1130 AC1-AC4. Reads the report the step above now writes and refuses when
+      # fewer IdP specs EXECUTED than the checked-in floor, or when one skipped with no
+      # recorded reason. Also prints the executed/skipped/total split (AC4), because
+      # `12 passed` reads as full coverage until you look -- and it was read that way
+      # twice, including by the author of this tier.
+      #
+      # `continue-on-error` so the classifier below decides the verdict, rather than the
+      # job dying red with no reading attached to it.
+      - name: Assert the IdP specs actually executed
+        id: sso_coverage
+        if: always()
+        continue-on-error: true
+        working-directory: e2e
+        run: python3 scripts/assert_sso_coverage.py results-sso.json
 
       # core#876, the half `e2e-staging` does not need. This job holds `staging-e2e-sso`,
       # NOT `staging-deploy` — deliberately, because it owns a compose project of its own
@@ -1254,6 +1273,7 @@ jobs:
         if: always()
         env:
           SPECS_OUTCOME: ${{ steps.sso_specs.outcome }}
+          COVERAGE_OUTCOME: ${{ steps.sso_coverage.outcome }}
           ATTRIB_OUTCOME: ${{ steps.attribution.outcome }}
           ATTRIB_POST_OUTCOME: ${{ steps.attribution_post.outcome }}
           JOB_STATUS: ${{ job.status }}
@@ -1271,6 +1291,11 @@ jobs:
             STATE=wrong_build
           elif [ "$SPECS_OUTCOME" = "failure" ]; then
             STATE=specs_failed
+          # core#1130 AC1. AFTER specs_failed on purpose -- a real red is more informative
+          # than 'we could not tell' -- and BEFORE clean, because an exit-0 run that
+          # executed no IdP spec is precisely what this job could not previously see.
+          elif [ "$COVERAGE_OUTCOME" = "failure" ]; then
+            STATE=no_verdict
           elif [ "$SPECS_OUTCOME" = "success" ]; then
             if [ "$JOB_STATUS" = "success" ]; then STATE=clean; else STATE=infra_only; fi
           else

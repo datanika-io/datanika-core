@@ -78,3 +78,39 @@ export async function expectApiJson(response: APIResponse, label: string): Promi
     );
   }
 }
+
+/**
+ * Assert a response is 2xx, and say what it was when it is not.
+ *
+ * 🚨 `expect(res.ok()).toBeTruthy()` is the failure mode this exists to end (core#1269).
+ * `ok()` collapses the status, the URL and the body into one boolean, so a soak whose
+ * seed step 500s reports `expect(received).toBeTruthy()` — four times, naming nothing.
+ * The real cause was one line of a traceback the assertion had thrown away:
+ *
+ *     TypeError: ApiKeyService.create_api_key() missing 1 required keyword-only
+ *                argument: 'actor_user_id'
+ *
+ * Same shape as a log fetcher that answered `None` for every failure alike (core#1273).
+ * **A helper that reduces a failure to a boolean cannot tell you which failure it was**,
+ * and the reduction is never worth what it costs on the day it fires.
+ *
+ * ⚠️ The body is included deliberately. On a stack without the one-origin proxy, a
+ * 2xx here can be the SPA rather than the API — see `assertApiOrigin` above — so a bare
+ * status is not sufficient evidence either way.
+ */
+export async function expectOk(response: APIResponse, label: string): Promise<APIResponse> {
+  if (response.ok()) return response;
+
+  const body = (await response.text()).slice(0, 400);
+  throw new Error(
+    [
+      `${label} -> HTTP ${response.status()} ${response.statusText()}`,
+      `  url : ${response.url()}`,
+      `  body: ${body || "(empty)"}`,
+      "",
+      "A 5xx here is the endpoint, not the assertion. Staging runs granian at",
+      "`--log-level critical`, so the traceback is NOT in `docker logs` — drive the",
+      "route in-process with TestClient(app._api, raise_server_exceptions=True) to see it.",
+    ].join("\n"),
+  );
+}

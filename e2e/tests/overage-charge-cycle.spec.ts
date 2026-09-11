@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { expectOk } from "../fixtures/api-origin";
 
 /**
  * V2 P5 Option B — overage charge cycle E2E @slow
@@ -100,7 +101,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
         usageGB: 105,
       },
     });
-    expect(seedRes.ok()).toBeTruthy();
+    await expectOk(seedRes, "seed-overage-tenant");
     const seed = (await seedRes.json()) as {
       orgId: number;
       subscriptionId: number;
@@ -118,13 +119,13 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const adv1 = await request.post(`${BASE_URL}/api/admin/e2e/advance-clock`, {
       data: { toIso: tMinus23h },
     });
-    expect(adv1.ok()).toBeTruthy();
+    await expectOk(adv1, "advance-clock (T-23h)");
 
     // Step 4 — fire the notice task
     const warn = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
       data: { taskName: "emit_charge_incoming_notices" },
     });
-    expect(warn.ok()).toBeTruthy();
+    await expectOk(warn, "run-task charge_cycle_warnings");
 
     // Step 5 — assert the CHARGE_INCOMING in-app notification landed.
     // seed.authToken is a full-access API key (cloud#72 seeds it via
@@ -137,7 +138,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const notifRes = await request.get(`${BASE_URL}/api/v1/notifications`, {
       headers: authHeaders,
     });
-    expect(notifRes.ok()).toBeTruthy();
+    await expectOk(notifRes, "notifications list");
     const notifBody = (await notifRes.json()) as {
       items: Array<{ type: string; title: string; message: string }>;
       unread_count: number;
@@ -155,13 +156,13 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const adv2 = await request.post(`${BASE_URL}/api/admin/e2e/advance-clock`, {
       data: { toIso: cycleEnd },
     });
-    expect(adv2.ok()).toBeTruthy();
+    await expectOk(adv2, "advance-clock (T+0)");
 
     // Step 7 — run the charge loop
     const settle1 = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
       data: { taskName: "charge_cycle_overages" },
     });
-    expect(settle1.ok()).toBeTruthy();
+    await expectOk(settle1, "run-task charge_cycle_overages");
     const settle1Body = (await settle1.json()) as {
       taskName: string;
       result: ChargeSummary;
@@ -175,7 +176,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
       `${BASE_URL}/api/admin/e2e/charges?subscriptionId=${seed.subscriptionId}`,
       { headers: authHeaders },
     );
-    expect(listRes.ok()).toBeTruthy();
+    await expectOk(listRes, "charges list");
     const charges = (await listRes.json()) as Array<{
       id: number;
       status: string;
@@ -193,7 +194,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const settle2 = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
       data: { taskName: "charge_cycle_overages" },
     });
-    expect(settle2.ok()).toBeTruthy();
+    await expectOk(settle2, "run-task charge_cycle_overages (retry)");
     const settle2Body = (await settle2.json()) as {
       taskName: string;
       result: ChargeSummary;
@@ -235,7 +236,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const seedRes = await request.post(`${BASE_URL}/api/admin/e2e/seed-overage-tenant`, {
       data: { planSlug: "pro", includedGB: 100, overagePriceCents: 100, usageGB: 80 },
     });
-    expect(seedRes.ok()).toBeTruthy();
+    await expectOk(seedRes, "seed-overage-tenant");
     const seed = (await seedRes.json()) as {
       subscriptionId: number;
       billingPeriodEnd: string;
@@ -249,12 +250,12 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     const adv = await request.post(`${BASE_URL}/api/admin/e2e/advance-clock`, {
       data: { toIso: cycleEnd },
     });
-    expect(adv.ok()).toBeTruthy();
+    await expectOk(adv, "adv");
 
     const settle = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
       data: { taskName: "charge_cycle_overages" },
     });
-    expect(settle.ok()).toBeTruthy();
+    await expectOk(settle, "settle");
     const body = (await settle.json()) as { result: ChargeSummary };
     // Under the allotment ⇒ nothing issued; kill-switch on (no `disabled`).
     expect(body.result.disabled).toBeFalsy();
@@ -265,7 +266,7 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
       `${BASE_URL}/api/admin/e2e/charges?subscriptionId=${seed.subscriptionId}`,
       { headers: { Authorization: `Bearer ${seed.authToken}` } },
     );
-    expect(listRes.ok()).toBeTruthy();
+    await expectOk(listRes, "charges list");
     const charges = (await listRes.json()) as Array<unknown>;
     expect(charges).toHaveLength(0);
   });

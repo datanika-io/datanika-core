@@ -133,6 +133,22 @@ services:
       - path: .env.docker
         required: false
     environment:
+      # core#895 — app metrics MUST aggregate across granian's workers.
+      #
+      # `GRANIAN_WORKERS: "4"` above means 1 arbiter + 4 workers, each with its own
+      # prometheus_client registry, and a scrape is answered by whichever process accepted the
+      # connection. QA measured it on production with the control that makes it evidence:
+      # the app counter read 1, 2, 7, 1, 1, 2 across six reads while a single-process exporter
+      # read 1, 1, 1, 1, 1, 1 at the same instants.
+      #
+      # ⚠️ This must be an ENVIRONMENT variable, not something the app sets: prometheus_client
+      # chooses its value class when it is IMPORTED, so a value set in code is already too late.
+      #
+      # ⚠️ tmpfs, not a named volume, and that is load-bearing. Each process writes a .db file
+      # named by pid; a persistent directory accumulates files from dead workers of previous
+      # container generations, and MultiProcessCollector sums whatever it finds — so yesterday's
+      # counters would be added to today's. tmpfs is empty on every container start.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
       GRANIAN_WORKERS: "4"
       # 🚨 core#785. `uv run` RE-SYNCS the venv from uv.lock before running the
       # command, and the Dockerfile grafts `datanika-cloud` and `datanika-mcp` in
@@ -168,6 +184,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    tmpfs:
+      # See PROMETHEUS_MULTIPROC_DIR above — fresh per container start by design (core#895).
+      - /tmp/prometheus_multiproc
     volumes:
       - dbt_projects:/app/dbt_projects
       # Uploads lived inside the image: every rebuild destroyed the archives while their
@@ -212,6 +231,22 @@ services:
       - path: .env.docker
         required: false
     environment:
+      # core#895 — app metrics MUST aggregate across granian's workers.
+      #
+      # `GRANIAN_WORKERS: "4"` above means 1 arbiter + 4 workers, each with its own
+      # prometheus_client registry, and a scrape is answered by whichever process accepted the
+      # connection. QA measured it on production with the control that makes it evidence:
+      # the app counter read 1, 2, 7, 1, 1, 2 across six reads while a single-process exporter
+      # read 1, 1, 1, 1, 1, 1 at the same instants.
+      #
+      # ⚠️ This must be an ENVIRONMENT variable, not something the app sets: prometheus_client
+      # chooses its value class when it is IMPORTED, so a value set in code is already too late.
+      #
+      # ⚠️ tmpfs, not a named volume, and that is load-bearing. Each process writes a .db file
+      # named by pid; a persistent directory accumulates files from dead workers of previous
+      # container generations, and MultiProcessCollector sums whatever it finds — so yesterday's
+      # counters would be added to today's. tmpfs is empty on every container start.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
       GRANIAN_WORKERS: "4"
       # core#785 — the full account is on `app` above. Short version: `uv run`
       # re-syncs from uv.lock, the grafted cloud/mcp packages are not IN the lock,
@@ -238,6 +273,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    tmpfs:
+      # See PROMETHEUS_MULTIPROC_DIR above — fresh per container start by design (core#895).
+      - /tmp/prometheus_multiproc
     volumes:
       - dbt_projects:/app/dbt_projects
       # Uploaded archives lived inside the image, so every rebuild destroyed them while

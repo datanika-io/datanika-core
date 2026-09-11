@@ -8,16 +8,19 @@ Exposes:
 """
 
 import logging
+import os
 import re
 import time
 from collections.abc import Iterable, Mapping, Sequence
 
 from prometheus_client import (
     REGISTRY,
+    CollectorRegistry,
     Counter,
     Gauge,
     Histogram,
     generate_latest,
+    multiprocess,
 )
 from starlette.requests import Request
 from starlette.responses import Response
@@ -60,6 +63,11 @@ celery_queue_length = Gauge(
     "celery_queue_length",
     "Number of tasks waiting in the Celery queue",
     ["queue"],
+    # core#895. In multiprocess mode a Gauge with no mode defaults to reporting EVERY
+    # process's value with a `pid` label -- cardinality growth, and meaningless for a
+    # queue depth that is polled fresh at scrape time. "livemostrecent" is the value a
+    # LIVE process wrote last, which is what a scrape-time poll means.
+    multiprocess_mode="livemostrecent",
 )
 
 # --- Volume metering (V2 P1, per datanika-cloud/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md §3.2) ---
@@ -467,6 +475,49 @@ def setup_celery_metrics(celery_app) -> None:
         celery_tasks_total.labels(task_name, "RETRY").inc()
 
 
+def build_scrape_registry() -> CollectorRegistry:
+    """The registry a `/metrics` scrape should read.
+
+    core#895. `granian` runs the app as **1 arbiter + 4 workers**, each with its own
+    `prometheus_client` registry, and a scrape is answered by whichever process accepted the
+    connection. QA measured the consequence on production, with the control that makes it
+    evidence rather than a story about load::
+
+        app counter, six reads          1, 2, 7, 1, 1, 2
+        single-process exporter, same   1, 1, 1, 1, 1, 1
+
+    So every ``source: app`` SLO was being computed from one arbitrary worker's share, and the
+    number moved when nothing about the system had.
+
+    With ``PROMETHEUS_MULTIPROC_DIR`` set, each process writes its samples to a file in that
+    directory and this builds a registry that sums them. ⚠️ **The variable must be set before
+    the process imports `prometheus_client`** — the library picks its value class at import
+    time — which is why it belongs in the container environment and not in code.
+
+    Returns the ordinary in-process ``REGISTRY`` when the variable is unset, so a developer
+    running a single process still gets metrics. "Always aggregate" would satisfy the
+    multiprocess test and break every single-process deployment.
+
+    ⚠️ Degrades rather than raising: a `/metrics` that 500s takes **every other metric** down
+    with it, which is the same reasoning as the `celery_queue_length` swallow below.
+    """
+    path = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if not path:
+        return REGISTRY
+    try:
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry, path=path)
+        return registry
+    except Exception:
+        _log.warning(
+            "PROMETHEUS_MULTIPROC_DIR is set but unusable (%s); serving this process's "
+            "registry only, which is the core#895 defect",
+            path,
+            exc_info=True,
+        )
+        return REGISTRY
+
+
 # --- /metrics endpoint ---
 
 
@@ -490,7 +541,7 @@ async def metrics_endpoint(request: Request) -> Response:
         # only thing that distinguishes them.
         _log.warning("celery_queue_length not refreshed; the gauge is now stale", exc_info=True)
 
-    body = generate_latest(REGISTRY)
+    body = generate_latest(build_scrape_registry())
     return Response(body, media_type="text/plain; version=0.0.4; charset=utf-8")
 
 

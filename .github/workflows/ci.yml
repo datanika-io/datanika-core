@@ -693,6 +693,125 @@ jobs:
   # A `@0.33.1`-style pin written from memory does not resolve and the job never
   # runs. Do NOT "simplify" this to `@v0`.
   # ---------------------------------------------------------------------------
+  # core#1290 — run CLOUD's suite against THIS core commit.
+  #
+  # cloud imports core, so its correctness depends on this repository's API. But cloud's
+  # own `ci.yml` triggers on pushes and PRs to *cloud*, and nothing here ran its tests —
+  # so a core-side change could break cloud with **no CI running anywhere**, while the
+  # core PR that broke it stayed green, because every required check is core's.
+  #
+  # Measured, not hypothetical (core#1269): core#681 made `create_api_key`'s
+  # `actor_user_id` keyword-only and required; cloud's `seed_overage_tenant` was not
+  # updated; cloud's suite went to **12 failed and sat there for two days**, because cloud
+  # had not been pushed in that window. Downstream, the overage soak's first step 500'd,
+  # so **Gate 4 for V2 P5 produced no reading at all** while reading as a test failure.
+  #
+  # ⚠️ "Remember to check the other repo" is the fix that already failed — twice in one
+  # day, against two careful changes, with no signal available to either author.
+  #
+  # 🚨 This is only a GUARD once it is REQUIRED on `dev`. A red non-required check does
+  # **not** block merge-queue entry (measured, core#904), so until the ruleset lists it
+  # this job reports and nothing more. Making it required is Infra's.
+  cloud-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout core (this repo)
+        uses: actions/checkout@v6
+        with:
+          path: core
+
+      - name: Check the cloud token is available
+        id: token
+        env:
+          CLOUD_REPO_TOKEN: ${{ secrets.CLOUD_REPO_TOKEN }}
+        run: |
+          # A fork PR gets no secrets. Warn rather than fail: a red that every fork
+          # contributor sees and none of them can fix teaches people to ignore reds.
+          if [ -z "${CLOUD_REPO_TOKEN}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::CLOUD_REPO_TOKEN unavailable (fork PR?) — cloud's suite cannot run, so this job proves nothing about this commit."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve the cloud branch to pair against
+        id: cloudref
+        if: steps.token.outputs.available == 'true'
+        # Reused rather than re-derived. core#923: `github.base_ref` is EMPTY on a
+        # `merge_group` event, and the naive fallback resolves to
+        # `gh-readonly-queue/dev/pr-N-<sha>`, which does not exist in cloud — the checkout
+        # then fails with no diagnostic that names the cause.
+        working-directory: core
+        env:
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_ref }}
+          PR_BASE: ${{ github.base_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: bash .github/scripts/resolve-cloud-ref.sh
+
+      - name: Checkout cloud
+        if: steps.token.outputs.available == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: datanika-io/datanika-cloud
+          ref: ${{ steps.cloudref.outputs.ref }}
+          token: ${{ secrets.CLOUD_REPO_TOKEN }}
+          path: cloud
+
+      - uses: astral-sh/setup-uv@v8.0.0
+        if: steps.token.outputs.available == 'true'
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "core/uv.lock"
+
+      - uses: actions/setup-python@v6
+        if: steps.token.outputs.available == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Install THIS core, then cloud on top of it
+        if: steps.token.outputs.available == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            pkg-config zlib1g-dev libssl-dev
+          cd core
+          # Same locked install as the `test` job: prod builds from uv.lock, so a CI
+          # green means nothing about prod if the two resolve differently (core#470).
+          uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
+          uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
+          uv pip install --system -e . --no-deps
+          cd ..
+          # `--no-deps` deliberately. cloud declares datanika, httpx, sqlalchemy and
+          # alembic — all installed by core's locked export above — and its dev extras
+          # (pytest, pytest-asyncio, ruff) are pinned to core's values on purpose, because
+          # a differing ruff lints the two repos to different rules. Letting this
+          # re-resolve is the core#602 mechanism, where a graft install moves a package the
+          # lock had pinned. This job tests the SEAM, not the resolution.
+          uv pip install --system -e ./cloud --no-deps
+
+      - name: Run cloud's suite against this core
+        if: steps.token.outputs.available == 'true'
+        env:
+          # 771 collect today (762 pass, 9 skip). The floor sits well under, so ordinary
+          # growth and deletion do not trip it while a wrong path or a broken import does.
+          MIN_CLOUD_TESTS: "500"
+        run: |
+          set -euo pipefail
+          # Anti-vacuity FIRST, and it is not belt-and-braces. A wrong path collects
+          # nothing and pytest exits 5, which is non-zero *today* — but this job must not
+          # rest on that, because one `|| true` or one `continue-on-error` converts
+          # "nothing ran" into a green required check, which is this project's signature
+          # defect. Assert the presence of tests rather than the absence of failures.
+          COLLECTED=$(pytest cloud/tests --collect-only -q 2>/dev/null | tail -1 | grep -oE '^[0-9]+' || echo 0)
+          echo "collected ${COLLECTED} cloud tests (floor ${MIN_CLOUD_TESTS})"
+          if [ "${COLLECTED}" -lt "${MIN_CLOUD_TESTS}" ]; then
+            echo "::error::collected only ${COLLECTED} cloud tests — expected at least ${MIN_CLOUD_TESTS}. A wrong path or a broken import collects nothing, which would otherwise read as green."
+            exit 1
+          fi
+          pytest cloud/tests --tb=short -q
+
   image-cve:
     name: image-cve
     runs-on: ubuntu-latest

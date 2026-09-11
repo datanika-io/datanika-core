@@ -797,6 +797,18 @@ jobs:
           # 771 collect today (762 pass, 9 skip). The floor sits well under, so ordinary
           # growth and deletion do not trip it while a wrong path or a broken import does.
           MIN_CLOUD_TESTS: "500"
+          # cloud's manifest-drift guard looks for core at a sibling `datanika-core/`,
+          # which is where CLOUD's own ci.yml puts it. Here core is at `core/`, so without
+          # this the guard cannot find it -- and it FAILS rather than skipping, on purpose:
+          # its comment says a check that declines to run must not let the decline spread to
+          # CI, "where the manifest *is* known-fresh". Found on this job's first real run.
+          #
+          # Pointing the documented override at our checkout rather than renaming ours: the
+          # override "wins over everything" and "the caller owns whether it is current"
+          # (that file's words), and freshness is exactly what this job has -- core is
+          # checked out at THIS commit. The result is a drift guard that actually compares
+          # cloud's pins against this core instead of declining.
+          DATANIKA_CORE_PYPROJECT: ${{ github.workspace }}/core/pyproject.toml
         run: |
           set -euo pipefail
           # Anti-vacuity FIRST, and it is not belt-and-braces. A wrong path collects

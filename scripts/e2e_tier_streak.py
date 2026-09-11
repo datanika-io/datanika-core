@@ -621,6 +621,27 @@ def _gh(path: str, *, raw: bool = False) -> object:
     return out.stdout if raw else json.loads(out.stdout)
 
 
+#: The exact refusal a newer `gh` prints for a response containing terminal escapes.
+#: Matched rather than version-sniffed: the flag may be spelled differently tomorrow, but
+#: the reason gh gives is what actually tells us to retry.
+ESCAPE_GUARD = "terminal escape sequences"
+
+
+def _gh_logs(repo: str, job_id: int, *, allow_escapes: bool):  # noqa: ANN202
+    """One `gh api` call for a job log, with or without the escape-sequence opt-in."""
+    cmd = ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"]
+    if allow_escapes:
+        cmd.append("--allow-escape-sequences")
+    return subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
 def _gh_log_or_none(repo: str, job_id: int) -> tuple[str | None, str]:
     """A job's raw log, or `None` when GitHub will not serve it.
 
@@ -637,14 +658,15 @@ def _gh_log_or_none(repo: str, job_id: int) -> tuple[str | None, str]:
     need opposite responses -- and the missing half cost a diagnosis that one line of
     stderr would have ended.
     """
-    out = subprocess.run(  # noqa: S603
-        ["gh", "api", f"repos/{repo}/actions/jobs/{job_id}/logs"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    out = _gh_logs(repo, job_id, allow_escapes=False)
+    if out.returncode != 0 and ESCAPE_GUARD in (out.stderr or ""):
+        # core#1273. Actions logs carry ANSI escapes, and a newer `gh` REFUSES to emit a
+        # response containing them unless told to. Measured: gh 2.89.0 here has no such
+        # flag and fetches fine; the runner's newer gh failed 19 of 19 with this message
+        # and nothing else. So the reader worked on the author's machine and could never
+        # have worked in CI -- try plain first (old gh), and retry only when gh itself
+        # says that is the reason.
+        out = _gh_logs(repo, job_id, allow_escapes=True)
     if out.returncode == 0:
         return out.stdout, ""
     # core#1273. Whitespace-normalised with split()/join so no newline escape is needed.

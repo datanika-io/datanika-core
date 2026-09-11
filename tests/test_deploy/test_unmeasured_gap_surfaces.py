@@ -288,3 +288,110 @@ def test_control_the_workflow_file_is_the_one_that_is_watched() -> None:
     assert WATCHDOG.exists()
     text = WATCHDOG.read_text(encoding="utf-8")
     assert "cron:" in text, "the host workflow no longer carries a schedule"
+
+
+# ── the reader must be able to run where it is scheduled (core#1273) ─────────────────────
+
+
+class _FakeRun:
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+class TestTheLogFetchWorksOnBothGhVersions:
+    """🚨 The reader worked on its author's machine and could never have worked in CI.
+
+    Actions logs carry ANSI escapes, and a newer `gh` **refuses to emit** a response
+    containing them unless told to. Measured: `gh 2.89.0` locally has no such flag and
+    fetches fine; the runner's newer `gh` failed **19 of 19** with that message and nothing
+    else, so the blindness detector had never once produced a reading in production.
+
+    Neither "always pass the flag" nor "never pass it" works — the flag does not exist on the
+    older CLI. So: try plain, and retry **only when `gh` itself says that is the reason**.
+    """
+
+    @staticmethod
+    def _streak_module():
+        import scripts.e2e_tier_streak as mod
+
+        return mod
+
+    def test_a_new_gh_is_retried_with_the_opt_in(self, monkeypatch) -> None:
+        mod = self._streak_module()
+        calls: list[bool] = []
+
+        def fake(repo, job_id, *, allow_escapes):  # noqa: ANN001, ANN202
+            calls.append(allow_escapes)
+            if not allow_escapes:
+                return _FakeRun(1, stderr="gh: the response contains terminal escape sequences")
+            return _FakeRun(0, stdout="a log")
+
+        monkeypatch.setattr(mod, "_gh_logs", fake)
+        log, why = mod._gh_log_or_none("o/r", 1)
+        assert log == "a log", f"the retry did not recover the log ({why})"
+        assert calls == [False, True], f"expected plain-then-opt-in, got {calls}"
+
+    def test_an_old_gh_is_not_given_a_flag_it_does_not_have(self, monkeypatch) -> None:
+        """The first call must succeed on its own where it can. Passing the flag
+        unconditionally would break every environment whose `gh` predates it — which is the
+        environment this was developed in, so the bug would have swapped ends rather than
+        being fixed."""
+        mod = self._streak_module()
+        calls: list[bool] = []
+
+        def fake(repo, job_id, *, allow_escapes):  # noqa: ANN001, ANN202
+            calls.append(allow_escapes)
+            return _FakeRun(0, stdout="a log")
+
+        monkeypatch.setattr(mod, "_gh_logs", fake)
+        log, _why = mod._gh_log_or_none("o/r", 1)
+        assert log == "a log"
+        assert calls == [False], f"an old gh was given the flag anyway: {calls}"
+
+    def test_control_an_unrelated_failure_is_not_retried(self, monkeypatch) -> None:
+        """🔑 The retry keys on the REASON, not on failure. A 404 is ordinary — expired or
+        cancelled — and retrying it with a flag would turn one wrong answer into two."""
+        mod = self._streak_module()
+        calls: list[bool] = []
+
+        def fake(repo, job_id, *, allow_escapes):  # noqa: ANN001, ANN202
+            calls.append(allow_escapes)
+            return _FakeRun(1, stderr="gh: HTTP 404")
+
+        monkeypatch.setattr(mod, "_gh_logs", fake)
+        log, why = mod._gh_log_or_none("o/r", 1)
+        assert log is None
+        assert calls == [False], f"a 404 was retried: {calls}"
+        assert "404" in why, "the reason must survive to the caller, or the guard is mute again"
+
+    def test_the_reason_reaches_the_caller(self, monkeypatch) -> None:
+        """`None` for every failure alike is what made "18 attempts, all failed" a true and
+        useless sentence. The stderr is the diagnosis."""
+        mod = self._streak_module()
+        monkeypatch.setattr(
+            mod,
+            "_gh_logs",
+            lambda repo, job_id, *, allow_escapes: _FakeRun(1, stderr="boom  \n  splat"),
+        )
+        log, why = mod._gh_log_or_none("o/r", 1)
+        assert log is None
+        assert why == "boom splat", (
+            "whitespace must be normalised without a newline escape, and the text must survive"
+        )
+
+
+def test_control_the_escape_guard_string_is_what_gh_actually_prints() -> None:
+    """Anti-vacuity for the retry trigger. If this constant stops matching gh's wording, the
+    retry silently never fires and the detector goes back to failing 19 of 19 — with the
+    reason printed, which is the only thing that would make it findable a second time."""
+    from scripts.e2e_tier_streak import ESCAPE_GUARD
+
+    observed = (
+        "gh: the response contains terminal escape sequences; "
+        "pass --allow-escape-sequences to output it anyway"
+    )
+    assert ESCAPE_GUARD in observed, (
+        f"{ESCAPE_GUARD!r} no longer appears in the message gh printed in run 34600182740"
+    )

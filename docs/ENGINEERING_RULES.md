@@ -1750,6 +1750,129 @@ exception because an inner `except` had already consumed it. The general form is
 4. **Corollary for the layer boundary**: an exception type is part of an interface between two
    layers, so it needs the same treatment as a status code or a field name — not "an error we
    throw", but "a value the outer layer is contracted to receive".
+
+## 58. A test that executes a subprocess to verify ENVIRONMENT-DRIVEN selection must not inherit the environment
+
+**(2026-09-11, [core#1265] follow-up, shipped in [core#1281].)**
+`tests/test_deploy/test_pre_push_scope.py` executes the pre-push hook's **real** scope-selection
+block under `set -e` and asserts which scope it picks — behavioural on purpose, because "a text
+match cannot tell working from broken" is that file's own opening line. Its helper:
+
+```python
+return subprocess.run([bash, "-c", script], capture_output=True, text=True, encoding="utf-8")
+```
+
+No `env=`, so the child inherits the parent's environment. The hook selects its scope from
+`DATANIKA_PREPUSH_FULL` and `DATANIKA_PREPUSH_SCOPE`. **This file runs inside that hook.** So a push
+with `DATANIKA_PREPUSH_FULL=1` — the documented way to ask for a full-tree pre-push, and what you
+are asked for before landing anything near the hook — leaked the variable into the case labelled
+*default*, which then correctly resolved to `tests` and correctly failed its own assertion. `-x`
+stopped the run and the push was refused at `1 failed, 1063 passed`.
+
+Every part of that is working as written. The defect is that **the case's inputs were not the ones
+the case names**.
+
+🔑 **The general form:**
+
+> A test of *"what does X choose given Y"* is only a test if Y is the **only** Y in scope. An
+> inherited environment is an unnamed second input, and the test then silently measures a different
+> case than the one in its name.
+
+⚠️ **This fails in the ALARMING direction, which is why it earns a rule rather than a shrug.**
+Nothing unsafe shipped. But the lesson it teaches is *"the full-scope flag is broken, push narrow"*
+— and narrow is exactly the scope whose dishonest verdict [core#1265] had just finished correcting.
+**A guard that punishes the behaviour it documents trains the opposite behaviour**, and the
+training is the damage.
+
+**Rules:**
+
+1. **Pass an explicit `env=` to any subprocess whose behaviour depends on the environment.** Derive
+   it by filtering `os.environ` rather than building one from scratch, or `PATH` and the
+   interpreter stop working and you have traded this bug for a worse one.
+2. **Scrub by the prefix the feature owns, not by the variable you happened to hit.** The leak was
+   `DATANIKA_PREPUSH_FULL`; `DATANIKA_PREPUSH_SCOPE` would have done the same to a different case.
+   The regression test sets **both**.
+3. **Ask whether the test runs inside its own subject.** Hooks, wrappers, CI steps and the suite
+   runner are where the answer is yes — and where the pollution is invisible, because the polluting
+   value is the one a correct operator supplies.
+4. **The regression test must set the polluting variable in the PARENT** and assert the default
+   case still resolves to the default. Checking the three cases in isolation passes against the
+   unfixed helper: twenty of them did.
+
+## 59. A raw grep total is not a population count until you have looked at the matches
+
+**(2026-09-11. Third instance in a single session, and the three pointed in different directions.)**
+
+Removing [core#895]'s `blocked_by` keys, `grep -c blocked_by docs/slo_instruments.yml` on
+`origin/dev` returned **7** while the change removed **6**. That reads as a key left behind — a fix
+that unblocked only some of its entries, which is precisely what the ratchet beside it exists to
+catch. The seventh match is the field's own description in the file header:
+
+```
+#      blocked_by  - wired to an instrument we have MEASURED to be defective.
+```
+
+It must stay. **Six was the whole population**, and `grep -c 'source: app'` returning 6 settled it
+in one command.
+
+Two more the same session: the alert files matched `python_gc_*` **twice** while ruling on
+[core#1275] — **both inside a comment**, so the count said *"two rules depend on this"* and the
+answer was zero; and [core#1265]'s own guard went red against the comment explaining why the phrase
+it bans had been removed.
+
+🔑 **The general form:**
+
+> A grep counts **text**. A population is **things of a kind**. The difference is every comment,
+> docstring, fixture, changelog line and link definition that *says the name without being the
+> thing* — and documentation about a mechanism concentrates exactly where the mechanism is used.
+
+**Rules:**
+
+1. **Before acting on a count, print the matches.** `grep -n`, not `grep -c`. A count is the
+   summary of a reading you have not done.
+2. **A scanner over source must read executable lines**, and must assert the stripper did not eat
+   the file — an over-eager strip returns a clean zero, which is §48's shape.
+3. ⚠️ **A count that disagrees with your change is evidence, not noise — and may be evidence that
+   you are RIGHT.** Both directions cost a round here: once believing the extra match was a
+   leftover key, once nearly deleting a header comment to make a number agree.
+4. **Name the population in words first** — *"`source: app` entries carrying the key"* — then write
+   the grep that answers **that**, rather than the one that matches the word.
+
+## 60. A shared mutable output path turns two concurrent measurements into one false verdict
+
+**(2026-09-11.)** The suite verdict harness wrote to one fixed path. Two runs overlapped, and run
+B's startup sentinel — the block that exists so an incomplete run cannot read as green — landed
+inside run A's **completed** verdict. The result parsed as:
+
+```
+exit_code=1, failed_lines=0, summary=
+```
+
+Exit 1, zero FAILED lines, empty summary. `read_verdict.py` refused on the contradiction, which is
+the only reason this is a near miss rather than an entry elsewhere in this file. **The verdict
+described neither run.**
+
+🔑 **The previous fix did not cover this and looked like it did.** Writing an `UNKNOWN` sentinel
+first made an *incomplete* run unreadable as green. The hazard here is not completion, it is
+**sharing** — two different failures with the same symptom, so fixing one reads as having fixed
+both.
+
+⚠️ **A false RED is the same defect as a false green wearing the other colour.** It is more
+survivable and less believed, so it costs a round rather than a release — but the cause is
+identical, and a harness that can produce one can produce the other.
+
+**Rules:**
+
+1. **Give every run its own directory**, named by time **and pid**. A timestamp alone collides when
+   two runs start in the same second, which is the same bug with a smaller window.
+2. 🚨 **Do not add a `latest` pointer.** A shared mutable pointer *is* the bug; re-adding one for
+   convenience re-adds it. Print the path on the first line of stdout and pass that exact path on.
+3. **The same rule governs the executor script**: never overwrite `<dept>_exec.sh` while a
+   backgrounded invocation is reading it. Bash reads a script **incrementally**, so the rewrite
+   lands at the old byte offset and the running invocation executes garbage.
+4. **Anything a second concurrent agent could be writing is shared** — the worktree, the venv, the
+   scratch directory. Ask what else is running before writing to a fixed path.
+
 [core#704]: https://github.com/datanika-io/datanika-core/issues/704
 [core#915]: https://github.com/datanika-io/datanika-core/issues/915
 [#1129]: https://github.com/datanika-io/datanika-core/pull/1129
@@ -1788,3 +1911,8 @@ exception because an inner `except` had already consumed it. The general form is
 [core#910]: https://github.com/datanika-io/datanika-core/issues/910
 [core#681]: https://github.com/datanika-io/datanika-core/issues/681
 [core#896]: https://github.com/datanika-io/datanika-core/issues/896
+[core#1265]: https://github.com/datanika-io/datanika-core/issues/1265
+[core#1275]: https://github.com/datanika-io/datanika-core/issues/1275
+[core#1281]: https://github.com/datanika-io/datanika-core/pull/1281
+[core#895]: https://github.com/datanika-io/datanika-core/issues/895
+[core#657]: https://github.com/datanika-io/datanika-core/issues/657

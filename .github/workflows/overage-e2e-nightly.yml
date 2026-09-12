@@ -62,6 +62,7 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: Run overage-charge E2E against staging
+        id: soak
         working-directory: e2e
         env:
           CI: "true"
@@ -79,7 +80,36 @@ jobs:
           # email only satisfies global-setup's skip guard; the spec never reads it.
           DATANIKA_E2E_SKIP_SEED: "1"
           DATANIKA_E2E_USER_EMAIL: overage-e2e-skip@datanika.test
+          # Read back by the coverage assertion below. Named explicitly rather than
+          # left to the config default, so the two halves name one string (core#1301).
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results-overage.json
         run: npx playwright test overage-charge-cycle.spec.ts
+
+      # 🚨 The step above CANNOT tell a pass from a no-op. Playwright exits 0 when every
+      # collected test skips, so a night on which the GATE tripped — a renamed or rotated
+      # PADDLE_SANDBOX_* secret on the `production` environment — reports `success` having
+      # executed nothing. The header of this file has warned about exactly that since it was
+      # written ("A 'green' run where all 3 tests SKIPPED is NOT a passing soak night") and
+      # nothing enforced it. This is that enforcement (core#1301).
+      #
+      # `if: always()` on purpose: on a red night this still prints the executed/skipped
+      # split and each skip's recorded reason, which is the diagnostic, and it must not be
+      # skippable on the green path, which is the case it exists for.
+      #
+      # Deliberately NO `continue-on-error`, unlike the sibling step in ci.yml. There it is
+      # correct because a downstream classifier owns the verdict; here nothing else reads
+      # the run, so this step IS the verdict. A guard whose red is swallowed is the defect
+      # it was built to catch, one level up.
+      #
+      # ⚠️ Adding an `always()` step here made the claiming step below JOB-keyed in a job
+      # where something can now fail after the work — core#873's exact shape, caught by
+      # tests/test_deploy/test_ci_autofiler_trigger.py at pre-push on this very commit.
+      # That is why both steps carry an `id` and the filer is step-keyed.
+      - name: Assert the soak actually executed
+        id: coverage
+        if: always()
+        working-directory: e2e
+        run: python3 scripts/assert_overage_coverage.py results-overage.json
 
       - name: Upload Playwright report on failure
         if: failure()
@@ -89,11 +119,25 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 14
 
+      # 🚨 STEP-KEYED, not job-keyed (core#873). With an `always()` coverage step above,
+      # job-red is strictly weaker than work-red: the coverage step can redden the job on a
+      # run whose specs all passed, and a job-keyed filer would then claim a test failure
+      # that did not happen. That is the 2026-09-01 incident this rule came from.
+      #
+      # `always() &&` leads deliberately: GitHub implicitly wraps an `if:` containing no
+      # status function in `success() && ...`, so the natural spelling
+      # `steps.soak.outcome == 'failure'` is skipped on exactly the runs it exists for —
+      # a false alarm converted into total silence, which is worse.
+      #
+      # `!= 'success'` rather than `== 'failure'`: an equality gate on a step outcome misses
+      # "never ran" (core#1260) — if a step is skipped its outcome is empty, not 'failure'.
       - name: Open QA issue on failure
-        if: failure()
+        if: always() && (steps.soak.outcome != 'success' || steps.coverage.outcome != 'success')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SOAK_OUTCOME: ${{ steps.soak.outcome }}
+          COVERAGE_OUTCOME: ${{ steps.coverage.outcome }}
         run: |
           gh label create overage-e2e-failure \
             --repo ${{ github.repository }} \
@@ -106,17 +150,28 @@ jobs:
             --state open \
             --limit 1 \
             --json number --jq '.[0].number // empty')
+          # Say WHICH half failed. A filer that reports one word for two different events
+          # teaches people to stop reading it — the specs going red and the run having
+          # executed nothing need opposite responses.
+          case "$SOAK_OUTCOME:$COVERAGE_OUTCOME" in
+            success:*) WHAT="the specs passed but the COVERAGE ASSERTION refused — the run may have executed nothing" ;;
+            *:success) WHAT="the specs themselves failed" ;;
+            :*)        WHAT="the soak step never ran (setup failed before it) — nothing about the charge cycle is claimed here" ;;
+            *)         WHAT="both the specs and the coverage assertion are non-green" ;;
+          esac
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo ${{ github.repository }} \
-              --body "Another overage-charge E2E soak failure: $RUN_URL"
+              --body "Another overage-charge E2E soak failure ($WHAT): $RUN_URL"
           else
             body=$(printf '%s\n' \
-              "The overage-charge Gate-4 E2E (overage-charge-cycle.spec.ts) failed on staging." \
+              "The overage-charge Gate-4 E2E (overage-charge-cycle.spec.ts) did not produce a good result on staging." \
               "" \
+              "**What failed:** $WHAT" \
+              "**Step outcomes:** soak=\`${SOAK_OUTCOME:-<did not run>}\` coverage=\`${COVERAGE_OUTCOME:-<did not run>}\`" \
               "**Run:** $RUN_URL" \
               "**Report:** the overage-e2e-report artifact on the run page." \
               "" \
-              "If all 3 tests SKIPPED (not failed), the PADDLE_SANDBOX_* secrets or the staging admin-endpoint env are not wired yet — see the workflow header. If tests RAN and failed, check the Playwright report + staging app logs (charge_cycle_overages / the /api/admin/e2e/* handlers).")
+              "If the COVERAGE assertion refused, read its output first: it prints the executed/skipped/collected split and each skip's reason as Playwright recorded it. An all-skipped run means the GATE tripped — DATANIKA_E2E_OVERAGE_CHARGE unset, or a PADDLE_SANDBOX_* secret renamed or rotated on the \`production\` environment. If tests RAN and failed, check the Playwright report + staging app logs (charge_cycle_overages / the /api/admin/e2e/* handlers).")
             gh issue create \
               --repo ${{ github.repository }} \
               --title "[QA] Overage-charge E2E soak failed $(date -u +%Y-%m-%d)" \

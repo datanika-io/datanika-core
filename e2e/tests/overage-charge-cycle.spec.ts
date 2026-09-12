@@ -225,7 +225,18 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
     // The grace-period policy is now specified (cloud#48), but exercising this
     // needs a sandbox subscription/product that forces a 4xx + a decline-simulation
     // harness. Kept skipped until that harness lands.
-    test.skip(true, "Needs sandbox 4xx-forcing harness — see core#361 / SPEC §4.4");
+    //
+    // ⚠️ This reason cited core#361 until 2026-09-12 — an issue CLOSED on 2026-07-20,
+    // and one that was never about this: it delivered the /api/admin/e2e/* endpoints,
+    // which shipped. So the skip had no live exit condition for ~8 weeks while firing
+    // on all 54 scheduled soak runs. core#1302 is the real one and is deliberately
+    // left open. e2e/scripts/assert_overage_coverage.py refuses the run if this title
+    // is not in its ACCOUNTED_SKIPS, so the pointer cannot go dead silently again.
+    //
+    // Not an uncovered branch: cloud's TestChargeCycleOverages4xxTerminal drives the
+    // 4xx and asserts status=FAILED plus last_error. What is absent is an end-to-end
+    // run against the real Paddle sandbox.
+    test.skip(true, "Needs sandbox 4xx-forcing harness — see core#1302 / SPEC §4.4");
   });
 
   test("no charge when usage under included", async ({ request }) => {

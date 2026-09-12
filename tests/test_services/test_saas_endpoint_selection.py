@@ -17,13 +17,22 @@ one that matters: it builds each source and compares against the resources dlt
 actually produced, rather than restating a list.
 """
 
+import socket
+
 import pytest
 
+from datanika.services import egress_guard
 from datanika.services.dlt_runner import DltRunnerError, DltRunnerService
+from datanika.services.egress_guard import EgressValidationError
 from datanika.ui.state.connection_state import SAAS_DEFAULT_ENDPOINTS
 
-# Minimal config to get each SaaS branch past its required-field checks. Values
-# are placeholders — no request is made; the source is only constructed.
+# Minimal config to get each SaaS branch past its required-field checks. Values are
+# placeholders and no HTTP request is made.
+#
+# 🔴 This said "no request is made; the source is only constructed" until 2026-09-12,
+# and constructing a source RESOLVES THE HOST — see `no_live_dns` below (core#1280).
+# The sentence was true about HTTP and false about DNS, and the difference is what made
+# a transient resolver failure look like a connector defect.
 SAAS_PROBE_CONFIG = {
     "stripe": {"api_key": "sk_test_x"},
     "github": {"access_token": "t", "owner": "o", "repo": "r"},
@@ -78,6 +87,92 @@ def svc(tmp_path):
 
 def _build(svc, conn_type, dlt_config=None):
     return svc.build_source(conn_type, SAAS_PROBE_CONFIG[conn_type], dlt_config or {})
+
+
+#: A public address the egress guard accepts, so the guard's own classification runs to
+#: completion rather than being short-circuited. `93.184.216.34` is example.com's, and is
+#: used here for the same reason tests/test_security/test_egress_guard.py uses it.
+_PUBLIC_IP = "93.184.216.34"
+
+
+def _gai(*ips: str):
+    """A ``socket.getaddrinfo``-shaped return value. The guard reads only ``[4][0]``."""
+    return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 0)) for ip in ips]
+
+
+@pytest.fixture(autouse=True)
+def no_live_dns(monkeypatch):
+    """Building a source RESOLVES THE HOST, so this module did live DNS (core#1280).
+
+    `build_source` -> `_build_saas_source` -> `_rest_api_fallback` -> `_rest_api_from_parts`
+    -> `validate_egress_host` -> `socket.getaddrinfo`. Nothing on that path is mocked, so a
+    file whose own docstring said *"no request is made; the source is only constructed"* was
+    performing a real lookup for every SaaS host it knows.
+
+    Measured: with DNS unavailable this module is **46 failed, 6 passed**. It failed for
+    real at 69% of a pre-push on one transient resolver blip, and the message it printed was
+    about connector endpoints rather than about DNS -- so the reader starts by looking for a
+    connector defect that is not there.
+
+    🚨 **The NETWORK is replaced, not the GUARD.** `validate_egress_host` still runs and
+    still classifies; `test_the_stub_replaced_the_network_not_the_guard` is what stops this
+    fixture from quietly becoming an SSRF bypass for the whole module.
+    """
+    seen: list[str] = []
+
+    def _fake_getaddrinfo(host, *args, **kwargs):
+        seen.append(host)
+        return _gai(_PUBLIC_IP)
+
+    monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo)
+
+    # ASSERT THE STUB IS IN EFFECT, behaviourally, through the real call path.
+    #
+    # A fixture that silently fails to patch hands back exactly today's behaviour, and the
+    # module goes green for the wrong reason -- which is the defect this file is fixing, one
+    # level up. `.invalid` is reserved by RFC 2606 and never resolves, so if the stub were
+    # not in effect this call would raise EgressValidationError and the fixture would fail
+    # loudly instead of the tests passing by luck.
+    egress_guard.validate_egress_host("https://dns-stub-probe.invalid/x")
+    assert seen == ["dns-stub-probe.invalid"], (
+        "the DNS stub is not in effect on the path that resolves hosts "
+        f"(recorded {seen!r}). These tests would fall back to live DNS and pass for the "
+        "wrong reason. If `egress_guard` switched to `from socket import getaddrinfo`, "
+        "patching `socket.getaddrinfo` no longer reaches it."
+    )
+    seen.clear()
+    return seen
+
+
+def test_the_stub_replaced_the_network_not_the_guard(monkeypatch):
+    """`no_live_dns` must not become an SSRF bypass for this module.
+
+    The tempting simplification is to patch `validate_egress_host` itself. That would keep
+    every test here green while switching the control off for the whole file, and nothing
+    would say so -- a guard is inert if anything upstream of it already answers
+    (`ENGINEERING_RULES` §57, and core#896 before it).
+
+    Patching the RESOLVER instead keeps the guard's classification running. Hand it a
+    private address and it must still refuse.
+    """
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: _gai("10.0.0.5"))
+    with pytest.raises(EgressValidationError):
+        egress_guard.validate_egress_host("https://internal.example.test/x")
+
+
+def test_the_stub_is_not_hiding_a_source_that_stopped_resolving_at_all(no_live_dns, svc):
+    """Anti-vacuity for `no_live_dns`: the stub must actually be on the hot path.
+
+    If `build_source` stopped resolving hosts, the fixture would still pass its own
+    in-effect probe (which calls the guard directly) while protecting nothing. This asserts
+    that building a real source goes through the stubbed resolver.
+    """
+    _build(svc, "freshdesk")
+    assert no_live_dns, (
+        "building a source resolved no host, so `no_live_dns` is protecting nothing here. "
+        "Either the egress guard left the build path -- in which case this module no "
+        "longer needs the fixture -- or the stub is not reaching it."
+    )
 
 
 class TestOfferedEndpointsExist:

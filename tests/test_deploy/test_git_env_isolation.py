@@ -31,6 +31,28 @@ the solution. A list of files that happen to know is what we already had.
 This scan is therefore **derived** -- it finds git subprocesses by reading the call, not by
 consulting a list -- and it asserts the PRESENCE of a scrub rather than the absence of a symptom.
 `ENGINEERING_RULES` §58 states the general rule; this is the case with teeth.
+
+What a matcher for this has to cover, so it is not re-earned
+------------------------------------------------------------
+🚨 **The AST match MUST cover the loop-variable form.** The first version of this scan matched only
+a literal argv -- ``subprocess.run(["git", "init", ...], ...)`` -- and `test_promotion_gate.py`
+builds its setup commands in a loop::
+
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "config", ...]):
+        subprocess.run(cmd, cwd=tmp_path, ...)
+
+So the scan **missed the `git init` line** -- the one that starts the damage -- and flagged the file
+only via the two literal calls after it. The file was caught, and it was caught **by luck**: a file
+that used the loop form throughout would have passed.
+
+⚠️ **That is the same shape as a probe that reads a frozen series and calls it a pass.** In both
+cases the anti-vacuity floor is what turns luck into a measurement, which is why
+``test_the_scan_finds_the_calls_it_is_supposed_to_guard`` exists and why it asserts a number rather
+than "found something".
+
+The matcher therefore treats a bare ``Name`` argument as a candidate in any module that builds git
+argv literally somewhere. Over-inclusive on purpose: the remedy is one keyword, and the failure it
+prevents rewrote a branch.
 """
 
 from __future__ import annotations

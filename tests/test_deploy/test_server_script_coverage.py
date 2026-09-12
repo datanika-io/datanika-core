@@ -28,6 +28,7 @@ either the installer names it or `NOT_INSTALLED` explains it.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -389,7 +390,15 @@ def _repo_from_real_gitattributes(tmp_path: Path, extra: str = "") -> Path:
     """
     repo = tmp_path / "probe"
     repo.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(repo)], capture_output=True, check=True)
+    # core#1307: git exports GIT_DIR to its hooks, and the pre-push hook runs this file.
+    # Without the scrub, `git init` re-initialises the REAL repository instead of `repo`.
+    subprocess.run(
+        ["git", "init", "-q", str(repo)],
+        capture_output=True,
+        check=True,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")},
+    )
+    assert (repo / ".git").is_dir(), "git init created no repo here; ambient GIT_DIR (core#1307)"
     (repo / ".gitattributes").write_bytes(GITATTRIBUTES.read_bytes() + extra.encode("utf-8"))
     return repo
 

@@ -21,6 +21,7 @@ skipped exactly when the suite is being trusted.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -58,6 +59,30 @@ WRITES_WRONG_SHA = _attr(
 )
 
 
+def _clean_env() -> dict:
+    """An environment with every ``GIT_*`` variable stripped.
+
+    core#1307, and it is not defensive tidiness -- without it this fixture DESTROYS the
+    repository you are pushing from. **git exports ``GIT_DIR`` to its hooks**, and the pre-push
+    hook runs ``tests/test_deploy``. Under it, ``cwd=tmp_path`` isolates the directory and
+    nothing isolates the repository: ``git init`` re-initialises the REAL repo, ``cwd`` becomes
+    its work tree, and the ``git add -A`` below records every tracked file as deleted because
+    none of them exist under ``tmp_path``.
+
+    Measured 2026-09-12: a push left the worktree at ``ccbb08b``, author ``t <t@example.com>``,
+    subject ``seed``, with a two-file tree and 889 files deleted. git even says so --
+    ``warning: re-init: ignored --initial-branch=main`` -- and ``capture_output=True`` swallows it.
+
+    ⚠️ It fails NOWHERE else. Standalone and in a plain CI run there is no ``GIT_DIR``, so this
+    file passes and looks fine, which is why it survived review and a required check.
+
+    Copied in spirit from ``tests/test_hooks/test_pre_push_gating.py``, which has carried this
+    fix -- and this explanation -- since before the incident. That it was not inherited here is
+    what ``test_git_env_isolation.py`` now prevents.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
 @pytest.fixture
 def gate(tmp_path: Path):
     """The REAL script, beside stub gates, in a throwaway git repo.
@@ -82,10 +107,26 @@ def gate(tmp_path: Path):
         ["git", "config", "user.email", "t@example.com"],
         ["git", "config", "user.name", "t"],
     ):
-        subprocess.run(cmd, cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(cmd, cwd=tmp_path, check=True, capture_output=True, env=_clean_env())
+    # ASSERT THE ISOLATION IS IN EFFECT, before the destructive command runs. If GIT_DIR
+    # redirected `git init` at another repository, `.git` is not here -- and the `git add -A`
+    # on the next line would stage this fixture's two files into that repo as a commit
+    # deleting everything else. Failing here costs a red test; not failing here cost a branch.
+    assert (tmp_path / ".git").is_dir(), (
+        "`git init` created no repository in tmp_path, so an ambient GIT_DIR redirected it at "
+        "another one (core#1307). Refusing to run `git add -A` against it."
+    )
     (tmp_path / "seed.txt").write_text("x", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-qm", "seed"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True, env=_clean_env()
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "seed"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        env=_clean_env(),
+    )
 
     def run(blast: str, attr: str) -> subprocess.CompletedProcess[str]:
         (scripts / "blast_radius.py").write_text(blast, encoding="utf-8")
@@ -97,6 +138,7 @@ def gate(tmp_path: Path):
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=_clean_env(),
         )
 
     return run

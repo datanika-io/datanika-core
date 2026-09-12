@@ -23,12 +23,21 @@ logs look identical either way. Nothing turns red -- except ``image-cve``, which
 continuously, and was read as routine because it is non-required (twice, by the author of this
 test, before promoting). A guard that cannot be read habitually is the point.
 
-WHAT THIS DOES NOT BUY
-----------------------
-Freshness, not reproducibility. Two builds a week apart still differ and nothing records which
-base either used. Pinning by digest is the stronger fix; it needs a deliberate bump process
-that does not exist yet. If that process ever lands, this test should be replaced by one
-asserting the digest pin -- not deleted.
+🔴 CORRECTED 2026-09-12 -- ``pull: true`` ALONE WAS NOT ENOUGH, measured on run 34692477424.
+That build pulled the current base digest and the apt layer STILL came from cache::
+
+    #6  [base 1/9] FROM python:3.12-slim@sha256:78387bc3...     <- base current
+    #11 CACHED     RUN apt-get update && apt-get install ...    <- apt NOT re-run
+    Get:1 = 0 | Reading package lists = 0 | Unpacking <any pkg> = 0
+
+``cache-from: type=gha`` restored the layer regardless of the refreshed base. So the base is
+now PINNED BY DIGEST in the Dockerfile, which invalidates deterministically: changing that
+line's text invalidates the instruction and everything after it. ``pull: true`` is kept because
+it is correct for the remaining unpinned references, but it is no longer the load-bearing half.
+
+⚠️ The earlier version of this docstring said a digest pin "needs a deliberate bump process
+that does not exist yet". It exists now and it is self-reinforcing: ``image-cve`` going red IS
+the signal to bump, and the same gate confirms the bump worked.
 """
 
 from __future__ import annotations
@@ -139,4 +148,53 @@ def test_the_production_deploy_pulls_its_base() -> None:
         "python:3.12-slim dated 2026-07-14 against a 2026-09-01 upstream, so the image that "
         "served production carried an apt layer seven weeks old while reporting a Created "
         "timestamp from the night before."
+    )
+
+
+def test_the_base_image_is_pinned_by_digest() -> None:
+    """The base must be pinned by digest, not by a floating tag.
+
+    This is the assertion that actually holds, and it exists because the obvious one did not:
+    `pull: true` refreshed the base and the apt layer above it was still served from the gha
+    cache (run 34692477424). A digest in the `FROM` line invalidates by ORDINARY layer-cache
+    semantics -- the instruction text changed -- rather than by anything about how a remote
+    cache derives its keys.
+    """
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    from_lines = [
+        line.strip()
+        for line in dockerfile.splitlines()
+        if line.startswith("FROM ") and not line.startswith("FROM base")
+    ]
+    assert from_lines, (
+        "no FROM lines found in the Dockerfile. This test cannot be vacuously true: if the "
+        "Dockerfile moved, re-point REPO_ROOT rather than deleting the assertion."
+    )
+
+    # Only external bases need a digest. `FROM variant-${...}` names a stage in this file.
+    external = [f for f in from_lines if "@sha256:" not in f and not f.startswith("FROM variant-")]
+    assert not external, (
+        f"these base images are not pinned by digest: {external}. A bare tag is not re-fetched "
+        "by Docker, so the build silently uses whatever copy is cached -- on the production box "
+        "that was a copy from 2026-07-14 against a 2026-09-01 upstream, and every layer above "
+        "it, including `apt-get install`, stayed valid for seven weeks. To bump: "
+        "`docker pull <image>` then `docker image inspect <image> --format "
+        "'{{index .RepoDigests 0}}'` and paste the digest in."
+    )
+
+
+def test_the_pinned_digest_is_well_formed() -> None:
+    """A truncated or hand-typed digest fails the build late and confusingly.
+
+    Asserted separately from the pin itself so a malformed digest is not reported as "not
+    pinned", which would send the reader to the wrong fix.
+    """
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    digests = re.findall(r"^FROM\s+\S+@sha256:([0-9a-f]*)", dockerfile, re.MULTILINE)
+    assert digests, "expected at least one digest-pinned FROM; found none"
+    malformed = [d for d in digests if len(d) != 64]
+    assert not malformed, (
+        f"digest(s) are not 64 hex characters: {[(d[:12] + '...', len(d)) for d in malformed]}. "
+        "A truncated digest fails at image resolution with a message about the manifest, which "
+        "reads as a registry problem rather than a typo."
     )

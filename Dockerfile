@@ -33,7 +33,41 @@ ARG DATANIKA_IMAGE_EDITION=cloud
 # =============================================================================
 # base — everything both editions share, including all the expensive work.
 # =============================================================================
-FROM python:3.12-slim AS base
+# 🚨 PINNED BY DIGEST, AND THE PIN IS WHAT REFRESHES THE OS PACKAGES (core#1313).
+#
+# This was `FROM python:3.12-slim` — a floating tag. Docker does not re-fetch a tag it already
+# holds, so the box built against a copy cached 2026-07-14 while upstream had moved on, and every
+# layer above it stayed valid. The image serving production reported `Created` as the previous
+# night and carried an apt layer dated seven weeks earlier. A REBUILD IS NOT A REFRESH.
+#
+# ⚠️ `pull: true` ALONE DOES NOT FIX THIS — measured, not assumed. Run 34692477424 pulled this
+# exact digest and the apt layer STILL came from cache:
+#
+#     #6  [base 1/9] FROM python:3.12-slim@sha256:78387bc3...     <- base current
+#     #11 CACHED     RUN apt-get update && apt-get install ...    <- apt NOT re-run
+#     Get:1 = 0 | Reading package lists = 0 | Unpacking <any pkg> = 0
+#
+# `cache-from: type=gha` restored the layer regardless of the refreshed base. The pin works where
+# the pull did not because changing this line's TEXT invalidates this instruction and everything
+# after it — ordinary, deterministic layer-cache semantics rather than a property of the remote
+# cache's key derivation.
+#
+# 🔑 HOW TO BUMP, and why the process is the point. `image-cve` going red IS the signal: it means
+# the pinned base has accumulated fixable CVEs. Then:
+#
+#     docker pull python:3.12-slim
+#     docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}'
+#     # paste the digest below, commit, let image-cve confirm green
+#
+# That makes the base a REVIEWABLE INPUT — the version is in git, the bump is a diff, and the
+# gate that tells you to bump is the same gate that confirms the bump worked. A floating tag gave
+# neither reproducibility nor freshness; this gives both, at the cost of a deliberate bump.
+#
+# ⚠️ Do NOT "simplify" this back to a bare tag because a bump felt like friction. The friction is
+# the mechanism.
+#
+# Pinned 2026-09-12 to the 2026-09-01 upstream build.
+FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS base
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let

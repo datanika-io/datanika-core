@@ -68,6 +68,55 @@ would just be a row an attacker now controls.
 `user_pii.pending_email` exists precisely so the pending value has somewhere to live that is not
 `users.email`. Use it.
 
+### 3a · Is §3 a disclosure? — Product ruling, 2026-09-12
+
+`WORKFLOW_RULES` §4 requires that a finding describing how the product leaks a credential, bypasses
+an authorization check, or discloses another tenant's data carry a **neutral title**, with the
+mechanism in the private `plans/security/` — **for life**, not until a fix ships. §3 was reviewed
+against that rule because this spec sits in a **public** repository, and a spec can disclose as
+readily as an issue can.
+
+**Ruling: §3 is a design constraint, not a disclosure. It stays here, in full.**
+
+The rule's own test is whether the text describes *"deployments the finding describes that are
+running right now on a released tag."* §3 does not:
+
+- **The flow it constrains does not exist.** `EmailChangeRequest` has **0** references in
+  `services/` and **0** in `ui/`, and the only assignments to `users.email` anywhere in `services/`
+  + `ui/` are `= None` on the erase paths. No shipped code path writes a user-supplied value to that
+  column, so there is no deployment for §3 to describe.
+- **What §3 says about shipped code is a safety property**, not a way around one: that
+  `resend_verification` reads its destination from the `User` row. Publishing the reason a control
+  is safe is not publishing a way past it.
+- The hazard it names is an outbound mail relay — **none of the three classes the rule lists.**
+  That is not the reason for the ruling, and it would not carry it alone; it is recorded so the fit
+  is known to have been checked rather than assumed.
+
+**And the reason that decides it: §3 is preventive.** It exists so this defect is never created,
+and Engineering builds from this spec. Removing it would make the vulnerability **more** likely, not
+less. The rule's own logic — *"the map outlives the vulnerability"* — presupposes a vulnerability
+to map. Applied to a constraint whose entire purpose is to prevent one, it inverts.
+
+🚨 **The condition that flips this ruling, and it has a reader.** The moment the email-change
+flow ships, §3 stops describing hypothetical code and starts describing deployed code:
+
+- If **AC7**'s `users.email` assertion exists and has been **seen to fail**, §3 describes a
+  *guarded* property and remains a constraint.
+- If the flow ships **without** that assertion, §3 becomes a precise, indexed description of where
+  to find a live open relay. **It must then move to `plans/security/`, and this section must be
+  replaced by a neutral pointer.**
+
+The reader who must notice is **whoever reviews the implementing PR**, because AC7 is already on
+their checklist. That is the whole trigger — no separate watcher, and nothing to remember.
+
+⚠️ **The sentence in §3 about the existing regression test still passing is kept deliberately.**
+It reads the most like attacker guidance of anything here, and it is the single load-bearing reason
+AC7 exists: without it a reviewer reasonably concludes the existing test already covers this case.
+Cutting it would remove the justification for the control that keeps this section a constraint.
+
+This ruling is Product's, and is **reversible on the coordinator's or the founder's call.** A
+neutral filing is the cheap and reversible direction, and I would not argue against being overruled.
+
 ## 4. Rate limiting: a second bucket, not the existing one
 
 The [core#700] limiter is `verify-resend:{user_id}`, 3 per 3600 s, via

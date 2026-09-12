@@ -57,6 +57,8 @@ what "done" means from the user's side.
 | [`SPEC_CONTEXTUAL_TOOLTIPS.md`](SPEC_CONTEXTUAL_TOOLTIPS.md) | The onboarding tooltip component and where it may appear. | Shipped |
 | [`SPEC_WAVE1_CONNECTOR_FIELDS.md`](SPEC_WAVE1_CONNECTOR_FIELDS.md) | Config fields for the Wave-1 connectors, plus a "Shipped reality" section recording where the implementation diverged. | Shipped |
 | [`SPEC_SOC2_ROADMAP.md`](SPEC_SOC2_ROADMAP.md) | The SOC 2 Type I readiness programme and its control inventory. ⚠️ **Its dates have expired and the public claim was withdrawn 2026-08-30** — the programme is parked, not cancelled, and nothing on datanika.io may state a status or a quarter for it. | Parked |
+| [`SPEC_EMAIL_CHANGE.md`](SPEC_EMAIL_CHANGE.md) | Changing your email address — [core#655] AC4. Needs no migration; §3 carries the invariant that keeps [core#700]'s resend control from becoming an open relay, and §3a records why that is a design constraint rather than a disclosure. | Contract |
+| [`SPEC_FIELD_REQUIREDNESS.md`](SPEC_FIELD_REQUIREDNESS.md) | How a form says a field is required — the convention [core#1311] is blocked on. Markers are derived, never authored into translated strings. | Contract |
 
 ---
 

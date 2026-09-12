@@ -1,0 +1,252 @@
+{
+  "config": {
+    "configFile": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\playwright.config.ts",
+    "rootDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/tests",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\global-setup.ts",
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "overage-charge-cycle.spec.ts",
+      "file": "overage-charge-cycle.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "V2 P5 overage charge cycle @slow",
+          "file": "overage-charge-cycle.spec.ts",
+          "line": 80,
+          "column": 6,
+          "specs": [
+            {
+              "title": "cycle: seed → T-23h notify → T+0 charge → retry no-op",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                      "location": {
+                        "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                        "line": 81,
+                        "column": 8
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "skipped",
+                      "duration": 0,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:52:01.919Z",
+                      "annotations": [
+                        {
+                          "type": "skip",
+                          "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                          "location": {
+                            "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                            "line": 81,
+                            "column": 8
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "skipped"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-cb780b96673d6bcb9047",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 91,
+              "column": 7
+            },
+            {
+              "title": "Paddle 4xx response marks Charge failed with reason",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                      "location": {
+                        "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                        "line": 81,
+                        "column": 8
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "skipped",
+                      "duration": 0,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:52:01.950Z",
+                      "annotations": [
+                        {
+                          "type": "skip",
+                          "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                          "location": {
+                            "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                            "line": 81,
+                            "column": 8
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "skipped"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-eb2ffff0e9410515dabc",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 215,
+              "column": 7
+            },
+            {
+              "title": "no charge when usage under included",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                      "location": {
+                        "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                        "line": 81,
+                        "column": 8
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "skipped",
+                      "duration": 0,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:52:01.951Z",
+                      "annotations": [
+                        {
+                          "type": "skip",
+                          "description": "Requires DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox creds",
+                          "location": {
+                            "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\overage-charge-cycle.spec.ts",
+                            "line": 81,
+                            "column": 8
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "skipped"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-785e8679fe0ef1f01899",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 230,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-12T09:52:00.701Z",
+    "duration": 1268.3090000000002,
+    "expected": 0,
+    "skipped": 3,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

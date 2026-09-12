@@ -2674,6 +2674,145 @@ groups:
           summary: "The production settings exporter has stopped reporting"
           description: "datanika_prod_settings_scrape_success is absent for more than 8 of the last 20 samples. While this is true, Production Setting Violation CANNOT fire — a missing filtering metric reads as health. Check the */5 cron and /opt/datanika/scripts/export-prod-settings.sh on the pointer.gr box, and that node-exporter still has /opt/datanika/node_textfile mounted at /textfile."
 
+      # ── Watchdog: the scheduled-workflow watchdog's OWN cadence (core#1264) ──
+      # `scheduled-workflow-watchdog.yml` auto-discovers every workflow with a
+      # `schedule:` key — including itself — which is vacuous for the failure it
+      # exists to catch. Its check is "did a scheduled run happen?", and answering
+      # that requires a run to happen. If its own schedule is auto-disabled
+      # (`disabled_inactivity`) or silently stops, there is no run, no check, no
+      # issue, and nothing red anywhere.
+      #
+      # Since core#1260 the filing path ends in `exit 1`, so a RED run is what a
+      # correct detection looks like. That leaves: red = found something, and
+      # SILENCE = HEALTHY. Silence is also what total failure looks like.
+      #
+      # These two rules are fed from the BOX, not from Actions, because every
+      # in-Actions observer inherits the failure it is meant to observe. The box
+      # is not subject to GitHub's scheduler or to `disabled_inactivity`.
+      #
+      # NOT graded by punctuality: honoured times for that cron run +1h52m to
+      # +2h53m past the declared 41 16 * * * and drift ~1h/day. 38h is a CADENCE
+      # budget (a ~24h cron plus a full day of slack), not a lateness threshold.
+      #
+      # 🔑 Why two rules and not one: "the API said there are no runs" and "the API
+      # call failed" are both an empty parse and mean opposite things. The exporter
+      # emits `scrape_success` separately for exactly that reason, and a failed call
+      # carries the previous timestamp forward so a network blip cannot manufacture
+      # a staleness page. Collapsing these into one rule reintroduces the ambiguity
+      # the exporter was written to remove.
+      - uid: watchdog-scheduled-run-stale
+        title: Scheduled Workflow Watchdog Has Not Run
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              # Guarded by scrape_success so a failed API call cannot page as staleness.
+              # A value of 0 (API answered, listed no scheduled runs) is ancient and fires,
+              # which is the intended loud failure rather than a query selecting nothing.
+              expr: 'count_over_time(((time() - datanika_watchdog_last_scheduled_run_timestamp_seconds > 136800) and on(workflow) (datanika_watchdog_scrape_success == 1))[5m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [8]
+              refId: C
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "The scheduled-workflow watchdog has not produced a scheduled run in over 38h"
+          description: "datanika_watchdog_last_scheduled_run_timestamp_seconds is older than 38h while the exporter reports a successful API read, so this is a statement about the watchdog and not about the network. While this is true, NOTHING is checking whether the project's other scheduled workflows are still firing — the watchdog cannot report its own silence. Check the workflow is not `disabled_inactivity` at https://github.com/datanika-io/datanika-core/actions/workflows/scheduled-workflow-watchdog.yml. A value of 0 means the API answered and listed no scheduled runs at all."
+
+      - uid: watchdog-freshness-exporter-gone
+        title: Watchdog Freshness Exporter Gone
+        condition: C
+        noDataState: OK
+        execErrState: Alerting
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: PBFA97CFB590B2093
+            model:
+              # absent() inverts the polarity: it returns a series precisely WHEN the
+              # metric is missing. Without this, the rule above is a filtering
+              # expression whose input vanishing reads as health — the same hole
+              # `watchdog-prod-settings` exists for, one level up.
+              #
+              # ⚠️ TIME TO FIRE IS ~7 MINUTES, NOT ~2, and this surprised me into
+              # thinking the rule was broken. `absent()` inherits Prometheus's
+              # `lookback_delta` (5m default): an instant query for a series still
+              # resolves to its last sample for five minutes after the scrape stops,
+              # so absent() stays FALSE for that whole window. Only then does the
+              # `[5m:15s]` debounce start accumulating toward `gt [8]`.
+              #
+              # Measured 2026-09-12, removing the metric and sampling the count:
+              #     T+1.5m  7     (residue from before the metric existed)
+              #     T+3m    7     still below threshold — looks broken, is not
+              #     T+5m    9     crosses gt [8] — FIRING
+              #     T+6m    13
+              # Control at the same instants: absent() of a live metric = 0 series.
+              # So the honest figure is "fires ~5 minutes after the exporter stops",
+              # and a reading of 7 three minutes in is the rule working, not failing.
+              # This applies verbatim to `watchdog-prod-settings` above, which has
+              # the identical shape — neither is a two-minute detector.
+              expr: 'count_over_time((absent(datanika_watchdog_freshness_last_run_timestamp_seconds))[5m:15s])'
+              refId: A
+          - refId: B
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              refId: B
+          - refId: C
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [8]
+              refId: C
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The watchdog freshness exporter has stopped reporting"
+          description: "datanika_watchdog_freshness_last_run_timestamp_seconds is absent for more than 8 of the last 20 samples. While this is true, Scheduled Workflow Watchdog Has Not Run CANNOT fire — a missing filtering metric reads as health. Check the cron entry for /opt/datanika/scripts/export-watchdog-freshness.sh on the pointer.gr box, and that node-exporter still has /opt/datanika/node_textfile mounted at /textfile."
+
   - orgId: 1
     name: Production Configuration
     folder: Datanika

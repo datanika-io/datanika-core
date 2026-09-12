@@ -41,6 +41,7 @@ INSTALL=(
     restore-drill.sh
     rebuild-parity-drill.sh
     export-prod-settings.sh
+    export-watchdog-freshness.sh
 )
 
 # Installed but NOT executable — read as data by the scripts above, never run.

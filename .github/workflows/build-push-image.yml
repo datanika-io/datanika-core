@@ -143,6 +143,11 @@ jobs:
           file: build-context/datanika/Dockerfile
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # core#1313 — THIS is the build that matters most, because `cache-to` below
+          # makes it the SOURCE of the gha cache every other job reads. Without `pull`,
+          # a base image cached here propagates staleness to image-probe, image-cve and
+          # core-only-image, and none of them can refresh it on their own.
+          pull: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64

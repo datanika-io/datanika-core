@@ -141,9 +141,9 @@ TIERS: tuple[Tier, ...] = (
         number=4,
         name="Execute & Control",
         summary=(
-            "Trigger runs synchronously with `?wait=true`, cancel stuck "
-            "runs, retry safely with Idempotency-Key headers, monitor "
-            "history, and browse the auto-generated catalog."
+            "Trigger runs synchronously with `?wait=true`, retry safely with "
+            "Idempotency-Key headers, monitor history, and browse the "
+            "auto-generated catalog."
         ),
         capabilities=(
             Capability(
@@ -161,7 +161,8 @@ TIERS: tuple[Tier, ...] = (
             Capability(
                 name="Control",
                 description=(
-                    "Cancel runs, monitor run history, stream logs, browse the data catalog."
+                    "Mark runs cancelled (this does not stop a run), monitor run history, "
+                    "stream logs, browse the data catalog."
                 ),
                 endpoints=(
                     "POST /api/v1/runs/{id}/cancel",

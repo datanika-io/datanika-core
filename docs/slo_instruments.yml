@@ -351,19 +351,26 @@ slos:
     status: measured
     source: celery
     query: >-
-      sum(increase(celery_task_failed_total[7d]))
-      / clamp_min(sum(increase(celery_task_received_total[7d])), 1)
-    samples_query: 'sum(increase(celery_task_received_total[7d]))'
+      increase(sum(celery_task_failed_total{exception!="RunFailedError"})[7d:1m])
+      / clamp_min(increase(sum(celery_task_received_total)[7d:1m]), 1)
+    samples_query: 'increase(sum(celery_task_received_total)[7d:1m])'
     min_samples: 20
     notes:
       - "celery-exporter reads the broker event stream from a single process, so
          these counters do not have the per-process defect that core#895
          describes for the app's HTTP metrics. Verified: resets() over 30d is 0
          here and 121 on http_requests_total."
-      - "The SLO says 'excluding user-error exceptions' and the exporter cannot
-         make that distinction. Today every task is internal, so the two
-         populations coincide; that stops being true once user-triggered runs
-         fail in production."
+      - "Aggregated BEFORE increase() (core#1356). The exporter labels a failure
+         by exception class and every series by worker hostname, so the first
+         failure of a kind, and each new worker's first receipt, is a series
+         born at a non-zero value, which increase() on the raw counter never
+         counts. Production, 7 days to 2026-09-15 22:53Z: receipts read 337.03
+         aggregated and 318.02 in the raw form."
+      - "'Excluding user-error exceptions' is approximated by excluding
+         RunFailedError, the class a run task raises when its run ended FAILED
+         (core#1352). That removes every failed run, whoever caused it, and no
+         other exception, so this is a task-exception rate and not a run-failure
+         rate. The runs table is the reading for failed runs."
 
   error-rate-slos-landing-blackbox-probe-success-rate:
     status: measured

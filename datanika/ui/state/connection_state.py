@@ -1095,6 +1095,29 @@ class ConnectionState(BaseState):
                 raise UserFacingError(str(exc)) from exc
             if not parsed.base_url:
                 raise UserFacingError("No base URL found in the spec — set the Base URL field")
+            # core#1348 item 2. OpenAPI allows a relative server URL (`/api/v1`), resolved against
+            # the location the document was served from. A pasted document has no location, so a
+            # relative URL gives a connection with no host. The form fills Base URL from the spec
+            # only when it can, and refuses when it cannot.
+            from urllib.parse import urlparse
+
+            base = urlparse(parsed.base_url)
+            if base.scheme not in ("http", "https") or not base.netloc:
+                raise UserFacingError(
+                    f"The base URL {parsed.base_url!r} has no scheme and host, so there is nothing "
+                    "to call — set the Base URL field to the API's full address"
+                )
+            # core#1345. A spec that parses to no loadable endpoint used to save as
+            # `resources: []`, silently, and every run then failed. Refuse it here, with the
+            # parser's own reasons, which otherwise reach only the API response.
+            if not parsed.resources:
+                reasons = "; ".join(parsed.warnings[:3]) or "no GET operation returns a JSON array"
+                more = len(parsed.warnings) - 3
+                if more > 0:
+                    reasons = f"{reasons}; and {more} more"
+                raise UserFacingError(
+                    f"This spec has no endpoint the connector can load: {reasons}"
+                )
             config["spec_inline"] = self.form_openapi_spec
             config["base_url"] = parsed.base_url
             config["resources"] = parsed.resources

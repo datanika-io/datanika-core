@@ -1646,7 +1646,13 @@ class DltRunnerService:
 
         catalog = config.get("resources")
         if not catalog or not isinstance(catalog, list):
-            raise DltRunnerError("OpenAPI source has no resource catalog — re-parse the spec")
+            # core#1345. "Re-parse the spec" named a control that does not exist. Saving the
+            # connection again is the re-parse, and the save now says what it could not load
+            # instead of storing an empty catalog.
+            raise DltRunnerError(
+                "OpenAPI source has no resource catalog. Open the connection and save it again: "
+                "saving re-reads the spec and says which endpoints it could not load"
+            )
 
         selected = dlt_config.get("resource_names")
         if selected:

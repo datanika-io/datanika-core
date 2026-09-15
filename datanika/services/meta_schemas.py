@@ -44,7 +44,12 @@ DLT_CONFIG_SCHEMA: dict = {
             "enum": sorted(VALID_WRITE_DISPOSITIONS),
             "description": (
                 "append: insert rows. replace: drop and recreate table. "
-                "merge: upsert by primary_key (requires merge_config in full_database mode)."
+                "merge: upsert by primary_key (requires merge_config in full_database mode). "
+                "If omitted, SaaS, OpenAPI and file sources replace their tables on every run, "
+                "because every run re-fetches every record; other sources use what each resource "
+                "declares, else append. For a non-SQL source, append sent together with mode is "
+                "read as the upload form's old stored default and is not applied; send append "
+                "without mode to append deliberately."
             ),
         },
         "table": {

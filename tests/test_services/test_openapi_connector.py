@@ -111,6 +111,13 @@ class TestBuildOpenApiSource:
         with pytest.raises(DltRunnerError, match="catalog"):
             svc._build_openapi_source({"base_url": "https://x.io"}, {})
 
+    def test_the_missing_catalog_error_names_a_remedy_that_exists(self, svc):
+        """core#1345. The message said "re-parse the spec", and no such control exists. Saving
+        the connection again is the re-parse, and since core#1345 that save says what it could
+        not load instead of storing an empty catalog."""
+        with pytest.raises(DltRunnerError, match="save it again"):
+            svc._build_openapi_source({"base_url": "https://x.io"}, {})
+
     def test_unknown_resource_names_raises(self, svc):
         with pytest.raises(DltRunnerError, match="resource_names"):
             svc._build_openapi_source(OPENAPI_CONFIG, {"resource_names": ["nope"]})

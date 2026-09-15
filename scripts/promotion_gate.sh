@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The last thing between `dev` and production, and the only one that refuses on silence.
 #
-# core#1287. `verify_e2e_attribution.py` has crashed TWICE on a change to
+# core#1288 (related). `verify_e2e_attribution.py` has crashed TWICE on a change to
 # `e2e_tier_streak.py`'s contract (core#1205, core#1285). Both times it was found
 # by a human mid-promotion, and both times the crash was survivable only because
 # somebody happened to be reading the output.

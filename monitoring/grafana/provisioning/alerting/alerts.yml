@@ -892,8 +892,32 @@ groups:
       # read off its README: `celery_task_failed_total{name, hostname, queue_name,
       # exception}`. `sum()` collapses `hostname`, which is the worker's container ID and
       # therefore changes on every deploy.
+      #
+      # core#1356 (2026-09-15) -- repointed, it STILL could not fire, for two independent
+      # reasons, both measured on production:
+      #
+      #   1. THE NUMBER. It was `sum(rate(...[15m])) > 0.1`: more than 90 failures in 15
+      #      minutes, against 40-48 Celery tasks a DAY (14 days of increase()).
+      #   2. THE SHAPE. The exporter holds a 0-valued failed series per (hostname, name,
+      #      queue_name) with exception="", and labels a real failure exception="<Class>"
+      #      (src/exporter.py:293-300 in the 0.12.2 image). So the first failure of a kind
+      #      lands in a NEW series born at 1, and rate()/increase() on the raw counter never
+      #      count a series' first sample. hostname changes on every deploy, so at our volume
+      #      almost every failure is a first of its kind: NO threshold on the raw form fires.
+      #      Production shows it on the success counter: over the hour after a deploy the
+      #      raw form read 1.00 and aggregate-then-increase read 2.03.
+      #
+      # So: aggregate FIRST, then increase. The 0-valued series keep the sum alive, so a
+      # series born at 1 is a step in the sum. promtool 3.13.1 (production's version) fires
+      # on a first failure and on repeats, and stays silent on an exporter restart, on scrape
+      # gaps inside and past the 5m lookback, and on a deploy's new worker series; the old
+      # expression fails the same harness (tests/test_deploy/test_celery_failure_rule.py).
+      #
+      # ⚠️ WHAT THIS WATCHES: task EXCEPTIONS. A failed pipeline run is not one today -- a
+      # failed upload run ends as a Celery SUCCESS (core#1352) -- so a run can fail with
+      # this rule silent. Its silence does not mean "no run failed".
       - uid: celery-task-failures
-        title: High Celery Task Failure Rate
+        title: Celery Task Raised An Exception
         condition: C
         noDataState: OK
         execErrState: Alerting
@@ -904,7 +928,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'sum(rate(celery_task_failed_total[15m])) > 0.1'
+              expr: 'increase(sum(celery_task_failed_total)[15m:15s]) > 0.5'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -929,12 +953,12 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 5m
+        for: 0s
         labels:
           severity: warning
         annotations:
-          summary: "High Celery task failure rate"
-          description: "More than 0.1 task failures per second over the last 15 minutes."
+          summary: "A Celery task raised an exception in the last 15 minutes"
+          description: "At least one Celery task raised an exception in the last 15 minutes (celery_task_failed_total moved). This watches task exceptions only: a failed pipeline run does not currently raise one, because a failed upload run ends as a Celery success (core#1352), so runs can fail while this stays silent. The threshold is one exception because production runs about 45 tasks a day; the previous 0.1 per second meant 90 in 15 minutes and was never reachable. The traceback is in `docker logs datanika-celery`."
 
       # --- Celery Queue Depth ---
       # ⚠️ Unlike its neighbour above, this rule DID work: `celery_queue_length` is set
@@ -2556,7 +2580,7 @@ groups:
           severity: warning
         annotations:
           summary: "The celery-exporter scrape target has disappeared"
-          description: "up{job=\"celery\"} is absent, so Prometheus is not scraping celery-exporter at all. High Celery Task Failure Rate, Celery Queue Backlog and Scheduled maintenance has stopped running are ALL blind while this is true — which is the state the whole system was in before core#704. Check `docker ps` for datanika-celery-exporter and the `celery` job in monitoring/prometheus.yml."
+          description: "up{job=\"celery\"} is absent, so Prometheus is not scraping celery-exporter at all. Celery Task Raised An Exception, Celery Queue Backlog and Scheduled maintenance has stopped running are ALL blind while this is true — which is the state the whole system was in before core#704. Check `docker ps` for datanika-celery-exporter and the `celery` job in monitoring/prometheus.yml."
       - uid: watchdog-celery-worker
         title: "Watchdog: no Celery worker is reporting"
         condition: C

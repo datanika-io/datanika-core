@@ -7,7 +7,11 @@ from datanika.ui.components.connection_config_fields import type_fields
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.components.searchable_select import searchable_select
-from datanika.ui.components.secure_input import config_input, config_text_area
+from datanika.ui.components.secure_input import (
+    config_text_area,
+    labelled_config_input,
+    required_marker,
+)
 from datanika.ui.components.table_loading import table_loading
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.connection_state import ConnectionState
@@ -80,16 +84,26 @@ def connection_form() -> rx.Component:
                 ),
                 size="4",
             ),
-            rx.text(_t["connections.name"], size="2", weight="bold"),
-            # config_input, not rx.input: this is the first text field on the
+            # SPEC_FIELD_REQUIREDNESS §2.6: a form that shows the marker explains it once.
+            rx.text(
+                required_marker(),
+                " ",
+                _t["connections.required_legend"],
+                size="1",
+                color="gray",
+            ),
+            # A config input, not rx.input: this is the first text field on the
             # form, so it is exactly the slot Chrome fills with the saved
             # username when it pairs against a password input below (core#618).
-            config_input(
+            # Requiredness is stated once and sets both the marker and the
+            # input's `required` attribute (SPEC_FIELD_REQUIREDNESS §2.1).
+            labelled_config_input(
+                _t["connections.name"],
                 "name",
+                required=True,
                 placeholder=_t["connections.ph_name"],
                 value=ConnectionState.form_name,
                 on_change=ConnectionState.set_form_name,
-                required=True,
                 size="3",
             ),
             searchable_select(

@@ -63,12 +63,31 @@ services:
       # one loses the session (#646). This is why golden-path.spec.ts was 3-of-6 here:
       # `gotoReady` does a full page.goto per step, so every step re-rolls the dice.
       REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
+      # core#895 — app metrics MUST aggregate across granian's workers. Staging runs
+      # GRANIAN_WORKERS: "2", so a scrape was answered by one of two per-process
+      # prometheus_client registries. Measured on staging 2026-09-12, six scrapes:
+      # 2, 1, 2, 1, 1, 2 — a counter that DECREASES, which is impossible, and is the
+      # signature of this defect rather than of load. Prod carries the same two lines.
+      #
+      # ⚠️ This must be an ENVIRONMENT variable, not something the app sets:
+      # prometheus_client chooses its value class when it is IMPORTED, so a value set
+      # in code is already too late.
+      #
+      # ⚠️ tmpfs, not a named volume, and that is load-bearing. Each process writes a
+      # .db file named by pid; a persistent directory accumulates files from dead
+      # workers of previous container generations, and MultiProcessCollector sums
+      # whatever it finds — so yesterday's counters would be added to today's. tmpfs
+      # is empty on every container start.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    tmpfs:
+      # See PROMETHEUS_MULTIPROC_DIR above — fresh per container start by design (core#895).
+      - /tmp/prometheus_multiproc
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files
@@ -110,12 +129,31 @@ services:
       # one loses the session (#646). This is why golden-path.spec.ts was 3-of-6 here:
       # `gotoReady` does a full page.goto per step, so every step re-rolls the dice.
       REFLEX_REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env.docker - Reflex needs it as REFLEX_REDIS_URL (#646)}
+      # core#895 — app metrics MUST aggregate across granian's workers. Staging runs
+      # GRANIAN_WORKERS: "2", so a scrape was answered by one of two per-process
+      # prometheus_client registries. Measured on staging 2026-09-12, six scrapes:
+      # 2, 1, 2, 1, 1, 2 — a counter that DECREASES, which is impossible, and is the
+      # signature of this defect rather than of load. Prod carries the same two lines.
+      #
+      # ⚠️ This must be an ENVIRONMENT variable, not something the app sets:
+      # prometheus_client chooses its value class when it is IMPORTED, so a value set
+      # in code is already too late.
+      #
+      # ⚠️ tmpfs, not a named volume, and that is load-bearing. Each process writes a
+      # .db file named by pid; a persistent directory accumulates files from dead
+      # workers of previous container generations, and MultiProcessCollector sums
+      # whatever it finds — so yesterday's counters would be added to today's. tmpfs
+      # is empty on every container start.
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus_multiproc
       REFLEX_MOUNT_FRONTEND_COMPILED_APP: "true"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    tmpfs:
+      # See PROMETHEUS_MULTIPROC_DIR above — fresh per container start by design (core#895).
+      - /tmp/prometheus_multiproc
     volumes:
       - staging_dbt:/app/dbt_projects
       - staging_uploads:/app/uploaded_files

@@ -1,0 +1,212 @@
+{
+  "config": {
+    "configFile": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\playwright.config.ts",
+    "rootDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/tests",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\global-setup.ts",
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "scratch1301\\overage-charge-cycle.spec.ts",
+      "file": "scratch1301/overage-charge-cycle.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "V2 P5 overage charge cycle @slow",
+          "file": "scratch1301/overage-charge-cycle.spec.ts",
+          "line": 18,
+          "column": 6,
+          "specs": [
+            {
+              "title": "cycle: seed → T-23h notify → T+0 charge → retry no-op",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 10,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:57:48.381Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "9f23293528cdb463c89d-70d59b8ebce265eb4300",
+              "file": "scratch1301/overage-charge-cycle.spec.ts",
+              "line": 19,
+              "column": 7
+            },
+            {
+              "title": "Paddle 4xx response marks Charge failed with reason",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "description": "Needs sandbox 4xx-forcing harness — see core#361 / SPEC §4.4",
+                      "location": {
+                        "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\scratch1301\\overage-charge-cycle.spec.ts",
+                        "line": 24,
+                        "column": 10
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "skipped",
+                      "duration": 2,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:57:48.413Z",
+                      "annotations": [
+                        {
+                          "type": "skip",
+                          "description": "Needs sandbox 4xx-forcing harness — see core#361 / SPEC §4.4",
+                          "location": {
+                            "file": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\tests\\scratch1301\\overage-charge-cycle.spec.ts",
+                            "line": 24,
+                            "column": 10
+                          }
+                        }
+                      ],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "skipped"
+                }
+              ],
+              "id": "9f23293528cdb463c89d-8b0579138829068b7a54",
+              "file": "scratch1301/overage-charge-cycle.spec.ts",
+              "line": 23,
+              "column": 7
+            },
+            {
+              "title": "no charge when usage under included",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-12T09:57:48.427Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "9f23293528cdb463c89d-aee9072d37d7fd9ab1f2",
+              "file": "scratch1301/overage-charge-cycle.spec.ts",
+              "line": 27,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-12T09:57:47.288Z",
+    "duration": 1177.4650000000001,
+    "expected": 2,
+    "skipped": 1,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

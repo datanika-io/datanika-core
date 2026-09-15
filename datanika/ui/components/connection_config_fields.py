@@ -14,7 +14,11 @@ an ``autocomplete`` value by hand.
 
 import reflex as rx
 
-from datanika.ui.components.secure_input import config_input, config_text_area
+from datanika.ui.components.secure_input import (
+    config_input,
+    config_text_area,
+    labelled_config_input,
+)
 from datanika.ui.state.connection_state import ConnectionState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -270,13 +274,15 @@ def file_upload_fields() -> rx.Component:
 def rest_api_fields() -> rx.Component:
     """Fields for rest_api."""
     return rx.vstack(
-        rx.text(_t["connections.base_url"], size="2", weight="bold"),
-        config_input(
+        # Required here, in the form and in the stored-config schema alike: a blank Base URL
+        # is refused by `_validate_connection_form` for rest_api (SPEC_FIELD_REQUIREDNESS §2.1).
+        labelled_config_input(
+            _t["connections.base_url"],
             "base_url",
+            required=True,
             placeholder=_t["connections.ph_base_url"],
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,
-            required=True,
         ),
         # Genuinely optional here: an unauthenticated endpoint is a real use
         # case (the production `githubpublicapi` connection has an empty key),
@@ -986,9 +992,14 @@ def openapi_fields() -> rx.Component:
             on_change=ConnectionState.set_form_openapi_spec,
             min_height="160px",
         ),
-        rx.text(_t["connections.base_url"], size="2", weight="bold"),
-        config_input(
+        # NOT required here, and the difference from rest_api is real: a blank Base URL saves, and
+        # connection_state.py backfills it from the spec's `servers` entry. The stored-config schema
+        # still lists base_url as required; that difference is recorded, and routed to Product, in
+        # tests/test_ui/test_field_requiredness.py (SPEC_FIELD_REQUIREDNESS §4).
+        labelled_config_input(
+            _t["connections.base_url"],
             "base_url",
+            required=False,
             placeholder=_t["connections.ph_base_url"],
             value=ConnectionState.form_base_url,
             on_change=ConnectionState.set_form_base_url,

@@ -17,18 +17,24 @@ SPEC_PAGE_ENTRY §0c retracts my own filing: the link already rendered Radix acc
 attributed the wrapper's colour to the link inside it. **A darker link measures as done and fixes
 nothing.** So every assertion below is about *what kind of control it is*, never how it is painted.
 
-## Two guards that point in opposite directions
+## Two guards that pointed in opposite directions — the second is now retired, on purpose
 
 `TestTheSignUpAffordanceIsARealControl` says the affordance must be a button.
-`TestThisDidNotQuietlyDeliverCore624` says `/signup` must still have **no** social controls — that
-is [core#624]'s job, with its own spec and the template/invite context propagation this change does
-not touch. A PR that satisfies one by breaking the other has not done either.
+
+`TestThisDidNotQuietlyDeliverCore624` said `/signup` must still have **no** social controls, because
+putting them there was [core#624]'s job and carried template/invite context propagation that this
+change did not touch. **core#624 has now done that job** — the propagation is pinned in
+`tests/test_services/test_oauth_signup_context.py` and
+`tests/test_services/test_oauth_signup_invitation.py` — so the guard is replaced by its positive
+form below. It did what it was for: it kept the buttons off `/signup` until the funnel they feed
+could carry its context.
 """
 
 import json
 from pathlib import Path
 
-from datanika.ui.pages.login import _social_login_button, login_page
+from datanika.ui.components.social_auth import social_login_button
+from datanika.ui.pages.login import login_page
 from datanika.ui.pages.signup import signup_page
 
 _I18N = Path(__file__).resolve().parents[2] / "datanika" / "i18n"
@@ -73,7 +79,7 @@ class TestTheInstrumentSeesWhatItIsAsked:
     def test_the_social_buttons_are_findable_and_are_buttons(self):
         """Positive control for the comparison the whole section rests on."""
         for name, slug in (("Google", "google"), ("GitHub", "github")):
-            button = _social_login_button(name, slug)
+            button = social_login_button(name, slug)
             assert type(button).__name__ == "Button"
             assert 'size:"3"' in _props(button)
 
@@ -178,23 +184,19 @@ class TestTheSocialBlockSaysWhatItDoes:
             assert banned not in copy, f"the disclosure hardcodes {banned!r}: {copy!r}"
 
 
-class TestThisDidNotQuietlyDeliverCore624:
-    """AC2c — putting social buttons ON /signup is [core#624], not this.
+class TestSignupNowOffersTheSameSocialControls:
+    """core#624 — the positive form of the retired AC2c guard (see the module docstring)."""
 
-    §3 names both failure directions: AC2b must not be written up as having
-    delivered #624, and #624 must not be reported as blocked on this spec.
-    """
-
-    def test_signup_still_offers_no_social_controls(self):
-        rendered = str(signup_page().render()).lower()
+    def test_signup_offers_both_providers(self):
+        rendered = str(signup_page().render())
         for provider in ("google", "github"):
-            assert provider not in rendered, (
-                f"/signup now renders a {provider} control. That is core#624's "
-                "job and it carries template/invite context propagation this "
-                "change does not touch (AC2c)."
+            assert f"/api/auth/login/{provider}" in rendered, (
+                f"/signup renders no {provider} control. Every CTA on the site lands on "
+                "/signup, and it was the one auth page with no one-click option (core#624)."
             )
 
     def test_login_still_offers_both(self):
-        """Positive control: the finder above can see a provider when one exists."""
-        rendered = str(login_page().render()).lower()
-        assert "google" in rendered and "github" in rendered
+        """Control: the extraction into a shared component did not take them off /login."""
+        rendered = str(login_page().render())
+        for provider in ("google", "github"):
+            assert f"/api/auth/login/{provider}" in rendered

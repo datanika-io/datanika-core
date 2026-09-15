@@ -469,7 +469,10 @@ class TestInvitationsCannotGrantOwnership:
 _OWNER_WRITERS = {
     "datanika/services/user_service.py": {
         "create_org",  # signup default org — the creator is the owner
-        "find_or_create_oauth_user",  # OAuth default org, same reason
+        # OAuth default org, same reason. Extracted from find_or_create_oauth_user by core#624 so
+        # the social callback can apply an invitation first and create this only as the fallback.
+        # It makes a user the owner of the org it has just created, never of an existing one.
+        "create_personal_org",
         "transfer_ownership",
         "add_owner",
     },

@@ -450,6 +450,11 @@ jobs:
           push: false
           load: true
           tags: datanika-core:probe
+          # core#1313 — `FROM python:3.12-slim` is a FLOATING tag, and without this
+          # nothing ever pulls it. A cached base is never re-fetched, so every layer
+          # above it stays valid forever and `RUN apt-get update && apt-get install`
+          # is served from cache indefinitely. A REBUILD IS NOT A REFRESH.
+          pull: true
           # Read the cache build-push-image.yml populates with mode=max, so a PR
           # usually pays only the layers its own diff invalidated.
           cache-from: type=gha
@@ -622,6 +627,8 @@ jobs:
           push: false
           load: true
           tags: datanika-core:core-only
+          # core#1313 — see the note on image-probe's build. A rebuild is not a refresh.
+          pull: true
           # Reads the same gha cache build-push-image.yml populates. The two
           # editions share every layer of the `base` stage — which is all of the
           # expensive work, including the from-source lxml/xmlsec build — so this
@@ -934,6 +941,11 @@ jobs:
           push: false
           load: true
           tags: datanika-core:cve
+          # core#1313 — LOAD-BEARING HERE ABOVE ALL. Without it this job scans an
+          # image built on a base that was cached months ago, so it reports findings
+          # against packages a clean build would not install, and a fix looks like it
+          # did not work. The scanner was right; the artifact it was handed was stale.
+          pull: true
           # Reads the cache image-probe and build-push-image populate, so this
           # usually pays only the layers the diff invalidated.
           cache-from: type=gha

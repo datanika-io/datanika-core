@@ -36,7 +36,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 REPO = "datanika-io/datanika-core"
@@ -344,6 +344,25 @@ def verdict_classes_for(repo: str, jobs: list[Job], sha: str) -> dict[str, str]:
     return out
 
 
+def write_verdict(path: str | None, state: str, sha: str, detail: str = "") -> None:
+    """Record a verdict that NAMES THE COMMIT it describes.
+
+    The sha is not decoration. A verdict file left over from an earlier run would
+    otherwise vouch for whatever head is promoted next — which is core#876's whole
+    lesson ("a green that belongs to another commit is not evidence about this one")
+    applied to the gate's own artifact instead of to the jobs it reads.
+
+    Called only on a path where a verdict actually exists. An exception anywhere
+    above leaves no file, and *that* is the signal: no artifact means no reading,
+    which a caller must treat differently from a reading that says no.
+    """
+    if not path:
+        return
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    line = f"PROMOTION-GATE {state} sha={sha} at={stamp} {detail}".rstrip()
+    Path(path).write_text(line + "\n", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--sha", help="commit to check (default: the branch head)")
@@ -358,6 +377,16 @@ def main(argv: list[str] | None = None) -> int:
     # `#876`'s own warning comes true: "a verifier that always refuses is a
     # verifier somebody deletes".
     ap.add_argument("--pages", type=int, default=100, help="how many recent runs to scan")
+    # core#1287. A POSITIVE artifact, so a promotion consumes evidence rather than the
+    # absence of a complaint. This script has crashed twice on a change to
+    # `e2e_tier_streak`'s contract (core#1205, core#1285), and an unhandled exception
+    # ALSO exits 1 — so "the gate refused" and "the gate broke" are the same signal to
+    # anything reading only the exit code. The file is written only once a verdict
+    # exists, so a crash leaves none and the caller can tell those two apart.
+    ap.add_argument(
+        "--verdict-file",
+        help="write a machine-readable verdict here (an absent file means NO verdict)",
+    )
     args = ap.parse_args(argv)
 
     sha = args.sha
@@ -408,6 +437,7 @@ def main(argv: list[str] | None = None) -> int:
         # true and read as an all-clear — the exact shape this script exists to catch.
         print("Every staging verdict for this commit describes this commit's own build,")
         print("and every job produced an actual reading.")
+        write_verdict(args.verdict_file, "OK", sha, "checks=all-attributed")
         return 0
 
     absent = [n for n, f in result["jobs"].items() if f["verdict"] == "no_verdict"]
@@ -420,6 +450,10 @@ def main(argv: list[str] | None = None) -> int:
         print("::error::At least one staging verdict does NOT describe this commit (core#876).")
         print("Re-run the deploy for this SHA and let the verifiers run against it, then re-check.")
         print("A green that belongs to another commit is not evidence about this one.")
+    # A REFUSAL is still a verdict, and is written as one. The caller must be able to
+    # distinguish "I looked and the answer is no" from "I never produced an answer" —
+    # collapsing those is how a crash gets read as tooling noise and waved through.
+    write_verdict(args.verdict_file, "REFUSED", sha, "see stderr")
     return 1
 
 

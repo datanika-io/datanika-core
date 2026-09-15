@@ -6,6 +6,7 @@ from datanika.ui.components.captcha import captcha_script
 from datanika.ui.components.i18n_text import interpolate
 from datanika.ui.components.layout import PRIVACY_URL, TERMS_URL
 from datanika.ui.components.secure_input import autofill_attrs
+from datanika.ui.components.social_auth import social_login_row
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
@@ -103,6 +104,11 @@ def signup_page() -> rx.Component:
                 ),
                 on_submit=AuthState.signup,
             ),
+            # core#624. The row /login renders — divider, "or continue with", Google then GitHub —
+            # below the form, as SPEC_SIGNUP_SOCIAL_AUTH §4 decides. Above the legal sentence on
+            # purpose: agreeing to the Terms covers an account created either way, so the
+            # sentence has to sit beneath both paths rather than only the email one.
+            social_login_row(),
             rx.text(
                 # One translated sentence with the links substituted into it,
                 # not fragments joined by punctuation chosen in Python (#682).

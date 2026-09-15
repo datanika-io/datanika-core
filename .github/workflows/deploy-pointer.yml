@@ -233,9 +233,25 @@ jobs:
         # for a different reason -- their single-FILE bind mounts pin the inode -- and
         # forcing these three would recreate cadvisor on every deploy, putting a gap in
         # the container metrics the alert rules read.
+        # core#1313 — `--pull` is LOAD-BEARING, not hygiene. `FROM python:3.12-slim` is a
+        # floating tag, and without this the box builds against whatever copy of that tag
+        # happens to sit in its local cache. Measured 2026-09-12: the box's copy dated from
+        # 2026-07-14 against a 2026-09-01 upstream, so every layer above it stayed valid and
+        # `RUN apt-get update && apt-get install ...` had been served from cache for SEVEN
+        # WEEKS. The image built the night before read `Created` as that night and carried an
+        # apt layer from seven weeks earlier. A REBUILD IS NOT A REFRESH.
+        #
+        # ⚠️ Expect the first deploy after this change to be markedly slower: a new base
+        # invalidates every layer above it, including the from-source lxml/xmlsec build. That
+        # cost is the point — it is what re-running `apt-get` looks like.
+        #
+        # ⚠️ This buys FRESHNESS, not reproducibility. Two builds a week apart still differ,
+        # and nothing records which base either used. Pinning by digest is the stronger fix
+        # and needs a bump process we do not have; `image-cve` is the detector that makes this
+        # choice defensible, so a red there must not be read as routine (it was, twice).
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
-            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build app celery app_b && docker compose up -d postgres redis postgres-exporter cadvisor node-exporter'
+            'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && docker compose build --pull app celery app_b && docker compose up -d postgres redis postgres-exporter cadvisor node-exporter'
 
       # The app is deployed by SWAPPING colours, not by recreating one container.
       #

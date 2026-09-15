@@ -1,58 +1,16 @@
 """Login page."""
 
-import json
-
 import reflex as rx
 
 from datanika.config import settings
 from datanika.ui.components.captcha import captcha_script
 from datanika.ui.components.layout import legal_links
 from datanika.ui.components.secure_input import autofill_attrs
+from datanika.ui.components.social_auth import social_login_row
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 
-_backend = settings.oauth_redirect_base_url
 _t = I18nState.translations
-
-
-def _social_login_button(label: str, provider: str) -> rx.Component:
-    """Start a social login in the current tab (#418).
-
-    This has to be a real browser navigation: ``/api/auth/login/<provider>``
-    is a backend Starlette route that 302s to the provider, so nothing the
-    frontend router does can serve it. It also has to stay in *this* tab —
-    the previous ``rx.link(..., is_external=True)`` compiled to
-    ``target="_blank"``, so the user authenticated in a second tab and ended
-    up signed in there while the original still showed the sign-in form.
-
-    Neither ``rx.link`` nor ``rx.el.a`` can express that: both render a
-    react-router ``Link``, which treats a *same-origin* absolute URL as an
-    in-app route — and in production the backend and frontend share
-    ``app.datanika.io``, so the click would be swallowed by the router.
-    (In dev the origins differ, so that breakage would not show up locally.)
-    ``rx.redirect`` has the same same-origin branch. Hence an explicit
-    assignment, which is unambiguous whatever the router does.
-
-    **Sizing (#605).** These two are the only controls in the card that share a
-    row, so they are the only ones that must not use ``width="100%"``. They used
-    to, and the GitHub button rendered *outside* the card: a Radix button
-    computes to ``flex: 0 0 auto``, so ``flex-basis`` resolved to the declared
-    100% (294px each) and ``flex-shrink: 0`` forbade the row from reducing them
-    — 294 + 12 + 294 laid out in a 294px row. ``flex="1 1 0"`` makes the basis 0
-    and lets both grow into equal halves; ``min_width="0"`` overrides a flex
-    item's default ``min-width: auto``, which would otherwise floor each button
-    at its own label width.
-    """
-    target = f"{_backend}/api/auth/login/{provider}"
-    return rx.button(
-        label,
-        variant="outline",
-        size="3",
-        flex="1 1 0",
-        min_width="0",
-        type="button",
-        on_click=rx.call_script(f"window.location.assign({json.dumps(target)})"),
-    )
 
 
 def _forgot_password_link() -> rx.Component:
@@ -262,14 +220,9 @@ def login_page() -> rx.Component:
                 on_submit=AuthState.login,
             ),
             _forgot_password_link(),
-            rx.divider(),
-            rx.text(_t["auth.or_continue_with"], size="2", color="gray", text_align="center"),
-            rx.hstack(
-                _social_login_button("Google", "google"),
-                _social_login_button("GitHub", "github"),
-                width="100%",
-                spacing="3",
-            ),
+            # core#624: the divider, "or continue with" and both provider buttons are one shared
+            # component, rendered identically on /signup. #418 and #605 live in social_auth.py.
+            social_login_row(),
             # core#1081 AC2b / SPEC_PAGE_ENTRY §3. "or continue with" is true for
             # a returning user and SILENT for a new one — and these two controls
             # start `/api/auth/login/<provider>`, which lands in

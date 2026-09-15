@@ -653,10 +653,12 @@ class TestEmptinessIsCountedPerRepo:
 class TestTheWatchdogReportsItsOwnBreakage:
     """A crash and a finding must not be the same signal.
 
-    Filing a finding ends in `exit 1`, so a red scheduled run is the *designed*
-    outcome of the watchdog working. That camouflaged three nights of it being
-    dead. The crash path therefore has to reach the issue tracker too, under a
-    title that is distinguishable at a glance.
+    Filing a finding used to end in `exit 1`, so a red scheduled run was the *designed*
+    outcome of the watchdog working. That camouflaged three nights of it being dead
+    (core#691) and later made it flag ITSELF every day (core#1272). The crash path
+    therefore reaches the issue tracker under a title distinguishable at a glance --
+    and since core#1272 a filed report ends green, so the colours differ as well. The
+    step's exit status is tested by RUNNING it, in ``test_watchdog_filing_gate.py``.
     """
 
     # Asserted as a CONSTRUCT (`--title "<x>"`), never as the bare token, and
@@ -688,6 +690,110 @@ class TestTheWatchdogReportsItsOwnBreakage:
         body = _WATCHDOG.read_text(encoding="utf-8")
         assert "nothing was verified" in body
         assert "the detector is down" in body
+
+
+class TestTheWatchdogIsNotExemptFromItsOwnCheck:
+    """core#1272. The self-report loop was ended by changing what a red run MEANS.
+
+    Exempting its own workflow would also have stopped the daily self-report -- and blinded
+    the watchdog to the one failure nothing else in Actions can see: its own runs breaking.
+    """
+
+    _SELF = ".github/workflows/scheduled-workflow-watchdog.yml"
+
+    def _self(self, conclusions):
+        return _wf(
+            repo="datanika-io/datanika-core",
+            name="Scheduled workflow watchdog",
+            path=self._SELF,
+            crons=["41 16 * * *"],
+            recent_conclusions=conclusions,
+        )
+
+    def test_its_own_failure_streak_is_still_a_problem(self):
+        problems, _ = wd.find_problems([self._self(["failure", "failure", "success"])], NOW)
+        assert any("FIRED AND FAILED" in p and self._SELF in p for p in problems), problems
+
+    def test_its_own_green_runs_are_clean(self):
+        problems, _ = wd.find_problems([self._self(["success", "success"])], NOW)
+        assert problems == []
+
+
+class TestDeclaredPauses:
+    """core#1272. A deliberate pause is a declaration with a reason and a review date."""
+
+    _REPO = "datanika-io/datanika-core"
+    _PATH = ".github/workflows/cve-watch.yml"
+
+    def _pause(self, review_by):
+        return wd.DeclaredPause(
+            ref=f"{self._REPO} :: {self._PATH}",
+            declared_on=NOW - timedelta(days=1),
+            review_by=review_by,
+            reason="a test pause",
+        )
+
+    def _cve_watch(self, state="disabled_manually", **overrides):
+        return _wf(
+            repo=self._REPO,
+            name="CVE watch",
+            path=self._PATH,
+            crons=["27 8 * * *"],
+            state=state,
+            **overrides,
+        )
+
+    def test_a_declared_manual_pause_is_a_note_not_a_problem(self):
+        pauses = (self._pause(NOW + timedelta(days=7)),)
+        problems, notes = wd.find_problems([self._cve_watch()], NOW, pauses=pauses)
+        assert problems == []
+        assert len(notes) == 1 and "DELIBERATELY PAUSED" in notes[0], notes
+        assert "NOT running" in notes[0], "a pause must still say the schedule is not running"
+
+    def test_an_undeclared_manual_disable_is_still_a_problem(self):
+        """The control: the same workflow with no declaration pages exactly as before."""
+        problems, _ = wd.find_problems([self._cve_watch()], NOW, pauses=())
+        assert len(problems) == 1
+        assert "disabled it by hand" in problems[0]
+        assert "60 days" not in problems[0], "a manual disable must not be blamed on inactivity"
+
+    def test_a_declaration_does_not_cover_githubs_inactivity_disable(self):
+        pauses = (self._pause(NOW + timedelta(days=7)),)
+        problems, _ = wd.find_problems(
+            [self._cve_watch(state="disabled_inactivity")], NOW, pauses=pauses
+        )
+        assert len(problems) == 1
+        assert "60 days" in problems[0] and "covers a manual disable only" in problems[0]
+
+    def test_a_pause_past_its_review_date_is_a_problem_again(self):
+        pauses = (self._pause(NOW - timedelta(hours=1)),)
+        problems, notes = wd.find_problems([self._cve_watch()], NOW, pauses=pauses)
+        assert len(problems) == 1 and "passed its review date" in problems[0], problems
+        assert not any("DELIBERATELY PAUSED" in n for n in notes)
+
+    def test_a_leftover_declaration_is_reported_and_grading_resumes(self):
+        """Re-enabled but not cleaned up: say so, and do not let the entry suppress anything."""
+        pauses = (self._pause(NOW + timedelta(days=7)),)
+        wf = self._cve_watch(state="active", recent_conclusions=["failure", "failure"])
+        problems, notes = wd.find_problems([wf], NOW, pauses=pauses)
+        assert any("still has a DECLARED_PAUSES entry" in n for n in notes), notes
+        assert any("FIRED AND FAILED" in p for p in problems), problems
+
+    def test_the_real_declarations_are_well_formed_and_bounded(self):
+        ref_shape = re.compile(r"^[\w.-]+/[\w.-]+ :: \.github/workflows/[\w.-]+\.ya?ml$")
+        for pause in wd.DECLARED_PAUSES:
+            assert ref_shape.match(pause.ref), (
+                f"{pause.ref!r} is not shaped like WorkflowState.ref, so it can never match"
+            )
+            assert pause.reason.strip(), f"{pause.ref}: a pause needs a reason"
+            assert pause.declared_on < pause.review_by, f"{pause.ref}: review precedes declaration"
+            assert pause.review_by - pause.declared_on <= timedelta(days=wd.MAX_PAUSE_DAYS), (
+                f"{pause.ref}: a pause may run at most {wd.MAX_PAUSE_DAYS} days before it is "
+                "re-decided in a reviewed change"
+            )
+            if pause.ref.startswith("datanika-io/datanika-core :: "):
+                path = pause.ref.split(" :: ", 1)[1]
+                assert (_REPO_ROOT / path).is_file(), f"{pause.ref}: no such workflow here"
 
 
 class TestFiresAndFails:

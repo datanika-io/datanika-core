@@ -1,7 +1,10 @@
 """OAuth routes — Starlette routes for social login (Google + GitHub)."""
 
+import base64
 import hashlib
 import hmac
+import json
+import re
 import secrets
 from urllib.parse import urlencode
 
@@ -11,7 +14,7 @@ from starlette.routing import Route
 
 from datanika.config import settings
 from datanika.services.auth import AuthService
-from datanika.services.auth_redirects import login_error_path
+from datanika.services.auth_redirects import TEMPLATE_SLUG_RE, login_error_path, safe_next_path
 from datanika.services.oauth_service import (
     OAuthProvider,
     OAuthService,
@@ -21,6 +24,28 @@ from datanika.services.oauth_service import (
 from datanika.services.user_service import UserService, UserServiceError
 
 _OAUTH_STATE_COOKIE = "oauth_state"
+
+#: The sign-in context a flow carries across the provider round trip (core#624).
+#:
+#: ⚠️ A SECOND cookie rather than a new ``oauth_state`` format, and the reason is the deploy:
+#: under blue/green a flow can start on one colour and complete on the other. The previous release
+#: verifies ``oauth_state`` exactly as before and never reads this cookie, so it completes a flow
+#: this release started (without context — which is all it ever did); and this release completes a
+#: flow the previous one started, finding no context cookie. A changed ``oauth_state`` format would
+#: instead reject every flow that crossed the swap.
+_OAUTH_CONTEXT_COOKIE = "oauth_ctx"
+
+_FLOW_COOKIE_MAX_AGE = 600
+
+#: Longest ``invite_token`` a social sign-in will carry (core#624). An invitation link holds a
+#: JWT from ``AuthService.create_email_verification_token`` — a few hundred characters — so 512
+#: is comfortable, and it keeps the worst-case context inside one cookie. A browser silently
+#: drops a cookie over 4096 bytes, and the flow would then complete without its context.
+MAX_INVITE_TOKEN_LEN = 512
+
+#: A JWT's alphabet: base64url segments joined by dots. Anything else is not a token we issued,
+#: and refusing it keeps the value inert wherever it is stored or logged.
+_INVITE_TOKEN_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 
 def _get_providers() -> dict[str, OAuthProvider]:
@@ -64,6 +89,69 @@ def _verify_state(state: str, signature: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def _as_text(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _clean_context(raw) -> dict[str, str]:
+    """The part of ``raw`` a flow may carry, each value validated on its own terms.
+
+    Applied twice — to the ``/api/auth/login`` query string on the way in, and to the decoded
+    cookie on the way out — because a valid signature proves WE stored a value, not that the value
+    is safe: anyone can put anything in their own ``?next=`` and have it faithfully signed
+    (``SPEC_SIGNUP_SOCIAL_AUTH`` §2 constraint 1). Keys outside the context set are dropped, never
+    passed through. ``/auth/complete`` checks ``next`` and ``template`` a third time, on the way
+    into the redirect, with the same helpers.
+    """
+    context: dict[str, str] = {}
+    nxt = safe_next_path(_as_text(raw.get("next")))
+    if nxt:
+        context["next"] = nxt
+    template = _as_text(raw.get("template"))
+    if TEMPLATE_SLUG_RE.fullmatch(template):
+        context["template"] = template
+    token = _as_text(raw.get("invite_token"))
+    if len(token) <= MAX_INVITE_TOKEN_LEN and _INVITE_TOKEN_RE.fullmatch(token):
+        context["invite_token"] = token
+    return context
+
+
+def _sign_context(state: str, payload: str) -> str:
+    """HMAC over the flow's ``state`` AND its context.
+
+    Binding the state is what keeps a context inside its own flow (§8d): a context cookie left
+    behind by an abandoned flow, or paired with another tab's state, does not verify against the
+    state of the flow now completing. The label keeps this signature distinct from a state
+    signature, which is an HMAC over the state alone.
+    """
+    message = f"oauth-context\x00{state}\x00{payload}"
+    return hmac.new(settings.secret_key.encode(), message.encode(), hashlib.sha256).hexdigest()
+
+
+def _encode_context(state: str, context: dict[str, str]) -> str:
+    raw = json.dumps(context, separators=(",", ":"), sort_keys=True).encode()
+    payload = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    return f"{payload}:{_sign_context(state, payload)}"
+
+
+def _decode_context(value: str, state: str) -> dict[str, str]:
+    """The context stored for THIS flow, re-validated — or ``{}``. Never raises.
+
+    Failing closed means the sign-in completes WITHOUT context, which is what every social sign-in
+    did before core#624. It never means completing with a context that belongs to another flow.
+    """
+    if ":" not in value:
+        return {}
+    payload, signature = value.rsplit(":", 1)
+    try:
+        if not hmac.compare_digest(_sign_context(state, payload), signature):
+            return {}
+        decoded = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (TypeError, ValueError):  # non-ASCII signature, bad base64, bad JSON
+        return {}
+    return _clean_context(decoded) if isinstance(decoded, dict) else {}
+
+
 async def oauth_login(request: Request) -> RedirectResponse:
     provider = request.path_params["provider"]
     providers = _get_providers()
@@ -82,10 +170,23 @@ async def oauth_login(request: Request) -> RedirectResponse:
     response.set_cookie(
         _OAUTH_STATE_COOKIE,
         signed,
-        max_age=600,
+        max_age=_FLOW_COOKIE_MAX_AGE,
         httponly=True,
         samesite="lax",
     )
+    context = _clean_context(request.query_params)
+    if context:
+        response.set_cookie(
+            _OAUTH_CONTEXT_COOKIE,
+            _encode_context(state, context),
+            max_age=_FLOW_COOKIE_MAX_AGE,
+            httponly=True,
+            samesite="lax",
+        )
+    else:
+        # A context left by an abandoned flow could not verify against this state anyway; clearing
+        # it stops it lingering for the rest of its lifetime.
+        response.delete_cookie(_OAUTH_CONTEXT_COOKIE)
     return response
 
 
@@ -112,14 +213,26 @@ async def oauth_callback(request: Request) -> RedirectResponse:
         or returned_state != stored_state
         or not _verify_state(stored_state, signature)
     ):
+        # 🚨 Two tabs share one cookie jar, so a second flow started before this one completed
+        # lands here too (§8d, AC12). The comparison stays exact: loosening it to make that case
+        # succeed would complete this flow against the OTHER flow's context — its invitation.
         return RedirectResponse(url=_frontend(login_error_path("invalid_state")), status_code=302)
+
+    # core#624. Read only once the state has verified, and only as bound to that state.
+    context = _decode_context(request.cookies.get(_OAUTH_CONTEXT_COOKIE, ""), stored_state)
 
     svc = _get_service()
     redirect_uri = f"{settings.oauth_redirect_base_url}/api/auth/callback/{provider}"
 
     with _get_session() as session:
         try:
-            result = await svc.handle_callback(providers[provider], code, redirect_uri, session)
+            result = await svc.handle_callback(
+                providers[provider],
+                code,
+                redirect_uri,
+                session,
+                invite_token=context.get("invite_token", ""),
+            )
             session.commit()
         except UserServiceError:
             # A refusal, not a failure. The user can act on this one — their
@@ -134,15 +247,28 @@ async def oauth_callback(request: Request) -> RedirectResponse:
                 url=_frontend(login_error_path("oauth_failed")), status_code=302
             )
 
-    params = urlencode(
-        {
-            "token": result["access_token"],
-            "refresh": result["refresh_token"],
-            "is_new": "1" if result["is_new"] else "0",
-        }
+    params = {
+        "token": result["access_token"],
+        "refresh": result["refresh_token"],
+        "is_new": "1" if result["is_new"] else "0",
+    }
+    # A bounded flag; the page picks the sentence. The token itself never goes back into a URL: the
+    # service has already applied it (or could not), and nothing downstream needs it.
+    if result.get("invite") == "not_applied":
+        params["invite"] = "not_applied"
+    # Checked again by /auth/complete on the way into the redirect (§2 constraint 1): once a value
+    # is back in a URL the signature that protected it between the two backend hops says nothing.
+    for key in ("next", "template"):
+        if key in context:
+            params[key] = context[key]
+
+    response = RedirectResponse(
+        url=_frontend(f"/auth/complete?{urlencode(params)}"), status_code=302
     )
-    response = RedirectResponse(url=_frontend(f"/auth/complete?{params}"), status_code=302)
+    # Both cookies go on the very redirect that sends the browser to /auth/complete (AC11): that
+    # page is a Reflex frontend route, and §8c rules out it ever reading either.
     response.delete_cookie(_OAUTH_STATE_COOKIE)
+    response.delete_cookie(_OAUTH_CONTEXT_COOKIE)
     return response
 
 

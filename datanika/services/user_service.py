@@ -677,8 +677,14 @@ class UserService:
         oauth_provider_id: str,
         *,
         email_verified: bool = False,
+        create_personal_org: bool = True,
     ) -> tuple[User, bool]:
         """Find existing user by OAuth identity or email, else create. -> (user, is_new).
+
+        ``create_personal_org=False`` is for a caller that places a NEW user in an org itself —
+        the social callback applying an invitation first (core#624, SPEC_SIGNUP_SOCIAL_AUTH §8e).
+        That caller then owns the fallback: a new user must never finish with zero orgs. It has
+        no effect on an existing user, who is never given an org here.
 
         SECURITY (auth boundary). Two rules decide who this returns:
 
@@ -783,15 +789,26 @@ class UserService:
         )
         session.flush()
 
-        # Create default org.
-        #
-        # 🚨 The slug is no longer derived from the person's name (D4). A slug is an
-        # *identifier*: unique-constrained, in URLs, and matched by the SSO callback
-        # (`sso_routes.py` compares `Organization.slug == org_slug`), so a name-derived
-        # slug publishes a person's name in a durable key. §2c measured this in
-        # production — `organizations.slug` contained a live `users.full_name` in **5 of
-        # 5** rows. The display `name` may stay: it is text inside the tenant, and the
-        # erasure sweep rewrites it (D5 step 7).
+        if create_personal_org:
+            self.create_personal_org(session, user, full_name)
+
+        return user, True
+
+    def create_personal_org(self, session: Session, user: User, full_name: str) -> Organization:
+        """The org a new social-login account owns, with its OWNER membership.
+
+        Extracted from ``find_or_create_oauth_user`` (core#624) so the social callback can apply an
+        invitation first and create this only as the fallback — one definition, not a second copy
+        that could drift from the first.
+
+        🚨 The slug is no longer derived from the person's name (D4). A slug is an
+        *identifier*: unique-constrained, in URLs, and matched by the SSO callback
+        (`sso_routes.py` compares `Organization.slug == org_slug`), so a name-derived
+        slug publishes a person's name in a durable key. §2c measured this in
+        production — `organizations.slug` contained a live `users.full_name` in **5 of
+        5** rows. The display `name` may stay: it is text inside the tenant, and the
+        erasure sweep rewrites it (D5 step 7).
+        """
         org_name = f"{full_name}'s Org"
         org = Organization(name=org_name, slug=f"org-{user.id}")
         session.add(org)
@@ -801,7 +818,7 @@ class UserService:
         session.add(membership)
         session.flush()
 
-        return user, True
+        return org
 
     @staticmethod
     def _assert_local_account_proved_its_email(user: User) -> None:

@@ -1,4 +1,4 @@
-"""The two social buttons must fit inside the login card (#605).
+"""The two social buttons must fit inside the auth card (#605) — on /login AND /signup.
 
 On production the **GitHub** button rendered outside the card's right border:
 Google ended at x=666 inside a card ending at x=699, and GitHub ran from 678 to
@@ -18,9 +18,25 @@ do its usual job of letting a flex item go narrower than its content.
 ``width="100%"`` remains correct on every *other* control in this card — the
 email input, the password input, the Sign In button — because each of those is
 the sole child of a vstack. It is wrong only for siblings sharing a flex row.
+
+**core#624** put the same two buttons on ``/signup``. This file used to end with a guard asking
+whoever did that to "give them the same flex sizing as /login and extend the assertions above to
+cover both pages" — which is what ``TestBothPagesRenderTheOneButton`` now does, by requiring both
+pages to render the single shared helper rather than a copy of it.
 """
 
-from datanika.ui.pages.login import _social_login_button, login_page
+import ast
+import importlib
+import inspect
+
+import pytest
+
+import datanika.ui.components.social_auth as social_auth_module
+from datanika.ui.components.social_auth import social_login_button
+from datanika.ui.pages.login import login_page
+from datanika.ui.pages.signup import signup_page
+
+_PAGES = pytest.mark.parametrize("page", [login_page, signup_page], ids=["login", "signup"])
 
 
 def _style(component) -> dict:
@@ -29,7 +45,26 @@ def _style(component) -> dict:
 
 
 def _social_buttons():
-    return [_social_login_button("Google", "google"), _social_login_button("GitHub", "github")]
+    return [social_login_button("Google", "google"), social_login_button("GitHub", "github")]
+
+
+def _code_strings(module) -> list[str]:
+    """String literals that are CODE — docstrings and bare string statements excluded.
+
+    A docstring that mentions a URL is prose about it, not a place that builds it (§59), and the
+    shared component's own docstring necessarily names the route it navigates to.
+    """
+    tree = ast.parse(inspect.getsource(module))
+    prose = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    return [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in prose
+    ]
 
 
 class TestSocialButtonsFitInsideTheCard:
@@ -76,24 +111,32 @@ class TestSocialButtonsFitInsideTheCard:
                 "moves the floor (#605)."
             )
 
-    def test_both_providers_survive_the_layout_fix(self):
+    @_PAGES
+    def test_both_providers_survive_the_layout_fix(self, page):
         """Guard against 'fixing' the overflow by dropping a button."""
-        html = str(login_page().render())
+        html = str(page().render())
         assert "/api/auth/login/google" in html and "/api/auth/login/github" in html, (
             "Both providers must still be on the page — this is a layout fix, not a removal."
         )
 
 
-class TestOnlyLoginHasThisShape:
-    def test_signup_does_not_reuse_the_social_button_helper(self):
-        """`/signup` was checked live and has no social buttons at all.
+class TestBothPagesRenderTheOneButton:
+    """A copy is a second place to regress #605 and #418 (SPEC_SIGNUP_SOCIAL_AUTH §4)."""
 
-        Pinned so that if someone later adds them there, they are made to look
-        at this file rather than re-deriving #605 from a screenshot.
-        """
-        import datanika.ui.pages.signup as signup_module
-
-        assert not hasattr(signup_module, "_social_login_button"), (
-            "If /signup grows social buttons, give them the same flex sizing as "
-            "/login and extend the assertions above to cover both pages."
+    @pytest.mark.parametrize("module_name", ["datanika.ui.pages.login", "datanika.ui.pages.signup"])
+    def test_no_page_builds_its_own_provider_url(self, module_name):
+        module = importlib.import_module(module_name)
+        builders = [s for s in _code_strings(module) if "/api/auth/login" in s]
+        assert not builders, (
+            f"{module_name} builds a provider URL itself ({builders}). Render "
+            "social_login_row() from datanika/ui/components/social_auth.py instead, which "
+            "carries the #605 sizing and the #418 navigation."
         )
+
+    def test_the_scan_can_see_the_url_where_it_does_live(self):
+        """Floor for the test above: an instrument that finds nothing anywhere proves nothing."""
+        assert any("/api/auth/login" in s for s in _code_strings(social_auth_module))
+
+    @_PAGES
+    def test_each_page_renders_exactly_one_pair(self, page):
+        assert str(page().render()).count("window.location.assign") == 2

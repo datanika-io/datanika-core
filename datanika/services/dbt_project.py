@@ -132,6 +132,36 @@ def _sum_rows_affected(result) -> int:
     return total
 
 
+def describe_dbt_failure(result: dict, model_name: str) -> str:
+    """Say what failed, for a dbt invocation that returned ``success: False`` (core#1361).
+
+    Written into a run's ``error_message``, the field a user reads first; ``logs`` keep dbt's full
+    output. Two shapes, both read from real dbt-core 1.11 runs against DuckDB in
+    ``tests/test_tasks/test_transformation_dbt_failure.py``:
+
+    - **SQL that fails in the warehouse** returns node results. The failing node's ``status.value``
+      is ``"error"``, and its ``message`` carries the warehouse's own error.
+    - **A project dbt cannot compile**, such as an unresolved ``ref``, returns no node results.
+      ``run_model`` puts the compilation error in ``logs`` instead.
+
+    Never returns an empty string: an empty ``error_message`` on a failed run would be the silence
+    core#1361 was about, moved one field over.
+    """
+    errored = []
+    for node_result in result.get("raw_result") or []:
+        if getattr(getattr(node_result, "status", None), "value", None) != "error":
+            continue
+        name = getattr(getattr(node_result, "node", None), "name", None) or model_name
+        message = (getattr(node_result, "message", None) or "").strip()
+        errored.append(f"dbt model {name} failed: {message or 'dbt gave no message'}")
+    if errored:
+        return "\n".join(errored)
+    detail = (result.get("logs") or "").strip()
+    if detail:
+        return f"dbt run of model {model_name} failed: {detail}"
+    return f"dbt run of model {model_name} failed, and dbt gave no detail"
+
+
 def _validate_identifier(name: str, label: str = "Name") -> None:
     """Validate that a name is a safe identifier (no path traversal, no special chars)."""
     if not name:

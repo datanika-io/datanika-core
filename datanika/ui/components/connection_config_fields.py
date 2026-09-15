@@ -1009,7 +1009,13 @@ def openapi_fields() -> rx.Component:
         config_input(
             "api_key",
             secret=True,
-            placeholder=_t["connections.ph_api_key"],
+            # core#1348: openapi's own placeholder. The shared `ph_api_key` says
+            # "API key for Authorization header", but for openapi the spec's
+            # securitySchemes decide where the key goes (a header the spec names,
+            # a query parameter, a cookie, or HTTP Basic's username -- see
+            # openapi_import._extract_auth), so naming the Authorization header
+            # here is wrong for this connector.
+            placeholder=_t["connections.ph_openapi_api_key"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
         ),

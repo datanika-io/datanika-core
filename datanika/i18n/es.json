@@ -720,7 +720,7 @@
   "pipelines.delete_confirm": "Sí, eliminar canalización",
   "pipelines.deleted_toast": "Canalización eliminada. Los datos cargados no se ven afectados.",
   "schedules.delete_title": "¿Eliminar esta programación?",
-  "schedules.delete_body": "Sus ejecuciones se detienen de inmediato. Nada volverá a lanzar el destino automáticamente.",
+  "schedules.delete_body": "No se iniciarán nuevas ejecuciones a partir de él. Una ejecución ya en curso continúa. Nada volverá a lanzar el destino automáticamente.",
   "schedules.delete_reversible": "La canalización o la carga que dispara no se elimina y puede seguir ejecutándose a mano.",
   "schedules.delete_confirm": "Sí, eliminar programación",
   "schedules.deleted_toast": "Programación eliminada. Ya no lanzará ejecuciones.",

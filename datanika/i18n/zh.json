@@ -720,7 +720,7 @@
   "pipelines.delete_confirm": "是，删除流水线",
   "pipelines.deleted_toast": "流水线已删除，已加载的数据不受影响。",
   "schedules.delete_title": "要删除此调度吗？",
-  "schedules.delete_body": "其运行将立即停止，目标不会再被自动触发。",
+  "schedules.delete_body": "将不再从它启动新的运行。已在进行中的运行会继续执行。目标不会再被自动触发。",
   "schedules.delete_reversible": "它触发的流水线或上传不会被删除，你仍可手动运行。",
   "schedules.delete_confirm": "是，删除调度",
   "schedules.deleted_toast": "调度已删除，它将不再触发运行。",

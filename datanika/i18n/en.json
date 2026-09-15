@@ -720,7 +720,7 @@
   "pipelines.delete_confirm": "Yes, delete pipeline",
   "pipelines.deleted_toast": "Pipeline deleted. Loaded data is unaffected.",
   "schedules.delete_title": "Delete this schedule?",
-  "schedules.delete_body": "Its runs stop immediately. Nothing will trigger the target automatically any more.",
+  "schedules.delete_body": "No new runs will start from it. A run already in progress keeps going. Nothing will trigger the target automatically any more.",
   "schedules.delete_reversible": "The pipeline or upload it triggers is not deleted, and you can still run it by hand.",
   "schedules.delete_confirm": "Yes, delete schedule",
   "schedules.deleted_toast": "Schedule deleted. It will no longer trigger runs.",

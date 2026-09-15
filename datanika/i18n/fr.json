@@ -720,7 +720,7 @@
   "pipelines.delete_confirm": "Oui, supprimer le pipeline",
   "pipelines.deleted_toast": "Pipeline supprimé. Les données chargées ne sont pas affectées.",
   "schedules.delete_title": "Supprimer cette planification ?",
-  "schedules.delete_body": "Ses exécutions s'arrêtent immédiatement. Plus rien ne déclenchera la cible automatiquement.",
+  "schedules.delete_body": "Aucune nouvelle exécution ne démarrera à partir de celui-ci. Une exécution déjà en cours se poursuit. Plus rien ne déclenchera la cible automatiquement.",
   "schedules.delete_reversible": "Le pipeline ou l'import déclenché n'est pas supprimé et reste lançable à la main.",
   "schedules.delete_confirm": "Oui, supprimer la planification",
   "schedules.deleted_toast": "Planification supprimée. Elle ne déclenchera plus d'exécutions.",

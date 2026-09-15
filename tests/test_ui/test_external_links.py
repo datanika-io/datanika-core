@@ -17,6 +17,12 @@ production the backend and frontend share ``app.datanika.io``, so dropping the
 flag would have handed the click to the router and broken sign-in — *and it
 would still have worked in dev*, where the origins differ. Hence the explicit
 ``window.location.assign``.
+
+**core#624** moved the two buttons into ``datanika/ui/components/social_auth.py`` and put them on
+``/signup`` as well. So every probe below runs against both pages, and the AST scan that used to
+watch ``login.py`` alone also watches the component — otherwise it would keep passing against a
+module the buttons no longer live in (ENGINEERING_RULES §54). ``signup.py`` itself is deliberately
+NOT given a module-wide ban: its Terms and Privacy links must open in a new tab.
 """
 
 import ast
@@ -26,8 +32,13 @@ import pytest
 
 import datanika.ui.components.cost_estimator_card as cost_estimator_card
 import datanika.ui.components.elt_nudge_card as elt_nudge_card
+import datanika.ui.components.social_auth as social_auth_module
 import datanika.ui.pages.login as login_page_module
+from datanika.services.auth_redirects import OAUTH_CONTEXT_KEYS
 from datanika.ui.pages.login import login_page
+from datanika.ui.pages.signup import signup_page
+
+_PAGES = pytest.mark.parametrize("page", [login_page, signup_page], ids=["login", "signup"])
 
 
 def _rendered(component) -> str:
@@ -38,6 +49,12 @@ def _window_around(html: str, needle: str, radius: int = 400) -> str:
     start = html.find(needle)
     assert start != -1, f"{needle} not on the page"
     return html[max(0, start - radius) : start + radius]
+
+
+def _is_external_lines(module) -> tuple[int, list[int]]:
+    """(number of calls scanned, lines passing ``is_external``)."""
+    calls = [n for n in ast.walk(ast.parse(inspect.getsource(module))) if isinstance(n, ast.Call)]
+    return len(calls), [n.lineno for n in calls for k in n.keywords if k.arg == "is_external"]
 
 
 class TestSocialLoginStaysInTheTab:
@@ -56,38 +73,55 @@ class TestSocialLoginStaysInTheTab:
     being the only link on the page.
     """
 
+    @_PAGES
     @pytest.mark.parametrize("provider", ["google", "github"])
-    def test_a_social_button_never_opens_a_new_tab(self, provider):
-        window = _window_around(_rendered(login_page()), f"/api/auth/login/{provider}")
+    def test_a_social_button_never_opens_a_new_tab(self, page, provider):
+        window = _window_around(_rendered(page()), f"/api/auth/login/{provider}")
         assert "_blank" not in window, (
             f"the {provider} button opens in a new tab, which leaves the user signed "
             "in there while the original tab still shows the form (#418)."
         )
 
-    def test_the_window_probe_is_not_vacuous(self):
+    @_PAGES
+    def test_the_window_probe_is_not_vacuous(self, page):
         """A radius that captured nothing would make the test above always pass."""
-        window = _window_around(_rendered(login_page()), "/api/auth/login/google")
+        window = _window_around(_rendered(page()), "/api/auth/login/google")
         assert "window.location.assign" in window
 
-    def test_both_providers_do_a_real_browser_navigation(self):
+    @_PAGES
+    def test_both_providers_do_a_real_browser_navigation(self, page):
         """Not a router push — the endpoint is served by the backend."""
-        html = _rendered(login_page())
+        html = _rendered(page())
 
         for provider in ("google", "github"):
             assert f"/api/auth/login/{provider}" in html, provider
         assert html.count("window.location.assign") == 2
 
-    def test_the_providers_are_not_react_router_links(self):
+    @_PAGES
+    def test_the_providers_are_not_react_router_links(self, page):
         """A router Link would swallow the click in production.
 
         Same-origin absolute URLs are treated as in-app routes, and prod serves
         the API and the frontend from one host. Dev would not have shown it.
         """
-        html = _rendered(login_page())
+        html = _rendered(page())
         start = html.find("/api/auth/login/google")
         assert start != -1
         # The surrounding markup must not be a router link carrying `to=`.
         assert "ReactRouterLink" not in html[max(0, start - 600) : start + 600]
+
+
+class TestTheButtonCarriesThePagesContext:
+    """core#624 — the navigation forwards the page's own ``?template=``, ``?invite_token=`` and
+    ``?next=`` to the backend, which re-validates each one (``test_oauth_signup_context.py``).
+    Only a browser can run the script, so this pins that the forwarding is present at all."""
+
+    @_PAGES
+    def test_the_navigation_reads_the_pages_query_string(self, page):
+        window = _window_around(_rendered(page()), "/api/auth/login/google", radius=700)
+        assert "window.location.search" in window
+        for key in OAUTH_CONTEXT_KEYS:
+            assert key in window, f"the button does not forward ?{key}="
 
 
 class TestOffSiteLinksAreAbsolute:
@@ -110,7 +144,7 @@ class TestOffSiteLinksAreAbsolute:
 
 
 class TestNoStrayExternalRedirects:
-    """No call on the login page may ask for a new tab.
+    """No call that builds a social button may ask for a new tab.
 
     AST rather than a substring scan (the repo's convention — see
     ``test_rbac_ui_visibility.py``) so the prose explaining *why* the flag is
@@ -119,16 +153,19 @@ class TestNoStrayExternalRedirects:
     """
 
     def test_login_module_never_asks_for_a_new_tab(self):
-        tree = ast.parse(inspect.getsource(login_page_module))
-        offenders = [
-            node.lineno
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            for keyword in node.keywords
-            if keyword.arg == "is_external"
-        ]
+        scanned, offenders = _is_external_lines(login_page_module)
 
+        assert scanned, "premise: the scan found no calls in login.py at all"
         assert not offenders, (
             f"login.py passes is_external at line(s) {offenders}. Social login "
-            "must stay in the current tab — see _social_login_button's docstring."
+            "must stay in the current tab — see social_login_button's docstring."
+        )
+
+    def test_the_social_button_component_never_asks_for_a_new_tab(self):
+        scanned, offenders = _is_external_lines(social_auth_module)
+
+        assert scanned, "premise: the scan found no calls in the component at all"
+        assert not offenders, (
+            f"social_auth.py passes is_external at line(s) {offenders}. The provider "
+            "buttons must navigate in the current tab (#418)."
         )

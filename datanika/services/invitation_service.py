@@ -161,8 +161,18 @@ class InvitationService:
         session.flush()
         return invitation
 
-    def accept_invitation(self, session: Session, token: str) -> Membership | None:
-        """Accept an invitation by token.  Returns the new Membership or None."""
+    def accept_invitation(
+        self, session: Session, token: str, *, user_id: int | None = None
+    ) -> Membership | None:
+        """Accept an invitation by token.  Returns the new Membership or None.
+
+        ``user_id`` is for a caller acting for ONE particular account — today, a signup, by email
+        or by social login (core#624). Without it the account is resolved from the
+        **invitation's** address, so a token issued to an address that already has an account
+        would join *that* account: its invitation consumed by someone else's signup, and the
+        account actually signing up left with no organization at all. A mismatch returns ``None``
+        before anything is written, so the invitation stays with the person it was sent to.
+        """
         invitation = self.get_invitation_by_token(session, token)
 
         if invitation is None:
@@ -199,6 +209,8 @@ class InvitationService:
         user = _UserService(self._auth).get_user_by_email(session, invited_email)
         if user is None:
             return None  # User must register first
+        if user_id is not None and user.id != user_id:
+            return None
 
         # Create membership
         membership = Membership(

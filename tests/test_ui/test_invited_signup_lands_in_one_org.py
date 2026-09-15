@@ -347,6 +347,44 @@ def test_an_unusable_token_falls_back_and_says_so(db_session, auth, inviting_org
     )
 
 
+def test_an_invitation_for_another_existing_account_is_not_applied(db_session, auth, inviting_org):
+    """core#624 — found while porting this path to social signup.
+
+    ``accept_invitation`` resolves its user from the **invitation's** address, not from the
+    account signing up. So a token issued to an address that already has an account joined
+    *that* account (consuming its invitation), reported success, and skipped the personal org
+    for the person actually signing up — who finished with **zero** memberships and
+    "Signup succeeded but login failed", because ``authenticate`` needs one. §8e rule 4:
+    nobody finishes signup with zero orgs.
+
+    Red before the fix: zero memberships, and Alice joined to the org by someone else.
+    """
+    alice = UserService(auth).register_user(
+        db_session, "alice@example.com", "alice-password-1", "Alice"
+    )
+    db_session.flush()
+    token = _invite(db_session, auth, inviting_org, email="alice@example.com")
+
+    state = _run_signup(db_session, auth, invite_token=token)
+
+    _user, memberships, orgs = _orgs_and_memberships(db_session, INVITEE_EMAIL)
+    assert len(memberships) == 1, (
+        f"the signup finished in {len(memberships)} orgs; an invitation issued to another "
+        "account must fall back to the personal org"
+    )
+    assert orgs[0].name == f"{INVITEE_NAME}'s Org"
+    assert not state.auth_error, f"the signup did not sign the user in: {state.auth_error!r}"
+    assert state.invite_notice == "not_applied"
+    assert (
+        db_session.query(Membership)
+        .filter(Membership.user_id == alice.id, Membership.org_id == inviting_org.org_id)
+        .count()
+        == 0
+    ), "someone else's signup joined Alice to the org"
+    invitation = db_session.query(Invitation).order_by(Invitation.id.desc()).first()
+    assert invitation.status is InvitationStatus.PENDING, "Alice's invitation was consumed"
+
+
 def test_the_dropped_invitation_is_still_logged(db_session, auth, inviting_org, caplog):
     """The log line stays — it is what support needs (core#723).
 

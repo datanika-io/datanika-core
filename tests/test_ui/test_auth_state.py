@@ -163,18 +163,36 @@ class TestAuthStateFormFields:
         """
         import inspect
 
-        from datanika.services import user_service
+        from datanika.services import oauth_service, user_service
 
-        oauth_source = inspect.getsource(user_service.UserService.find_or_create_oauth_user)
-        assert 'f"org-{user.id}"' in oauth_source, (
-            'find_or_create_oauth_user no longer uses the `f"org-{user.id}"` pattern — '
+        # core#624 moved the OAuth path's org creation into ``create_personal_org``, so the social
+        # callback can apply an invitation first and create the org only as the fallback. The
+        # pattern is asserted where it now lives, AND both OAuth paths are asserted to still reach
+        # it: a pattern in a helper nothing calls would pass while the OAuth path minted slugs some
+        # other way (ENGINEERING_RULES §54 — re-teach a scanner to find the same thing).
+        helper_source = inspect.getsource(user_service.UserService.create_personal_org)
+        assert 'f"org-{user.id}"' in helper_source, (
+            'create_personal_org no longer uses the `f"org-{user.id}"` pattern — '
             "if you changed the OAuth uniqueness strategy, update password-signup in "
             "auth_state.py to match, and update #127 / core#655 D4."
         )
-        assert "slugify" not in oauth_source.lower(), (
-            "the OAuth signup path is deriving the org slug from the user's name again "
-            "(core#655 D4)"
-        )
+        find_source = inspect.getsource(user_service.UserService.find_or_create_oauth_user)
+        callback_source = inspect.getsource(oauth_service.OAuthService.handle_callback)
+        for name, source in (
+            ("UserService.find_or_create_oauth_user", find_source),
+            ("OAuthService.handle_callback", callback_source),
+        ):
+            assert "create_personal_org(" in source, (
+                f"{name} no longer creates the personal org through create_personal_org, so "
+                "the slug pattern asserted above no longer describes what the OAuth path does"
+            )
+        for name, source in (
+            ("create_personal_org", helper_source),
+            ("find_or_create_oauth_user", find_source),
+        ):
+            assert "slugify" not in source.lower(), (
+                f"{name} is deriving the org slug from the user's name again (core#655 D4)"
+            )
 
 
 class TestSignupExceptionHandling:

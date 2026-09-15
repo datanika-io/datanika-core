@@ -10,6 +10,8 @@ from datanika.config import settings
 from datanika.hooks import collect_events
 from datanika.services.auth import AuthService
 from datanika.services.auth_redirects import AUTH_ERROR_KEYS
+from datanika.services.auth_redirects import TEMPLATE_SLUG_RE as _TEMPLATE_SLUG_RE
+from datanika.services.auth_redirects import safe_next_path as _safe_next_path
 from datanika.services.captcha_service import CaptchaService
 from datanika.services.client_ip import resolve_client_ip
 from datanika.services.email_verification import request_email_verification
@@ -59,44 +61,10 @@ def _allow(bucket: str, limit: int) -> bool:
     return _limiter.check_window(bucket, limit, window_seconds=_SIGNUP_WINDOW).allowed
 
 
-# Option C auth bridge: valid template slug pattern + max length. Cold-traffic
-# visitors who click "Try this template" on a public /templates/<slug> landing
-# page must have the slug preserved across the signup wall so the post-auth
-# redirect can land on /connections?template=<slug>. The slug is compared
-# against this pattern (not against the in-app template registry) to keep the
-# auth layer decoupled from ConnectionState; unknown-but-well-formed slugs are
-# silently ignored downstream by ConnectionState.load_template_from_query.
-# Rejecting malformed or over-long slugs avoids an open-redirect vector.
-_TEMPLATE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
-
-# Longest ?next= we will honour. An OAuth consent URL carries a PKCE challenge
-# and an opaque client state, so it is comfortably the biggest legitimate one.
-_MAX_NEXT_LEN = 2048
-
-
-def _safe_next_path(raw: str) -> str:
-    """Return ``raw`` if it is a same-site absolute path, else ``""``.
-
-    The ``?next=`` bridge exists so an interrupted flow can resume after the
-    login wall — ``/oauth/consent`` (#394) is the first caller, where dropping
-    the user on the dashboard would strand an MCP client mid-handshake.
-
-    It is also the classic open-redirect vector, so the allowed shape is
-    deliberately narrow: an absolute path on this site and nothing else.
-    ``//evil.com`` is protocol-relative, and a browser normalises the
-    backslashes in ``/\\evil.com`` to the same thing — both would send a
-    freshly-authenticated user straight off-site, which is precisely when they
-    are most likely to type a password into whatever they land on.
-    """
-    if not raw or len(raw) > _MAX_NEXT_LEN:
-        return ""
-    if not raw.startswith("/"):
-        return ""
-    if raw.startswith("//") or "\\" in raw:
-        return ""
-    if any(ch.isspace() or ord(ch) < 0x20 for ch in raw):
-        return ""
-    return raw
+# The Option C template-slug pattern and the ``?next=`` open-redirect guard used by
+# ``_post_auth_redirect_target`` live in ``services/auth_redirects.py`` (core#624): the OAuth
+# callback is a backend route that now applies the same checks, and a service cannot import
+# from the UI layer. Imported above under their historical private names.
 
 
 class UserInfo(BaseModel):
@@ -370,7 +338,9 @@ class AuthState(rx.State):
             return nxt
 
         slug = self.router.page.params.get("template", "")
-        if not slug or not _TEMPLATE_SLUG_RE.match(slug):
+        # ``fullmatch``, not ``match``: the pattern ends in ``$``, which also matches just before a
+        # trailing newline, so ``match`` let ``"slug\n"`` through into the redirect (core#624).
+        if not slug or not _TEMPLATE_SLUG_RE.fullmatch(slug):
             return "/"
         return f"/connections?template={slug}"
 
@@ -513,7 +483,10 @@ class AuthState(rx.State):
             from datanika.services.invitation_service import InvitationService
 
             inv_svc = InvitationService(AuthService(settings.secret_key))
-            membership = inv_svc.accept_invitation(session, invite_token)
+            # ``user_id`` binds the invitation to THIS account (core#624). Without it a token
+            # issued to an address that already has an account joined that account instead, and
+            # this signup finished with zero memberships and "Signup succeeded but login failed".
+            membership = inv_svc.accept_invitation(session, invite_token, user_id=user_id)
         except Exception:
             logger.exception(
                 "Invitation acceptance raised during signup and was dropped: user_id=%s",
@@ -829,6 +802,11 @@ class AuthState(rx.State):
                 if o.id == org_id:
                     self.current_org = o
                     break
+        # core#624. What became of an invitation the social path carried: a bounded flag set by
+        # the callback, never text from the URL — the shell renders the translated sentence, as it
+        # does for the email path's core#981 notice. Assigned on every completion, so a notice
+        # left by an earlier attempt cannot outlive this sign-in.
+        self.invite_notice = "not_applied" if params.get("invite", "") == "not_applied" else ""
         self._load_current_role(user_id, org_id)
         return rx.redirect(self._post_auth_redirect_target())
 

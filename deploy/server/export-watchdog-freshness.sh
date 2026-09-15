@@ -17,9 +17,11 @@
 #   * so if its OWN schedule is auto-disabled (`disabled_inactivity`) or silently stops, there
 #     is no run, no check, no issue, and NOTHING ANYWHERE IS RED
 #
-# Since core#1260 the watchdog's filing path ends in `exit 1`, so a red run is what a CORRECT
-# detection looks like. The failure modes therefore read: red = found something, and
-# SILENCE = HEALTHY. Silence is also what total failure looks like.
+# Silence reads as healthy, and silence is also what total failure looks like. (Until core#1272
+# the watchdog's filing path ended in `exit 1`, so a red run was ALSO what a correct detection
+# looked like. A filed report now ends green and red means it could not verify or could not
+# report -- which changes what a red run means, not what an ABSENT run means. This watches the
+# absence.)
 #
 # WHY THIS RUNS ON THE BOX AND NOT IN ACTIONS
 # -------------------------------------------

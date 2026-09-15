@@ -37,13 +37,20 @@ _page_scripts: dict[str, list[str]] = {}
 def get_prometheus_registry() -> CollectorRegistry:
     """Return the Prometheus collector registry that core exposes at /metrics.
 
-    Plugins (notably ``datanika_cloud``) register billing-semantic counters
+    Plugins (notably ``datanika_cloud``) register billing-semantic collectors
     with per-``org_id`` labels against this registry so they're scraped via
     core's existing ``/metrics`` route without core importing any cloud
     code. Core itself only creates cardinality-safe instruments — see
     ``datanika-cloud/docs/specs/SPEC_GB_THROUGHPUT_METRICS.md`` §3.1 for the
     open-core split rationale. (That spec lives in the cloud repo, not here —
     it governs the plugin side of the split.)
+
+    ⚠️ **Behind several workers, whichever worker answers renders your
+    collector** (core#895). With ``PROMETHEUS_MULTIPROC_DIR`` set, ``/metrics``
+    sums native metrics across workers and adds every other collector
+    registered here as it is. So a collector must compute from shared state
+    (the cloud ledger collector reads Postgres), never from process-local
+    state, or each scrape reports a different worker's number.
     """
     return _DEFAULT_PROMETHEUS_REGISTRY
 

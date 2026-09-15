@@ -35,8 +35,11 @@ Two different questions, and both are asked:
   * Playwright's recorded reason answers *why did it skip* -- and it is always current,
     because the runner wrote it.
   * `ACCOUNTED_SKIPS` answers *who makes it stop skipping, and when* -- which no annotation
-    can know, and which is the half that rots. The entry below replaced a reason string
-    citing **core#361, an issue closed 2026-07-20 that was never about this**.
+    can know, and which is the half that rots. Its one entry replaced a reason string citing
+    **core#361, an issue closed 2026-07-20 that was never about this**, and is now gone
+    entirely: core#1302 built the 4xx-forcing harness, the test executes, and the floor rose
+    to 3 in the same commit. The map is kept because the next exemption will need it, and
+    because an empty one is a claim this guard asserts (floor + entries == real test count).
 
 WARNING -- the floor is CHECKED IN, not derived from the spec file. A floor computed from the
 tests present falls as they are deleted and agrees with the attack (core#1130).
@@ -61,8 +64,8 @@ from pathlib import Path
 OVERAGE_SPEC_FILE = "overage-charge-cycle.spec.ts"
 
 #: How many specs must actually EXECUTE. Checked in on purpose -- see the module note.
-#: 3 tests exist; one is accounted for below, so 2 must run.
-OVERAGE_EXECUTED_FLOOR = 2
+#: 3 tests exist and NONE is exempt since core#1302's harness landed, so all 3 must run.
+OVERAGE_EXECUTED_FLOOR = 3
 
 #: Skips that are ACCOUNTED FOR, with the exit condition. A skip is either executed or
 #: explicitly out of the set with a reason recorded -- never an unexplained absence inside
@@ -71,17 +74,13 @@ OVERAGE_EXECUTED_FLOOR = 2
 #: WARNING: each entry is a gap that is TRACKED, not a gap that is fine. Adding one lowers
 #: real coverage of the charge path, so OVERAGE_EXECUTED_FLOOR must be lowered in the same
 #: commit and both land in one diff.
-ACCOUNTED_SKIPS: dict[str, str] = {
-    "Paddle 4xx response marks Charge failed with reason": (
-        "the PRE-ACCEPTANCE Paddle 4xx path needs a sandbox product/subscription that forces "
-        "a 4xx on POST /subscriptions/{id}/charge; no such harness exists. Not an uncovered "
-        "branch: cloud's tests/test_billing_tasks.py::TestChargeCycleOverages4xxTerminal "
-        "drives it and asserts status=FAILED plus last_error, and retry exhaustion is covered "
-        "twice. What is missing is an end-to-end run against the real Paddle sandbox. "
-        "Exit condition: core#1302 -- open, and deliberately not closed by the PR that added "
-        "this guard."
-    ),
-}
+#: EMPTY since core#1302, and the floor went 2 -> 3 in the same commit -- which is the whole
+#: point of the arithmetic below. The one entry that lived here was the PRE-ACCEPTANCE Paddle
+#: 4xx path, waiting on "a sandbox product/subscription that forces a 4xx". That harness now
+#: exists: `seed-overage-tenant` takes `forcePaddleRejection` and binds a subscription id Paddle
+#: cannot resolve, so the real client takes the real 4xx branch without touching the shared
+#: sandbox subscription. The coverage is regained in the same diff as the exemption's removal.
+ACCOUNTED_SKIPS: dict[str, str] = {}
 
 _SKIPPED = "skipped"
 

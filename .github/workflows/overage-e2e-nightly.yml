@@ -119,6 +119,19 @@ jobs:
           path: e2e/playwright-report/
           retention-days: 14
 
+      # `if: always()`, unlike the report above, and the difference is the point: this JSON is
+      # the only record of WHICH specs executed, and a GREEN night is exactly when nobody can
+      # currently check that claim — the report artifact uploads on failure only. It is also
+      # what the coverage assertion above reads, so keeping it makes that verdict auditable
+      # after the fact instead of only in the step's own stdout (core#1302).
+      - name: Upload the soak's own JSON result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: overage-e2e-results
+          path: e2e/results-overage.json
+          retention-days: 14
+
       # 🚨 STEP-KEYED, not job-keyed (core#873). With an `always()` coverage step above,
       # job-red is strictly weaker than work-red: the coverage step can redden the job on a
       # run whose specs all passed, and a job-keyed filer would then claim a test failure

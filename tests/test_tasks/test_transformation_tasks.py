@@ -116,6 +116,27 @@ class TestRunTransformationTask:
         assert run.finished_at is not None
         assert "dbt exploded" in run.error_message
 
+    def test_a_dbt_verdict_that_is_not_true_is_not_success(self, db_session, setup_transformation):
+        """core#1361. The task reads ``success is True``: a truthy value that is not dbt's bool,
+        such as a stand-in that never set it, ends the run FAILED rather than SUCCESS.
+
+        The real dbt shapes are in ``test_transformation_dbt_failure.py``; this pins the one a real
+        run cannot produce.
+        """
+        org, transformation, run = setup_transformation
+        with _mock_dbt_project() as mock_dbt_cls:
+            instance = mock_dbt_cls.return_value
+            instance.run_model.return_value = {
+                "success": MagicMock(),
+                "rows_affected": 0,
+                "logs": "stand-in output",
+                "raw_result": [],
+            }
+            run_transformation(run_id=run.id, org_id=org.id, session=db_session)
+        db_session.refresh(run)
+        assert run.status == RunStatus.FAILED
+        assert run.error_message == "dbt run of model test_model failed: stand-in output"
+
     def test_nonexistent_transformation_fails(self, db_session, exec_svc):
         import uuid
 

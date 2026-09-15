@@ -14,7 +14,7 @@ from datanika.models.transformation import Transformation
 from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
-from datanika.services.dbt_project import DbtProjectService
+from datanika.services.dbt_project import DbtProjectService, describe_dbt_failure
 from datanika.services.execution_service import ExecutionService, get_org_run
 from datanika.tasks.celery_app import celery_app
 
@@ -90,6 +90,9 @@ def run_transformation(
     boundaries (no commit/rollback here).
     """
     own_session = session is None
+    #: True only once dbt reported success and the run was completed. The announce in `else`
+    #: reads it, so a run recorded FAILED is never announced as completed (core#1361).
+    completed = False
     if own_session:
         from datanika.db import get_sync_session
 
@@ -161,17 +164,42 @@ def run_transformation(
         )
         dbt_svc.clean_target(org_id)
         result = dbt_svc.run_model(org_id, transformation.name)
-        rows = result["rows_affected"]
-        logs = result["logs"]
 
-        execution_service.complete_run(session, org_id, run_id, rows_loaded=rows, logs=logs)
-
-        try:
-            _sync_catalog_after_transformation(
-                session, org_id, transformation, dbt_svc, dst_conn, dst_config
+        # core#1361. dbt reports a failed model through `success` and does not raise. Measured on
+        # dbt-core 1.11.14 against real DuckDB: SQL that fails in the warehouse, and a `ref` that
+        # does not resolve, both come back with `success` false and nothing raised. This used to
+        # read nothing, so such a run was recorded SUCCESS with dbt's error only in `logs`,
+        # announced as completed, and invisible to core#1352's check in the Celery wrapper, which
+        # reads the row. Same shape as `run_pipeline`'s dbt-failure branch: record the failure
+        # with dbt's own message, skip the catalog sync, announce nothing.
+        #
+        # `is True` rather than truthiness: dbt's verdict is a bool, so a value that is not one,
+        # such as a stand-in that never set it, must not read as success.
+        if result["success"] is True:
+            execution_service.complete_run(
+                session,
+                org_id,
+                run_id,
+                rows_loaded=result["rows_affected"],
+                logs=result["logs"],
             )
-        except Exception:
-            logger.exception("Catalog sync failed (non-fatal)")
+
+            try:
+                _sync_catalog_after_transformation(
+                    session, org_id, transformation, dbt_svc, dst_conn, dst_config
+                )
+            except Exception:
+                logger.exception("Catalog sync failed (non-fatal)")
+
+            completed = True
+        else:
+            execution_service.fail_run(
+                session,
+                org_id,
+                run_id,
+                error_message=describe_dbt_failure(result, transformation.name),
+                logs=result["logs"],
+            )
 
         if own_session:
             session.commit()
@@ -197,14 +225,17 @@ def run_transformation(
         # the session the handlers receive.
         # See upload_tasks: announced, not emitted (core#456), and `status` read from
         # the run rather than hardcoded (core#657 AC4).
-        execution_service.announce_completion(
-            session,
-            org_id,
-            run_id,
-            "run.transformation_completed",
-            target_type="transformation",
-            target_id=transformation.id,
-        )
+        # `completed` stays False when dbt reported a failure: that run is FAILED, and a failed
+        # run is not announced as completed (core#1361), as in `run_pipeline`.
+        if completed:
+            execution_service.announce_completion(
+                session,
+                org_id,
+                run_id,
+                "run.transformation_completed",
+                target_type="transformation",
+                target_id=transformation.id,
+            )
 
     finally:
         if own_session:
@@ -228,9 +259,9 @@ def run_transformation_task(self, run_id: int, org_id: int, scheduled: bool = Fa
         run_transformation(run_id=run_id, org_id=org_id)
     finally:
         release(org_id)
-    # core#1352: a run that ended FAILED must not end its task as a Celery SUCCESS.
-    # ⚠️ core#1361: a failed dbt model may not end this run FAILED at all, and then nothing here
-    # can see it. That is the row lying, one layer below this check.
+    # core#1352: a run that ended FAILED must not end its task as a Celery SUCCESS. This covers a
+    # dbt model that failed without raising only since core#1361: before that, such a run was
+    # recorded SUCCESS, so this check had nothing to see.
     from datanika.tasks.run_outcome import raise_if_run_failed
 
     raise_if_run_failed(org_id, run_id, "transformation")

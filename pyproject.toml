@@ -279,6 +279,12 @@ constraint-dependencies = [
     "python-multipart>=0.0.30,<0.1",
     "python-socketio>=5.16.2,<6",
     "soupsieve>=2.8.4,<3",
+    # ---- Unblocked by databricks-sql-connector 4.4.0 -------------------------
+    # thrift reaches the tree only through databricks-sql-connector (dlt's
+    # `databricks` extra). 4.2.5 declared thrift<0.21.0, below the fix; 4.4.0
+    # declares >=0.24.0,<0.25.0. This floor is also what keeps a future re-lock
+    # from resolving the connector back below 4.4.0.
+    "thrift>=0.24.0,<0.25",
     # ---- Unblocked by the dbt 1.11 move (core#825) ----------------------
     # ⚠️ `protobuf` and `urllib3` take a MAJOR ceiling rather than the usual
     # next-major one, because for both of them the fix IS the major: urllib3's

@@ -62,8 +62,6 @@ _DOCKERFILE = _ROOT / "Dockerfile"
 DECIDED_WAIVERS = {
     "CVE-2026-48818": "starlette StaticFiles UNC/NTLM — Windows-specific, prod is Linux",
     "CVE-2026-54283": "starlette request.form() limits ignored — memory DoS, reachable",
-    "CVE-2026-41608": "thrift DoS — capped below the fix by databricks-sql-connector<0.21.0",
-    "CVE-2026-43871": "thrift DoS — same pin, same decision",
 }
 
 #: Waived id -> the package its `paths` entries must name.
@@ -73,8 +71,6 @@ DECIDED_WAIVERS = {
 WAIVER_PACKAGE = {
     "CVE-2026-48818": "starlette",
     "CVE-2026-54283": "starlette",
-    "CVE-2026-41608": "thrift",
-    "CVE-2026-43871": "thrift",
 }
 
 

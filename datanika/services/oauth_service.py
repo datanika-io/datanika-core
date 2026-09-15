@@ -1,5 +1,6 @@
 """OAuth / Social Login service — Google + GitHub."""
 
+import logging
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -8,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.services.auth import AuthService
+from datanika.services.invitation_service import InvitationService
 from datanika.services.user_service import UserService
+
+logger = logging.getLogger(__name__)
 
 
 class OAuthError(UserFacingError):
@@ -88,10 +92,17 @@ class OAuthService:
         code: str,
         redirect_uri: str,
         session: Session,
+        *,
+        invite_token: str = "",
     ) -> dict:
         """Exchange auth code for tokens, find/create user, return JWT.
 
-        Returns: {"access_token": str, "refresh_token": str, "user": User, "is_new": bool}
+        Returns: ``{"access_token": str, "refresh_token": str, "user": User, "is_new": bool,
+        "invite": str}``.
+
+        ``invite`` reports what became of ``invite_token`` (core#624): ``""`` when none was
+        supplied, ``"joined"`` when it was applied and the session lands in that org, and
+        ``"not_applied"`` when one was supplied and could not be.
         """
         # Exchange code for access token
         token_data = await self._exchange_code(provider, code, redirect_uri)
@@ -115,23 +126,76 @@ class OAuthService:
         full_name = user_info.get("name") or user_info.get("login") or ""
         provider_id = str(user_info.get("sub") or user_info.get("id") or "")
 
-        # Find or create user
-        user, is_new = self._user.find_or_create_oauth_user(
-            session, email, full_name, provider.name, provider_id, email_verified=True
-        )
+        if not invite_token:
+            # Find or create user
+            user, is_new = self._user.find_or_create_oauth_user(
+                session, email, full_name, provider.name, provider_id, email_verified=True
+            )
+            invite, joined_org_id = "", None
+        else:
+            # 🚨 SPEC_SIGNUP_SOCIAL_AUTH §8e: the invitation is tried FIRST and the personal org
+            # is the fallback. ``find_or_create_oauth_user`` creates that org as part of creating
+            # the user, so it is asked not to. The email path had exactly this defect until
+            # core#981 — an unconditional create_org, then the invitation *appended* — and every
+            # invited signup finished in two orgs.
+            user, is_new = self._user.find_or_create_oauth_user(
+                session,
+                email,
+                full_name,
+                provider.name,
+                provider_id,
+                email_verified=True,
+                create_personal_org=False,
+            )
+            joined_org_id = self._apply_invitation(session, invite_token, user.id)
+            invite = "not_applied" if joined_org_id is None else "joined"
+            if is_new and joined_org_id is None:
+                # §8e rule 4: never zero orgs. Owned here because this caller opted out above.
+                self._user.create_personal_org(session, user, full_name)
 
-        # Get user's first org
         orgs = self._user.get_user_orgs(session, user.id)
         if not orgs:
             raise OAuthError("User has no organization")
-        org_id = orgs[0].id
+        # Land in the org the invitation just joined; otherwise the first org, as always.
+        org_id = joined_org_id if joined_org_id is not None else orgs[0].id
 
         return {
             "access_token": self._auth.create_access_token(user.id, org_id),
             "refresh_token": self._auth.create_refresh_token(user.id),
             "user": user,
             "is_new": is_new,
+            "invite": invite,
         }
+
+    def _apply_invitation(self, session: Session, invite_token: str, user_id: int) -> int | None:
+        """Accept ``invite_token`` for ``user_id``; the org it joined, or ``None``.
+
+        ``user_id`` is passed so the invitation can only ever join the account signing in, never
+        whichever account holds the address it was issued to (see ``accept_invitation``).
+
+        Logged in both failure shapes, because ``accept_invitation`` *returns* ``None`` for the
+        common ones — expired, already used, cancelled, issued to another account — and a log line
+        that fires only on an exception misses every one of them (core#981's second silence). The
+        user is told separately, through the ``invite`` flag the callback forwards.
+        """
+        try:
+            membership = InvitationService(self._auth).accept_invitation(
+                session, invite_token, user_id=user_id
+            )
+        except Exception:
+            logger.exception(
+                "Invitation acceptance raised during social sign-in and was dropped: user_id=%s",
+                user_id,
+            )
+            return None
+        if membership is None:
+            logger.warning(
+                "Invitation token was not applicable during social sign-in and was dropped: "
+                "user_id=%s (expired, already used, cancelled, or issued to another account)",
+                user_id,
+            )
+            return None
+        return membership.org_id
 
     async def _exchange_code(self, provider: OAuthProvider, code: str, redirect_uri: str) -> dict:
         """Exchange authorization code for tokens."""

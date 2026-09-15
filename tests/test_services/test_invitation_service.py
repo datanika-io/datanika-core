@@ -4,8 +4,9 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import select
 
-from datanika.models.invitation import InvitationStatus
+from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.pii import UserPII
 from datanika.models.user import MemberRole, Membership, Organization, User
 from datanika.services.auth import AuthService
@@ -322,6 +323,41 @@ class TestAcceptInvitation:
     def test_accept_invalid_token_returns_none(self, db_session, inv_svc):
         result = inv_svc.accept_invitation(db_session, "bogus-token")
         assert result is None
+
+    def test_accept_for_a_named_account_refuses_every_other_account(
+        self, db_session, inv_svc, user_svc, org, owner
+    ):
+        """core#624. The account is resolved from the invitation's address, so a caller acting
+        for one particular account — a signup — has to be able to say which one.
+
+        Refused WITHOUT consuming: the invitation still belongs to the person it was sent to.
+        """
+        inv = inv_svc.create_invitation(
+            db_session, org.id, "invited@test.com", MemberRole.EDITOR, owner.id
+        )
+        invited = user_svc.register_user(db_session, "invited@test.com", "invited password", "In")
+        stranger = user_svc.register_user(db_session, "other@test.com", "other password", "Other")
+        db_session.flush()
+
+        assert inv_svc.accept_invitation(db_session, inv.token, user_id=stranger.id) is None
+        # Read the column, not ``db_session.refresh(inv)``: a refresh reloads ``expires_at`` from
+        # SQLite without its timezone, and the control below would then fail on a naive/aware
+        # comparison that PostgreSQL never produces (see test_invited_signup_lands_in_one_org).
+        status = db_session.execute(
+            select(Invitation.status).where(Invitation.id == inv.id)
+        ).scalar_one()
+        assert status == InvitationStatus.PENDING
+        assert (
+            db_session.query(Membership)
+            .filter(Membership.org_id == org.id, Membership.user_id == invited.id)
+            .count()
+            == 0
+        )
+
+        # Control: the account it was issued to can still accept it.
+        membership = inv_svc.accept_invitation(db_session, inv.token, user_id=invited.id)
+        assert membership is not None
+        assert membership.user_id == invited.id
 
     def test_accept_already_accepted_returns_none(self, db_session, inv_svc, user_svc, org, owner):
         inv = inv_svc.create_invitation(

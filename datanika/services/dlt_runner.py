@@ -15,6 +15,10 @@ from dlt.sources.sql_database import sql_database, sql_table
 from datanika.errors import UserFacingError
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
+from datanika.services.write_disposition import (
+    FULL_FETCH_WRITE_DISPOSITION,
+    is_serialized_form_default,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,21 @@ SUPPORTED_SAAS_TYPES = {
 
 # Kafka is a streaming source with its own builder
 SUPPORTED_KAFKA_TYPES = {"kafka"}
+
+#: Source types whose upload form does not render the Write Disposition control (core#1336).
+#:
+#: For these a stored ``{"mode": ..., "write_disposition": "append"}`` is the structured form's
+#: saved default, not a choice, and ``execute()`` does not forward it. Must equal the form's
+#: ``NON_SQL_SOURCE_TYPES``; ``tests/test_connector_type_contracts.py`` asserts it.
+FORM_HIDES_WRITE_DISPOSITION: frozenset[str] = frozenset(
+    SUPPORTED_SAAS_TYPES
+    | SUPPORTED_FILE_TYPES
+    | SUPPORTED_OPENAPI_TYPES
+    | SUPPORTED_REST_TYPES
+    | SUPPORTED_SHEETS_TYPES
+    | SUPPORTED_MONGODB_TYPES
+    | SUPPORTED_KAFKA_TYPES
+)
 
 #: Graph API version for the Facebook Ads fallback. Facebook retires versions on
 #: a rolling ~2-year schedule, so this is a config-overridable default
@@ -1557,7 +1576,14 @@ class DltRunnerService:
         if _first_file_or_none(lister) is None:
             raise DltRunnerError(describe_empty_file_match(bucket_url, file_glob))
 
-        return (lister | reader).with_name(table_name)
+        # core#1336. Every run re-lists and re-reads every matching file, so `append` loaded the
+        # same rows again on each run. `replace` leaves each row once. A disposition the upload
+        # sets deliberately still wins, because `execute()` passes it at run level.
+        return (
+            (lister | reader)
+            .with_name(table_name)
+            .apply_hints(write_disposition=FULL_FETCH_WRITE_DISPOSITION)
+        )
 
     @staticmethod
     def _rest_api_from_parts(
@@ -1660,12 +1686,16 @@ class DltRunnerService:
         resources = [
             {k: v for k, v in r.items() if k not in ("columns", "_source")} for r in catalog
         ]
+        # core#1336. No dlt state crosses runs (the pipeline name carries the run id), so every run
+        # fetches the whole catalog again. `replace` as a resource DEFAULT leaves each record once,
+        # and a resource that declares its own disposition keeps it.
         return self._rest_api_from_parts(
             base_url,
             resources,
             headers=config.get("headers"),
             auth=config.get("auth"),
             paginator=config.get("paginator") or dlt_config.get("paginator"),
+            resource_defaults={"write_disposition": FULL_FETCH_WRITE_DISPOSITION},
         )
 
     def _build_google_sheets_source(self, config: dict, dlt_config: dict):
@@ -2509,8 +2539,16 @@ class DltRunnerService:
         somebody adds; with no default, forgetting it is a ``TypeError`` at
         build time instead of five missing customers in a warehouse.
         """
+        # core#1336. Every run re-fetches the account, so `append` stored every record again on
+        # each run. `replace` as a resource default leaves each record once, and a resource that
+        # declares its own disposition keeps it.
         return cls._rest_api_from_parts(
-            base_url, resources, auth=auth, headers=headers, paginator=paginator
+            base_url,
+            resources,
+            auth=auth,
+            headers=headers,
+            paginator=paginator,
+            resource_defaults={"write_disposition": FULL_FETCH_WRITE_DISPOSITION},
         )
 
     def build_pipeline(
@@ -2610,6 +2648,14 @@ class DltRunnerService:
         if merge_config:
             run_kwargs.pop("write_disposition", None)
             run_kwargs.pop("primary_key", None)
+        # core#1336. Until the form stopped storing it, every structured upload saved the SQL
+        # block's hidden default, `append`, including sources that never render that block. Passed
+        # at run level it overrode every resource, so each re-run landed every record again. For
+        # those sources the stored pair is the form's default, not a choice. It is not forwarded,
+        # and what the builder or the resource declares applies. A disposition stored without the
+        # form's `mode` key came from raw JSON or the API, and is still forwarded.
+        if source_type in FORM_HIDES_WRITE_DISPOSITION and is_serialized_form_default(dlt_config):
+            run_kwargs.pop("write_disposition", None)
         load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = _extract_rows_loaded(pipeline)
 

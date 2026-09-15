@@ -12,6 +12,7 @@ from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
+from datanika.services.write_disposition import is_serialized_form_default
 from datanika.tasks.upload_tasks import run_upload_task
 from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.connection_state import (
@@ -215,13 +216,17 @@ class UploadState(BaseState):
         config: dict = {}
         config["mode"] = self.form_mode
 
-        if self.form_write_disposition:
-            config["write_disposition"] = self.form_write_disposition
-        if self.form_write_disposition == "merge":
-            if self.form_mode == "single_table" and self.form_primary_key:
-                config["primary_key"] = self.form_primary_key
-            elif self.form_mode == "full_database" and self.form_merge_config:
-                config["merge_config"] = json.loads(self.form_merge_config)
+        # core#1336. The Write Disposition select renders only for SQL sources. Storing its default
+        # for a source that never shows it made every re-run of a SaaS, OpenAPI or file upload land
+        # a second full copy. For those sources the loader chooses; see `dlt_runner.execute`.
+        if not self.form_is_non_sql_source:
+            if self.form_write_disposition:
+                config["write_disposition"] = self.form_write_disposition
+            if self.form_write_disposition == "merge":
+                if self.form_mode == "single_table" and self.form_primary_key:
+                    config["primary_key"] = self.form_primary_key
+                elif self.form_mode == "full_database" and self.form_merge_config:
+                    config["merge_config"] = json.loads(self.form_merge_config)
 
         if self.form_source_schema:
             config["source_schema"] = self.form_source_schema
@@ -598,7 +603,17 @@ class UploadState(BaseState):
             # a hand edit) can hold a value the structured form cannot parse
             # back. Failing towards "keep it" is the only safe direction.
             rebuilt = None
-        if rebuilt is None or any(k not in rebuilt or rebuilt[k] != v for k, v in config.items()):
+        # core#1336. A non-SQL upload saved before the form stopped storing its hidden `append`
+        # still carries that pair. The structured form does not need to preserve it: saving without
+        # it is the repair, so it must not push the edit form into raw JSON.
+        skip = (
+            {"write_disposition"}
+            if self.form_is_non_sql_source and is_serialized_form_default(config)
+            else set()
+        )
+        if rebuilt is None or any(
+            k not in rebuilt or rebuilt[k] != v for k, v in config.items() if k not in skip
+        ):
             self.form_use_raw_json = True
             self.form_config = json.dumps(config, indent=2)
 

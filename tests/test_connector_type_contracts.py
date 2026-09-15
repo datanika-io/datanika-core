@@ -92,6 +92,15 @@ def test_the_form_and_the_loader_agree_on_which_types_are_saas():
     assert SAAS_SOURCE_TYPES == SUPPORTED_SAAS_TYPES
 
 
+def test_the_loader_and_the_form_agree_on_where_the_disposition_control_is_hidden():
+    """core#1336. The loader decides whether a stored `write_disposition` is the form's hidden
+    default by source type, and the form decides whether to render the control by source type.
+    If the two sets disagree, one source gets a disposition it was never shown."""
+    from datanika.services.dlt_runner import FORM_HIDES_WRITE_DISPOSITION
+
+    assert FORM_HIDES_WRITE_DISPOSITION == NON_SQL_SOURCE_TYPES
+
+
 def test_every_ui_saas_type_has_endpoints_to_offer():
     """A SaaS type with no endpoint list renders an empty checkbox group.
 

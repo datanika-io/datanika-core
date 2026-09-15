@@ -252,7 +252,7 @@ A single `BackgroundScheduler` with `SQLAlchemyJobStore` (sync PostgreSQL URL) f
 - Source factory selects adapter by connection type (postgres, mysql, mssql, sqlite, rest_api, s3, csv, json, parquet, google_sheets, mongodb)
 - Destination factory selects dlt destination (postgres, mssql, clickhouse, duckdb, bigquery, snowflake, redshift, databricks, synapse). ⚠️ It is a bare `getattr(dlt.destinations, connection_type)`, so a type in the set with no factory raises `AttributeError` at run time — see the note below
 - Supports two extraction modes: **single_table** (one table with optional incremental key) and **full_database** (all tables or filtered subset)
-- Write dispositions: append, replace, merge
+- Write dispositions: append, replace, merge. ⚠️ The upload form renders this choice only for SQL database sources. For SaaS, OpenAPI and file sources, every run re-fetches every record: no dlt state crosses runs, because the pipeline name carries the run id. So the loader writes those sources with `replace` unless the upload sets a disposition deliberately. Before core#1336 the form stored its hidden `append` for those sources too, and each re-run landed a second full copy while every run read green. For those sources, a stored `{"mode": …, "write_disposition": "append"}` pair is still ignored.
 - Schema evolution control per entity: evolve, freeze, discard
 - Row-level data quality filters with 8 operators
 

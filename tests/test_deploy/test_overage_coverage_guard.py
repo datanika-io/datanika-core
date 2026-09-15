@@ -19,6 +19,12 @@ by running the real reporter:
   `test.skip(true, ...)`, run from a subdirectory so the report's file BASENAME is
   `overage-charge-cycle.spec.ts`. The mixed 2-passed shape cannot be produced locally from the
   real spec, which needs staging plus Paddle sandbox credentials.
+* `report-3passed.json` -- the same technique, with the three tests EXECUTING, produced when
+  core#1302's harness made the 4xx test runnable and the exemption went away. It is what the
+  passing arm reads. The real spec still cannot produce this locally, and the soak uploaded its
+  JSON only `if: failure()` until that same change added an always-upload -- so a green night's
+  own artifact was, until then, unobtainable. Replace this with a real soak night's JSON when
+  one is to hand; it is the same shape.
 
 That distinction is the point of `test_control_*` below: a guard driven only by JSON somebody
 typed is a guard asserting its author's model of the reporter. These assert against what the
@@ -44,8 +50,12 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "overage-e2e-nightly.yml"
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "overage_coverage"
 
 ALL_SKIPPED = FIXTURES / "report-all-skipped.json"
-MIXED_OK = FIXTURES / "report-2passed-1accounted.json"
+#: Renamed from MIXED_OK when core#1302 removed the exemption: this shape is no longer a passing
+#: night, and a constant whose name asserts "OK" would be the stale label this file exists to
+#: catch. The bytes are unchanged -- only what the guard now says about them.
+MIXED_ONE_SKIP = FIXTURES / "report-2passed-1accounted.json"
 UNACCOUNTED = FIXTURES / "report-unaccounted-skip.json"
+THREE_PASSED = FIXTURES / "report-3passed.json"
 
 #: A top-level `test(` in a spec file. `test.skip(` does not match -- the `.` is not `(`.
 _TEST = re.compile(r"^\s*test\(", re.M)
@@ -99,7 +109,7 @@ def test_control_the_real_spec_exists_and_parses_to_three_tests() -> None:
 
 def test_control_the_fixtures_are_real_playwright_reports() -> None:
     """Each must carry the reporter's own `stats` block. A hand-written stub would not."""
-    for path in (ALL_SKIPPED, MIXED_OK, UNACCOUNTED):
+    for path in (ALL_SKIPPED, MIXED_ONE_SKIP, UNACCOUNTED, THREE_PASSED):
         assert path.exists(), f"{path.name} missing"
         report = json.loads(path.read_text(encoding="utf-8"))
         stats = report.get("stats")
@@ -114,6 +124,7 @@ def test_control_the_fixtures_are_real_playwright_reports() -> None:
         ("report-all-skipped.json", 0, 3),
         ("report-2passed-1accounted.json", 2, 1),
         ("report-unaccounted-skip.json", 1, 2),
+        ("report-3passed.json", 3, 0),
     ],
 )
 def test_control_each_fixture_carries_the_shape_it_is_named_for(
@@ -215,19 +226,34 @@ def test_refuses_a_report_from_some_other_run(cov, capsys, tmp_path) -> None:
 # ── and passes what it must — a guard that cannot pass is not a gate ─────────────────────
 
 
-def test_passes_the_real_mixed_run_and_names_the_accounted_skip(cov, capsys) -> None:
-    """The shape every soak night has actually produced since 2026-07-21: 2 passed, 1 skipped.
+def test_the_shape_that_used_to_pass_is_now_refused(cov, capsys) -> None:
+    """2 passed + 1 skipped was every soak night from 2026-07-21 until core#1302.
 
-    ⚠️ This arm is as load-bearing as the refusals. A guard that fires on correct work is how
-    a guard gets deleted, and this is the state the job is in on a good night.
+    The skip was the PRE-ACCEPTANCE Paddle 4xx test, and it is now executable: the seed can bind
+    a subscription id Paddle cannot resolve. So the exemption is gone, the floor rose to 3 in the
+    same commit, and this **same fixture** — unchanged, still the real reporter's output — must
+    now be refused as a partial run. Only the verdict moved, which is what regaining coverage
+    looks like from the guard's side.
     """
-    code, out = _run(cov, MIXED_OK, capsys)
-    assert code == 0, f"the guard refused a legitimately green soak night:\n{out}"
+    code, out = _run(cov, MIXED_ONE_SKIP, capsys)
+    assert code == 2, f"a run that skipped the 4xx test was still graded a pass:\n{out}"
     assert "2 executed / 1 skipped / 3 collected" in out
     assert "Paddle 4xx response marks Charge failed with reason" in out
-    assert "accounted:" in out
-    # The reason must come from the RUN, not be restated by the guard.
-    assert "reported :" in out
+    assert "UNACCOUNTED" in out
+
+
+def test_passes_a_fully_executed_soak_night(cov, capsys) -> None:
+    """🚨 A guard that cannot pass is not a gate — and removing the exemption removed the only
+    fixture that made `main()` return 0, leaving every other arm a refusal.
+
+    ⚠️ This arm is as load-bearing as the refusals. A guard that fires on correct work is how a
+    guard gets deleted, and this is the state the job is in on a good night from core#1302 on:
+    three executed, nothing skipped, nothing exempt.
+    """
+    code, out = _run(cov, THREE_PASSED, capsys)
+    assert code == 0, f"the guard refused a fully executed soak night:\n{out}"
+    assert "3 executed / 0 skipped / 3 collected" in out
+    assert "SKIPPED" not in out
 
 
 # ── the accounted set and the floor stay honest ──────────────────────────────────────────
@@ -256,18 +282,17 @@ def test_the_floor_branch_refuses_a_partial_run(cov, capsys, tmp_path) -> None:
     So this is defence-in-depth being proven to function, not a case seen in the wild. The
     three fixtures above are the real ones; this one is hand-built on purpose and says so.
     """
-    only_accounted = next(iter(cov.ACCOUNTED_SKIPS))
     report = tmp_path / "partial.json"
     report.write_text(
         json.dumps(
             {
-                "stats": {"expected": 1, "skipped": 1},
+                "stats": {"expected": 2, "skipped": 0},
                 "suites": [
                     {
                         "file": "overage-charge-cycle.spec.ts",
                         "specs": [
                             {"title": "cycle: seed", "tests": [{"status": "expected"}]},
-                            {"title": only_accounted, "tests": [{"status": "skipped"}]},
+                            {"title": "no charge when usage", "tests": [{"status": "expected"}]},
                         ],
                     }
                 ],
@@ -277,7 +302,7 @@ def test_the_floor_branch_refuses_a_partial_run(cov, capsys, tmp_path) -> None:
     )
     code, out = _run(cov, report, capsys)
     assert code == 2, "a partial run met the floor"
-    assert "1 specs executed, floor is 2" in out
+    assert f"2 specs executed, floor is {cov.OVERAGE_EXECUTED_FLOOR}" in out
 
 
 def test_the_floor_is_not_derived_from_the_spec_file(cov) -> None:
@@ -311,6 +336,17 @@ def test_the_skip_reason_and_the_accounted_entry_cite_the_same_issue(cov) -> Non
     version of this assertion was measurably unarmed.
     """
     reasons = _SKIP_REASON.findall(_spec_text())
+
+    if not cov.ACCOUNTED_SKIPS:
+        # core#1302 removed the last exemption. The coupling still has something to say in that
+        # state, and it is the inverse: an unconditional skip with nothing accounting for it is
+        # precisely what `assert_overage_coverage` refuses at exit 2, so it must not exist.
+        assert not reasons, (
+            "the spec carries an unconditional test.skip but ACCOUNTED_SKIPS is empty — the soak "
+            f"would refuse the run as UNACCOUNTED. Reasons found: {reasons}"
+        )
+        return
+
     assert reasons, "no in-body `test.skip(true, ...)` found — this test now asserts nothing"
 
     in_reason = set(_ISSUE.findall(" ".join(reasons)))

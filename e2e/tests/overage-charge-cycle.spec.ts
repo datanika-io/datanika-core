@@ -63,6 +63,14 @@ const GATE =
 
 const BASE_URL = process.env.DATANIKA_E2E_BASE_URL ?? "https://staging-app.datanika.io";
 
+// The subscription id `seed-overage-tenant` binds when `forcePaddleRejection` is set: well-formed
+// (`sub_` + 26 base-32 characters) so Paddle looks it up, and a zero-filled ULID so the lookup
+// always fails. Measured against the sandbox on 2026-09-15 — 404 request_error/not_found on the
+// charge POST and on a plain GET, while a malformed id answers 400 and a bad key answers 403, so
+// the 404 is the entity refusing. No entity means no charge and no sandbox state change, which is
+// what keeps this off the SHARED sandbox subscription the contract nightly drives (core#1302).
+const REJECTING_SUBSCRIPTION_ID = `sub_${"0".repeat(26)}`;
+
 // Armed: the test-only admin endpoints shipped (cloud#72). The tests still run
 // only where the GATE env is set (DATANIKA_E2E_OVERAGE_CHARGE=1 + Paddle sandbox
 // creds) — i.e. the staging overage run, never PR CI. See core#374 / core#267.
@@ -214,29 +222,80 @@ test.describe("V2 P5 overage charge cycle @slow", () => {
   });
 
   test("Paddle 4xx response marks Charge failed with reason", async ({ request }) => {
-    // Scenario: Paddle sandbox returns a 4xx on the POST /subscriptions/{id}/charge
-    // request (pre-acceptance rejection). After CHARGE_MAX_RETRIES the Charge goes
-    // to status=failed with `last_error` set to the Paddle body.
-    //
-    // NB: this is the pre-acceptance path. A *post-acceptance* collection decline
-    // is different — the charge stays ISSUED while Paddle runs dunning (see
+    // The PRE-ACCEPTANCE rejection: Paddle refuses the charge request itself, so the Charge
+    // terminates FAILED with `last_error` carrying Paddle's body. A *post-acceptance* card
+    // decline is a different branch — the charge stays ISSUED while Paddle runs dunning (see
     // docs/billing-failed-payment-policy.md §Grace period). Don't conflate them.
     //
-    // The grace-period policy is now specified (cloud#48), but exercising this
-    // needs a sandbox subscription/product that forces a 4xx + a decline-simulation
-    // harness. Kept skipped until that harness lands.
-    //
-    // ⚠️ This reason cited core#361 until 2026-09-12 — an issue CLOSED on 2026-07-20,
-    // and one that was never about this: it delivered the /api/admin/e2e/* endpoints,
-    // which shipped. So the skip had no live exit condition for ~8 weeks while firing
-    // on all 54 scheduled soak runs. core#1302 is the real one and is deliberately
-    // left open. e2e/scripts/assert_overage_coverage.py refuses the run if this title
-    // is not in its ACCOUNTED_SKIPS, so the pointer cannot go dead silently again.
-    //
-    // Not an uncovered branch: cloud's TestChargeCycleOverages4xxTerminal drives the
-    // 4xx and asserts status=FAILED plus last_error. What is absent is an end-to-end
-    // run against the real Paddle sandbox.
-    test.skip(true, "Needs sandbox 4xx-forcing harness — see core#1302 / SPEC §4.4");
+    // This test was an unconditional skip from the day it was written, and until 2026-09-12 its
+    // reason cited core#361 — closed 2026-07-20, and never about this. Forcing a 4xx used to
+    // mean breaking the payload for the SHARED sandbox subscription that the contract nightly
+    // also drives (cloud#88). The harness that unblocked it is `forcePaddleRejection`: the seed
+    // binds a subscription id Paddle cannot resolve (core#1302).
+    const seedRes = await request.post(`${BASE_URL}/api/admin/e2e/seed-overage-tenant`, {
+      data: {
+        planSlug: "pro",
+        includedGB: 100,
+        overagePriceCents: 100,
+        usageGB: 105,
+        forcePaddleRejection: true,
+      },
+    });
+    await expectOk(seedRes, "seed-overage-tenant (forced rejection)");
+    const seed = (await seedRes.json()) as {
+      subscriptionId: number;
+      billingPeriodEnd: string;
+      authToken: string;
+      paddleSubscriptionId?: string;
+    };
+
+    // 🚨 SAFETY GATE, asserted BEFORE anything is charged. If staging runs cloud code that
+    // predates `forcePaddleRejection`, the flag is ignored silently and the charge below would
+    // go to the shared sandbox subscription — a real transaction on the tenant the contract
+    // nightly uses. Failing here costs a red night; not checking costs that transaction.
+    expect(
+      seed.paddleSubscriptionId,
+      "staging did not honour forcePaddleRejection — refusing to charge the shared sandbox subscription",
+    ).toBe(REJECTING_SUBSCRIPTION_ID);
+
+    const cycleEnd = new Date(
+      new Date(seed.billingPeriodEnd).getTime() + 60 * 1000,
+    ).toISOString();
+    const adv = await request.post(`${BASE_URL}/api/admin/e2e/advance-clock`, {
+      data: { toIso: cycleEnd },
+    });
+    await expectOk(adv, "advance-clock (T+0, forced rejection)");
+
+    const settle = await request.post(`${BASE_URL}/api/admin/e2e/run-task`, {
+      data: { taskName: "charge_cycle_overages" },
+    });
+    await expectOk(settle, "run-task charge_cycle_overages (forced rejection)");
+    const body = (await settle.json()) as { result: ChargeSummary };
+    expect(body.result.disabled).toBeFalsy();
+    expect(body.result.issued).toBe(0);
+    expect(body.result.failed).toBe(1);
+
+    const listRes = await request.get(
+      `${BASE_URL}/api/admin/e2e/charges?subscriptionId=${seed.subscriptionId}`,
+      { headers: { Authorization: `Bearer ${seed.authToken}` } },
+    );
+    await expectOk(listRes, "charges list (forced rejection)");
+    const charges = (await listRes.json()) as Array<{
+      status: string;
+      attempts: number;
+      lastError: string | null;
+      paddleTransactionId: string | null;
+    }>;
+    expect(charges).toHaveLength(1);
+    expect(charges[0].status).toBe("failed");
+    // Terminal on the FIRST attempt, not retried to CHARGE_MAX_RETRIES. This is what separates
+    // "Paddle refused us" from "we never reached Paddle": a transient error (network, 5xx)
+    // leaves the row PENDING and retryable, with the same `failed` count nowhere in sight.
+    expect(charges[0].attempts).toBe(1);
+    expect(charges[0].paddleTransactionId).toBeNull();
+    // ...with reason: Paddle's own body, which only a real HTTP response can supply.
+    expect(charges[0].lastError ?? "").toMatch(/Paddle charge error \(4\d\d\)/);
+    expect(charges[0].lastError ?? "").toContain("not_found");
   });
 
   test("no charge when usage under included", async ({ request }) => {

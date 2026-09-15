@@ -1,0 +1,196 @@
+{
+  "config": {
+    "configFile": "D:\\Projects\\Datanika\\worktrees\\datanika-core-qa\\e2e\\.tmp-3passed\\playwright.config.ts",
+    "rootDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/.tmp-3passed/tests",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "D:/Projects/Datanika/worktrees/datanika-core-qa/e2e/.tmp-3passed/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json",
+        {
+          "outputFile": "results.json"
+        }
+      ],
+      [
+        "list",
+        null
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.59.1",
+    "workers": 10,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "overage-charge-cycle.spec.ts",
+      "file": "overage-charge-cycle.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "V2 P5 overage charge cycle @slow",
+          "file": "overage-charge-cycle.spec.ts",
+          "line": 11,
+          "column": 6,
+          "specs": [
+            {
+              "title": "cycle: seed → T-23h notify → T+0 charge → retry no-op",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 7,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-15T23:38:09.325Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-6abefa952fae88142084",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 12,
+              "column": 7
+            },
+            {
+              "title": "Paddle 4xx response marks Charge failed with reason",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-15T23:38:09.360Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-57e5035e718dccd3d8c7",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 16,
+              "column": 7
+            },
+            {
+              "title": "no charge when usage under included",
+              "ok": true,
+              "tags": [
+                "slow"
+              ],
+              "tests": [
+                {
+                  "timeout": 30000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "",
+                  "projectName": "",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 2,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-09-15T23:38:09.375Z",
+                      "annotations": [],
+                      "attachments": []
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "ea566d2eb7d983313cbc-9fac5e8269b2b6995179",
+              "file": "overage-charge-cycle.spec.ts",
+              "line": 20,
+              "column": 7
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-09-15T23:38:08.390Z",
+    "duration": 1023.9259999999997,
+    "expected": 3,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

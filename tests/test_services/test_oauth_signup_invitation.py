@@ -25,14 +25,18 @@ from datanika.services.invitation_service import InvitationService
 from datanika.services.oauth_service import OAuthService, google_provider
 from datanika.services.user_service import UserService
 
-# SQLite returns DateTime(timezone=True) naive; accept_invitation compares it to an aware now().
-# The fixture and the reason it is module-scoped live beside core#981's tests.
-from tests.test_ui.test_invited_signup_lands_in_one_org import (  # noqa: F401 — autouse fixture
-    _sqlite_returns_aware_datetimes,
-)
-
 NAME = "Nina Newcomer"
 EMAIL = "nina@example.com"
+
+
+@pytest.fixture(autouse=True)
+def _aware_invitation_expiry(sqlite_aware_invitation_expiry):
+    """Opt in to the SQLite ``expires_at`` fix in ``tests/conftest.py``.
+
+    ``handle_callback`` flushes between creating the user and accepting the invitation, so the row
+    comes back from SQLite naive and ``accept_invitation``'s comparison would raise — a failure
+    PostgreSQL never produces.
+    """
 
 
 @pytest.fixture

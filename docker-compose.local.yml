@@ -8,6 +8,12 @@
 #
 #   DATANIKA_E2E_BASE_URL=http://localhost:3100 npx playwright test
 #
+# ⚠️ FROM AN AGENT WORKTREE, run `bash scripts/worktree-stack.sh up` instead (core#1197). It
+# starts the same services under that worktree's own compose project, container names, host-port
+# band and backend URL, and refuses a configuration that would collide with another stack. The
+# command above binds the default names and ports, which is how two agents' stacks answered each
+# other's health checks on 2026-09-15.
+#
 # WHY A SEPARATE FILE AND NOT A `profiles:` ENTRY IN docker-compose.yml
 # ---------------------------------------------------------------------
 # Two guards constrain every service in `docker-compose.yml`, from opposite directions:

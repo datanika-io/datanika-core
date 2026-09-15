@@ -208,3 +208,51 @@ def test_rejects_an_unknown_edition(tmp_path: Path) -> None:
     res = _run(core, "--edition", "enterprise", "--list-context")
     assert res.returncode != 0
     assert "core" in res.stderr and "cloud" in res.stderr
+
+
+# --------------------------------------------------------------------------------------
+# The tag. The context cannot collide with another agent; the tag could, and did
+# (QA, 2026-09-15): every worktree built `:worktree`, and on a containerd image store a
+# re-pointed tag cannot be put back.
+# --------------------------------------------------------------------------------------
+
+
+def test_the_default_tag_is_per_worktree(tmp_path: Path) -> None:
+    res = _run(_make_tree(tmp_path), "--print-tag")
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == "ghcr.io/datanika-io/datanika-core:worktree-fake"
+
+
+def test_two_worktrees_never_share_a_default_tag(tmp_path: Path) -> None:
+    qa = _run(_make_tree(tmp_path / "a", agent="qa"), "--print-tag").stdout.strip()
+    infra = _run(_make_tree(tmp_path / "b", agent="infra"), "--print-tag").stdout.strip()
+    assert qa.endswith(":worktree-qa"), qa
+    assert infra.endswith(":worktree-infra"), infra
+
+
+def test_an_explicit_tag_still_wins(tmp_path: Path) -> None:
+    res = _run(_make_tree(tmp_path), "--tag", "foo:bar", "--print-tag")
+    assert res.stdout.strip() == "foo:bar", res.stdout + res.stderr
+
+
+def test_the_shared_tag_is_gone_from_the_script_body() -> None:
+    """`:worktree` with nothing after it -- as a default, or in the hint the script prints."""
+    import re
+
+    body = SCRIPT.read_text(encoding="utf-8")
+    code = "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+    assert not re.search(r"datanika-core:worktree(?!-)", code), "the shared default tag is back"
+    assert "DATANIKA_IMAGE_TAG=worktree " not in code
+
+
+def test_the_build_tag_is_the_tag_the_stack_runs(tmp_path: Path) -> None:
+    """The two scripts derive the tag separately, so they are held together here."""
+    import importlib.util
+
+    module_path = REPO_ROOT / "scripts" / "worktree_stack.py"
+    spec = importlib.util.spec_from_file_location("worktree_stack", module_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    core = _make_tree(tmp_path, agent="qa")
+    assert _run(core, "--print-tag").stdout.strip() == module.identity(core)["tag"]

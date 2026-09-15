@@ -494,6 +494,16 @@ def _salesforce_default_resources(api_version: str) -> list[dict]:
     ]
 
 
+#: Shopify Admin API version for the REST fallback's default resources (core#1337).
+#:
+#: Shopify serves the oldest version it still supports in place of a retired one, and says nothing:
+#: the old ``2024-01`` pin was being served as ``2025-10``. Pinning a supported version keeps the
+#: response shape a choice rather than a surprise. Measured against a real store on 2026-09-15:
+#: ``2026-07`` is served as itself, and products and customers return the same field sets as they
+#: did under the retired pin. Shopify supports a stable version for about twelve months.
+SHOPIFY_API_VERSION = "2026-07"
+
+
 SAAS_PAGINATORS: dict[str, dict] = {
     # `starting_after` carrying the last item's id. There is deliberately no
     # `has_more` stop condition — the schema rejects `has_more_path` — so the
@@ -1977,19 +1987,24 @@ class DltRunnerService:
                         {
                             "name": "orders",
                             "endpoint": {
-                                "path": "admin/api/2024-01/orders.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/orders.json",
+                                # core#1337: Shopify's `status` defaults to `open`, so without
+                                # this a run loads only the orders open at run time. dlt's
+                                # next-URL paginator drops the query on every later page, which
+                                # is what Shopify's `page_info` rule requires.
+                                "params": {"status": "any"},
                             },
                         },
                         {
                             "name": "products",
                             "endpoint": {
-                                "path": "admin/api/2024-01/products.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/products.json",
                             },
                         },
                         {
                             "name": "customers",
                             "endpoint": {
-                                "path": "admin/api/2024-01/customers.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/customers.json",
                             },
                         },
                     ],

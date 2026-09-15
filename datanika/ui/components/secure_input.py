@@ -150,6 +150,43 @@ def config_input(
     )
 
 
+def required_marker() -> rx.Component:
+    """The required marker, as its own element (SPEC_FIELD_REQUIREDNESS §2.4).
+
+    Never part of a translated string. A string cannot vary by connector, and nothing ties a glyph
+    inside one to the input's ``required`` attribute — which is how openapi's Base URL came to look
+    mandatory to a sighted user while a screen reader was told it was optional (§1c, landing#572).
+
+    ``aria-hidden``: the input's HTML ``required`` attribute is what assistive technology announces
+    (§2.5), and a star read aloud beside it adds nothing.
+    """
+    return rx.el.span("*", custom_attrs={"aria-hidden": "true"})
+
+
+def field_label(label, *, required: bool) -> rx.Component:
+    """A config-form label that carries the marker exactly when ``required`` is true."""
+    if required:
+        return rx.text(label, " ", required_marker(), size="2", weight="bold")
+    return rx.text(label, size="2", weight="bold")
+
+
+def labelled_config_input(label, field: str, *, required: bool, **props) -> rx.Component:
+    """A config input and its label, with requiredness stated ONCE (SPEC_FIELD_REQUIREDNESS §2.1).
+
+    The single ``required`` value sets both the visual marker and the input's HTML ``required``
+    attribute, so the two cannot disagree: there is only one of them. Everything else is forwarded
+    to :func:`config_input`.
+
+    ⚠️ ``tests/test_i18n/test_required_marker_matches_label.py`` recognises this call by name and
+    reads ``required=`` as a literal. Pass a literal ``True`` or ``False`` at the call site, or that
+    guard stops seeing the label — and a scanning guard that stops seeing a site does not fail.
+    """
+    return rx.fragment(
+        field_label(label, required=required),
+        config_input(field, required=required, **props),
+    )
+
+
 def config_text_area(field: str, *, width: str = "100%", **props) -> rx.Component:
     """A config-form textarea that no password manager will fill.
 

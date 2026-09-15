@@ -79,30 +79,6 @@ vulnerabilities:
 # CVE sweep — and it stays on core#836 with the corrected reason. What is written
 # down here is why we are not doing it TODAY, not a claim that we cannot.
 
-  - id: CVE-2026-41608
-    paths:
-      - "app/.venv/lib/python3.12/site-packages/thrift-*.dist-info/METADATA"
-    statement: >-
-      Apache Thrift Python bindings, DoS. NOT ACTIONABLE: the fix is thrift
-      0.24.0 and databricks-sql-connector declares thrift (>=0.16.0,<0.21.0) —
-      a ceiling BELOW the fix, so flooring thrift makes the resolve fail rather
-      than producing a fixed tree. This is a table-driven deferral, not a
-      judgement: tests/test_security/test_dependency_advisories.py fails the day
-      that ceiling lifts. Exposure is narrow — we are a Thrift CLIENT of a
-      Databricks endpoint the org configured, and both records are parser DoS.
-      See core#819.
-    expired_at: 2026-12-01
-
-  - id: CVE-2026-43871
-    paths:
-      - "app/.venv/lib/python3.12/site-packages/thrift-*.dist-info/METADATA"
-    statement: >-
-      Apache Thrift, DoS via infinite loop. Same blocker and same reasoning as
-      CVE-2026-41608 above: fixed in 0.24.0, capped below it by
-      databricks-sql-connector's thrift<0.21.0. Waived together because they are
-      one decision about one pin, not two. See core#819.
-    expired_at: 2026-12-01
-
 # ✅ NOT waived, because they are actionable and were fixed instead:
 #   msgpack GHSA-6v7p-g79w-8964 -> floored to 1.2.1 in pyproject.toml.
 #     mashumaro asks for msgpack>=0.5.6 with no ceiling, so the floor resolves.

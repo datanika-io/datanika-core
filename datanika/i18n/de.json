@@ -155,6 +155,7 @@
   "connections.test_file_in_memory": "Verbunden — In-Memory-Datenbank. Es wird nichts auf die Festplatte geschrieben.",
   "connections.test_driver_unavailable": "Der Treiber {arg} ist in diesem Build nicht verfügbar.",
   "connections.test_timed_out": "Der Server hat nicht innerhalb von {arg} Sekunden geantwortet.",
+  "connections.test_busy": "Es laufen gerade zu viele Verbindungstests. Versuchen Sie es in einem Moment erneut.",
   "connections.test_not_tested_rest_api": "Nicht geprüft. Ohne zu wissen, welche Ressourcen Sie benötigen, gibt es keinen Endpunkt, den wir gefahrlos aufrufen können — Ressourcen werden am Upload festgelegt, nicht an der Verbindung. Ihre Zugangsdaten werden beim ersten Lauf geprüft.",
   "connections.test_not_tested_openapi": "Nicht geprüft. Der Aufruf eines Endpunkts aus Ihrer Spezifikation kann Nebenwirkungen haben, deshalb wählen wir keinen für Sie aus. Ihre Zugangsdaten werden beim ersten Lauf geprüft.",
   "connections.test_not_tested_google_sheets": "Nicht geprüft. Google-Zugangsdaten werden beim ersten Lauf geprüft. Stellen Sie sicher, dass Sie die Tabelle für das Dienstkonto freigegeben haben — daran scheitert es meistens.",

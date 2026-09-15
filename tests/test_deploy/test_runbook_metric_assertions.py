@@ -98,9 +98,15 @@ NAME_ONLY = (
     " | grep -E 'datanika_cloud_bytes_processed_total'\n"
     "```"
 )
+# The runbooks' real per-tenant grep. It used to be `\{org_id="[0-9]+"\} [0-9]`, which this guard
+# accepts and which matches no line the collector renders: labels render sorted, as
+# `{mode="…",org_id="…"}` (core#895). This file checks shape only; cloud's
+# `test_bytes_metrics_reach_the_metrics_route.py` runs each grep against a served line.
 GOOD = (
     "```bash\ncurl -sf http://127.0.0.1:8000/metrics > m.txt\n"
-    "grep -E '^datanika_cloud_bytes_processed_total\{org_id=\"[0-9]+\"\} [0-9]' m.txt\n```"
+    r"""grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?"""
+    r"""org_id="[0-9]+"(,[^}]*)?\} [0-9]' m.txt"""
+    "\n```"
 )
 GOOD_UNLABELLED = (
     "```bash\ncurl -sf http://127.0.0.1:8000/metrics > m.txt\n"

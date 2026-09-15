@@ -1,4 +1,5 @@
-"""`celery-task-failures` must be able to fire on the failures production actually has (core#1356).
+"""`celery-task-failures` must fire on the task exceptions production actually has (core#1356), and
+must not fire on a user's failed run (core#1352).
 
 The rule shipped as `sum(rate(celery_task_failed_total[15m])) > 0.1` and could not fire, for two
 independent reasons, both measured on production on 2026-09-15:
@@ -15,23 +16,31 @@ independent reasons, both measured on production on 2026-09-15:
    Production shows the same thing on the success counter: over the hour after a deploy the raw
    form read 1.00 and aggregate-then-increase read 2.03.
 
-The rule also says what it watches, because that is not what its old title implied: Celery task
-EXCEPTIONS. A failed pipeline run does not raise one today (core#1352, Engineering).
+Then core#1352 made a run task raise `RunFailedError` when its run ended FAILED. Counted, that pages
+on every failed user run, so since 2026-09-16 the rule EXCLUDES that class, by the label the
+exporter derives from it: `^(\\w+)\\(` on the exception's repr (`src/exporter.py:433` and
+`:443-447` in the image). For the real class that reads 'RunFailedError' -- measured on the image,
+with the event field built as Celery 5.6.2 builds it (`celery/worker/request.py:650-652`). Nothing
+else connects the selector to the class, so the class is read from
+`datanika/tasks/run_outcome.py`'s source -- parsed, not imported -- and a rename fails here instead
+of quietly paging on failed runs again.
 
 Two layers:
 
 * `shape_problems` -- static checks on the rule as provisioned. They run everywhere, CI
   included, and `TestTheCheckCanFail` shows each one failing on a one-property mutation of the
-  shipping rule, or on the rule as it shipped before.
+  shipping rule, or on a rule as it stood before.
 * `test_promtool_*` -- behaviour, from promtool at production's Prometheus version, against
-  series that model the exporter's labelling, with the rule's OWN expression substituted in. The
-  expression that shipped before is the control and must fail the same harness. It needs docker
-  and pulls an image, so it is OPT-IN (`DATANIKA_PROMTOOL=1`) rather than a cost on every
-  department's pre-push. Run on 2026-09-15: the shipping expression passed, the old one failed.
+  series that model the exporter's labelling, with the rule's OWN expression substituted in. Two
+  controls must fail the same harness, each in its own direction: the expression that shipped
+  first misses a first failure, and the expression that counts failed runs fires where silence is
+  required. It needs docker and pulls an image, so it is OPT-IN (`DATANIKA_PROMTOOL=1`) rather than
+  a cost on every department's pre-push.
 """
 
 from __future__ import annotations
 
+import ast
 import copy
 import os
 import re
@@ -44,13 +53,15 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 ALERTS = ROOT / "monitoring" / "grafana" / "provisioning" / "alerting" / "alerts.yml"
+RUN_OUTCOME = ROOT / "datanika" / "tasks" / "run_outcome.py"
 UID = "celery-task-failures"
 
-# Production's version, read from /api/v1/status/buildinfo on 2026-09-15. docker-compose.yml pins
-# `prom/prometheus:latest`, so this is a measurement, not something the repository can tell you.
+# Production's version, read from /api/v1/status/buildinfo on 2026-09-15 and again on 2026-09-16.
+# docker-compose.yml pins `prom/prometheus:latest`, so this is a measurement, not something the
+# repository can tell you.
 PROMETHEUS_VERSION = "3.13.1"
 
-# The rule as it was provisioned until core#1356: the negative control.
+# The rule as it was provisioned until core#1356: the negative control for a first failure.
 SHIPPED_BEFORE = {
     "uid": UID,
     "for": "5m",
@@ -68,10 +79,22 @@ SHIPPED_BEFORE = {
     },
 }
 
+# The rule as core#1356 first fixed it (on `dev` 2026-09-15, never deployed): right about a first
+# failure, and a page on every failed user run once core#1352 made those raise. The negative control
+# for silence.
+COUNTS_FAILED_RUNS = "increase(sum(celery_task_failed_total)[15m:15s]) > 0.5"
+
+# celery-exporter 0.12.2 derives a failure's `exception` label from the task-failed event's
+# `exception` field, which Celery fills with `safe_repr(exception)`, using this pattern, and falls
+# back to "UnknownException" (src/exporter.py:433 and :443-447 in the image).
+_EXPORTER_EXCEPTION_PATTERN = re.compile(r"^(\w+)\(")
+
 _RAW_RANGE = re.compile(r"\b(?:rate|irate|increase)\(\s*celery_task_failed_total\b")
 _AGGREGATE_THEN_INCREASE = re.compile(
-    r"\bincrease\(\s*sum\(\s*celery_task_failed_total\s*\)\s*\[(\d+)([smh]):\d+[smh]\]\s*\)"
+    r"\bincrease\(\s*sum\(\s*celery_task_failed_total\s*(\{[^}]*\})?\s*\)"
+    r"\s*\[(\d+)([smh]):\d+[smh]\]\s*\)"
 )
+_MATCHER = re.compile(r'\s*(\w+)\s*(=~|!~|!=|=)\s*"((?:[^"\\]|\\.)*)"\s*')
 _TRAILING_COMPARISON = re.compile(r"(>=|>)\s*(bool\s+)?(\d+(?:\.\d+)?)\s*$")
 _UNIT = {"s": 1, "m": 60, "h": 3600}
 
@@ -96,8 +119,74 @@ def _expr(rule: dict) -> str:
     return exprs[0]
 
 
-def shape_problems(rule: dict) -> list[str]:
-    """Every way `rule` fails to fire on one Celery task exception of any kind. Empty is healthy."""
+def exporter_exception_label(event_exception_field: str) -> str:
+    """The `exception` label celery-exporter 0.12.2 gives a failure with this event field."""
+    match = _EXPORTER_EXCEPTION_PATTERN.match(event_exception_field)
+    return match.group(1) if match else "UnknownException"
+
+
+def raised_run_failure_classes(source: str) -> set[str]:
+    """The classes `raise_if_run_failed` raises, read from the module's source."""
+    helpers = [
+        node
+        for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "raise_if_run_failed"
+    ]
+    assert len(helpers) == 1, f"expected one raise_if_run_failed, found {len(helpers)}"
+    return {
+        node.exc.func.id
+        for node in ast.walk(helpers[0])
+        if isinstance(node, ast.Raise)
+        and isinstance(node.exc, ast.Call)
+        and isinstance(node.exc.func, ast.Name)
+    }
+
+
+def run_failure_label(source: str | None = None) -> str:
+    """The `exception` label a failed run's task failure carries on production."""
+    if source is None:
+        source = RUN_OUTCOME.read_text(encoding="utf-8")
+    classes = raised_run_failure_classes(source)
+    assert len(classes) == 1, f"raise_if_run_failed should raise one class, found {sorted(classes)}"
+    (name,) = classes
+    # The event field is the exception's repr. The message never reaches the label.
+    return exporter_exception_label(f"{name}('upload run 1 ended FAILED')")
+
+
+def _selector_problems(selector: str | None, run_failed: str) -> list[str]:
+    exclusion = f'exception!="{run_failed}"'
+    if not selector:
+        return [
+            f"the selector does not exclude {exclusion}, so every failed user run fires this "
+            "(core#1352)"
+        ]
+    matchers = []
+    for part in (p for p in selector.strip()[1:-1].split(",") if p.strip()):
+        match = _MATCHER.fullmatch(part)
+        if not match:
+            return [f"unparseable matcher {part!r} in {selector}"]
+        matchers.append(match.groups())
+    if len(matchers) != 1:
+        return [
+            f"the selector must be exactly {{{exclusion}}}: any other matcher changes which "
+            "zero-valued series keep the sum alive, and only the promtool harness can say whether "
+            "a first failure still fires"
+        ]
+    if matchers[0] != ("exception", "!=", run_failed):
+        return [
+            f"the selector is {selector}, but a failed run is labelled {run_failed!r} (the class "
+            f"raise_if_run_failed raises), so it must read {{{exclusion}}} (core#1352)"
+        ]
+    return []
+
+
+def shape_problems(rule: dict, run_failed: str | None = None) -> list[str]:
+    """Every way `rule` misses one task exception of any kind, or fires on a failed run.
+
+    Empty is healthy. `run_failed` is the label a failed run carries; by default it is derived from
+    the class `raise_if_run_failed` raises.
+    """
+    run_failed = run_failed or run_failure_label()
     expr = _expr(rule)
     problems: list[str] = []
     if _RAW_RANGE.search(expr):
@@ -120,17 +209,18 @@ def shape_problems(rule: dict) -> list[str]:
             value = float(number)
             if not (value < 1 if operator == ">" else value <= 1):
                 problems.append(f"threshold {operator} {number} does not fire on ONE failure")
-        window_seconds = float(window.group(1)) * _UNIT[window.group(2)]
+        window_seconds = float(window.group(2)) * _UNIT[window.group(3)]
         if _seconds(rule.get("for", "0s")) >= window_seconds:
             problems.append(
                 f"for: {rule.get('for')} outlasts the {window_seconds:g}s window, so one failure "
                 "leaves the window before the alert may fire"
             )
+        problems.extend(_selector_problems(window.group(1), run_failed))
     prose = " ".join(str(v) for v in (rule.get("annotations") or {}).values())
-    if "exception" not in prose.lower() or "core#1352" not in prose:
+    if "exception" not in prose.lower() or "core#1352" not in prose or run_failed not in prose:
         problems.append(
-            "the annotations must say the rule watches task exceptions, and that a failed run "
-            "does not produce one (core#1352)"
+            "the annotations must say the rule watches task exceptions, and name the class it "
+            f"excludes: {run_failed}, which is how a failed run reports (core#1352)"
         )
     return problems
 
@@ -149,8 +239,14 @@ def _with(*, expr: str | None = None, for_: str | None = None, annotations=None)
     return rule
 
 
-def test_the_shipping_rule_fires_on_one_exception_of_any_kind() -> None:
+def test_the_shipping_rule_fires_on_one_exception_and_not_on_a_failed_run() -> None:
     assert shape_problems(_load_rule()) == []
+
+
+def test_a_failed_run_is_labelled_by_the_class_the_helper_raises() -> None:
+    # The anchor for everything above: 'RunFailedError' is what the exporter image derived for this
+    # class on 2026-09-16. If the class is renamed, this and the shipping rule both go red.
+    assert run_failure_label() == "RunFailedError"
 
 
 class TestTheCheckCanFail:
@@ -167,7 +263,7 @@ class TestTheCheckCanFail:
         assert any("raw counter" in p for p in problems), problems
 
     def test_it_rejects_an_unreachable_threshold_on_the_right_shape(self) -> None:
-        expr = "increase(sum(celery_task_failed_total)[15m:15s]) > 90"
+        expr = 'increase(sum(celery_task_failed_total{exception!="RunFailedError"})[15m:15s]) > 90'
         problems = shape_problems(_with(expr=expr))
         assert [p for p in problems if "ONE failure" in p], problems
         assert not any("raw counter" in p for p in problems), problems
@@ -176,11 +272,62 @@ class TestTheCheckCanFail:
         problems = shape_problems(_with(for_="20m"))
         assert [p for p in problems if "outlasts" in p], problems
 
+    def test_it_rejects_the_rule_that_pages_on_every_failed_run(self) -> None:
+        problems = shape_problems(_with(expr=COUNTS_FAILED_RUNS))
+        assert [p for p in problems if "every failed user run" in p], problems
+        assert not any("raw counter" in p or "does not aggregate" in p for p in problems), problems
+
+    def test_it_rejects_an_exclusion_of_a_class_nothing_raises(self) -> None:
+        expr = 'increase(sum(celery_task_failed_total{exception!="RunFailed"})[15m:15s]) > 0.5'
+        problems = shape_problems(_with(expr=expr))
+        assert [p for p in problems if "raise_if_run_failed raises" in p], problems
+
+    def test_it_rejects_a_selector_that_does_more_than_exclude(self) -> None:
+        expr = (
+            'increase(sum(celery_task_failed_total{exception!="RunFailedError",name!="x"})'
+            "[15m:15s]) > 0.5"
+        )
+        problems = shape_problems(_with(expr=expr))
+        assert [p for p in problems if "must be exactly" in p], problems
+
     def test_it_rejects_prose_that_does_not_say_what_it_watches(self) -> None:
         problems = shape_problems(
             _with(annotations={"summary": "Celery task failed", "description": "A task failed."})
         )
         assert [p for p in problems if "core#1352" in p], problems
+
+    def test_it_rejects_prose_that_does_not_name_the_excluded_class(self) -> None:
+        # The description as it stood on `dev` before this change: true about exceptions, and
+        # silent about the exclusion.
+        prose = {
+            "summary": "A Celery task raised an exception in the last 15 minutes",
+            "description": "This watches task exceptions only: a failed pipeline run does not "
+            "currently raise one (core#1352).",
+        }
+        problems = shape_problems(_with(annotations=prose))
+        assert [p for p in problems if "name the class it excludes" in p], problems
+
+    def test_a_renamed_class_reddens_the_shipping_rule(self) -> None:
+        renamed = RUN_OUTCOME.read_text(encoding="utf-8").replace("RunFailedError", "RunEndedError")
+        label = run_failure_label(renamed)
+        assert label == "RunEndedError"
+        problems = shape_problems(_load_rule(), run_failed=label)
+        assert [p for p in problems if "raise_if_run_failed raises" in p], problems
+        assert [p for p in problems if "name the class it excludes" in p], problems
+
+    def test_a_helper_raising_two_classes_is_refused(self) -> None:
+        source = (
+            "def raise_if_run_failed(org_id, run_id, kind):\n"
+            "    if org_id:\n"
+            "        raise FirstError('x')\n"
+            "    raise SecondError('y')\n"
+        )
+        with pytest.raises(AssertionError, match="one class"):
+            run_failure_label(source)
+
+    def test_the_label_falls_back_when_the_exporter_pattern_misses(self) -> None:
+        assert exporter_exception_label("TypeError('boom')") == "TypeError"
+        assert exporter_exception_label("pkg.mod.RunFailedError('x')") == "UnknownException"
 
 
 # --------------------------------------------------------------------------------------------
@@ -188,7 +335,8 @@ class TestTheCheckCanFail:
 # --------------------------------------------------------------------------------------------
 
 # Every assertion is about the expression under test (@EXPR@, in its `> bool` form). Zero-valued
-# series carry no exception label, as on production; a failure carries exception="E" or "F".
+# series carry no exception label, as on production; a task exception carries exception="E" or
+# "F"; a failed run carries @RUN_FAILED@, the label derived from the class the helper raises.
 _HARNESS = """\
 rule_files: [rules.yml]
 evaluation_interval: 1m
@@ -275,11 +423,69 @@ tests:
         values: '_x99 0x140'
     promql_expr_test:
       - {expr: '@EXPR@', eval_time: 35m, exp_samples: [{labels: '{}', value: 0}]}
+  # core#1352: the first failed run of a kind, a new series born at 1: must stay silent
+  - interval: 15s
+    input_series:
+      - series: 'celery_task_failed_total{hostname="w1",name="t"}'
+        values: '0x240'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="@RUN_FAILED@"}'
+        values: '_x119 1x120'
+    promql_expr_test:
+      - {expr: '@EXPR@', eval_time: 35m, exp_samples: [{labels: '{}', value: 0}]}
+  # eight more failed runs in 10 minutes on an existing series: must stay silent
+  - interval: 15s
+    input_series:
+      - series: 'celery_task_failed_total{hostname="w1",name="t"}'
+        values: '0x240'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="@RUN_FAILED@"}'
+        values: '1x79 3x20 6x20 9x120'
+    promql_expr_test:
+      - {expr: '@EXPR@', eval_time: 32m, exp_samples: [{labels: '{}', value: 0}]}
+  # a deploy, then the new worker's first failed run: must stay silent
+  - interval: 15s
+    input_series:
+      - series: 'celery_task_failed_total{hostname="w1",name="t"}'
+        values: '0x240'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="@RUN_FAILED@"}'
+        values: '2x240'
+      - series: 'celery_task_failed_total{hostname="w2",name="t"}'
+        values: '_x99 0x140'
+      - series: 'celery_task_failed_total{hostname="w2",name="t",exception="@RUN_FAILED@"}'
+        values: '_x119 1x120'
+    promql_expr_test:
+      - {expr: '@EXPR@', eval_time: 35m, exp_samples: [{labels: '{}', value: 0}]}
+  # a first task exception of a kind, in a window that already holds failed runs: must fire
+  - interval: 15s
+    input_series:
+      - series: 'celery_task_failed_total{hostname="w1",name="t"}'
+        values: '0x240'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="@RUN_FAILED@"}'
+        values: '_x99 1x20 2x120'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="E"}'
+        values: '_x119 1x120'
+    promql_expr_test:
+      - {expr: '@EXPR@', eval_time: 35m, exp_samples: [{labels: '{}', value: 1}]}
+  # exporter restart with historic failures of both kinds, neither returning: must stay silent
+  - interval: 15s
+    input_series:
+      - series: 'celery_task_failed_total{hostname="w1",name="t"}'
+        values: '0x79 _x39 0x120'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="E"}'
+        values: '5x79 _x160'
+      - series: 'celery_task_failed_total{hostname="w1",name="t",exception="@RUN_FAILED@"}'
+        values: '7x79 _x160'
+    promql_expr_test:
+      - {expr: '@EXPR@', eval_time: 35m, exp_samples: [{labels: '{}', value: 0}]}
+      - {expr: '@EXPR@', eval_time: 45m, exp_samples: [{labels: '{}', value: 0}]}
 """
 
 _NOOP_RULES = (
     "groups:\n  - name: noop\n    rules:\n      - record: harness:noop\n        expr: vector(1)\n"
 )
+
+# promtool's report of a failed expectation: what it expected, then what it got.
+_EXPECTED_SILENCE_GOT_FIRING = re.compile(r"exp: \{\} 0E\+00\s+got: \{\} 1E\+00")
+_EXPECTED_FIRING_GOT_SILENCE = re.compile(r"exp: \{\} 1E\+00\s+got: \{\} 0E\+00")
 
 requires_promtool = pytest.mark.skipif(
     os.environ.get("DATANIKA_PROMTOOL") != "1",
@@ -298,6 +504,7 @@ def _promtool(tmp_path: Path, expr: str) -> subprocess.CompletedProcess[str]:
     if shutil.which("docker") is None:
         pytest.fail("DATANIKA_PROMTOOL=1 was set, but there is no docker to run promtool in")
     harness = _HARNESS.replace("@EXPR@", _bool_form(expr))
+    harness = harness.replace("@RUN_FAILED@", run_failure_label())
     (tmp_path / "rules.yml").write_text(_NOOP_RULES, encoding="utf-8")
     (tmp_path / "test.yml").write_text(harness, encoding="utf-8")
     source = str(tmp_path).replace("\\", "/")
@@ -332,5 +539,17 @@ def test_promtool_the_shipping_expression_fires_on_what_production_produces(
 @requires_promtool
 def test_promtool_control_the_expression_that_shipped_before_fails(tmp_path: Path) -> None:
     result = _promtool(tmp_path, _expr(SHIPPED_BEFORE))
+    output = result.stdout + result.stderr
     assert result.returncode != 0, "the harness passed the old expression, so it proves nothing"
-    assert "FAILED" in result.stdout + result.stderr, result.stdout + result.stderr
+    # It must fail by MISSING a failure; firing where silence is required is the other control.
+    assert _EXPECTED_FIRING_GOT_SILENCE.search(output), output
+
+
+@requires_promtool
+def test_promtool_control_the_expression_that_counts_failed_runs_fails(tmp_path: Path) -> None:
+    result = _promtool(tmp_path, COUNTS_FAILED_RUNS)
+    output = result.stdout + result.stderr
+    assert result.returncode != 0, "the harness passed an expression that counts failed runs"
+    # It must fail by FIRING where silence is required, which only the failed-run cases require.
+    assert _EXPECTED_SILENCE_GOT_FIRING.search(output), output
+    assert not _EXPECTED_FIRING_GOT_SILENCE.search(output), output

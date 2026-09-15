@@ -154,3 +154,146 @@ def test_a_missing_directory_does_not_take_the_endpoint_down(monkeypatch, tmp_pa
     from datanika.services.metrics import build_scrape_registry
 
     generate_latest(build_scrape_registry())  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# core#895 AC4: what PR #1281 removed together with the per-process counters.
+#
+# `build_scrape_registry()` returned a registry that only `MultiProcessCollector` populates. A
+# collector registered through `plugin_registry.get_prometheus_registry()` computes at scrape time
+# and writes no mmap file, so it is outside that mechanism by construction. From the
+# 2026-09-11 20:45:48Z deploy on, production and staging served none of the cloud plugin's ledger
+# series. QA's control was Prometheus history: the cloud series stop at that swap while the HTTP
+# series continue.
+#
+# Asserted on the SERVED object (QA_RULES §30): its own interpreter with the variable set before
+# any import, the plugin seam's real registration call, core's real `/metrics` route, and the
+# outer `Mount("")` that Reflex puts around `app._api` when granian calls the factory.
+# ---------------------------------------------------------------------------
+
+#: Stands in for a plugin collector that computes at scrape time, as cloud's ledger collector does.
+PROBE = "datanika_probe_scrape_time_collector"
+
+SERVER = """
+import sys
+sys.path.insert(0, r"__ROOT__")
+
+from prometheus_client.core import GaugeMetricFamily
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
+from datanika.plugin_registry import get_prometheus_registry
+from datanika.services.metrics import PrometheusMiddleware, http_requests_total, metrics_routes
+
+
+class ScrapeTimeProbe:
+    def collect(self):
+        yield GaugeMetricFamily("__PROBE__", "stand-in for a plugin collector", value=1.0)
+
+
+get_prometheus_registry().register(ScrapeTimeProbe())
+
+# This process counts one request of its own. With the variable set, that lands in this process's
+# own .db file, so the aggregate already carries it; rendering the in-process registry as well
+# would count it twice.
+http_requests_total.labels("GET", "/probe", "200").inc()
+
+api = Starlette(routes=list(metrics_routes))
+api.add_middleware(PrometheusMiddleware)
+served = Starlette()
+served.mount("", api)
+
+response = TestClient(served).get("/metrics")
+sys.stdout.write("STATUS %d\\n" % response.status_code)
+sys.stdout.write(response.text)
+"""
+
+#: prometheus_client's own per-process collectors. Served from whichever worker answered, their
+#: counters go backwards between scrapes, which is the core#895 defect itself.
+PER_PROCESS_FAMILIES = ("python_gc_objects_collected_total", "python_info")
+
+
+def _serve_one_scrape(multiproc_dir: pathlib.Path | None) -> str:
+    """Run the served-shaped app in its own interpreter and return one `/metrics` body."""
+    env = dict(os.environ)
+    env.pop("PROMETHEUS_MULTIPROC_DIR", None)
+    if multiproc_dir is not None:
+        env["PROMETHEUS_MULTIPROC_DIR"] = str(multiproc_dir)
+    source = SERVER.replace("__ROOT__", str(ROOT)).replace("__PROBE__", PROBE)
+    proc = subprocess.run(
+        [sys.executable, "-c", source],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, f"the served-app process failed: {proc.stderr[-1500:]}"
+    status, _, body = proc.stdout.partition("\n")
+    assert status == "STATUS 200", f"/metrics answered {status!r}, so nothing below is a reading"
+    return body
+
+
+def _sample_lines(body: str, name: str) -> list[str]:
+    """Lines carrying a VALUE for exactly this metric name. Never `# HELP` or `# TYPE`."""
+    return [
+        line
+        for line in body.splitlines()
+        if not line.startswith("#") and line.startswith((f"{name} ", f"{name}{{"))
+    ]
+
+
+@pytest.fixture(scope="module")
+def aggregated_scrape(tmp_path_factory) -> str:
+    """Three workers count one request each, then a fourth process serves `/metrics`."""
+    directory = tmp_path_factory.mktemp("promdir")
+    _run_children(directory, 3)
+    return _serve_one_scrape(directory)
+
+
+@pytest.fixture(scope="module")
+def single_process_scrape() -> str:
+    return _serve_one_scrape(None)
+
+
+def test_a_collector_registered_through_the_plugin_seam_is_served_in_multiprocess_mode(
+    aggregated_scrape,
+):
+    """AC4, the structural half: every collector registered through the plugin seam reaches the
+    response. Asserted as a rule over a stand-in, not as the cloud series' names, because a name
+    list can be satisfied by hardcoding the names."""
+    assert _sample_lines(aggregated_scrape, PROBE) == [f"{PROBE} 1.0"], (
+        "a collector registered through plugin_registry.get_prometheus_registry() is missing "
+        "from /metrics while PROMETHEUS_MULTIPROC_DIR is set. That is how the cloud plugin's "
+        "ledger series vanished from production on 2026-09-11 with every check green."
+    )
+
+
+def test_the_serving_process_counts_are_not_rendered_twice(aggregated_scrape):
+    """Three workers plus the serving process each counted one request, so the scrape reads 4.
+
+    Reading 5 means the serving process's in-process registry was rendered beside the aggregate:
+    its own increment counted once from its file and again from memory."""
+    assert _counter_total(aggregated_scrape) == 4.0, (
+        f"the scrape read {_counter_total(aggregated_scrape)} for 4 increments across 4 processes"
+    )
+
+
+def test_per_process_default_collectors_stay_out_of_the_aggregated_scrape(aggregated_scrape):
+    """PR #1281 removed these knowingly, with zero readers. Adding them back from whichever
+    worker answered would reintroduce the arbitrary-worker reading for their series."""
+    for name in PER_PROCESS_FAMILIES:
+        assert _sample_lines(aggregated_scrape, name) == [], (
+            f"{name} was served from one arbitrary worker in multiprocess mode"
+        )
+
+
+def test_control_one_process_serves_the_whole_default_registry(single_process_scrape):
+    """The control. The families the previous test asserts absent must exist in this environment,
+    or their absence there proves nothing. The probe must render here too, or the multiprocess
+    test's red could be a harness that renders no collector at all."""
+    assert _sample_lines(single_process_scrape, PROBE) == [f"{PROBE} 1.0"]
+    for name in PER_PROCESS_FAMILIES:
+        assert _sample_lines(single_process_scrape, name), (
+            f"{name} is absent even from the single-process scrape, so asserting its absence "
+            "from the aggregated scrape is vacuous in this environment"
+        )

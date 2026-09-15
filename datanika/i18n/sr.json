@@ -720,7 +720,7 @@
   "pipelines.delete_confirm": "Da, obriši tok",
   "pipelines.deleted_toast": "Tok je obrisan. Učitani podaci nisu promenjeni.",
   "schedules.delete_title": "Obrisati ovaj raspored?",
-  "schedules.delete_body": "Njegova izvršavanja odmah prestaju. Ništa više neće automatski pokretati cilj.",
+  "schedules.delete_body": "Nova izvršavanja se više neće pokretati iz njega. Izvršavanje koje je već u toku se nastavlja. Ništa više neće automatski pokretati cilj.",
   "schedules.delete_reversible": "Tok ili otpremanje koje pokreće ne briše se i i dalje možete da ga pokrenete ručno.",
   "schedules.delete_confirm": "Da, obriši raspored",
   "schedules.deleted_toast": "Raspored je obrisan. Više neće pokretati izvršavanja.",

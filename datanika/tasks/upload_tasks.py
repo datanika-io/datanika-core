@@ -481,3 +481,7 @@ def run_upload_task(self, run_id: int, org_id: int, scheduled: bool = False):
         run_upload(run_id=run_id, org_id=org_id)
     finally:
         release(org_id)
+    # core#1352: a run that ended FAILED must not end its task as a Celery SUCCESS.
+    from datanika.tasks.run_outcome import raise_if_run_failed
+
+    raise_if_run_failed(org_id, run_id, "upload")

@@ -251,6 +251,12 @@ A single `BackgroundScheduler` with `SQLAlchemyJobStore` (sync PostgreSQL URL) f
 
 - Source factory selects adapter by connection type (postgres, mysql, mssql, sqlite, rest_api, s3, csv, json, parquet, google_sheets, mongodb)
 - Destination factory selects dlt destination (postgres, mssql, clickhouse, duckdb, bigquery, snowflake, redshift, databricks, synapse). ⚠️ It is a bare `getattr(dlt.destinations, connection_type)`, so a type in the set with no factory raises `AttributeError` at run time — see the note below
+- ClickHouse is the one destination whose stored port is not dlt's port (core#1341).
+  - The form stores a single port, labelled "HTTP port", and Test Connection and dbt use it that way.
+  - dlt dials two ports: `http_port` for the file load, and `port`, the native TCP port, at `sync`.
+  - `build_destination` therefore sends the stored port as `http_port`, and derives the native port from `secure`: 9000, or 9440 with TLS.
+  - A config that already names `http_port` is left as given.
+  - The mapping is destination-only: the ClickHouse *source* speaks HTTP through `clickhousedb+connect`, and keeps the stored port.
 - Supports two extraction modes: **single_table** (one table with optional incremental key) and **full_database** (all tables or filtered subset)
 - Write dispositions: append, replace, merge. ⚠️ The upload form renders this choice only for SQL database sources. For SaaS, OpenAPI and file sources, every run re-fetches every record: no dlt state crosses runs, because the pipeline name carries the run id. So the loader writes those sources with `replace` unless the upload sets a disposition deliberately. Before core#1336 the form stored its hidden `append` for those sources too, and each re-run landed a second full copy while every run read green. For those sources, a stored `{"mode": …, "write_disposition": "append"}` pair is still ignored.
 - Schema evolution control per entity: evolve, freeze, discard

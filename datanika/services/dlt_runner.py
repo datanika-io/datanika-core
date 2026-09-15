@@ -663,6 +663,45 @@ _RENAME_USER_TYPES = {
 # ClickHouse table engine types supported by dlt
 CLICKHOUSE_ENGINE_TYPES = {"merge_tree", "replicated_merge_tree", "shared_merge_tree"}
 
+#: ClickHouse's own default native TCP ports, without and with TLS (core#1341).
+CLICKHOUSE_NATIVE_PORT = 9000
+CLICKHOUSE_NATIVE_TLS_PORT = 9440
+#: The HTTP port Test Connection and dbt assume when a connection stores none.
+CLICKHOUSE_DEFAULT_HTTP_PORT = 8123
+
+
+def _clickhouse_destination_credentials(creds: dict) -> dict:
+    """Give dlt's ClickHouse destination both of the ports it dials (core#1341).
+
+    The connection form stores ONE port, labelled "HTTP port", and Test Connection and dbt both
+    use it that way. dlt needs two:
+
+    * ``http_port``: the HTTP interface its file load uses, through clickhouse-connect.
+    * ``port``: the NATIVE TCP port its ``sync`` step dials, through clickhouse-driver.
+
+    Passing the stored value through as ``port`` caused two failures, both measured by QA on a
+    stock server. It pointed the native client at the HTTP interface, so ``sync`` failed. It also
+    left ``http_port`` at dlt's default of 8443, and that port alone switches clickhouse-connect to
+    TLS, so the load failed even when a user typed the native port in instead.
+
+    The native port is derived from ``secure``. ClickHouse's defaults, 9000 and 9440, match a
+    stock server and ClickHouse Cloud. A server whose native port is remapped cannot be expressed
+    yet; whether the form gains a field for it is Product's question on core#1341.
+
+    A config that already names ``http_port`` states both ports in dlt's own terms, which only raw
+    JSON can do, so it is left as given. Rewriting its ``port`` would point the HTTP client at the
+    native port.
+
+    ⚠️ Destination only. ``_to_dlt_credentials`` also serves the ClickHouse SOURCE, whose
+    ``clickhousedb+connect`` driver speaks HTTP and must keep the stored port.
+    """
+    if "http_port" in creds:
+        return creds
+    creds = dict(creds)
+    creds["http_port"] = creds.pop("port", CLICKHOUSE_DEFAULT_HTTP_PORT)
+    creds["port"] = CLICKHOUSE_NATIVE_TLS_PORT if creds.get("secure") else CLICKHOUSE_NATIVE_PORT
+    return creds
+
 
 def _normalize_oracle_identifier(name: str | None) -> str | None:
     """Normalize an Oracle table/schema identifier for dlt/SQLAlchemy reflection.
@@ -1440,6 +1479,7 @@ class DltRunnerService:
 
         # ClickHouse: pass table_engine_type for cluster support
         if connection_type == "clickhouse":
+            kwargs["credentials"] = _clickhouse_destination_credentials(kwargs["credentials"])
             engine = config.get("table_engine_type", "merge_tree")
             if engine in CLICKHOUSE_ENGINE_TYPES:
                 kwargs["table_engine_type"] = engine

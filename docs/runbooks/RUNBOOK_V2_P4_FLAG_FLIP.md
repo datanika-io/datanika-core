@@ -184,14 +184,22 @@ curl -sf "http://127.0.0.1:${BE}/metrics" > m.txt && wc -l < m.txt
 #    one of these that tells "broken" apart from "no tenants yet".
 grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
 
-# 2. Per-tenant bytes: a real sample line, not the HELP/TYPE header.
-grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]' m.txt
+# 2. Per-tenant bytes: a real sample line, not the HELP/TYPE header. Labels render SORTED
+#    ({mode="…",org_id="…"}), so match org_id anywhere inside the braces, never by position.
+grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\} [0-9]' m.txt
 ```
 
 - [ ] `datanika_cloud_bytes_ledger_scrape_ok` emits **`1`**. A `0` means the collector could not read
       `usage_ledger`, in which case every per-org series below is missing for *that* reason rather
       than for lack of traffic — do not read its absence as "no runs yet"
-- [ ] `datanika_cloud_bytes_processed_total{org_id="…"}` emits **at least one sample line**, value > 0
+- [ ] `datanika_cloud_bytes_processed_total{mode="…",org_id="…"}` emits **at least one sample line**, value > 0
+
+⚠️ **Two reasons these checks could not pass before core#895's second fix**, recorded so an old
+failure is not re-diagnosed. From the 2026-09-11 deploy, `/metrics` served neither series at all,
+so check 1 printed nothing, which this section tells you to read as a broken collector. And grep 2
+required `org_id` directly before `}`, which a two-label line never has. Cloud's
+`test_bytes_metrics_reach_the_metrics_route.py` now runs both greps against the lines the real
+collector serves.
 
 ⚠️ **`datanika_cloud_bytes_quota_rejected_total` cannot be verified here — do not tick it.** It is
 labelled, so a healthy zero-rejection state emits **no sample line at all**, which is byte-identical

@@ -135,7 +135,8 @@ metrics surface below.
         /etc/apache2/conf-enabled/datanika-staging-active.conf)
   curl -sf "http://127.0.0.1:${SBE}/metrics" > m.txt && wc -l < m.txt
   grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
-  grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]' m.txt
+  # Labels render SORTED ({mode="…",org_id="…"}): match org_id anywhere inside the braces.
+  grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\} [0-9]' m.txt
   ```
 
   🚨 `prometheus_client` emits `# HELP`/`# TYPE` for a labelled metric with zero children, so a
@@ -144,7 +145,13 @@ metrics surface below.
   so a `curl` to the public hostname returns the SPA. See `docs/ENGINEERING_RULES.md` §5.
 
 - [ ] `datanika_cloud_bytes_ledger_scrape_ok` is `1`
-- [ ] `datanika_cloud_bytes_processed_total{org_id="…"}` has at least one sample line, value > 0
+- [ ] `datanika_cloud_bytes_processed_total{mode="…",org_id="…"}` has at least one sample line, value > 0
+
+⚠️ **Two reasons these checks could not pass before core#895's second fix**, recorded so an old
+failure is not re-diagnosed. From the 2026-09-11 deploy, `/metrics` served neither series at all.
+And the per-tenant grep required `org_id` directly before `}`, which a two-label line never has.
+Cloud's `test_bytes_metrics_reach_the_metrics_route.py` now runs both greps against the lines the
+real collector serves.
 
 ## 5. Verify `check_bytes_quota` dry-run logging
 

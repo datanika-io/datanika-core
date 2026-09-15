@@ -52,3 +52,38 @@ def db_session(engine):
     if transaction.is_active:
         transaction.rollback()
     connection.close()
+
+
+@pytest.fixture
+def sqlite_aware_invitation_expiry():
+    """Make the SQLite harness return ``Invitation.expires_at`` timezone-aware, as PostgreSQL does.
+
+    🚨 **Without this an invitation test fails for a reason production does not have, and the
+    failure looks like the feature being broken.** ``Invitation.expires_at`` is
+    ``DateTime(timezone=True)``; PostgreSQL returns it tz-aware and SQLite — which has no
+    ``timestamptz`` — silently returns it naive. ``accept_invitation`` compares it to
+    ``datetime.now(UTC)``, so once the row is re-loaded from the database rather than served from
+    the identity map, the comparison raises
+    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+
+    **Not autouse, deliberately.** It changes what a test runs against, so a module opts in by
+    requesting it — ``test_invited_signup_lands_in_one_org.py`` (core#981) and
+    ``test_oauth_signup_invitation.py`` (core#624) do. It lives here rather than in either of them
+    because an imported fixture is registered as a second FixtureDef in the importing module
+    (``tests/test_fixture_sharing.py``).
+    """
+    from datetime import UTC
+
+    from sqlalchemy import event
+
+    from datanika.models.invitation import Invitation
+
+    def _make_aware(target, _context):
+        if target.expires_at is not None and target.expires_at.tzinfo is None:
+            target.expires_at = target.expires_at.replace(tzinfo=UTC)
+
+    event.listen(Invitation, "load", _make_aware, propagate=True)
+    try:
+        yield
+    finally:
+        event.remove(Invitation, "load", _make_aware)

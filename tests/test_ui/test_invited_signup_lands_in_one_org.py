@@ -46,42 +46,26 @@ INVITEE_NAME = "Ingrid Invitee"
 
 
 @pytest.fixture(autouse=True)
-def _sqlite_returns_aware_datetimes():
-    """Make the SQLite harness honour ``DateTime(timezone=True)``.
+def _sqlite_returns_aware_datetimes(sqlite_aware_invitation_expiry):
+    """Make the SQLite harness honour ``DateTime(timezone=True)`` for this module.
 
     🚨 **Without this the happy path fails for a reason production does not
-    have, and the failure looks like the feature being broken.**
+    have, and the failure looks like the feature being broken.** The listener
+    and the full explanation live in
+    ``tests/conftest.py::sqlite_aware_invitation_expiry`` — moved there by
+    core#624, so a second module could share it without importing a fixture
+    across test modules, which ``tests/test_fixture_sharing.py`` refuses.
 
-    `Invitation.expires_at` is `DateTime(timezone=True)`; PostgreSQL returns it
-    tz-aware and SQLite — which has no `timestamptz` — silently returns it
-    naive. `accept_invitation` compares it to `datetime.now(UTC)`, so the moment
-    the instance is re-loaded from the database rather than served from the
-    identity map, the comparison raises
-    `TypeError: can't compare offset-naive and offset-aware datetimes`.
+    ⚠️ ``tests/test_services/test_invitation_service.py`` does not opt in, and
+    needs not to: its tests accept in the same unit of work, or read the status
+    column directly, so ``expires_at`` is never re-loaded. Anything that flushes
+    between creating and accepting — which a signup does, repeatedly — gets the
+    naive value back.
 
-    ⚠️ The existing `tests/test_services/test_invitation_service.py` does not
-    hit this, and that is luck rather than coverage: it creates the invitation
-    and accepts it in the same unit of work, so the aware value it wrote is
-    still the one in the session. Anything that flushes between the two — which
-    a signup does, repeatedly — gets the naive one back.
-
-    Scoped to this module deliberately. A global fix belongs in `conftest.py`
-    and would change what ~4,000 other tests are running against, which is not
-    a change to make as a side effect of a bug fix.
+    Opted into per module rather than autouse in ``conftest.py``: a global fix
+    would change what ~4,000 other tests are running against, which is not a
+    change to make as a side effect of a bug fix.
     """
-    from datetime import UTC as _UTC
-
-    from sqlalchemy import event
-
-    def _make_aware(target, _context):
-        if target.expires_at is not None and target.expires_at.tzinfo is None:
-            target.expires_at = target.expires_at.replace(tzinfo=_UTC)
-
-    event.listen(Invitation, "load", _make_aware, propagate=True)
-    try:
-        yield
-    finally:
-        event.remove(Invitation, "load", _make_aware)
 
 
 @pytest.fixture

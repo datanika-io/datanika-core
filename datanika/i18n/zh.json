@@ -155,6 +155,7 @@
   "connections.test_file_in_memory": "已连接——内存数据库。不会向磁盘写入任何内容。",
   "connections.test_driver_unavailable": "此版本中没有可用的 {arg} 驱动程序。",
   "connections.test_timed_out": "服务器在 {arg} 秒内没有响应。",
+  "connections.test_busy": "当前正在进行的连接测试过多。请稍后再试。",
   "connections.test_not_tested_rest_api": "未测试。在不知道你需要哪些资源的情况下，我们无法安全地调用任何端点——资源在上传中配置，而不是在连接中。你的凭据将在首次运行时校验。",
   "connections.test_not_tested_openapi": "未测试。调用你的规范中的端点可能产生副作用，因此我们不会替你选择。你的凭据将在首次运行时校验。",
   "connections.test_not_tested_google_sheets": "未测试。Google 凭据将在首次运行时校验。请确认你已将该表格共享给服务账号——这一步最容易出错。",

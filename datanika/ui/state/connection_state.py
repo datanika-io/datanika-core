@@ -16,6 +16,7 @@ from datanika.services.connection_service import (
     ConnectionService,
     ConnectionVerdict,
     LocalPathNotAllowedError,
+    try_submit_connection_test,
 )
 from datanika.services.encryption import EncryptionService
 from datanika.ui.state.base_state import BaseState, get_sync_session
@@ -43,6 +44,9 @@ _VERDICT_KEYS = {
     "file_in_memory": "connections.test_file_in_memory",
     "driver_unavailable": "connections.test_driver_unavailable",
     "timed_out": "connections.test_timed_out",
+    # core#1367. A saturated connection-test pool never dialled the host, so "the server did not
+    # answer" would be a wrong explanation rather than a vague one.
+    "busy": "connections.test_busy",
     # core#1170 AC3.3 -- the six probe-exempt SaaS types. Until these existed the
     # product had no vocabulary for an honest "we don't know": `_test_saas_source`
     # returned a bare 2-tuple, `reason` took its default "", the map was missed, and
@@ -1663,20 +1667,23 @@ class ConnectionState(BaseState):
     async def _verdict_off_the_loop(
         self, config: dict, connection_type: ConnectionType
     ) -> ConnectionVerdict:
-        """Run one connection test in a worker thread, and wait no longer than the budget.
+        """Run one connection test on the connection-test pool, no longer than the budget.
 
         Driver calls block, so the call runs off the event loop and the loop keeps serving while
         it waits (core#1367). Past the budget, the thread is left to the driver's own bounds and
         the user gets an answer.
+
+        ⚠️ **The pool is dedicated, not ``asyncio.to_thread``'s default executor.** That executor is
+        shared with every synchronous API handler in this process, and a thread a driver still holds
+        after the budget expired is capacity those handlers need. A test that cannot get a slot is
+        told so, rather than queued behind stalled work.
         """
         budget = CONNECTION_TEST_BUDGET_SECONDS
+        future = try_submit_connection_test(config, connection_type)
+        if future is None:
+            return ConnectionService.busy_verdict()
         try:
-            return await asyncio.wait_for(
-                asyncio.to_thread(
-                    ConnectionService.test_connection_verdict, config, connection_type
-                ),
-                timeout=budget,
-            )
+            return await asyncio.wait_for(asyncio.wrap_future(future), timeout=budget)
         except TimeoutError:
             return ConnectionService.timed_out_verdict(budget)
 

@@ -217,6 +217,22 @@ def test_the_handler_itself_maps_the_neutral_verdict_onto_the_new_status():
         )
         assert helper is not None, "the handler calls _verdict_off_the_loop, which does not exist"
         verdict_source = ast.get_source_segment(src, helper) or ""
+    # core#1367, second half: the helper submits to the connection-test pool, so the call to the
+    # verdict API now lives one hop further out, in the service. Follow that hop too. The property
+    # asserted below is that the handler's path ENDS at the three-valued verdict API — not which
+    # function happens to name it, which is what a scanner matching one name would encode instead.
+    if "try_submit_connection_test" in verdict_source:
+        service_src = (UI.parent / "services" / "connection_service.py").read_text(encoding="utf-8")
+        submit = next(
+            (
+                n
+                for n in ast.walk(ast.parse(service_src))
+                if isinstance(n, ast.FunctionDef) and n.name == "try_submit_connection_test"
+            ),
+            None,
+        )
+        assert submit is not None, "the helper submits through a function that does not exist"
+        verdict_source += ast.get_source_segment(service_src, submit) or ""
     assert "test_connection_verdict" in verdict_source, (
         "the handler is back on the two-tuple, which discards the message and "
         "cannot tell a neutral verdict from a failure"

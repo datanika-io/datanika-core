@@ -22,7 +22,7 @@ from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
 from datanika.services.authorization import InsufficientRoleError
 from datanika.services.catalog_service import CatalogService
-from datanika.services.connection_service import ConnectionService
+from datanika.services.connection_service import ConnectionService, run_connection_test_bounded
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.notification_service import NotificationService
@@ -375,7 +375,13 @@ def test_connection(request, api_key, session):
     if config is None:
         return _error(404, "Connection not found")
     conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
-    ok, msg = ConnectionService.test_connection(config, conn.connection_type)
+    # core#1367. This handler is synchronous, so `api_middleware` runs it in the process's default
+    # executor — the pool every synchronous handler shares — and it holds this request's database
+    # session for as long as it waits. A driver handed a host that accepts TCP and then says nothing
+    # does not always return, and nothing here bounded that wait. The test now runs on the dedicated
+    # connection-test pool, and this call answers within the budget.
+    verdict = run_connection_test_bounded(config, conn.connection_type)
+    ok, msg = verdict.ok, verdict.message
     # core#821: the service verdict is now True / False / **None** ("not
     # tested"). `success` must stay strictly boolean -- letting None through
     # would turn a documented bool into a nullable one, which

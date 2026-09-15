@@ -155,6 +155,7 @@
   "connections.test_file_in_memory": "Connected — in-memory database. Nothing is written to disk.",
   "connections.test_driver_unavailable": "The {arg} driver is not available in this build.",
   "connections.test_timed_out": "The server did not answer within {arg} seconds.",
+  "connections.test_busy": "Too many connection tests are running right now. Try again in a moment.",
   "connections.test_not_tested_rest_api": "Not tested. Without knowing which resources you want there is no endpoint we can safely call — resources are set on the upload, not the connection. Your credentials are checked on the first run.",
   "connections.test_not_tested_openapi": "Not tested. Calling an endpoint from your spec could have side effects, so we do not choose one for you. Your credentials are checked on the first run.",
   "connections.test_not_tested_google_sheets": "Not tested. Google credentials are checked on the first run. Make sure you have shared the sheet with the service account — that is the step that usually fails.",

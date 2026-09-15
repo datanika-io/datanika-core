@@ -450,7 +450,13 @@ def test_every_reason_the_service_produces_has_a_key(tmp_path):
     timed_out = {ConnectionService.timed_out_verdict(1).reason}
     assert timed_out == {"timed_out"}, f"the budget verdict produces {sorted(timed_out)}"
 
-    reachable = produced | {"driver_unavailable"} | exempt | timed_out
+    # core#1367, second half: every connection-test slot in this process already held. Called for
+    # the same reason as the two branches above — saturating the real pool belongs in its own test,
+    # and reading the mapping instead of the service is exactly what this assertion refuses.
+    busy = {ConnectionService.busy_verdict().reason}
+    assert busy == {"busy"}, f"the saturated-pool verdict produces {sorted(busy)}"
+
+    reachable = produced | {"driver_unavailable"} | exempt | timed_out | busy
     assert set(_VERDICT_KEYS) == reachable, (
         "every mapped reason must be one something can actually produce — "
         f"orphans: {sorted(set(_VERDICT_KEYS) - reachable)}; "

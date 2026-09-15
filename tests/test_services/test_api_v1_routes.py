@@ -1020,7 +1020,10 @@ class TestConnectionTestEndpointVerdict:
         )
         src = _ast.get_source_segment(module_src, fn)
 
-        assert src is not None and "ConnectionService.test_connection" in src, (
+        # core#1367: the route obtains its verdict from the bounded runner rather than calling the
+        # two-tuple itself, so that call is the floor now. The floor's job is unchanged — prove this
+        # is the route and not the `@api_endpoint` wrapper, which contains neither call.
+        assert src is not None and "run_connection_test_bounded(" in src, (
             "found a `test_connection` that is not the route — this assertion is "
             "not looking at the code it claims to"
         )

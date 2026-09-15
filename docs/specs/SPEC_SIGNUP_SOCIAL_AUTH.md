@@ -409,3 +409,66 @@ lists every cause without saying which one applied.**
 
 All nine locales. **Witness:** render the notice for `invite_notice == "not_applied"` and assert that
 the address clause is present in the rendered text.
+
+---
+
+## 8h. Amendment, 2026-09-16 — the signup-conversion event fires on **every** signup path ([core#1369])
+
+Engineering found, and Product confirms, that `user.signup_completed` is emitted only by the password
+`signup()` handler (`auth_state.py:674`). The social completion (`handle_oauth_complete`,
+`auth_state.py:768`) and the SSO callback (`sso_routes.py:365`) emit nothing, while cloud subscribes
+`handle_signup_conversion` to the event (`plugin.py:149`). So a signup through **Google, GitHub or
+SSO** never reaches the handler — the path this spec exists to make the *primary* one.
+
+### Ruling — fire it on every signup path
+
+The event is `user.signup_completed`, not `user.password_signup_completed`. DESIGN.md's hooks table and
+cloud's README document it as *"post-signup, plugins contribute conversion tracking"* — keyed on a
+signup, whatever the credential. **The password-only emit is an implementation gap, not the intended
+contract**, and [core#1369]'s AC4 (declare it password-only, close won't-fix) is **declined**.
+
+Why password-only is the wrong contract: social and SSO are the lowest-friction paths and likely the
+majority of real signups, so a password-only event makes most signups permanently invisible to
+conversion tracking and biases every downstream measurement toward the highest-friction path. The
+impact is latent today — `handle_signup_conversion` returns `None` while the Ads tag is unconfigured
+([cloud#192]) — but **every future signup-measurement fix inherits the gap**, and Growth's
+signup-goal work ([landing#515]) depends on signups being measurable at all.
+
+### The contract
+
+1. A new account created through Google, GitHub or SSO emits `user.signup_completed` **exactly once**,
+   with the new user's id.
+2. A returning user signing in through those paths does **not** emit it.
+3. `is_new` is taken from the **server** side of the flow — `oauth_service.handle_callback` and the SSO
+   callback already return `is_new: bool` — **not** from the `is_new=1` query parameter `/auth/complete`
+   reads. A completion URL carrying a forged `is_new=1` for an existing account must not fire a
+   conversion. (This is §8c's transport lesson pointed at analytics: the URL is attacker-shaped; the
+   fact is the backend's.)
+4. 🚨 **Exactly-once under `on_load`.** `handle_oauth_complete` is an `on_load` handler
+   (`datanika.py:249`), and `on_load` re-runs on a reload of `/auth/complete`. The emit must be bound
+   to the account-creation outcome for *this* request, not to the page load, so refreshing the
+   completion page does not fire a second conversion.
+
+### Mechanism note (Engineering's call; the constraint is not)
+
+The conversion `rx.call_script` must be **returned by a Reflex handler** to reach the browser, and the
+frontend completion path is the only one positioned to return it — while the authoritative `is_new`
+lives in the **backend** callback. Bridging those without trusting the URL is the same bridge §8g.2
+already builds for the invitation *outcome* (a bounded, server-set flag reaching the completion page,
+not the raw fact). Reuse that channel, in a way AC4 (4 above) can hold.
+
+### Acceptance
+
+Adds to §5, numbered from 15 so §8f's 9–14 stay unambiguous.
+
+15. A new Google/GitHub/SSO account emits `user.signup_completed` once, with the new user's id; a
+    returning user on the same path emits nothing. Drive the real completion path, not the emit
+    function. **Control:** a password signup still emits it (do not regress the one path that works).
+16. A completion request carrying `is_new=1` for an **existing** account emits nothing — the fact is
+    read from the server, not the URL.
+17. **Reload the completion route for a freshly-created account and assert the event fires once**, not
+    once per load (`PRODUCT_RULES` §16 — name the entry point and the artifact read).
+
+[core#1369]: https://github.com/datanika-io/datanika-core/issues/1369
+[cloud#192]: https://github.com/datanika-io/datanika-cloud/issues/192
+[landing#515]: https://github.com/datanika-io/datanika-landing/issues/515

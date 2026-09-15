@@ -75,11 +75,11 @@ jobs:
         # `steps.check.outcome` is EMPTY, this step is SKIPPED, and the job ends red
         # having filed nothing.
         #
-        # That is core#691 one level up, inside the very thing built to catch core#691's
-        # class: a red scheduled run is EXACTLY what a correct detection looks like (the
-        # filing path deliberately ends in `exit 1`), so "broke before it could look" and
-        # "found a dead cron" produced the same colour AND the same absence of a new
-        # issue. Measured on run 34395255144: that red run WAS a correct detection --
+        # That was core#691 one level up, inside the very thing built to catch core#691's
+        # class: a red scheduled run was ALSO what a correct detection looked like (the
+        # report branches ended in `exit 1` until core#1272), so "broke before it could
+        # look" and "found a dead cron" produced the same colour AND the same absence of a
+        # new issue. Measured on run 34395255144: that red run WAS a correct detection --
         # which is exactly why a genuinely broken one would not have stood out.
         #
         # `!= 'success'` covers both '' (never ran) and 'failure' (ran and crashed).
@@ -89,6 +89,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 🚨 core#1272 -- THIS STEP'S EXIT STATUS IS A VERDICT, AND THE WATCHDOG READS IT.
+          # `check_scheduled_workflows.py` grades every scheduled workflow's recent RUN
+          # conclusions, this workflow's included. Both report branches below used to end
+          # in `exit 1`, so every correct report was a red run; two reports were a "FIRED
+          # AND FAILED" streak; that finding was filed, and filing it was red again. From
+          # 2026-09-11 the watchdog flagged ITSELF every day with nothing else wrong.
+          #
+          # So a report that was FILED ends GREEN (`exit 0`). The run is RED only when
+          # nothing was verified (the `exit 1` in the next branch) or when the report could
+          # not be filed (a failing `gh` ends the step: the default shell is `bash -e`).
+          # Red now means broke -- the one reading the self-check needs. Exempting this
+          # workflow from its own check would also have ended the loop, and would have
+          # blinded it to its own breakage, which nothing else in Actions can see.
+          #
           # One open issue is enough -- don't stack a new one every morning.
           existing=$(gh issue list --state open \
             --search "in:title Scheduled workflow stopped firing" \
@@ -100,16 +114,16 @@ jobs:
           # rather than filing an empty issue.
           #
           # 🚨 This branch used to `exit 1` after four `::error::` lines and
-          # nothing else. Both outcomes -- "a cron has stopped" and "I could not
-          # run" -- then produced one identical signal: a red scheduled run.
-          # The first is *designed* to be red (filing an issue ends in `exit 1`),
-          # so a broken watchdog is camouflaged by its own success case. It sat
-          # broken for three nights that way (core#691): a crash on 08-31 looked
-          # exactly like the correct detection on 08-30.
+          # nothing else, while the report branches ended in `exit 1` too. So
+          # "a cron has stopped" and "I could not run" produced one identical
+          # signal, and a broken watchdog was camouflaged by its own success case.
+          # It sat broken for three nights that way (core#691): a crash on 08-31
+          # looked exactly like the correct detection on 08-30.
           #
-          # So the watchdog now reports its own failure through the SAME channel
-          # it reports findings through, under a DIFFERENT title, so the two are
-          # one glance apart in the issue list rather than one log-dive apart.
+          # So the watchdog reports its own failure through the SAME channel it
+          # reports findings through, under a DIFFERENT title -- and, since
+          # core#1272, in a different colour. This is the only branch that is
+          # red by design.
           if [ ! -f problems.md ]; then
             echo "::error::No problems.md was written, so NOTHING WAS VERIFIED."
             echo "::error::That means it failed to RUN, not that it found a fault."
@@ -155,7 +169,8 @@ jobs:
               cat problems.md
             } > /tmp/comment.md
             gh issue comment "$existing" --body-file /tmp/comment.md
-            exit 1
+            # Filed. GREEN on purpose (core#1272) -- see the top of this step.
+            exit 0
           fi
 
           {
@@ -171,7 +186,8 @@ jobs:
           gh issue create \
             --title "Scheduled workflow stopped firing" \
             --body-file /tmp/body.md
-          exit 1
+          # Filed. GREEN on purpose (core#1272) -- see the top of this step.
+          exit 0
 
   # ---------------------------------------------------------------------------
   # core#1256. `e2e-sso` produced NO READING on five consecutive commits and CI

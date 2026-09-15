@@ -139,6 +139,14 @@ RED_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
 #: and runners flake -- and a watchdog that pages on one bad night gets retrained away
 #: within a week. Three would mean three days blind, and core#1166 exists precisely
 #: because TWO days unread was already too long.
+#:
+#: 🚨 core#1272. This reads RUN conclusions, so a streak means "broken" only for a workflow
+#: whose successful REPORT is not itself a red run. The watchdog's filing step used to end
+#: in `exit 1` after filing, so every correct report was a red run, two reports made a
+#: streak, the streak was reported, and the report was red: from 2026-09-11 it flagged
+#: itself daily with nothing else wrong. The fix is NOT an exemption for its own workflow
+#: -- that would blind it to its own genuine breakage, the one failure nothing else in
+#: Actions can see. A filed report now ends green, so a red run means it broke.
 FAILURE_STREAK = 2
 
 
@@ -166,14 +174,52 @@ class WorkflowState:
         return f"{self.repo} :: {self.path}"
 
 
+@dataclass(frozen=True)
+class DeclaredPause:
+    """A scheduled workflow disabled ON PURPOSE, with a reason and a review date (core#1272).
+
+    A deliberate ``gh workflow disable`` and GitHub's silent 60-day ``disabled_inactivity``
+    both leave a schedule that is not running, and the API gives a reason for neither.
+    Grading every disabled schedule as stopped makes a deliberate pause page daily until
+    someone "fixes" it by re-enabling exactly what was paused. Exempting
+    ``disabled_manually`` wholesale would hide an accidental disable forever. So a pause is
+    a DECLARATION, reviewed in git, and it EXPIRES: past ``review_by`` it is a problem again,
+    so a pause cannot quietly become permanent.
+    """
+
+    #: Exactly :attr:`WorkflowState.ref` -- ``"<owner>/<repo> :: <path>"``.
+    ref: str
+    declared_on: datetime
+    review_by: datetime
+    reason: str
+
+
+#: Every deliberate pause. Each entry is a schedule that is NOT running, so keep this short.
+#: Lifting a pause is `gh workflow enable <file>` AND deleting the entry; an entry whose
+#: workflow is active again is reported as stale rather than silently kept.
+DECLARED_PAUSES: tuple[DeclaredPause, ...] = (
+    DeclaredPause(
+        ref="datanika-io/datanika-core :: .github/workflows/cve-watch.yml",
+        declared_on=datetime(2026, 9, 15, tzinfo=UTC),
+        review_by=datetime(2026, 9, 29, tzinfo=UTC),
+        reason="paused pending a decision on where its findings are filed (refs #1166)",
+    ),
+)
+
+#: Longest a single declaration may run before it has to be re-decided in a reviewed change.
+MAX_PAUSE_DAYS = 30
+
+
 def find_problems(
     workflows: list[WorkflowState],
     now: datetime,
     grace: int = GRACE_SECONDS,
+    pauses: tuple[DeclaredPause, ...] = DECLARED_PAUSES,
 ) -> tuple[list[str], list[str]]:
     """Return ``(problems, notes)``. Only ``problems`` should fail the run."""
     problems: list[str] = []
     notes: list[str] = []
+    declared = {pause.ref: pause for pause in pauses}
 
     for wf in workflows:
         # core#982 — a third state, distinct from both "synthesised by GitHub" and
@@ -207,14 +253,55 @@ def find_problems(
         if not wf.crons:
             continue
 
+        pause = declared.get(wf.ref)
+
         if wf.state != "active":
+            if wf.state == "disabled_manually" and pause is not None:
+                since = pause.declared_on.date().isoformat()
+                review = pause.review_by.date().isoformat()
+                if now <= pause.review_by:
+                    notes.append(
+                        f"{wf.ref} is DELIBERATELY PAUSED since {since}: {pause.reason}. Its "
+                        f"schedule ({', '.join(wf.crons)}) is NOT running, so nothing it would "
+                        f"find is being found. Review by {review}; to lift it, "
+                        f"`gh workflow enable` the file and delete its DECLARED_PAUSES entry."
+                    )
+                else:
+                    problems.append(
+                        f"{wf.ref} is still `disabled_manually`, and the pause declared on "
+                        f"{since} ({pause.reason}) passed its review date {review}. Lift it "
+                        f"(`gh workflow enable`) or re-declare it with a new review date in a "
+                        f"reviewed change: a pause nobody re-decides is a schedule that stopped."
+                    )
+                continue
+            if wf.state == "disabled_manually":
+                cause = (
+                    "Someone disabled it by hand and no pause is declared for it in "
+                    "DECLARED_PAUSES, so either it was switched off by mistake or a deliberate "
+                    "pause has no reason and no review date."
+                )
+            else:
+                cause = (
+                    "GitHub disables schedules in a public repo after 60 days without "
+                    "repository activity, and notifies nobody when it does."
+                )
+                if pause is not None:
+                    cause += (
+                        " A pause IS declared for it, but a declaration covers a manual "
+                        "disable only, and this one was not switched off by hand."
+                    )
             problems.append(
                 f"{wf.ref} is in state `{wf.state}`, not `active`. It carries a "
-                f"schedule ({', '.join(wf.crons)}) and is not running. GitHub "
-                f"disables schedules in a public repo after 60 days without "
-                f"repository activity, and notifies nobody when it does."
+                f"schedule ({', '.join(wf.crons)}) and is not running. {cause}"
             )
             continue
+
+        if pause is not None:
+            notes.append(
+                f"{wf.ref} is `active` but still has a DECLARED_PAUSES entry "
+                f"({pause.reason}). The pause has been lifted; delete the entry so a future "
+                f"pause of this workflow is a fresh, reviewed decision."
+            )
 
         periods = [cron_period_seconds(c) for c in wf.crons]
         known = [p for p in periods if p is not None]

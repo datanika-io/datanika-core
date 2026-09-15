@@ -35,9 +35,16 @@ from datanika.i18n import SUPPORTED_LOCALES, get_translations
 UI_ROOT = Path(datanika.ui.__file__).parent
 EN = get_translations("en")
 
-# The required marker as it is written throughout the UI: a second positional
-# argument to rx.text, next to the translated label.
+# The required marker as it is written throughout most of the UI: a second
+# positional argument to rx.text, next to the translated label.
 REQUIRED_MARKER = "*"
+
+# SPEC_FIELD_REQUIREDNESS (core#1311) moves labels into helpers that take
+# requiredness ONCE and render both the marker and the input attribute from it.
+# For these the site's requiredness is the literal `required=` keyword. Without
+# this set, a label migrated into a helper silently stops being scanned — a
+# scanning guard does not fail when a site leaves its view (ENGINEERING_RULES §54).
+DERIVED_MARKER_HELPERS = {"labelled_config_input", "field_label"}
 
 # A scan that silently finds nothing passes every assertion below it. Both
 # counts are pinned so an extractor that stops matching fails loudly instead
@@ -46,15 +53,57 @@ MIN_LABEL_SITES = 60
 MIN_REQUIRED_SITES = 20
 
 
+def _t_key(arg) -> str | None:
+    """The key of a ``_t["some.key"]`` expression, or ``None``."""
+    if (
+        isinstance(arg, ast.Subscript)
+        and isinstance(arg.value, ast.Name)
+        and arg.value.id == "_t"
+        and isinstance(arg.slice, ast.Constant)
+        and isinstance(arg.slice.value, str)
+    ):
+        return arg.slice.value
+    return None
+
+
 def _label_sites() -> list[tuple[str, int, str, bool]]:
-    """(file, lineno, i18n key, carries the required marker) for every rx.text label."""
+    """(file, lineno, i18n key, carries the required marker) for every label.
+
+    Two call shapes: ``rx.text(_t[key], " *", ...)``, and a derived-marker helper called as
+    ``helper(_t[key], ..., required=<literal>)``.
+    """
     sites: list[tuple[str, int, str, bool]] = []
     for path in sorted(UI_ROOT.rglob("*.py")):
+        rel = str(path.relative_to(UI_ROOT))
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
+
+            helper = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if helper in DERIVED_MARKER_HELPERS:
+                key = _t_key(node.args[0]) if node.args else None
+                required = next(
+                    (
+                        kw.value.value
+                        for kw in node.keywords
+                        if kw.arg == "required"
+                        and isinstance(kw.value, ast.Constant)
+                        and isinstance(kw.value.value, bool)
+                    ),
+                    False,
+                )
+                if key is not None:
+                    sites.append((rel, node.lineno, key, required))
+                continue
+
             if not (
                 isinstance(func, ast.Attribute)
                 and func.attr == "text"
@@ -66,15 +115,8 @@ def _label_sites() -> list[tuple[str, int, str, bool]]:
             key = None
             marked = False
             for arg in node.args:
-                # _t["some.key"]
-                if (
-                    isinstance(arg, ast.Subscript)
-                    and isinstance(arg.value, ast.Name)
-                    and arg.value.id == "_t"
-                    and isinstance(arg.slice, ast.Constant)
-                    and isinstance(arg.slice.value, str)
-                ):
-                    key = arg.slice.value
+                if _t_key(arg) is not None:
+                    key = _t_key(arg)
                 elif (
                     isinstance(arg, ast.Constant)
                     and isinstance(arg.value, str)
@@ -82,7 +124,7 @@ def _label_sites() -> list[tuple[str, int, str, bool]]:
                 ):
                     marked = True
             if key is not None:
-                sites.append((str(path.relative_to(UI_ROOT)), node.lineno, key, marked))
+                sites.append((rel, node.lineno, key, marked))
     return sites
 
 
@@ -113,6 +155,29 @@ class TestTheScannerIsArmed:
     def test_every_scanned_key_exists(self):
         missing = sorted({key for _, _, key, _ in SITES if key not in EN})
         assert not missing, f"labels reference keys absent from en.json: {missing}"
+
+
+class TestTheScannerSeesTheDerivedMarker:
+    """SPEC_FIELD_REQUIREDNESS moves labels off ``rx.text(_t[...], " *")`` and into a helper that
+    takes ``required=`` once and renders both the marker and the input attribute (core#1311).
+
+    🚨 A scanner that only knows the old call shape does not fail when a label moves — it simply
+    stops counting that site, and the guard above goes quietly blind one field at a time
+    (ENGINEERING_RULES §54). So the migrated sites are asserted by key AND by requiredness,
+    in both directions.
+    """
+
+    def test_helper_rendered_labels_are_sites_carrying_their_required_value(self):
+        pairs = {(key, marked) for _, _, key, marked in SITES}
+        assert ("connections.name", True) in pairs, (
+            "the connection-name label is not seen as required"
+        )
+        assert ("connections.base_url", True) in pairs, (
+            "rest_api's Base URL is not seen as required"
+        )
+        assert ("connections.base_url", False) in pairs, (
+            "openapi's Base URL is not seen as optional"
+        )
 
 
 class TestNoLabelIsOptionalAndRequiredAtOnce:

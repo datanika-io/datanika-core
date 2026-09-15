@@ -33,52 +33,82 @@ ARG DATANIKA_IMAGE_EDITION=cloud
 # =============================================================================
 # base — everything both editions share, including all the expensive work.
 # =============================================================================
-# 🚨 PINNED BY DIGEST, AND THE PIN IS WHAT REFRESHES THE OS PACKAGES (core#1313).
+# 🚨 TWO LEVERS REFRESH THE OS PACKAGES, AND NEITHER IS ENOUGH ALONE (core#1313).
 #
-# This was `FROM python:3.12-slim` — a floating tag. Docker does not re-fetch a tag it already
-# holds, so the box built against a copy cached 2026-07-14 while upstream had moved on, and every
-# layer above it stayed valid. The image serving production reported `Created` as the previous
-# night and carried an apt layer dated seven weeks earlier. A REBUILD IS NOT A REFRESH.
+# 1. THE BASE IS PINNED BY DIGEST — reproducibility, and a base bump becomes a reviewable diff.
+#    This was `FROM python:3.12-slim`, a floating tag Docker never re-fetched: the box built against
+#    a copy cached 2026-07-14 while upstream had moved on, and every layer above it stayed valid.
+#    The image serving production reported `Created` as the previous night and carried an apt layer
+#    dated seven weeks earlier. A REBUILD IS NOT A REFRESH.
 #
-# ⚠️ `pull: true` ALONE DOES NOT FIX THIS — measured, not assumed. Run 34692477424 pulled this
-# exact digest and the apt layer STILL came from cache:
+# 2. `APT_REFRESHED_ON` (just below the FROM) RE-RUNS THE PACKAGE LAYER against today's Debian
+#    mirrors, upgrade included — the lever for fixes Debian publishes between upstream base builds.
 #
-#     #6  [base 1/9] FROM python:3.12-slim@sha256:78387bc3...     <- base current
-#     #11 CACHED     RUN apt-get update && apt-get install ...    <- apt NOT re-run
-#     Get:1 = 0 | Reading package lists = 0 | Unpacking <any pkg> = 0
+# 🔴 CORRECTED 2026-09-15. This comment used to say the pin refreshed the packages because
+# "changing this line's TEXT invalidates this instruction and everything after it". MEASURED
+# FALSE. A layer's cache key follows the RESOLVED parent's content, not the FROM line's text, and
+# the pin named the exact digest the floating tag already resolved to. Run 34695877776, the first
+# build carrying the pin:
 #
-# `cache-from: type=gha` restored the layer regardless of the refreshed base. The pin works where
-# the pull did not because changing this line's TEXT invalidates this instruction and everything
-# after it — ordinary, deterministic layer-cache semantics rather than a property of the remote
-# cache's key derivation.
+#     [base 1/9] FROM python:3.12-slim@sha256:78387bc3...     <- the same parent as before
+#     [base 2/9] RUN apt-get update && apt-get install ...    -> CACHED
 #
-# 🔑 HOW TO BUMP, and why the process is the point. `image-cve` going red IS the signal: it means
-# the pinned base has accumulated fixable CVEs. Then:
+# `pull: true` (run 34692477424) failed the same way, for the same reason.
 #
-#     docker pull python:3.12-slim
-#     docker image inspect python:3.12-slim --format '{{index .RepoDigests 0}}'
-#     # paste the digest below, commit, let image-cve confirm green
+# ⚠️ Nor would a fresh `apt-get install <list>` have been enough without the cache: install never
+# upgrades a package the base image already ships. Measured on this digest, 2026-09-15: a fresh
+# install fixed only the packages the list pulls in and left the base's own packages upgradable;
+# `apt-get upgrade` first left none. Upstream had published no newer base, so no digest bump
+# could have helped either.
 #
-# That makes the base a REVIEWABLE INPUT — the version is in git, the bump is a diff, and the
-# gate that tells you to bump is the same gate that confirms the bump worked. A floating tag gave
-# neither reproducibility nor freshness; this gives both, at the cost of a deliberate bump.
+# 🔑 HOW TO REFRESH. When `image-cve` reports a fixable OS-package finding:
+#   - bump APT_REFRESHED_ON to today. A new build-arg value invalidates the RUN after it —
+#     measured, with a positive control in the same run (same value -> CACHED, new value ->
+#     EXECUTED) — so the package step re-runs in CI and on the box alike;
+#   - bump the digest as well when upstream has published a newer base:
+#       docker buildx imagetools inspect python:3.12-slim    # the index digest is on `Digest:`
+#   The step prints `apt layer refresh <date> ran at <UTC time>` ONLY when it actually executes
+#   (the step header shows the format string, never a time), followed by the count still
+#   upgradable. A cached step prints neither. Read those lines, not this file, as the evidence.
 #
-# ⚠️ Do NOT "simplify" this back to a bare tag because a bump felt like friction. The friction is
-# the mechanism.
+# ⚠️ Do NOT "simplify" either lever away because a bump felt like friction. The friction is the
+# mechanism.
 #
-# Pinned 2026-09-12 to the 2026-09-01 upstream build.
+# Pinned 2026-09-12 to the 2026-09-01 upstream build — still upstream's newest on 2026-09-15.
 FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS base
+
+# The package layer's refresh date (see HOW TO REFRESH above). Declared directly before the RUN
+# it invalidates and printed by it, so a reorder cannot quietly detach the two
+# (tests/test_deploy/test_base_image_freshness.py).
+ARG APT_REFRESHED_ON=2026-09-15
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let
 # us build lxml + xmlsec FROM SOURCE (below) against the SAME system libxml2 —
 # the prebuilt wheels each bundle a different libxml2 and mismatch at import on
 # debian-slim ("lxml & xmlsec libxml2 library version mismatch").
-RUN apt-get update && apt-get install -y --no-install-recommends \
+#
+# `apt-get upgrade` runs BEFORE install, because install never upgrades what the base already
+# ships; its stdout is discarded (errors still reach stderr) because this repository's build logs
+# are public. The step then asserts nothing is left upgradable: a non-zero count means an upgrade
+# was kept back (it needs a new dependency), which is a decision for a person, not something to
+# ship silently. Only the COUNT is printed, for the same reason.
+RUN printf 'apt layer refresh %s ran at %s\n' "${APT_REFRESHED_ON}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" && \
+    apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold > /dev/null && \
+    apt-get install -y --no-install-recommends \
     curl unzip gcc libpq-dev \
     libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl pkg-config \
     zlib1g-dev libssl-dev && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get -s upgrade > /tmp/apt-upgradable && \
+    left="$(grep -c '^Inst' /tmp/apt-upgradable || true)" && \
+    printf 'apt layer refresh: %s package(s) still upgradable\n' "${left}" && \
+    if [ "${left}" != "0" ]; then \
+      echo "apt layer refresh: upgrades were kept back; decide between full-upgrade and a pin" >&2; \
+      exit 1; \
+    fi && \
+    rm -rf /var/lib/apt/lists/* /tmp/apt-upgradable
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/

@@ -202,9 +202,27 @@ def test_the_handler_itself_maps_the_neutral_verdict_onto_the_new_status():
     body = ast.get_source_segment(src, fn) or ""
     assert len(body.splitlines()) > 10, "extracted body is too short to be the handler"
 
-    assert "test_connection_verdict" in body, (
+    # core#1367: the handler may reach the verdict API through `_verdict_off_the_loop`, which runs
+    # it in a worker thread. Follow that helper rather than accept its name as proof.
+    verdict_source = body
+    if "_verdict_off_the_loop" in body:
+        helper = next(
+            (
+                n
+                for n in ast.walk(tree)
+                if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
+                and n.name == "_verdict_off_the_loop"
+            ),
+            None,
+        )
+        assert helper is not None, "the handler calls _verdict_off_the_loop, which does not exist"
+        verdict_source = ast.get_source_segment(src, helper) or ""
+    assert "test_connection_verdict" in verdict_source, (
         "the handler is back on the two-tuple, which discards the message and "
         "cannot tell a neutral verdict from a failure"
+    )
+    assert "ConnectionService.test_connection(" not in body + verdict_source, (
+        "the two-tuple `test_connection` is back on the handler's path"
     )
     assert '"untested"' in body, (
         "the handler no longer routes the neutral verdict to its own status, so "

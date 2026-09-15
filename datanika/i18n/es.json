@@ -154,6 +154,7 @@
   "connections.test_file_unopenable": "No se puede abrir «{arg}»: comprueba que sea un archivo de base de datos y que se pueda leer.",
   "connections.test_file_in_memory": "Conectado — base de datos en memoria. No se escribe nada en el disco.",
   "connections.test_driver_unavailable": "El controlador {arg} no está disponible en esta compilación.",
+  "connections.test_timed_out": "El servidor no respondió en {arg} segundos.",
   "connections.test_not_tested_rest_api": "Sin probar. Sin saber qué recursos quieres, no hay ningún endpoint que podamos llamar con seguridad: los recursos se definen en la carga, no en la conexión. Tus credenciales se comprueban en la primera ejecución.",
   "connections.test_not_tested_openapi": "Sin probar. Llamar a un endpoint de tu especificación podría tener efectos secundarios, así que no elegimos ninguno por ti. Tus credenciales se comprueban en la primera ejecución.",
   "connections.test_not_tested_google_sheets": "Sin probar. Las credenciales de Google se comprueban en la primera ejecución. Asegúrate de haber compartido la hoja con la cuenta de servicio: ese es el paso que suele fallar.",

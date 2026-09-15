@@ -445,7 +445,12 @@ def test_every_reason_the_service_produces_has_a_key(tmp_path):
         f"the exempt branch produces {sorted(exempt)}"
     )
 
-    reachable = produced | {"driver_unavailable"} | exempt
+    # core#1367: a connection test that runs past its budget. Called, like the two branches above,
+    # so a service that stopped producing the reason would fail here rather than read as mapped.
+    timed_out = {ConnectionService.timed_out_verdict(1).reason}
+    assert timed_out == {"timed_out"}, f"the budget verdict produces {sorted(timed_out)}"
+
+    reachable = produced | {"driver_unavailable"} | exempt | timed_out
     assert set(_VERDICT_KEYS) == reachable, (
         "every mapped reason must be one something can actually produce — "
         f"orphans: {sorted(set(_VERDICT_KEYS) - reachable)}; "

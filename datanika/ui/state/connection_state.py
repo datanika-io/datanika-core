@@ -1,5 +1,6 @@
 """Connection state for Reflex UI."""
 
+import asyncio
 import json
 import logging
 import re
@@ -11,6 +12,7 @@ from datanika.config import settings
 from datanika.errors import UserFacingError
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_service import (
+    CONNECTION_TEST_BUDGET_SECONDS,
     ConnectionService,
     ConnectionVerdict,
     LocalPathNotAllowedError,
@@ -40,6 +42,7 @@ _VERDICT_KEYS = {
     "file_unopenable": "connections.test_file_unopenable",
     "file_in_memory": "connections.test_file_in_memory",
     "driver_unavailable": "connections.test_driver_unavailable",
+    "timed_out": "connections.test_timed_out",
     # core#1170 AC3.3 -- the six probe-exempt SaaS types. Until these existed the
     # product had no vocabulary for an honest "we don't know": `_test_saas_source`
     # returned a bare 2-tuple, `reason` took its default "", the map was missed, and
@@ -1657,6 +1660,26 @@ class ConnectionState(BaseState):
         text = await self._translated(key, verdict.message)
         return text.replace("{arg}", verdict.arg) if verdict.arg else text
 
+    async def _verdict_off_the_loop(
+        self, config: dict, connection_type: ConnectionType
+    ) -> ConnectionVerdict:
+        """Run one connection test in a worker thread, and wait no longer than the budget.
+
+        Driver calls block, so the call runs off the event loop and the loop keeps serving while
+        it waits (core#1367). Past the budget, the thread is left to the driver's own bounds and
+        the user gets an answer.
+        """
+        budget = CONNECTION_TEST_BUDGET_SECONDS
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    ConnectionService.test_connection_verdict, config, connection_type
+                ),
+                timeout=budget,
+            )
+        except TimeoutError:
+            return ConnectionService.timed_out_verdict(budget)
+
     async def test_connection_from_form(self):
         """Test connectivity using the current form fields (before saving)."""
         validation_error = self._validate_form()
@@ -1681,9 +1704,7 @@ class ConnectionState(BaseState):
         # Converting an unknown failure into a red verdict is strictly safer
         # than letting it through.
         try:
-            verdict = ConnectionService.test_connection_verdict(
-                config, ConnectionType(self.form_type)
-            )
+            verdict = await self._verdict_off_the_loop(config, ConnectionType(self.form_type))
         except Exception:
             logger.exception("Connection test crashed for type %s", self.form_type)
             verdict = ConnectionVerdict(
@@ -1711,7 +1732,7 @@ class ConnectionState(BaseState):
         # icon showing whatever it showed before — including a previous green
         # tick — rather than reporting the failure (core#608 / core#609).
         try:
-            verdict = ConnectionService.test_connection_verdict(config, conn.connection_type)
+            verdict = await self._verdict_off_the_loop(config, conn.connection_type)
         except Exception:
             logger.exception(
                 "Connection test crashed for saved connection %s (%s)",

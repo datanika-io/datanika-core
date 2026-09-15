@@ -586,16 +586,22 @@ class TestTestConnectionConnectArgs:
         assert call.kwargs["connect_args"] == {"connect_timeout": 5}
 
     def test_mysql_uses_connect_timeout(self, svc):
+        # core#1367: a MySQL connection test also bounds its reads and writes.
         call = self._run(svc, ConnectionType.MYSQL)
-        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+        assert call.kwargs["connect_args"] == {
+            "connect_timeout": 5,
+            "read_timeout": 30,
+            "write_timeout": 30,
+        }
 
     def test_redshift_uses_connect_timeout(self, svc):
         call = self._run(svc, ConnectionType.REDSHIFT)
         assert call.kwargs["connect_args"] == {"connect_timeout": 5}
 
     def test_clickhouse_uses_connect_timeout(self, svc):
+        # core#1367: a ClickHouse connection test also bounds each request.
         call = self._run(svc, ConnectionType.CLICKHOUSE)
-        assert call.kwargs["connect_args"] == {"connect_timeout": 5}
+        assert call.kwargs["connect_args"] == {"connect_timeout": 5, "send_receive_timeout": 30}
 
     def test_snowflake_uses_connect_timeout(self, svc):
         config = {

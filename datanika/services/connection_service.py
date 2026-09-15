@@ -360,6 +360,27 @@ _CONNECT_TIMEOUT_KWARG = {
 }
 
 
+#: The longest the UI waits for one connection test before it answers that the server did not
+#: answer. The driver call runs in a worker thread, so the wait never holds the event loop.
+CONNECTION_TEST_BUDGET_SECONDS = 60
+
+#: A read and write bound, in seconds, for the drivers that accept one. A connect timeout alone does
+#: not bound the handshake, the login or the probe query for these drivers, and each argument here
+#: was checked against a test server. Generous on purpose: a serverless database can take this long
+#: to wake.
+_TEST_IO_TIMEOUT_SECONDS = 30
+
+
+def _io_timeout_args(connection_type: ConnectionType) -> dict:
+    """Read and write bounds for one dialect's connection test, where its driver takes them."""
+    seconds = _TEST_IO_TIMEOUT_SECONDS
+    if connection_type == ConnectionType.MYSQL:
+        return {"read_timeout": seconds, "write_timeout": seconds}  # PyMySQL
+    if connection_type == ConnectionType.CLICKHOUSE:
+        return {"send_receive_timeout": seconds}  # clickhouse-connect
+    return {}
+
+
 def _connect_args(connection_type: ConnectionType, config: dict) -> dict:
     """Connect-args for one dialect, derived from what the dialect *is*.
 
@@ -380,7 +401,10 @@ def _connect_args(connection_type: ConnectionType, config: dict) -> dict:
         # sqlite carries read-only in the URL, not in connect_args — see
         # ``_build_sa_url``.
         return {}
-    return {_CONNECT_TIMEOUT_KWARG.get(connection_type, "connect_timeout"): 5}
+    return {
+        _CONNECT_TIMEOUT_KWARG.get(connection_type, "connect_timeout"): 5,
+        **_io_timeout_args(connection_type),
+    }
 
 
 # Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
@@ -1502,6 +1526,20 @@ class ConnectionService:
             return local
 
         return ConnectionVerdict(*ConnectionService._test_sql_connection(config, connection_type))
+
+    @staticmethod
+    def timed_out_verdict(seconds: float) -> ConnectionVerdict:
+        """The verdict for a connection test that ran past its budget (core#1367).
+
+        The UI maps ``timed_out`` to a translated sentence, and ``arg`` carries the seconds.
+        """
+        shown = f"{seconds:g}"
+        return ConnectionVerdict(
+            False,
+            f"The server did not answer within {shown} seconds",
+            reason="timed_out",
+            arg=shown,
+        )
 
     @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:

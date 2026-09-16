@@ -21,6 +21,7 @@ from datanika.services.oauth_service import (
     github_provider,
     google_provider,
 )
+from datanika.services.signup_conversion import mark_signup_completed
 from datanika.services.user_service import UserService, UserServiceError
 
 _OAUTH_STATE_COOKIE = "oauth_state"
@@ -233,6 +234,7 @@ async def oauth_callback(request: Request) -> RedirectResponse:
                 session,
                 invite_token=context.get("invite_token", ""),
             )
+            new_user_id = result["user"].id if result["is_new"] else None
             session.commit()
         except UserServiceError:
             # A refusal, not a failure. The user can act on this one — their
@@ -246,6 +248,12 @@ async def oauth_callback(request: Request) -> RedirectResponse:
             return RedirectResponse(
                 url=_frontend(login_error_path("oauth_failed")), status_code=302
             )
+
+    # core#1369. Only once the account is committed, and only the backend's own fact: the
+    # `is_new` written into the URL below is the user's to edit, so /auth/complete never reads it
+    # for this. The marker is one-shot and fails quiet — see `signup_conversion`.
+    if new_user_id is not None:
+        mark_signup_completed(new_user_id)
 
     params = {
         "token": result["access_token"],

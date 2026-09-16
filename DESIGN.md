@@ -391,7 +391,7 @@ clear()                         # Remove all handlers (testing)
 | `run.upload_completed` | `upload_tasks.py` | `org_id`, `table_count` | Post-upload metering | `emit` |
 | `run.models_completed` | `pipeline_tasks.py` | `org_id`, `count` | Post-pipeline metering (billable model runs) | `emit` |
 | `run.transformation_completed` | `transformation_tasks.py` | `org_id` | Post-transformation metering | `emit` |
-| `user.signup_completed` | `ui/state/auth_state.py::signup` | `user_id` | Post-signup, plugins can contribute Reflex events (e.g. conversion tracking) | `collect_events` |
+| `user.signup_completed` | `ui/state/auth_state.py::signup` (password), `::handle_oauth_complete` (Google, GitHub, SSO) | `user_id` | Post-signup, once per new account on every signup path, plugins can contribute Reflex events (e.g. conversion tracking). On the social and SSO paths the callback records a one-shot server-side marker and `/auth/complete` claims it, so a reload or a forged `is_new=1` fires nothing (`services/signup_conversion.py`, core#1369) | `collect_events` |
 
 Handlers raising exceptions propagate to the emitter — this is how quota enforcement blocks resource creation (cloud's `QuotaExceededError` subclasses `ValueError`).
 

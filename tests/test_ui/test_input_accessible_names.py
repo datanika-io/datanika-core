@@ -106,24 +106,18 @@ _STR_METHODS = {"replace", "lower", "upper", "strip"}
 #: (1) moved out to the **91** call sites that actually render those inputs: config_input 71,
 #: config_text_area 6, searchable_select 11, and 3 through labelled_config_input.
 KNOWN_UNLABELLED: dict[str, int] = {
+    # A type="hidden" token carrier, not a text-entry control (core#720, noted for QA).
     "datanika/ui/components/captcha.py": 1,
-    # 71 config_input + 5 config_text_area calls with rx.text beside them, and 2
-    # labelled_config_input calls whose label is text, not a bound <label>.
-    "datanika/ui/components/connection_config_fields.py": 78,
-    # The locale dropdown's filter box, and 10 more like it: searchable_select() builds its
-    # input id from a hash of its placeholder, so each call renders its own unnamed input.
-    "datanika/ui/components/language_switcher.py": 1,
-    "datanika/ui/components/pipeline_mode_selector.py": 1,
-    "datanika/ui/pages/audit_logs.py": 2,
-    "datanika/ui/pages/connections.py": 3,
-    "datanika/ui/pages/dag.py": 3,
-    "datanika/ui/pages/model_detail.py": 14,
-    "datanika/ui/pages/pipelines.py": 6,
-    "datanika/ui/pages/schedules.py": 3,
+    # connection_config_fields.py, language_switcher.py, pipeline_mode_selector.py, audit_logs.py,
+    # connections.py and sql_editor.py reached 0 on 2026-09-16 (core#720's component fixes) and
+    # their entries were removed: a file at 0 needs no allowance.
+    "datanika/ui/pages/dag.py": 1,
+    "datanika/ui/pages/model_detail.py": 13,
+    "datanika/ui/pages/pipelines.py": 3,
+    "datanika/ui/pages/schedules.py": 2,
     "datanika/ui/pages/settings.py": 13,
-    "datanika/ui/pages/sql_editor.py": 1,
-    "datanika/ui/pages/transformations.py": 9,
-    "datanika/ui/pages/uploads.py": 18,
+    "datanika/ui/pages/transformations.py": 6,
+    "datanika/ui/pages/uploads.py": 16,
 }
 
 #: The eight ids ``8a5c90d`` bound to a ``<label>``. These are the production fix for

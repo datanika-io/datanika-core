@@ -54,7 +54,15 @@ def _is_input_for(node, field: str) -> bool:
 
 
 def _is_label(node) -> bool:
-    return isinstance(node, dict) and node.get("name") == "RadixThemesText"
+    """The label a user reads immediately before the input.
+
+    🔁 Repointed for core#720, not relaxed. This matched only a bare ``RadixThemesText`` sibling —
+    which is exactly the shape #720 is about: text beside an input gives it no accessible name. The
+    connector labels are now ``<label htmlFor="cfg-…">`` elements wrapping that same text, so the
+    requiredness invariant below is asserted on them unchanged, and ``_pair`` additionally checks
+    that a ``<label>`` found this way is bound to THIS input.
+    """
+    return isinstance(node, dict) and node.get("name") in {"RadixThemesText", '"label"'}
 
 
 class _Pair:
@@ -90,6 +98,12 @@ def _pair(component, field: str) -> _Pair:
             if _is_input_for(kid, field):
                 label = next((k for k in reversed(kids[:i]) if _is_label(k)), None)
                 assert label is not None, f"no label precedes the cfg-{field} input"
+                if label.get("name") == '"label"':
+                    bound = f'htmlFor:"cfg-{field.replace("_", "-")}"'
+                    assert bound in _props(label), (
+                        f"the <label> before the cfg-{field} input names another input: "
+                        f"{_props(label)}"
+                    )
                 key, marker = _label_state(label)
                 return _Pair(key, marker, "required:true" in _props(kid))
     raise AssertionError(f"no input named cfg-{field} is rendered")

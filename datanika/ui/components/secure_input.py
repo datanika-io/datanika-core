@@ -163,11 +163,24 @@ def required_marker() -> rx.Component:
     return rx.el.span("*", custom_attrs={"aria-hidden": "true"})
 
 
-def field_label(label, *, required: bool) -> rx.Component:
-    """A config-form label that carries the marker exactly when ``required`` is true."""
+def field_label(label, *, required: bool, field: str) -> rx.Component:
+    """A config-form label that carries the marker exactly when ``required`` is true.
+
+    ``field`` binds it to the input :func:`config_input` renders for the same field (core#720).
+    The label used to be a sibling ``rx.text``, which gave the input no accessible name: a screen
+    reader announced an unnamed edit box, and ``getByLabel`` could not find it. ``html_for`` is the
+    same expression ``config_input`` builds its ``id`` from, on BOTH return paths: the guard in
+    ``tests/test_ui/test_input_accessible_names.py`` credits a binding only when every path does.
+    """
     if required:
-        return rx.text(label, " ", required_marker(), size="2", weight="bold")
-    return rx.text(label, size="2", weight="bold")
+        return rx.el.label(
+            rx.text(label, " ", required_marker(), size="2", weight="bold"),
+            html_for=f"cfg-{field.replace('_', '-')}",
+        )
+    return rx.el.label(
+        rx.text(label, size="2", weight="bold"),
+        html_for=f"cfg-{field.replace('_', '-')}",
+    )
 
 
 def labelled_config_input(label, field: str, *, required: bool, **props) -> rx.Component:
@@ -182,7 +195,7 @@ def labelled_config_input(label, field: str, *, required: bool, **props) -> rx.C
     guard stops seeing the label — and a scanning guard that stops seeing a site does not fail.
     """
     return rx.fragment(
-        field_label(label, required=required),
+        field_label(label, required=required, field=field),
         config_input(field, required=required, **props),
     )
 

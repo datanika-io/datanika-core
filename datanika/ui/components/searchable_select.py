@@ -66,6 +66,9 @@ def searchable_select(
                     id=input_id,
                     name=input_id,
                     placeholder=search_placeholder,
+                    # core#720. The placeholder vanishes as soon as the user types and is not a
+                    # name; this is, and it names the filter box at every call site at once.
+                    aria_label=search_placeholder,
                     size="2",
                     width="100%",
                     auto_focus=True,

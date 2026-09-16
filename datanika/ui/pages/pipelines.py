@@ -145,6 +145,7 @@ def _models_section() -> rx.Component:
             rx.box(
                 rx.input(
                     id="model-name-input",
+                    aria_label=_t["pipelines.model_name"],
                     placeholder=_t["pipelines.ph_model_name"],
                     value=PipelineState.form_new_model_name,
                     on_change=PipelineState.set_form_new_model_name,

@@ -105,8 +105,12 @@ def _elt_disabled_reasons() -> rx.Component:
 
 def _volume_estimate_field() -> rx.Component:
     return rx.vstack(
-        rx.text(_t["pipelines.volume_estimate_label"], size="2", weight="medium"),
+        rx.el.label(
+            rx.text(_t["pipelines.volume_estimate_label"], size="2", weight="medium"),
+            html_for="pipeline-volume-estimate",
+        ),
         rx.input(
+            id="pipeline-volume-estimate",
             placeholder=_t["pipelines.volume_estimate_placeholder"],
             value=PipelineState.form_volume_estimate_gb,
             on_change=PipelineState.set_form_volume_estimate_gb,

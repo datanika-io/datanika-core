@@ -106,6 +106,7 @@ def schedule_form() -> rx.Component:
             rx.box(
                 rx.input(
                     id="schedule-target-input",
+                    aria_label=_t["schedules.ph_target_name"],
                     placeholder=_t["schedules.ph_target_name"],
                     value=ScheduleState.form_target_name,
                     on_change=ScheduleState.set_form_target_name,

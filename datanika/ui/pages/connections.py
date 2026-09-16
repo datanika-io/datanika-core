@@ -139,6 +139,8 @@ def connection_form() -> rx.Component:
                 # generated fields do, so it gets the same opt-out.
                 config_text_area(
                     "raw_json",
+                    # core#720: the only control with no label text beside it on this form.
+                    aria_label=_t["connections.use_raw_json"],
                     placeholder=_t["connections.ph_raw_json"],
                     value=ConnectionState.form_config,
                     on_change=ConnectionState.set_form_config,

@@ -40,6 +40,7 @@ def sql_editor_page() -> rx.Component:
                     value=TransformationState.form_sql_body,
                     on_change=TransformationState.set_form_sql_body,
                     id="sql-editor",
+                    aria_label=_t["transformations.sql"],
                     min_height="50vh",
                     width="100%",
                 ),

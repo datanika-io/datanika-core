@@ -22,6 +22,10 @@ from prometheus_client import (
     generate_latest,
     multiprocess,
 )
+from prometheus_client.gc_collector import GCCollector
+from prometheus_client.metrics import MetricWrapperBase
+from prometheus_client.platform_collector import PlatformCollector
+from prometheus_client.process_collector import ProcessCollector
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -475,6 +479,51 @@ def setup_celery_metrics(celery_app) -> None:
         celery_tasks_total.labels(task_name, "RETRY").inc()
 
 
+#: What a multiprocess scrape must NOT take from the default registry (core#895).
+#:
+#: - Native metric objects (``Counter``, ``Gauge``, ``Histogram``, ...). With
+#:   ``PROMETHEUS_MULTIPROC_DIR`` set, their samples go to the per-process files that
+#:   ``MultiProcessCollector`` reads, so the aggregate already carries this process's share, and
+#:   rendering the object as well counts it twice.
+#: - ``prometheus_client``'s own per-process collectors. Served from whichever worker accepted the
+#:   connection, ``process_cpu_seconds_total`` and the GC counters would move backwards between
+#:   scrapes, which is the defect the aggregation exists to remove.
+#: - A ``MultiProcessCollector`` registered on the default registry, for the same double count.
+_NOT_SCRAPE_TIME_COLLECTORS = (
+    MetricWrapperBase,
+    multiprocess.MultiProcessCollector,
+    ProcessCollector,
+    PlatformCollector,
+    GCCollector,
+)
+
+
+def _scrape_time_collectors(registry: CollectorRegistry = REGISTRY) -> list[object]:
+    """Collectors on ``registry`` that compute at scrape time, and so write no multiprocess file.
+
+    The cloud plugin's ledger collector is the one in production. It registers through
+    ``plugin_registry.get_prometheus_registry()`` and reads Postgres on every scrape, which makes
+    its output the same from whichever worker answers.
+
+    ⚠️ ``prometheus_client`` offers no public way to list a registry's collectors, so this reads
+    the private map that ``CollectorRegistry.collect()`` itself iterates. If a release renames it,
+    this returns nothing and logs why, and
+    ``tests/test_services/test_metrics_multiprocess.py`` goes red on that upgrade, instead of
+    ``/metrics`` silently losing every plugin series in production.
+    """
+    try:
+        with registry._lock:
+            collectors = list(registry._collector_to_names)
+    except AttributeError:
+        _log.warning(
+            "cannot enumerate the default Prometheus registry, so plugin collectors are missing "
+            "from the aggregated /metrics (core#895)",
+            exc_info=True,
+        )
+        return []
+    return [c for c in collectors if not isinstance(c, _NOT_SCRAPE_TIME_COLLECTORS)]
+
+
 def build_scrape_registry() -> CollectorRegistry:
     """The registry a `/metrics` scrape should read.
 
@@ -500,6 +549,14 @@ def build_scrape_registry() -> CollectorRegistry:
 
     ⚠️ Degrades rather than raising: a `/metrics` that 500s takes **every other metric** down
     with it, which is the same reasoning as the `celery_queue_length` swallow below.
+
+    🔴 **The aggregate alone was not enough (core#895 AC4).** The first version returned a registry
+    that only ``MultiProcessCollector`` populates. A collector that computes at scrape time writes
+    no file for it to read, so the cloud plugin's ledger series, registered on the default
+    registry, were missing from production's ``/metrics`` from the 2026-09-11 deploy until this
+    change, while every check stayed green. Every collector on the default registry is now added
+    to the scrape registry, except those in ``_NOT_SCRAPE_TIME_COLLECTORS``: the aggregate already
+    carries their samples, or they are one worker's view by construction.
     """
     path = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
     if not path:
@@ -507,7 +564,6 @@ def build_scrape_registry() -> CollectorRegistry:
     try:
         registry = CollectorRegistry()
         multiprocess.MultiProcessCollector(registry, path=path)
-        return registry
     except Exception:
         _log.warning(
             "PROMETHEUS_MULTIPROC_DIR is set but unusable (%s); serving this process's "
@@ -516,6 +572,18 @@ def build_scrape_registry() -> CollectorRegistry:
             exc_info=True,
         )
         return REGISTRY
+    for collector in _scrape_time_collectors():
+        try:
+            registry.register(collector)
+        except Exception:
+            # One collector that cannot be added must not take the aggregate down with it.
+            _log.warning(
+                "a scrape-time collector could not be added to the aggregated /metrics and is "
+                "missing from it: %r",
+                collector,
+                exc_info=True,
+            )
+    return registry
 
 
 # --- /metrics endpoint ---

@@ -397,3 +397,8 @@ def run_pipeline_task(self, run_id: int, org_id: int, scheduled: bool = False):
         run_pipeline(run_id=run_id, org_id=org_id)
     finally:
         release(org_id)
+    # core#1352: a run that ended FAILED must not end its task as a Celery SUCCESS. This also
+    # covers `run_pipeline`'s non-exception failure branch (dbt reporting `success: False`).
+    from datanika.tasks.run_outcome import raise_if_run_failed
+
+    raise_if_run_failed(org_id, run_id, "pipeline")

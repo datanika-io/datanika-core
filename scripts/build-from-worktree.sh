@@ -26,27 +26,35 @@
 # ----------------------
 # Streams a tar of the two worktrees to `docker build -`, renaming them on the fly
 # with GNU tar's `--transform` so the stream carries the names the Dockerfile
-# expects. Nothing is written to disk, so it cannot collide with another agent and
-# satisfies core#1197 AC4 by construction.
+# expects. Nothing is written to disk, which satisfies core#1197 AC4 by construction.
+#
+# ⚠️ The CONTEXT cannot collide with another agent; the TAG could, and did (QA,
+# 2026-09-15). Every worktree used to build `:worktree`, so one agent's build silently
+# re-pointed the tag under another agent's running stack -- and on a containerd image
+# store a moved tag cannot be put back. So the default tag is per worktree:
+# `:worktree-<agent>`, and `:worktree-main` for the main checkout. `--tag` still wins.
 #
 # Usage
-#   bash scripts/build-from-worktree.sh                    # cloud edition, :worktree
+#   bash scripts/build-from-worktree.sh                    # cloud edition, :worktree-<agent>
 #   bash scripts/build-from-worktree.sh --edition core      # no cloud tree
 #   bash scripts/build-from-worktree.sh --tag foo:bar
 #   bash scripts/build-from-worktree.sh --target variant-cloud
 #   bash scripts/build-from-worktree.sh --list-context      # print members, build nothing
+#   bash scripts/build-from-worktree.sh --print-tag         # print the tag, build nothing
 #
-# Then run the stack WITHOUT rebuilding (every app service already declares
-# `image: ghcr.io/datanika-io/datanika-core:${DATANIKA_IMAGE_TAG:-latest}`):
+# Then run the stack WITHOUT rebuilding, isolated from every other worktree's stack:
+# its own compose project, container names, host-port band and backend URL, and a
+# refusal to start any configuration that is not isolated.
 #
-#   DATANIKA_IMAGE_TAG=worktree docker compose up -d --no-build postgres redis app celery scheduler
+#   bash scripts/worktree-stack.sh up
 #
 set -euo pipefail
 
-TAG="ghcr.io/datanika-io/datanika-core:worktree"
+TAG=""
 EDITION="cloud"
 TARGET=""
 LIST_ONLY=0
+PRINT_TAG=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,7 +62,8 @@ while [ $# -gt 0 ]; do
     --edition) EDITION="${2:?--edition needs a value}"; shift 2 ;;
     --target)  TARGET="${2:?--target needs a value}"; shift 2 ;;
     --list-context) LIST_ONLY=1; shift ;;
-    -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    --print-tag) PRINT_TAG=1; shift ;;
+    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -75,6 +84,7 @@ CORE_NAME="$(basename "$CORE_DIR")"
 
 # `datanika-core-<agent>` -> `<agent>`; the main checkout is plain `datanika`.
 if [ "$CORE_NAME" = "datanika" ]; then
+  AGENT="main"
   CLOUD_NAME="datanika-cloud"
 else
   AGENT="${CORE_NAME#datanika-core-}"
@@ -84,6 +94,14 @@ else
     exit 1
   fi
   CLOUD_NAME="datanika-cloud-${AGENT}"
+fi
+
+# Per worktree, never shared (see the header). scripts/worktree_stack.py derives the same
+# tag for the stack it runs; tests/test_deploy/test_build_from_worktree.py holds them together.
+TAG="${TAG:-ghcr.io/datanika-io/datanika-core:worktree-${AGENT}}"
+if [ "$PRINT_TAG" -eq 1 ]; then
+  echo "$TAG"
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -144,5 +162,9 @@ tar_stream | docker "${BUILD_ARGS[@]}" -
 
 echo "build-from-worktree: built $TAG"
 echo
-echo "Run the stack without rebuilding:"
-echo "  DATANIKA_IMAGE_TAG=${TAG##*:} docker compose up -d --no-build postgres redis app celery scheduler"
+if [ "$TAG" = "ghcr.io/datanika-io/datanika-core:worktree-${AGENT}" ]; then
+  echo "Run the stack without rebuilding, isolated from every other worktree's:"
+  echo "  bash scripts/worktree-stack.sh up"
+else
+  echo "Built a custom --tag. scripts/worktree-stack.sh runs :worktree-${AGENT}, not $TAG."
+fi

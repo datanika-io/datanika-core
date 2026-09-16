@@ -15,6 +15,10 @@ from dlt.sources.sql_database import sql_database, sql_table
 from datanika.errors import UserFacingError
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
+from datanika.services.write_disposition import (
+    FULL_FETCH_WRITE_DISPOSITION,
+    is_serialized_form_default,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,21 @@ SUPPORTED_SAAS_TYPES = {
 
 # Kafka is a streaming source with its own builder
 SUPPORTED_KAFKA_TYPES = {"kafka"}
+
+#: Source types whose upload form does not render the Write Disposition control (core#1336).
+#:
+#: For these a stored ``{"mode": ..., "write_disposition": "append"}`` is the structured form's
+#: saved default, not a choice, and ``execute()`` does not forward it. Must equal the form's
+#: ``NON_SQL_SOURCE_TYPES``; ``tests/test_connector_type_contracts.py`` asserts it.
+FORM_HIDES_WRITE_DISPOSITION: frozenset[str] = frozenset(
+    SUPPORTED_SAAS_TYPES
+    | SUPPORTED_FILE_TYPES
+    | SUPPORTED_OPENAPI_TYPES
+    | SUPPORTED_REST_TYPES
+    | SUPPORTED_SHEETS_TYPES
+    | SUPPORTED_MONGODB_TYPES
+    | SUPPORTED_KAFKA_TYPES
+)
 
 #: Graph API version for the Facebook Ads fallback. Facebook retires versions on
 #: a rolling ~2-year schedule, so this is a config-overridable default
@@ -475,6 +494,16 @@ def _salesforce_default_resources(api_version: str) -> list[dict]:
     ]
 
 
+#: Shopify Admin API version for the REST fallback's default resources (core#1337).
+#:
+#: Shopify serves the oldest version it still supports in place of a retired one, and says nothing:
+#: the old ``2024-01`` pin was being served as ``2025-10``. Pinning a supported version keeps the
+#: response shape a choice rather than a surprise. Measured against a real store on 2026-09-15:
+#: ``2026-07`` is served as itself, and products and customers return the same field sets as they
+#: did under the retired pin. Shopify supports a stable version for about twelve months.
+SHOPIFY_API_VERSION = "2026-07"
+
+
 SAAS_PAGINATORS: dict[str, dict] = {
     # `starting_after` carrying the last item's id. There is deliberately no
     # `has_more` stop condition — the schema rejects `has_more_path` — so the
@@ -643,6 +672,45 @@ _RENAME_USER_TYPES = {
 
 # ClickHouse table engine types supported by dlt
 CLICKHOUSE_ENGINE_TYPES = {"merge_tree", "replicated_merge_tree", "shared_merge_tree"}
+
+#: ClickHouse's own default native TCP ports, without and with TLS (core#1341).
+CLICKHOUSE_NATIVE_PORT = 9000
+CLICKHOUSE_NATIVE_TLS_PORT = 9440
+#: The HTTP port Test Connection and dbt assume when a connection stores none.
+CLICKHOUSE_DEFAULT_HTTP_PORT = 8123
+
+
+def _clickhouse_destination_credentials(creds: dict) -> dict:
+    """Give dlt's ClickHouse destination both of the ports it dials (core#1341).
+
+    The connection form stores ONE port, labelled "HTTP port", and Test Connection and dbt both
+    use it that way. dlt needs two:
+
+    * ``http_port``: the HTTP interface its file load uses, through clickhouse-connect.
+    * ``port``: the NATIVE TCP port its ``sync`` step dials, through clickhouse-driver.
+
+    Passing the stored value through as ``port`` caused two failures, both measured by QA on a
+    stock server. It pointed the native client at the HTTP interface, so ``sync`` failed. It also
+    left ``http_port`` at dlt's default of 8443, and that port alone switches clickhouse-connect to
+    TLS, so the load failed even when a user typed the native port in instead.
+
+    The native port is derived from ``secure``. ClickHouse's defaults, 9000 and 9440, match a
+    stock server and ClickHouse Cloud. A server whose native port is remapped cannot be expressed
+    yet; whether the form gains a field for it is Product's question on core#1341.
+
+    A config that already names ``http_port`` states both ports in dlt's own terms, which only raw
+    JSON can do, so it is left as given. Rewriting its ``port`` would point the HTTP client at the
+    native port.
+
+    ⚠️ Destination only. ``_to_dlt_credentials`` also serves the ClickHouse SOURCE, whose
+    ``clickhousedb+connect`` driver speaks HTTP and must keep the stored port.
+    """
+    if "http_port" in creds:
+        return creds
+    creds = dict(creds)
+    creds["http_port"] = creds.pop("port", CLICKHOUSE_DEFAULT_HTTP_PORT)
+    creds["port"] = CLICKHOUSE_NATIVE_TLS_PORT if creds.get("secure") else CLICKHOUSE_NATIVE_PORT
+    return creds
 
 
 def _normalize_oracle_identifier(name: str | None) -> str | None:
@@ -1421,6 +1489,7 @@ class DltRunnerService:
 
         # ClickHouse: pass table_engine_type for cluster support
         if connection_type == "clickhouse":
+            kwargs["credentials"] = _clickhouse_destination_credentials(kwargs["credentials"])
             engine = config.get("table_engine_type", "merge_tree")
             if engine in CLICKHOUSE_ENGINE_TYPES:
                 kwargs["table_engine_type"] = engine
@@ -1557,7 +1626,14 @@ class DltRunnerService:
         if _first_file_or_none(lister) is None:
             raise DltRunnerError(describe_empty_file_match(bucket_url, file_glob))
 
-        return (lister | reader).with_name(table_name)
+        # core#1336. Every run re-lists and re-reads every matching file, so `append` loaded the
+        # same rows again on each run. `replace` leaves each row once. A disposition the upload
+        # sets deliberately still wins, because `execute()` passes it at run level.
+        return (
+            (lister | reader)
+            .with_name(table_name)
+            .apply_hints(write_disposition=FULL_FETCH_WRITE_DISPOSITION)
+        )
 
     @staticmethod
     def _rest_api_from_parts(
@@ -1646,7 +1722,13 @@ class DltRunnerService:
 
         catalog = config.get("resources")
         if not catalog or not isinstance(catalog, list):
-            raise DltRunnerError("OpenAPI source has no resource catalog — re-parse the spec")
+            # core#1345. "Re-parse the spec" named a control that does not exist. Saving the
+            # connection again is the re-parse, and the save now says what it could not load
+            # instead of storing an empty catalog.
+            raise DltRunnerError(
+                "OpenAPI source has no resource catalog. Open the connection and save it again: "
+                "saving re-reads the spec and says which endpoints it could not load"
+            )
 
         selected = dlt_config.get("resource_names")
         if selected:
@@ -1660,12 +1742,16 @@ class DltRunnerService:
         resources = [
             {k: v for k, v in r.items() if k not in ("columns", "_source")} for r in catalog
         ]
+        # core#1336. No dlt state crosses runs (the pipeline name carries the run id), so every run
+        # fetches the whole catalog again. `replace` as a resource DEFAULT leaves each record once,
+        # and a resource that declares its own disposition keeps it.
         return self._rest_api_from_parts(
             base_url,
             resources,
             headers=config.get("headers"),
             auth=config.get("auth"),
             paginator=config.get("paginator") or dlt_config.get("paginator"),
+            resource_defaults={"write_disposition": FULL_FETCH_WRITE_DISPOSITION},
         )
 
     def _build_google_sheets_source(self, config: dict, dlt_config: dict):
@@ -1941,19 +2027,24 @@ class DltRunnerService:
                         {
                             "name": "orders",
                             "endpoint": {
-                                "path": "admin/api/2024-01/orders.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/orders.json",
+                                # core#1337: Shopify's `status` defaults to `open`, so without
+                                # this a run loads only the orders open at run time. dlt's
+                                # next-URL paginator drops the query on every later page, which
+                                # is what Shopify's `page_info` rule requires.
+                                "params": {"status": "any"},
                             },
                         },
                         {
                             "name": "products",
                             "endpoint": {
-                                "path": "admin/api/2024-01/products.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/products.json",
                             },
                         },
                         {
                             "name": "customers",
                             "endpoint": {
-                                "path": "admin/api/2024-01/customers.json",
+                                "path": f"admin/api/{SHOPIFY_API_VERSION}/customers.json",
                             },
                         },
                     ],
@@ -2509,8 +2600,16 @@ class DltRunnerService:
         somebody adds; with no default, forgetting it is a ``TypeError`` at
         build time instead of five missing customers in a warehouse.
         """
+        # core#1336. Every run re-fetches the account, so `append` stored every record again on
+        # each run. `replace` as a resource default leaves each record once, and a resource that
+        # declares its own disposition keeps it.
         return cls._rest_api_from_parts(
-            base_url, resources, auth=auth, headers=headers, paginator=paginator
+            base_url,
+            resources,
+            auth=auth,
+            headers=headers,
+            paginator=paginator,
+            resource_defaults={"write_disposition": FULL_FETCH_WRITE_DISPOSITION},
         )
 
     def build_pipeline(
@@ -2610,6 +2709,14 @@ class DltRunnerService:
         if merge_config:
             run_kwargs.pop("write_disposition", None)
             run_kwargs.pop("primary_key", None)
+        # core#1336. Until the form stopped storing it, every structured upload saved the SQL
+        # block's hidden default, `append`, including sources that never render that block. Passed
+        # at run level it overrode every resource, so each re-run landed every record again. For
+        # those sources the stored pair is the form's default, not a choice. It is not forwarded,
+        # and what the builder or the resource declares applies. A disposition stored without the
+        # form's `mode` key came from raw JSON or the API, and is still forwarded.
+        if source_type in FORM_HIDES_WRITE_DISPOSITION and is_serialized_form_default(dlt_config):
+            run_kwargs.pop("write_disposition", None)
         load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = _extract_rows_loaded(pipeline)
 

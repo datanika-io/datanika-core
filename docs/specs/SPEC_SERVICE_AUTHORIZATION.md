@@ -25,7 +25,7 @@ backed by `UserService._assert_may_manage`. That is the whole of the enforced se
 
 | subsystem | `editor` | `admin` |
 |---|---|---|
-| **connections** | `save_connection`, `edit_connection`, `copy_connection` | `delete_connection` |
+| **connections** | `save_connection`, `edit_connection`, `copy_connection`, `test_connection_from_form`, `test_saved_connection` 🚨 **the two Test handlers are added by §11, not by this census — it could not see them** | `delete_connection` |
 | **uploads** | `save_upload`, `run_upload` | `delete_upload` |
 | **pipelines** | `save_pipeline`, `run_pipeline` | `delete_pipeline` |
 | **schedules** | `save_schedule`, `toggle_schedule` | `delete_schedule` |
@@ -432,8 +432,83 @@ from *"two layers of three"* to *"three of four"*.
 
 ---
 
+## §11 — Connection **Test**: `editor`, on both surfaces (2026-09-16, [core#1370])
+
+Raised by Engineering while bounding test-connection stalls ([core#1367]). Two connection operations
+enforce **no** role:
+
+- `ConnectionState.test_connection_from_form` (`connection_state.py:1683`) — **Test** on the unsaved form.
+- `ConnectionState.test_saved_connection` (`connection_state.py:1720`) — **Test** on a saved row.
+
+### Why the §1 census did not have them
+
+🚨 **This is §1's method reporting a blind spot as an absence, and it is worth stating because it will
+recur.** §1 builds its table by reading each handler's own `_check_role("R")` — it reads the
+*requirement off the declaration*. A handler that declares **no** role contributes nothing to the
+census, so a completely unguarded operation is **invisible** to it, not flagged by it. This is
+`PRODUCT_RULES` §11's shape exactly (a `leave_org` that carries no `ast.Call`; an `ip_address` grep
+satisfied by the comment explaining the removal): *a census keyed on what is declared cannot see what
+was never declared.* So Test is added here **explicitly**, with the reasoning — the §1 table cannot
+be trusted to have produced it.
+
+### The ruling
+
+| operation | surface(s) | role | where enforced |
+|---|---|---|---|
+| **Test on the unsaved form** | Reflex only (`test_connection_from_form`) | **`editor`** | the Reflex handler — `_check_role("editor")` |
+| **Test on a saved row** | Reflex (`test_saved_connection`) **and** REST `POST /api/v1/connections/{id}/test` | **`editor`** | Reflex handler (`_check_role("editor")`); REST already at scope `connections:write`, which under §8 requires the owner be `editor`+ |
+
+**Reasoning, in the register this spec already uses (§2's one rule, its three exception families).**
+Test is neither the ordinary lifecycle nor a deletion, but it is not a read either: it **exercises the
+org's stored credential to open an outbound connection to a host**. That is the same privileged use of
+a stored credential that puts `edit_connection`/`copy_connection` at `editor` — they decrypt the
+credential into form state, Test authenticates outbound with it — so Test lands at the same threshold.
+For the **form** path the member supplies the host and credentials themselves and asks the server to
+dial them, which is a step of the create/save lifecycle; `editor` is what `save_connection` already
+requires, so nobody who cannot save a connection can test-before-save.
+
+`viewer` was weighed for the saved-row case and declined. The `/connections` table already renders the
+last `test_status` (`connection_state.py:1761`), so a viewer can *see* a connection's health without
+initiating a fresh outbound connection and credential use. **Triggering a test is an action, not a
+read**, and the read is already available to viewers.
+
+### Two placement notes, because Test does not fit §4's "put the check in the service" shape
+
+1. **`test_connection_verdict(config, type)` is a pure function** — no session, no org, no
+   `actor_user_id` — and it is called from non-request callers (Celery has no use for it, but the
+   contract is a shared pure function). So the request-authorization check does **not** belong in it;
+   §4's "do not put `_check_role` in a service" and "the service takes an `actor_user_id`" both assume
+   a DB mutation the two surfaces share, and Test has none.
+2. **Test-on-form is the one operation where the UI check *is* the control**, and that is correct here
+   rather than the §6 hazard: there is no second surface (no REST endpoint tests an unsaved form) and
+   no service mutation to inherit a check. Saved-row Test *does* have a second surface, and §3's rule
+   holds for it — the two surfaces must agree; they do, at `editor`, by two different mechanisms
+   (handler check + REST scope). Record the agreement rather than routing both through one method that
+   would have to grow an `actor_user_id` the pure verdict function must not carry.
+
+### Acceptance criteria
+
+Numbered to stand alone; they follow §5/§7's shapes.
+
+11.1 `test_connection_from_form` refuses a `viewer` — the handler returns before any outbound call —
+     and the state's `error_message` names the required role (`editor`), resolved from the
+     per-threshold i18n key, in all nine locales (§7.2). **Red first:** it passes for a viewer on
+     current `dev`. **Control:** an `editor` reaches the test.
+11.2 `test_saved_connection` refuses a `viewer` the same way, with the same message and control.
+11.3 The saved-row REST endpoint's `editor` threshold is **asserted**, not assumed: a key whose owner
+     is a `viewer` is refused at `POST /api/v1/connections/{id}/test`. This follows from
+     `connections:write` + §8 and needs no new code — assert it (§7.1's status **and** body, with an
+     owner-is-`editor` negative control, §5 AC8) so the two surfaces are pinned together and a later
+     scope edit cannot silently split them.
+11.4 The §1 table gains a **Test** row that names §11, not one the census "produced" — §1's method
+     could not have.
+
+---
+
 [core#651]: https://github.com/datanika-io/datanika-core/issues/651
 [core#673]: https://github.com/datanika-io/datanika-core/issues/673
 [core#681]: https://github.com/datanika-io/datanika-core/issues/681
 [core#851]: https://github.com/datanika-io/datanika-core/issues/851
 [core#886]: https://github.com/datanika-io/datanika-core/issues/886
+[core#1367]: https://github.com/datanika-io/datanika-core/issues/1367
+[core#1370]: https://github.com/datanika-io/datanika-core/issues/1370

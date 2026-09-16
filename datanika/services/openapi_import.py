@@ -219,9 +219,7 @@ def _resource_from_get(
         endpoint["data_selector"] = data_selector
 
     response = _success_response(spec, op) or {}
-    envelope = resolve_ref(
-        spec, (((response.get("content") or {}).get("application/json")) or {}).get("schema")
-    )
+    envelope = resolve_ref(spec, _json_media_schema(response))
     envelope_props = (envelope or {}).get("properties") or {}
     paginator = _paginator_from_operation(
         spec, path_item, op, envelope_props, response.get("headers") or {}
@@ -492,6 +490,39 @@ def _rewrite_refs(node):
     return node
 
 
+def _is_json_media_type(media_type: object) -> bool:
+    """Whether a media-type key names JSON, whatever parameters follow it (core#1345).
+
+    Type and subtype compare case-insensitively, and parameters are not part of the type
+    (RFC 9110 §8.3.1), so ``application/json; v=1.0`` is JSON. Swashbuckle emits exactly that when
+    ASP.NET API versioning is on. The ``+json`` structured-syntax suffix (RFC 6839) is JSON too, as
+    in ``application/vnd.api+json`` and ``application/hal+json``.
+    """
+    essence = str(media_type).split(";", 1)[0].strip().lower()
+    kind, _, subtype = essence.partition("/")
+    return essence == "application/json" or (bool(kind) and subtype.endswith("+json"))
+
+
+def _json_media_schema(response: dict | None) -> object:
+    """The schema of a response's JSON representation, or ``None``.
+
+    Both places that read a success response go through here: the row lookup in
+    ``_response_item_schema``, and the envelope read that feeds pagination detection. Each used to
+    read the exact key ``"application/json"``, so a spec whose only JSON type carried a parameter
+    parsed to zero resources (core#1345). The exact key still wins when present, so every spec
+    that parsed before parses the same way.
+    """
+    content = (response or {}).get("content") or {}
+    if not isinstance(content, dict):
+        return None
+    if "application/json" in content:
+        return (content["application/json"] or {}).get("schema")
+    for media_type, media in content.items():
+        if _is_json_media_type(media_type) and isinstance(media, dict):
+            return media.get("schema")
+    return None
+
+
 def _success_response(spec: dict, op: dict) -> dict | None:
     """The resolved success response object for a GET, if any."""
     responses = op.get("responses") or {}
@@ -525,7 +556,7 @@ def _response_item_schema(spec: dict, op: dict) -> tuple[dict | None, str | None
     resp = resolve_ref(spec, resp)
     if not isinstance(resp, dict):
         return None, None
-    schema = (((resp.get("content") or {}).get("application/json")) or {}).get("schema")
+    schema = _json_media_schema(resp)
     schema = resolve_ref(spec, schema)
     if not isinstance(schema, dict):
         return None, None

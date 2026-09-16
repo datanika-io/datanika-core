@@ -4,6 +4,9 @@ import base64
 import json
 import logging
 import re
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -360,6 +363,102 @@ _CONNECT_TIMEOUT_KWARG = {
 }
 
 
+#: The longest the UI waits for one connection test before it answers that the server did not
+#: answer. The driver call runs in a worker thread, so the wait never holds the event loop.
+CONNECTION_TEST_BUDGET_SECONDS = 60
+
+#: A read and write bound, in seconds, for the drivers that accept one. A connect timeout alone does
+#: not bound the handshake, the login or the probe query for these drivers, and each argument here
+#: was checked against a test server. Generous on purpose: a serverless database can take this long
+#: to wake.
+_TEST_IO_TIMEOUT_SECONDS = 30
+
+
+def _io_timeout_args(connection_type: ConnectionType) -> dict:
+    """Read and write bounds for one dialect's connection test, where its driver takes them."""
+    seconds = _TEST_IO_TIMEOUT_SECONDS
+    if connection_type == ConnectionType.MYSQL:
+        return {"read_timeout": seconds, "write_timeout": seconds}  # PyMySQL
+    if connection_type == ConnectionType.CLICKHOUSE:
+        return {"send_receive_timeout": seconds}  # clickhouse-connect
+    return {}
+
+
+#: How many connection tests one process runs at a time.
+#:
+#: 🚨 **They run on their own pool, not on the event loop's default executor, and that is the whole
+#: point (core#1367).** ``asyncio.to_thread`` and ``api_middleware``'s synchronous-handler path both
+#: use the default executor — the pool every synchronous API handler shares, sized
+#: ``min(32, cpu+4)``. A driver handed a host that accepts TCP and then says nothing does not always
+#: return, and the thread stays with the driver after the waiter's budget has expired. On the shared
+#: pool those threads are capacity every other endpoint needs; here they are capacity only
+#: connection tests need.
+#:
+#: Four, because a connection test is a person pressing a button on a form, not a served request
+#: rate. A fifth concurrent test in one process is answered, not queued.
+CONNECTION_TEST_POOL_SIZE = 4
+
+_test_pool: ThreadPoolExecutor | None = None
+_test_pool_lock = threading.Lock()
+_test_pool_slots = threading.BoundedSemaphore(CONNECTION_TEST_POOL_SIZE)
+
+
+def _connection_test_pool() -> ThreadPoolExecutor:
+    """The dedicated pool, built on first use so importing this module starts no threads."""
+    global _test_pool
+    with _test_pool_lock:
+        if _test_pool is None:
+            _test_pool = ThreadPoolExecutor(
+                max_workers=CONNECTION_TEST_POOL_SIZE,
+                thread_name_prefix="datanika-conn-test",
+            )
+        return _test_pool
+
+
+def try_submit_connection_test(config: dict, connection_type: ConnectionType) -> Future | None:
+    """Submit one connection test to the dedicated pool, or ``None`` when every slot is held.
+
+    🔑 **The slot is released by a done callback, never by the caller.** A caller that gives up at
+    its budget has stopped waiting, but the driver thread is still holding the slot. Releasing it
+    where the waiter gives up would hand out a slot that is still occupied — the shared-pool problem
+    rebuilt inside its own fix.
+    """
+    if not _test_pool_slots.acquire(blocking=False):
+        return None
+    try:
+        future = _connection_test_pool().submit(
+            ConnectionService.test_connection_verdict, config, connection_type
+        )
+    except BaseException:
+        _test_pool_slots.release()
+        raise
+    future.add_done_callback(lambda _future: _test_pool_slots.release())
+    return future
+
+
+def run_connection_test_bounded(
+    config: dict, connection_type: ConnectionType, budget: float | None = None
+) -> ConnectionVerdict:
+    """Run one connection test and answer within ``budget`` — the form a non-async caller needs.
+
+    The API endpoint is a synchronous handler, so ``api_middleware`` runs it in the default executor
+    and it holds that request's database session for as long as it waits. Nothing bounded that wait,
+    so a single unresponsive host held a shared thread and a pooled database connection with no
+    limit.
+
+    ``budget`` is resolved at call time rather than bound as a default argument, so a caller — or a
+    test — that changes ``CONNECTION_TEST_BUDGET_SECONDS`` is honoured.
+    """
+    seconds = CONNECTION_TEST_BUDGET_SECONDS if budget is None else budget
+    future = try_submit_connection_test(config, connection_type)
+    if future is None:
+        return ConnectionService.busy_verdict()
+    try:
+        return future.result(timeout=seconds)
+    except FuturesTimeoutError:
+        return ConnectionService.timed_out_verdict(seconds)
+
+
 def _connect_args(connection_type: ConnectionType, config: dict) -> dict:
     """Connect-args for one dialect, derived from what the dialect *is*.
 
@@ -380,7 +479,10 @@ def _connect_args(connection_type: ConnectionType, config: dict) -> dict:
         # sqlite carries read-only in the URL, not in connect_args — see
         # ``_build_sa_url``.
         return {}
-    return {_CONNECT_TIMEOUT_KWARG.get(connection_type, "connect_timeout"): 5}
+    return {
+        _CONNECT_TIMEOUT_KWARG.get(connection_type, "connect_timeout"): 5,
+        **_io_timeout_args(connection_type),
+    }
 
 
 # Connection types that don't support SQL queries (SELECT 1 testing or execute_query)
@@ -1502,6 +1604,34 @@ class ConnectionService:
             return local
 
         return ConnectionVerdict(*ConnectionService._test_sql_connection(config, connection_type))
+
+    @staticmethod
+    def timed_out_verdict(seconds: float) -> ConnectionVerdict:
+        """The verdict for a connection test that ran past its budget (core#1367).
+
+        The UI maps ``timed_out`` to a translated sentence, and ``arg`` carries the seconds.
+        """
+        shown = f"{seconds:g}"
+        return ConnectionVerdict(
+            False,
+            f"The server did not answer within {shown} seconds",
+            reason="timed_out",
+            arg=shown,
+        )
+
+    @staticmethod
+    def busy_verdict() -> ConnectionVerdict:
+        """The verdict when every connection-test slot in this process is already held (core#1367).
+
+        Deliberately **not** ``timed_out``. That sentence says the server did not answer, and here
+        no server was dialled at all — the request never left this process. A wrong explanation is
+        worse than a vague one: it sends the user to investigate a host that is fine.
+        """
+        return ConnectionVerdict(
+            False,
+            "Too many connection tests are running right now — try again in a moment",
+            reason="busy",
+        )
 
     @staticmethod
     def test_connection(config: dict, connection_type: ConnectionType) -> tuple[bool | None, str]:

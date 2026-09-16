@@ -892,8 +892,59 @@ groups:
       # read off its README: `celery_task_failed_total{name, hostname, queue_name,
       # exception}`. `sum()` collapses `hostname`, which is the worker's container ID and
       # therefore changes on every deploy.
+      #
+      # core#1356 (2026-09-15) -- repointed, it STILL could not fire, for two independent
+      # reasons, both measured on production:
+      #
+      #   1. THE NUMBER. It was `sum(rate(...[15m])) > 0.1`: more than 90 failures in 15
+      #      minutes, against 40-48 Celery tasks a DAY (14 days of increase()).
+      #   2. THE SHAPE. The exporter holds a 0-valued failed series per (hostname, name,
+      #      queue_name) with exception="", and labels a real failure exception="<Class>"
+      #      (src/exporter.py:293-300 in the 0.12.2 image). So the first failure of a kind
+      #      lands in a NEW series born at 1, and rate()/increase() on the raw counter never
+      #      count a series' first sample. hostname changes on every deploy, so at our volume
+      #      almost every failure is a first of its kind: NO threshold on the raw form fires.
+      #      Production shows it on the success counter: over the hour after a deploy the
+      #      raw form read 1.00 and aggregate-then-increase read 2.03.
+      #
+      # So: aggregate FIRST, then increase. The 0-valued series keep the sum alive, so a
+      # series born at 1 is a step in the sum. promtool 3.13.1 (production's version) fires
+      # on a first failure and on repeats, and stays silent on an exporter restart, on scrape
+      # gaps inside and past the 5m lookback, and on a deploy's new worker series; the old
+      # expression fails the same harness (tests/test_deploy/test_celery_failure_rule.py).
+      #
+      # core#1352 x core#1356 (2026-09-16) -- FAILED RUNS ARE EXCLUDED, deliberately.
+      # core#1352 ends the Celery task of an upload, pipeline or transformation run that ended
+      # FAILED by raising RunFailedError (datanika/tasks/run_outcome.py). Counted here, every
+      # failed user run would page, so the selector drops exactly that one class:
+      #
+      #   - The run row already records the failure and the user sees it. Its usual causes --
+      #     wrong credentials, a host that does not answer, the source's own data -- are the
+      #     user's to fix, and any signed-in user can produce one at will, so counting them
+      #     would let user activity set this rule's volume.
+      #   - The cost, stated: a run that fails because of OUR defect is not visible here either.
+      #     It never was -- before core#1352 no failed run reached this counter at all.
+      #   - The label is what celery-exporter 0.12.2 derives from the task-failed event:
+      #     `^(\w+)\(` on the exception's repr (src/exporter.py:433 and :443-447 in the image).
+      #     For the real class it reads 'RunFailedError' -- measured on the image, with the event
+      #     field built as Celery 5.6.2 builds it. A rename would put failed runs back in, so
+      #     tests/test_deploy/test_celery_failure_rule.py reads the class the helper raises from
+      #     source and fails if this selector names anything else.
+      #   - It still fires on the FIRST exception of a kind. Every zero-valued series carries no
+      #     exception label, so it matches !="RunFailedError" and keeps the filtered sum alive
+      #     (production, 2026-09-15 22:53Z: 1 series, value 0). promtool 3.13.1: fires on a first
+      #     exception, on repeats, and on one arriving among failed runs; silent on a first failed
+      #     run, on a burst of them and across a deploy, where the unfiltered form fires.
+      #   - Residual, measured: after an exporter restart, an exception that arrives before any
+      #     zero-valued series has come back is not a step in the sum, so it is silent -- as it
+      #     was unfiltered. `or vector(0)` would catch it, and would also fire on every scrape
+      #     gap longer than the 5m lookback with nothing failing (promtool, same version). Not
+      #     taken.
+      #
+      # ⚠️ WHAT THIS WATCHES: Celery task exceptions of every class except RunFailedError. Its
+      # silence does not mean "no run failed"; the runs table is the reading for that.
       - uid: celery-task-failures
-        title: High Celery Task Failure Rate
+        title: Celery Task Raised An Exception
         condition: C
         noDataState: OK
         execErrState: Alerting
@@ -904,7 +955,7 @@ groups:
               to: 0
             datasourceUid: PBFA97CFB590B2093
             model:
-              expr: 'sum(rate(celery_task_failed_total[15m])) > 0.1'
+              expr: 'increase(sum(celery_task_failed_total{exception!="RunFailedError"})[15m:15s]) > 0.5'
               refId: A
           - refId: B
             relativeTimeRange:
@@ -929,12 +980,12 @@ groups:
                     type: gt
                     params: [0]
               refId: C
-        for: 5m
+        for: 0s
         labels:
           severity: warning
         annotations:
-          summary: "High Celery task failure rate"
-          description: "More than 0.1 task failures per second over the last 15 minutes."
+          summary: "A Celery task raised an exception other than RunFailedError in the last 15 minutes"
+          description: "At least one Celery task raised an exception other than RunFailedError in the last 15 minutes (celery_task_failed_total moved). RunFailedError is how a run task reports a run that ended FAILED (core#1352). Failed runs are excluded on purpose: the run row records them, and their usual causes are the user's to fix. So this stays silent when a run fails, including when the cause is our defect; the runs table is the reading for failed runs. The threshold is one exception because production runs about 45 tasks a day. The traceback is in `docker logs datanika-celery`."
 
       # --- Celery Queue Depth ---
       # ⚠️ Unlike its neighbour above, this rule DID work: `celery_queue_length` is set
@@ -2556,7 +2607,7 @@ groups:
           severity: warning
         annotations:
           summary: "The celery-exporter scrape target has disappeared"
-          description: "up{job=\"celery\"} is absent, so Prometheus is not scraping celery-exporter at all. High Celery Task Failure Rate, Celery Queue Backlog and Scheduled maintenance has stopped running are ALL blind while this is true — which is the state the whole system was in before core#704. Check `docker ps` for datanika-celery-exporter and the `celery` job in monitoring/prometheus.yml."
+          description: "up{job=\"celery\"} is absent, so Prometheus is not scraping celery-exporter at all. Celery Task Raised An Exception, Celery Queue Backlog and Scheduled maintenance has stopped running are ALL blind while this is true — which is the state the whole system was in before core#704. Check `docker ps` for datanika-celery-exporter and the `celery` job in monitoring/prometheus.yml."
       - uid: watchdog-celery-worker
         title: "Watchdog: no Celery worker is reporting"
         condition: C

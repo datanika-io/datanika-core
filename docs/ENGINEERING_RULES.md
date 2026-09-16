@@ -203,7 +203,13 @@ and the second is more dangerous, because it reads as the repair having worked.
 
 **Rules:**
 1. **Assert a sample line, never a metric name.**
-   `grep -E '^datanika_cloud_bytes_processed_total\{org_id="[0-9]+"\} [0-9]'`
+   `grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\} [0-9]'`
+   ⚠️ **Match a label anywhere inside the braces, never by position.** `prometheus_client` renders
+   labels sorted, so this series reads `{mode="…",org_id="…"}`. The example that stood here put
+   `org_id` directly before `}`, and from the day `mode` was added (core#910) it matched nothing,
+   in both V2 runbooks that copied it (core#895). A grep is a check only once it has been run
+   against a line the real collector rendered. Cloud's `test_bytes_metrics_reach_the_metrics_route.py`
+   now does that for every such grep in these docs.
 2. **An *unlabelled* metric behaves differently and is useful for exactly this** — it emits `x 0.0`,
    so zero is distinguishable from absent. That is why a collector's health flag should be an
    unlabelled gauge: with labels, "collector broken" and "no tenants yet" produce identical output.

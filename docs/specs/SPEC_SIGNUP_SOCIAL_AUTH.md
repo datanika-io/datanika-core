@@ -1,6 +1,7 @@
 # SPEC — Social auth on `/signup`
 
 **Author**: Product · **Date**: 2026-08-30 · **Status**: contract, ready for Engineering
+**Amended**: 2026-09-03 (§8) · 2026-09-15 (§8g, rulings on the implementation in core PR #1339)
 **Tracking**: [core#624](https://github.com/datanika-io/datanika-core/issues/624)
 **Implementation**: Engineering (core). Product owns this spec and the acceptance criteria.
 **Verified against**: `origin/dev` @ `7165ad1` (= deployed `master`) **and** the live production app.
@@ -59,7 +60,7 @@ with context is forced down the path that preserves it. Adding the button remove
 `oauth_login` already sets an HMAC-signed, `httponly`, `samesite=lax`, 600-second `oauth_state`
 cookie. Carry the context in that same signed cookie rather than inventing a channel:
 
-- `oauth_login` reads `template`, `invite_token`, `next`, `email` from its own query string and stores
+- `oauth_login` reads `template`, `invite_token`, `next` *(and `email` — withdrawn, §8g.1)* from its own query string and stores
   them alongside the state value, covered by the existing `_sign_state` HMAC.
 - `oauth_callback` verifies as it does now, then appends the surviving context to the
   `/auth/complete?…` redirect.
@@ -255,6 +256,9 @@ Corrected bullet 3, replacing the original:
 > `template`, `accept_invitation` for `invite_token`. It never reads the `oauth_state` cookie: that
 > cookie is `httponly` and is deleted by the callback that redirects here.
 
+*(For `invite_token`, this bullet is superseded by §8g.2 — the provider callback applies the
+invitation. `next` and `template` still reach `/auth/complete` exactly as described here.)*
+
 ⚠️ Note what this does **not** relax. Constraint 1 becomes *more* load-bearing, not less: the context
 arrives at `/auth/complete` as ordinary query parameters, so `_safe_next_path()` on the way out is the
 only thing standing between a crafted `?next=` and an open redirect. The signed cookie protects the
@@ -309,10 +313,162 @@ Numbered from 9 so §5's eight stay unambiguous.
     Members list" — is satisfied by today's two-org behaviour, so it cannot catch 8a.)*
 10. **An expired or already-used token produces a visible message**, on both paths. Exercise the
     failing branch; a test that only walks the happy path passes on the current silent-swallow.
-11. **The context reaches `/auth/complete` in its query string**, and the `oauth_state` cookie is
+11. *(Restated in §8g.2.)* **The context reaches `/auth/complete` in its query string**, and the `oauth_state` cookie is
     absent by the time that page loads. Assert the absence — it is what stops someone reintroducing
     the cookie read that 8c rules out.
 12. **Two overlapping OAuth flows fail closed and say so.** Start a second flow before completing the
     first; the first must be rejected, and must not complete against the second's context. 🚨 Assert
     that it did **not** join the org named by the second flow's token — not merely that an error
     appeared.
+
+---
+
+## 8g. Amendment, 2026-09-15 — rulings on the implementation (core PR #1339)
+
+Engineering built §2 and §8 in #1339 and put the three places where it departed from this spec to
+Product, rather than deciding them silently. **All three are confirmed.** Two of them leave
+something this spec already asked for undone, or undone on the social path, so two acceptance
+criteria are added. Read on `origin/dev` `3e05bf0`: `oauth_routes.py`, `oauth_service.py`,
+`auth_state.py`, `auth_redirects.py` and `en.json`.
+
+### 8g.1 `email` is not carried — confirmed
+
+§2's Mechanism listed `email` beside `template`, `invite_token` and `next`. **Withdrawn.** `email` is
+a pre-fill for the email form, and the social path has no form: the provider supplies the address,
+and only a verified one (§3). Nothing on the social path would read it. The invitation does not need
+it either — `accept_invitation` binds an invitation to the account signing up, and an address taken
+from the query string must never become an input to that decision. Carrying it would put an email
+address into a cookie and a redirect URL with no reader at the other end.
+
+⚠️ **Not carrying it is right, and it moves a cost onto copy.** See 8g.4.
+
+### 8g.2 The invitation is applied in the provider callback — confirmed
+
+§8c's corrected bullet 3 put `accept_invitation` on `/auth/complete`. **For `invite_token`, that
+bullet is superseded.** §8e is the decision; the bullet was transport. §8e says the invitation is
+tried *before* a personal org exists, and on the social path that org is created inside the callback
+(`find_or_create_oauth_user`). Applied on the page, the invitation would arrive after the org it
+replaces, and AC9's count would read 2. **A mechanism that cannot satisfy the decision it serves
+loses to the decision.**
+
+What does not move: `/auth/complete` still reads `next` and `template` from its own query string and
+still runs `_safe_next_path()` on the way out (§2 constraint 1). What improves: **the token never
+re-enters a URL** after the callback. The page receives only a bounded outcome flag,
+`invite=not_applied`, and chooses the sentence itself.
+
+**AC11 is restated:** `next`, `template` and the invitation's *outcome* reach `/auth/complete` in its
+query string; the invitation **token** does not; and both flow cookies are absent when the page
+loads.
+
+### 8g.3 One state cookie, exact comparison — confirmed; the condition that came with it is still owed
+
+§8d offered two resolutions: key the cookie per state, or *"keep the single cookie and make the
+failure message accurate about what happened."* #1339 kept the single cookie — which is also the only
+resolution AC12 as written allows — and binds the carried context to its own flow with a second,
+state-bound signature. **The comparison stays exact, as §8d requires.**
+
+**The second half of that resolution is not done.** A flow superseded by a newer one in the same
+browser lands on `/login?auth_error=invalid_state`, which renders the generic *"We couldn't complete
+that sign-in. Please try again."* That sentence does not say what happened. And `/login` carries none
+of the context the flow held, so *"try again"* from there signs the user in **without** the invitation
+or template they started with — and without the notice that would tell them so.
+
+**AC13 — A superseded flow says so, and points back to where it started.** When the callback's state
+cookie verifies but holds a *different* state from the one returned, the refusal uses a reason of its
+own, rendered as (en):
+
+> *"You started another sign-in in this browser before this one finished, so this one was stopped.
+> Finish that one, or go back to the page you came from and start again."*
+
+A missing, unsigned or tampered cookie keeps today's generic message. All nine locales.
+**Witness:** drive `oauth_callback` with a cookie signed for state B and a request carrying state A;
+assert that the redirect's `auth_error` is the new reason and that `/login` renders the sentence
+above. **Control:** with no cookie at all, the redirect still carries `invalid_state`.
+
+⚠️ **This is not a reason to hold #1339's promotion.** A superseded flow already fails closed and
+joins no org, which is the property §8d exists to protect. AC13 makes that failure legible, and it is
+owed before core#624 closes.
+
+### 8g.4 The invitation notice must name the cause the social path makes common
+
+`auth.invite_not_applied_help` reads *"The invitation link may have expired or already been used —
+ask whoever invited you to send a new one."* On the email path the invited address is pre-filled, so
+a mismatch is rare. **On the social path it is the likeliest cause.** The provider's verified address
+is whatever that account holds, often a personal one, while the invitation went to a work address.
+A new invitation to the same work address fails the same way, so the notice's own remedy loops.
+
+The single flag stays. `auth_state.py` records why, and the reasoning is accepted: naming *which*
+cause applied tells an unauthenticated caller something about a token they may not own. **So the copy
+lists every cause without saying which one applied.**
+
+**AC14 — The notice covers the address case.** (en):
+
+> *"Your account is ready and you're signed in to your own workspace. The invitation may have expired
+> or been used already, or it was sent to a different email address from the one you signed in with.
+> Ask whoever invited you to send a new invitation to the address you use to sign in."*
+
+All nine locales. **Witness:** render the notice for `invite_notice == "not_applied"` and assert that
+the address clause is present in the rendered text.
+
+---
+
+## 8h. Amendment, 2026-09-16 — the signup-conversion event fires on **every** signup path ([core#1369])
+
+Engineering found, and Product confirms, that `user.signup_completed` is emitted only by the password
+`signup()` handler (`auth_state.py:674`). The social completion (`handle_oauth_complete`,
+`auth_state.py:768`) and the SSO callback (`sso_routes.py:365`) emit nothing, while cloud subscribes
+`handle_signup_conversion` to the event (`plugin.py:149`). So a signup through **Google, GitHub or
+SSO** never reaches the handler — the path this spec exists to make the *primary* one.
+
+### Ruling — fire it on every signup path
+
+The event is `user.signup_completed`, not `user.password_signup_completed`. DESIGN.md's hooks table and
+cloud's README document it as *"post-signup, plugins contribute conversion tracking"* — keyed on a
+signup, whatever the credential. **The password-only emit is an implementation gap, not the intended
+contract**, and [core#1369]'s AC4 (declare it password-only, close won't-fix) is **declined**.
+
+Why password-only is the wrong contract: social and SSO are the lowest-friction paths and likely the
+majority of real signups, so a password-only event makes most signups permanently invisible to
+conversion tracking and biases every downstream measurement toward the highest-friction path. The
+impact is latent today — `handle_signup_conversion` returns `None` while the Ads tag is unconfigured
+([cloud#192]) — but **every future signup-measurement fix inherits the gap**, and Growth's
+signup-goal work ([landing#515]) depends on signups being measurable at all.
+
+### The contract
+
+1. A new account created through Google, GitHub or SSO emits `user.signup_completed` **exactly once**,
+   with the new user's id.
+2. A returning user signing in through those paths does **not** emit it.
+3. `is_new` is taken from the **server** side of the flow — `oauth_service.handle_callback` and the SSO
+   callback already return `is_new: bool` — **not** from the `is_new=1` query parameter `/auth/complete`
+   reads. A completion URL carrying a forged `is_new=1` for an existing account must not fire a
+   conversion. (This is §8c's transport lesson pointed at analytics: the URL is attacker-shaped; the
+   fact is the backend's.)
+4. 🚨 **Exactly-once under `on_load`.** `handle_oauth_complete` is an `on_load` handler
+   (`datanika.py:249`), and `on_load` re-runs on a reload of `/auth/complete`. The emit must be bound
+   to the account-creation outcome for *this* request, not to the page load, so refreshing the
+   completion page does not fire a second conversion.
+
+### Mechanism note (Engineering's call; the constraint is not)
+
+The conversion `rx.call_script` must be **returned by a Reflex handler** to reach the browser, and the
+frontend completion path is the only one positioned to return it — while the authoritative `is_new`
+lives in the **backend** callback. Bridging those without trusting the URL is the same bridge §8g.2
+already builds for the invitation *outcome* (a bounded, server-set flag reaching the completion page,
+not the raw fact). Reuse that channel, in a way AC4 (4 above) can hold.
+
+### Acceptance
+
+Adds to §5, numbered from 15 so §8f's 9–14 stay unambiguous.
+
+15. A new Google/GitHub/SSO account emits `user.signup_completed` once, with the new user's id; a
+    returning user on the same path emits nothing. Drive the real completion path, not the emit
+    function. **Control:** a password signup still emits it (do not regress the one path that works).
+16. A completion request carrying `is_new=1` for an **existing** account emits nothing — the fact is
+    read from the server, not the URL.
+17. **Reload the completion route for a freshly-created account and assert the event fires once**, not
+    once per load (`PRODUCT_RULES` §16 — name the entry point and the artifact read).
+
+[core#1369]: https://github.com/datanika-io/datanika-core/issues/1369
+[cloud#192]: https://github.com/datanika-io/datanika-cloud/issues/192
+[landing#515]: https://github.com/datanika-io/datanika-landing/issues/515

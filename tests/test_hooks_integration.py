@@ -378,7 +378,9 @@ class TestTransformationHookEmission:
 
         with patch("datanika.tasks.transformation_tasks.DbtProjectService") as mock_dbt_cls:
             instance = mock_dbt_cls.return_value
-            instance.run_model.return_value = {"rows_affected": 10, "logs": "ok"}
+            # `success` was missing here, a shape `DbtProjectService.run_model` never returns.
+            # Since core#1361 the task reads it, so a stand-in without it is a failed run.
+            instance.run_model.return_value = {"success": True, "rows_affected": 10, "logs": "ok"}
             run_transformation(run_id=run.id, org_id=org.id, session=db_session)
 
         # core#456: this pinned the emitter's kwargs in isolation from the

@@ -181,8 +181,10 @@ Content-Type: application/json
   The serialised run is the body in all three cases, so `status` and
   `error_message` remain the source of truth. Without `?wait=true` the trigger
   still returns `202` immediately and says nothing about the outcome.
-- **Cancel + retry** if a run appears stuck — `POST /runs/{{id}}/cancel`
-  then re-trigger.
+- **Do not cancel and re-trigger a slow run.** `POST /runs/{{id}}/cancel`
+  marks the run cancelled but does not stop it, so re-triggering runs the
+  same job a second time beside the first. Wait with `?wait=true`, or poll
+  `GET /runs/{{id}}`.
 - **Introspect before building** — list source tables and columns
   before writing the upload config. Don't guess table names.
 

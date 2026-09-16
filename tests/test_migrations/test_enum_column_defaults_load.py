@@ -49,6 +49,7 @@ offender pass is the one edit this file exists to make visible in review.
 
 from __future__ import annotations
 
+import ast
 import enum
 import importlib
 import pkgutil
@@ -292,6 +293,75 @@ def test_the_census_reads_every_mapped_enum_column(migrated, metadata):
         f"{_format(absent)}\n\nEither the catalogue query is reading the wrong schema — in which "
         "case the schema-layer guard reads nothing — or a model has no migration "
         "(test_migration_coverage.py)."
+    )
+
+
+def _enum_columns_by_source() -> set[tuple[str, str]]:
+    """``(table, column)`` for every ``mapped_column(Enum(...))`` in ``datanika/models/*.py``,
+    read from SOURCE: a second derivation that no import order, registry or ``_is_enum`` rule
+    can narrow.
+    """
+    found: set[tuple[str, str]] = set()
+    for path in sorted(Path(models_pkg.__file__).parent.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for cls in (node for node in tree.body if isinstance(node, ast.ClassDef)):
+            table = next(
+                (
+                    stmt.value.value
+                    for stmt in cls.body
+                    if isinstance(stmt, ast.Assign)
+                    and isinstance(stmt.value, ast.Constant)
+                    and any(
+                        isinstance(t, ast.Name) and t.id == "__tablename__" for t in stmt.targets
+                    )
+                ),
+                None,
+            )
+            if table is None:
+                continue
+            for stmt in cls.body:
+                if not (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)):
+                    continue
+                call = stmt.value
+                if not (
+                    isinstance(call, ast.Call) and getattr(call.func, "id", None) == "mapped_column"
+                ):
+                    continue
+                first = call.args[0] if call.args else None
+                if isinstance(first, ast.Call) and getattr(first.func, "id", None) == "Enum":
+                    found.add((table, stmt.target.id))
+    return found
+
+
+def test_the_census_population_agrees_with_the_source(metadata):
+    """QA_RULES §2a: two independent derivations of "every Enum column core maps", as sets.
+
+    The census reads ``Base.metadata`` through ``_is_enum`` — a population set by what was imported
+    and by what the type check recognises. The floor above catches an EMPTY census; only a second
+    derivation catches a SUBSET, which is non-empty and looks healthy. Metadata columns on tables no
+    core model file declares (a cloud model imported elsewhere in a session) are left out of the
+    comparison; they are still censused.
+    """
+    by_source = _enum_columns_by_source()
+    # The filter must NOT come from the source walk: filtering one side by the other side's output
+    # makes a subset on that side agree with itself. Measured: narrowing the walk to [a-r]*.py
+    # passed until the filter was taken from the mapper registry instead.
+    core_tables = {
+        mapper.local_table.name
+        for mapper in Base.registry.mappers
+        if mapper.class_.__module__.startswith("datanika.models.")
+    }
+    by_metadata = {
+        (column.table.name, column.name)
+        for column in _enum_columns(metadata)
+        if column.table.name in core_tables
+    }
+    assert by_source, "the source walk found no Enum columns — it has stopped working"
+    assert by_metadata == by_source, (
+        f"only in the source: {sorted(by_source - by_metadata)}\n"
+        f"only in the metadata: {sorted(by_metadata - by_source)}\n"
+        "The census reads the metadata, so a column only in the source is one this guard never "
+        "examines — most likely a column type _is_enum does not recognise."
     )
 
 

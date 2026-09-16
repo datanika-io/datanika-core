@@ -104,27 +104,15 @@ FLOOR_RESOLVED_REFERENCES = 190
 #: would silently exempt a different clause. ``test_no_accounted_entry_has_gone_stale`` fails
 #: when one of these starts resolving, so a fix removes its own entry.
 ACCOUNTED_UNRESOLVED: dict[tuple[str, str], str] = {
-    (
-        "SPEC_DUAL_MODE_UX.md",
-        "PipelineMode.AUTO",
-    ): "§9.1's PipelineTemplate code block still defaults to a member the same spec's 2026-04-15 "
-    "reconciliation note dropped. Product's: update the block or mark it superseded (core#1150).",
-    (
-        "SPEC_DUAL_MODE_UX.md",
-        "pipelines.volume_estimate_gb",
-    ): "the migration bullet claims a column the reconciliation note above it dropped in favour "
-    "of Upload.volume_estimate_gb. Product's (core#1150).",
-    (
-        "SPEC_DUAL_MODE_UX.md",
-        "pipelines.elt_nudge_dismissed_at",
-    ): "same bullet; the column lives on pipeline_prefs per §8 of the same spec, not on "
-    "pipelines. Product's (core#1150).",
-    (
-        "SPEC_PASSWORD_RESET.md",
-        "account.set_password",
-    ): "the variant table names a key en.json does not hold; settings.py renders "
-    "auth.set_password for that button. Same shape as the auth.current_password defect "
-    "PR #1271 corrected. Product's (core#1150).",
+    # Empty, and that is a measurement rather than a default. The four entries QA shipped here on
+    # 2026-09-15 were all real, all Product's, and all four were corrected on 2026-09-16 under
+    # core#1150: §9.1's ``PipelineTemplate`` default, the two ``pipelines.*`` columns in §11's
+    # migration bullet, and ``SPEC_PASSWORD_RESET``'s ``account.set_password``.
+    #
+    # 🔑 The ratchet is what made that happen in one diff:
+    # ``test_no_accounted_entry_has_gone_stale`` fails while a corrected entry still stands here,
+    # so a fix cannot merge leaving behind an exemption nobody would revisit. Add an entry only
+    # for a finding you are handing to its owner, never to quiet a failure.
 }
 
 _QUALIFIED = re.compile(r"\b([A-Z][A-Za-z0-9]+)\.([A-Za-z_][A-Za-z0-9_]*)\b")

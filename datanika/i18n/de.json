@@ -1,5 +1,8 @@
 {
   "app.name": "Datanika",
+  "errors.role_required_editor": "Diese Aktion erfordert mindestens die Rolle „Bearbeiter“. Bitten Sie einen Inhaber oder Administrator Ihrer Organisation, sie auszuführen oder Ihre Rolle zu ändern.",
+  "errors.role_required_admin": "Diese Aktion erfordert mindestens die Rolle „Administrator“. Bitten Sie einen Inhaber oder Administrator Ihrer Organisation, sie auszuführen oder Ihre Rolle zu ändern.",
+  "errors.role_required_owner": "Diese Aktion erfordert die Rolle „Inhaber“. Bitten Sie einen Inhaber Ihrer Organisation, sie auszuführen oder Ihre Rolle zu ändern.",
   "app.connection_lost": "Verbindung unterbrochen — Neuverbindung läuft. Klicks werden erst gesendet, wenn sie wiederhergestellt ist.",
   "nav.dashboard": "Dashboard",
   "nav.connections": "Verbindungen",

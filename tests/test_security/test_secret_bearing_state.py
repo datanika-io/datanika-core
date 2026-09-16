@@ -29,12 +29,21 @@ Two cheaper rules were measured first and both are wrong:
 * **"no public state var may be named like a secret"** — flags 18 members, of
   which 16 are `form_*` inputs the user *typed*. A value the user just supplied
   is not a disclosure; the direction is the whole question.
-* **"no handler that decrypts may be ungated"** — flags 7, of which 4 are
-  correct as they stand: `test_saved_connection`, `load_preview`,
-  `preview_result` and `preview_compiled_sql` decrypt in order to *use* the
-  credential and never put it in state. Gating those would take a member-visible
-  action away for no security gain, and a guard whose remedy is a product
-  regression will be "fixed" by an exemption.
+* **"no handler that decrypts may be ungated"** — flags 7, of which 3 are
+  correct as they stand: `load_preview`, `preview_result` and
+  `preview_compiled_sql` decrypt in order to *use* the credential and never put
+  it in state. Gating those would take a member-visible action away for no
+  security gain, and a guard whose remedy is a product regression will be
+  "fixed" by an exemption.
+
+  🔴 **`test_saved_connection` was the fourth until 2026-09-16 and no longer is**
+  (`SPEC_SERVICE_AUTHORIZATION` §11, core#1370). It now requires `editor` —
+  **but not because it discloses**, which is why the taint rule below still must
+  not flag it. It is gated because *triggering* a test exercises the org's
+  stored credential to open an outbound connection, and that is an action rather
+  than a read. **The two rules are independent, and this file asserts only the
+  disclosure one**: a decrypt-and-discard handler stays unflagged here whether or
+  not it carries a role gate.
 
 What separates the defects from the four false positives is not the read and
 not the name. It is the **assignment into a public state var** — the boundary

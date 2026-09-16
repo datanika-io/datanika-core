@@ -354,11 +354,19 @@ def _connections_table_loaded() -> rx.Component:
                                     ),
                                 ),
                             ),
-                            rx.button(
-                                _t["common.test"],
-                                variant="outline",
-                                size="1",
-                                on_click=ConnectionState.test_saved_connection(conn.id),
+                            # core#1370: Test is gated at `editor` in the handler, so the button
+                            # follows `can_edit` like Edit and Copy. Leaving it visible would show
+                            # a viewer a control that always refuses. ⚠️ The render condition is
+                            # NOT the gate — a Reflex event is dispatched by name over the
+                            # websocket and does not care which buttons were drawn.
+                            rx.cond(
+                                AuthState.can_edit,
+                                rx.button(
+                                    _t["common.test"],
+                                    variant="outline",
+                                    size="1",
+                                    on_click=ConnectionState.test_saved_connection(conn.id),
+                                ),
                             ),
                             rx.cond(
                                 AuthState.can_edit,

@@ -1688,7 +1688,21 @@ class ConnectionState(BaseState):
             return ConnectionService.timed_out_verdict(budget)
 
     async def test_connection_from_form(self):
-        """Test connectivity using the current form fields (before saving)."""
+        """Test connectivity using the current form fields (before saving).
+
+        🚨 ``editor``, per ``SPEC_SERVICE_AUTHORIZATION`` §11 (core#1370). Test is not a read: the
+        member supplies a host and credentials and asks the server to open an outbound connection
+        to them, which is a step of the create/save lifecycle — so nobody who cannot save a
+        connection can test-before-save. ``editor`` is what ``save_connection`` already requires.
+
+        The gate is the **first** statement, before ``_build_config`` reads the typed credential.
+
+        ⚠️ §1's census could not see this handler. It reads the requirement off each handler's own
+        ``_check_role``, so an operation that declares none is *invisible* to it rather than
+        flagged by it — which is why §11 adds Test explicitly instead of deriving it.
+        """
+        if not await self._check_role("editor"):
+            return
         validation_error = self._validate_form()
         if validation_error:
             self.test_success = False
@@ -1725,7 +1739,18 @@ class ConnectionState(BaseState):
         self.test_message = await self._verdict_message(verdict)
 
     async def test_saved_connection(self, conn_id: int):
-        """Test connectivity for an already-saved connection."""
+        """Test connectivity for an already-saved connection.
+
+        🚨 ``editor``, per ``SPEC_SERVICE_AUTHORIZATION`` §11 (core#1370). This decrypts the org's
+        stored credential and authenticates outbound with it — the same privileged use of a stored
+        credential that puts ``edit_connection`` and ``copy_connection`` at ``editor``.
+
+        ``viewer`` was weighed and declined: the ``/connections`` table already renders the last
+        ``test_status``, so a viewer can *see* a connection's health without initiating a fresh
+        outbound connection and credential use. **Triggering a test is an action, not a read.**
+        """
+        if not await self._check_role("editor"):
+            return
         org_id = await self._get_org_id()
         encryption = EncryptionService(settings.credential_encryption_key)
         svc = ConnectionService(encryption)

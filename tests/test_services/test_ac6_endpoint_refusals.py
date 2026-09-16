@@ -77,6 +77,15 @@ _RATE_OK = RateLimitResult(
 CASES = [
     ("connections", "POST", "/api/v1/connections", "conn_create", "editor", MemberRole.VIEWER),
     ("connections", "PUT", "/api/v1/connections/{conn}", "rename", "editor", MemberRole.VIEWER),
+    # core#1370 / SPEC_SERVICE_AUTHORIZATION §11.3. Test on a saved row requires `editor` on BOTH
+    # surfaces, and this row is what pins them together so a later scope edit cannot split them.
+    #
+    # ⚠️ §11.3 predicted this needed no new code — that `connections:write` plus core#681's
+    # intersection already implied `editor`. Measured otherwise: the intersection happens inside
+    # `assert_org_role`, which *services* call, and this endpoint called only
+    # `get_connection_config` and `get_connection`, both unguarded reads. The scope was checked and
+    # the owner's role never was.
+    ("connections", "POST", "/api/v1/connections/{conn}/test", None, "editor", MemberRole.VIEWER),
     ("connections", "DELETE", "/api/v1/connections/{conn}", None, "admin", MemberRole.EDITOR),
     ("uploads", "POST", "/api/v1/uploads", "upload_create", "editor", MemberRole.VIEWER),
     ("uploads", "PUT", "/api/v1/uploads/{upload}", "rename", "editor", MemberRole.VIEWER),

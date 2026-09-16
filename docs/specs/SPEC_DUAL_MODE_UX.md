@@ -341,7 +341,10 @@ Each `PipelineTemplate` dataclass in `datanika/data/pipeline_templates.py` gains
 class PipelineTemplate:
     ...
     typical_volume_gb: float  # per-run estimate, used by the cost estimator
-    recommended_mode: PipelineMode = PipelineMode.AUTO
+    # UI-layer value, not a persisted enum member. `PipelineMode.AUTO` was dropped by the
+    # 2026-04-15 reconciliation in §11, so a template recommends the string `"auto"`, which
+    # the form resolves to `PipelineMode.ETL` or `PipelineMode.ELT` at pipeline-create time.
+    recommended_mode: str = "auto"
 ```
 
 The 3 current templates get reasonable defaults:
@@ -557,7 +560,9 @@ class Pipeline(TenantMixin, TimestampMixin, Base):
         nullable=False,
     )
     ir: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Eng ELT §5.1
-    elt_nudge_dismissed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+# The ELT-nudge dismissal flag is NOT a Pipeline column — §9.5 puts it on a
+# `pipeline_prefs` row (per pipeline, per org). It was listed here by mistake.
 
 # `Upload.volume_estimate_gb` — user-hint column, used only before first run.
 # After first successful run, EWMA of bytes_processed replaces this value in
@@ -587,7 +592,8 @@ class Upload(TenantMixin, TimestampMixin, Base):
 - `run.volume_processed` — new event emitted after run completes. Cloud plugin handler records GB to usage ledger.
 
 **Migrations**:
-- One Alembic migration adds `pipelines.mode`, `pipelines.volume_estimate_gb`, `pipelines.elt_nudge_dismissed_at`. Back-fills `mode = 'etl'` for existing rows (back-compat — existing pipelines were ETL).
+- One Alembic migration adds `pipelines.mode`. Back-fills `mode = 'etl'` for existing rows (back-compat — existing pipelines were ETL).
+- ⚠️ The two further columns this bullet used to name were dropped by the 2026-04-15 reconciliation above and must **not** be migrated onto the pipelines table: the volume hint lives on `Upload.volume_estimate_gb`, and the ELT-nudge dismissal flag on a `pipeline_prefs` row (§9.5) keyed per pipeline and per org.
 - One migration (in `datanika-cloud`) adds a `volume_gb_processed` column to `usage_ledger`.
 
 ## 12. Back-compat

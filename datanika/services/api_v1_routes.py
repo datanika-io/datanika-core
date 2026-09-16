@@ -20,7 +20,7 @@ from datanika.models.pipeline import DbtCommand
 from datanika.models.run import RunStatus
 from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
-from datanika.services.authorization import InsufficientRoleError
+from datanika.services.authorization import InsufficientRoleError, assert_org_role
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService, run_connection_test_bounded
 from datanika.services.encryption import EncryptionService
@@ -375,6 +375,25 @@ def test_connection(request, api_key, session):
     if config is None:
         return _error(404, "Connection not found")
     conn = _get_conn_svc().get_connection(session, api_key.org_id, conn_id)
+    # SPEC_SERVICE_AUTHORIZATION §11 (core#1370): Test requires `editor` on BOTH surfaces, and the
+    # two must agree or a later scope edit splits them silently.
+    #
+    # §7.3's ordering is load-bearing: AFTER the org-scoped lookup, so a cross-org probe still
+    # answers 404 and the refusal never confirms the row exists somewhere; BEFORE the outbound
+    # connection, which is the thing being authorised.
+    #
+    # ⚠️ §11.3 predicted this needed no new code, reasoning that `connections:write` plus core#681's
+    # intersection already implies `editor`. Measured otherwise: the intersection happens inside
+    # `assert_org_role`, which *services* call, and this endpoint calls only `get_connection_config`
+    # and `get_connection` — both unguarded reads — plus a pure verdict function. So the key's
+    # scope was checked and its owner's current role never was.
+    assert_org_role(
+        session,
+        api_key.org_id,
+        api_key.user_id,
+        required="editor",
+        operation="test_connection",
+    )
     # core#1367. This handler is synchronous, so `api_middleware` runs it in the process's default
     # executor — the pool every synchronous handler shares — and it holds this request's database
     # session for as long as it waits. A driver handed a host that accepts TCP and then says nothing

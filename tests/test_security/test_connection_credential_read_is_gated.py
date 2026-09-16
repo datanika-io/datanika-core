@@ -25,6 +25,7 @@ inventing a new boundary.
 """
 
 import ast
+import importlib
 import inspect
 import pathlib
 import textwrap
@@ -40,9 +41,22 @@ STATE_DIR = pathlib.Path(datanika.ui.state.__file__).parent
 #: Handlers that decrypt a stored credential and put it into public state.
 CREDENTIAL_READING = ["edit_connection", "copy_connection"]
 
-#: The control: same module, same service call, and correct as it stands —
-#: it opens a connection with the credential and never assigns it to state.
-DECRYPTS_WITHOUT_DISCLOSING = "test_saved_connection"
+#: The control: a handler that decrypts in order to **use** a credential and never assigns it to
+#: public state. It must stay ungated, or this module's rule collapses into the cheaper one it
+#: explicitly rejects — *"any handler that decrypts must be gated"*.
+#:
+#: 🔴 **This was `ConnectionState.test_saved_connection` until 2026-09-16**, asserting it stays
+#: UNGATED on the grounds that "the Test button is member-visible on purpose".
+#: `SPEC_SERVICE_AUTHORIZATION` §11 (core#1370) **reversed that**: both Test surfaces now require
+#: `editor`, because triggering a test exercises the org's stored credential to open an outbound
+#: connection — an action, not a read.
+#:
+#: 🔑 It is **repointed rather than deleted**. The discriminating job is still needed, and
+#: `TransformationState.preview_result` still does exactly what the old control described: it
+#: decrypts to reach the destination and puts only rows and a message into state. Deleting the
+#: control instead would have left the module asserting "gate these two" with nothing checking that
+#: the rule had not quietly become "gate everything that decrypts".
+DECRYPTS_WITHOUT_DISCLOSING = ("transformation_state", "TransformationState", "preview_result")
 
 
 def _unwrap(func):
@@ -53,7 +67,18 @@ def _parse(name: str) -> ast.AST:
     return ast.parse(textwrap.dedent(inspect.getsource(_unwrap(getattr(ConnectionState, name)))))
 
 
-def _src(name: str) -> str:
+def _resolve(triple: tuple[str, str, str]):
+    """Resolve a ``(module, class, handler)`` triple under ``datanika.ui.state``.
+
+    The control lives in a different state class from the subjects now, so it can no longer be
+    reached through ``getattr(ConnectionState, ...)``.
+    """
+    module, cls_name, fn_name = triple
+    mod = importlib.import_module(f"datanika.ui.state.{module}")
+    return getattr(getattr(mod, cls_name), fn_name)
+
+
+def _src_of(func) -> str:
     """Handler source with the docstring removed.
 
     🚨 The fixed handlers *explain* why they gate, quoting ``_check_role`` and
@@ -63,7 +88,7 @@ def _src(name: str) -> str:
     moment somebody wrote a comment mentioning the gate they deliberately did
     not add. Comments go too: ``ast.unparse`` drops them.
     """
-    tree = _parse(name)
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_unwrap(func))))
     fn = tree.body[0]
     if (
         fn.body
@@ -73,6 +98,10 @@ def _src(name: str) -> str:
     ):
         fn.body = fn.body[1:]
     return ast.unparse(fn)
+
+
+def _src(name: str) -> str:
+    return _src_of(getattr(ConnectionState, name))
 
 
 def _awaited_role_gate(name: str) -> str | None:
@@ -150,24 +179,25 @@ def test_the_gate_precedes_the_decrypt(name):
 
 
 def test_the_control_handler_stays_ungated():
-    """The false-positive control, and the reason this is not "gate every decrypt".
+    """The false-positive control, and the reason this module's rule is not "gate every decrypt".
 
-    `test_saved_connection` decrypts in order to *open* the connection and puts
-    only a verdict in state. The Test button is deliberately outside
-    `rx.cond(AuthState.can_edit, ...)` in `connections.py`, so gating it would
-    take a member-visible action away and buy nothing.
+    `TransformationState.preview_result` decrypts the destination credential in order to *run* a
+    query, and puts only rows and a message into state. Gating it would take a member-visible
+    action away for no disclosure gain — and a guard whose remedy is a product regression gets
+    "fixed" with an exemption rather than obeyed.
 
-    If somebody satisfies the assertions above by decorating the whole class,
-    this goes red.
+    If somebody satisfies the assertions above by decorating the whole class, this goes red.
     """
-    src = _src(DECRYPTS_WITHOUT_DISCLOSING)
-    assert "get_connection_config" in src, (
-        "the control no longer decrypts, so it no longer controls anything"
+    src = _src_of(_resolve(DECRYPTS_WITHOUT_DISCLOSING))
+    assert "EncryptionService" in src, (
+        "the control no longer decrypts, so it no longer controls anything — repoint it at a "
+        "handler that still reads a credential in order to use it"
     )
     assert "_check_role" not in src, (
-        "test_saved_connection acquired a role gate. It reads a credential to use it, "
-        "not to disclose it — the Test button is member-visible on purpose. A blanket "
-        "gate over every decrypting handler is the cheap rule this module rejects."
+        f"{DECRYPTS_WITHOUT_DISCLOSING[1]}.{DECRYPTS_WITHOUT_DISCLOSING[2]} acquired a role gate. "
+        "It reads a credential to use it, not to disclose it. A blanket gate over every "
+        "decrypting handler is the cheap rule this module rejects — if that gate is deliberate, "
+        "repoint this control rather than deleting it."
     )
 
 

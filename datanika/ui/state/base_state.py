@@ -18,6 +18,24 @@ def check_role_hierarchy(current_role: str, required_role: str) -> bool:
     return ROLE_HIERARCHY.get(current_role, 0) >= ROLE_HIERARCHY.get(required_role, 0)
 
 
+#: ``SPEC_SERVICE_AUTHORIZATION`` §7.2 — **one key per threshold, never one per handler.** There
+#: are 40+ ``_check_role`` call sites across three thresholds; a key per handler would be hundreds
+#: of near-identical strings drifting apart in nine locales.
+#:
+#: ⚠️ **Spelled out rather than derived.** ``f"errors.role_required_{min_role}"`` is shorter and was
+#: the first version; it is wrong twice over. ``tests/test_i18n`` fails any key that no code
+#: mentions — correctly, since a key nothing names cannot be found by the person maintaining the
+#: locale files — and an f-string also makes the key ungreppable from ``en.json`` back to here.
+#:
+#: ⚠️ **Module level, not a class attribute.** A dict on a Reflex ``State`` subclass becomes a state
+#: var and is serialized to every client.
+_ROLE_REFUSAL_KEYS = {
+    "editor": "errors.role_required_editor",
+    "admin": "errors.role_required_admin",
+    "owner": "errors.role_required_owner",
+}
+
+
 def is_user_facing(exc: Exception) -> bool:
     """Is this exception's own text something we authored, and safe to show? (core#1094)
 
@@ -192,7 +210,16 @@ class BaseState(rx.State):
         auth = await self.get_state(AuthState)
         role = auth.current_role
         if not check_role_hierarchy(role, min_role):
-            self.error_message = f"Permission denied. Requires {min_role} role or higher."
+            # §7.2: ONE key per threshold — `errors.role_required_{editor,admin,owner}` — never one
+            # per handler. There are 40+ call sites across three thresholds, and a key per handler
+            # would be hundreds of near-identical strings drifting apart in nine locales.
+            #
+            # ⚠️ The English sentence stays as the FALLBACK rather than being replaced, so a locale
+            # that has not caught up still names the required role instead of degrading to a bare
+            # "permission denied" — which tells a user they have a problem and not how to end it.
+            fallback = f"Permission denied. Requires {min_role} role or higher."
+            key = _ROLE_REFUSAL_KEYS.get(min_role)
+            self.error_message = await self._translated(key, fallback) if key else fallback
             # ⚠️ ``self.error_message`` is the SUBSTATE's own copy, and for most
             # callers no page renders it — 10 of the 15 state classes that
             # assign ``error_message`` are read by nothing (#887), `uploads.py`

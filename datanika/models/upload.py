@@ -47,7 +47,9 @@ class Upload(Base, TenantMixin, TimestampMixin):
         Enum(UploadMode, native_enum=False, length=20),
         nullable=False,
         default=UploadMode.ETL,
-        server_default=UploadMode.ETL.value,
+        # The member NAME (core#1391). `Enum(..., native_enum=False)` without `values_callable`
+        # stores and loads names, so `.value` ("etl") wrote a row this column cannot read back.
+        server_default=UploadMode.ETL.name,
     )
 
     source_connection = relationship(

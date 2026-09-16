@@ -411,6 +411,45 @@ defect [core#823] fixed*, and the only place that is written down is a source co
   dict has held **one** since `salesforce` moved out. A stale count in a comment about completeness
   is the smallest possible instance of this spec's own subject.
 
+### 4.6 · AC7 — a table the catalogue could not read must be named where the reader looks
+
+*Added 2026-09-16: ruling on [landing#604], contract for [core#1398]. The ClickHouse defect that
+produced the measurement is [core#1397].*
+
+`/models` makes a claim by listing: **these are the tables your loads produced.** When an upload's
+catalogue sync fails, that list is short, and a short list with no qualifier asserts a completeness
+nobody measured. It is §1's invariant on a screen that shows no verdict badge at all.
+
+**Measured 2026-09-16** through the unpatched `run_upload` on `origin/dev` `8da38e7` ([core#1397] has
+the full table). A ClickHouse upload finished `success` with 3 of 3 rows in the destination, the
+catalogue held **0** entries for it, and the only statement of that anywhere in the product was one
+WARNING line in the run's log. A DuckDB upload through the same path catalogued its table. So this is
+not a PostgreSQL-only catalogue; it is a sync that cannot read one destination.
+
+**Why the two diagnostics that already exist do not satisfy §1 here:**
+
+| diagnostic | where the reader meets it | why it is not enough |
+|---|---|---|
+| the two catalogue WARNINGs (§6) | the run's log | Correct, and in a place the reader is not sent: the destination guides send them to `/models`. |
+| `models.no_models_after_load` | `/models`, empty state | Rendered **only when the whole catalogue is empty**, so one catalogued upload anywhere in the org hides every uncatalogued one. It also names three causes (schema deleted, renamed, set incorrectly) that are **wrong when the sync raised**, which sends the reader to change a correct connection. |
+
+**Acceptance:**
+- When an upload's **most recent successful run** did not catalogue its tables, `/models` shows a
+  notice naming **that upload**, however many other rows are listed, with a link to that run.
+- The notice says **which** of two things happened, the two the run's log already distinguishes:
+  *the catalogue could not read this destination* (the sync raised; the data is there and nothing
+  about the connection needs changing), or *no tables were found in schema X* (the sync ran and found
+  nothing). **Only the second carries the deleted / renamed / misconfigured advice.** A wrong cause is
+  the same defect as a missing one (`PRODUCT_RULES` §15a).
+- The notice **clears** when a later successful run of that upload catalogues its tables. A notice that
+  outlives its cause teaches the reader to ignore the next one.
+- Callout text, nine locales.
+- ⚠️ **Do not satisfy this by listing tables the catalogue did not read.** `/models` shows what the
+  catalogue holds. The fix is a qualifier on that list, never an entry the sync did not produce.
+- ⚠️ **Do not satisfy it through the run's status either.** §4.1's decision stands: no `PARTIAL`
+  member. The load succeeded and the run says so correctly. What is missing is the catalogue, and the
+  page that shows the catalogue is where that gets said.
+
 ---
 
 ## §5 — Acceptance criteria that can tell a real success from a fabricated one
@@ -440,6 +479,7 @@ For each AC, the mutation is named and it is the **pre-fix behaviour**, which is
 | 4.2 | make `_extract_rows_loaded` raise | must show `—`, not `0` |
 | 4.4 | force `raise_on_failed_jobs = False` in the resolved config | proves the guard is reading the resolved value |
 | 4.5 | remove `jira` from `SAAS_PAGINATION_EXEMPT` | the log line must disappear — proving it is derived, not literal |
+| 4.6 | an org holding one catalogued upload and one upload whose sync raised | today's code renders no notice, because the catalogue is not empty |
 
 ### 5.3 · 🚨 The one assertion that must **not** be written
 
@@ -470,8 +510,10 @@ from [core#1097] AC5.5, where the sweep found **eleven** loaders against a spec 
 - **[core#869]** BigQuery reflection returning 0 tables — a different defect on the same screen, QA's.
 - **[core#850]** `salesforce` default resources being describe endpoints. Filed from [core#823]'s
   work; `salesforce` has since gained a paginator, and the resource question is separate.
-- **The two catalog-sync WARNINGs** (`upload_tasks.py:300`, `:325`). They are correct as diagnostics
-  and this spec deliberately reuses their mechanism rather than replacing it.
+- **The two catalog-sync WARNINGs** that `run_upload` appends after the catalogue sync. They are
+  correct as diagnostics and this spec deliberately reuses their mechanism rather than replacing it.
+  §4.6 (added 2026-09-16) leaves them as they are; it requires their verdict to reach `/models` as
+  well.
 
 ---
 
@@ -502,3 +544,6 @@ Kept because each of these was believed by someone, including by me:
 [core#851]: https://github.com/datanika-io/datanika-core/issues/851
 [core#869]: https://github.com/datanika-io/datanika-core/issues/869
 [core#1097]: https://github.com/datanika-io/datanika-core/issues/1097
+[core#1397]: https://github.com/datanika-io/datanika-core/issues/1397
+[core#1398]: https://github.com/datanika-io/datanika-core/issues/1398
+[landing#604]: https://github.com/datanika-io/datanika-landing/issues/604

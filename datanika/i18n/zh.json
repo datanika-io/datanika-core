@@ -1,5 +1,8 @@
 {
   "app.name": "Datanika",
+  "errors.role_required_editor": "此操作至少需要“编辑者”角色。请让组织的所有者或管理员执行该操作，或更改您的角色。",
+  "errors.role_required_admin": "此操作至少需要“管理员”角色。请让组织的所有者或管理员执行该操作，或更改您的角色。",
+  "errors.role_required_owner": "此操作需要“所有者”角色。请让组织的所有者执行该操作，或更改您的角色。",
   "app.connection_lost": "连接已断开，正在重新连接。恢复之前，点击不会被发送。",
   "nav.dashboard": "仪表板",
   "nav.connections": "连接",

@@ -141,6 +141,14 @@ def api_client():
         stack.enter_context(
             patch("datanika.services.api_v1_routes._get_conn_svc", return_value=conn_svc)
         )
+        # core#1370 put an `editor` check on this endpoint. The key here is a MagicMock with no
+        # membership row and the session is a MagicMock, so the real check would refuse with a 403
+        # and every test in this file would measure the gate instead of the budget. The gate is
+        # asserted against REAL membership rows in `test_ac6_endpoint_refusals.py`, which is where
+        # §5 AC6 says the endpoint-level witness belongs.
+        stack.enter_context(
+            patch("datanika.services.api_v1_routes.assert_org_role", lambda *a, **k: None)
+        )
         svc.authenticate_api_key.return_value = key
         rl.get_limit_for_org.return_value = 60
         rl.check_rate_limit.return_value = allowed
@@ -234,7 +242,14 @@ def ui_state(monkeypatch):
     async def _get_state(self, state_cls):
         return _NoTranslations()
 
+    async def _allow(self, min_role):
+        """core#1370 gated both Test handlers at `editor`; this file is about the pool, not the
+        audience. The gate is asserted in `tests/test_security/test_connection_test_role_gate.py`.
+        """
+        return True
+
     monkeypatch.setattr(ConnectionState, "get_state", _get_state)
+    monkeypatch.setattr(ConnectionState, "_check_role", _allow)
     return ConnectionState(parent_state=BaseState(init_substates=False), init_substates=False)
 
 

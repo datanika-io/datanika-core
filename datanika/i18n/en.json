@@ -1,5 +1,8 @@
 {
   "app.name": "Datanika",
+  "errors.role_required_editor": "Only an editor or higher can do this. Ask an owner or admin of your organization to do it, or to change your role.",
+  "errors.role_required_admin": "Only an admin or higher can do this. Ask an owner or admin of your organization to do it, or to change your role.",
+  "errors.role_required_owner": "Only an owner can do this. Ask an owner of your organization to do it, or to change your role.",
   "app.connection_lost": "Connection lost — reconnecting. Clicks are not sent until it returns.",
   "nav.dashboard": "Dashboard",
   "nav.connections": "Connections",

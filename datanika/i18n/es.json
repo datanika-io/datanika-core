@@ -1,5 +1,8 @@
 {
   "app.name": "Datanika",
+  "errors.role_required_editor": "Esta acción requiere al menos el rol «editor». Pide a un propietario o administrador de tu organización que la realice o que cambie tu rol.",
+  "errors.role_required_admin": "Esta acción requiere al menos el rol «administrador». Pide a un propietario o administrador de tu organización que la realice o que cambie tu rol.",
+  "errors.role_required_owner": "Esta acción requiere el rol «propietario». Pide a un propietario de tu organización que la realice o que cambie tu rol.",
   "app.connection_lost": "Conexión perdida: reconectando. Los clics no se envían hasta que se restablezca.",
   "nav.dashboard": "Panel",
   "nav.connections": "Conexiones",

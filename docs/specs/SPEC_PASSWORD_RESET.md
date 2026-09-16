@@ -278,7 +278,7 @@ instance the reset flow would show "check your inbox" forever.
 | Variant | Fields | Button |
 |---|---|---|
 | Has a password | Current · New · Confirm | `account.update_password` |
-| Never had one | New · Confirm, plus `account.set_password_hint` | `account.set_password` |
+| Never had one | New · Confirm, plus `account.set_password_hint` | `auth.set_password` |
 
 > ⚠️ **Use `rx.form` + `on_submit`, not the controlled `value=` / `on_change=` pattern the rest of
 > `/settings` uses.** Every other card binds inputs to state vars, which for a password field means

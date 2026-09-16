@@ -200,7 +200,10 @@ def transformation_form() -> rx.Component:
                 size="1",
                 color="var(--gray-9)",
             ),
-            rx.text(_t["transformations.sql"], size="2", weight="bold"),
+            rx.el.label(
+                rx.text(_t["transformations.sql"], size="2", weight="bold"),
+                html_for="sql-editor",
+            ),
             rx.box(
                 rx.text_area(
                     placeholder=_t["transformations.ph_sql"],

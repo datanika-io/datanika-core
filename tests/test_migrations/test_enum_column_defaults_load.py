@@ -73,10 +73,6 @@ SCHEMA = "schema"
 #: Today's offenders. **Shrink only.** Each entry names the issue that owns the fix; delete the
 #: entry in the PR that makes the column's default load (the stale-entry test will say which).
 KNOWN_UNLOADABLE: dict[tuple[str, str, str], str] = {
-    (MODEL, "pipelines", "mode"): "core#1391",
-    (MODEL, "uploads", "mode"): "core#1391",
-    (SCHEMA, "pipelines", "mode"): "core#1391",
-    (SCHEMA, "uploads", "mode"): "core#1391",
     (SCHEMA, "invitations", "status"): "core#1393",
 }
 

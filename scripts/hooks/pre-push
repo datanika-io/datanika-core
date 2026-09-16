@@ -33,6 +33,26 @@ while read -r _lref lsha _rref _rsha; do
   SAW_ANY=1
   [ "$lsha" = "$HEAD_SHA" ] && PUSHING_HEAD=1
 done
+# --- nothing to push? (core#1355) ------------------------------------------------------
+# git invokes this hook with TWO arguments (remote name, remote URL) and writes one stdin line
+# per ref it will update. Zero lines FROM GIT therefore means "this push updates nothing" --
+# and there is nothing to check.
+#
+# This used to fall through to the auto-rebase below, which rewrote whatever branch happened to
+# be checked out -- a branch the push does not touch -- and exited 1 with `error: failed to push
+# some refs`. Measured on git 2.51.0: a push that updates a ref gives 1 line; the same push when
+# everything is up to date still runs the hook, with 0 lines. It bit the post-promotion resync
+# `git push origin origin/master:refs/heads/dev` after `dev` had already been fast-forwarded
+# server-side, and by the same path it bites a redundant second push of a feature branch.
+#
+# 🚨 The discriminator is GIT'S ARGUMENTS, never the empty stdin alone. A hand invocation passes
+# no arguments and keeps the fail-closed path below on purpose -- that is what the next comment
+# protects. tests/test_deploy/test_pre_push_noop_push.py pins both directions with a real push.
+if [ "$SAW_ANY" = "0" ] && [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
+  echo "pre-push: nothing to push (git listed no refs to update) — no rebase, no tests."
+  exit 0
+fi
+
 # No lines at all means git told us nothing (or the hook was invoked by hand) -- assume a
 # normal push and check, rather than skipping silently.
 if [ "$SAW_ANY" = "1" ] && [ "$PUSHING_HEAD" = "0" ]; then
@@ -117,6 +137,26 @@ if [ "$KWRC" -eq 2 ]; then
   echo "  pre-push WARNING: could not read origin/dev..HEAD for the closing-keyword check."
   echo "      This measured NOTHING. Re-run after 'git fetch origin' if the range is stale."
 elif [ "$KWRC" -ne 0 ]; then
+  exit 1
+fi
+
+# --- attribution trailers (core#1385) --------------------------------------------------
+# The founder's standing ruling: no Co-Authored-By and no Claude-Session line, in a commit
+# message or a PR body. Every department reported an ARMED check on every commit for a week and
+# five commits still reached shared branches carrying one -- because the scan ran AFTER
+# publishing. This hook is the only thing that sees a commit before origin does.
+#
+# Deliberately ABOVE the path-aware test gate below: a trailer has nothing to do with which
+# files changed, and a docs-only push carries one just as easily as a code one. Blocking rather
+# than warning, because a trailer on a shared branch needs a force-push to remove and `dev` and
+# `master` both forbid one. The guard prints its controls' readings beside its verdict.
+echo "pre-push: attribution trailers (core#1385)"
+"$PY" scripts/check_attribution_trailers.py --range 'origin/dev..HEAD'
+ATRC=$?
+if [ "$ATRC" -eq 2 ]; then
+  echo "  pre-push WARNING: could not read origin/dev..HEAD for the trailer check."
+  echo "      This measured NOTHING. Re-run after 'git fetch origin' if the range is stale."
+elif [ "$ATRC" -ne 0 ]; then
   exit 1
 fi
 

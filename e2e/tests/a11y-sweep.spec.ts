@@ -91,27 +91,36 @@ type Violation = {
 };
 
 /**
- * 🚨 `best-practice` is in this list because WITHOUT it this sweep could not have caught the
- * defect it was built for.
+ * `best-practice` adds 30 rules, and they earn their place by what they found: on the first
+ * nine-surface run (2026-09-17) `region`, `landmark-one-main`, `landmark-unique` and
+ * `page-has-heading-one` all fired. The severity policy still fails only on critical/serious, so
+ * that tail is visible without becoming a gate.
  *
- * core#720 exists because the auth inputs had **no accessible name at all**. Read out of the
- * installed axe-core, the `label` rule's `any:` is:
+ * 🔴 **CORRECTED 2026-09-17. This comment used to say best-practice is here because without it the
+ * sweep "could not have caught the defect it was built for", since "the rule that catches
+ * placeholder-only labelling is `label-title-only`". That was reasoned from the rule's description
+ * and never measured, and it is FALSE.** Planted inputs on /login, each with exactly one naming
+ * route, scanned with this tag set on axe-core 4.13.0:
  *
- *     [implicit-label, explicit-label, aria-label, aria-labelledby,
- *      non-empty-title, non-empty-placeholder, presentational-role]
+ *     placeholder only        label: pass        label-title-only: pass        <- nothing flags it
+ *     title only              label: pass        label-title-only: VIOLATION   <- the rule's own case
+ *     aria-describedby only   label: VIOLATION   label-title-only: VIOLATION
+ *     no name at all          label: VIOLATION   label-title-only: pass
+ *     <label for=…>           label: pass        label-title-only: pass
  *
- * **`non-empty-placeholder` satisfies it**, and `login.py`'s input has a placeholder — so the
- * pre-fix inputs would have passed a wcag-only scan. The rule that catches placeholder-only
- * labelling is `label-title-only`, whose tags are `["cat.forms", "best-practice"]`, and the
- * original tag set excluded it.
- *
- * Measured: this adds 30 best-practice rules. That is a lot of new *reporting* on an app never
- * swept before, and it is wanted — the severity policy still fails only on critical/serious, so
- * the tail becomes visible without becoming a gate.
+ * The `label` rule's `any:` includes `non-empty-placeholder`, so axe treats a placeholder as a name
+ * and **no axe rule catches an input named only by its placeholder** — which is how most of this
+ * app's connector fields are named. That class is enforced statically, by
+ * `tests/test_ui/test_input_accessible_names.py`, which deliberately does not accept a placeholder.
+ * Probe: `plans/qa/notes/probe-720/probe-label-title-only.mjs`.
  */
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"];
 
-/** The rule that covers this issue's own defect class. Asserted to have RUN, not merely listed. */
+/**
+ * A form-labelling rule that runs only under `best-practice`. It flags an input named solely by
+ * `title` or `aria-describedby` (measured above) — NOT one named by a placeholder. Asserted to
+ * have RUN, so a tag edit cannot switch it off silently.
+ */
 const FORM_LABEL_RULE = "label-title-only";
 
 type AxeResult = {
@@ -246,6 +255,20 @@ test.describe("Accessibility sweep @informational", () => {
     // authorise the staging app, and nothing else should be handed them.
     test.use({ extraHTTPHeaders: {} });
 
+    // 🚨 These pages are PRODUCTION, and they carry Plausible. Unblocked, every `dev` push would
+    // record three pageviews from a CI runner into the analytics Growth reads — on a site whose
+    // real traffic is small enough for that to matter. The script adds nothing an accessibility
+    // scan reads, so it is refused at the network layer, and the refusal is counted rather than
+    // assumed: a scan that silently let the beacon through would read exactly the same.
+    let analyticsBlocked = 0;
+    test.beforeEach(async ({ page }) => {
+      analyticsBlocked = 0;
+      await page.route(/^https:\/\/plausible\.datanika\.io\//, (route) => {
+        analyticsBlocked += 1;
+        return route.abort();
+      });
+    });
+
     for (const surface of LANDING_SURFACES) {
       test(`${surface.name} has no critical or serious a11y violations`, async ({ page }) => {
         const url = new URL(surface.path, LANDING_BASE).toString();
@@ -259,6 +282,19 @@ test.describe("Accessibility sweep @informational", () => {
           timeout: 30_000,
         });
 
+        // The refusal above is only evidence if it fired: a page that references the analytics
+        // script must have had at least one request to it refused.
+        const analyticsTags = await page.locator('script[src*="plausible.datanika.io"]').count();
+        console.log(
+          `[a11y] ${surface.name}: analytics script tags=${analyticsTags}, requests refused=${analyticsBlocked}`,
+        );
+        if (analyticsTags > 0) {
+          expect(
+            analyticsBlocked,
+            `${url} loads Plausible but no request to it was refused — this run recorded a pageview`,
+          ).toBeGreaterThan(0);
+        }
+
         const result = await scanFull(page);
         report(surface.name, result);
         expectNoBlocking(surface.name, result);
@@ -267,12 +303,15 @@ test.describe("Accessibility sweep @informational", () => {
   });
 
   /**
-   * The rule that covers this issue's own defect class must actually RUN.
+   * The best-practice form rule must actually RUN.
    *
-   * 🔑 This exists because the first version of this sweep silently did not run it: a tag set of
-   * wcag-only excludes `label-title-only`, which is `best-practice`. The sweep would have passed
-   * the exact inputs core#720 was filed about. Asserting the rule is *evaluated* — not that it
-   * passes — is what stops a future tag edit reopening that gap without anyone noticing.
+   * 🔑 The first version of this sweep silently did not run it: a wcag-only tag set excludes
+   * `label-title-only`, which is `best-practice`. Asserting the rule is *evaluated* — not that it
+   * passes — stops a future tag edit dropping it without anyone noticing.
+   *
+   * 🔴 Corrected 2026-09-17: this used to call it "the only rule that catches an input labelled
+   * solely by its placeholder". It is not — no axe rule catches that (see `TAGS`). What it does
+   * catch is a name carried only by `title` or `aria-describedby`.
    */
   test(`the ${FORM_LABEL_RULE} rule is actually evaluated`, async ({ page }) => {
     await page.goto("/login");
@@ -282,8 +321,9 @@ test.describe("Accessibility sweep @informational", () => {
     expect(
       ran.has(FORM_LABEL_RULE),
       `axe did not evaluate \`${FORM_LABEL_RULE}\` on /login. It is tagged best-practice, so a ` +
-        `wcag-only tag set switches it off — and with it the only rule that catches an input ` +
-        `labelled solely by its placeholder, which is precisely core#720's defect. ` +
+        `wcag-only tag set switches it off — and with it the check for inputs named only by ` +
+        `title or aria-describedby. (Placeholder-only naming is not an axe finding at all; ` +
+        `tests/test_ui/test_input_accessible_names.py enforces that.) ` +
         `Rules that ran: ${[...ran].sort().slice(0, 12).join(", ")}…`,
     ).toBe(true);
 

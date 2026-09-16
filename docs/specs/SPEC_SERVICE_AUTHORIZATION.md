@@ -297,6 +297,20 @@ and splitting scopes would be a breaking API change bought to fix something §4 
 Reflex handler instead leaves the gap open *and* removes the reason to split scopes. **If the service
 work is descoped, Q1 reopens** — say so rather than letting the answer outlive its premise.
 
+⚠️ **And a route inherits the intersection only along a path that reaches the check** (added
+2026-09-16, [core#1370]). The intersection runs inside `assert_org_role`. A route that performs a
+guarded service mutation inherits it, whatever its scope says. **A route whose work is not a guarded
+service mutation — a read, a pure function, an outbound probe — inherits nothing**, so its `:write`
+scope grants reach and no authority. Such a route calls `assert_org_role` itself, at its operation's
+threshold and in §7.3's order. 🚨 **Never read a route's role check off its scope.** *"The scope grants
+reach; the role grants authority"* is a statement about the decision; the code honours it only where
+something calls the check. §11.3 applies this to the REST Test route.
+
+**Not established by this spec: whether any other route has that shape.** A census of it treats what it
+finds as `WORKFLOW_RULES` §4 material — neutral issue, write-up private — and shows its guard red only
+where the output stays private (a local run, or a mutation), then lands it green. A red guard's CI log
+on a public repository names the route.
+
 **Q2 — existing keys: intersected on next use, or grandfathered?**
 
 **Decision: intersected on next use. No grandfather clause.**
@@ -434,8 +448,11 @@ from *"two layers of three"* to *"three of four"*.
 
 ## §11 — Connection **Test**: `editor`, on both surfaces (2026-09-16, [core#1370])
 
-Raised by Engineering while bounding test-connection stalls ([core#1367]). Two connection operations
-enforce **no** role:
+Raised by Engineering while bounding test-connection stalls ([core#1367]).
+**Amended 2026-09-16, after implementation:** the REST half is an explicit check (11.3), and §8a now
+states why a scope never stands in for one.
+
+Two connection operations enforce **no** role:
 
 - `ConnectionState.test_connection_from_form` (`connection_state.py:1683`) — **Test** on the unsaved form.
 - `ConnectionState.test_saved_connection` (`connection_state.py:1720`) — **Test** on a saved row.
@@ -456,7 +473,7 @@ be trusted to have produced it.
 | operation | surface(s) | role | where enforced |
 |---|---|---|---|
 | **Test on the unsaved form** | Reflex only (`test_connection_from_form`) | **`editor`** | the Reflex handler — `_check_role("editor")` |
-| **Test on a saved row** | Reflex (`test_saved_connection`) **and** REST `POST /api/v1/connections/{id}/test` | **`editor`** | Reflex handler (`_check_role("editor")`); REST already at scope `connections:write`, which under §8 requires the owner be `editor`+ |
+| **Test on a saved row** | Reflex (`test_saved_connection`) **and** REST `POST /api/v1/connections/{id}/test` | **`editor`** | Reflex handler (`_check_role("editor")`); the REST endpoint calls `assert_org_role` itself — its `connections:write` scope does not supply the role (§8a, 11.3) |
 
 **Reasoning, in the register this spec already uses (§2's one rule, its three exception families).**
 Test is neither the ordinary lifecycle nor a deletion, but it is not a read either: it **exercises the
@@ -482,9 +499,10 @@ read**, and the read is already available to viewers.
 2. **Test-on-form is the one operation where the UI check *is* the control**, and that is correct here
    rather than the §6 hazard: there is no second surface (no REST endpoint tests an unsaved form) and
    no service mutation to inherit a check. Saved-row Test *does* have a second surface, and §3's rule
-   holds for it — the two surfaces must agree; they do, at `editor`, by two different mechanisms
-   (handler check + REST scope). Record the agreement rather than routing both through one method that
-   would have to grow an `actor_user_id` the pure verdict function must not carry.
+   holds for it — the two surfaces must agree; they do, at `editor`, by two different mechanisms: the
+   handler's `_check_role`, and an explicit `assert_org_role` call in the REST endpoint. Record the
+   agreement rather than routing both through one method that would have to grow an `actor_user_id`
+   the pure verdict function must not carry.
 
 ### Acceptance criteria
 
@@ -495,11 +513,17 @@ Numbered to stand alone; they follow §5/§7's shapes.
      per-threshold i18n key, in all nine locales (§7.2). **Red first:** it passes for a viewer on
      current `dev`. **Control:** an `editor` reaches the test.
 11.2 `test_saved_connection` refuses a `viewer` the same way, with the same message and control.
-11.3 The saved-row REST endpoint's `editor` threshold is **asserted**, not assumed: a key whose owner
-     is a `viewer` is refused at `POST /api/v1/connections/{id}/test`. This follows from
-     `connections:write` + §8 and needs no new code — assert it (§7.1's status **and** body, with an
-     owner-is-`editor` negative control, §5 AC8) so the two surfaces are pinned together and a later
-     scope edit cannot silently split them.
+11.3 The saved-row REST endpoint enforces `editor` **with its own call**:
+     `POST /api/v1/connections/{id}/test` calls `assert_org_role(..., required="editor")` **after** the
+     org-scoped lookup and **before** any outbound connection. That is §7.3's order, so an id from
+     another org still answers `404`, and a refused caller never causes a dial. A key whose owner is a
+     `viewer` receives §7.1's `403`, asserted by status **and** body (`error == "insufficient_role"`,
+     `required_role == "editor"`), with an owner-is-`editor` negative control (§5 AC8). The case sits in
+     the same table as the other endpoint refusals, so the two surfaces stay pinned together and a later
+     scope edit cannot split them.
+     🔴 **AMENDED 2026-09-16.** This criterion derived the threshold from `connections:write` plus §8 and
+     asked only for an assertion. The contract is the explicit call above, for the reason §8a now
+     states: a route's role check is never read off its scope.
 11.4 The §1 table gains a **Test** row that names §11, not one the census "produced" — §1's method
      could not have.
 

@@ -219,6 +219,12 @@ def run_pipeline(
         encryption = EncryptionService(settings.credential_encryption_key)
 
     try:
+        # core#657 §7 2a, the pre-flight checkpoint — before the quota gate (see run_upload).
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
+
         # Check run quota before starting (cloud plugin may block).
         # Load the pipeline first so we can pass a cheap prediction
         # (Path A in datanika-cloud/docs/billing_contract.md). Falls
@@ -280,6 +286,12 @@ def run_pipeline(
 
         # Clean stale dbt artifacts before run
         dbt_svc.clean_target(org_id)
+
+        # core#657 §7 2a, immediately before the engine.
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
 
         # Execute dbt command
         result = dbt_svc.run_command(

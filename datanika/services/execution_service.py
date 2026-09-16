@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from datanika.models.dependency import NodeType
@@ -50,6 +50,41 @@ def is_cancelled(run: Run) -> bool:
     return run.status == RunStatus.CANCELLED
 
 
+#: What a run that never reached its engine records, beside ``rows_loaded = 0`` (core#657 §7 2a).
+CANCELLED_BEFORE_START_LOG = (
+    "Cancelled before it started: the engine never ran, so nothing was read from the source "
+    "and nothing was written to the destination."
+)
+
+
+def _transition_unless_cancelled(session: Session, org_id: int, run: Run, **values) -> bool:
+    """Write a lifecycle transition IN THE DATABASE, refusing to overwrite ``CANCELLED``.
+
+    core#657, measured 2026-09-16. The guards used to read ``run.status`` off ``run =
+    get_org_run(session, ...)``, an ORM ``SELECT`` — which does **not** overwrite the loaded
+    attributes of an instance already in the session's identity map. Every task holds such an
+    instance across its engine call, so a cancel committed by the API's own session never reached
+    the worker's guard: ``complete_run`` read its stale ``RUNNING`` and wrote ``SUCCESS`` over the
+    cancellation, ``fail_run`` wrote ``FAILED`` and paged, and ``start_run`` started a run cancelled
+    while ``PENDING``. Two-session probe: ``success`` / ``failed`` / ``running``; the same sequence
+    with no reference held preserved ``cancelled``, which is what attributes it to the identity map.
+
+    So the predicate lives in the ``UPDATE`` (``… AND status <> 'CANCELLED'``). It reads the row as
+    it is at write time: no stale read, and no gap between a read and a write for a cancel to land
+    in. The instance is refreshed afterwards so the caller's object agrees with the row.
+
+    Returns whether this call wrote the transition. ``False`` means the run was cancelled.
+    """
+    result = session.execute(
+        update(Run)
+        .where(Run.id == run.id, Run.org_id == org_id, Run.status != RunStatus.CANCELLED)
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    session.refresh(run, attribute_names=list(values))
+    return result.rowcount == 1
+
+
 class ExecutionService:
     def create_run(
         self,
@@ -72,10 +107,40 @@ class ExecutionService:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
-        run.status = RunStatus.RUNNING
-        run.started_at = datetime.now(UTC)
-        session.flush()
+        # core#657: a run cancelled while PENDING stays CANCELLED, and gets no start time.
+        _transition_unless_cancelled(
+            session, org_id, run, status=RunStatus.RUNNING, started_at=datetime.now(UTC)
+        )
         return run
+
+    def is_cancelled_now(self, session: Session, org_id: int, run_id: int) -> bool:
+        """Is the run cancelled, read from the DATABASE — never from the session's identity map?
+
+        core#657 §7 2a, the pre-flight checkpoint. A column ``SELECT`` returns the row's current
+        value; ``get_org_run(...).status`` returns whatever this session loaded earlier, which is
+        exactly the reading that never saw a cancel (see ``_transition_unless_cancelled``).
+        """
+        status = session.execute(
+            select(Run.status).where(Run.id == run_id, Run.org_id == org_id)
+        ).scalar_one_or_none()
+        return status == RunStatus.CANCELLED
+
+    def skip_if_cancelled(self, session: Session, org_id: int, run_id: int) -> bool:
+        """The pre-flight checkpoint (``SPEC_RUN_CANCELLATION`` §7 **2a**, not 2b).
+
+        ``True`` means the caller must not invoke its engine. The run then records what actually
+        happened — ``rows_loaded = 0`` and a log line saying the engine never ran — which is a
+        measurement, not an unknown. Its status is already ``CANCELLED`` and stays so.
+
+        ⚠️ This stops a run that has not reached its engine. A run already inside
+        ``pipeline.run()`` or a dbt invoke is not stopped by anything here: both are single opaque
+        calls and §6 rules revocation out. Reporting this as "cancellation stops runs" is the
+        overclaim §7.2 warns about.
+        """
+        if not self.is_cancelled_now(session, org_id, run_id):
+            return False
+        self.complete_run(session, org_id, run_id, rows_loaded=0, logs=CANCELLED_BEFORE_START_LOG)
+        return True
 
     def complete_run(
         self,
@@ -105,13 +170,16 @@ class ExecutionService:
         # they are the evidence of what the worker did before it was told to stop, and
         # AC3 asks the product to say what happened to partially-loaded data.
         #
-        # 🚨 This does NOT stop metering, and reading it that way is the easy mistake:
-        # this method emits no hook at all. `run.*_completed` fires from the TASKS, after
-        # this returns (upload_tasks.py, pipeline_tasks.py, transformation_tasks.py), so a
-        # cancelled run still bills. That is core#657 AC4 and it is still open.
-        if not is_cancelled(run):
-            run.status = RunStatus.SUCCESS
-            run.finished_at = datetime.now(UTC)
+        # 🔴 Written as a compare-and-set in the database (core#657, 2026-09-16). The previous
+        # `if not is_cancelled(run)` read this session's identity map, which in every task still
+        # held the RUNNING loaded before the engine call, so a cancel committed by the API was
+        # overwritten with SUCCESS. See `_transition_unless_cancelled`.
+        #
+        # This method emits no hook: `run.*_completed` is announced by the TASKS, with the run's
+        # real status read at that point (AC4, `announce_completion`).
+        _transition_unless_cancelled(
+            session, org_id, run, status=RunStatus.SUCCESS, finished_at=datetime.now(UTC)
+        )
         run.rows_loaded = rows_loaded
         run.logs = logs
         if bytes_processed is not None:
@@ -131,11 +199,11 @@ class ExecutionService:
         if run is None:
             return None
         # core#657 AC2, same shape as `complete_run`: the error is recorded, the terminal
-        # CANCELLED is not overwritten.
-        cancelled = is_cancelled(run)
-        if not cancelled:
-            run.status = RunStatus.FAILED
-            run.finished_at = datetime.now(UTC)
+        # CANCELLED is not overwritten — decided in the database, and the announce below follows
+        # what THIS write did rather than a second read that a cancel could land between.
+        cancelled = not _transition_unless_cancelled(
+            session, org_id, run, status=RunStatus.FAILED, finished_at=datetime.now(UTC)
+        )
         run.error_message = error_message
         run.logs = logs
         session.flush()

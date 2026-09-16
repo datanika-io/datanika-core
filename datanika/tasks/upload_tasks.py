@@ -140,6 +140,13 @@ def run_upload(
         encryption = EncryptionService(settings.credential_encryption_key)
 
     try:
+        # core#657 §7 2a, the pre-flight checkpoint — before the quota gate, so a run the user
+        # cancelled while it was queued consults nothing, starts nothing and marks nothing ERROR.
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
+
         # Check run quota before starting (cloud plugin may block).
         # Uploads are Path A with predicted_runs=1 — one submission
         # counts as one run for both gating and metering, per
@@ -168,6 +175,12 @@ def run_upload(
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
 
         bytes_processed = None  # filled by either ETL or ELT path
+
+        # core#657 §7 2a, immediately before the engine: a cancel that landed after the start.
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
 
         if upload.mode == UploadMode.ELT:
             # V2 P3 — ELT path: stream source → Arrow → raw schema

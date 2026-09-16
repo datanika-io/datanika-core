@@ -16,6 +16,7 @@ from datanika.services.captcha_service import CaptchaService
 from datanika.services.client_ip import resolve_client_ip
 from datanika.services.email_verification import request_email_verification
 from datanika.services.rate_limit_service import RateLimitService
+from datanika.services.signup_conversion import claim_signup_completed
 from datanika.services.user_service import UserService, UserServiceError
 from datanika.ui.state.base_state import check_role_hierarchy, get_sync_session
 
@@ -808,7 +809,30 @@ class AuthState(rx.State):
         # left by an earlier attempt cannot outlive this sign-in.
         self.invite_notice = "not_applied" if params.get("invite", "") == "not_applied" else ""
         self._load_current_role(user_id, org_id)
-        return rx.redirect(self._post_auth_redirect_target())
+        redirect = rx.redirect(self._post_auth_redirect_target())
+
+        # core#1369 (SPEC_SIGNUP_SOCIAL_AUTH §8h). A Google, GitHub or SSO signup ends here, and
+        # this is the only handler positioned to RETURN a plugin's event to the browser — so this
+        # is where `user.signup_completed` fires for those paths, as `signup()` fires it for the
+        # password one.
+        #
+        # 🚨 Not from the URL. `is_new=1` is in this page's query string and the user can write it
+        # there themselves; the callback recorded the backend's own fact as a one-shot marker, and
+        # this claims it. The claim is an atomic delete, so a reload of this route — which re-runs
+        # this `on_load` handler — and a second tab racing the first both find it spent.
+        #
+        # Claimed only here, after the token verified and the user loaded, so a request that cannot
+        # sign in cannot spend a real signup's marker.
+        if not claim_signup_completed(user_id):
+            return redirect
+        try:
+            extra_events = collect_events("user.signup_completed", user_id=user_id)
+        except Exception:
+            # The user is signed in at this point. A plugin that raises must cost the event, never
+            # the redirect that gets them off this page.
+            logger.exception("A user.signup_completed handler failed: user_id=%s", user_id)
+            return redirect
+        return [*extra_events, redirect]
 
     def _clear_session(self) -> None:
         """Drop every trace of the signed-in user from this state object.

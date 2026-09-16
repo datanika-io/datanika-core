@@ -220,7 +220,7 @@ test.describe("Accessibility sweep @informational", () => {
       const anchor = page.locator(surface.mustRead ?? "input").first();
       await expect(
         anchor,
-        `${surface.name}: ${surface.mustRead ?? "no input"} rendered — the scan would read an empty page`,
+        `${surface.name}: ${surface.mustRead ?? "an input"} never rendered — the scan would read an empty page`,
       ).toBeVisible({ timeout: 30_000 });
 
       const result = await scanFull(page);

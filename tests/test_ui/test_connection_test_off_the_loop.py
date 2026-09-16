@@ -81,7 +81,19 @@ def state_without_a_tree(monkeypatch):
     async def _get_state(self, state_cls):
         return _NoTranslations()
 
+    async def _allow(self, min_role):
+        """core#1370 gated both Test handlers at `editor`.
+
+        This file is about *where the driver runs and how long it waits*, not about who may ask.
+        The stand-in above has no `AuthState`, so the real gate would fail on the session check and
+        these tests would go red for a reason unrelated to their subject. The gate itself is
+        asserted — viewer refused, editor admitted — in
+        `tests/test_security/test_connection_test_role_gate.py`.
+        """
+        return True
+
     monkeypatch.setattr(ConnectionState, "get_state", _get_state)
+    monkeypatch.setattr(ConnectionState, "_check_role", _allow)
     return ConnectionState(parent_state=BaseState(init_substates=False), init_substates=False)
 
 

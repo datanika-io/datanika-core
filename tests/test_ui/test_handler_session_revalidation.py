@@ -64,6 +64,11 @@ def _auth(**overrides):
     for name, field in AuthState.__fields__.items():
         default = field.default_factory() if field.default_factory else field.default
         setattr(st, name, default)
+    # core#1370: ``_caller`` returns this stand-in for EVERY state class it is asked for, including
+    # ``I18nState``, so ``_translated`` reads ``.translations`` off it. An empty table is what a
+    # locale missing the key resolves to, so the English fallback is returned — which is what keeps
+    # this file's assertions about the *sentence* reading a string rather than a ``MagicMock``.
+    st.translations = {}
     st._revalidate_session = lambda: AuthState._revalidate_session(st)
     st._clear_session = lambda: AuthState._clear_session(st)
     st._get_user_service = lambda: AuthState._get_user_service(st)
@@ -86,6 +91,12 @@ def _caller(auth_stand_in):
     st.error_message = ""
     st.get_state = AsyncMock(return_value=auth_stand_in)
     st._require_live_session = lambda: BaseState._require_live_session(st)
+    # core#1370: the refusal sentence now resolves through ``_translated`` (§7.2's per-threshold
+    # key), so it is delegated for exactly the reason the docstring above gives for
+    # ``_require_live_session`` — a bare ``MagicMock`` attribute returns a non-awaitable and the
+    # test dies as ``TypeError: object MagicMock can't be used in 'await' expression`` rather than
+    # saying anything about the guard.
+    st._translated = lambda key, fallback: BaseState._translated(st, key, fallback)
     return st
 
 

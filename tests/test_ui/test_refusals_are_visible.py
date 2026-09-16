@@ -75,6 +75,11 @@ def _auth_stand_in(**overrides):
     for name, field in AuthState.__fields__.items():
         default = field.default_factory() if field.default_factory else field.default
         setattr(st, name, default)
+    # core#1370: `_check_role` now resolves its sentence through `_translated`, which asks
+    # `get_state(I18nState)` — and `_caller` below returns this stand-in for *every* state class.
+    # An empty table is what a locale missing the key resolves to, so the English fallback is read
+    # and the assertions below still measure the sentence rather than a MagicMock.
+    st.translations = {}
     st._revalidate_session = lambda: AuthState._revalidate_session(st)
     st._clear_session = lambda: AuthState._clear_session(st)
     st._get_user_service = lambda: AuthState._get_user_service(st)
@@ -92,6 +97,11 @@ def _caller(auth_stand_in):
     # gate. Delegate to the real implementation — a bare MagicMock returns a
     # truthy non-awaitable, and these tests turn on what the guard does.
     st._require_live_session = lambda: BaseState._require_live_session(st)
+    # core#1370: the refusal sentence now resolves through `_translated` (§7.2's per-threshold
+    # key). Delegate to the real implementation for the same reason as the line above — a bare
+    # MagicMock attribute returns a non-awaitable, which fails as `TypeError: object MagicMock
+    # can't be used in 'await' expression` rather than as anything about the guard.
+    st._translated = lambda key, fallback: BaseState._translated(st, key, fallback)
     return st
 
 

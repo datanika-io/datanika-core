@@ -629,18 +629,11 @@ ARMS: tuple[Arm, ...] = (
     ),
 )
 
-#: The known instances of the class that are unfixed on the branch this file ships in. Strict: an
-#: entry cannot outlive its defect, because the fix turns the arm into an XPASS, which fails.
-KNOWN_INSTANCES: dict[str, str] = {
-    "sqlite-path-the-worker-cannot-see": (
-        "core#1401: with no file at the path, sql_database opens an empty SQLite database and the "
-        "run succeeds with 0 tables"
-    ),
-    "kafka-two-topics-both-waiting": (
-        "core#1408: one consumer per topic in one group and one process; the second is never "
-        "assigned a partition and its topic loads nothing on a green run"
-    ),
-}
+#: The known instances of the class that are unfixed on the branch this file ships in. Each gets a
+#: strict xfail in `_param`, written as a literal so its issue is readable where the marker is
+#: (`tests/test_deploy/test_strict_xfail_reasons_name_an_issue.py`). Strict: a fix turns the arm
+#: into an XPASS, which fails, so the marker cannot outlive its defect.
+KNOWN_INSTANCE_ARMS = ("sqlite-path-the-worker-cannot-see", "kafka-two-topics-both-waiting")
 
 #: Every source type without an arm, with the reason. Not a list of exemptions: a list of what this
 #: probe does not yet see. An arm makes its entry fail until it is removed.
@@ -693,9 +686,27 @@ def _param(arm: Arm):
     marks = []
     if "kafka" in arm.needs:
         marks.append(requires_docker)
-    if arm.id in KNOWN_INSTANCES:
+    if arm.id == "sqlite-path-the-worker-cannot-see":
         marks.append(
-            pytest.mark.xfail(strict=True, raises=AssertionError, reason=KNOWN_INSTANCES[arm.id])
+            pytest.mark.xfail(
+                strict=True,
+                raises=AssertionError,
+                reason=(
+                    "core#1401: with no file at the path, sql_database opens an empty SQLite "
+                    "database and the run succeeds with 0 tables"
+                ),
+            )
+        )
+    if arm.id == "kafka-two-topics-both-waiting":
+        marks.append(
+            pytest.mark.xfail(
+                strict=True,
+                raises=AssertionError,
+                reason=(
+                    "core#1408: one consumer per topic in one group and one process; the second "
+                    "is never assigned a partition and its topic loads nothing on a green run"
+                ),
+            )
         )
     return pytest.param(arm, id=arm.id, marks=marks)
 
@@ -896,7 +907,13 @@ class TestThePopulation:
         assert gaps["armed_yet_listed_as_not_probed"] == ["sqlite"]
 
     def test_every_known_instance_names_an_arm(self):
-        assert set(KNOWN_INSTANCES) <= {arm.id for arm in ARMS}
+        assert set(KNOWN_INSTANCE_ARMS) <= {arm.id for arm in ARMS}
+        marked = {
+            arm.id
+            for arm in ARMS
+            if any(m.name == "xfail" and m.kwargs.get("strict") for m in _param(arm).marks)
+        }
+        assert marked == set(KNOWN_INSTANCE_ARMS), marked
 
     def test_arm_ids_are_unique(self):
         ids = [arm.id for arm in ARMS]

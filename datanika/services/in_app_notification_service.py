@@ -91,11 +91,23 @@ class InAppNotificationService:
         return count
 
     @staticmethod
-    def mark_read(session: Session, notification_id: int, org_id: int) -> Notification | None:
+    def _members_own(user_id: int):
+        """The rows a member's inbox holds: their own and the org-wide ones.
+
+        Exactly what :meth:`list_for_user` shows them, so an action reaches no row the member
+        cannot see.
+        """
+        return (Notification.user_id == user_id) | (Notification.user_id.is_(None))
+
+    @staticmethod
+    def mark_read(
+        session: Session, notification_id: int, org_id: int, user_id: int
+    ) -> Notification | None:
         stmt = select(Notification).where(
             Notification.id == notification_id,
             Notification.org_id == org_id,
             Notification.deleted_at.is_(None),
+            InAppNotificationService._members_own(user_id),
         )
         notif = session.execute(stmt).scalar_one_or_none()
         if notif is None:
@@ -133,11 +145,12 @@ class InAppNotificationService:
         return len(notifications)
 
     @staticmethod
-    def dismiss(session: Session, notification_id: int, org_id: int) -> bool:
+    def dismiss(session: Session, notification_id: int, org_id: int, user_id: int) -> bool:
         stmt = select(Notification).where(
             Notification.id == notification_id,
             Notification.org_id == org_id,
             Notification.deleted_at.is_(None),
+            InAppNotificationService._members_own(user_id),
         )
         notif = session.execute(stmt).scalar_one_or_none()
         if notif is None:

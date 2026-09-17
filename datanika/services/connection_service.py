@@ -358,6 +358,11 @@ def assert_local_paths_allowed(config: dict, connection_type: ConnectionType) ->
 #: onboarding path we advertise as needing neither.
 _CONNECT_TIMEOUT_KWARG = {
     ConnectionType.MSSQL: "login_timeout",  # pymssql
+    # The same dialect as MSSQL. Missing here, Synapse fell through to `connect_timeout`, which
+    # pymssql.connect does not accept, so its Test Connection raised TypeError before it reached
+    # the server (core#1443). tests/test_services/test_pymssql_connect_args.py derives every
+    # type that reaches pymssql, so the next one cannot be missed the same way.
+    ConnectionType.SYNAPSE: "login_timeout",  # pymssql
     ConnectionType.ORACLE: "tcp_connect_timeout",  # oracledb
 }
 

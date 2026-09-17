@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from datanika.models.dependency import NodeType
@@ -357,6 +357,46 @@ class ExecutionService:
     def get_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
         """The public reader. Kept as a method for its callers; one predicate."""
         return get_org_run(session, org_id, run_id)
+
+    def latest_upload_catalog_verdicts(self, session: Session, org_id: int) -> list:
+        """The most recent successful run of each upload, and what its catalogue sync found.
+
+        Rows of ``(target_id, run_id, catalog_sync_verdict, catalog_sync_schema)``, one per upload
+        with a successful run (core#1398). `/models` asks this on every load, so it selects four
+        columns and never a run's logs. "Most recent" is the latest ``finished_at``, then the
+        highest id.
+        """
+        ranked = (
+            select(
+                Run.target_id,
+                Run.id.label("run_id"),
+                Run.catalog_sync_verdict,
+                Run.catalog_sync_schema,
+                func.row_number()
+                .over(
+                    partition_by=Run.target_id,
+                    order_by=(Run.finished_at.desc().nulls_last(), Run.id.desc()),
+                )
+                .label("recency"),
+            )
+            .where(
+                Run.org_id == org_id,
+                Run.target_type == NodeType.UPLOAD,
+                Run.status == RunStatus.SUCCESS,
+            )
+            .subquery()
+        )
+        stmt = (
+            select(
+                ranked.c.target_id,
+                ranked.c.run_id,
+                ranked.c.catalog_sync_verdict,
+                ranked.c.catalog_sync_schema,
+            )
+            .where(ranked.c.recency == 1)
+            .order_by(ranked.c.target_id)
+        )
+        return list(session.execute(stmt).all())
 
     def list_runs(
         self,

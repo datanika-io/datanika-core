@@ -11,6 +11,7 @@ from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import Connection, ConnectionType
 from datanika.models.dependency import NodeType
+from datanika.models.run import CatalogSyncVerdict
 from datanika.models.upload import Upload, UploadMode, UploadStatus
 from datanika.services.catalog_service import CatalogService, dbt_sources_for_entries
 from datanika.services.connection_service import _build_sa_url, get_org_connection
@@ -318,6 +319,9 @@ def run_upload(
             )
 
         table_count = 1  # fallback
+        # core#1398: what the sync found, as data, for `/models` to name per upload. The run's log
+        # keeps the prose below, and this records the same distinction.
+        catalog_verdict, catalog_schema = CatalogSyncVerdict.CATALOGUED, None
         try:
             table_count = _sync_catalog_after_upload(
                 session,
@@ -329,6 +333,7 @@ def run_upload(
             )
         except Exception as exc:
             logger.exception("Catalog sync failed (non-fatal)")
+            catalog_verdict = CatalogSyncVerdict.UNREADABLE
             # Non-fatal to the run, but not invisible: the load succeeded and
             # the data is there, while Models/Catalog will not show it. Saying
             # so on the run is the difference between a user filing a bug and
@@ -360,6 +365,9 @@ def run_upload(
             #
             # Diagnostics only: status, `rows_loaded` and `table_count` are
             # untouched. The load did succeed; the catalog is what is missing.
+            if table_count == 0:
+                catalog_verdict = CatalogSyncVerdict.NO_TABLES if rows else CatalogSyncVerdict.EMPTY
+                catalog_schema = dataset_name if rows else None
             if rows and table_count == 0:
                 execution_service.append_logs(
                     session,
@@ -371,6 +379,11 @@ def run_upload(
                     "dataset/schema matches where the rows were written, and that it still "
                     "exists.",
                 )
+
+        finished = get_org_run(session, org_id, run_id)
+        if finished is not None:
+            finished.catalog_sync_verdict = catalog_verdict.value
+            finished.catalog_sync_schema = catalog_schema
 
         upload.status = UploadStatus.ACTIVE
         session.flush()

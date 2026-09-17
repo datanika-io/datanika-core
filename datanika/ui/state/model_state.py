@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.dependency import NodeType
-from datanika.models.run import RunStatus
+from datanika.models.run import CatalogSyncVerdict, RunStatus
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
@@ -15,6 +15,20 @@ from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
+
+
+class UncataloguedUpload(BaseModel):
+    """An upload whose most recent successful run did not catalogue its tables (core#1398)."""
+
+    upload_id: int = 0
+    upload_name: str = ""
+    run_id: int = 0
+    #: `/runs?run=<id>` opens that run's log.
+    run_href: str = ""
+    #: `unreadable` or `no_tables`, a `CatalogSyncVerdict` value.
+    verdict: str = ""
+    #: Translated and filled in on the server: a Reflex Var cannot be formatted in the browser.
+    message: str = ""
 
 
 class ModelItem(BaseModel):
@@ -68,6 +82,45 @@ class ModelState(BaseState):
     #: the diagnosis onto the run (see `tasks/upload_tasks.py`), and this flag
     #: is what points the user at it.
     loaded_without_catalog: bool = False
+
+    #: Each upload whose most recent SUCCESSFUL run did not catalogue its tables (core#1398,
+    #: `SPEC_EARNED_VERDICTS` §4.6), however many other rows the catalogue lists.
+    #: `loaded_without_catalog` answers only when the whole catalogue is empty, so one catalogued
+    #: upload anywhere in the org used to hide every uncatalogued one.
+    uncatalogued_uploads: list[UncataloguedUpload] = []
+
+    async def _uncatalogued_notice(self, upload_name: str, run) -> UncataloguedUpload:
+        """The notice for one upload, in the reader's locale, naming which thing happened.
+
+        Only `no_tables` carries the deleted / renamed / misconfigured advice. When the sync
+        raised, the connection is correct and the catalogue could not read the destination, and
+        advice to change the connection is the same defect as no notice (`PRODUCT_RULES` §15a).
+        """
+        if run.catalog_sync_verdict == CatalogSyncVerdict.NO_TABLES:
+            text = await self._translated(
+                "models.catalog_no_tables",
+                "“{upload}” loaded rows, but no tables were found in schema “{schema}”, so "
+                "nothing from it is listed here. The schema may have been deleted, renamed, or "
+                "set incorrectly on the destination connection.",
+            )
+        else:
+            text = await self._translated(
+                "models.catalog_unreadable",
+                "“{upload}” loaded its data, but the catalog could not read the destination, "
+                "so its tables are not listed here. The data is in the destination, and the "
+                "connection does not need to change.",
+            )
+        message = text.replace("{upload}", upload_name).replace(
+            "{schema}", run.catalog_sync_schema or ""
+        )
+        return UncataloguedUpload(
+            upload_id=run.target_id,
+            upload_name=upload_name,
+            run_id=run.run_id,
+            run_href=f"/runs?run={run.run_id}",
+            verdict=str(run.catalog_sync_verdict),
+            message=message,
+        )
 
     async def load_models(self):
         from datanika.ui.state.auth_state import AuthState
@@ -167,6 +220,17 @@ class ModelState(BaseState):
                 )
             self.models = items
 
+            # core#1398. The most recent successful run of each upload, and what its catalogue
+            # sync found. A later failure loaded nothing new, so it neither raises nor clears a
+            # notice. NULL is a run from before the verdict was recorded: nothing is known.
+            uncatalogued = [
+                (upload_names[latest.target_id], latest)
+                for latest in exec_svc.latest_upload_catalog_verdicts(session, org_id)
+                if latest.target_id in upload_names
+                and latest.catalog_sync_verdict
+                in (CatalogSyncVerdict.UNREADABLE, CatalogSyncVerdict.NO_TABLES)
+            ]
+
             # Only asked when the catalog is empty, which is the only case that
             # consumes the answer — so the normal page load pays nothing.
             # Reset unconditionally: this state object is reused across loads,
@@ -180,6 +244,9 @@ class ModelState(BaseState):
                     r.rows_loaded is not None and r.rows_loaded > 0
                     for r in exec_svc.list_runs(session, org_id, status=RunStatus.SUCCESS)
                 )
+        self.uncatalogued_uploads = [
+            await self._uncatalogued_notice(name, run) for name, run in uncatalogued
+        ]
         # Set AFTER both the rows and the empty-state diagnosis, so no render can
         # catch the flag True beside a half-computed answer.
         self.models_loaded = True

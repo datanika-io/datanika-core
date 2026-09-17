@@ -133,7 +133,7 @@ class TestInAppNotificationService:
             resource_type="run",
             resource_id=2,
         )
-        svc.mark_read(db_session, n2.id, org.id)
+        svc.mark_read(db_session, n2.id, org.id, user_id=1)
         db_session.flush()
 
         items = svc.list_for_user(db_session, org.id, user_id=1, unread_only=True)
@@ -165,7 +165,7 @@ class TestInAppNotificationService:
             resource_type="run",
             resource_id=3,
         )
-        svc.mark_read(db_session, n3.id, org.id)
+        svc.mark_read(db_session, n3.id, org.id, user_id=1)
         db_session.flush()
 
         assert svc.unread_count(db_session, org.id, user_id=1) == 2
@@ -181,7 +181,7 @@ class TestInAppNotificationService:
         )
         db_session.flush()
         assert n.read_at is None
-        result = svc.mark_read(db_session, n.id, org.id)
+        result = svc.mark_read(db_session, n.id, org.id, user_id=1)
         assert result is not None
         assert result.read_at is not None
 
@@ -195,7 +195,7 @@ class TestInAppNotificationService:
             resource_id=1,
         )
         db_session.flush()
-        assert svc.mark_read(db_session, n.id, org_id=999) is None
+        assert svc.mark_read(db_session, n.id, org_id=999, user_id=1) is None
 
     def test_mark_all_read(self, db_session, org, svc):
         svc.create(
@@ -229,7 +229,7 @@ class TestInAppNotificationService:
             resource_id=1,
         )
         db_session.flush()
-        assert svc.dismiss(db_session, n.id, org.id) is True
+        assert svc.dismiss(db_session, n.id, org.id, user_id=1) is True
         items = svc.list_for_user(db_session, org.id, user_id=1)
         assert len(items) == 0
 
@@ -243,7 +243,7 @@ class TestInAppNotificationService:
             resource_id=1,
         )
         db_session.flush()
-        assert svc.dismiss(db_session, n.id, org_id=999) is False
+        assert svc.dismiss(db_session, n.id, org_id=999, user_id=1) is False
 
     def test_tenant_isolation(self, db_session, org, svc):
         svc.create(
@@ -481,3 +481,89 @@ class TestNotificationEndpoints:
     def test_auth_required(self, client):
         resp = client.get("/api/v1/notifications")
         assert resp.status_code == 401
+
+
+class TestAMembersInboxIsTheirOwn:
+    """Marking read and dismissing act on the member's OWN notifications and on org-wide ones --
+    the same rows ``list_for_user`` shows them -- and on nobody else's. Each refusal sits beside the
+    member's own notification and an org-wide one, which do change."""
+
+    @staticmethod
+    def _notif(svc, db_session, org, user_id):
+        n = svc.create(
+            db_session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            title="T",
+            resource_type="run",
+            resource_id=1,
+            user_id=user_id,
+        )
+        db_session.flush()
+        return n
+
+    def test_another_members_notification_is_not_marked_read(self, db_session, org, svc):
+        theirs = self._notif(svc, db_session, org, user_id=2)
+
+        assert svc.mark_read(db_session, theirs.id, org.id, user_id=1) is None
+        db_session.refresh(theirs)
+        assert theirs.read_at is None
+
+    def test_another_members_notification_is_not_dismissed(self, db_session, org, svc):
+        theirs = self._notif(svc, db_session, org, user_id=2)
+
+        assert svc.dismiss(db_session, theirs.id, org.id, user_id=1) is False
+        db_session.refresh(theirs)
+        assert theirs.deleted_at is None
+
+    def test_the_members_own_notification_is_marked_and_dismissed(self, db_session, org, svc):
+        mine = self._notif(svc, db_session, org, user_id=1)
+
+        assert svc.mark_read(db_session, mine.id, org.id, user_id=1) is not None
+        assert svc.dismiss(db_session, mine.id, org.id, user_id=1) is True
+
+    def test_an_org_wide_notification_is_marked_by_any_member(self, db_session, org, svc):
+        everyone = self._notif(svc, db_session, org, user_id=None)
+
+        assert svc.mark_read(db_session, everyone.id, org.id, user_id=2) is not None
+
+
+class TestAnotherMembersNotificationOverRest:
+    def test_mark_read_and_dismiss_answer_404(self, client, fake_api_key, rate_limit_ok, engine):
+        """Not 403: the notification is not the caller's to know about, the same answer as an id
+        that does not exist -- and the control, the caller's own, is served."""
+        session = SASession(engine)
+        org = Organization(name="Inbox", slug="inbox-own")
+        session.add(org)
+        session.flush()
+        fake_api_key.org_id = org.id
+        svc = InAppNotificationService()
+        theirs = svc.create(
+            session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            "T",
+            "run",
+            1,
+            user_id=fake_api_key.user_id + 1,
+        )
+        mine = svc.create(
+            session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            "T",
+            "run",
+            2,
+            user_id=fake_api_key.user_id,
+        )
+        session.commit()
+        headers = {"Authorization": "Bearer etf_test"}
+        with _patch_auth(fake_api_key, rate_limit_ok, session):
+            read_theirs = client.patch(f"/api/v1/notifications/{theirs.id}/read", headers=headers)
+            dismiss_theirs = client.delete(f"/api/v1/notifications/{theirs.id}", headers=headers)
+            read_mine = client.patch(f"/api/v1/notifications/{mine.id}/read", headers=headers)
+        session.close()
+
+        assert read_theirs.status_code == 404
+        assert dismiss_theirs.status_code == 404
+        assert read_mine.status_code == 200

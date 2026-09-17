@@ -204,12 +204,23 @@ def _ser_run(r):
     }
 
 
-def _ser_channel(ch):
+#: What a member below the channel threshold reads in place of each configuration value.
+REDACTED = "[redacted]"
+
+
+def _ser_channel(ch, *, reveal_config: bool = True):
+    """``reveal_config=False`` keeps the configuration's KEYS and replaces every value.
+
+    SPEC_SERVICE_AUTHORIZATION §2 puts notification channels at ``admin`` because the row holds
+    the webhook URL / bot token, and ``NotificationService._redact`` treats every config value as
+    a secret; the Reflex list renders no configuration for any role.
+    """
+    config = ch.config if reveal_config else dict.fromkeys(ch.config or {}, REDACTED)
     return {
         "id": ch.id,
         "name": ch.name,
         "channel_type": ch.channel_type.value,
-        "config": ch.config,
+        "config": config,
         "events": ch.events,
         "is_active": ch.is_active,
         "created_at": ch.created_at.isoformat() if ch.created_at else None,
@@ -1252,7 +1263,7 @@ def mark_notification_read(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
-    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id)
+    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id, api_key.user_id)
     if notif is None:
         return _error(404, "Notification not found")
     return JSONResponse(_ser_notification(notif))
@@ -1275,7 +1286,7 @@ def dismiss_notification(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
-    if not InAppNotificationService.dismiss(session, nid, api_key.org_id):
+    if not InAppNotificationService.dismiss(session, nid, api_key.org_id, api_key.user_id):
         return _error(404, "Notification not found")
     return JSONResponse({"deleted": True})
 
@@ -1285,10 +1296,26 @@ def dismiss_notification(request, api_key, session):
 # ---------------------------------------------------------------------------
 
 
+def _may_read_channel_config(session, api_key) -> bool:
+    """True when the key owner's CURRENT role reaches the channel threshold (`admin`, §2)."""
+    try:
+        assert_org_role(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            required="admin",
+            operation="read_channel_config",
+        )
+    except InsufficientRoleError:
+        return False
+    return True
+
+
 @api_endpoint(required_scope="notifications:read")
 def list_notification_channels(request, api_key, session):
     items = _notif_svc.list_channels(session, api_key.org_id)
-    return JSONResponse({"items": [_ser_channel(ch) for ch in items]})
+    reveal = _may_read_channel_config(session, api_key)
+    return JSONResponse({"items": [_ser_channel(ch, reveal_config=reveal) for ch in items]})
 
 
 @api_endpoint(required_scope="notifications:read")
@@ -1297,7 +1324,7 @@ def get_notification_channel(request, api_key, session):
     ch = _notif_svc._get_channel(session, cid, api_key.org_id)
     if ch is None:
         return _error(404, "Notification channel not found")
-    return JSONResponse(_ser_channel(ch))
+    return JSONResponse(_ser_channel(ch, reveal_config=_may_read_channel_config(session, api_key)))
 
 
 @api_endpoint(required_scope="notifications:write")

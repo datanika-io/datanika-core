@@ -227,18 +227,18 @@ class TestServiceInvalidation:
         svc.unread_count(db_session, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) == 1
 
-        svc.mark_read(db_session, n.id, org.id)
+        svc.mark_read(db_session, n.id, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) is None
 
     def test_mark_read_skips_invalidation_when_already_read(self, db_session, org, mock_redis):
         svc = InAppNotificationService()
         n = _make_notif(svc, db_session, org, user_id=1)
-        svc.mark_read(db_session, n.id, org.id)  # first mark: invalidates
+        svc.mark_read(db_session, n.id, org.id, user_id=1)  # first mark: invalidates
         svc.unread_count(db_session, org.id, user_id=1)  # warm cache with 0
         assert notification_unread_cache.get(org.id, 1) == 0
 
         # Second mark_read on an already-read row should not invalidate.
-        svc.mark_read(db_session, n.id, org.id)
+        svc.mark_read(db_session, n.id, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) == 0
 
     def test_mark_all_read_invalidates_user_when_no_org_wide(self, db_session, org, mock_redis):
@@ -274,16 +274,16 @@ class TestServiceInvalidation:
         svc.unread_count(db_session, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) == 1
 
-        svc.dismiss(db_session, n.id, org.id)
+        svc.dismiss(db_session, n.id, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) is None
 
     def test_dismiss_skips_invalidation_when_already_read(self, db_session, org, mock_redis):
         svc = InAppNotificationService()
         n = _make_notif(svc, db_session, org, user_id=1)
-        svc.mark_read(db_session, n.id, org.id)
+        svc.mark_read(db_session, n.id, org.id, user_id=1)
         svc.unread_count(db_session, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) == 0
 
         # Dismissing an already-read row doesn't change anyone's unread count.
-        svc.dismiss(db_session, n.id, org.id)
+        svc.dismiss(db_session, n.id, org.id, user_id=1)
         assert notification_unread_cache.get(org.id, 1) == 0

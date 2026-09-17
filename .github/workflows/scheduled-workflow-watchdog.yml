@@ -238,11 +238,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -o pipefail
+          # core#1448. Read by TIME, not by count. `--runs 40` is 40 push runs of every
+          # workflow, about 20 pushes, and between the 09-16 and 09-17 looks there were 23:
+          # three CI runs on `dev` were read by no detector run at all, and nothing said so.
+          # 48 hours covers the daily cadence, its observed skew (18:44Z-20:32Z) and one
+          # dropped scheduled run.
+          since=$(date -u -d '48 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          # A 48-hour look sees each blind stretch on two days. Hand the reader what was
+          # already reported, so a stretch alerts once and a NEW one still alerts.
+          existing=$(gh issue list --state open --json number --jq '.[0].number // empty' \
+            --search "in:title An E2E tier went unmeasured")
+          : > reported.txt
+          if [ -n "$existing" ]; then
+            gh issue view "$existing" --json body,comments \
+              --jq '.body, .comments[].body' > reported.txt
+          fi
           for job in e2e-sso e2e-staging; do
             echo "=== $job"
             rc=0
             python scripts/e2e_tier_streak.py --job "$job" --branch dev \
-              --runs 40 --max-unmeasured 3 | tee "out-$job.txt" || rc=$?
+              --since "$since" --already-reported reported.txt --max-unmeasured 3 \
+              | tee "out-$job.txt" || rc=$?
             echo "exit=$rc"
             # Exit 2 is BLIND. Exit 1 is merely "not graduated", which is the normal
             # resting state of an informational tier and must never file an issue.
@@ -294,10 +310,10 @@ jobs:
             printf 'One or more E2E tiers produced **no reading** for 3+ consecutive runs on '
             printf '`dev`.\n\n'
             printf 'Nothing is red, and that is the point: this is the ABSENCE of a '
-            printf 'measurement, which reads exactly like a pass. Each unmeasured run refused '
-            printf 'to grade because a newer push had redeployed staging out from under it '
-            printf '(core#876) -- the guard working. What was missing is anyone seeing the '
-            printf 'accumulation.\n\n'
+            printf 'measurement, which reads exactly like a pass. WHY each run carried no '
+            printf 'reading is printed below, from the classifier token of that run (core#1447): '
+            printf 'a verifier refusing to grade another commit (core#876) and a harness that '
+            printf 'produced no verdict at all need opposite responses.\n\n'
             printf '```\n'
             cat out-*.txt
             printf '```\n\nRun: %s/%s/actions/runs/%s\n' \

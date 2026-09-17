@@ -191,6 +191,24 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "so there was no patch-level escape. This is the HTTP client the whole product "
         "uses to reach customer sources -- not a build-time dependency.",
     ),
+    # ---- A lock refresh to the first patched release of each (2026-09-17) ---------------------
+    # Each moved to exactly the version its advisory names, and nothing else in the lock moved.
+    "ecdsa": (
+        "0.19.2",
+        "CVE-2026-33936 (0.19.2) DoS via improper DER length validation in crafted private keys. "
+        "Separate from CVE-2024-23342, which has no fixed release.",
+    ),
+    "idna": ("3.15", "CVE-2026-45409 (3.15) crafted idna.encode() input bypasses an earlier fix"),
+    "pydantic-settings": (
+        "2.14.2",
+        "GHSA-4xgf-cpjx-pc3j (2.14.2) the nested secrets source follows symlinks out of "
+        "secrets_dir",
+    ),
+    "pygments": ("2.20.0", "CVE-2026-4539 (2.20.0) ReDoS in GUID matching"),
+    "pytest": ("9.0.3", "CVE-2025-71176 (9.0.3) tmpdir handling. A dev dependency, not imaged"),
+    "python-dotenv": ("1.2.2", "CVE-2026-28684 (1.2.2) symlink following in set_key"),
+    "requests": ("2.33.0", "CVE-2026-25645 (2.33.0) temp file reuse in extract_zipped_paths()"),
+    "setuptools": ("83.0.0", "CVE-2026-59890 (83.0.0) MANIFEST.in exclusion bypass in an sdist"),
 }
 
 

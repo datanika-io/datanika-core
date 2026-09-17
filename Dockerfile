@@ -91,8 +91,8 @@ ARG APT_REFRESHED_ON=2026-09-17
 # unixodbc + tdsodbc (core#1379): the ODBC runtime and Debian's FreeTDS driver, which the SQL Server
 # and Synapse DESTINATIONS load through (pyodbc). Founder decision: FreeTDS, not Microsoft's driver,
 # so no third-party apt repository and no driver EULA in this image. `tdsodbc`'s own postinst
-# registers `[FreeTDS]` in /etc/odbcinst.ini; the `final` stage asserts that registration and sets
-# FreeTDS's global encryption, because a listed package is not a working driver (measured on #1379).
+# registers `[FreeTDS]` in /etc/odbcinst.ini; the `final` stage asserts that registration, because a
+# listed package is not a working driver (measured on #1379).
 #
 # `apt-get upgrade` runs BEFORE install, because install never upgrades what the base already
 # ships; its stdout is discarded (errors still reach stderr) because this repository's build logs
@@ -345,17 +345,13 @@ RUN set -eu; \
 # to "No supported ODBC driver found". So the build asks pyodbc -- in the artifact -- for the exact
 # name the loader and the dbt profile use (`datanika.services.dlt_mssql_freetds.FREETDS_DRIVER`).
 #
-# 🚨 `encryption = require` IN [global], because FreeTDS ignores Microsoft's `Encrypt=yes` without an
-# error. dlt's connection string is ours and already carries `ENCRYPTION=require`; dbt-sqlserver's is
-# not ours and writes Microsoft's keyword. The global setting covers both. It is REPLACED rather than
-# appended: appending lands under whichever server section happens to be last in Debian's file.
-# The server certificate is NOT verified -- no CA is configured -- and that limitation is stated in
-# the destination documentation (founder decision on #1379).
-RUN set -eu; \
-    printf '[global]\n\ttds version = auto\n\tencryption = require\n' > /etc/freetds/freetds.conf; \
-    grep -Eq '^[[:space:]]*encryption[[:space:]]*=[[:space:]]*require[[:space:]]*$' /etc/freetds/freetds.conf; \
-    /app/.venv/bin/python -c "import pyodbc, sys; d = pyodbc.drivers(); sys.exit(f'FreeTDS ODBC driver not registered: {d}') if 'FreeTDS' not in d else print('odbc drivers:', d)"; \
-    echo "freetds: [global] encryption = require"
+# ⚠️ ENCRYPTION IS NOT CONFIGURED HERE, and that is deliberate. FreeTDS ignores Microsoft's
+# `Encrypt=yes` without an error, and a `[global] encryption = require` in freetds.conf was MEASURED
+# INERT for these DSN-less connections (`SERVER=host,port`): the session read `encrypt_option = FALSE`
+# from the server's DMV. So each consumer carries FreeTDS's own keyword in its connection string --
+# see `datanika/services/dlt_mssql_freetds.py`. The server certificate is not verified (no CA), which
+# the destination documentation states (founder decision on #1379).
+RUN /app/.venv/bin/python -c "import pyodbc, sys; d = pyodbc.drivers(); sys.exit(f'FreeTDS ODBC driver not registered: {d}') if 'FreeTDS' not in d else print('odbc drivers:', d)"
 
 EXPOSE 3000 8000
 

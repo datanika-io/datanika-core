@@ -21,9 +21,14 @@ Three things stood between that decision and a load, each measured on core#1379:
    in cleartext and reports success. Encryption is requested in FreeTDS's own vocabulary,
    ``Encryption=require`` (dlt upper-cases query keys, and the upper-cased keyword was measured to
    work), which gave ``encrypt_option = TRUE`` in the server's own ``sys.dm_exec_connections``.
-   The image also sets it in FreeTDS's ``[global]`` section, for dbt-sqlserver, whose connection
-   string is not ours. A test of this must read the server's DMV -- never the keyword -- because
-   the keyword's presence is exactly the reading that passes while a session is cleartext.
+
+   🚨 Every consumer has to carry the keyword ITSELF. A ``[global] encryption = require`` in
+   ``freetds.conf`` was measured INERT for these DSN-less connections (``SERVER=host,port``): the
+   loader's session read ``FALSE`` with only that setting. dbt-sqlserver builds its own connection
+   string and has no field for an extra keyword, so :data:`FREETDS_DBT_DRIVER` carries it inside
+   the profile's ``driver`` value. A test of any of this must read the server's DMV -- never the
+   keyword -- because the keyword's presence is exactly the reading that passes while a session is
+   cleartext.
 
 3. **dlt maps ``json`` to a native ``json`` column**, which SQL Server 2022 rejects with
    ``Msg 2715`` whichever driver is used. Synapse's own mapper already writes ``nvarchar(max)``;
@@ -49,6 +54,17 @@ FREETDS_DRIVER = "FreeTDS"
 
 #: FreeTDS's own keyword. Microsoft's ``Encrypt=yes`` would be silently ignored (see above).
 FREETDS_ENCRYPTION = {"encryption": "require"}
+
+#: The ``driver`` value for a dbt-sqlserver profile. dbt-sqlserver writes ``DRIVER=<value>``,
+#: wrapping the value in braces unless it is already braced, and then appends Microsoft's
+#: ``encrypt=Yes``, which FreeTDS ignores. A value that starts and ends with a brace passes through
+#: verbatim, so this becomes ``DRIVER={FreeTDS};Encryption={require};...`` -- the only way to get
+#: FreeTDS's keyword into a connection string dbt-sqlserver owns. Measured on the built image:
+#: dbt's own session read ``encrypt_option = TRUE`` with this value, ``FALSE`` with plain FreeTDS.
+#: ⚠️ It leans on dbt-sqlserver's brace handling. ``test_dlt_mssql_freetds.py`` builds the string
+#: with dbt-sqlserver's own function, so an upgrade that changes it goes red instead of silently
+#: dropping encryption.
+FREETDS_DBT_DRIVER = "{" + FREETDS_DRIVER + "};Encryption={require}"
 
 
 @configspec(init=False)

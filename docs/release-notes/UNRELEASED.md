@@ -45,5 +45,49 @@ anywhere. Nothing else about the connection changes.
   no form field for it. Tracked as [core#1341].
 - **The ClickHouse _source_ is unchanged.** Its driver speaks HTTP and keeps using the stored port.
 
+### Re-running a SaaS, OpenAPI, file, MongoDB or Google Sheets upload replaces its tables instead of adding another copy
+
+**Who this affects:** anyone who runs one of these uploads more than once, by hand or on a schedule,
+and anyone who relied on what earlier runs of such an upload left in the destination. Uploads saved
+before this change are included, and they do not need to be saved again ([core#1336]).
+
+**What changed.** The upload form shows its Write Disposition control only for SQL database sources,
+but it stored that control's default, `append`, for every upload, and the loader passed it to dlt on
+every run. So each run of an unchanged upload added a full copy of every table, and every run read
+green. The loader no longer forwards that stored default. A re-run now does this:
+
+| sources | what a re-run does |
+|---|---|
+| OpenAPI, and the 14 SaaS connectors built on the REST API fallback: Stripe, GitHub, HubSpot, Salesforce, Shopify, Jira, Slack, Facebook Ads, Zendesk, Airtable, Notion, Pipedrive, Freshdesk, Asana | **replaces** each table with that run's fetch. A resource that declares its own disposition keeps it. |
+| CSV, JSON, Parquet, S3 | **replaces** the table with the rows of every file the glob matches at that run |
+| MongoDB, Google Sheets | **replaces** each table. Both sources declare `replace`, and the stored `append` no longer overrides it. |
+| REST API (generic), Kafka | uses each resource's own disposition, else dlt's default, which is `append`. **No change**, unless a resource declares one. |
+| Google Analytics, Google Ads | **still appends**, so each run lands its report window again ([core#1400]) |
+| SQL database sources | **no change**: the Write Disposition shown on the form still governs |
+
+**Before the upload runs again:**
+
+- **The destination table now mirrors the source.** A record the source no longer returns (deleted, or
+  no longer listed by the endpoint) is gone after the next run, and so are rows that only earlier runs
+  had loaded. **If you keep history or snapshots in these tables, copy them first.**
+- **Tables that already hold duplicates** go back to a single copy at the next run of that upload.
+  Nothing is cleaned before that run. A table the upload no longer loads, such as an endpoint you have
+  since unticked, keeps its duplicates.
+- **To keep appending on purpose**, give the upload an explicit `"write_disposition": "append"` through
+  **Use raw JSON config** or the API. That is still honoured; only the form's stored default stopped
+  being forwarded.
+
+**Also worth knowing:**
+
+- **What was measured:** two runs of an unchanged OpenAPI, SaaS (REST fallback) or CSV upload into a
+  real DuckDB file leave each record once; a table holding copies from earlier runs goes back to one
+  copy at the next run; and an explicit `append` still appends. The other rows of the table above are
+  read in code, not measured. Destinations other than DuckDB were not measured.
+- Saving an old upload in the form drops its stored `append`. It behaves as above either way.
+- If you ran `dlt init` to install one of dlt's verified sources for a SaaS connector, that source's
+  own dispositions now apply instead of being overridden to `append`.
+
 [core#680]: https://github.com/datanika-io/datanika-core/issues/680
+[core#1336]: https://github.com/datanika-io/datanika-core/issues/1336
 [core#1341]: https://github.com/datanika-io/datanika-core/issues/1341
+[core#1400]: https://github.com/datanika-io/datanika-core/issues/1400

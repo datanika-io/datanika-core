@@ -33,6 +33,30 @@ def _disable_notif_unread_cache(request):
         yield
 
 
+class _NoSignupMarkers:
+    """A reachable store that holds no signup markers: writes succeed, nothing is ever claimed."""
+
+    def setex(self, *_args, **_kwargs):
+        return True
+
+    def delete(self, *_keys):
+        return 0
+
+
+@pytest.fixture(autouse=True)
+def _no_signup_marker_store():
+    """Autouse: keep ``signup_conversion`` off a real Redis in every test (core#1369).
+
+    Both sign-in callbacks and ``/auth/complete`` now touch the marker store, so without this every
+    test that drives one would wait on ``localhost:6379`` — the same dead wait
+    ``_disable_notif_unread_cache`` exists for. A null store rather than a raising one, so the
+    helpers' failure logging is not emitted by tests that are about something else. Tests of the
+    marker itself patch ``signup_conversion._redis`` again, which takes precedence inside them.
+    """
+    with patch("datanika.services.signup_conversion._redis", return_value=_NoSignupMarkers()):
+        yield
+
+
 @pytest.fixture(scope="session")
 def engine():
     """SQLite in-memory engine for fast model tests."""

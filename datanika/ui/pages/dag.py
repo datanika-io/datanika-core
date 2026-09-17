@@ -150,7 +150,10 @@ def add_dependency_form() -> rx.Component:
                     spacing="1",
                 ),
                 rx.vstack(
-                    rx.text(_t["dag.upstream_name"], size="2"),
+                    rx.el.label(
+                        rx.text(_t["dag.upstream_name"], size="2"),
+                        html_for="dag-upstream-input",
+                    ),
                     rx.box(
                         rx.input(
                             id="dag-upstream-input",
@@ -177,7 +180,10 @@ def add_dependency_form() -> rx.Component:
                     spacing="1",
                 ),
                 rx.vstack(
-                    rx.text(_t["dag.downstream_name"], size="2"),
+                    rx.el.label(
+                        rx.text(_t["dag.downstream_name"], size="2"),
+                        html_for="dag-downstream-input",
+                    ),
                     rx.box(
                         rx.input(
                             id="dag-downstream-input",

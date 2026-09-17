@@ -60,7 +60,9 @@ class Pipeline(Base, TenantMixin, TimestampMixin):
         Enum(PipelineMode, native_enum=False, length=20),
         nullable=False,
         default=PipelineMode.ETL,
-        server_default=PipelineMode.ETL.value,
+        # The member NAME (core#1391). `Enum(..., native_enum=False)` without `values_callable`
+        # stores and loads names, so `.value` ("etl") wrote a row this column cannot read back.
+        server_default=PipelineMode.ETL.name,
     )
 
     destination_connection = relationship(

@@ -16,6 +16,7 @@ from datanika.services.auth import AuthService
 from datanika.services.auth_redirects import login_error_path
 from datanika.services.encryption import EncryptionService
 from datanika.services.oidc_token import IdTokenError, verify_id_token
+from datanika.services.signup_conversion import mark_signup_completed
 from datanika.services.sso_service import SSOService
 from datanika.services.user_service import UserService, UserServiceError
 
@@ -356,7 +357,13 @@ async def sso_callback(request: Request) -> RedirectResponse:
 
         access_token = auth.create_access_token(user.id, org_id)
         refresh_token = auth.create_refresh_token(user.id)
+        user_id = user.id
         session.commit()
+
+    # core#1369, as in the OAuth callback: the account is committed, and the fact comes from here —
+    # never from the `is_new` this redirect writes into a URL the user can edit.
+    if is_new:
+        mark_signup_completed(user_id)
 
     params = urlencode(
         {

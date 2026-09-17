@@ -99,6 +99,12 @@ def run_transformation(
         session = get_sync_session()
 
     try:
+        # core#657 §7 2a, the pre-flight checkpoint — before the quota gate (see run_upload).
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
+
         # Check run quota before starting (cloud plugin may block).
         # Standalone transformations are Path A with predicted_runs=1,
         # per datanika-cloud/docs/billing_contract.md.
@@ -163,6 +169,11 @@ def run_transformation(
             incremental_config=transformation.incremental_config,
         )
         dbt_svc.clean_target(org_id)
+        # core#657 §7 2a, immediately before the engine.
+        if execution_service.skip_if_cancelled(session, org_id, run_id):
+            if own_session:
+                session.commit()
+            return
         result = dbt_svc.run_model(org_id, transformation.name)
 
         # core#1361. dbt reports a failed model through `success` and does not raise. Measured on

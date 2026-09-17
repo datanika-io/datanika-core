@@ -482,3 +482,52 @@ class TestImportOpenAPISpec:
         schemas = spec["components"]["schemas"]
         assert "ImportRequest" in schemas
         assert "ImportResult" in schemas
+
+
+class TestImportScopes:
+    """core#681. The import route creates resources in four subsystems, so it declares no single
+    scope -- and a key's scopes must still bound what it creates. Each refusal sits beside the same
+    request by a key that carries the scope, which is served."""
+
+    _TRANSFORMATION_ONLY = {
+        "version": 2,
+        "transformations": [{"name": "scoped_t", "sql_body": "select 1"}],
+    }
+
+    def test_a_key_without_the_write_scope_creates_nothing(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        from datanika.models.transformation import Transformation
+
+        fake_api_key.scopes = ["catalog:read", "transformations:read"]
+        with _patch_auth(fake_api_key, rate_limit_ok) as session:
+            resp = client.post(
+                "/api/v1/import", json=self._TRANSFORMATION_ONLY, headers=_auth_headers()
+            )
+            count = session.query(Transformation).count()
+
+        assert resp.status_code == 403, resp.text
+        err = resp.json()["error"]
+        assert err["code"] == "insufficient_scope"
+        assert err["required_scopes"] == ["transformations:write"]
+        assert count == 0
+
+    def test_the_refusal_names_only_the_scopes_that_are_missing(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        fake_api_key.scopes = ["connections:write"]
+        payload = {**self._TRANSFORMATION_ONLY, "connections": [_PG_CONN]}
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post("/api/v1/import", json=payload, headers=_auth_headers())
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["required_scopes"] == ["transformations:write"]
+
+    def test_a_key_carrying_the_scope_is_served(self, client, fake_api_key, rate_limit_ok):
+        fake_api_key.scopes = ["transformations:write"]
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post(
+                "/api/v1/import", json=self._TRANSFORMATION_ONLY, headers=_auth_headers()
+            )
+
+        assert resp.status_code == 201, resp.text

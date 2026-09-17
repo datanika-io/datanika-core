@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.transformation import Materialization, Transformation
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 from datanika.services.connection_service import (
     TRANSFORM_DESTINATION_TYPES,
     get_org_connection,
@@ -34,7 +36,17 @@ class TransformationService:
         destination_connection_id: int | None = None,
         tags: list[str] | None = None,
         incremental_config: dict | None = None,
+        *,
+        actor_user_id: int,
     ) -> Transformation:
+        # core#681 / SPEC_SERVICE_AUTHORIZATION §1: `save_transformation` is `editor`.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="create_transformation",
+        )
         self.validate_model_name(name)
         self.validate_unique_name(session, org_id, name)
         self.validate_sql_body(sql_body)
@@ -79,11 +91,19 @@ class TransformationService:
         return list(session.execute(stmt).scalars().all())
 
     def update_transformation(
-        self, session: Session, org_id: int, transformation_id: int, **kwargs
+        self, session: Session, org_id: int, transformation_id: int, *, actor_user_id: int, **kwargs
     ) -> Transformation | None:
         transformation = self.get_transformation(session, org_id, transformation_id)
         if transformation is None:
             return None
+        # §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="update_transformation",
+        )
 
         if "sql_body" in kwargs:
             self.validate_sql_body(kwargs["sql_body"])
@@ -142,10 +162,20 @@ class TransformationService:
                 "which has no dbt adapter and cannot be a transformation target"
             )
 
-    def delete_transformation(self, session: Session, org_id: int, transformation_id: int) -> bool:
+    def delete_transformation(
+        self, session: Session, org_id: int, transformation_id: int, *, actor_user_id: int
+    ) -> bool:
         transformation = self.get_transformation(session, org_id, transformation_id)
         if transformation is None:
             return False
+        # §1: deletion is `admin`. §7.3: after the org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.ADMIN,
+            operation="delete_transformation",
+        )
         transformation.deleted_at = datetime.now(UTC)
         session.flush()
         return True

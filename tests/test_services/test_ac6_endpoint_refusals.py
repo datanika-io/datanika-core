@@ -52,10 +52,12 @@ from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.notification_channel import ChannelType
 from datanika.models.pipeline import DbtCommand
+from datanika.models.transformation import Materialization
 from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
+from datanika.services.execution_service import ExecutionService
 from datanika.services.notification_service import NotificationService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.rate_limit_service import RateLimitResult
@@ -119,7 +121,73 @@ CASES = [
         "admin",
         MemberRole.EDITOR,
     ),
+    ("schedules", "PUT", "/api/v1/schedules/{schedule}", "cron", "editor", MemberRole.VIEWER),
+    # §1: `save_transformation` editor, `delete_transformation` admin.
+    (
+        "transformations",
+        "POST",
+        "/api/v1/transformations",
+        "transformation_create",
+        "editor",
+        MemberRole.VIEWER,
+    ),
+    (
+        "transformations",
+        "PUT",
+        "/api/v1/transformations/{transformation}",
+        "rename",
+        "editor",
+        MemberRole.VIEWER,
+    ),
+    (
+        "transformations",
+        "DELETE",
+        "/api/v1/transformations/{transformation}",
+        None,
+        "admin",
+        MemberRole.EDITOR,
+    ),
+    # §1: `run_upload` / `run_pipeline` editor; a transformation run is the same act (§2).
+    ("uploads", "POST", "/api/v1/uploads/{upload}/run", None, "editor", MemberRole.VIEWER),
+    ("pipelines", "POST", "/api/v1/pipelines/{pipeline}/run", None, "editor", MemberRole.VIEWER),
+    (
+        "transformations",
+        "POST",
+        "/api/v1/transformations/{transformation}/run",
+        None,
+        "editor",
+        MemberRole.VIEWER,
+    ),
+    # §2: cancelling is the ordinary lifecycle. No Reflex handler exists; REST is the surface.
+    ("runs", "POST", "/api/v1/runs/{run}/cancel", None, "editor", MemberRole.VIEWER),
+    # The import routes create through the same services, so they inherit the services' thresholds.
+    ("import", "POST", "/api/v1/import", "import_transformation", "editor", MemberRole.VIEWER),
+    (
+        "import",
+        "POST",
+        "/api/v1/pipelines/yaml",
+        "yaml_import_transformation",
+        "editor",
+        MemberRole.VIEWER,
+    ),
 ]
+
+#: Mutating routes that are deliberately NOT role-gated, each with the reason read off the handler.
+#: A route here is not a gap: every one still requires a CURRENT membership, at authentication.
+NOT_ROLE_GATED = {
+    (
+        "PATCH",
+        "/api/v1/notifications/{}/read",
+    ): "a member's own notification inbox -- reading state, open to any member (no §1 row)",
+    (
+        "POST",
+        "/api/v1/notifications/read-all",
+    ): "a member's own notification inbox -- reading state, open to any member (no §1 row)",
+    (
+        "DELETE",
+        "/api/v1/notifications/{}",
+    ): "a member's own notification inbox -- dismissal, open to any member (no §1 row)",
+}
 
 PG = {"host": "h", "port": 5432, "database": "d", "user": "u", "password": "p"}
 
@@ -150,6 +218,15 @@ def _body(key: str, ids: dict) -> dict | None:
             "target_id": ids["upload"],
             "cron_expression": "0 * * * *",
         },
+        "cron": {"cron_expression": "0 2 * * *"},
+        "transformation_create": {"name": "t2", "sql_body": "select 1"},
+        "import_transformation": {
+            "version": 2,
+            "transformations": [{"name": "imp_t", "sql_body": "select 1"}],
+        },
+        "yaml_import_transformation": (
+            "version: 2\ntransformations:\n  - name: imp_y\n    sql_body: select 1\n"
+        ),
     }.get(key)
 
 
@@ -230,12 +307,24 @@ def _surface(actor_role: MemberRole):
         events=["run_failure"],
     )
     session.flush()
+    transformation = transform_svc.create_transformation(
+        session,
+        ORG_ID,
+        "existing_t",
+        "select 1",
+        Materialization.VIEW,
+        actor_user_id=setup_admin.id,
+    )
+    run = ExecutionService().create_run(session, ORG_ID, NodeType.UPLOAD, upload.id)
+    session.flush()
     ids = {
         "channel": channel.id,
         "conn": conn.id,
         "upload": upload.id,
         "pipeline": pipeline.id,
         "schedule": schedule.id,
+        "transformation": transformation.id,
+        "run": run.id,
     }
 
     key = MagicMock()
@@ -258,6 +347,10 @@ def _surface(actor_role: MemberRole):
         patch.object(routes_mod, "_get_conn_svc", return_value=conn_svc),
         patch.object(routes_mod, "_get_upload_svc", return_value=upload_svc),
         patch.object(routes_mod, "_get_schedule_svc", return_value=schedule_svc),
+        # The run triggers dispatch to Celery after committing the run row; a test has no broker.
+        patch("datanika.tasks.upload_tasks.run_upload_task"),
+        patch("datanika.tasks.pipeline_tasks.run_pipeline_task"),
+        patch("datanika.tasks.transformation_tasks.run_transformation_task"),
     ):
         mock_svc.authenticate_api_key.return_value = key
         mock_rl.get_limit_for_org.return_value = 60
@@ -270,6 +363,9 @@ def _surface(actor_role: MemberRole):
 
 def _drive(client, method: str, path: str, body):
     headers = {"Authorization": "Bearer etf_ac6"}
+    if isinstance(body, str):  # the YAML import route reads a raw body
+        headers["Content-Type"] = "application/yaml"
+        return client.request(method, path, content=body.encode(), headers=headers)
     fn = getattr(client, method.lower())
     return fn(path, headers=headers) if body is None else fn(path, json=body, headers=headers)
 
@@ -338,7 +434,16 @@ def test_the_table_covers_every_wired_subsystem():
     while the others shipped would report AC6 satisfied for work nobody did.
     """
     covered = {c[0] for c in CASES}
-    assert covered == {"connections", "uploads", "pipelines", "schedules", "channels"}, (
+    assert covered == {
+        "connections",
+        "uploads",
+        "pipelines",
+        "schedules",
+        "channels",
+        "transformations",
+        "runs",
+        "import",
+    }, (
         f"AC6 table covers {sorted(covered)}. Raise this assertion as each subsystem is wired "
         "— uploads, pipelines, schedules, transformations, api keys, notification channels, "
         "backup/export — so the table cannot silently lag the wiring."
@@ -381,3 +486,53 @@ def test_the_two_reflex_only_subsystems_still_have_no_rest_surface():
         "a REST route now exists for a subsystem recorded as Reflex-only, so AC6 is no longer "
         "inapplicable for it and needs a row in CASES:\n  " + "\n  ".join(offenders)
     )
+
+
+def _declared_scopes() -> dict[str, str | None]:
+    """`required_scope` per handler, read off the route module's own decorators."""
+    import ast
+
+    import datanika.services.api_v1_routes as routes_mod
+
+    tree = ast.parse(pathlib.Path(routes_mod.__file__).read_text(encoding="utf-8"))
+    scopes: dict[str, str | None] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for dec in node.decorator_list:
+            if isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "api_endpoint":
+                scope = None
+                for kw in dec.keywords:
+                    if kw.arg == "required_scope" and isinstance(kw.value, ast.Constant):
+                        scope = kw.value.value
+                scopes[node.name] = scope
+    return scopes
+
+
+def _shape(path: str) -> str:
+    import re
+
+    return re.sub(r"\{[^}]*\}", "{}", path)
+
+
+def test_every_mutating_route_has_a_refusal_row_or_a_stated_reason():
+    """Derived, not listed (§5 AC3's shape): a mutating route added later must arrive with an AC6
+    row or a reason in NOT_ROLE_GATED, so the table cannot fall behind the routes it describes."""
+    scopes = _declared_scopes()
+    mutating = {
+        (method, _shape(route.path))
+        for route in api_v1_routes
+        for method in route.methods - {"HEAD", "GET"}
+        if (scopes.get(route.endpoint.__name__) or "").endswith(":write")
+        or scopes.get(route.endpoint.__name__, "missing") is None
+    }
+    assert len(mutating) >= 25, f"route census read only {len(mutating)} routes -- vacuous"
+
+    rowed = {(c[1], _shape(c[2])) for c in CASES}
+    unaccounted = sorted(mutating - rowed - set(NOT_ROLE_GATED))
+    assert not unaccounted, (
+        "mutating routes with neither an AC6 refusal row nor a reason they are not role-gated: "
+        f"{unaccounted}"
+    )
+    stale = sorted(set(NOT_ROLE_GATED) - mutating)
+    assert not stale, f"NOT_ROLE_GATED names routes that no longer exist or mutate: {stale}"

@@ -18,6 +18,7 @@ from datanika.tasks.transformation_tasks import (
     _sync_catalog_after_transformation,
     run_transformation,
 )
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -53,6 +54,7 @@ def setup_transformation(transform_svc, exec_svc, db_session):
         "SELECT 1 AS id",
         Materialization.TABLE,
         schema_name="staging",
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     run = exec_svc.create_run(db_session, org.id, NodeType.TRANSFORMATION, transformation.id)
     return org, transformation, run
@@ -263,6 +265,7 @@ class TestCatalogSyncAfterTransformation:
             Materialization.TABLE,
             schema_name="staging",
             destination_connection_id=conn.id,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
 
         introspected_columns = [

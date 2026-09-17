@@ -33,6 +33,7 @@ from datanika.models.run import RunStatus
 from datanika.models.uploaded_file import UploadedFile
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService, get_org_run
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -122,13 +123,23 @@ class TestRunMutatorsRefuseAnotherOrgsRun:
 
     def test_cancel_run_refuses(self, db_session, two_orgs, a_run):
         _org_a, org_b = two_orgs
-        assert ExecutionService().cancel_run(db_session, org_b.id, a_run.id) is None
+        assert (
+            ExecutionService().cancel_run(
+                db_session, org_b.id, a_run.id, actor_user_id=make_org_admin(db_session, org_b.id)
+            )
+            is None
+        )
         db_session.refresh(a_run)
         assert a_run.status == RunStatus.PENDING
 
     def test_cancel_run_still_works_for_its_own_org(self, db_session, two_orgs, a_run):
         org_a, _org_b = two_orgs
-        assert ExecutionService().cancel_run(db_session, org_a.id, a_run.id) is not None
+        assert (
+            ExecutionService().cancel_run(
+                db_session, org_a.id, a_run.id, actor_user_id=make_org_admin(db_session, org_a.id)
+            )
+            is not None
+        )
         db_session.refresh(a_run)
         assert a_run.status == RunStatus.CANCELLED
 

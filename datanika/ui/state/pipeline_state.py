@@ -461,7 +461,9 @@ class PipelineState(BaseState):
         template_slug: str | None = None
         with get_sync_session() as session:
             pipeline = pipeline_svc.get_pipeline(session, org_id, pipeline_id)
-            run = exec_svc.create_run(session, org_id, NodeType.PIPELINE, pipeline_id)
+            run = exec_svc.create_requested_run(
+                session, org_id, NodeType.PIPELINE, pipeline_id, actor_user_id=user_id
+            )
             self._audit(
                 session,
                 org_id,

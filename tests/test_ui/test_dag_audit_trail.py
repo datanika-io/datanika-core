@@ -124,7 +124,12 @@ def graph(db_session, org, svc):
         actor_user_id=make_org_admin(db_session, org.id),
     )
     transformation = TransformationService().create_transformation(
-        db_session, org.id, "dds_orders", "SELECT 1", Materialization.VIEW
+        db_session,
+        org.id,
+        "dds_orders",
+        "SELECT 1",
+        Materialization.VIEW,
+        actor_user_id=make_org_admin(db_session, org.id),
     )
     return SimpleNamespace(svc=dep_svc, upload=upload, transformation=transformation, org=org)
 

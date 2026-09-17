@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from datanika.models.user import Organization
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.api_key_service import ApiKeyService
 from tests.factories import make_org_admin, make_user
 
@@ -23,13 +23,17 @@ def org(db_session):
 
 
 @pytest.fixture
-def user(db_session):
+def user(db_session, org):
+    """A member of ``org``: authentication resolves the key owner's CURRENT membership
+    (core#681), so a key whose owner belongs to no org authorizes nothing."""
     u = make_user(
         db_session,
         email=f"keysec-{uuid.uuid4().hex[:6]}@test.com",
         full_name="K",
         password_hash="h",
     )
+    db_session.add(Membership(user_id=u.id, org_id=org.id, role=MemberRole.VIEWER))
+    db_session.flush()
     return u
 
 

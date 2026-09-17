@@ -47,6 +47,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -67,7 +68,9 @@ def cancelled_run(svc, db_session, org):
     """A run that reached CANCELLED the way the API reaches it."""
     run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 1)
     svc.start_run(db_session, org.id, run.id)
-    cancelled = svc.cancel_run(db_session, org.id, run.id)
+    cancelled = svc.cancel_run(
+        db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
+    )
     assert cancelled is not None and cancelled.status == RunStatus.CANCELLED, (
         "fixture precondition failed — the rest of this file would assert nothing"
     )
@@ -221,7 +224,12 @@ def test_the_fixture_can_produce_an_uncancelled_run(svc, db_session, org, runnin
 def test_cancel_run_still_refuses_a_finished_run(svc, db_session, org, running_run):
     """Unchanged behaviour, pinned because this change is adjacent to it."""
     svc.complete_run(db_session, org.id, running_run.id, rows_loaded=1, logs="")
-    assert svc.cancel_run(db_session, org.id, running_run.id) is None
+    assert (
+        svc.cancel_run(
+            db_session, org.id, running_run.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
+        is None
+    )
 
 
 def test_finished_at_is_actually_set_by_cancel(cancelled_run):

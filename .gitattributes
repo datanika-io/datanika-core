@@ -28,3 +28,6 @@ deploy/server/*.yml text eol=lf
 # here and not a diff-noise one. Left out of the rule above because it is not a .conf;
 # found by test_the_deployed_conf_files_are_pinned_to_lf rather than by anyone noticing.
 deploy/server/*.asc text eol=lf
+
+# Read by FreeTDS's C parser inside a Linux image; keep it byte-identical across checkouts.
+datanika/pymssql_freetds.conf text eol=lf

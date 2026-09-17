@@ -344,7 +344,7 @@
   "dag.check_timeframe": "检查时间范围",
   "models.no_models": "未找到模型。请先运行上传或转换以填充目录。",
   "models.no_models_after_load": "未找到模型，但之前的运行已加载数据行。请打开该运行并查看其日志——它写入的目标架构可能已被删除、重命名，或在连接中配置有误。",
-  "models.catalog_unreadable": "“{upload}”已加载数据，但目录无法读取目标，因此此处未列出其表。数据已在目标中，无需更改连接。",
+  "models.catalog_unreadable": "“{upload}”已成功运行，但目录无法读取其目标，因此此处未列出其表。无需更改连接，该次运行的日志会显示它加载了什么。",
   "models.catalog_no_tables": "“{upload}”已加载数据行，但在架构“{schema}”中未找到任何表，因此此处未列出其中任何内容。该架构可能已被删除、重命名，或在目标连接中配置有误。",
   "models.open_run": "打开运行",
   "models.origin": "来源",

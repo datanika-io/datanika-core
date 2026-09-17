@@ -450,6 +450,79 @@ not a PostgreSQL-only catalogue; it is a sync that cannot read one destination.
   member. The load succeeded and the run says so correctly. What is missing is the catalogue, and the
   page that shows the catalogue is where that gets said.
 
+> 🔴 **CORRECTED 2026-09-17, on reviewing the sentences [core#1398] shipped (PR #1436).** The first
+> variant above said *"the data is there"*, and the verdict cannot earn that. `unreadable` is recorded
+> whenever the sync raises after a **successful** run, whatever that run loaded
+> (`upload_tasks.py:334-336`), and the notice is built from the verdict, the schema and the run id,
+> never a row count. So an upload that has loaded nothing, into a destination the catalogue cannot
+> read, was told its data is in the destination. The shipped English said it twice (*"loaded its
+> data"*, *"The data is in the destination"*). That is the invariant in §1, broken by the notice written
+> to enforce it, and the fault is this clause, not the implementation, which did what it said.
+>
+> **What the `unreadable` variant may say:** the catalogue could not read the destination after a
+> successful run; the connection does not need to change; and the run's log shows what that run
+> loaded. **What stays, and why:** *the connection does not need to change* was measured true for the
+> case that produced it ([core#1397]). The counter-case I can reason about, a login allowed to load
+> but not to list, is not measured. The data claim is withdrawn on a reading of the code that renders
+> it; a clause is not withdrawn on a hypothesis about someone's server.
+> **The `no_tables` variant is unchanged.** `no_tables` is recorded only when the run loaded rows
+> (`upload_tasks.py:368-370`), so *"loaded rows"* is earned, and its causes are offered as *"may have
+> been"*.
+
+### 4.7 · AC8 — a run that finds nothing it was configured to read does not report success
+
+*Added 2026-09-17: ruling on [core#1401] AC3, contract for [core#1445].*
+
+A source run answers two questions: **what did the configuration select**, and **what did the
+selection hold**. An empty answer to the second is a measurement of the source, and the run succeeded
+with zero rows. An empty answer to the first means the run never reached anything it was asked to
+read, and reporting `success` for it is §1's defect: a verdict about a load that did not happen.
+
+**The product already applies this rule to files.** `dlt_runner.py:1753-1754` refuses a glob that
+matches nothing, *"where the reason is still known"*, with a message naming the pattern and the
+location ([core#493]). A SQL source is the same shape one family over. After [core#1401]'s fix
+(PR #1432), a missing SQLite or DuckDB file is refused. A database file that exists and holds no tables,
+and a `table_names` selection that matches nothing, still finish `success`, and by code so does a
+`source_schema` that names no tables (`dlt_runner.py:1710-1721` hands both to `sql_database`, and
+nothing checks what came back).
+
+**Why `failed`, and not `success` with a warning:**
+1. **The user configured the run to move data.** A selection that resolves to nothing is almost always
+   a wrong database, schema, file or table name, and a green run hides it until someone notices an
+   empty destination, possibly weeks of scheduled runs later.
+2. **A deliberately empty source is possible and rarer than a typo**, which is [core#493]'s argument
+   and holds here. The cost is asymmetric too: a failed run reaches the user's failure notifications,
+   and a green one reaches nobody.
+3. **§4.1 declined a new status**, so `failed` is the honest verdict the product has. A warning on a
+   green run is the "diagnostics only" posture, and it is right only where the load did happen
+   (§4.5, §4.6).
+4. **One user, two sources, one answer.** Someone moving from a CSV folder to a SQLite file should not
+   find that the same mistake fails in one and succeeds in the other.
+
+**Why the legitimately empty case stays green:** tables that exist and hold 0 rows are a measurement,
+and [core#883] and §4.6 already treat them as a success. Failing them would be the mirror defect
+(`PRODUCT_RULES` §15a).
+
+**Acceptance** (outcome, entry point and witness, `PRODUCT_RULES` §16; "a run" is `run_upload`):
+- **Nothing selected fails before anything loads.** A configuration that resolves no table (a database
+  or schema holding none, or a schema that does not exist) ends the run `failed`, and the destination is
+  left exactly as it was: no schema and no `_dlt_*` tables. Witness: the run's status and error, and the
+  destination read back. Entry points: an existing SQLite file holding no tables, and a PostgreSQL
+  `source_schema` holding no tables.
+- **A named table that does not exist fails the run before anything loads**, even when the other
+  names exist, and the error names each missing one. A selection that loads some of its tables and
+  drops the rest is this defect with a smaller number.
+- **The message is the diagnosis:** where the run looked (the database, the schema when one applies,
+  or the file path), what it looked for (every table, or the names given), and that nothing was loaded.
+  It is a dynamic error message, so it stays English (`WORKFLOW_RULES` §6).
+- **Controls:** tables that exist and hold 0 rows stay `success` with 0 rows; a selection that loads
+  today is not refused, including a name whose case the source folds (`_normalize_oracle_identifier`
+  exists for exactly that); `single_table` naming a missing table still fails.
+- **Scope:** every SQL source type that reaches `sql_database` or `sql_table`. The PR body reports the
+  count of types covered and any left out, with the reason (§5.4).
+- ⚠️ **Not decided here:** MongoDB collections and Kafka topics. The principle plausibly applies, and
+  neither was measured.
+
 ---
 
 ## §5 — Acceptance criteria that can tell a real success from a fabricated one
@@ -480,6 +553,7 @@ For each AC, the mutation is named and it is the **pre-fix behaviour**, which is
 | 4.4 | force `raise_on_failed_jobs = False` in the resolved config | proves the guard is reading the resolved value |
 | 4.5 | remove `jira` from `SAAS_PAGINATION_EXEMPT` | the log line must disappear — proving it is derived, not literal |
 | 4.6 | an org holding one catalogued upload and one upload whose sync raised | today's code renders no notice, because the catalogue is not empty |
+| 4.7 | an existing SQLite file holding no tables, and a `table_names` list that matches nothing | Engineering reports both finishing `success` on `dev` after PR #1432 ([core#1401]) |
 
 ### 5.3 · 🚨 The one assertion that must **not** be written
 
@@ -546,4 +620,8 @@ Kept because each of these was believed by someone, including by me:
 [core#1097]: https://github.com/datanika-io/datanika-core/issues/1097
 [core#1397]: https://github.com/datanika-io/datanika-core/issues/1397
 [core#1398]: https://github.com/datanika-io/datanika-core/issues/1398
+[core#1401]: https://github.com/datanika-io/datanika-core/issues/1401
+[core#1445]: https://github.com/datanika-io/datanika-core/issues/1445
+[core#493]: https://github.com/datanika-io/datanika-core/issues/493
+[core#883]: https://github.com/datanika-io/datanika-core/issues/883
 [landing#604]: https://github.com/datanika-io/datanika-landing/issues/604

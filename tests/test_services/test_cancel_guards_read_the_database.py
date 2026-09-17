@@ -28,6 +28,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService, get_org_run
+from tests.factories import make_org_admin
 
 svc = ExecutionService()
 
@@ -57,7 +58,10 @@ def pending_run(factory):
 def _api_cancels(factory, org_id, run_id):
     """The API request: its own session, cancels, commits."""
     with factory() as api:
-        assert svc.cancel_run(api, org_id, run_id) is not None
+        assert (
+            svc.cancel_run(api, org_id, run_id, actor_user_id=make_org_admin(api, org_id))
+            is not None
+        )
         api.commit()
 
 

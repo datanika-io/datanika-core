@@ -373,3 +373,29 @@ class TestYamlImportEndpoint:
         assert len(json_created["uploads"]) == len(yaml_created["uploads"])
         assert len(json_created["pipelines"]) == len(yaml_created["pipelines"])
         assert len(json_created["transformations"]) == len(yaml_created["transformations"])
+
+
+class TestYamlImportScopes:
+    """core#681: the YAML route applies the same per-section write scopes as the JSON one."""
+
+    _BODY = "version: 2\ntransformations:\n  - name: scoped_y\n    sql_body: select 1\n"
+
+    def test_a_key_without_the_write_scope_is_refused(self, client, fake_api_key, rate_limit_ok):
+        fake_api_key.scopes = ["catalog:read"]
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post(
+                "/api/v1/pipelines/yaml", content=self._BODY, headers=_auth_headers_yaml()
+            )
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["code"] == "insufficient_scope"
+        assert resp.json()["error"]["required_scopes"] == ["transformations:write"]
+
+    def test_a_key_carrying_the_scope_is_served(self, client, fake_api_key, rate_limit_ok):
+        fake_api_key.scopes = ["transformations:write"]
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post(
+                "/api/v1/pipelines/yaml", content=self._BODY, headers=_auth_headers_yaml()
+            )
+
+        assert resp.status_code == 201, resp.text

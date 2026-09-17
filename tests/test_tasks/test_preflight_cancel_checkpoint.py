@@ -40,6 +40,7 @@ from datanika.services.execution_service import ExecutionService
 from datanika.tasks.pipeline_tasks import run_pipeline
 from datanika.tasks.transformation_tasks import run_transformation
 from datanika.tasks.upload_tasks import run_upload
+from tests.factories import make_org_admin
 
 svc = ExecutionService()
 
@@ -154,7 +155,10 @@ def _rows_in_destination(path: Path) -> int:
 
 
 def _cancel(db_session, org, run):
-    assert svc.cancel_run(db_session, org.id, run.id) is not None
+    assert (
+        svc.cancel_run(db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id))
+        is not None
+    )
     db_session.flush()
 
 

@@ -810,6 +810,7 @@ class BackupService:
                         destination_connection_id=dst_id,
                         tags=t_data.get("tags", []),
                         incremental_config=t_data.get("incremental_config"),
+                        actor_user_id=actor_user_id,
                     )
                     imported_transformations += 1
                     continue
@@ -831,6 +832,7 @@ class BackupService:
                 destination_connection_id=dst_id,
                 tags=t_data.get("tags"),
                 incremental_config=t_data.get("incremental_config"),
+                actor_user_id=actor_user_id,
             )
             imported_transformations += 1
 

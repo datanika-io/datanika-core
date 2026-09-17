@@ -42,7 +42,9 @@ class TestUploadRunDispatchesCeleryTask:
         mock_run.status = RunStatus.PENDING
 
         mock_exec_svc = MagicMock()
-        mock_exec_svc.create_run.return_value = mock_run
+        # core#681: the Run button asks the service for a MEMBER-requested run, which checks the
+        # actor's role; `create_run` is the scheduler's actor-free path.
+        mock_exec_svc.create_requested_run.return_value = mock_run
 
         # #93 — run_upload now instantiates Encryption/Connection/Upload
         # services to consume the template first-run latch. Mock them so
@@ -83,7 +85,10 @@ class TestUploadRunDispatchesCeleryTask:
                 pass
 
         # Verify run was created
-        mock_exec_svc.create_run.assert_called_once_with(mock_session, 1, NodeType.UPLOAD, 5)
+        mock_exec_svc.create_requested_run.assert_called_once_with(
+            mock_session, 1, NodeType.UPLOAD, 5, actor_user_id=10
+        )
+        mock_exec_svc.create_run.assert_not_called()
         # THE KEY ASSERTION: Celery task must be dispatched
         mock_task.delay.assert_called_once_with(run_id=42, org_id=1)
 

@@ -8,6 +8,7 @@ from datanika.services.transformation_service import (
     TransformationConfigError,
     TransformationService,
 )
+from tests.factories import make_org_admin
 
 
 @pytest.fixture
@@ -34,7 +35,12 @@ def other_org(db_session):
 class TestCreateTransformation:
     def test_basic(self, svc, db_session, org):
         t = svc.create_transformation(
-            db_session, org.id, "my_model", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "my_model",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert isinstance(t, Transformation)
         assert isinstance(t.id, int)
@@ -53,6 +59,7 @@ class TestCreateTransformation:
             description="All orders",
             schema_name="marts",
             tests_config={"unique": ["id"]},
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.description == "All orders"
         assert t.schema_name == "marts"
@@ -61,15 +68,34 @@ class TestCreateTransformation:
 
     def test_empty_sql_body_rejected(self, svc, db_session, org):
         with pytest.raises(TransformationConfigError, match="sql_body"):
-            svc.create_transformation(db_session, org.id, "bad", "", Materialization.VIEW)
+            svc.create_transformation(
+                db_session,
+                org.id,
+                "bad",
+                "",
+                Materialization.VIEW,
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_whitespace_sql_body_rejected(self, svc, db_session, org):
         with pytest.raises(TransformationConfigError, match="sql_body"):
-            svc.create_transformation(db_session, org.id, "bad", "   \n\t  ", Materialization.VIEW)
+            svc.create_transformation(
+                db_session,
+                org.id,
+                "bad",
+                "   \n\t  ",
+                Materialization.VIEW,
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
     def test_default_values(self, svc, db_session, org):
         t = svc.create_transformation(
-            db_session, org.id, "defaults", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "defaults",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.schema_name == "staging"
         assert t.tests_config == {}
@@ -79,7 +105,12 @@ class TestCreateTransformation:
 class TestGetTransformation:
     def test_existing(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         fetched = svc.get_transformation(db_session, org.id, created.id)
         assert fetched is not None
@@ -90,15 +121,27 @@ class TestGetTransformation:
 
     def test_wrong_org(self, svc, db_session, org, other_org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert svc.get_transformation(db_session, other_org.id, created.id) is None
 
     def test_soft_deleted(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.delete_transformation(db_session, org.id, created.id)
+        svc.delete_transformation(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert svc.get_transformation(db_session, org.id, created.id) is None
 
 
@@ -108,24 +151,66 @@ class TestListTransformations:
         assert result == []
 
     def test_multiple(self, svc, db_session, org):
-        svc.create_transformation(db_session, org.id, "a", "SELECT 1", Materialization.VIEW)
-        svc.create_transformation(db_session, org.id, "b", "SELECT 2", Materialization.TABLE)
+        svc.create_transformation(
+            db_session,
+            org.id,
+            "a",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_transformation(
+            db_session,
+            org.id,
+            "b",
+            "SELECT 2",
+            Materialization.TABLE,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         result = svc.list_transformations(db_session, org.id)
         assert len(result) == 2
 
     def test_excludes_deleted(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "a", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "a",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        svc.create_transformation(db_session, org.id, "b", "SELECT 2", Materialization.TABLE)
-        svc.delete_transformation(db_session, org.id, created.id)
+        svc.create_transformation(
+            db_session,
+            org.id,
+            "b",
+            "SELECT 2",
+            Materialization.TABLE,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.delete_transformation(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         result = svc.list_transformations(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "b"
 
     def test_filters_by_org(self, svc, db_session, org, other_org):
-        svc.create_transformation(db_session, org.id, "a", "SELECT 1", Materialization.VIEW)
-        svc.create_transformation(db_session, other_org.id, "b", "SELECT 2", Materialization.TABLE)
+        svc.create_transformation(
+            db_session,
+            org.id,
+            "a",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        svc.create_transformation(
+            db_session,
+            other_org.id,
+            "b",
+            "SELECT 2",
+            Materialization.TABLE,
+            actor_user_id=make_org_admin(db_session, other_org.id),
+        )
         result = svc.list_transformations(db_session, org.id)
         assert len(result) == 1
         assert result[0].name == "a"
@@ -134,42 +219,93 @@ class TestListTransformations:
 class TestUpdateTransformation:
     def test_update_name(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "old", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "old",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_transformation(db_session, org.id, created.id, name="new")
+        updated = svc.update_transformation(
+            db_session,
+            org.id,
+            created.id,
+            name="new",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated is not None
         assert updated.name == "new"
 
     def test_sql_body_revalidates(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        updated = svc.update_transformation(db_session, org.id, created.id, sql_body="SELECT 2")
+        updated = svc.update_transformation(
+            db_session,
+            org.id,
+            created.id,
+            sql_body="SELECT 2",
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.sql_body == "SELECT 2"
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.update_transformation(db_session, org.id, 99999, name="x") is None
+        assert (
+            svc.update_transformation(
+                db_session,
+                org.id,
+                99999,
+                name="x",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
+            is None
+        )
 
     def test_invalid_sql_body_rejected(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(TransformationConfigError, match="sql_body"):
-            svc.update_transformation(db_session, org.id, created.id, sql_body="")
+            svc.update_transformation(
+                db_session,
+                org.id,
+                created.id,
+                sql_body="",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestDeleteTransformation:
     def test_sets_deleted_at(self, svc, db_session, org):
         created = svc.create_transformation(
-            db_session, org.id, "m", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
-        result = svc.delete_transformation(db_session, org.id, created.id)
+        result = svc.delete_transformation(
+            db_session, org.id, created.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is True
         db_session.refresh(created)
         assert created.deleted_at is not None
 
     def test_nonexistent(self, svc, db_session, org):
-        result = svc.delete_transformation(db_session, org.id, 99999)
+        result = svc.delete_transformation(
+            db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert result is False
 
 
@@ -201,15 +337,31 @@ class TestModelNameValidation:
     def test_create_rejects_invalid_name(self, svc, db_session, org):
         with pytest.raises(TransformationConfigError, match="Model name"):
             svc.create_transformation(
-                db_session, org.id, "bad model!", "SELECT 1", Materialization.VIEW
+                db_session,
+                org.id,
+                "bad model!",
+                "SELECT 1",
+                Materialization.VIEW,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_update_rejects_invalid_name(self, svc, db_session, org):
         t = svc.create_transformation(
-            db_session, org.id, "valid_name", "SELECT 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "valid_name",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         with pytest.raises(TransformationConfigError, match="Model name"):
-            svc.update_transformation(db_session, org.id, t.id, name="bad name!")
+            svc.update_transformation(
+                db_session,
+                org.id,
+                t.id,
+                name="bad name!",
+                actor_user_id=make_org_admin(db_session, org.id),
+            )
 
 
 class TestConnectionAndTags:
@@ -221,17 +373,38 @@ class TestConnectionAndTags:
             "SELECT 1",
             Materialization.VIEW,
             tags=["finance", "daily"],
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.tags == ["finance", "daily"]
         assert t.destination_connection_id is None
 
     def test_update_tags(self, svc, db_session, org):
-        t = svc.create_transformation(db_session, org.id, "m", "SELECT 1", Materialization.VIEW)
-        updated = svc.update_transformation(db_session, org.id, t.id, tags=["updated"])
+        t = svc.create_transformation(
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
+        updated = svc.update_transformation(
+            db_session,
+            org.id,
+            t.id,
+            tags=["updated"],
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert updated.tags == ["updated"]
 
     def test_default_tags_empty(self, svc, db_session, org):
-        t = svc.create_transformation(db_session, org.id, "m", "SELECT 1", Materialization.VIEW)
+        t = svc.create_transformation(
+            db_session,
+            org.id,
+            "m",
+            "SELECT 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
+        )
         assert t.tags == []
 
 
@@ -255,6 +428,7 @@ class TestValidation:
             "SELECT 1",
             Materialization.VIEW,
             tests_config=None,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.tests_config == {}
 

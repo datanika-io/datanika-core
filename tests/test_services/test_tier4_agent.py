@@ -80,6 +80,19 @@ def _headers(idem_key=None):
 
 @contextlib.contextmanager
 def _patch_auth(fake_api_key, rate_limit_ok, db_session):
+    # core#681: cancelling a run and creating a transformation now resolve the key owner's
+    # CURRENT role in the service, so the owner is a real `admin` member of the key's org --
+    # this file's subject is cancel, wait and idempotency, not authorization.
+    from datanika.models.user import Organization
+    from tests.factories import make_org_admin
+
+    if db_session.get(Organization, fake_api_key.org_id) is None:
+        db_session.add(
+            Organization(id=fake_api_key.org_id, name="Tier4", slug=f"tier4-{fake_api_key.org_id}")
+        )
+        db_session.flush()
+    fake_api_key.user_id = make_org_admin(db_session, fake_api_key.org_id)
+
     @contextlib.contextmanager
     def fake_session():
         yield db_session

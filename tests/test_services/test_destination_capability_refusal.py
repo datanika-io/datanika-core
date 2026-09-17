@@ -185,6 +185,7 @@ class TestTransformationsRefuseTheSame:
                 "select 1",
                 Materialization.VIEW,
                 destination_connection_id=conn.id,
+                actor_user_id=make_org_admin(db_session, org.id),
             )
 
     def test_postgres_still_works(self, conn_svc, db_session, org):
@@ -196,6 +197,7 @@ class TestTransformationsRefuseTheSame:
             "select 1",
             Materialization.VIEW,
             destination_connection_id=conn.id,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.destination_connection_id == conn.id
 
@@ -204,7 +206,12 @@ class TestTransformationsRefuseTheSame:
         without one inherits its pipeline's destination. The new check must not
         turn None into a refusal."""
         t = TransformationService().create_transformation(
-            db_session, org.id, "t_none", "select 1", Materialization.VIEW
+            db_session,
+            org.id,
+            "t_none",
+            "select 1",
+            Materialization.VIEW,
+            actor_user_id=make_org_admin(db_session, org.id),
         )
         assert t.destination_connection_id is None
 

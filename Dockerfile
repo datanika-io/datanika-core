@@ -80,13 +80,19 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 # The package layer's refresh date (see HOW TO REFRESH above). Declared directly before the RUN
 # it invalidates and printed by it, so a reorder cannot quietly detach the two
 # (tests/test_deploy/test_base_image_freshness.py).
-ARG APT_REFRESHED_ON=2026-09-15
+ARG APT_REFRESHED_ON=2026-09-17
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let
 # us build lxml + xmlsec FROM SOURCE (below) against the SAME system libxml2 —
 # the prebuilt wheels each bundle a different libxml2 and mismatch at import on
 # debian-slim ("lxml & xmlsec libxml2 library version mismatch").
+#
+# unixodbc + tdsodbc (core#1379): the ODBC runtime and Debian's FreeTDS driver, which the SQL Server
+# and Synapse DESTINATIONS load through (pyodbc). Founder decision: FreeTDS, not Microsoft's driver,
+# so no third-party apt repository and no driver EULA in this image. `tdsodbc`'s own postinst
+# registers `[FreeTDS]` in /etc/odbcinst.ini; the `final` stage asserts that registration and sets
+# FreeTDS's global encryption, because a listed package is not a working driver (measured on #1379).
 #
 # `apt-get upgrade` runs BEFORE install, because install never upgrades what the base already
 # ships; its stdout is discarded (errors still reach stderr) because this repository's build logs
@@ -100,7 +106,8 @@ RUN printf 'apt layer refresh %s ran at %s\n' "${APT_REFRESHED_ON}" "$(date -u +
     apt-get install -y --no-install-recommends \
     curl unzip gcc libpq-dev \
     libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl pkg-config \
-    zlib1g-dev libssl-dev && \
+    zlib1g-dev libssl-dev \
+    unixodbc tdsodbc && \
     apt-get -s upgrade > /tmp/apt-upgradable && \
     left="$(grep -c '^Inst' /tmp/apt-upgradable || true)" && \
     printf 'apt layer refresh: %s package(s) still upgradable\n' "${left}" && \
@@ -330,6 +337,25 @@ RUN set -eu; \
         || { echo "entrypoint module '$mod' does not import in this image"; exit 1; }; \
       echo "entrypoint imports OK: $mod"; \
     done
+
+# FreeTDS for the SQL Server and Synapse destinations (core#1379) -- asserted, not assumed.
+#
+# 🚨 A LISTED PACKAGE IS NOT A WORKING DRIVER. Measured on #1379: installing `unixodbc` alone clears
+# `ImportError: libodbc.so.2`, builds green, and leaves `pyodbc.drivers() == []`, so every load moves
+# to "No supported ODBC driver found". So the build asks pyodbc -- in the artifact -- for the exact
+# name the loader and the dbt profile use (`datanika.services.dlt_mssql_freetds.FREETDS_DRIVER`).
+#
+# 🚨 `encryption = require` IN [global], because FreeTDS ignores Microsoft's `Encrypt=yes` without an
+# error. dlt's connection string is ours and already carries `ENCRYPTION=require`; dbt-sqlserver's is
+# not ours and writes Microsoft's keyword. The global setting covers both. It is REPLACED rather than
+# appended: appending lands under whichever server section happens to be last in Debian's file.
+# The server certificate is NOT verified -- no CA is configured -- and that limitation is stated in
+# the destination documentation (founder decision on #1379).
+RUN set -eu; \
+    printf '[global]\n\ttds version = auto\n\tencryption = require\n' > /etc/freetds/freetds.conf; \
+    grep -Eq '^[[:space:]]*encryption[[:space:]]*=[[:space:]]*require[[:space:]]*$' /etc/freetds/freetds.conf; \
+    /app/.venv/bin/python -c "import pyodbc, sys; d = pyodbc.drivers(); sys.exit(f'FreeTDS ODBC driver not registered: {d}') if 'FreeTDS' not in d else print('odbc drivers:', d)"; \
+    echo "freetds: [global] encryption = require"
 
 EXPOSE 3000 8000
 

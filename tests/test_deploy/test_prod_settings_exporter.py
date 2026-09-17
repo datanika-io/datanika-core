@@ -1,8 +1,12 @@
 """The prod-settings exporter and the rules that watch it must name the same metrics.
 
-🚨 **Why this guard exists.** `deploy/server/export-prod-settings.sh` is applied by
-**no workflow** (core#747) — it is hand-installed on the box. So nothing mechanical
-connects the script to the Grafana rules that read its output. Rename a metric in the
+🚨 **Why this guard exists.** `deploy/server/export-prod-settings.sh` reaches the box
+through `scripts/install-server-scripts.sh` (core#747), which copies its bytes and checks
+their sha256 — and checks nothing about what they emit. So nothing mechanical connects
+the script to the Grafana rules that read its output. *(This said "applied by no workflow,
+hand-installed" until core#1421 touched this file; that stopped being true on
+2026-09-04.)* Its behaviour under a blue/green swap is executed, not read, in
+`test_prod_settings_exporter_behaviour.py`. Rename a metric in the
 script and the rule keeps evaluating a series nobody emits; under `noDataState: OK`,
 which every rule in this project uses, that reads as **health**. The deploy's own
 rule-health check would still pass, because a rule watching a non-existent metric is

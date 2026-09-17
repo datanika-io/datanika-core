@@ -73,9 +73,7 @@ SCHEMA = "schema"
 
 #: Today's offenders. **Shrink only.** Each entry names the issue that owns the fix; delete the
 #: entry in the PR that makes the column's default load (the stale-entry test will say which).
-KNOWN_UNLOADABLE: dict[tuple[str, str, str], str] = {
-    (SCHEMA, "invitations", "status"): "core#1393",
-}
+KNOWN_UNLOADABLE: dict[tuple[str, str, str], str] = {}
 
 #: Not a member of any enum in this codebase, and short enough for the narrowest Enum column
 #: (``length=10``), so an INSERT storing it fails on the enum and never on the column width.

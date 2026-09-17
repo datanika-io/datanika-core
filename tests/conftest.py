@@ -131,8 +131,16 @@ def production_session_factory(tmp_path):
     * **The database is a file.** SQLite ``:memory:`` gives each connection its own database, so a
       second session would see nothing the first committed.
     * ⚠️ **Code under test that opens its own session** (``get_sync_session()``) binds production's
-      engine, not this one. Hand it a session from this factory, as
+      engine, not this one. For a service call, hand it a session from this factory, as
       ``test_cancel_guards_read_the_database.py`` does.
+    * 🚨 **For a TASK, patch ``datanika.db.get_sync_session`` to this factory; do not pass
+      ``session=``.** A task given a session skips its own commits (``run_upload``'s
+      ``own_session`` branches), so its first write stays uncommitted across the engine call. SQLite
+      allows ONE writer, so another session's commit then fails ``database is locked`` — which
+      Postgres, locking rows, would not do — and the harness manufactures a failed run and loses the
+      other session's write.
+      Measured on ``run_upload`` (core#1412): passed session, an API soft-delete mid-run → run
+      ``failed``, delete lost; production's shape → run ``success``, delete kept.
 
     The fixture's own properties are pinned in ``tests/test_production_session_factory.py``.
     """

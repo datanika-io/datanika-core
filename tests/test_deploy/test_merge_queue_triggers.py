@@ -386,17 +386,30 @@ def test_goes_red_when_a_required_job_is_gated_on_the_pull_request_event():
 
 
 def test_goes_red_when_a_staging_job_loses_its_event_gate():
-    doc = _mutate(
-        CI_TEXT,
-        r"^    if: github\.event_name == 'push' && github\.ref == 'refs/heads/dev'$",
-        "    if: github.ref == 'refs/heads/dev'",
-    )
+    """Aimed at the job that redeploys staging, found by what it calls, not at a line.
+
+    🔴 This used to rewrite the FIRST single-line
+    ``if: github.event_name == 'push' && github.ref == 'refs/heads/dev'`` in ci.yml. core#975's
+    residual added a ``supersession`` job with exactly that gate, ahead of the caller, whose own
+    ``if:`` became a folded block. The anchor then matched the new job, which touches no staging,
+    so the control loosened a job the rule does not cover and went red for aiming at the wrong
+    subject. Loosening the calling job's own condition keeps the control on the job the rule is
+    about, however that condition is formatted.
+    """
+    doc = yaml.safe_load(CI_TEXT)
+    callers = [n for n, spec in doc["jobs"].items() if _calls_a_staging_workflow(spec or {})]
+    assert callers, "no job calls a staging workflow -- this mutation would test nothing"
+    for name in callers:
+        cond = str(doc["jobs"][name].get("if") or "")
+        loosened_cond = re.sub(r"github\.event_name\s*==\s*'push'\s*&&\s*", "", cond)
+        assert loosened_cond != cond, f"{name}'s if: carries no event gate to remove"
+        doc["jobs"][name]["if"] = loosened_cond
     loosened = [
         job_id
         for job_id, spec in doc["jobs"].items()
         if _touches_staging(spec or {}) and not _skips_merge_group(spec or {})
     ]
-    assert loosened, "loosening a staging job's event gate must be detectable"
+    assert set(callers) <= set(loosened), "loosening a staging job's event gate must be detectable"
 
 
 def test_a_paths_filtered_workflow_is_exempted_for_the_stated_reason():

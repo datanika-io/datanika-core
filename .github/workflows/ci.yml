@@ -1045,14 +1045,54 @@ jobs:
   # to pointer.gr on push:master). The old GHCR-pull-to-Hetzner deploy job was
   # removed 2026-07-17 — the Hetzner box is gone and GHCR is inaccessible from the box.
 
+  # core#975, the residual. ONE group member per run (below) closed INTRA-run displacement.
+  # It did not close INTER-run displacement under a burst: GitHub holds one running plus one
+  # PENDING entry per group, a newer waiter cancels the pending one, and "newer" means
+  # whichever run's TESTS FINISHED later -- not whichever commit is newer. On 2026-09-16
+  # `0cd5b471` was pushed before `3a2d4147`, finished its tests 16 s after it, and cancelled
+  # the head's pending staging entry: `dev`'s head got no staging verdict, and nothing was red.
+  #
+  # So a run whose commit is no longer `dev`'s head does not enter the group at all; the newer
+  # head's own run produces the reading that matters. `scripts/staging-supersession.sh` FAILS
+  # OPEN: an unreadable head answers `true`, the behaviour before this check existed.
+  #
+  # 🚨 Its `needs` must stay identical to the caller's other needs. The whole race is about
+  # when tests FINISH, so the head has to be read at group-entry time; a check with no `needs`
+  # would read it at push time, eleven minutes too early. And it holds no group -- a second
+  # `staging-deploy` member is core#975 itself. Guarded by test_staging_supersession.py.
+  #
+  # ✅ Measured before it was built (run 35231903068, throwaway branch deleted): a `uses:`
+  # caller skipped by `if:` does NOT enter its group and does NOT cancel a pending entry (that
+  # entry ran when the holder released), while the same caller with the condition true
+  # cancelled the pending entry one second after its check finished.
+  supersession:
+    needs: [lint, test, helm-lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      is_head: ${{ steps.head.outputs.is_head }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Is this commit still dev's head?
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: bash scripts/staging-supersession.sh
+
   # core#975: ONE group member per run. See `.github/workflows/staging.yml` for why the
   # three jobs moved and what the check names became.
   staging:
     concurrency:
       group: staging-deploy
       cancel-in-progress: false
-    needs: [lint, test, helm-lint]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: [lint, test, helm-lint, supersession]
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/dev'
+      && needs.supersession.outputs.is_head == 'true'
     permissions:
       contents: read
       issues: write
@@ -1129,10 +1169,16 @@ jobs:
     # enough that silently losing the SSO tier behind it is a real loss of coverage, and it
     # would look exactly like a clean run. `!cancelled()` rather than `always()` so a
     # cancelled staging run does not start an IdP nobody will tear down (core#765).
-    needs: [staging]
+    #
+    # core#975 residual: gated on the same supersession answer as the caller. A superseded
+    # run skips `staging`, and under `!cancelled()` this job would otherwise still start, then
+    # refuse at its attribution step against the newer head's build -- a red on a commit
+    # nobody can promote.
+    needs: [staging, supersession]
     if: >-
       !cancelled()
       && github.event_name == 'push' && github.ref == 'refs/heads/dev'
+      && needs.supersession.outputs.is_head == 'true'
     continue-on-error: true
     runs-on: ubuntu-latest
     environment: production

@@ -330,10 +330,15 @@ jobs:
     #   (core#975), each leaving a commit that was `dev`'s head with no honest reading and
     #   nothing red anywhere.
     #
-    # ✅ core#975 closes that second half by construction: the three jobs are now ONE group
-    # member, so there is nothing for a newer run to displace. A newer push waits instead of
-    # cancelling, which is the right polarity -- the promotion pre-flight needs a verdict for
-    # `dev`'s exact HEAD, and it now gets one for every head rather than for most of them.
+    # ✅ core#975 closes the INTRA-run half by construction: the three jobs are now ONE group
+    # member, so no sibling job can displace another. A newer push waits instead of
+    # cancelling, which is the right polarity for the promotion pre-flight.
+    #
+    # 🔴 It did NOT close the INTER-run half, and this comment said "every head" until it was
+    # measured false (2026-09-16): under a burst, the run whose tests finish later is the newer
+    # waiter and cancels a pending head. The caller in ci.yml is therefore gated by a
+    # `supersession` job, so a run whose commit is no longer `dev`'s head never enters the
+    # group. See that job's comment for the measurement behind the gate.
     #
     # ⚠️ `cancel-in-progress` must stay false on the caller. `true` on a deploy is core#572
     # (a cancelled deploy left renamed containers and wedged staging); `true` here would

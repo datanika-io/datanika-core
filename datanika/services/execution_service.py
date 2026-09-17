@@ -3,10 +3,11 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
+from datanika.models.upload import Upload
 from datanika.models.user import MemberRole
 from datanika.services.authorization import assert_org_role
 
@@ -142,6 +143,68 @@ class ExecutionService:
             session, org_id, run, status=RunStatus.RUNNING, started_at=datetime.now(UTC)
         )
         return run
+
+    def start_exclusive_upload_run(
+        self, session: Session, org_id: int, run_id: int, upload_id: int
+    ) -> int | None:
+        """Start a run of an incremental upload unless another run of it is running (core#1404).
+
+        ``SPEC_INCREMENTAL_UPLOADS`` §2.4. An incremental upload's runs share one cursor, so two of
+        them extracting at once would both read past the same value and both land the same rows.
+
+        Returns ``None`` when this call started the run, or when the run was cancelled, which the
+        caller's pre-engine checkpoint then stops exactly as after :meth:`start_run`. Otherwise it
+        returns the id of the run in progress and leaves this run ``PENDING``. The caller commits.
+
+        🚨 **The row lock on the upload is the guarantee, not the ``NOT EXISTS``.** Two claims whose
+        ``UPDATE``s overlap each read the committed state from before either wrote, so each finds no
+        run in progress and both start. Locking the upload first makes the second claim wait until
+        the first commits, and its ``UPDATE`` then reads the first run as running.
+        ``tests/test_tasks/test_incremental_upload_runs_do_not_overlap.py`` holds a claim
+        uncommitted and asserts the second one waits. SQLite ignores ``FOR UPDATE``, and serialises
+        writers instead.
+
+        ⚠️ **No timeout decides that a run is stale.** A run left ``RUNNING`` by a worker that died
+        keeps refusing, and the refusal says to cancel it, which the user can do. A timeout would
+        let a long, healthy run be joined by a second one.
+        """
+        run = get_org_run(session, org_id, run_id)
+        if run is None:
+            return None
+        other = aliased(Run)
+        in_progress = select(other.id).where(
+            other.org_id == org_id,
+            other.target_type == NodeType.UPLOAD,
+            other.target_id == upload_id,
+            other.status == RunStatus.RUNNING,
+            other.id != run_id,
+        )
+        session.execute(
+            select(Upload.id)
+            .where(Upload.id == upload_id, Upload.org_id == org_id)
+            .with_for_update()
+        )
+        # A run in progress can finish between the refused UPDATE and the read of its id, so the
+        # claim is retried rather than reporting a run that no longer holds the cursor.
+        for _attempt in range(3):
+            started = session.execute(
+                update(Run)
+                .where(
+                    Run.id == run_id,
+                    Run.org_id == org_id,
+                    Run.status != RunStatus.CANCELLED,
+                    ~in_progress.exists(),
+                )
+                .values(status=RunStatus.RUNNING, started_at=datetime.now(UTC))
+                .execution_options(synchronize_session=False)
+            )
+            session.refresh(run, attribute_names=["status", "started_at"])
+            if started.rowcount == 1 or run.status == RunStatus.CANCELLED:
+                return None
+            busy = session.execute(in_progress.order_by(other.id).limit(1)).scalar_one_or_none()
+            if busy is not None:
+                return busy
+        return None
 
     def is_cancelled_now(self, session: Session, org_id: int, run_id: int) -> bool:
         """Is the run cancelled, read from the DATABASE — never from the session's identity map?

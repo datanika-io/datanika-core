@@ -1,8 +1,10 @@
 """Catalog service — introspect tables, manage catalog entries."""
 
 import logging
+from collections import defaultdict
 from datetime import UTC, datetime
 
+from dlt.destinations.impl.clickhouse.configuration import ClickHouseClientConfiguration
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.orm import Session
 
@@ -21,7 +23,105 @@ _INFORMATION_SCHEMA_COLUMNS = text(
 )
 
 
+#: dlt's ClickHouse destination has no schema level (core#1397). A dataset is a table-name PREFIX
+#: inside the connection's database: ``<dataset>___<table>``, next to ``<dataset>____dlt_loads``
+#: and ``<dataset>___dlt_sentinel_table``. Read from dlt's own configuration, which Datanika does
+#: not override, so a changed default in dlt moves this with it.
+CLICKHOUSE_DATASET_TABLE_SEPARATOR: str = ClickHouseClientConfiguration.dataset_table_separator
+CLICKHOUSE_DATASET_SENTINEL_TABLE: str = ClickHouseClientConfiguration.dataset_sentinel_table_name
+
+#: ClickHouse's own catalogue. Queried directly, because clickhouse-connect 0.11's SQLAlchemy
+#: dialect lists tables by passing a plain string to ``connection.execute``, which SQLAlchemy 2
+#: refuses before anything reaches the server (``ObjectNotExecutableError``, for every schema).
+_CLICKHOUSE_TABLES = text(
+    "SELECT database, name FROM system.tables WHERE database = :database ORDER BY name"
+)
+_CLICKHOUSE_TABLES_EVERYWHERE = text(
+    "SELECT database, name FROM system.tables "
+    "WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') "
+    "ORDER BY database, name"
+)
+_CLICKHOUSE_COLUMNS = text(
+    "SELECT name, type FROM system.columns WHERE database = :database AND table = :table "
+    "ORDER BY position"
+)
+
+
+def clickhouse_table_names(sa_url: str, database: str | None) -> list[tuple[str, str]]:
+    """``(database, table)`` for every table in ``database``, or in every user database."""
+    engine = create_engine(sa_url)
+    try:
+        with engine.connect() as conn:
+            if database:
+                rows = conn.execute(_CLICKHOUSE_TABLES, {"database": database}).fetchall()
+            else:
+                rows = conn.execute(_CLICKHOUSE_TABLES_EVERYWHERE).fetchall()
+        return [(str(db), str(name)) for db, name in rows]
+    finally:
+        engine.dispose()
+
+
+def dbt_sources_for_entries(entries) -> list[dict]:
+    """The dbt source definitions for a connection's catalogued upload tables.
+
+    One source per dataset. Its ``schema`` is where the tables **are**, read from the entries:
+    the dataset itself on every destination that has a schema level, and the connection's
+    database on ClickHouse, whose entries carry the prefixed table name (core#1397). So
+    ``source('<dataset>', '<dataset>___<table>')`` resolves to ``<database>.<dataset>___<table>``,
+    which is the table the load wrote, and the name the catalogue and the editor's autocomplete
+    already show.
+    """
+    by_dataset: dict[str, list] = defaultdict(list)
+    for entry in entries:
+        by_dataset[entry.dataset_name].append(entry)
+    return [
+        {
+            "name": dataset,
+            "schema": group[0].schema_name or dataset,
+            "description": f"Data loaded by upload into {dataset}",
+            "tables": [{"name": e.table_name, "columns": e.columns or []} for e in group],
+        }
+        for dataset, group in sorted(by_dataset.items())
+    ]
+
+
 class CatalogService:
+    @staticmethod
+    def introspect_clickhouse_dataset(sa_url: str, database: str, dataset_name: str) -> list[dict]:
+        """The tables one dlt dataset loaded into a ClickHouse database (core#1397).
+
+        Returns the same shape as :meth:`introspect_tables`, with ``table_name`` the table's real
+        name in ClickHouse, prefix included. dlt's bookkeeping tables share the prefix rather
+        than starting with ``_dlt_``, so they are dropped here by what follows the prefix.
+        """
+        prefix = f"{dataset_name}{CLICKHOUSE_DATASET_TABLE_SEPARATOR}"
+        results = []
+        engine = create_engine(sa_url)
+        try:
+            with engine.connect() as conn:
+                rows = conn.execute(_CLICKHOUSE_TABLES, {"database": database}).fetchall()
+                for name in (str(r[1]) for r in rows):
+                    if not name.startswith(prefix):
+                        continue
+                    remainder = name[len(prefix) :]
+                    if (
+                        remainder.startswith("_dlt_")
+                        or remainder == CLICKHOUSE_DATASET_SENTINEL_TABLE
+                    ):
+                        continue
+                    columns = conn.execute(
+                        _CLICKHOUSE_COLUMNS, {"database": database, "table": name}
+                    ).fetchall()
+                    results.append(
+                        {
+                            "table_name": name,
+                            "columns": [{"name": str(c), "data_type": str(t)} for c, t in columns],
+                        }
+                    )
+            return results
+        finally:
+            engine.dispose()
+
     @staticmethod
     def introspect_tables(
         sa_url: str,

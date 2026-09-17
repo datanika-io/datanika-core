@@ -1769,6 +1769,14 @@ class ConnectionService:
         if connection_type in _NON_DB_TYPES:
             raise UserFacingError(f"Cannot list tables for {connection_type.value} connections")
         url = _build_sa_url(config, connection_type)
+        if connection_type == ConnectionType.CLICKHOUSE:
+            # core#1397: clickhouse-connect's dialect cannot run its own `SHOW DATABASES` or
+            # `SHOW TABLES` under SQLAlchemy 2, so ClickHouse's system tables are read instead.
+            from datanika.services.catalog_service import clickhouse_table_names
+
+            return [
+                {"schema": db, "name": name} for db, name in clickhouse_table_names(url, schema)
+            ]
         engine = create_engine(url)
         try:
             insp = inspect(engine)

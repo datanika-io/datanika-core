@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.dependency import NodeType
-from datanika.services.catalog_service import CatalogService
+from datanika.services.catalog_service import CatalogService, dbt_sources_for_entries
 from datanika.services.connection_service import ConnectionService
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
@@ -528,29 +528,14 @@ class ModelDetailState(BaseState):
                 dbt_svc.ensure_project(org_id)
 
                 if entry.entry_type == CatalogEntryType.SOURCE_TABLE and entry.connection_id:
-                    from collections import defaultdict
-
                     all_entries = catalog_svc.get_entries_by_connection(
                         session,
                         org_id,
                         entry.connection_id,
                     )
-                    by_dataset: dict[str, list] = defaultdict(list)
-                    for e in all_entries:
-                        by_dataset[e.dataset_name].append(
-                            {
-                                "name": e.table_name,
-                                "columns": e.columns or [],
-                            }
-                        )
-                    sources = [
-                        {
-                            "name": ds,
-                            "schema": ds,
-                            "tables": tbls,
-                        }
-                        for ds, tbls in sorted(by_dataset.items())
-                    ]
+                    # The same definitions the upload writes, so saving an entry here cannot
+                    # rewrite a ClickHouse source to a database that does not exist (core#1397).
+                    sources = dbt_sources_for_entries(all_entries)
                     # Resolve connection name for filename
                     encryption = EncryptionService(settings.credential_encryption_key)
                     conn_svc = ConnectionService(encryption)

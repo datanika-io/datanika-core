@@ -633,7 +633,9 @@ ARMS: tuple[Arm, ...] = (
 #: strict xfail in `_param`, written as a literal so its issue is readable where the marker is
 #: (`tests/test_deploy/test_strict_xfail_reasons_name_an_issue.py`). Strict: a fix turns the arm
 #: into an XPASS, which fails, so the marker cannot outlive its defect.
-KNOWN_INSTANCE_ARMS = ("sqlite-path-the-worker-cannot-see", "kafka-two-topics-both-waiting")
+#: Empty since core#1401 and core#1408 were fixed: both arms went XPASS(strict), and their markers
+#: went with them.
+KNOWN_INSTANCE_ARMS: tuple[str, ...] = ()
 
 #: Every source type without an arm, with the reason. Not a list of exemptions: a list of what this
 #: probe does not yet see. An arm makes its entry fail until it is removed.
@@ -686,28 +688,6 @@ def _param(arm: Arm):
     marks = []
     if "kafka" in arm.needs:
         marks.append(requires_docker)
-    if arm.id == "sqlite-path-the-worker-cannot-see":
-        marks.append(
-            pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "core#1401: with no file at the path, sql_database opens an empty SQLite "
-                    "database and the run succeeds with 0 tables"
-                ),
-            )
-        )
-    if arm.id == "kafka-two-topics-both-waiting":
-        marks.append(
-            pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "core#1408: one consumer per topic in one group and one process; the second "
-                    "is never assigned a partition and its topic loads nothing on a green run"
-                ),
-            )
-        )
     return pytest.param(arm, id=arm.id, marks=marks)
 
 

@@ -322,9 +322,13 @@ class TestBuildSource:
         assert result == "mssql_source"
 
     @patch("datanika.services.dlt_runner.sql_database")
-    def test_sqlite_source(self, mock_sql_db, svc):
+    def test_sqlite_source(self, mock_sql_db, svc, tmp_path):
+        # A file that exists: since core#1401 a missing one is refused before sql_database is
+        # called (tests/test_services/test_local_file_source_needs_its_file.py).
+        path = tmp_path / "db.sqlite"
+        path.touch()
         mock_sql_db.return_value = "sqlite_source"
-        result = svc.build_source("sqlite", {"path": "db.sqlite"}, {})
+        result = svc.build_source("sqlite", {"path": str(path)}, {})
         assert result == "sqlite_source"
 
     def test_unsupported_type_raises(self, svc):

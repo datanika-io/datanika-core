@@ -224,6 +224,28 @@ def test_a_real_sqlite_file_still_passes_and_is_not_modified(real_sqlite):
     assert before == after, "the check modified the database it was checking"
 
 
+@pytest.mark.parametrize("name", ["hash#1.sqlite", "pct%20.sqlite", "with space.sqlite"])
+def test_a_file_whose_name_is_uri_syntax_passes_and_nothing_appears_beside_it(tmp_path, name):
+    """core#1401. The read-only open is a URI filename, and `#` and `%` are URI syntax.
+
+    Measured before the encoding: `hash#1.sqlite` passed by opening, and **creating**, a
+    database named `hash` beside it. That open was read-write, because `?mode=ro` landed in the
+    fragment. `pct%20.sqlite` could not be opened at all.
+    """
+    import sqlite3
+
+    path = tmp_path / name
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE t (a INTEGER)")
+    con.commit()
+    con.close()
+
+    ok, msg = ConnectionService.test_connection({"path": str(path)}, ConnectionType.SQLITE)
+
+    assert ok is True, msg
+    assert sorted(p.name for p in tmp_path.iterdir()) == [name], "the check created a database"
+
+
 def test_missing_and_unopenable_are_distinguishable(tmp_path):
     """AC4. They call for different user actions, so they need different words.
 

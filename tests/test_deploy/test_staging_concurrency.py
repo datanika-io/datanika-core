@@ -69,8 +69,13 @@ What this does NOT claim
 Nothing here says a staging job can never be cancelled. An intermediate commit superseded
 before it is ever `dev`'s head does not need a verdict, and cancelling that is correct. The
 property is *"every commit that becomes the head acquires a complete, attributed verdict, or
-something goes red"* — and after core#975 the only way to lose one is for the run itself to
-be cancelled, not for a sibling job to displace it.
+something goes red"*. After core#975 a SIBLING job can no longer displace one.
+
+🔴 **This paragraph used to say the only remaining way to lose one was the run itself being
+cancelled, and that was measured false on 2026-09-16.** Between RUNS, the run whose tests
+finish later is the newer waiter and cancels a pending head's entry. That residual is closed by
+the `supersession` gate in ci.yml, and its invariants live in `test_staging_supersession.py`,
+not here — this file pins one member per run, that one pins who may enter.
 """
 
 from __future__ import annotations

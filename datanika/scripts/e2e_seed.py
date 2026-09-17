@@ -38,7 +38,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import MetaData, Table, inspect, select
 from sqlalchemy.orm import Session
 
 from datanika.config import settings
@@ -214,6 +214,29 @@ def _delete_oauth_chain(session: Session, api_key_ids) -> None:
     session.execute(OAuthGrant.__table__.delete().where(OAuthGrant.id.in_(grant_ids)))
 
 
+#: Cloud tables that hold org-scoped rows, in the order they have to be emptied: `charges`
+#: references `subscriptions`, and `usage_ledger` and `subscriptions` reference `organizations`
+#: (core#1437). Core creates them by migration and has no model for them, so they are reflected.
+_CLOUD_ORG_TABLES = ("charges", "usage_ledger", "subscriptions")
+
+
+def _delete_cloud_org_rows(session: Session, org_ids: list[int]) -> None:
+    """Remove the fixture orgs' billing rows, where those tables exist.
+
+    On a cloud-edition stack, metering writes a `usage_ledger` row for a fixture org as soon as
+    a run in it completes. After that, every teardown died on `usage_ledger_org_id_fkey`, which
+    wedged e2e-staging for every commit. A database built from core's metadata alone has none of
+    these tables, which is why each one is looked up first.
+    """
+    bind = session.connection()
+    present = set(inspect(bind).get_table_names())
+    for name in _CLOUD_ORG_TABLES:
+        if name not in present:
+            continue
+        table = Table(name, MetaData(), autoload_with=bind)
+        session.execute(table.delete().where(table.c.org_id.in_(org_ids)))
+
+
 def _tear_down_fixture(session: Session) -> None:
     """Hard-delete both fixture orgs and everything scoped to them.
 
@@ -282,6 +305,7 @@ def _tear_down_fixture(session: Session) -> None:
         session.execute(ApiKey.__table__.delete().where(ApiKey.org_id.in_(org_ids)))
         session.execute(Connection.__table__.delete().where(Connection.org_id.in_(org_ids)))
         session.execute(Membership.__table__.delete().where(Membership.org_id.in_(org_ids)))
+        _delete_cloud_org_rows(session, org_ids)
         session.execute(Organization.__table__.delete().where(Organization.id.in_(org_ids)))
 
     users = list(session.execute(select(User).where(User.email.in_(fixture_user_emails))).scalars())

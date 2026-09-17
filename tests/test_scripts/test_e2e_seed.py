@@ -812,3 +812,122 @@ class TestTeardownWithPIIChildren:
         seed(session=session)
 
         assert session.execute(select(PasswordResetToken)).scalars().first() is None
+
+
+class TestTeardownWithCloudBillingRows:
+    """Regression: e2e-staging died in the seed on `usage_ledger_org_id_fkey` (core#1437).
+
+    `usage_ledger` and `subscriptions` reference `organizations`, and `charges` references
+    `subscriptions`. All three are cloud tables that core creates by migration and has no model
+    for, so `_tear_down_fixture` never deleted from them. On a cloud-edition stack, metering
+    writes a `usage_ledger` row for a fixture org as soon as a run in it completes. From then on,
+    every re-seed died on the organizations delete, for every commit, until rows were removed
+    by hand. #415's shape, with billing rows instead of OAuth grants.
+
+    Foreign keys are enforced on a dedicated engine, as `TestTeardownWithOAuthGrants` explains.
+    The three tables are created with the columns and keys the migrations give them. Core's
+    metadata does not know them.
+    """
+
+    @pytest.fixture
+    def fk_enforced_with_billing(self):
+        from sqlalchemy import create_engine, event
+        from sqlalchemy.orm import Session as SaSession
+
+        from datanika.models.base import Base
+
+        engine = create_engine("sqlite:///:memory:")
+
+        @event.listens_for(engine, "connect")
+        def _enable_fk(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+        Base.metadata.create_all(engine)
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE TABLE subscriptions (id INTEGER PRIMARY KEY, "
+                    "org_id BIGINT NOT NULL REFERENCES organizations(id))"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE usage_ledger (id INTEGER PRIMARY KEY, "
+                    "org_id BIGINT NOT NULL REFERENCES organizations(id), metric VARCHAR(50))"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TABLE charges (id INTEGER PRIMARY KEY, org_id BIGINT NOT NULL, "
+                    "subscription_id BIGINT NOT NULL REFERENCES subscriptions(id))"
+                )
+            )
+        session = SaSession(bind=engine)
+        assert session.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    @staticmethod
+    def _bill(session, org_id: int) -> None:
+        session.execute(text("INSERT INTO subscriptions (org_id) VALUES (:org)"), {"org": org_id})
+        subscription_id = session.execute(
+            text("SELECT max(id) FROM subscriptions WHERE org_id = :org"), {"org": org_id}
+        ).scalar_one()
+        session.execute(
+            text("INSERT INTO usage_ledger (org_id, metric) VALUES (:org, 'bytes_processed')"),
+            {"org": org_id},
+        )
+        session.execute(
+            text("INSERT INTO charges (org_id, subscription_id) VALUES (:org, :sub)"),
+            {"org": org_id, "sub": subscription_id},
+        )
+        session.flush()
+
+    def test_teardown_succeeds_after_a_fixture_org_was_metered(self, fk_enforced_with_billing):
+        session = fk_enforced_with_billing
+        seed(session=session)
+        fixture_org = session.execute(
+            select(Organization).where(Organization.slug == FIXTURE_ORG_SLUG)
+        ).scalar_one()
+        self._bill(session, fixture_org.id)
+
+        seed(session=session)  # tears the fixture down first: the path that died on staging
+
+        for table in ("usage_ledger", "charges", "subscriptions"):
+            left = session.execute(
+                text(f"SELECT count(*) FROM {table} WHERE org_id = :org"),  # noqa: S608
+                {"org": fixture_org.id},
+            ).scalar_one()
+            assert left == 0, table
+
+    def test_control_billing_rows_of_other_orgs_are_left_alone(self, fk_enforced_with_billing):
+        session = fk_enforced_with_billing
+        other = Organization(name="Customer", slug="a-real-customer")
+        session.add(other)
+        session.flush()
+        self._bill(session, other.id)
+        seed(session=session)
+        fixture_org = session.execute(
+            select(Organization).where(Organization.slug == FIXTURE_ORG_SLUG)
+        ).scalar_one()
+        self._bill(session, fixture_org.id)
+
+        seed(session=session)
+
+        for table in ("usage_ledger", "charges", "subscriptions"):
+            kept = session.execute(
+                text(f"SELECT count(*) FROM {table} WHERE org_id = :org"),  # noqa: S608
+                {"org": other.id},
+            ).scalar_one()
+            assert kept == 1, table
+
+    def test_teardown_still_runs_where_the_billing_tables_do_not_exist(self, db_session):
+        """A core-only database has these tables too (core creates them), but a test database
+        built from core's metadata does not. The teardown must not require them."""
+        seed(session=db_session)
+        seed(session=db_session)

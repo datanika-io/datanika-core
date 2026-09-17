@@ -133,11 +133,17 @@ class TestToDltCredentials:
         assert creds["drivername"] == "sqlite"
         assert creds["database"] == "/data/my.db"
 
-    def test_redshift_adds_drivername(self, svc):
-        creds = svc._to_dlt_credentials(
-            "redshift", {"host": "h", "port": 5439, "user": "u", "database": "db"}
-        )
-        assert creds["drivername"] == "redshift+redshift_connector"
+    def test_the_source_driver_map_names_only_source_types(self):
+        """core#1456. Repointed: this test used to assert that Redshift got
+        `redshift+redshift_connector`, which pinned the defect. Redshift is not a source type
+        (core#845), so that entry reached only the DESTINATION, whose DSN psycopg2 then
+        refused. A SQLAlchemy dialect for a type nothing reads as a source has nowhere correct
+        to go.
+        """
+        from datanika.services.dlt_runner import SOURCE_DRIVERNAME_MAP
+
+        extra = set(SOURCE_DRIVERNAME_MAP) - DltRunnerService.SUPPORTED_SOURCE_TYPES
+        assert not extra, f"source driver names for types that are not sources: {extra}"
 
     def test_renames_user_to_username(self, svc):
         creds = svc._to_dlt_credentials(
@@ -213,7 +219,10 @@ class TestBuildDestination:
         mock_dlt.destinations.postgres.return_value = "pg_dest"
         result = svc.build_destination("postgres", {"host": "localhost"})
         call_creds = mock_dlt.destinations.postgres.call_args[1]["credentials"]
-        assert call_creds["drivername"] == "postgresql"
+        # core#1456: a destination receives no source driver name; dlt's credential class
+        # declares its own. That the resulting DSN parses is asserted, unmocked, in
+        # test_destination_credential_contract.py.
+        assert "drivername" not in call_creds
         assert call_creds["host"] == "localhost"
         assert result == "pg_dest"
 
@@ -294,7 +303,9 @@ class TestBuildDestination:
         mock_dlt.destinations.redshift.return_value = "rs_dest"
         result = svc.build_destination("redshift", {"host": "rs-host"})
         call_creds = mock_dlt.destinations.redshift.call_args[1]["credentials"]
-        assert call_creds["drivername"] == "redshift+redshift_connector"
+        # core#1456: this asserted `redshift+redshift_connector`, the value that made every
+        # Redshift load's DSN unparseable. Repointed at the invariant.
+        assert "drivername" not in call_creds
         assert result == "rs_dest"
 
 

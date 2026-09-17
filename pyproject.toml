@@ -279,6 +279,13 @@ constraint-dependencies = [
     "python-multipart>=0.0.30,<0.1",
     "python-socketio>=5.16.2,<6",
     "soupsieve>=2.8.4,<3",
+    # ---- starlette 1.x under Reflex 0.8.26 (core#1347) ------------------------
+    # Nothing in the tree declares a ceiling on starlette, so the question was never whether
+    # the resolver would take 1.x but whether Reflex 0.8.26 runs on it. Measured on core#1347
+    # under granian and uvicorn: the /_event websocket handshake and an event round-trip, a
+    # multipart upload reaching state (3 MB included), and an authenticated /mcp tool call,
+    # identical on 0.52.1, 1.3.1 and 1.6.0, each beside a control that fails.
+    "starlette>=1.3.1,<2",
     # ---- Unblocked by databricks-sql-connector 4.4.0 -------------------------
     # thrift reaches the tree only through databricks-sql-connector (dlt's
     # `databricks` extra). 4.2.5 declared thrift<0.21.0, below the fix; 4.4.0

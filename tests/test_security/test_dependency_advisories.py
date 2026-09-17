@@ -92,6 +92,11 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "kombu's optional `msgpack` extra, which this tree does not enable, so it never "
         "enters the resolution. Check whether a pin is behind an extra before believing it.",
     ),
+    "starlette": (
+        "1.3.1",
+        "CVE-2026-48818 (1.1.0) and CVE-2026-54283 (1.3.1). The major under Reflex 0.8.26 is "
+        "measured on core#1347; these were the two image-cve waivers, retired with this floor.",
+    ),
     "pyasn1": (
         "0.6.4",
         "CVE-2026-30922 (0.6.3) unbounded recursion, then three more DoS records fixed in 0.6.4",

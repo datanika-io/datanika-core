@@ -198,12 +198,10 @@ class DeclaredPause:
 #: Lifting a pause is `gh workflow enable <file>` AND deleting the entry; an entry whose
 #: workflow is active again is reported as stale rather than silently kept.
 DECLARED_PAUSES: tuple[DeclaredPause, ...] = (
-    DeclaredPause(
-        ref="datanika-io/datanika-core :: .github/workflows/cve-watch.yml",
-        declared_on=datetime(2026, 9, 15, tzinfo=UTC),
-        review_by=datetime(2026, 9, 29, tzinfo=UTC),
-        reason="paused pending a decision on where its findings are filed (refs #1166)",
-    ),
+    # cve-watch's pause (declared 2026-09-15, refs #1166) was lifted when its findings moved to
+    # the private tracker. The lift is this deletion AND `gh workflow enable`, done together
+    # right after the promotion that carries it: enabling first would file into the public
+    # tracker, and deleting without enabling reads as an undeclared manual disable.
 )
 
 #: Longest a single declaration may run before it has to be re-decided in a reviewed change.

@@ -9,8 +9,11 @@ file. None would turn anything red on its own.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,10 @@ REPO = Path(__file__).resolve().parents[2]
 WF = REPO / ".github" / "workflows" / "cve-watch.yml"
 SCRIPT = REPO / ".github" / "scripts" / "cve_report.py"
 
+#: Founder, 2026-09-17 (refs #1166): findings are filed into the private tracker.
+PRIVATE_TRACKER = "datanika-io/datanika-cloud"
+LABELS = ("core", "security scan")
+
 
 def _wf() -> dict:
     return yaml.safe_load(WF.read_text(encoding="utf-8"))
@@ -28,6 +35,19 @@ def _wf() -> dict:
 def _on(doc: dict) -> dict:
     # PyYAML parses a bare `on:` key as the boolean True.
     return doc.get("on") or doc.get(True) or {}
+
+
+def _steps() -> list[dict]:
+    return _wf()["jobs"]["scan"]["steps"]
+
+
+def _filing_steps() -> list[dict]:
+    """Every step that runs the filer, dry or not -- never the reach check."""
+    return [
+        s
+        for s in _steps()
+        if "cve_report.py" in str(s.get("run", "")) and "--check-reach" not in str(s.get("run", ""))
+    ]
 
 
 def test_workflow_exists() -> None:
@@ -71,11 +91,70 @@ def test_cron_does_not_collide_with_the_existing_schedules() -> None:
     assert mine & others == set(), f"cron collides with an existing schedule: {mine & others}"
 
 
-def test_it_can_write_issues_because_that_is_the_whole_delivery_mechanism() -> None:
-    perms = _wf().get("permissions") or {}
-    assert perms.get("issues") == "write", (
-        "without `issues: write` the filer cannot file, and the run still goes green"
-    )
+def test_the_filer_holds_a_token_that_can_reach_the_tracker_it_files_into() -> None:
+    """Repointed, not deleted (WORKFLOW_RULES §5a), 2026-09-17.
+
+    This test used to assert `permissions: issues: write`. The invariant was never that
+    line: it is that the filer can file where it files. While the target was this
+    repository, the job's own token with `issues: write` was how. The target is now the
+    private tracker, and a job's own `GITHUB_TOKEN` cannot reach another repository at all
+    -- a filer still holding it would fail on the first advisory, and on a clean day it
+    would fail on nothing and read green.
+    """
+    steps = _filing_steps()
+    assert steps, "no step runs the filer"
+    for step in steps:
+        token = str((step.get("env") or {}).get("CVE_FILING_TOKEN", ""))
+        assert "secrets." in token, f"{step.get('name')}: the filer's token is not a secret"
+        assert "GITHUB_TOKEN" not in token, (
+            f"{step.get('name')}: the job's own GITHUB_TOKEN cannot reach {PRIVATE_TRACKER}"
+        )
+
+
+def test_findings_are_filed_into_the_private_tracker_not_this_public_repo() -> None:
+    """Founder, 2026-09-17: findings go to the private tracker; the daily scan keeps running."""
+    for step in _filing_steps():
+        run = str(step["run"])
+        assert f"--repo {PRIVATE_TRACKER}" in run, f"{step.get('name')} files somewhere else"
+        assert "github.repository" not in run, f"{step.get('name')} still targets this repo"
+
+
+def test_filed_issues_carry_both_labels() -> None:
+    for step in _filing_steps():
+        run = f"{step['run']} "
+        for label in LABELS:
+            assert f'--label "{label}"' in run or f"--label {label} " in run, (
+                f"{step.get('name')} does not apply the `{label}` label"
+            )
+
+
+def test_a_pull_request_run_never_files() -> None:
+    """The PR trigger proves the token's reach and the dedupe before a merge. It never files."""
+    assert "pull_request" in _on(_wf()), "no pull_request trigger: reach is unproven until cron"
+    live = [s for s in _filing_steps() if "--dry-run" not in str(s["run"])]
+    assert live, "no step actually files"
+    for step in live:
+        assert "github.event_name != 'pull_request'" in str(step.get("if", "")), (
+            f"{step.get('name')} would file from a pull_request"
+        )
+
+
+def test_the_filing_tokens_reach_is_checked_before_the_image_is_built() -> None:
+    """A token that lost its reach must fail in seconds, not after a ten-minute build.
+
+    And on a clean day there is nothing to file, so without this a token that can no
+    longer write reads green until the first advisory it cannot file.
+    """
+    steps = _steps()
+    reach = [i for i, s in enumerate(steps) if "--check-reach" in str(s.get("run", ""))]
+    build = [i for i, s in enumerate(steps) if "build-push-action" in str(s.get("uses", ""))]
+    assert reach and build, "no reach check, or no build"
+    assert reach[0] < build[0], "the reach check runs after the build"
+    reach_token = (steps[reach[0]].get("env") or {}).get("CVE_FILING_TOKEN")
+    for step in _filing_steps():
+        assert (step.get("env") or {}).get("CVE_FILING_TOKEN") == reach_token, (
+            "the reach check proves a different token from the one that files"
+        )
 
 
 def test_a_missing_cloud_token_fails_rather_than_scanning_nothing() -> None:
@@ -85,23 +164,20 @@ def test_a_missing_cloud_token_fails_rather_than_scanning_nothing() -> None:
     at fault. On the default branch the token is always supposed to be there, so
     its absence is a real fault and a green would be a scan of nothing.
     """
-    steps = _wf()["jobs"]["scan"]["steps"]
-    guard = next(s for s in steps if s.get("id") == "token")
+    guard = next(s for s in _steps() if s.get("id") == "token")
     body = str(guard.get("run", ""))
     assert "exit 1" in body, "a token outage must fail, not warn-and-continue"
 
 
 def test_it_asserts_the_report_exists_before_believing_it_is_clean() -> None:
     """An empty report is indistinguishable from a clean scan."""
-    runs = " ".join(str(s.get("run", "")) for s in _wf()["jobs"]["scan"]["steps"])
+    runs = " ".join(str(s.get("run", "")) for s in _steps())
     assert "is NOT a clean scan" in runs
 
 
 def test_the_scan_is_fixed_only_and_critical_high() -> None:
     """Volume was measured before this was built: the unfixed set never gates."""
-    step = next(
-        s for s in _wf()["jobs"]["scan"]["steps"] if "trivy-action" in str(s.get("uses", ""))
-    )
+    step = next(s for s in _steps() if "trivy-action" in str(s.get("uses", "")))
     with_ = step["with"]
     assert with_["severity"] == "CRITICAL,HIGH"
     assert with_["ignore-unfixed"] is True
@@ -109,9 +185,7 @@ def test_the_scan_is_fixed_only_and_critical_high() -> None:
 
 def test_it_does_not_go_red_on_a_finding() -> None:
     """The delivery is an issue. A red tick here would page nobody and mute fast."""
-    step = next(
-        s for s in _wf()["jobs"]["scan"]["steps"] if "trivy-action" in str(s.get("uses", ""))
-    )
+    step = next(s for s in _steps() if "trivy-action" in str(s.get("uses", "")))
     assert str(step["with"]["exit-code"]) == "0"
 
 
@@ -131,14 +205,16 @@ def _v(vid: str, sev: str = "HIGH", fixed: str | None = "2.0") -> dict:
     return d
 
 
-def _run(report: dict, tmp_path: Path) -> str:
+def _run(report: dict, tmp_path: Path, *extra: str) -> str:
     p = tmp_path / "trivy.json"
     p.write_text(json.dumps(report), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "CVE_FILING_TOKEN"}
     res = subprocess.run(
-        [sys.executable, str(SCRIPT), "--report", str(p), "--repo", "o/r", "--dry-run"],
+        [sys.executable, str(SCRIPT), "--report", str(p), "--repo", "o/r", "--dry-run", *extra],
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
     assert res.returncode == 0, res.stderr
     return res.stdout
@@ -234,8 +310,6 @@ def test_trivy_pin_matches_the_one_ci_already_proves_works() -> None:
     schedule FIRED, never whether it succeeded — so it would report healthy
     forever. See core#1193.
     """
-    import re
-
     pins: set[str] = set()
     for path in (REPO / ".github" / "workflows").glob("*.yml"):
         for m in re.finditer(
@@ -248,3 +322,139 @@ def test_trivy_pin_matches_the_one_ci_already_proves_works() -> None:
         f"trivy-action is pinned inconsistently across workflows: {sorted(pins)}. "
         f"The scheduled scan must use the pin CI already proves resolves."
     )
+
+
+# --------------------------------------------------------------------------
+# The private tracker (founder, 2026-09-17, refs #1166)
+# --------------------------------------------------------------------------
+
+
+def _mod():
+    sys.path.insert(0, str(SCRIPT.parent))
+    import cve_report
+
+    return cve_report
+
+
+class _FakeTracker:
+    """Answers the calls the reach check makes, and records them."""
+
+    def __init__(self, private=True, labels=LABELS, write_status=200, read_status=200):
+        self.private = private
+        self.labels = labels
+        self.write_status = write_status
+        self.read_status = read_status
+        self.calls: list[tuple] = []
+
+    def __call__(self, url, token, method="GET", body=None):
+        self.calls.append((method, url, body))
+        if "/labels/" in url:
+            name = urllib.parse.unquote(url.rsplit("/labels/", 1)[1])
+            if name not in self.labels:
+                return 404, {}, {"message": "Not Found"}
+            if method == "GET":
+                return 200, {}, {"name": name, "color": "abcdef", "description": "d"}
+            if self.write_status != 200:
+                return self.write_status, {"X-Accepted-GitHub-Permissions": "issues=write"}, {}
+            return 200, {}, {"name": name}
+        if url.endswith("/repos/o/private") and method == "GET":
+            return self.read_status, {}, {"private": self.private}
+        raise AssertionError(f"unexpected call: {method} {url}")
+
+
+def _reach(**fake):
+    return _mod().check_reach("o/private", list(LABELS), "t", request=_FakeTracker(**fake))
+
+
+def test_reach_passes_on_a_private_tracker_with_both_labels_and_write_access() -> None:
+    fake = _FakeTracker()
+    assert _mod().check_reach("o/private", list(LABELS), "t", request=fake) == []
+    patches = [c for c in fake.calls if c[0] == "PATCH"]
+    assert len(patches) == 1, "write reach is proven by exactly one no-op write"
+    assert patches[0][2] == {"color": "abcdef", "description": "d"}, (
+        "the write probe must re-send the label's own values, so it changes nothing"
+    )
+
+
+def test_reach_refuses_a_public_tracker() -> None:
+    """Filing into a public tracker is the exact thing this change exists to stop."""
+    problems = _reach(private=False)
+    assert any("not private" in p for p in problems), problems
+
+
+def test_reach_refuses_an_unreadable_tracker() -> None:
+    problems = _reach(read_status=404)
+    assert any("cannot read" in p for p in problems), problems
+
+
+def test_reach_refuses_a_missing_label() -> None:
+    problems = _reach(labels=("core",))
+    assert any("security scan" in p for p in problems), problems
+
+
+def test_reach_refuses_a_token_that_can_read_but_not_write() -> None:
+    problems = _reach(write_status=403)
+    assert any("cannot write" in p for p in problems), problems
+    assert any("issues=write" in p for p in problems), "say what GitHub reports the token lacks"
+
+
+def test_dedupe_reads_every_tracker_and_ignores_pull_requests(monkeypatch) -> None:
+    """The existing public issues stay open (founder, 2026-09-17), so they still count.
+
+    A pull request is not a tracking issue: a bump PR naming the id in its title must not
+    stop the finding from being filed.
+    """
+    mod = _mod()
+    pages = {
+        "a/private": [{"title": "[Infra] HIGH CVE-1 in x (1 -> 2)"}],
+        "b/public": [
+            {"title": "[Infra] HIGH CVE-2 in y (1 -> 2)"},
+            {"title": "[Engineering] Bump z for CVE-3", "pull_request": {"url": "u"}},
+        ],
+    }
+
+    def fake_req(url, token, method="GET", body=None):
+        for repo, items in pages.items():
+            if f"/repos/{repo}/issues" in url:
+                return items if "page=1" in url else []
+        raise AssertionError(url)
+
+    monkeypatch.setattr(mod, "_req", fake_req)
+    assert mod.known_advisories(["a/private", "b/public"], "t") == {"CVE-1", "CVE-2"}
+
+
+def test_the_body_names_core_issues_so_they_resolve_from_another_repository() -> None:
+    body = _mod().body_for(
+        {
+            "id": "CVE-1",
+            "pkg": "p",
+            "installed": "1",
+            "fixed": "2",
+            "severity": "HIGH",
+            "title": "t",
+            "target": "img",
+        }
+    )
+    assert re.findall(r"(?<![\w/.-])core#\d+", body) == [], "a bare core#N resolves to nothing"
+    assert "datanika-io/datanika-core#1166" in body
+
+
+def test_a_dry_run_shows_the_labels_it_would_apply(tmp_path: Path) -> None:
+    out = _run(_report([_v("CVE-7")]), tmp_path, "--label", "core", "--label", "security scan")
+    assert "would file: [Infra] HIGH CVE-7 in pkg" in out
+    assert "labels: core, security scan" in out
+
+
+def test_no_token_is_a_failure_not_a_silent_skip(tmp_path: Path) -> None:
+    p = tmp_path / "trivy.json"
+    p.write_text(json.dumps(_report([_v("CVE-8")])), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if k != "CVE_FILING_TOKEN"}
+    res = subprocess.run(
+        [sys.executable, str(SCRIPT), "--report", str(p), "--repo", "o/r"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert res.returncode == 1, (res.returncode, res.stderr)
+    assert "CVE_FILING_TOKEN" in res.stderr, res.stderr

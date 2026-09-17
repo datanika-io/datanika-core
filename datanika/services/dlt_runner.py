@@ -13,6 +13,7 @@ from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
 from datanika.errors import UserFacingError
+from datanika.services.dlt_mssql_freetds import FREETDS_DESTINATIONS, freetds_credentials
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 from datanika.services.write_disposition import (
@@ -1486,6 +1487,14 @@ class DltRunnerService:
                 f"destination for it. Choose another destination for this pipeline."
             )
         kwargs: dict = {"credentials": self._to_dlt_credentials(connection_type, config)}
+
+        # core#1379: SQL Server and Synapse load through FreeTDS, with encryption requested in
+        # FreeTDS's own vocabulary and dlt's name-only driver gate widened for it. The shaping
+        # happens HERE and not in `_to_dlt_credentials`, which also builds the pymssql SOURCE
+        # credentials. See `dlt_mssql_freetds` for what each piece guards against.
+        if connection_type in FREETDS_DESTINATIONS:
+            factory = FREETDS_DESTINATIONS[connection_type]
+            kwargs["credentials"] = freetds_credentials(kwargs["credentials"])
 
         # ClickHouse: pass table_engine_type for cluster support
         if connection_type == "clickhouse":

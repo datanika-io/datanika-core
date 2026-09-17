@@ -2559,9 +2559,24 @@ class DltRunnerService:
 
         @dlt.source(name="kafka")
         def _kafka_source():
-            # One resource per topic, so each lands in its own table rather
-            # than being fused into one by message shape.
-            return [_topic_resource(topic)() for topic in topics]
+            @dlt.resource(name="kafka_all_topics")
+            def _consume_all():
+                consumer = KafkaConsumer(
+                    *topics,
+                    bootstrap_servers=servers,
+                    group_id=group_id,
+                    auto_offset_reset=auto_offset_reset,
+                    enable_auto_commit=auto_commit,
+                    consumer_timeout_ms=idle_timeout_ms,
+                    **security,
+                )
+                try:
+                    for message in consumer:
+                        yield dlt.mark.with_table_name(_kafka_record(message), message.topic)
+                finally:
+                    consumer.close()
+
+            return [_consume_all]
 
         return _kafka_source()
 

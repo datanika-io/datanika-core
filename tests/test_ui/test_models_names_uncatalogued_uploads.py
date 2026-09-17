@@ -227,3 +227,21 @@ def test_the_notice_sentences_are_keys_not_fallbacks():
     """The UI tests above read `en.json`; this is what stops a missing key passing as English."""
     for key in ("models.catalog_unreadable", "models.catalog_no_tables", "models.open_run"):
         assert _EN.get(key), key
+
+
+def test_the_models_page_renders_the_notices():
+    """A state var nothing renders is core#887's subject. The page must reach the notice, its
+    message, its link, and the link's label, and must build."""
+    import inspect
+
+    import datanika.ui.pages.models as models_page_module
+
+    source = inspect.getsource(models_page_module)
+    for needle in (
+        "ModelState.uncatalogued_uploads",
+        "notice.message",
+        "notice.run_href",
+        "models.open_run",
+    ):
+        assert needle in source, needle
+    models_page_module.models_page()

@@ -64,10 +64,15 @@ class _St:
         self._org_id = org_id
         self.models: list = []
         self.loaded_without_catalog = False
+        # core#1398: `load_models` also computes the per-upload notices, translated server-side.
+        self.uncatalogued_uploads: list = []
         self.error_message = "stale"
 
     async def _get_org_id(self):
         return self._org_id
+
+    async def _translated(self, _key: str, fallback: str) -> str:
+        return fallback
 
     async def get_state(self, _cls):
         return SimpleNamespace(

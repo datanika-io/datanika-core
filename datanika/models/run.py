@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, Text
+from sqlalchemy import BigInteger, DateTime, Enum, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from datanika.models.base import Base, TenantMixin, TimestampMixin
@@ -14,6 +14,23 @@ class RunStatus(enum.StrEnum):
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class CatalogSyncVerdict(enum.StrEnum):
+    """What an upload run's catalogue sync found (core#1398, ``SPEC_EARNED_VERDICTS`` §4.6).
+
+    Stored as its value in a plain string column, never through ``Enum``: a non-native ``Enum``
+    without ``values_callable`` stores member NAMES (core#1391's class).
+    """
+
+    #: The sync found tables, and they are in the catalogue.
+    CATALOGUED = "catalogued"
+    #: No rows and no tables: a legitimately empty load (core#883's control).
+    EMPTY = "empty"
+    #: Rows loaded and the sync found no tables in the schema it asked.
+    NO_TABLES = "no_tables"
+    #: The sync raised: the catalogue could not read the destination.
+    UNREADABLE = "unreadable"
 
 
 class Run(Base, TenantMixin, TimestampMixin):
@@ -53,3 +70,8 @@ class Run(Base, TenantMixin, TimestampMixin):
     # distinction and put a fake floor in every distribution built on it.
     bytes_processed: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # core#1398. What this run's catalogue sync found, as a `CatalogSyncVerdict` value, and for
+    # `no_tables` the schema it asked. `/models` reads the most recent successful run of each
+    # upload. NULL means not recorded: a run from before migration `j0k1l2m3n4o5`, or not an upload.
+    catalog_sync_verdict: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    catalog_sync_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -2,7 +2,6 @@
 
 import logging
 import traceback
-from collections import defaultdict
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
@@ -10,10 +9,10 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
-from datanika.models.connection import Connection
+from datanika.models.connection import Connection, ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.upload import Upload, UploadMode, UploadStatus
-from datanika.services.catalog_service import CatalogService
+from datanika.services.catalog_service import CatalogService, dbt_sources_for_entries
 from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.dlt_runner import (
@@ -69,8 +68,18 @@ def _sync_catalog_after_upload(
     catalog_svc = CatalogService()
     sa_url = _build_sa_url(dst_config, dst_conn.connection_type)
 
-    # Introspect destination tables in the dataset schema
-    tables = catalog_svc.introspect_tables(sa_url, schema_name=dataset_name)
+    if dst_conn.connection_type == ConnectionType.CLICKHOUSE:
+        # core#1397. ClickHouse has no schema level for dlt to write a dataset into: the tables
+        # are `<dataset>___<table>` in the connection's database. Asking for a schema named after
+        # the dataset asks for a database that does not exist, so they are found by prefix and
+        # catalogued under the name that queries them.
+        schema_name = dst_config.get("database") or "default"
+        tables = catalog_svc.introspect_clickhouse_dataset(
+            sa_url, database=schema_name, dataset_name=dataset_name
+        )
+    else:
+        schema_name = dataset_name
+        tables = catalog_svc.introspect_tables(sa_url, schema_name=dataset_name)
 
     for tbl in tables:
         catalog_svc.upsert_entry(
@@ -80,7 +89,7 @@ def _sync_catalog_after_upload(
             origin_type=NodeType.UPLOAD,
             origin_id=upload.id,
             table_name=tbl["table_name"],
-            schema_name=dataset_name,
+            schema_name=schema_name,
             dataset_name=dataset_name,
             columns=tbl["columns"],
             connection_id=dst_conn.id,
@@ -88,24 +97,7 @@ def _sync_catalog_after_upload(
 
     # Build source YML for the entire connection (all datasets)
     all_entries = catalog_svc.get_entries_by_connection(session, org_id, dst_conn.id)
-    by_dataset: dict[str, list] = defaultdict(list)
-    for entry in all_entries:
-        by_dataset[entry.dataset_name].append(
-            {
-                "name": entry.table_name,
-                "columns": entry.columns or [],
-            }
-        )
-
-    sources = [
-        {
-            "name": ds_name,
-            "schema": ds_name,
-            "description": f"Data loaded by upload into {ds_name}",
-            "tables": ds_tables,
-        }
-        for ds_name, ds_tables in sorted(by_dataset.items())
-    ]
+    sources = dbt_sources_for_entries(all_entries)
 
     from datanika.config import settings
 

@@ -101,6 +101,8 @@ MARKER_ALLOWLIST = frozenset(
         "e2e/tests/golden-path.spec.ts",  # comment: how it graduated
         "e2e/scripts/informational_spec_results.py",  # emits the per-spec marker (core#1221)
         "tests/test_deploy/test_per_spec_graduation.py",  # its tests (core#1221)
+        # tests: fakes job logs to drive the reader's main() (core#1447, core#1448)
+        "tests/test_deploy/test_blindness_alert_cause_and_lookback.py",
     }
 )
 

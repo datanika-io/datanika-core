@@ -697,17 +697,6 @@ def _param(arm: Arm):
                 ),
             )
         )
-    if arm.id == "kafka-two-topics-both-waiting":
-        marks.append(
-            pytest.mark.xfail(
-                strict=True,
-                raises=AssertionError,
-                reason=(
-                    "core#1408: one consumer per topic in one group and one process; the second "
-                    "is never assigned a partition and its topic loads nothing on a green run"
-                ),
-            )
-        )
     return pytest.param(arm, id=arm.id, marks=marks)
 
 

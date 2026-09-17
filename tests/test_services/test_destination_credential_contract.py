@@ -24,7 +24,11 @@ Outcome for the four destinations #577 asks about:
   every produced key is one dlt declares. A *live* run stays unobtainable (the
   trial signup is blocked by Snowflake's risk engine — CEO-parked), so this is
   the strongest statement available and is stated as such rather than implied.
-* **redshift, clickhouse** — confirmed clean rather than inferred.
+* **redshift, clickhouse** — confirmed clean rather than inferred. 🔴 **Corrected for redshift by
+  core#1456:** its KEYS were clean, and the value of one of them was not. `drivername` reached the
+  destination as the source dialect `redshift+redshift_connector`, and no load could connect. A
+  key scan cannot see a value, so ``TestALibpqDestinationHandsPsycopg2ADsnItParses`` parses the
+  resolved DSN.
 
 `drivername` is deliberately not required: `SnowflakeCredentials` and
 `SynapseCredentials` both declare a working class-level default (`'snowflake'`,
@@ -218,3 +222,68 @@ class TestEveryDestinationIsCovered:
             "so nothing checks that their stored keys are the ones dlt reads — the core#565 "
             "gap. Add them with the config the connection form writes."
         )
+
+
+# ---------------------------------------------------------------------------------------------
+# core#1456: a declared field with a wrong VALUE
+# ---------------------------------------------------------------------------------------------
+
+
+def _libpq_destinations() -> list[str]:
+    """Destinations whose dlt credentials are PostgreSQL's, i.e. connect through a libpq DSN.
+
+    Derived from dlt's own credential classes rather than listed, so a new one is covered the day it
+    is added.
+    """
+    import dlt
+    from dlt.destinations.impl.postgres.configuration import PostgresCredentials
+
+    found = []
+    for destination in sorted(STORED_CONFIG):
+        factory = getattr(dlt.destinations, destination)
+        for field in dataclasses.fields(factory.spec):
+            if field.name != "credentials":
+                continue
+            candidates = getattr(field.type, "__args__", (field.type,))
+            if any(isinstance(c, type) and issubclass(c, PostgresCredentials) for c in candidates):
+                found.append(destination)
+    return found
+
+
+class TestALibpqDestinationHandsPsycopg2ADsnItParses:
+    """core#1456. Every key `_to_dlt_credentials` produced was a declared field, so the scan above
+    passed, and its docstring called redshift clean. The VALUE of one field was wrong: `drivername`
+    came from the source map as `redshift+redshift_connector`, the destination's DSN began with it,
+    and psycopg2 refused the DSN before any load could reach a server. Test Connection builds its
+    own URL, so it reported success throughout.
+
+    This resolves each destination's credentials the way dlt does and parses the result with the
+    parser the loader uses.
+    """
+
+    def test_the_libpq_destinations_are_found_by_class(self):
+        assert {"postgres", "redshift"} <= set(_libpq_destinations())
+
+    def test_the_parser_refuses_a_source_dialect_url(self):
+        """The instrument can fail: this is the exact shape core#1456 measured."""
+        import psycopg2
+        import psycopg2.extensions
+
+        with pytest.raises(psycopg2.ProgrammingError):
+            psycopg2.extensions.parse_dsn("redshift+redshift_connector://u:p@h:5439/db")
+
+    @pytest.mark.parametrize("destination", _libpq_destinations())
+    def test_the_resolved_dsn_is_one_psycopg2_parses(self, svc, destination):
+        import psycopg2.extensions
+
+        factory = svc.build_destination(destination, STORED_CONFIG[destination])
+        config = factory.configuration(factory.spec()._bind_dataset_name(dataset_name="probe"))
+        dsn = config.credentials.to_native_representation()
+
+        try:
+            psycopg2.extensions.parse_dsn(dsn)
+        except Exception as exc:  # noqa: BLE001 - the message is the finding
+            pytest.fail(
+                f"{destination}: psycopg2 cannot parse the DSN its destination resolves "
+                f"({dsn.split(':', 1)[0]}://...): {exc}. No load can connect."
+            )

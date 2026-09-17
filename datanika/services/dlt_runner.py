@@ -703,12 +703,18 @@ def describe_paginator_rejection(spec, exc: Exception) -> str:
 
 
 # Drivernames used by sql_database() source (SQLAlchemy connections)
+#
+# SOURCES only (core#1456). Redshift had an entry here long after it stopped being a source
+# (core#845), so the only thing it reached was the Redshift DESTINATION, whose DSN then began
+# `redshift+redshift_connector://` and was refused by psycopg2 before any load could connect.
+# `build_destination` now drops `drivername` for every destination, and
+# `test_dlt_runner.py::test_the_source_driver_map_names_only_source_types` keeps this map to
+# source types.
 SOURCE_DRIVERNAME_MAP = {
     "postgres": "postgresql",
     "mysql": "mysql+pymysql",
     "mssql": "mssql+pymssql",
     "sqlite": "sqlite",
-    "redshift": "redshift+redshift_connector",
     "clickhouse": "clickhousedb+connect",
     "duckdb": "duckdb",
     "oracle": "oracle+oracledb",
@@ -1602,7 +1608,13 @@ class DltRunnerService:
                 f"Destination type '{connection_type}' is advertised but dlt ships no "
                 f"destination for it. Choose another destination for this pipeline."
             )
-        kwargs: dict = {"credentials": self._to_dlt_credentials(connection_type, config)}
+        credentials = self._to_dlt_credentials(connection_type, config)
+        # core#1456. `drivername` is a SOURCE dialect, from SOURCE_DRIVERNAME_MAP. Each dlt
+        # destination's credential class declares its own, and dlt builds the connection string
+        # from whatever it is given, so a source dialect here produces a DSN the destination's
+        # driver cannot parse. Dropped for every destination rather than for the one that broke.
+        credentials.pop("drivername", None)
+        kwargs: dict = {"credentials": credentials}
 
         # core#1379: SQL Server and Synapse load through FreeTDS, with encryption requested in
         # FreeTDS's own vocabulary and dlt's name-only driver gate widened for it. The shaping

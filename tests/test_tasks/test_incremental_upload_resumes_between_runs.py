@@ -46,6 +46,7 @@ import contextlib
 import os
 import re
 import sqlite3
+import urllib.parse
 from pathlib import Path
 
 import duckdb
@@ -114,6 +115,10 @@ def _source_selects(source: Path):
 
     def _capture(conn, cursor, statement, parameters, context, executemany):
         database = conn.engine.url.database or ""
+        if database.startswith("file:"):
+            # Since core#1401 a SQLite source opens read-only, through a percent-encoded `file:`
+            # URI filename (`local_file_database.sqlite_uri_filename`), so decode it back to a path.
+            database = urllib.parse.unquote(database.removeprefix("file:"))
         if os.path.normcase(os.path.abspath(database)) != want:
             return
         if statement.lstrip().upper().startswith("SELECT") and _FROM_EVENTS.search(statement):

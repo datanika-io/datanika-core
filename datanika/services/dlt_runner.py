@@ -15,6 +15,12 @@ from dlt.sources.sql_database import sql_database, sql_table
 from datanika.errors import UserFacingError
 from datanika.services.dlt_mssql_freetds import FREETDS_DESTINATIONS, freetds_credentials
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
+from datanika.services.local_file_database import (
+    DUCKDB_READ_ONLY_QUERY,
+    IN_MEMORY_PATHS,
+    SQLITE_READ_ONLY_QUERY,
+    sqlite_uri_filename,
+)
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 from datanika.services.write_disposition import (
     FULL_FETCH_WRITE_DISPOSITION,
@@ -384,6 +390,62 @@ def _extract_rows_loaded(pipeline) -> int | None:
 
 class DltRunnerError(UserFacingError):
     """Raised when dlt runner encounters an unsupported configuration."""
+
+
+# ---------------------------------------------------------------------------
+# Local-file database sources (core#1401)
+# ---------------------------------------------------------------------------
+
+#: Source types whose database is a file inside the container that runs the upload.
+LOCAL_FILE_SOURCE_TYPES = frozenset({"sqlite", "duckdb"})
+
+_LOCAL_FILE_SOURCE_LABELS = {"sqlite": "SQLite", "duckdb": "DuckDB"}
+
+
+def _require_local_database_file(connection_type: str, path: str) -> None:
+    """Refuse a run whose database file is not there in the process running it (core#1401).
+
+    Test Connection runs in the web app and the upload runs in the worker, so a path can pass
+    one and be missing in the other. SQLite and DuckDB both open-or-create. Without this check
+    the worker opened an empty database, reflected no tables, reported `success` with 0 rows,
+    and left a 0-byte file behind, so the next run passed as well.
+
+    The read-only open in :func:`_local_file_source_credentials` would refuse the file too. This
+    check is still needed, because the driver's error names neither the path nor the reason.
+    """
+    if os.path.isfile(path):
+        return
+    label = _LOCAL_FILE_SOURCE_LABELS[connection_type]
+    raise DltRunnerError(
+        f"There is no {label} database file at '{path}' where this upload runs. Test Connection "
+        "runs in the web app and uploads run in the worker, so a path can pass Test Connection "
+        "and still be missing here. Both need to see the same file."
+    )
+
+
+def _local_file_source_credentials(connection_type: str, creds: dict) -> dict:
+    """Credentials that open an **existing** local database file, read-only (core#1401).
+
+    The existence check says what is wrong. The read-only open keeps a file that disappears between
+    the check and the open from being created. Each is tested without the other in
+    ``tests/test_services/test_local_file_source_needs_its_file.py``.
+
+    Source only. A destination has to be writable, so ``_to_dlt_credentials``, which destinations
+    share, is left as it is.
+    """
+    path = str(creds.get("database") or "")
+    if path in IN_MEMORY_PATHS:
+        return creds
+    _require_local_database_file(connection_type, path)
+    shaped = dict(creds)
+    query = dict(creds.get("query") or {})
+    if connection_type == "sqlite":
+        shaped["database"] = sqlite_uri_filename(path)
+        query.update(SQLITE_READ_ONLY_QUERY)
+    else:
+        query.update(DUCKDB_READ_ONLY_QUERY)
+    shaped["query"] = query
+    return shaped
 
 
 # ---------------------------------------------------------------------------
@@ -1551,6 +1613,8 @@ class DltRunnerService:
             schema = _normalize_oracle_identifier(schema)
 
         creds = self._to_dlt_credentials(connection_type, config)
+        if connection_type in LOCAL_FILE_SOURCE_TYPES:
+            creds = _local_file_source_credentials(connection_type, creds)
 
         # Arrow backend (E6) — when callers set backend="pyarrow", dlt's
         # sql_database/sql_table yields pa.Table per chunk instead of dicts.

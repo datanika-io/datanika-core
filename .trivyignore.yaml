@@ -23,63 +23,12 @@
 # covered, while the same CVE id reported against some OTHER package or path is
 # NOT waived. A bare id would waive it everywhere.
 
-vulnerabilities:
-  - id: CVE-2026-48818
-    paths:
-      - "app/.venv/lib/python3.12/site-packages/starlette-*.dist-info/METADATA"
-    statement: >-
-      starlette SSRF / NTLM credential theft via UNC paths in StaticFiles.
-      REACHABLE: Reflex mounts StaticFiles(directory=get_upload_dir()) at
-      /_upload (reflex/app.py:708) and our Apache vhost routes /_upload to the
-      backend, so the vulnerable component is in the production request path.
-      ACCEPTED because the exploit is Windows-specific — it turns on the OS
-      resolving a UNC path (\\host\share) and emitting NTLM credentials — and
-      production is Ubuntu 22.04, where a backslash is an ordinary filename
-      character. That is a mitigation, not an absence, so this expires rather
-      than being deleted. Fix requires starlette >= 1.1.0; see core#836.
-    expired_at: 2026-12-01
-
-  - id: CVE-2026-54283
-    paths:
-      - "app/.venv/lib/python3.12/site-packages/starlette-*.dist-info/METADATA"
-    statement: >-
-      starlette request.form() limits (max_files / max_fields / max_part_size)
-      are silently ignored. REACHABLE and unauthenticated: request.form() is
-      called at sso_routes.py:466 (/api/auth/sso/callback) and
-      mcp_oauth_routes.py:65, and Reflex's own /_upload handler parses multipart
-      on the same starlette. Impact is memory exhaustion from an oversized or
-      many-part body, not disclosure or bypass. ACCEPTED at 0 paying users,
-      behind the API rate limiter and a 401 on both named endpoints. Fix
-      requires starlette >= 1.3.1; see core#836.
-    expired_at: 2026-12-01
-
-# 🚨 WHY NOT JUST BUMP STARLETTE — and the reason core#836 gives is WRONG.
-#
-# That issue says starlette is "pinned by Reflex 0.8.x, so 0.52.1 -> 1.x is not a
-# bump we can make". Re-derived from the installed distributions rather than from
-# memory: NOTHING declares an upper bound on starlette anywhere in this tree.
-#
-#     reflex                   starlette>=0.47.0
-#     mcp                      starlette>=0.27
-#     sse-starlette            starlette>=0.49.1
-#     google-cloud-aiplatform  starlette>=0.17.1  (extras only)
-#
-# So the resolver would take starlette 1.3.1 today, without complaint. The bump
-# is not BLOCKED — it is UNVALIDATED, which is a different problem with a
-# different remedy. starlette is the ASGI foundation the entire backend runs on,
-# Reflex 0.8.26 is what production runs, and 0.52 -> 1.x is a major.
-#
-# This project has two precedents for exactly that resolve going wrong silently:
-# core#602, where `mcp` resolved to 2.x, FastMCP was renamed, /mcp was never
-# mounted and every deploy failed its post-swap assertion; and core#470, where CI
-# tested Reflex 0.9.x while production ran 0.8.26. Both were invisible in the
-# manifest and expensive at the far end.
-#
-# So the bump is real work with its own verification — not a line item inside a
-# CVE sweep — and it stays on core#836 with the corrected reason. What is written
-# down here is why we are not doing it TODAY, not a claim that we cannot.
+vulnerabilities: []
 
 # ✅ NOT waived, because they are actionable and were fixed instead:
+#   starlette CVE-2026-48818, CVE-2026-54283 -> floored to 1.3.1 in pyproject.toml and
+#     locked at 1.6.0, after Reflex 0.8.26 was measured running on 1.x (core#1347).
+#     These were the two waivers this file used to carry.
 #   msgpack GHSA-6v7p-g79w-8964 -> floored to 1.2.1 in pyproject.toml.
 #     mashumaro asks for msgpack>=0.5.6 with no ceiling, so the floor resolves.
 #     (kombu declares msgpack==1.1.2, but only under its `msgpack` extra, which

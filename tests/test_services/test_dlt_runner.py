@@ -242,10 +242,17 @@ class TestBuildDestination:
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_mssql_returns_destination(self, mock_dlt, svc):
-        mock_dlt.destinations.mssql.return_value = "mssql_dest"
-        result = svc.build_destination("mssql", {"host": "localhost"})
-        call_creds = mock_dlt.destinations.mssql.call_args[1]["credentials"]
-        assert call_creds["drivername"] == "mssql+pymssql"
+        """Repointed for core#1379. This used to assert `drivername == "mssql+pymssql"` reached the
+        DESTINATION -- the source path's SQLAlchemy dialect, which dlt's destination never used.
+        The invariant is that the destination is built with the FreeTDS credentials the image can
+        actually load through."""
+        factory = MagicMock(return_value="mssql_dest")
+        with patch.dict("datanika.services.dlt_runner.FREETDS_DESTINATIONS", {"mssql": factory}):
+            result = svc.build_destination("mssql", {"host": "localhost"})
+        call_creds = factory.call_args[1]["credentials"]
+        assert call_creds["driver"] == "FreeTDS"
+        assert call_creds["query"]["encryption"] == "require"
+        assert "drivername" not in call_creds
         assert result == "mssql_dest"
 
     def test_sqlite_is_refused_as_a_destination(self, svc):
@@ -315,9 +322,13 @@ class TestBuildSource:
         assert result == "mssql_source"
 
     @patch("datanika.services.dlt_runner.sql_database")
-    def test_sqlite_source(self, mock_sql_db, svc):
+    def test_sqlite_source(self, mock_sql_db, svc, tmp_path):
+        # A file that exists: since core#1401 a missing one is refused before sql_database is
+        # called (tests/test_services/test_local_file_source_needs_its_file.py).
+        path = tmp_path / "db.sqlite"
+        path.touch()
         mock_sql_db.return_value = "sqlite_source"
-        result = svc.build_source("sqlite", {"path": "db.sqlite"}, {})
+        result = svc.build_source("sqlite", {"path": str(path)}, {})
         assert result == "sqlite_source"
 
     def test_unsupported_type_raises(self, svc):
@@ -1421,12 +1432,16 @@ class TestSynapseDestination:
 
     @patch("datanika.services.dlt_runner.dlt")
     def test_build_synapse_destination(self, mock_dlt, svc):
-        mock_dlt.destinations.synapse.return_value = "syn_dest"
-        result = svc.build_destination(
-            "synapse", {"host": "syn.sql.net", "user": "sa", "password": "p", "database": "dw"}
-        )
+        """Repointed for core#1379: Synapse loads through the FreeTDS factory, not dlt's own."""
+        factory = MagicMock(return_value="syn_dest")
+        with patch.dict("datanika.services.dlt_runner.FREETDS_DESTINATIONS", {"synapse": factory}):
+            result = svc.build_destination(
+                "synapse", {"host": "syn.sql.net", "user": "sa", "password": "p", "database": "dw"}
+            )
         assert result == "syn_dest"
-        mock_dlt.destinations.synapse.assert_called_once()
+        factory.assert_called_once()
+        assert factory.call_args[1]["credentials"]["driver"] == "FreeTDS"
+        mock_dlt.destinations.synapse.assert_not_called()
 
 
 class TestHubSpotSaasSource:

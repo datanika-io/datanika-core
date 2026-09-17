@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from datanika.models.api_key import ApiKey
-from datanika.models.user import Organization
+from datanika.models.user import MemberRole, Membership, Organization
 from datanika.services.api_key_service import ApiKeyService
 from tests.factories import make_org_admin, make_user
 
@@ -24,13 +24,19 @@ def org(db_session):
 
 
 @pytest.fixture
-def user(db_session):
+def user(db_session, org):
+    """The key's OWNER. A member of ``org``, because authentication resolves the owner's current
+    membership (core#681, SPEC §8) -- a key whose owner belongs to no org authorizes nothing, which
+    ``test_api_key_owner_membership.py`` asserts. ``viewer``: the lowest role that is a
+    membership."""
     user = make_user(
         db_session,
         email="user@example.com",
         full_name="Test User",
         password_hash="hashed",
     )
+    db_session.add(Membership(user_id=user.id, org_id=org.id, role=MemberRole.VIEWER))
+    db_session.flush()
     return user
 
 

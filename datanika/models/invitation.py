@@ -51,5 +51,10 @@ class Invitation(Base, TenantMixin, TimestampMixin):
         Enum(InvitationStatus, native_enum=False, length=20),
         nullable=False,
         default=InvitationStatus.PENDING,
+        # The member NAME (core#1393). `Enum(..., native_enum=False)` without `values_callable`
+        # stores and loads names, so the database default must be the name too, or a row that
+        # takes it cannot be read back. Migration `i9j0k1l2m3n4` sets the column to match, and
+        # `test_the_column_default_is_the_models_server_default` fails if the two drift.
+        server_default=InvitationStatus.PENDING.name,
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

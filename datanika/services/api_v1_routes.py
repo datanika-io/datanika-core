@@ -204,12 +204,23 @@ def _ser_run(r):
     }
 
 
-def _ser_channel(ch):
+#: What a member below the channel threshold reads in place of each configuration value.
+REDACTED = "[redacted]"
+
+
+def _ser_channel(ch, *, reveal_config: bool = True):
+    """``reveal_config=False`` keeps the configuration's KEYS and replaces every value.
+
+    SPEC_SERVICE_AUTHORIZATION §2 puts notification channels at ``admin`` because the row holds
+    the webhook URL / bot token, and ``NotificationService._redact`` treats every config value as
+    a secret; the Reflex list renders no configuration for any role.
+    """
+    config = ch.config if reveal_config else dict.fromkeys(ch.config or {}, REDACTED)
     return {
         "id": ch.id,
         "name": ch.name,
         "channel_type": ch.channel_type.value,
-        "config": ch.config,
+        "config": config,
         "events": ch.events,
         "is_active": ch.is_active,
         "created_at": ch.created_at.isoformat() if ch.created_at else None,
@@ -657,7 +668,9 @@ async def trigger_upload(request, api_key, session):
     upload = _get_upload_svc().get_upload(session, api_key.org_id, upload_id)
     if upload is None:
         return _error(404, "Upload not found")
-    run = _exec_svc.create_run(session, api_key.org_id, NodeType.UPLOAD, upload_id)
+    run = _exec_svc.create_requested_run(
+        session, api_key.org_id, NodeType.UPLOAD, upload_id, actor_user_id=api_key.user_id
+    )
     session.commit()
     from datanika.tasks.upload_tasks import run_upload_task
 
@@ -768,7 +781,9 @@ async def trigger_pipeline(request, api_key, session):
     pipeline = _pipeline_svc.get_pipeline(session, api_key.org_id, pipeline_id)
     if pipeline is None:
         return _error(404, "Pipeline not found")
-    run = _exec_svc.create_run(session, api_key.org_id, NodeType.PIPELINE, pipeline_id)
+    run = _exec_svc.create_requested_run(
+        session, api_key.org_id, NodeType.PIPELINE, pipeline_id, actor_user_id=api_key.user_id
+    )
     session.commit()
     from datanika.tasks.pipeline_tasks import run_pipeline_task
 
@@ -824,7 +839,10 @@ def create_transformation(request, api_key, session):
             ),
             tags=data.get("tags"),
             incremental_config=data.get("incremental_config"),
+            actor_user_id=api_key.user_id,
         )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection
     except (ValueError, Exception) as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_transformation(t), status_code=201)
@@ -856,7 +874,11 @@ def update_transformation(request, api_key, session):
             int(data["destination_connection_id"]) if data["destination_connection_id"] else None
         )
     try:
-        t = _transform_svc.update_transformation(session, api_key.org_id, tid, **kwargs)
+        t = _transform_svc.update_transformation(
+            session, api_key.org_id, tid, actor_user_id=api_key.user_id, **kwargs
+        )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection
     except ValueError as exc:
         return _error(400, str(exc))
     if t is None:
@@ -867,7 +889,9 @@ def update_transformation(request, api_key, session):
 @api_endpoint(required_scope="transformations:write")
 def delete_transformation(request, api_key, session):
     tid = int(request.path_params["id"])
-    if not _transform_svc.delete_transformation(session, api_key.org_id, tid):
+    if not _transform_svc.delete_transformation(
+        session, api_key.org_id, tid, actor_user_id=api_key.user_id
+    ):
         return _error(404, "Transformation not found")
     return JSONResponse({"deleted": True})
 
@@ -878,7 +902,9 @@ async def trigger_transformation(request, api_key, session):
     t = _transform_svc.get_transformation(session, api_key.org_id, tid)
     if t is None:
         return _error(404, "Transformation not found")
-    run = _exec_svc.create_run(session, api_key.org_id, NodeType.TRANSFORMATION, tid)
+    run = _exec_svc.create_requested_run(
+        session, api_key.org_id, NodeType.TRANSFORMATION, tid, actor_user_id=api_key.user_id
+    )
     session.commit()
     from datanika.tasks.transformation_tasks import run_transformation_task
 
@@ -1039,6 +1065,8 @@ def update_schedule(request, api_key, session):
         s = _get_schedule_svc().update_schedule(
             session, api_key.org_id, sid, **kwargs, actor_user_id=api_key.user_id
         )
+    except InsufficientRoleError:
+        raise  # §7.1 belongs to api_middleware -- see create_connection
     except ValueError as exc:
         return _error(400, str(exc))
     if s is None:
@@ -1118,7 +1146,7 @@ def cancel_run(request, api_key, session):
             "not_cancellable",
             f"Run is already {run.status.value} and cannot be cancelled",
         )
-    cancelled = _exec_svc.cancel_run(session, api_key.org_id, run_id)
+    cancelled = _exec_svc.cancel_run(session, api_key.org_id, run_id, actor_user_id=api_key.user_id)
     if cancelled is None:
         return _error(500, "Failed to cancel run")
     return JSONResponse(_ser_run(cancelled))
@@ -1235,7 +1263,7 @@ def mark_notification_read(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
-    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id)
+    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id, api_key.user_id)
     if notif is None:
         return _error(404, "Notification not found")
     return JSONResponse(_ser_notification(notif))
@@ -1258,7 +1286,7 @@ def dismiss_notification(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
-    if not InAppNotificationService.dismiss(session, nid, api_key.org_id):
+    if not InAppNotificationService.dismiss(session, nid, api_key.org_id, api_key.user_id):
         return _error(404, "Notification not found")
     return JSONResponse({"deleted": True})
 
@@ -1268,10 +1296,26 @@ def dismiss_notification(request, api_key, session):
 # ---------------------------------------------------------------------------
 
 
+def _may_read_channel_config(session, api_key) -> bool:
+    """True when the key owner's CURRENT role reaches the channel threshold (`admin`, §2)."""
+    try:
+        assert_org_role(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            required="admin",
+            operation="read_channel_config",
+        )
+    except InsufficientRoleError:
+        return False
+    return True
+
+
 @api_endpoint(required_scope="notifications:read")
 def list_notification_channels(request, api_key, session):
     items = _notif_svc.list_channels(session, api_key.org_id)
-    return JSONResponse({"items": [_ser_channel(ch) for ch in items]})
+    reveal = _may_read_channel_config(session, api_key)
+    return JSONResponse({"items": [_ser_channel(ch, reveal_config=reveal) for ch in items]})
 
 
 @api_endpoint(required_scope="notifications:read")
@@ -1280,7 +1324,7 @@ def get_notification_channel(request, api_key, session):
     ch = _notif_svc._get_channel(session, cid, api_key.org_id)
     if ch is None:
         return _error(404, "Notification channel not found")
-    return JSONResponse(_ser_channel(ch))
+    return JSONResponse(_ser_channel(ch, reveal_config=_may_read_channel_config(session, api_key)))
 
 
 @api_endpoint(required_scope="notifications:write")
@@ -1496,6 +1540,42 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
     return errors
 
 
+#: core#681. The two import routes create resources in four subsystems, so they cannot declare ONE
+#: `required_scope` on `api_endpoint`. Their scopes are checked here, per section the payload
+#: carries, before anything is read or created. The role thresholds stay in the services
+#: (SPEC_SERVICE_AUTHORIZATION §4).
+_IMPORT_SECTION_SCOPES = {
+    "connections": "connections:write",
+    "uploads": "uploads:write",
+    "pipelines": "pipelines:write",
+    "transformations": "transformations:write",
+}
+
+
+def _import_scope_refusal(api_key, data: dict) -> JSONResponse | None:
+    """`403 insufficient_scope` naming every write scope the payload needs and the key lacks.
+
+    ``scopes=None`` is an unscoped key, which holds every scope -- the reading
+    `ApiKeyService.authenticate_api_key` applies. The scopes are a FIELD, like §7.1's
+    `required_role`, so a script can act on them without parsing prose.
+    """
+    if api_key.scopes is None:
+        return None
+    missing = [
+        scope
+        for section, scope in _IMPORT_SECTION_SCOPES.items()
+        if data.get(section) and scope not in api_key.scopes
+    ]
+    if not missing:
+        return None
+    return _typed_error(
+        403,
+        "insufficient_scope",
+        "This import creates resources the API key has no write scope for.",
+        required_scopes=missing,
+    )
+
+
 def _execute_validated_import(
     session, org_id: int, data: dict, *, actor_user_id: int
 ) -> dict[str, list[int]]:
@@ -1586,6 +1666,7 @@ def _execute_validated_import(
             destination_connection_id=dest_conn_id,
             tags=t.get("tags"),
             incremental_config=t.get("incremental_config"),
+            actor_user_id=actor_user_id,
         )
         session.flush()
         created["transformations"].append(transformation.id)
@@ -1607,6 +1688,10 @@ def bulk_import(request, api_key, session):
     version = data.get("version")
     if version != 2:
         return _error(400, "version 2 is required")
+
+    refusal = _import_scope_refusal(api_key, data)
+    if refusal is not None:
+        return refusal
 
     existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
     existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}
@@ -1666,6 +1751,10 @@ def bulk_import_yaml(request, api_key, session):
 
     if data.get("version") != 2:
         return _error(400, "version 2 is required")
+
+    refusal = _import_scope_refusal(api_key, data)
+    if refusal is not None:
+        return refusal
 
     existing_conns = _get_conn_svc().list_connections(session, api_key.org_id)
     existing_conn_names: dict[str, int] = {c.name: c.id for c in existing_conns}

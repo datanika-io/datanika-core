@@ -112,6 +112,11 @@ class RunState(BaseState):
                 )
                 for r in rows
             ]
+        # core#1398: `/runs?run=<id>` opens that run's log. It is how `/models` links to the run
+        # that explains a missing catalog entry. Only a run in this org's loaded list can open.
+        requested = str(self.router.page.params.get("run", "") or "")
+        if requested.isdigit():
+            self._select_run(int(requested))
         self.error_message = ""
 
     @staticmethod
@@ -139,7 +144,7 @@ class RunState(BaseState):
         self.filter_target_type = target_type
         await self.load_runs()
 
-    def view_logs(self, run_id: int):
+    def _select_run(self, run_id: int) -> None:
         for r in self.runs:
             if r.id == run_id:
                 self.selected_run_id = run_id
@@ -147,6 +152,9 @@ class RunState(BaseState):
                 return
         self.selected_run_id = 0
         self.selected_run_logs = ""
+
+    def view_logs(self, run_id: int):
+        self._select_run(run_id)
 
     def close_logs(self):
         self.selected_run_id = 0

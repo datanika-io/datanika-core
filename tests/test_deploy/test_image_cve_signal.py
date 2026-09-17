@@ -59,19 +59,16 @@ _DOCKERFILE = _ROOT / "Dockerfile"
 #: being added here fails, so "one more line in the ignore file" cannot be a
 #: quiet way to turn the job green — which is the exact pressure a job that has
 #: been red for weeks creates.
-DECIDED_WAIVERS = {
-    "CVE-2026-48818": "starlette StaticFiles UNC/NTLM — Windows-specific, prod is Linux",
-    "CVE-2026-54283": "starlette request.form() limits ignored — memory DoS, reachable",
-}
+#: Empty since core#1347: the two starlette waivers were retired by taking the fix (starlette
+#: floored at 1.3.1 in `pyproject.toml`, see SECURITY_FLOORS). An empty set is a decision too --
+#: a new line in the YAML still fails here until someone argues it into this dict.
+DECIDED_WAIVERS: dict[str, str] = {}
 
 #: Waived id -> the package its `paths` entries must name.
 #:
 #: Without this, `test_each_waiver_is_scoped_to_a_path` degenerates into "any
 #: path at all", and a starlette waiver pointed at thrift would pass.
-WAIVER_PACKAGE = {
-    "CVE-2026-48818": "starlette",
-    "CVE-2026-54283": "starlette",
-}
+WAIVER_PACKAGE: dict[str, str] = {}
 
 
 def _ignorefile() -> dict:

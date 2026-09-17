@@ -67,6 +67,7 @@ from datanika.models.dependency import NodeType
 from datanika.models.run import RunStatus
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService
+from tests.factories import make_org_admin
 
 TASKS_DIR = Path(__file__).resolve().parents[2] / "datanika" / "tasks"
 
@@ -103,7 +104,7 @@ class TestTheAnnouncedStatusIsReadFromTheRun:
     def test_a_cancelled_run_announces_cancelled(self, svc, db_session, org):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 1)
         svc.start_run(db_session, org.id, run.id)
-        svc.cancel_run(db_session, org.id, run.id)
+        svc.cancel_run(db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id))
 
         status = _announced_status(svc, db_session, org.id, run.id)
         assert status == RunStatus.CANCELLED.value, (

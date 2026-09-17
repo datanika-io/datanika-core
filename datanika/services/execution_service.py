@@ -2,11 +2,13 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
+from datanika.models.user import MemberRole
+from datanika.services.authorization import assert_org_role
 
 
 def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
@@ -102,6 +104,34 @@ class ExecutionService:
         session.add(run)
         session.flush()
         return run
+
+    def create_requested_run(
+        self,
+        session: Session,
+        org_id: int,
+        target_type: NodeType,
+        target_id: int,
+        *,
+        actor_user_id: int,
+    ) -> Run:
+        """A run a MEMBER asked for -- the Run button or a REST trigger (core#681).
+
+        `SPEC_SERVICE_AUTHORIZATION` §1 puts `run_upload` and `run_pipeline` at `editor`; running a
+        transformation is the same act, and §2's rule gives it the same threshold. Enforced here so
+        the Reflex handlers and the REST triggers inherit one check (§4).
+
+        ⚠️ The scheduler does not come through here. It is not a member and has no actor, so it
+        keeps :meth:`create_run`; giving that method an actor would either fail every scheduled run
+        closed or invent an actor, and both are wrong.
+        """
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation=f"run_{target_type.value}",
+        )
+        return self.create_run(session, org_id, target_type, target_id)
 
     def start_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
         run = get_org_run(session, org_id, run_id)
@@ -302,10 +332,21 @@ class ExecutionService:
         session.flush()
         return run
 
-    def cancel_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
+    def cancel_run(
+        self, session: Session, org_id: int, run_id: int, *, actor_user_id: int
+    ) -> Run | None:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
+        # core#681: cancelling is the ordinary lifecycle, so `editor` (SPEC §2). §7.3: after the
+        # org-scoped lookup, before the mutation.
+        assert_org_role(
+            session,
+            org_id,
+            actor_user_id,
+            required=MemberRole.EDITOR,
+            operation="cancel_run",
+        )
         if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
             return None
         run.status = RunStatus.CANCELLED
@@ -316,6 +357,46 @@ class ExecutionService:
     def get_run(self, session: Session, org_id: int, run_id: int) -> Run | None:
         """The public reader. Kept as a method for its callers; one predicate."""
         return get_org_run(session, org_id, run_id)
+
+    def latest_upload_catalog_verdicts(self, session: Session, org_id: int) -> list:
+        """The most recent successful run of each upload, and what its catalogue sync found.
+
+        Rows of ``(target_id, run_id, catalog_sync_verdict, catalog_sync_schema)``, one per upload
+        with a successful run (core#1398). `/models` asks this on every load, so it selects four
+        columns and never a run's logs. "Most recent" is the latest ``finished_at``, then the
+        highest id.
+        """
+        ranked = (
+            select(
+                Run.target_id,
+                Run.id.label("run_id"),
+                Run.catalog_sync_verdict,
+                Run.catalog_sync_schema,
+                func.row_number()
+                .over(
+                    partition_by=Run.target_id,
+                    order_by=(Run.finished_at.desc().nulls_last(), Run.id.desc()),
+                )
+                .label("recency"),
+            )
+            .where(
+                Run.org_id == org_id,
+                Run.target_type == NodeType.UPLOAD,
+                Run.status == RunStatus.SUCCESS,
+            )
+            .subquery()
+        )
+        stmt = (
+            select(
+                ranked.c.target_id,
+                ranked.c.run_id,
+                ranked.c.catalog_sync_verdict,
+                ranked.c.catalog_sync_schema,
+            )
+            .where(ranked.c.recency == 1)
+            .order_by(ranked.c.target_id)
+        )
+        return list(session.execute(stmt).all())
 
     def list_runs(
         self,

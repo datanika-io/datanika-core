@@ -741,7 +741,9 @@ class UploadState(BaseState):
                     # renders (#744).
                     auth_state.action_error = self.error_message
                     return
-            run = exec_svc.create_run(session, org_id, NodeType.UPLOAD, upload_id)
+            run = exec_svc.create_requested_run(
+                session, org_id, NodeType.UPLOAD, upload_id, actor_user_id=user_id
+            )
             self._audit(
                 session,
                 org_id,

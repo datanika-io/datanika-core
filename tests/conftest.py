@@ -111,3 +111,49 @@ def sqlite_aware_invitation_expiry():
         yield
     finally:
         event.remove(Invitation, "load", _make_aware)
+
+
+@pytest.fixture
+def production_session_factory(tmp_path):
+    """Sessions built the way production builds them, on ONE database they can all see (core#1412).
+
+    ``db_session`` above is a single session, so its identity map is never stale relative to another
+    writer. In this product the other writer is routine: the API request and the Celery worker never
+    share a session. core#657's guards passed every single-session test and failed in production for
+    exactly that reason.
+
+    Call the factory once per actor — ``worker = factory()``, ``api = factory()`` — and commit from
+    each as the real code would.
+
+    * **The options are read off ``datanika.db.sync_session_factory``, not restated**, so a change
+      there (``expire_on_commit``, ``autoflush``) reaches every test using this fixture the day it
+      is made. Only the bind is replaced.
+    * **The database is a file.** SQLite ``:memory:`` gives each connection its own database, so a
+      second session would see nothing the first committed.
+    * ⚠️ **Code under test that opens its own session** (``get_sync_session()``) binds production's
+      engine, not this one. For a service call, hand it a session from this factory, as
+      ``test_cancel_guards_read_the_database.py`` does.
+    * 🚨 **For a TASK, patch ``datanika.db.get_sync_session`` to this factory; do not pass
+      ``session=``.** A task given a session skips its own commits (``run_upload``'s
+      ``own_session`` branches), so its first write stays uncommitted across the engine call. SQLite
+      allows ONE writer, so another session's commit then fails ``database is locked`` — which
+      Postgres, locking rows, would not do — and the harness manufactures a failed run and loses the
+      other session's write.
+      Measured on ``run_upload`` (core#1412): passed session, an API soft-delete mid-run → run
+      ``failed``, delete lost; production's shape → run ``success``, delete kept.
+
+    The fixture's own properties are pinned in ``tests/test_production_session_factory.py``.
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from datanika.db import sync_session_factory
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'sessions.db'}")
+    Base.metadata.create_all(engine)
+    options = {key: value for key, value in sync_session_factory.kw.items() if key != "bind"}
+    # `sessionmaker` stores a generated SUBCLASS of the class it was given; build from that base.
+    session_class = sync_session_factory.class_.__mro__[1]
+    try:
+        yield sessionmaker(bind=engine, class_=session_class, **options)
+    finally:
+        engine.dispose()

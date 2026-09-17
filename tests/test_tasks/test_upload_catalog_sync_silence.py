@@ -47,6 +47,15 @@ def encryption():
 
 @pytest.fixture
 def setup_upload(db_session, encryption):
+    return make_upload_setup(db_session, encryption)
+
+
+def make_upload_setup(db_session, encryption):
+    """An org, a Postgres source, a BigQuery destination (dataset ``d``), an upload and a run.
+
+    A plain function rather than only a fixture, so another module can build the same setup
+    without importing a fixture (``tests/test_fixture_sharing.py``).
+    """
     import uuid
 
     conn_svc = ConnectionService(encryption)

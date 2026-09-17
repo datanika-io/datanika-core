@@ -376,6 +376,27 @@ class DbtProjectService:
                 "schema": config.get("schema", default_schema),
                 "threads": 4,
             }
+        if connection_type == "mssql":
+            # core#1379. dbt-sqlserver's default backend is pyodbc and needs a DRIVER; the image
+            # carries FreeTDS (founder decision), and the value also carries FreeTDS's encryption
+            # keyword -- see FREETDS_DBT_DRIVER for why it has to travel there.
+            #
+            # `database`, not `dbname`: dbt-sqlserver 1.11 refuses a profile without it ("The
+            # `database` profile field is required for SQL Server connections"), measured on the
+            # built image -- so the shared branch below never produced a profile it accepts.
+            from datanika.services.dlt_mssql_freetds import FREETDS_DBT_DRIVER
+
+            return {
+                "type": "sqlserver",
+                "driver": FREETDS_DBT_DRIVER,
+                "host": config.get("host", ""),
+                "port": config.get("port", 1433),
+                "user": config.get("user", ""),
+                "password": config.get("password", ""),
+                "database": config.get("database", ""),
+                "schema": config.get("schema", default_schema),
+                "threads": 4,
+            }
         # Map connection type to dbt adapter type
         dbt_type = {"mssql": "sqlserver"}.get(connection_type, connection_type)
         # postgres, mysql, sqlserver, sqlite, redshift — same shape

@@ -119,7 +119,12 @@ def upload2(upload_svc, conn_svc, db_session, org):
 @pytest.fixture
 def transformation(transform_svc, db_session, org):
     return transform_svc.create_transformation(
-        db_session, org.id, "check_model_a", "SELECT 1", Materialization.VIEW
+        db_session,
+        org.id,
+        "check_model_a",
+        "SELECT 1",
+        Materialization.VIEW,
+        actor_user_id=make_org_admin(db_session, org.id),
     )
 
 

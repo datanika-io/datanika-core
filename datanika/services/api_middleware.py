@@ -160,6 +160,30 @@ def _record_auth_failure(raw_key: str, request: Request) -> None:
         )
 
 
+def _refuse_ownerless_key(session, raw_key: str, exc: InsufficientRoleError) -> JSONResponse:
+    """The key is real, and its owner holds no membership in its org (core#681, SPEC §8).
+
+    Rendered as §7.1's `403 insufficient_role`, never the `401` an unknown key gets: §8's condition
+    on the intersection decision is that the refusal names its cause.
+
+    ⚠️ Counted toward the key's own CREDENTIAL bucket (#774), so repeated use is shed before it
+    costs a session -- and NOT toward the caller's address bucket: the credential is genuine, and
+    one former member's key must not lock out everyone who shares their address.
+    """
+    session.rollback()
+    with contextlib.suppress(Exception):
+        _rate_limit_svc.record_auth_failure(
+            credential=RateLimitService.credential_bucket(raw_key),
+            client="",
+            window_seconds=settings.api_auth_failure_window_seconds,
+        )
+    logger.info(
+        "API refusal: key owner holds no membership",
+        extra={"operation": exc.operation, "required_role": exc.required_role},
+    )
+    return _insufficient_role(exc)
+
+
 def _mark_refused(raw_key: str, retry_after: int) -> None:
     """Arm the pre-auth refusal for a key that just exceeded its own limit."""
     with contextlib.suppress(Exception):
@@ -301,7 +325,12 @@ async def _run_async_handler(
         return shed
 
     with _get_session() as session:
-        api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
+        try:
+            api_key = _api_key_svc.authenticate_api_key(
+                session, raw_key, required_scope=required_scope
+            )
+        except InsufficientRoleError as exc:
+            return _refuse_ownerless_key(session, raw_key, exc)
         if api_key is None:
             _record_auth_failure(raw_key, request)
             return _error(401, "Invalid or expired API key")
@@ -391,7 +420,12 @@ def _run_sync_handler(
         return shed
 
     with _get_session() as session:
-        api_key = _api_key_svc.authenticate_api_key(session, raw_key, required_scope=required_scope)
+        try:
+            api_key = _api_key_svc.authenticate_api_key(
+                session, raw_key, required_scope=required_scope
+            )
+        except InsufficientRoleError as exc:
+            return _refuse_ownerless_key(session, raw_key, exc)
         if api_key is None:
             _record_auth_failure(raw_key, request)
             return _error(401, "Invalid or expired API key")

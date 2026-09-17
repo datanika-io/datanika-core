@@ -13,7 +13,14 @@ from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
 
 from datanika.errors import UserFacingError
+from datanika.services.dlt_mssql_freetds import FREETDS_DESTINATIONS, freetds_credentials
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
+from datanika.services.local_file_database import (
+    DUCKDB_READ_ONLY_QUERY,
+    IN_MEMORY_PATHS,
+    SQLITE_READ_ONLY_QUERY,
+    sqlite_uri_filename,
+)
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 from datanika.services.write_disposition import (
     FULL_FETCH_WRITE_DISPOSITION,
@@ -383,6 +390,62 @@ def _extract_rows_loaded(pipeline) -> int | None:
 
 class DltRunnerError(UserFacingError):
     """Raised when dlt runner encounters an unsupported configuration."""
+
+
+# ---------------------------------------------------------------------------
+# Local-file database sources (core#1401)
+# ---------------------------------------------------------------------------
+
+#: Source types whose database is a file inside the container that runs the upload.
+LOCAL_FILE_SOURCE_TYPES = frozenset({"sqlite", "duckdb"})
+
+_LOCAL_FILE_SOURCE_LABELS = {"sqlite": "SQLite", "duckdb": "DuckDB"}
+
+
+def _require_local_database_file(connection_type: str, path: str) -> None:
+    """Refuse a run whose database file is not there in the process running it (core#1401).
+
+    Test Connection runs in the web app and the upload runs in the worker, so a path can pass
+    one and be missing in the other. SQLite and DuckDB both open-or-create. Without this check
+    the worker opened an empty database, reflected no tables, reported `success` with 0 rows,
+    and left a 0-byte file behind, so the next run passed as well.
+
+    The read-only open in :func:`_local_file_source_credentials` would refuse the file too. This
+    check is still needed, because the driver's error names neither the path nor the reason.
+    """
+    if os.path.isfile(path):
+        return
+    label = _LOCAL_FILE_SOURCE_LABELS[connection_type]
+    raise DltRunnerError(
+        f"There is no {label} database file at '{path}' where this upload runs. Test Connection "
+        "runs in the web app and uploads run in the worker, so a path can pass Test Connection "
+        "and still be missing here. Both need to see the same file."
+    )
+
+
+def _local_file_source_credentials(connection_type: str, creds: dict) -> dict:
+    """Credentials that open an **existing** local database file, read-only (core#1401).
+
+    The existence check says what is wrong. The read-only open keeps a file that disappears between
+    the check and the open from being created. Each is tested without the other in
+    ``tests/test_services/test_local_file_source_needs_its_file.py``.
+
+    Source only. A destination has to be writable, so ``_to_dlt_credentials``, which destinations
+    share, is left as it is.
+    """
+    path = str(creds.get("database") or "")
+    if path in IN_MEMORY_PATHS:
+        return creds
+    _require_local_database_file(connection_type, path)
+    shaped = dict(creds)
+    query = dict(creds.get("query") or {})
+    if connection_type == "sqlite":
+        shaped["database"] = sqlite_uri_filename(path)
+        query.update(SQLITE_READ_ONLY_QUERY)
+    else:
+        query.update(DUCKDB_READ_ONLY_QUERY)
+    shaped["query"] = query
+    return shaped
 
 
 # ---------------------------------------------------------------------------
@@ -1207,6 +1270,60 @@ def _kafka_security_kwargs(config: dict, dlt_config: dict) -> dict:
     return kwargs
 
 
+#: How many Kafka messages travel together from the one consumer to the per-topic resources
+#: (core#1408), and the payload bytes at which a page is sent early. Measured with 200,000
+#: messages over two topics: extracting one message at a time took 23.5 s through the fork
+#: and 0.8 s in pages of 1,000. The byte bound keeps a topic of large messages from holding a
+#: large page in memory.
+KAFKA_PAGE_MESSAGES = 1_000
+KAFKA_PAGE_BYTES = 8 * 1024 * 1024
+
+
+def _kafka_pages(consumer, topics: list[str], group_id: str):
+    """Messages from ``consumer`` as rows, in pages, after proving every topic was assigned.
+
+    🚨 **The assignment check runs before the first row leaves this generator** (core#1408 AC3).
+    A topic the group never assigned to this consumer contributes nothing, and the run used to
+    report `success` without it. So a missing topic refuses the run **before anything is
+    consumed**. The caller closes the consumer without committing, and the next run reads the
+    same messages. A refusal after some rows had been consumed and committed would lose them.
+
+    With no message at all, the check runs when the iterator ends. Nothing was consumed then
+    either.
+    """
+    checked = False
+    page: list[dict] = []
+    page_bytes = 0
+    for message in consumer:
+        if not checked:
+            _refuse_unassigned_kafka_topics(topics, consumer.assignment(), group_id)
+            checked = True
+        page.append(_kafka_record(message))
+        value = message.value
+        page_bytes += len(value) if isinstance(value, bytes | bytearray | str) else 0
+        if len(page) >= KAFKA_PAGE_MESSAGES or page_bytes >= KAFKA_PAGE_BYTES:
+            yield page
+            page, page_bytes = [], 0
+    if not checked:
+        _refuse_unassigned_kafka_topics(topics, consumer.assignment(), group_id)
+    if page:
+        yield page
+
+
+def _refuse_unassigned_kafka_topics(topics: list[str], assignment, group_id: str) -> None:
+    assigned = {tp.topic for tp in assignment}
+    missing = [t for t in dict.fromkeys(topics) if t not in assigned]
+    if not missing:
+        return
+    named = ", ".join(repr(t) for t in missing)
+    raise DltRunnerError(
+        f"Kafka consumer group '{group_id}' assigned this run no partition of {named}, so "
+        "nothing could be read from it, and the run stopped before loading anything. Another "
+        "consumer in the same group may hold it, for example a run that is still going or one "
+        "that has not left the group yet, or the topic may not exist."
+    )
+
+
 def _kafka_record(message) -> dict:
     """One Kafka message as a row, with the provenance needed to deduplicate.
 
@@ -1487,6 +1604,14 @@ class DltRunnerService:
             )
         kwargs: dict = {"credentials": self._to_dlt_credentials(connection_type, config)}
 
+        # core#1379: SQL Server and Synapse load through FreeTDS, with encryption requested in
+        # FreeTDS's own vocabulary and dlt's name-only driver gate widened for it. The shaping
+        # happens HERE and not in `_to_dlt_credentials`, which also builds the pymssql SOURCE
+        # credentials. See `dlt_mssql_freetds` for what each piece guards against.
+        if connection_type in FREETDS_DESTINATIONS:
+            factory = FREETDS_DESTINATIONS[connection_type]
+            kwargs["credentials"] = freetds_credentials(kwargs["credentials"])
+
         # ClickHouse: pass table_engine_type for cluster support
         if connection_type == "clickhouse":
             kwargs["credentials"] = _clickhouse_destination_credentials(kwargs["credentials"])
@@ -1542,6 +1667,8 @@ class DltRunnerService:
             schema = _normalize_oracle_identifier(schema)
 
         creds = self._to_dlt_credentials(connection_type, config)
+        if connection_type in LOCAL_FILE_SOURCE_TYPES:
+            creds = _local_file_source_credentials(connection_type, creds)
 
         # Arrow backend (E6) — when callers set backend="pyarrow", dlt's
         # sql_database/sql_table yields pa.Table per chunk instead of dicts.
@@ -2495,6 +2622,18 @@ class DltRunnerService:
         and states why it refuses to read one out of ``dlt_config``. An
         unauthenticated broker is unaffected: with no security fields set that
         helper returns ``{}`` and the call below is what it always was.
+
+        **One consumer for every topic (core#1408).** This used to create one
+        ``KafkaConsumer`` per topic, all in the same group, each inside its own
+        resource. dlt runs resources on one thread, so the second consumer's join
+        started a rebalance that the first consumer could only complete by
+        polling, and it could not poll while the thread waited in the second
+        consumer's poll. The second topic's iterator hit its idle timeout with no
+        partition assigned, and a two-topic upload loaded one topic per run while
+        reporting `success`. Now one consumer subscribes to every topic, and one
+        deselected resource forks its pages into **the same per-topic resources as
+        before**: a table per topic, the resource names that ``merge_config`` and
+        existing pipeline schemas are keyed by, and the same hints.
         """
         bootstrap_servers = config.get("bootstrap_servers", "")
         topics = _kafka_topics(dlt_config.get("topics") or config.get("topics", []))
@@ -2518,9 +2657,35 @@ class DltRunnerService:
         auto_commit = bool(dlt_config.get("enable_auto_commit", True))
         security = _kafka_security_kwargs(config, dlt_config)
 
+        @dlt.resource(name="_kafka_consumer", selected=False)
+        def _messages():
+            consumer = KafkaConsumer(
+                *topics,
+                bootstrap_servers=servers,
+                group_id=group_id,
+                auto_offset_reset=auto_offset_reset,
+                enable_auto_commit=auto_commit,
+                consumer_timeout_ms=idle_timeout_ms,
+                # Splatted rather than named: an empty dict is the
+                # unauthenticated broker this builder already supported, so
+                # the PLAINTEXT path is byte-for-byte what it was.
+                **security,
+            )
+            commit_on_close = True
+            try:
+                yield from _kafka_pages(consumer, topics, group_id)
+            except DltRunnerError:
+                # Refused before anything was consumed: commit nothing, so the
+                # next run reads the same messages.
+                commit_on_close = False
+                raise
+            finally:
+                consumer.close(autocommit=commit_on_close)
+
         def _topic_resource(topic: str):
-            @dlt.resource(
+            @dlt.transformer(
                 name=topic,
+                data_from=_messages,
                 primary_key=("_kafka_partition", "_kafka_offset"),
                 # Typed explicitly so the destination schema does not depend on
                 # what happened to arrive: dlt only materialises a column it saw
@@ -2536,32 +2701,19 @@ class DltRunnerService:
                     "_kafka_key": {"data_type": "text"},
                 },
             )
-            def _consume():
-                consumer = KafkaConsumer(
-                    topic,
-                    bootstrap_servers=servers,
-                    group_id=group_id,
-                    auto_offset_reset=auto_offset_reset,
-                    enable_auto_commit=auto_commit,
-                    consumer_timeout_ms=idle_timeout_ms,
-                    # Splatted rather than named: an empty dict is the
-                    # unauthenticated broker this builder already supported, so
-                    # the PLAINTEXT path is byte-for-byte what it was.
-                    **security,
-                )
-                try:
-                    for message in consumer:
-                        yield _kafka_record(message)
-                finally:
-                    consumer.close()
+            def _only_this_topic(page: list[dict]):
+                rows = [row for row in page if row["_kafka_topic"] == topic]
+                if rows:
+                    yield rows
 
-            return _consume
+            return _only_this_topic
 
         @dlt.source(name="kafka")
         def _kafka_source():
             # One resource per topic, so each lands in its own table rather
-            # than being fused into one by message shape.
-            return [_topic_resource(topic)() for topic in topics]
+            # than being fused into one by message shape. They share the one
+            # consumer above.
+            return [_messages, *(_topic_resource(topic) for topic in dict.fromkeys(topics))]
 
         return _kafka_source()
 

@@ -19,28 +19,22 @@ while ``PENDING`` → ``running``.
 """
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select
 
 from datanika import hooks
-from datanika.models.base import Base
 from datanika.models.dependency import NodeType
 from datanika.models.run import Run, RunStatus
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService, get_org_run
+from tests.factories import make_org_admin
 
 svc = ExecutionService()
 
 
 @pytest.fixture
-def factory(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'runs.db'}")
-    Base.metadata.create_all(engine)
-    try:
-        # As production's worker factory: loaded attributes survive a commit.
-        yield sessionmaker(engine, class_=Session, expire_on_commit=False)
-    finally:
-        engine.dispose()
+def factory(production_session_factory):
+    """The shared fixture (core#1412): production's session options, one file database."""
+    return production_session_factory
 
 
 @pytest.fixture
@@ -57,7 +51,10 @@ def pending_run(factory):
 def _api_cancels(factory, org_id, run_id):
     """The API request: its own session, cancels, commits."""
     with factory() as api:
-        assert svc.cancel_run(api, org_id, run_id) is not None
+        assert (
+            svc.cancel_run(api, org_id, run_id, actor_user_id=make_org_admin(api, org_id))
+            is not None
+        )
         api.commit()
 
 

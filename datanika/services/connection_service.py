@@ -24,6 +24,7 @@ from datanika.models.user import MemberRole
 from datanika.services.authorization import assert_org_role
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
 from datanika.services.encryption import EncryptionService
+from datanika.services.local_file_database import IN_MEMORY_PATHS, sqlite_uri_filename
 from datanika.services.naming import validate_name
 
 logger = logging.getLogger(__name__)
@@ -257,11 +258,9 @@ _FILE_TYPES = {
 #: property rather than from a list of connector names.
 _LOCAL_FILE_DB_TYPES = {ConnectionType.SQLITE, ConnectionType.DUCKDB}
 
-#: Values of ``path`` that name no file at all. An in-memory database is created
-#: fresh on every connect by definition, so "does it already exist?" is not a
-#: question about it and read-only is not a mode it has — measured: duckdb
-#: refuses ``:memory:`` with ``read_only=True`` outright.
-_IN_MEMORY_PATHS = {":memory:", ""}
+#: Values of ``path`` that name no file at all. Defined beside the read-only spelling in
+#: ``local_file_database``, which the upload run shares (core#1401).
+_IN_MEMORY_PATHS = IN_MEMORY_PATHS
 
 #: URL schemes that name something **outside this container**, so the value
 #: means the same thing in the web process and in the Celery worker.
@@ -922,8 +921,10 @@ def _build_sa_url(config: dict, connection_type: ConnectionType, *, read_only: b
             # all. Measured: with this, a path that does not exist fails and
             # **no file is created**; without it, SQLite's open-or-create
             # semantics manufacture the very database the check then reports
-            # finding (core#979).
-            return f"sqlite:///file:{path}?mode=ro&uri=true"
+            # finding (core#979). The path is percent-encoded, because `#`, `?` and `%` are URI
+            # syntax: unencoded, `hash#1.sqlite` opened and created a database named `hash`
+            # (core#1401). The upload run opens the same way, from the same helper.
+            return f"sqlite:///{sqlite_uri_filename(path)}?mode=ro&uri=true"
         return f"sqlite:///{path}"
 
     if connection_type == ConnectionType.SNOWFLAKE:
@@ -1768,6 +1769,14 @@ class ConnectionService:
         if connection_type in _NON_DB_TYPES:
             raise UserFacingError(f"Cannot list tables for {connection_type.value} connections")
         url = _build_sa_url(config, connection_type)
+        if connection_type == ConnectionType.CLICKHOUSE:
+            # core#1397: clickhouse-connect's dialect cannot run its own `SHOW DATABASES` or
+            # `SHOW TABLES` under SQLAlchemy 2, so ClickHouse's system tables are read instead.
+            from datanika.services.catalog_service import clickhouse_table_names
+
+            return [
+                {"schema": db, "name": name} for db, name in clickhouse_table_names(url, schema)
+            ]
         engine = create_engine(url)
         try:
             insp = inspect(engine)

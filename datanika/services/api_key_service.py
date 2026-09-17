@@ -194,6 +194,24 @@ class ApiKeyService:
         ):
             return None
 
+        # core#681 / SPEC_SERVICE_AUTHORIZATION §8: a key's authority is intersected with its
+        # owner's CURRENT org role at authentication. Operation thresholds live in the services
+        # (§4, §8a); the floor under all of them lives here, because an owner who holds no
+        # membership has no role to intersect with -- on a read as much as on a write.
+        #
+        # Raised, not `return None`: None renders as `401 Invalid or expired API key`, which is
+        # exactly the answer §8 forbids -- the caller re-mints a key that was never the problem.
+        # `api_middleware` renders this as §7.1's `403 insufficient_role`.
+        #
+        # Before the `last_used_at` write, so a refused key does not record a use.
+        assert_org_role(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            required=MemberRole.VIEWER,  # i.e. any current membership
+            operation="api_key_authentication",
+        )
+
         # Debounce last_used_at: skip the UPDATE if written within the last 60s.
         # Under load (100 concurrent VUs on one key), the synchronous UPDATE
         # serializes behind a row lock → p95 8s. Debouncing reduces writes

@@ -83,9 +83,33 @@ def models_table() -> rx.Component:
     )
 
 
+def uncatalogued_upload_notices() -> rx.Component:
+    """One notice per upload whose latest successful run did not catalog its tables (core#1398).
+
+    Rendered above the list, not in its empty state: the list is short, not empty, whenever any
+    other upload is catalogued, and that is exactly the case the old diagnosis could not see.
+    """
+    return rx.foreach(
+        ModelState.uncatalogued_uploads,
+        lambda notice: rx.callout(
+            rx.hstack(
+                rx.text(notice.message, size="2"),
+                rx.link(_t["models.open_run"], href=notice.run_href, size="2", weight="medium"),
+                spacing="3",
+                align="center",
+                wrap="wrap",
+            ),
+            icon="triangle_alert",
+            color_scheme="amber",
+            width="100%",
+        ),
+    )
+
+
 def models_page() -> rx.Component:
     return page_layout(
         rx.vstack(
+            rx.cond(ModelState.models_loaded, uncatalogued_upload_notices(), rx.fragment()),
             # core#872: the emptiness question is only worth ASKING once the
             # answer has arrived. Before this outer cond, `models == []` on the
             # first paint took the empty branch and told a user who has data, in
@@ -94,17 +118,23 @@ def models_page() -> rx.Component:
                 ModelState.models_loaded,
                 rx.cond(
                     ModelState.models.length() == 0,
-                    rx.callout(
-                        # "Run an upload to populate the catalog" is correct only
-                        # for someone who has never run one. Told to a user whose
-                        # load just went green with a row count, it sends them back
-                        # around the same loop (core#883).
-                        rx.cond(
-                            ModelState.loaded_without_catalog,
-                            _t["models.no_models_after_load"],
-                            _t["models.no_models"],
+                    # core#1398: when a notice above already names why the list is empty, the
+                    # generic empty-state copy would give a second, contradicting cause.
+                    rx.cond(
+                        ModelState.uncatalogued_uploads.length() > 0,
+                        rx.fragment(),
+                        rx.callout(
+                            # "Run an upload to populate the catalog" is correct only
+                            # for someone who has never run one. Told to a user whose
+                            # load just went green with a row count, it sends them back
+                            # around the same loop (core#883).
+                            rx.cond(
+                                ModelState.loaded_without_catalog,
+                                _t["models.no_models_after_load"],
+                                _t["models.no_models"],
+                            ),
+                            icon="info",
                         ),
-                        icon="info",
                     ),
                     models_table(),
                 ),

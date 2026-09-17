@@ -141,14 +141,18 @@ class TestFailRun:
 class TestCancelRun:
     def test_cancel_pending(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
-        cancelled = svc.cancel_run(db_session, org.id, run.id)
+        cancelled = svc.cancel_run(
+            db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert cancelled is not None
         assert cancelled.status == RunStatus.CANCELLED
 
     def test_cancel_running(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
         svc.start_run(db_session, org.id, run.id)
-        cancelled = svc.cancel_run(db_session, org.id, run.id)
+        cancelled = svc.cancel_run(
+            db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
+        )
         assert cancelled is not None
         assert cancelled.status == RunStatus.CANCELLED
 
@@ -156,10 +160,20 @@ class TestCancelRun:
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)
         svc.start_run(db_session, org.id, run.id)
         svc.complete_run(db_session, org.id, run.id, 0, "")
-        assert svc.cancel_run(db_session, org.id, run.id) is None
+        assert (
+            svc.cancel_run(
+                db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is None
+        )
 
     def test_nonexistent(self, svc, db_session, org):
-        assert svc.cancel_run(db_session, org.id, 99999) is None
+        assert (
+            svc.cancel_run(
+                db_session, org.id, 99999, actor_user_id=make_org_admin(db_session, org.id)
+            )
+            is None
+        )
 
 
 class TestGetRun:

@@ -291,6 +291,7 @@ class TransformationState(BaseState):
                         destination_connection_id=conn_id,
                         tags=tags,
                         incremental_config=inc_cfg,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -316,6 +317,7 @@ class TransformationState(BaseState):
                         destination_connection_id=conn_id,
                         tags=tags,
                         incremental_config=inc_cfg,
+                        actor_user_id=user_id,
                     )
                     self._audit(
                         session,
@@ -514,7 +516,7 @@ class TransformationState(BaseState):
         with get_sync_session() as session:
             t = svc.get_transformation(session, org_id, transformation_id)
             old_values = {"name": t.name, "materialization": t.materialization.value} if t else {}
-            svc.delete_transformation(session, org_id, transformation_id)
+            svc.delete_transformation(session, org_id, transformation_id, actor_user_id=user_id)
             self._audit(
                 session,
                 org_id,

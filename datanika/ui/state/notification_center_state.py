@@ -82,12 +82,13 @@ class NotificationCenterState(BaseState):
 
         auth = await self.get_state(AuthState)
         org_id = auth.current_org.id or 0
-        if org_id == 0:
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
             return
 
         svc = InAppNotificationService()
         with get_sync_session() as session:
-            svc.mark_read(session, notification_id, org_id)
+            svc.mark_read(session, notification_id, org_id, user_id)
             session.commit()
         await self.load_notifications()
 
@@ -117,11 +118,12 @@ class NotificationCenterState(BaseState):
 
         auth = await self.get_state(AuthState)
         org_id = auth.current_org.id or 0
-        if org_id == 0:
+        user_id = auth.current_user.id or 0
+        if org_id == 0 or user_id == 0:
             return
 
         svc = InAppNotificationService()
         with get_sync_session() as session:
-            svc.dismiss(session, notification_id, org_id)
+            svc.dismiss(session, notification_id, org_id, user_id)
             session.commit()
         await self.load_notifications()

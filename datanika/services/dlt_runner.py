@@ -1,9 +1,11 @@
 """DltRunnerService — builds dlt pipeline/source/destination and executes pipelines."""
 
+import datetime
 import logging
 import os
 import re
 import shutil
+from decimal import Decimal
 from pathlib import PurePosixPath
 
 import dlt
@@ -390,6 +392,83 @@ def _extract_rows_loaded(pipeline) -> int | None:
 
 class DltRunnerError(UserFacingError):
     """Raised when dlt runner encounters an unsupported configuration."""
+
+
+def _reflected_column_type(credentials: dict, schema: str | None, table: str, column: str):
+    """The SQLAlchemy type the source reports for one column, or ``None`` when it cannot be read.
+
+    Opens its own short-lived engine from the same credentials the source is built from. A failed
+    reflection is not an error here: the run goes on with the value as stored, and dlt's own
+    reflection of the same table reports whatever is wrong with it.
+    """
+    from dlt.common.configuration.specs import ConnectionStringCredentials
+    from dlt.sources.sql_database.helpers import engine_from_credentials
+    from sqlalchemy import inspect as sa_inspect
+
+    spec = ConnectionStringCredentials()
+    for key, value in credentials.items():
+        setattr(spec, key, value)
+    engine = None
+    try:
+        engine = engine_from_credentials(spec, may_dispose_after_use=True)
+        columns = sa_inspect(engine).get_columns(table, schema=schema)
+    except Exception:  # noqa: BLE001 - see the docstring: dlt's own reflection reports it
+        logger.warning(
+            "Could not read the type of cursor column %s.%s", table, column, exc_info=True
+        )
+        return None
+    finally:
+        if engine is not None:
+            engine.dispose()
+    exact = [c for c in columns if c["name"] == column]
+    folded = exact or [c for c in columns if str(c["name"]).lower() == column.lower()]
+    return folded[0]["type"] if folded else None
+
+
+#: Python types a text initial value is converted to, with the word the refusal uses for each.
+_INITIAL_VALUE_PARSERS = {
+    int: ("an integer", int),
+    float: ("a number", float),
+    Decimal: ("a number", Decimal),
+    datetime.datetime: ("a date and time", datetime.datetime.fromisoformat),
+    datetime.date: ("a date", datetime.date.fromisoformat),
+}
+
+
+def _typed_initial_value(
+    credentials: dict, schema: str | None, table: str, cursor_path: str, value
+):
+    """A text initial value converted to the cursor column's own type (core#1414).
+
+    The upload form stores **Initial value** as text, and dlt compares it with each row's cursor in
+    Python, where text never compares with an integer, a decimal, a date or a timestamp: the run
+    failed at extract (``IncrementalCursorInvalidCoercion`` or ``TypeError``, measured on dlt
+    1.21.0 for each of those types). The source's own column type decides the conversion, so a text
+    cursor keeps its text and a value stored as a number by the API is left as it is.
+
+    A value that is not the column's type is refused by name here rather than failing later
+    inside dlt.
+    """
+    if not isinstance(value, str):
+        return value
+    column_type = _reflected_column_type(credentials, schema, table, cursor_path)
+    if column_type is None:
+        return value
+    try:
+        python_type = column_type.python_type
+    except NotImplementedError:
+        return value
+    if python_type not in _INITIAL_VALUE_PARSERS:
+        return value
+    label, parse = _INITIAL_VALUE_PARSERS[python_type]
+    try:
+        return parse(value.strip())
+    except (ValueError, ArithmeticError) as exc:
+        raise DltRunnerError(
+            f"The initial value {value!r} is not {label}, which the cursor column "
+            f"'{cursor_path}' ({column_type}) holds. Enter it in that form, or clear it to start "
+            "from the first row."
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1701,8 +1780,13 @@ class DltRunnerService:
             incremental_cfg = dlt_config.get("incremental")
             if incremental_cfg is not None:
                 inc_kwargs = {"cursor_path": incremental_cfg["cursor_path"]}
-                if "initial_value" in incremental_cfg:
-                    inc_kwargs["initial_value"] = incremental_cfg["initial_value"]
+                initial_value = incremental_cfg.get("initial_value")
+                # An empty initial value is no initial value: the form never stores one, and dlt
+                # would compare every row with "".
+                if initial_value is not None and initial_value != "":
+                    inc_kwargs["initial_value"] = _typed_initial_value(
+                        creds, schema, table, incremental_cfg["cursor_path"], initial_value
+                    )
                 if "row_order" in incremental_cfg:
                     inc_kwargs["row_order"] = incremental_cfg["row_order"]
                 kwargs["incremental"] = dlt.sources.incremental(**inc_kwargs)
@@ -2771,16 +2855,23 @@ class DltRunnerService:
         destination_config: dict,
         dataset_name: str | None = None,
         run_id: int | None = None,
+        pipeline_name: str | None = None,
     ):
         """Create a dlt.Pipeline with the given destination.
 
         When ``run_id`` is provided, pipeline name includes it to avoid
         cross-run state pollution.  ``pipelines_dir`` isolates working files.
+
+        ``pipeline_name`` wins over both (core#1404). An incremental upload passes the name its runs
+        share, because dlt restores a cursor from the destination by that name; see
+        ``datanika.services.incremental_identity``.
         """
         destination = self.build_destination(destination_type, destination_config)
         name = f"pipeline_{pipeline_id}"
         if run_id is not None:
             name = f"{name}_run_{run_id}"
+        if pipeline_name is not None:
+            name = pipeline_name
         kwargs: dict = {
             "pipeline_name": name,
             "destination": destination,
@@ -2814,6 +2905,7 @@ class DltRunnerService:
         batch_size: int | None = None,
         dataset_name: str | None = None,
         run_id: int | None = None,
+        pipeline_name: str | None = None,
     ) -> dict:
         """Execute a dlt pipeline.
 
@@ -2831,6 +2923,7 @@ class DltRunnerService:
             destination_config,
             dataset_name=dataset_name,
             run_id=run_id,
+            pipeline_name=pipeline_name,
         )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
 

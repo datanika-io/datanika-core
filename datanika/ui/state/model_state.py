@@ -106,9 +106,9 @@ class ModelState(BaseState):
         else:
             text = await self._translated(
                 "models.catalog_unreadable",
-                "“{upload}” loaded its data, but the catalog could not read the destination, "
-                "so its tables are not listed here. The data is in the destination, and the "
-                "connection does not need to change.",
+                "“{upload}” ran successfully, but the catalog could not read its destination, so "
+                "its tables are not listed here. The connection does not need to change, and the "
+                "run’s log shows what the run loaded.",
             )
         message = text.replace("{upload}", upload_name).replace(
             "{schema}", run.catalog_sync_schema or ""

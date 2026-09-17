@@ -344,7 +344,7 @@
   "dag.check_timeframe": "Plazo de verificación",
   "models.no_models": "No se encontraron modelos. Ejecute una carga o transformación para llenar el catálogo.",
   "models.no_models_after_load": "No se encontraron modelos, pero una ejecución anterior cargó filas. Abra esa ejecución y revise su registro: el esquema de destino en el que escribió puede haberse eliminado, renombrado o configurado incorrectamente en la conexión.",
-  "models.catalog_unreadable": "«{upload}» cargó sus datos, pero el catálogo no pudo leer el destino, así que sus tablas no aparecen aquí. Los datos están en el destino y no hace falta cambiar la conexión.",
+  "models.catalog_unreadable": "«{upload}» se ejecutó correctamente, pero el catálogo no pudo leer su destino, así que sus tablas no aparecen aquí. No hace falta cambiar la conexión, y el registro de la ejecución muestra lo que cargó.",
   "models.catalog_no_tables": "«{upload}» cargó filas, pero no se encontraron tablas en el esquema «{schema}», así que no aparece nada de él aquí. Es posible que el esquema se haya eliminado, renombrado o configurado incorrectamente en la conexión de destino.",
   "models.open_run": "Abrir la ejecución",
   "models.origin": "Origen",

@@ -189,6 +189,13 @@ class TestTheCauseIsTheRunsOwn:
         missing = sorted((tokens | {"gating_failed"}) - set(streak.UNMEASURED_CAUSES))
         assert not missing, f"tokens with no recorded cause: {missing}"
 
+    def test_a_token_with_no_gating_beside_it_is_explained_by_itself(self) -> None:
+        """The SSO tier's shape: `no_verdict` is the tier's own token, with no gating deferral."""
+        run = streak.RunReading("2026-09-17T08:00:00Z", "5500aa00", streak.UNMEASURED, "no_verdict")
+        text = "\n".join(streak.explain_blindness([[run, run, run]]))
+        assert "3 x no_verdict" in text and "fix the harness" in text, text
+        assert CORE_876_CLAIM not in text, text
+
     def test_an_unrecognised_token_is_named_rather_than_explained_away(self) -> None:
         run = streak.RunReading("2026-09-17T08:00:00Z", "deadbeef", streak.UNMEASURED, "brand_new")
         text = "\n".join(streak.explain_blindness([[run, run, run]]))

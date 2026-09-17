@@ -205,6 +205,14 @@ Use `pytest.mark.xfail(strict=True, raises=<Specific>)`.
   and confirm the test goes red *for the stated reason* — one strict xfail on this project was being
   satisfied by an `IndentationError` inside `ast.parse(inspect.getsource(...))`, visible only on
   removing the marker.
+- **A setup helper can raise `AssertionError` by design, and then the marker absorbs a dead
+  container.** `await_setup` (``test_source_builders_move_rows.py``) reports a container that never
+  became ready as an `AssertionError`. Called inside a test marked
+  `xfail(strict=True, raises=AssertionError)`, a broker that never answered reads exactly like the
+  defect still being present. It happened to the #1408 arm of the class probe (#1422) on a host
+  where the Kafka testcontainer was unreachable: the run hung in setup, and had it exhausted its
+  budget it would have reported `XFAIL`. Re-raise setup failures as a non-`AssertionError` at the
+  boundary of the thing under test.
 
 ## 6. Validate against the real consumer
 

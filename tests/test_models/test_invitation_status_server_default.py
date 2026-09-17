@@ -19,7 +19,7 @@ from sqlalchemy import text
 
 from datanika.models.invitation import Invitation, InvitationStatus
 from datanika.models.user import MemberRole, Organization
-from tests.factories import make_user
+from tests.factories import make_invitation, make_user
 
 
 @pytest.fixture
@@ -63,15 +63,16 @@ def test_the_default_stores_the_spelling_the_orm_itself_writes(db_session, paren
     """Derived, not restated: whatever the ORM stores for PENDING is what the default stores."""
     org_id, inviter_id = parents
     omitted_id = _insert(db_session, parents, status=None, token_hash="b" * 64)
-    orm_row = Invitation(
+    # Built the way the product builds one (sidecar and hash), so the spelling compared against is
+    # the one a real invitation row carries.
+    orm_row = make_invitation(
+        db_session,
         org_id=org_id,
+        email="invitee-1393@test.io",
         role=MemberRole.VIEWER,
         invited_by_user_id=inviter_id,
-        token_hash="c" * 64,
-        expires_at=datetime.now(UTC) + timedelta(days=7),
+        token="c" * 64,
     )
-    db_session.add(orm_row)
-    db_session.flush()
 
     stored = dict(
         db_session.execute(

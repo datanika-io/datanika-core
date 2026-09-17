@@ -16,26 +16,39 @@ catalogue only.
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+from cryptography.fernet import Fernet
+
 from datanika.models.run import CatalogSyncVerdict, RunStatus
 from datanika.services.catalog_service import CatalogService
+from datanika.services.encryption import EncryptionService
 from datanika.tasks.upload_tasks import run_upload
 from tests.test_tasks.test_upload_catalog_sync_silence import (
     DESTINATION_DATASET,
     ONE_TABLE,
     _run,
-    encryption,  # noqa: F401 - fixture
-    setup_upload,  # noqa: F401 - fixture
+    make_upload_setup,
 )
 
 
-def test_a_sync_that_finds_tables_records_catalogued(db_session, setup_upload):  # noqa: F811
+@pytest.fixture
+def encryption():
+    return EncryptionService(Fernet.generate_key().decode())
+
+
+@pytest.fixture
+def setup_upload(db_session, encryption):
+    return make_upload_setup(db_session, encryption)
+
+
+def test_a_sync_that_finds_tables_records_catalogued(db_session, setup_upload):
     _, _, run = _run(db_session, setup_upload, rows_loaded=10, introspect_result=ONE_TABLE)
 
     assert run.catalog_sync_verdict == CatalogSyncVerdict.CATALOGUED
     assert run.catalog_sync_schema is None
 
 
-def test_rows_with_no_tables_records_no_tables_and_the_schema_asked(db_session, setup_upload):  # noqa: F811
+def test_rows_with_no_tables_records_no_tables_and_the_schema_asked(db_session, setup_upload):
     _, _, run = _run(db_session, setup_upload, rows_loaded=10, introspect_result=[])
 
     assert run.catalog_sync_verdict == CatalogSyncVerdict.NO_TABLES
@@ -43,13 +56,13 @@ def test_rows_with_no_tables_records_no_tables_and_the_schema_asked(db_session, 
     assert run.status == RunStatus.SUCCESS and run.rows_loaded == 10
 
 
-def test_an_empty_load_records_empty(db_session, setup_upload):  # noqa: F811
+def test_an_empty_load_records_empty(db_session, setup_upload):
     _, _, run = _run(db_session, setup_upload, rows_loaded=0, introspect_result=[])
 
     assert run.catalog_sync_verdict == CatalogSyncVerdict.EMPTY
 
 
-def test_a_sync_that_raised_records_unreadable(db_session, setup_upload):  # noqa: F811
+def test_a_sync_that_raised_records_unreadable(db_session, setup_upload):
     org, _upload, run, encryption_service = setup_upload
     with (
         patch("datanika.tasks.upload_tasks.DltRunnerService") as mock_runner_cls,

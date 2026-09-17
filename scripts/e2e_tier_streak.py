@@ -79,7 +79,9 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass
+from urllib.parse import quote
 
 REPO = "datanika-io/datanika-core"
 WORKFLOW = ".github/workflows/ci.yml"
@@ -196,6 +198,52 @@ VERDICT_CLASS: dict[str, str] = {
     **INFORMATIONAL_VERDICTS,
     **INFORMATIONAL_SPEC_VERDICTS,
     **LOCAL_VERDICTS,
+}
+
+#: Why a run carried no reading, keyed by the classifier's OWN token (core#1447).
+#:
+#: 🚨 The blindness alert used to print core#876's cause for EVERY unmeasured run -- "a newer push
+#: had redeployed staging out from under it, the guard working". On 2026-09-17 it said that about
+#: eight `e2e-staging` runs that had been on the right build and died in the seed (core#1437):
+#: their classifier printed `no_verdict`, which its own workflow glosses as "fix the harness". The
+#: class `UNMEASURED` is one word for causes that need opposite responses, and the sentence it
+#: picked was the one that asks nobody to act. So the token is kept, and the cause comes from it.
+#:
+#: `tests/test_deploy/test_blindness_alert_cause_and_lookback.py` derives the required keys from
+#: `VERDICT_CLASS`, so a new non-reading token cannot arrive without a cause.
+UNMEASURED_CAUSES: dict[str, str] = {
+    "wrong_build": (
+        "staging was not running this commit when the verifier looked: a newer push had "
+        "redeployed staging out from under it (core#876) - the guard working. Re-deploying "
+        "that commit is the only way to grade it"
+    ),
+    "cancelled": (
+        "the job was cancelled before it produced a verdict (typically a newer run in its "
+        "concurrency group); nothing was graded"
+    ),
+    "no_verdict": (
+        "the harness produced NO verdict: the gating step never ran or collected zero specs "
+        "(a seed, setup or collection failure). That is not a guard working - fix the harness; "
+        "re-deploying will not help"
+    ),
+    "gating_failed": (
+        "the gating specs FAILED, so the informational step never ran. That is a red, not an "
+        "absence: read the gating result"
+    ),
+    "unknown": (
+        "the informational step never ran, and the log carries no gating verdict saying why; "
+        "read the run's log"
+    ),
+    "empty": "the informational tier held no specs, so there was nothing to grade",
+    "no_evidence": "the report carried no spec at all (a crashed or misdirected run)",
+    # --spec only (core#1221): the two ways one spec can be unattributable in a run.
+    "absent": (
+        "this spec was not in the run's per-spec report: it did not run, or did not exist yet"
+    ),
+    "failure": (
+        "the tier failed in a run that predates per-spec lines, so it cannot say whether THIS "
+        "spec did"
+    ),
 }
 
 #: Tier -> the vocabulary that tier's classifier emits. The caller names the tier it is asking
@@ -597,6 +645,72 @@ class Reading:
         )
 
 
+@dataclass(frozen=True)
+class RunReading:
+    """One completed run of the job, as the reader classified it (core#1447).
+
+    ``token`` is the classifier's own word for the tier asked about (``no_verdict``, ``unknown``,
+    ``wrong_build``, ...), or ``None`` when the log carried none. ``gating`` is the GATING tier's
+    token read from the same log, kept only because an informational ``unknown`` says nothing
+    about its cause and the gating verdict beside it does.
+    """
+
+    created: str
+    sha: str
+    klass: str
+    token: str | None = None
+    gating: str | None = None
+
+    def tag(self) -> str:
+        """The history line's suffix. Only an unmeasured run needs one: its class hides WHY."""
+        if self.klass != UNMEASURED:
+            return ""
+        inner = self.token or "no token"
+        if self.gating is not None:
+            inner += f", gating={self.gating}"
+        return f" ({inner})"
+
+
+def cause_of(run: RunReading) -> str:
+    """The token that explains THIS run's non-reading. An informational ``unknown`` defers to the
+    gating token beside it, because that is where the reason is recorded."""
+    if run.token == "unknown" and run.gating is not None:  # noqa: S105 - a verdict token
+        return run.gating
+    return run.token or "no token"
+
+
+def blind_stretches(history: list[RunReading], threshold: int) -> list[list[RunReading]]:
+    """Every run of ``threshold`` or more consecutive UNMEASURED readings, oldest first."""
+    stretches: list[list[RunReading]] = []
+    current: list[RunReading] = []
+    for run in [*history, None]:
+        if run is not None and run.klass == UNMEASURED:
+            current.append(run)
+            continue
+        if len(current) >= threshold:
+            stretches.append(current)
+        current = []
+    return stretches
+
+
+def stretch_signature(job: str, stretch: list[RunReading]) -> str:
+    """A line that names one blind stretch and nothing else, so a later look can tell it has
+    already been reported (core#1448: a look-back longer than a day sees each stretch twice)."""
+    return f"BLIND-STRETCH {job} {stretch[0].sha}..{stretch[-1].sha}"
+
+
+def explain_blindness(stretches: list[list[RunReading]]) -> list[str]:
+    """One line per cause present, from each run's own token -- never one sentence for all."""
+    counts = Counter(cause_of(run) for stretch in stretches for run in stretch)
+    lines = []
+    for cause, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
+        text = UNMEASURED_CAUSES.get(
+            cause, "no cause is recorded for this token in UNMEASURED_CAUSES; read the run's log"
+        )
+        lines.append(f"    {n} x {cause}: {text}")
+    return lines
+
+
 # --------------------------------------------------------------------------------------
 # GitHub API layer
 # --------------------------------------------------------------------------------------
@@ -674,20 +788,57 @@ def _gh_log_or_none(repo: str, job_id: int) -> tuple[str | None, str]:
     return None, reason or f"gh exited {out.returncode} with no stderr"
 
 
+#: The filtered runs listing stops at 1000 results; a look-back that reaches it is truncated.
+_MAX_PAGES = 10
+
+
+def _push_runs(repo: str, branch: str, runs: int, since: str | None) -> list[dict]:
+    """The push runs on ``branch`` the reader will look at, newest first.
+
+    🚨 core#1448. A COUNT (``per_page=runs``) was the only mode, and the watchdog asked for 40 once
+    a day. A push to `dev` starts two push workflows, so 40 is about 20 pushes, and on 2026-09-17
+    there were 23 since the previous look: three `CI` runs were read by no detector run, ever, and
+    the output could not say so. ``since`` pages by TIME instead, so every push run created since
+    then is read.
+    """
+    if since is None:
+        payload = _gh(f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}")
+        return list(payload.get("workflow_runs", []))  # type: ignore[union-attr]
+    created = quote(f">={since}", safe="")
+    listed: list[dict] = []
+    for page in range(1, _MAX_PAGES + 1):
+        payload = _gh(
+            f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page=100"
+            f"&page={page}&created={created}"
+        )
+        batch = list(payload.get("workflow_runs", []))  # type: ignore[union-attr]
+        listed.extend(batch)
+        if len(batch) < 100:
+            return listed
+    raise SystemExit(
+        f"more than {_MAX_PAGES * 100} push runs on {branch} since {since}: GitHub's filtered "
+        "listing stops at 1000, so this look-back would be silently truncated. Narrow --since."
+    )
+
+
 def collect(
-    repo: str, branch: str, job_name: str, runs: int, spec: str | None = None
-) -> list[tuple[str, str, str]]:
-    """`(created_at, short_sha, class)` per completed run, oldest first.
+    repo: str,
+    branch: str,
+    job_name: str,
+    runs: int,
+    spec: str | None = None,
+    since: str | None = None,
+) -> list[RunReading]:
+    """One :class:`RunReading` per completed run, oldest first.
 
     ``event=push`` is not optional. A `dev` head carries a `merge_group` run too, whose staging
     jobs are `skipped` **by design** — byte-identical to the condition that holds a promotion,
     produced by a run nobody asked for.
     """
-    payload = _gh(f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}")
-    out: list[tuple[str, str, str]] = []
+    out: list[RunReading] = []
     fetched = failed = 0
     reasons: list[str] = []  # core#1273: why each fetch failed, so the guard can say
-    for run in payload.get("workflow_runs", []):  # type: ignore[union-attr]
+    for run in _push_runs(repo, branch, runs, since):
         if run.get("path") != WORKFLOW or run.get("status") != "completed":
             continue
         jobs = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
@@ -729,16 +880,22 @@ def collect(
         # it, and a per-spec green from a laptop is exactly the false verdict with a build
         # behind it that #1232 exists to refuse.
         where = attested_environment(lines) if log is not None else None
+        token = verdict
         if where is not None and where != CI_ENVIRONMENT:
             klass = LOCAL
+            token = LOCAL_VERDICT
         elif spec is not None:
-            klass = classify_for_spec(
-                spec, parse_spec_verdicts(lines), parse_verdict_line(lines, tier="informational")
-            )
+            per_spec = parse_spec_verdicts(lines)
+            info = parse_verdict_line(lines, tier="informational")
+            klass = classify_for_spec(spec, per_spec, info)
+            token = per_spec.get(spec, "absent") if per_spec else info
         else:
             klass = classify_verdict(verdict, specs)
 
-        out.append((run["created_at"], run["head_sha"][:8], klass))
+        # core#1447: keep the gating token beside an informational one. `unknown` says only that
+        # the informational step did not run; the gating verdict on the same log says why.
+        gating = parse_verdict_line(lines, tier="gating") if tier == "informational" else None
+        out.append(RunReading(run["created_at"], run["head_sha"][:8], klass, token, gating))
 
     # If NOTHING could be fetched, this is an instrument failure and must be loud. Silently
     # classifying every run UNREADABLE blocks a streak, which is the safe direction — and it
@@ -760,7 +917,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--branch", default="dev")
     ap.add_argument("--job", default="e2e-sso", help="job name substring (e2e-sso, e2e-staging)")
-    ap.add_argument("--runs", type=int, default=25)
+    ap.add_argument(
+        "--runs",
+        type=int,
+        default=25,
+        help="read the N newest push runs (of EVERY workflow, so about N/2 pushes). "
+        "Ignored with --since",
+    )
+    ap.add_argument(
+        "--since",
+        help="read every push run created at or after this UTC time (YYYY-MM-DDTHH:MM:SSZ) "
+        "instead of a count. A scheduled caller needs this: a count-sized page can end before "
+        "the previous look (core#1448)",
+    )
+    ap.add_argument(
+        "--already-reported",
+        metavar="FILE",
+        help="text of earlier reports; a blind stretch whose BLIND-STRETCH line appears in it is "
+        "listed but does not exit 2 again (core#1448)",
+    )
     ap.add_argument(
         "--spec",
         help="grade ONE informational spec file (e.g. reflex-wire.spec.ts) instead of the "
@@ -784,18 +959,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    history = collect(args.repo, args.branch, args.job, args.runs, spec=args.spec)
-    for created, sha, cls in history:
-        print(f"{created}  {sha}  {cls}")
+    history = collect(args.repo, args.branch, args.job, args.runs, spec=args.spec, since=args.since)
+    for run in history:
+        print(f"{run.created}  {run.sha}  {run.klass}{run.tag()}")
 
     r = Reading.from_classes(
-        [c for _, _, c in history], required=args.required, max_gaps=args.max_gaps
+        [run.klass for run in history], required=args.required, max_gaps=args.max_gaps
     )
     print()
     subject = f"{args.job} on {args.branch}"
     if args.spec:
         subject += f"   spec: {args.spec}"
     print(f"job            : {subject}")
+    # core#1448: say how far back this look reached, so a page that ended early is visible.
+    if args.since:
+        print(f"look-back      : every push run created since {args.since}")
+    else:
+        print(f"look-back      : the {args.runs} newest push runs, of every workflow")
+    print(f"oldest run read: {history[0].created if history else 'none'}")
     print(f"runs read      : {r.total}  (measured: {r.measured})")
     print(
         f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "
@@ -824,25 +1005,43 @@ def main(argv: list[str] | None = None) -> int:
         f"trailing: {r.trailing_unmeasured}"
     )
 
-    if args.max_unmeasured is not None and r.longest_unmeasured >= args.max_unmeasured:
-        print()
-        print(
-            f"BLIND: {r.longest_unmeasured} consecutive runs produced no reading of this "
-            f"tier (threshold {args.max_unmeasured})."
-        )
-        print(
-            "  Nothing here is red, and that is the point: this is the ABSENCE of a "
-            "measurement, which reads exactly like a pass. Each of those runs refused to "
-            "grade because a newer push had redeployed staging out from under it "
-            "(core#876) - the guard working. What was missing is anyone seeing the "
-            "accumulation."
-        )
-        print(
-            f"  A tier unmeasured for {args.max_unmeasured} runs in a row cannot graduate "
-            "anything even if every spec passed, because the bar is three consecutive "
-            "greens."
-        )
-        return 2
+    if args.max_unmeasured is not None:
+        stretches = blind_stretches(history, args.max_unmeasured)
+        job = f"{args.job}[{args.spec}]" if args.spec else args.job
+        reported: set[str] = set()
+        if args.already_reported:
+            with open(args.already_reported, encoding="utf-8") as fh:
+                reported = {line.strip() for line in fh}
+        new = [s for s in stretches if stretch_signature(job, s) not in reported]
+        old = [s for s in stretches if stretch_signature(job, s) in reported]
+        if old:
+            print()
+            for s in old:
+                print(f"already reported, not alerting again: {stretch_signature(job, s)}")
+        if new:
+            print()
+            print(
+                f"BLIND: {max(len(s) for s in new)} consecutive runs produced no reading of "
+                f"this tier (threshold {args.max_unmeasured})."
+            )
+            print(
+                "  Nothing here is red, and that is the point: this is the ABSENCE of a "
+                "measurement, which reads exactly like a pass. What was missing is anyone "
+                "seeing the accumulation."
+            )
+            # core#1447: the cause comes from each run's own classifier token, never from one
+            # sentence written for one of them.
+            print("  Why, from each run's own classifier token:")
+            for line in explain_blindness(new):
+                print(line)
+            print(
+                f"  A tier unmeasured for {args.max_unmeasured} runs in a row cannot graduate "
+                "anything even if every spec passed, because the bar is three consecutive "
+                "greens."
+            )
+            for s in new:
+                print(stretch_signature(job, s))
+            return 2
     return 0 if r.graduated else 1
 
 

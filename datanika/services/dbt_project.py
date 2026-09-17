@@ -377,20 +377,23 @@ class DbtProjectService:
                 "threads": 4,
             }
         if connection_type == "mssql":
-            # core#1379. dbt-sqlserver's default backend is pyodbc and it needs a DRIVER name;
-            # the image carries FreeTDS (founder decision). dbt-sqlserver also writes Microsoft's
-            # `Encrypt=Yes`, which FreeTDS ignores without an error -- encryption for this path
-            # comes from the image's FreeTDS `[global] encryption = require`.
-            from datanika.services.dlt_mssql_freetds import FREETDS_DRIVER
+            # core#1379. dbt-sqlserver's default backend is pyodbc and needs a DRIVER; the image
+            # carries FreeTDS (founder decision), and the value also carries FreeTDS's encryption
+            # keyword -- see FREETDS_DBT_DRIVER for why it has to travel there.
+            #
+            # `database`, not `dbname`: dbt-sqlserver 1.11 refuses a profile without it ("The
+            # `database` profile field is required for SQL Server connections"), measured on the
+            # built image -- so the shared branch below never produced a profile it accepts.
+            from datanika.services.dlt_mssql_freetds import FREETDS_DBT_DRIVER
 
             return {
                 "type": "sqlserver",
-                "driver": FREETDS_DRIVER,
+                "driver": FREETDS_DBT_DRIVER,
                 "host": config.get("host", ""),
                 "port": config.get("port", 1433),
                 "user": config.get("user", ""),
                 "password": config.get("password", ""),
-                "dbname": config.get("database", ""),
+                "database": config.get("database", ""),
                 "schema": config.get("schema", default_schema),
                 "threads": 4,
             }

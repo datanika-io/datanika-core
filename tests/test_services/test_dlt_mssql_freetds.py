@@ -141,13 +141,44 @@ class TestTheSourcePathIsUntouched:
 
 
 class TestDbtProfile:
-    def test_sqlserver_profile_names_the_freetds_driver(self):
+    @staticmethod
+    def _dbt_connection_string_parts(output: dict) -> list[str]:
+        """The string dbt-sqlserver itself builds from our profile -- its function, not ours."""
+        from dbt.adapters.sqlserver.sqlserver_backend import build_pyodbc_connection_string
+        from dbt.adapters.sqlserver.sqlserver_credentials import SQLServerCredentials
+
+        creds = SQLServerCredentials(
+            driver=output["driver"],
+            host=output["host"],
+            port=output["port"],
+            database=output["database"],
+            schema=output["schema"],
+            UID=output["user"],
+            PWD=output["password"],
+        )
+        return build_pyodbc_connection_string(creds).split(";")
+
+    def test_sqlserver_profile_loads_through_freetds_and_requires_encryption(self):
+        """dbt-sqlserver appends Microsoft's `encrypt=Yes`, which FreeTDS ignores; FreeTDS's own
+        keyword has to reach the string through the driver value. Measured on the built image:
+        dbt's session read `encrypt_option = TRUE` with this, `FALSE` with a plain driver name."""
+        from datanika.services.dbt_project import DbtProjectService
+
+        output = DbtProjectService._build_profile_output("mssql", STORED)
+        parts = self._dbt_connection_string_parts(output)
+
+        assert output["type"] == "sqlserver"
+        assert "DRIVER={FreeTDS}" in parts, parts
+        assert "Encryption={require}" in parts, parts
+
+    def test_sqlserver_profile_carries_database_not_dbname(self):
+        """dbt-sqlserver 1.11 refuses a profile without `database` (measured on the built image)."""
         from datanika.services.dbt_project import DbtProjectService
 
         output = DbtProjectService._build_profile_output("mssql", STORED)
 
-        assert output["type"] == "sqlserver"
-        assert output["driver"] == "FreeTDS"
+        assert output["database"] == "Analytics"
+        assert "dbname" not in output
 
     def test_sqlserver_profile_defaults_to_the_sql_server_port(self):
         from datanika.services.dbt_project import DbtProjectService

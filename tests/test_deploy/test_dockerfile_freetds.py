@@ -11,12 +11,12 @@ SQL Server or Synapse destination failed at dlt's ``sync`` step with
 failure moves to *"No supported ODBC driver found"* with the build green. That is why the build
 asserts the driver is REGISTERED, in the artifact, and not merely that a package name is listed.
 
-WHY A GLOBAL ``encryption = require``
--------------------------------------
-Two consumers reach FreeTDS through ODBC: dlt's loader and dbt-sqlserver. dlt's connection string is
-ours and carries ``ENCRYPTION=require``. dbt-sqlserver writes Microsoft's ``Encrypt=Yes``, which
-FreeTDS ignores without an error — a request for encryption that connects in cleartext and reports
-success. The global setting is the one place that covers both.
+WHY THE IMAGE CONFIGURES NO ENCRYPTION
+--------------------------------------
+A ``[global] encryption = require`` in freetds.conf was measured INERT for these DSN-less
+connections, so encryption travels in each consumer's own connection string -- the loader's DSN
+and the dbt profile's driver value -- and is tested there. A Dockerfile setting that does nothing
+would be a check that cannot fail in the direction that matters.
 """
 
 from __future__ import annotations
@@ -75,27 +75,13 @@ def freetds_problems(text: str) -> list[str]:
             "and the dbt profile ask for"
         )
 
-    conf_runs = [r for r in runs if "/etc/freetds/freetds.conf" in r]
-    if not conf_runs:
-        problems.append(
-            "nothing writes /etc/freetds/freetds.conf -- dbt-sqlserver would connect in cleartext"
-        )
-    else:
-        conf = " ".join(conf_runs)
-        if not re.search(r"\[global\]", conf):
-            problems.append("the FreeTDS configuration has no [global] section")
-        if not re.search(r"encryption\s*=\s*require", conf):
-            problems.append("the FreeTDS [global] section does not set `encryption = require`")
-        if "grep" not in conf:
-            problems.append("the written FreeTDS configuration is never read back in the build")
-
     stage = _stage_of(text, "pyodbc.drivers()")
     if stage not in (None, "final"):
         problems.append(f"the driver assertion runs in stage {stage!r}; it must run in `final`")
     return problems
 
 
-def test_the_dockerfile_carries_a_registered_encrypting_freetds() -> None:
+def test_the_dockerfile_carries_a_registered_freetds_driver() -> None:
     assert not freetds_problems(DOCKERFILE.read_text(encoding="utf-8"))
 
 
@@ -104,7 +90,7 @@ def test_the_dbt_profile_and_the_loader_name_the_same_driver() -> None:
     from datanika.services.dlt_mssql_freetds import FREETDS_DRIVER
 
     output = DbtProjectService._build_profile_output("mssql", {"host": "h"})
-    assert output["driver"] == FREETDS_DRIVER
+    assert output["driver"].startswith("{" + FREETDS_DRIVER + "}")
 
 
 _MUTATIONS = {
@@ -119,14 +105,6 @@ _MUTATIONS = {
     "no registration assertion": (
         lambda t: t.replace("pyodbc.drivers()", "pyodbc.version"),
         "no build step asserts the ODBC driver is registered",
-    ),
-    "encryption not required": (
-        lambda t: re.sub(r"encryption\s*=\s*require", "encryption = request", t),
-        "does not set `encryption = require`",
-    ),
-    "configuration written but never read back": (
-        lambda t: re.sub(r"grep[^;&|]*freetds\.conf", "true", t),
-        "never read back",
     ),
 }
 

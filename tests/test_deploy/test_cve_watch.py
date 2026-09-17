@@ -128,15 +128,53 @@ def test_filed_issues_carry_both_labels() -> None:
             )
 
 
-def test_a_pull_request_run_never_files() -> None:
-    """The PR trigger proves the token's reach and the dedupe before a merge. It never files."""
-    assert "pull_request" in _on(_wf()), "no pull_request trigger: reach is unproven until cron"
-    live = [s for s in _filing_steps() if "--dry-run" not in str(s["run"])]
-    assert live, "no step actually files"
-    for step in live:
-        assert "github.event_name != 'pull_request'" in str(step.get("if", "")), (
-            f"{step.get('name')} would file from a pull_request"
-        )
+REACH_WF = REPO / ".github" / "workflows" / "cve-watch-reach.yml"
+
+
+def test_the_filer_workflow_never_runs_on_a_pull_request() -> None:
+    """A pull request must never be able to file an issue."""
+    triggers = _on(_wf())
+    for event in ("pull_request", "pull_request_target"):
+        assert event not in triggers, f"cve-watch.yml runs on {event}, so a PR could file"
+
+
+def test_reach_is_proven_on_a_pull_request_by_a_workflow_the_pause_does_not_disable() -> None:
+    """🔴 Measured on PR #1418, 2026-09-17: a `disabled_manually` workflow runs on NO trigger.
+
+    The first version of this change put a `pull_request` trigger on cve-watch.yml itself, to
+    prove the filing token's reach before merging. The PR produced no CVE-watch run at all,
+    because the workflow is disabled, and enabling it to get the reading would have re-armed
+    the default branch's PUBLIC filer on its schedule. So the proof lives in its own workflow,
+    which the pause does not cover, and it must prove the same thing the filer depends on: the
+    same token, the same tracker and the same labels.
+    """
+    assert REACH_WF.is_file(), "cve-watch-reach.yml is missing"
+    doc = yaml.safe_load(REACH_WF.read_text(encoding="utf-8"))
+    triggers = _on(doc)
+    assert "schedule" not in triggers, "the reach proof must not become a second schedule"
+    paths = set((triggers.get("pull_request") or {}).get("paths") or [])
+    for needed in (
+        ".github/workflows/cve-watch.yml",
+        ".github/workflows/cve-watch-reach.yml",
+        ".github/scripts/cve_report.py",
+    ):
+        assert needed in paths, f"a change to {needed} does not re-prove the reach"
+
+    steps = [s for job in doc["jobs"].values() for s in job.get("steps", [])]
+    runs = [s for s in steps if "cve_report.py" in str(s.get("run", ""))]
+    assert runs, "the reach workflow never runs cve_report.py"
+    for step in runs:
+        run = str(step["run"])
+        assert "--check-reach" in run, f"{step.get('name')} runs the FILER on a pull request"
+        assert f"--repo {PRIVATE_TRACKER}" in run
+        for label in LABELS:
+            assert f'--label "{label}"' in run or f"--label {label} " in f"{run} "
+
+    filer_token = {(s.get("env") or {}).get("CVE_FILING_TOKEN") for s in _filing_steps()}
+    reach_token = {(s.get("env") or {}).get("CVE_FILING_TOKEN") for s in runs}
+    assert len(filer_token) == 1 and filer_token == reach_token, (
+        f"the PR proves {reach_token} but the scheduled run files with {filer_token}"
+    )
 
 
 def test_the_filing_tokens_reach_is_checked_before_the_image_is_built() -> None:

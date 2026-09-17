@@ -1270,6 +1270,60 @@ def _kafka_security_kwargs(config: dict, dlt_config: dict) -> dict:
     return kwargs
 
 
+#: How many Kafka messages travel together from the one consumer to the per-topic resources
+#: (core#1408), and the payload bytes at which a page is sent early. Measured with 200,000
+#: messages over two topics: extracting one message at a time took 23.5 s through the fork
+#: and 0.8 s in pages of 1,000. The byte bound keeps a topic of large messages from holding a
+#: large page in memory.
+KAFKA_PAGE_MESSAGES = 1_000
+KAFKA_PAGE_BYTES = 8 * 1024 * 1024
+
+
+def _kafka_pages(consumer, topics: list[str], group_id: str):
+    """Messages from ``consumer`` as rows, in pages, after proving every topic was assigned.
+
+    🚨 **The assignment check runs before the first row leaves this generator** (core#1408 AC3).
+    A topic the group never assigned to this consumer contributes nothing, and the run used to
+    report `success` without it. So a missing topic refuses the run **before anything is
+    consumed**. The caller closes the consumer without committing, and the next run reads the
+    same messages. A refusal after some rows had been consumed and committed would lose them.
+
+    With no message at all, the check runs when the iterator ends. Nothing was consumed then
+    either.
+    """
+    checked = False
+    page: list[dict] = []
+    page_bytes = 0
+    for message in consumer:
+        if not checked:
+            _refuse_unassigned_kafka_topics(topics, consumer.assignment(), group_id)
+            checked = True
+        page.append(_kafka_record(message))
+        value = message.value
+        page_bytes += len(value) if isinstance(value, bytes | bytearray | str) else 0
+        if len(page) >= KAFKA_PAGE_MESSAGES or page_bytes >= KAFKA_PAGE_BYTES:
+            yield page
+            page, page_bytes = [], 0
+    if not checked:
+        _refuse_unassigned_kafka_topics(topics, consumer.assignment(), group_id)
+    if page:
+        yield page
+
+
+def _refuse_unassigned_kafka_topics(topics: list[str], assignment, group_id: str) -> None:
+    assigned = {tp.topic for tp in assignment}
+    missing = [t for t in dict.fromkeys(topics) if t not in assigned]
+    if not missing:
+        return
+    named = ", ".join(repr(t) for t in missing)
+    raise DltRunnerError(
+        f"Kafka consumer group '{group_id}' assigned this run no partition of {named}, so "
+        "nothing could be read from it, and the run stopped before loading anything. Another "
+        "consumer in the same group may hold it, for example a run that is still going or one "
+        "that has not left the group yet, or the topic may not exist."
+    )
+
+
 def _kafka_record(message) -> dict:
     """One Kafka message as a row, with the provenance needed to deduplicate.
 
@@ -2568,6 +2622,18 @@ class DltRunnerService:
         and states why it refuses to read one out of ``dlt_config``. An
         unauthenticated broker is unaffected: with no security fields set that
         helper returns ``{}`` and the call below is what it always was.
+
+        **One consumer for every topic (core#1408).** This used to create one
+        ``KafkaConsumer`` per topic, all in the same group, each inside its own
+        resource. dlt runs resources on one thread, so the second consumer's join
+        started a rebalance that the first consumer could only complete by
+        polling, and it could not poll while the thread waited in the second
+        consumer's poll. The second topic's iterator hit its idle timeout with no
+        partition assigned, and a two-topic upload loaded one topic per run while
+        reporting `success`. Now one consumer subscribes to every topic, and one
+        deselected resource forks its pages into **the same per-topic resources as
+        before**: a table per topic, the resource names that ``merge_config`` and
+        existing pipeline schemas are keyed by, and the same hints.
         """
         bootstrap_servers = config.get("bootstrap_servers", "")
         topics = _kafka_topics(dlt_config.get("topics") or config.get("topics", []))
@@ -2591,9 +2657,35 @@ class DltRunnerService:
         auto_commit = bool(dlt_config.get("enable_auto_commit", True))
         security = _kafka_security_kwargs(config, dlt_config)
 
+        @dlt.resource(name="_kafka_consumer", selected=False)
+        def _messages():
+            consumer = KafkaConsumer(
+                *topics,
+                bootstrap_servers=servers,
+                group_id=group_id,
+                auto_offset_reset=auto_offset_reset,
+                enable_auto_commit=auto_commit,
+                consumer_timeout_ms=idle_timeout_ms,
+                # Splatted rather than named: an empty dict is the
+                # unauthenticated broker this builder already supported, so
+                # the PLAINTEXT path is byte-for-byte what it was.
+                **security,
+            )
+            commit_on_close = True
+            try:
+                yield from _kafka_pages(consumer, topics, group_id)
+            except DltRunnerError:
+                # Refused before anything was consumed: commit nothing, so the
+                # next run reads the same messages.
+                commit_on_close = False
+                raise
+            finally:
+                consumer.close(autocommit=commit_on_close)
+
         def _topic_resource(topic: str):
-            @dlt.resource(
+            @dlt.transformer(
                 name=topic,
+                data_from=_messages,
                 primary_key=("_kafka_partition", "_kafka_offset"),
                 # Typed explicitly so the destination schema does not depend on
                 # what happened to arrive: dlt only materialises a column it saw
@@ -2609,32 +2701,19 @@ class DltRunnerService:
                     "_kafka_key": {"data_type": "text"},
                 },
             )
-            def _consume():
-                consumer = KafkaConsumer(
-                    topic,
-                    bootstrap_servers=servers,
-                    group_id=group_id,
-                    auto_offset_reset=auto_offset_reset,
-                    enable_auto_commit=auto_commit,
-                    consumer_timeout_ms=idle_timeout_ms,
-                    # Splatted rather than named: an empty dict is the
-                    # unauthenticated broker this builder already supported, so
-                    # the PLAINTEXT path is byte-for-byte what it was.
-                    **security,
-                )
-                try:
-                    for message in consumer:
-                        yield _kafka_record(message)
-                finally:
-                    consumer.close()
+            def _only_this_topic(page: list[dict]):
+                rows = [row for row in page if row["_kafka_topic"] == topic]
+                if rows:
+                    yield rows
 
-            return _consume
+            return _only_this_topic
 
         @dlt.source(name="kafka")
         def _kafka_source():
             # One resource per topic, so each lands in its own table rather
-            # than being fused into one by message shape.
-            return [_topic_resource(topic)() for topic in topics]
+            # than being fused into one by message shape. They share the one
+            # consumer above.
+            return [_messages, *(_topic_resource(topic) for topic in dict.fromkeys(topics))]
 
         return _kafka_source()
 

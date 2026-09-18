@@ -17,7 +17,12 @@ from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url, get_org_connection
 from datanika.services.dbt_project import DbtProjectService
 from datanika.services.encryption import EncryptionService
-from datanika.services.execution_service import ExecutionService, get_org_run
+from datanika.services.execution_service import (
+    ExecutionService,
+    get_org_run,
+    hold_run_secrets,
+    release_run_secrets,
+)
 from datanika.services.pipeline_service import PipelineService
 from datanika.tasks.celery_app import celery_app
 
@@ -218,6 +223,7 @@ def run_pipeline(
 
         encryption = EncryptionService(settings.credential_encryption_key)
 
+    held_secrets = None
     try:
         # core#657 §7 2a, the pre-flight checkpoint — before the quota gate (see run_upload).
         if execution_service.skip_if_cancelled(session, org_id, run_id):
@@ -261,6 +267,8 @@ def run_pipeline(
                 f"available to org {org_id}"
             )
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
+        # core#1460: from here on, nothing this run stores carries the connection's secrets.
+        held_secrets = hold_run_secrets(dst_config)
 
         org = session.get(Organization, org_id)
         default_schema = org.default_dbt_schema if org else "datanika"
@@ -389,6 +397,9 @@ def run_pipeline(
             )
 
     finally:
+        # core#1460: stop redacting with this run's connection secrets once nothing more is stored.
+        if held_secrets is not None:
+            release_run_secrets(held_secrets)
         if own_session:
             session.close()
 

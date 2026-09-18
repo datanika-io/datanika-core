@@ -1,5 +1,6 @@
 """Execution service — run lifecycle management."""
 
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, update
@@ -10,6 +11,40 @@ from datanika.models.run import Run, RunStatus
 from datanika.models.upload import Upload
 from datanika.models.user import MemberRole
 from datanika.services.authorization import assert_org_role
+
+#: The decrypted connection configs of the run this context is executing (core#1460).
+_RUN_CONNECTION_CONFIGS: ContextVar[tuple[dict, ...]] = ContextVar(
+    "datanika_run_connection_configs", default=()
+)
+
+
+def hold_run_secrets(*configs) -> Token:
+    """Name the connection configs whose secrets this run's stored text must never carry.
+
+    A task calls this as soon as it has decrypted a connection, and hands the token to
+    :func:`release_run_secrets` in its ``finally``. From then on
+    :meth:`ExecutionService.complete_run`, :meth:`~ExecutionService.fail_run` and
+    :meth:`~ExecutionService.append_logs` store their text through
+    :func:`~datanika.services.connection_service.redact_run_text`. The redaction happens where the
+    text is stored, so a new call site in a task is covered without anyone remembering it;
+    ``tests/test_services/test_run_text_redaction.py`` checks that every task which reads a
+    connection config holds it.
+    """
+    held = tuple(config for config in configs if isinstance(config, dict))
+    return _RUN_CONNECTION_CONFIGS.set(_RUN_CONNECTION_CONFIGS.get() + held)
+
+
+def release_run_secrets(token: Token) -> None:
+    _RUN_CONNECTION_CONFIGS.reset(token)
+
+
+def _storable(text: str | None) -> str | None:
+    configs = _RUN_CONNECTION_CONFIGS.get()
+    if not configs or not text:
+        return text
+    from datanika.services.connection_service import redact_run_text
+
+    return redact_run_text(text, configs)
 
 
 def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
@@ -274,7 +309,7 @@ class ExecutionService:
             session, org_id, run, status=RunStatus.SUCCESS, finished_at=datetime.now(UTC)
         )
         run.rows_loaded = rows_loaded
-        run.logs = logs
+        run.logs = _storable(logs)
         if bytes_processed is not None:
             run.bytes_processed = bytes_processed
         session.flush()
@@ -291,6 +326,9 @@ class ExecutionService:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
+        # core#1460: redacted once, here, so the stored row and every notification announced from
+        # it below carry the same text.
+        error_message, logs = _storable(error_message), _storable(logs)
         # core#657 AC2, same shape as `complete_run`: the error is recorded, the terminal
         # CANCELLED is not overwritten — decided in the database, and the announce below follows
         # what THIS write did rather than a second read that a cancel could land between.
@@ -391,6 +429,7 @@ class ExecutionService:
         run = get_org_run(session, org_id, run_id)
         if run is None:
             return None
+        text = _storable(text)
         run.logs = f"{run.logs}\n{text}" if run.logs else text
         session.flush()
         return run

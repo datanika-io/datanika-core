@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import NoSuchModuleError
@@ -836,7 +836,7 @@ def _secret_spellings(value: str) -> tuple[str, ...]:
     back verbatim in a connection-test error.
     """
     encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
-    return (value, quote_plus(value), encoded, quote_plus(encoded))
+    return (value, quote_plus(value), quote(value, safe=""), encoded, quote_plus(encoded))
 
 
 def _redact_secrets(text: str, config: dict) -> str | None:
@@ -862,6 +862,82 @@ def _redact_secrets(text: str, config: dict) -> str | None:
             return None
         for form in _secret_spellings(value):
             text = text.replace(form, "***")
+    return text
+
+
+#: What a run stores in place of text that cannot be stored without one of its connection secrets.
+RUN_TEXT_WITHHELD = "[withheld: this text could not be stored without the connection's credentials]"
+
+
+def _json_structure(value: str) -> dict | list | None:
+    """The dict or list a JSON text encodes, or ``None`` when it encodes neither."""
+    if value.lstrip()[:1] not in ("{", "["):
+        return None
+    try:
+        parsed = json.loads(value)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict | list) else None
+
+
+def _secret_values(config: dict) -> list[tuple[str, bool]]:
+    """Every secret in a connection config, at any depth, and whether it stands alone (core#1460).
+
+    A value *stands alone* when it sits directly under a :data:`SECRET_CONFIG_KEYS` name, however
+    deeply that name is nested: a REST connection keeps its key inside ``auth``. A structured
+    credential under such a name, whether a dict, a list, or the JSON text a key file is stored
+    as, is secret whole, as its JSON text, and every string inside it is secret as a *part*.
+    """
+    found: list[tuple[str, bool]] = []
+
+    def structure(value, within: bool) -> None:
+        found.append((json.dumps(value), False))
+        walk(value, within)
+
+    def walk(node, within: bool) -> None:
+        items = node.items() if isinstance(node, dict) else ((None, item) for item in node)
+        for key, value in items:
+            named = key in SECRET_CONFIG_KEYS
+            secret = within or named
+            if isinstance(value, dict | list):
+                if secret:
+                    structure(value, True)
+                else:
+                    walk(value, False)
+            elif secret and isinstance(value, str) and value:
+                found.append((value, named))
+                parsed = _json_structure(value)
+                if parsed is not None:
+                    structure(parsed, True)
+
+    walk(config, False)
+    return found
+
+
+def redact_run_text(text: str | None, configs) -> str | None:
+    """A run's stored text, with every secret of the run's connections removed (core#1460).
+
+    Every spelling a driver can quote is removed: the value as stored, percent-encoded, and
+    base64. A secret that stands alone but is too short to remove from prose cleanly withholds
+    the whole text when it appears in it, as Test Connection's messages already fail closed; a
+    short part of a structured credential is not the credential, and is left. Text with no secret
+    in it is returned unchanged, so the diagnosis survives.
+    """
+    if not text:
+        return text
+    forms: set[str] = set()
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        for value, stands_alone in _secret_values(config):
+            spellings = {form for form in _secret_spellings(value) if form}
+            if len(value) >= _MIN_REDACTABLE_SECRET:
+                forms |= spellings
+            elif stands_alone and any(form in text for form in spellings):
+                return RUN_TEXT_WITHHELD
+    # Longest first, so a secret that contains another is removed whole rather than cut short.
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "***")
     return text
 
 

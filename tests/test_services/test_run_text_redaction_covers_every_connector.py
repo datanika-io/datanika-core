@@ -15,9 +15,13 @@ spelling :func:`_secret_spellings` knows — and reads what survives
 * ``test_the_instrument_finds_every_marker_with_nothing_held`` — with no config held, every marker
   must still be readable. Without it, "no marker survived" is equally explained by a search that
   cannot see its own markers, which is the exact reading in doubt.
-* ``test_a_field_that_is_not_a_credential_survives`` — a hostname, a database name and a username
-  must come through untouched. Without it, "no marker survived" is equally explained by a redactor
-  that shreds everything, and the diagnosis a run stores would be worthless.
+* ``test_a_field_that_is_not_a_credential_survives`` — a field the schema does **not** declare a
+  credential must come through untouched. Without it, "no marker survived" is equally explained by
+  a redactor that shreds everything, and the diagnosis a run stores would be worthless.
+  ⚠️ The set is derived from each schema's own ``format: password`` flags rather than enumerated
+  here, so this sentence naming particular field names would be both redundant and a claim about
+  where credentials are *not* — which is exactly the kind of pointer a public file should not
+  carry.
 
 A structured (object or array) property is deliberately outside this sweep: its inner shape is the
 user's rather than the schema's, so it is asserted per shape instead of by a census.

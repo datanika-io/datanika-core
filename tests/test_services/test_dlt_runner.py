@@ -22,10 +22,17 @@ def a_source_stub(name: str = "source"):
     """A stand-in for what ``sql_database`` returns.
 
     It has to carry ``resources``: since core#1445 ``build_source`` reads them to refuse a
-    selection that resolved no table, so a bare string sentinel is no longer a source. A stub
-    that cannot stand in for the real object is a stub that hides exactly that kind of change.
+    selection that resolved no table, so a bare string sentinel is no longer a source. Each
+    resource has to answer ``compute_table_schema`` and ``apply_hints`` too, because core#1439
+    reads a SQLite source's reflected key off them. A stub that cannot stand in for the real
+    object is a stub that hides exactly those changes — this one has now hidden two.
     """
-    return SimpleNamespace(name=name, resources={name: object()})
+    resource = SimpleNamespace(
+        name=name,
+        compute_table_schema=lambda: {"columns": {}},
+        apply_hints=lambda **_kw: None,
+    )
+    return SimpleNamespace(name=name, resources={name: resource})
 
 
 @pytest.fixture

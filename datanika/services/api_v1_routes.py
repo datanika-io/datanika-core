@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from datanika.errors import UserFacingError
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
@@ -22,14 +23,18 @@ from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
 from datanika.services.authorization import InsufficientRoleError, assert_org_role
 from datanika.services.catalog_service import CatalogService
-from datanika.services.connection_service import ConnectionService, run_connection_test_bounded
+from datanika.services.connection_service import (
+    ConnectionService,
+    run_connection_test_bounded,
+    validate_connection_name,
+)
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.notification_service import NotificationService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
-from datanika.services.upload_service import UploadService
+from datanika.services.upload_service import UploadService, validate_upload_name
 
 logger = logging.getLogger(__name__)
 
@@ -1387,6 +1392,44 @@ def delete_notification_channel(request, api_key, session):
 # ---------------------------------------------------------------------------
 
 
+#: The name rule each import section's own service applies (core#1440).
+#:
+#: ⚠️ **Taken from the service, never restated here.** The defect this closes was the validator and
+#: the creator disagreeing about what a valid name is: the validator checked presence and
+#: uniqueness, the service applied the rule, and the rule's refusal had no path to a response. A
+#: second copy of the rule in this module would be the same defect with a slower fuse.
+#:
+#: ⚠️ **A section absent here has no name rule in its service.** `pipelines` is absent for that
+#: reason and not by oversight — `PipelineService` validates `models`, never the name — and
+#: inventing a rule here would refuse payloads the rest of the product accepts.
+_IMPORT_NAME_RULES = {
+    "connections": validate_connection_name,
+    "uploads": validate_upload_name,
+    "transformations": TransformationService.validate_model_name,
+}
+
+
+def _invalid_name_error(section: str, index: int, name) -> list[dict]:
+    """The section's own rule, applied to one name, as zero or one error dict.
+
+    The name is in the message because the rules differ per section — a model name takes
+    underscores and a connection name does not — so *which* name was refused is half the answer.
+    """
+    rule = _IMPORT_NAME_RULES.get(section)
+    if rule is None:
+        return []
+    try:
+        rule(str(name))
+    except UserFacingError as exc:
+        return [
+            {
+                "code": "INVALID_NAME",
+                "message": f"{section}[{index}]: invalid name '{name}': {exc}",
+            }
+        ]
+    return []
+
+
 def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) -> list[dict]:
     """Validate the entire import payload and return a list of error dicts.
 
@@ -1429,6 +1472,7 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
                     "message": f"connections[{i}]: config (object) is required",
                 }
             )
+        errors.extend(_invalid_name_error("connections", i, name))
         if name in conn_names_in_payload:
             errors.append(
                 {"code": "DUPLICATE_NAME", "message": f"connections[{i}]: duplicate name '{name}'"}
@@ -1450,6 +1494,7 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
                 {"code": "DUPLICATE_NAME", "message": f"uploads[{i}]: duplicate name '{name}'"}
             )
         else:
+            errors.extend(_invalid_name_error("uploads", i, name))
             upload_names.add(name)
         for ref_field in ("source_connection_name", "destination_connection_name"):
             ref = u.get(ref_field)
@@ -1520,6 +1565,7 @@ def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) ->
                 }
             )
         else:
+            errors.extend(_invalid_name_error("transformations", i, name))
             transform_names.add(name)
         if not t.get("sql_body"):
             errors.append(

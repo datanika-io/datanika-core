@@ -279,3 +279,122 @@ def test_arming_the_scanner_ignores_a_gate_nothing_skips_on() -> None:
         "the scanner must still recognise a gate once something skips on it — a matcher "
         "narrowed until it finds nothing is the failure this control exists to catch."
     )
+
+
+# ---------------------------------------------------------------------------
+# core#1130 AC5 — the residual this file's docstring names is CLOSED. Pinned here
+# so it cannot come undone quietly.
+# ---------------------------------------------------------------------------
+#
+# 🔑 **How this section came to exist, because the method is the point.** It was written as a
+# `xfail(strict=True)` ratchet, on the docstring's word that the residual was open and on
+# core#1130's measurement that `PLAYWRIGHT_JSON_OUTPUT_NAME` had **0 hits** in the job. It went
+# `XPASS(strict)` on the first run. The AC had shipped in between, and a ratchet without `strict`
+# would have sat here asserting a closed gap was open — the exact shape core#1130 was filed about,
+# in a guard written to prevent it. **An open issue is not evidence the work is undone**
+# (`WORKFLOW_RULES` §4), and the `strict` is what said so.
+
+#: The step that reads the Playwright report and decides whether the IdP specs executed.
+COVERAGE_STEP_ID = "sso_coverage"
+#: The classifier's env key carrying that step's outcome, and the state it must produce.
+COVERAGE_OUTCOME_VAR = "COVERAGE_OUTCOME"
+
+
+class HarnessError(Exception):
+    """A setup invariant failed — never an `AssertionError`, so no marker can absorb it."""
+
+
+def _sso_steps() -> list[dict]:
+    doc = yaml.safe_load(CI.read_text(encoding="utf-8"))
+    jobs = (doc or {}).get("jobs") or {}
+    if SSO_JOB not in jobs:
+        raise HarnessError(f"{SSO_JOB!r} is not in ci.yml — repoint this guard, do not delete it")
+    steps = jobs[SSO_JOB].get("steps") or []
+    if len(steps) < 5:
+        raise HarnessError(f"{SSO_JOB!r} has {len(steps)} steps; that is not the real job")
+    return steps
+
+
+def _step_by_id(step_id: str) -> dict:
+    for step in _sso_steps():
+        if step.get("id") == step_id:
+            return step
+    raise HarnessError(f"no step with id={step_id!r} in {SSO_JOB!r}")
+
+
+def test_control_the_job_reader_finds_the_classifier() -> None:
+    """Run first. Every assertion below is vacuous if this cannot read the job."""
+    verdict = _step_by_id("verdict")
+    assert "STATE=clean" in str(verdict.get("run") or ""), (
+        "the classifier no longer emits STATE=clean — this section is reading the wrong step"
+    )
+
+
+def test_a_step_reads_the_playwright_report_and_counts_what_executed() -> None:
+    """core#1130 AC1-AC4: the tier reports how many IdP specs it actually EXECUTED.
+
+    `steps.sso_specs.outcome` is a **process exit code**, and Playwright exits 0 when every
+    collected test skips. So the count has to come from the report, not from the exit status.
+    """
+    run = str(_step_by_id(COVERAGE_STEP_ID).get("run") or "")
+    assert "assert_sso_coverage.py" in run, (
+        f"the {COVERAGE_STEP_ID!r} step no longer runs the coverage assertion"
+    )
+    report = str(_step_by_id("sso_specs").get("env", {}).get("PLAYWRIGHT_JSON_OUTPUT_NAME") or "")
+    assert report, "the specs step no longer writes a JSON report, so nothing can count executions"
+    assert report in run, (
+        f"the coverage step does not read {report!r}, the report the specs step writes — "
+        "so whatever it counts, it is not this run"
+    )
+    assert (REPO_ROOT / "e2e" / "scripts" / "assert_sso_coverage.py").is_file()
+
+
+def test_the_coverage_result_reaches_the_verdict() -> None:
+    """core#1130 AC5. **This is the half that a named step does not give you.**
+
+    The coverage step is `continue-on-error: true` **on purpose** — that is what lets its
+    *outcome* be `failure` while the job continues far enough for the classifier to read it. The
+    consequence is that the step cannot fail the job by itself, so if the classifier ignored it,
+    the assertion would be a **reporter rather than a gate**: loud in the log, absent from the
+    verdict, and green.
+    """
+    verdict = _step_by_id("verdict")
+    env = {str(k): str(v) for k, v in (verdict.get("env") or {}).items()}
+    assert COVERAGE_OUTCOME_VAR in env, (
+        f"the classifier does not receive the {COVERAGE_STEP_ID!r} step's outcome at all, so a "
+        "run that executed zero IdP specs can still be classified `clean` (core#1130 AC5)"
+    )
+    assert COVERAGE_STEP_ID in env[COVERAGE_OUTCOME_VAR], env[COVERAGE_OUTCOME_VAR]
+
+    run = str(verdict.get("run") or "")
+    assert f"${COVERAGE_OUTCOME_VAR}" in run, (
+        f"{COVERAGE_OUTCOME_VAR} is supplied to the classifier and never read — an unread input "
+        "is the shape of a check that reports instead of gating"
+    )
+    # The branch must reach a NON-green state, and must be tested before `clean` can be emitted.
+    branch = run.index(f"${COVERAGE_OUTCOME_VAR}")
+    assert run.index("STATE=clean") > branch, (
+        "the coverage branch is tested AFTER `clean` is decided, so it cannot prevent one"
+    )
+    tail = run[branch : run.index("STATE=clean")]
+    assert "no_verdict" in tail or "STATE=specs_failed" in tail, (
+        "the coverage branch does not lead to a non-green state; AC5 asks for `no_verdict` or red"
+    )
+    # 🔑 The branch must fire on the value a FAILED step's outcome actually takes. Without this,
+    # retyping `= "failure"` to anything else disarms the gate and leaves every assertion above
+    # green — measured, on this guard, before it shipped. `outcome` is one of
+    # success|failure|cancelled|skipped, so requiring `failure` pins the contract rather than a
+    # spelling somebody chose (`WORKFLOW_RULES` §4).
+    assert '"failure"' in tail, (
+        f'the {COVERAGE_STEP_ID!r} branch never compares against "failure", so it cannot fire '
+        "when the coverage assertion fails — the gate is present and unreachable"
+    )
+
+
+def test_the_floor_is_checked_in_rather_than_derived_from_the_spec_files() -> None:
+    """A floor computed from the files present falls as they are deleted — and agrees with it."""
+    source = (REPO_ROOT / "e2e" / "scripts" / "assert_sso_coverage.py").read_text(encoding="utf-8")
+    assert "SSO_IDP_EXECUTED_FLOOR = " in source, (
+        "the executed floor is no longer a checked-in constant, so deleting an IdP spec file "
+        "would lower the bar it is measured against (core#1130's Route B)"
+    )

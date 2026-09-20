@@ -96,6 +96,40 @@ def _ts(value: str) -> datetime:
     return datetime.fromisoformat((value or "").replace("Z", "+00:00"))
 
 
+@dataclass(frozen=True)
+class Window:
+    """What the runs list actually returned, so a refusal can name its own boundaries.
+
+    ── core#1462 ────────────────────────────────────────────────────────────────────────
+    The window refusal in `main()` used to offer two explanations — *"widen `--pages`"* or
+    *"CI genuinely has not run"* — and print nothing that could tell them apart.
+
+    On 2026-09-17, on head `c321f2eb`, **neither had happened.** The same script, same
+    worktree, same interpreter, same default `--pages`, 52 seconds apart: the first call
+    refused with that message and the second exited 0 with all three verdicts attributed
+    to that commit's own deploy. A later reading showed the head's own CI run was *inside*
+    the window, and `actions/runs?created>=` returned `total_count=0` for the interval
+    between the two calls — so both windows contained the same objects. The list response
+    the first call received did not contain runs that already existed.
+
+    A promoter who reads *"CI genuinely has not run"* goes and waits for CI that already
+    ran. These five numbers are what make that reading falsifiable.
+    """
+
+    returned: int
+    ci_runs: int
+    newest: str
+    oldest: str
+    for_head: int
+
+    def describe(self) -> str:
+        return (
+            f"  returned={self.returned}  ci.yml-runs={self.ci_runs}  "
+            f"runs-for-the-head={self.for_head}\n"
+            f"  newest={self.newest or '<none>'}  oldest={self.oldest or '<none>'}"
+        )
+
+
 # ── the decision, with no network in it ─────────────────────────────────────────────────
 
 
@@ -276,6 +310,58 @@ def collect(repo: str, branch: str, pages: int) -> list[Job]:
     return jobs
 
 
+def read_window(repo: str, branch: str, pages: int, sha: str = "") -> Window | None:
+    """The runs list's own boundaries (core#1462). ONE request, only on the refusal path.
+
+    Deliberately **not** folded into `collect()`'s return value. That contract is consumed
+    by `main()` and by five test modules, and this script has already crashed twice in
+    production use because a helper's shape changed under a caller that unpacked it the old
+    way (core#1205, core#1285). A refusal that costs one extra request is cheaper than a
+    third instance of that, and the refusal path is the one place where an extra request
+    cannot slow anything down that was going to succeed.
+
+    Returns `None` rather than a zeroed `Window` when the read fails. A fabricated boundary
+    is worse than an absent one: `main()` then says *"unavailable"* instead of printing
+    zeros that read like measurements — which is this script's own subject matter.
+    """
+    # `_gh` raises SystemExit on a non-zero `gh`, and json.JSONDecodeError on output that
+    # is not JSON. Both are caught: this runs on the refusal path, whose whole purpose is
+    # now to DIAGNOSE, and a diagnosis that can itself crash is the defect one level up.
+    try:
+        runs = _gh(f"repos/{repo}/actions/runs?branch={branch}&per_page={pages}")
+    except (SystemExit, json.JSONDecodeError):
+        return None
+    all_runs = runs.get("workflow_runs", []) or []  # type: ignore[union-attr]
+    ci = [r for r in all_runs if r.get("path") == WORKFLOW]
+    created = sorted(r["created_at"] for r in all_runs if r.get("created_at"))
+    for_head = sum(1 for r in ci if str(r.get("head_sha", "")).startswith(sha)) if sha else 0
+    return Window(
+        returned=len(all_runs),
+        ci_runs=len(ci),
+        newest=created[-1] if created else "",
+        oldest=created[0] if created else "",
+        for_head=for_head,
+    )
+
+
+def commit_date(repo: str, sha: str) -> str | None:
+    """The commit's own committer date, so the window can be compared against it.
+
+    Best effort, and only on the refusal path. A sha the API does not know — a local
+    commit, a typo, a branch that was force-deleted — yields `None`, and the refusal then
+    prints the boundaries *without* choosing between scrolled and stale rather than
+    guessing. Declining to answer is a reading; inventing one is not.
+    """
+    try:
+        commit = _gh(f"repos/{repo}/commits/{sha}")
+    except (SystemExit, json.JSONDecodeError):
+        return None
+    try:
+        return commit["commit"]["committer"]["date"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+
+
 def verdict_classes_for(repo: str, jobs: list[Job], sha: str) -> dict[str, str]:
     """Each verifier's own classifier verdict, as a class (core#1174).
 
@@ -403,24 +489,75 @@ def main(argv: list[str] | None = None) -> int:
     # "which is NOT a pass". Resolving the prefix to the full SHA once, here, also
     # fixes `classify()`, which compares the same way at two more sites.
     matched = {j.head_sha for j in jobs if j.head_sha == sha or j.head_sha.startswith(sha)}
+    if not matched:
+        # core#1462. ONE re-read before concluding — not a retry loop.
+        #
+        # The measured case is a list response that omitted runs which already existed,
+        # and it recovered on its own 52 seconds later (see `Window`). A single re-read
+        # separates that from a real absence for the cost of one request, on a path that
+        # is already refusing.
+        #
+        # 🔑 The refusal stands on the SECOND reading and the exit code is NOT relaxed. A
+        # promoter who sees `promotion_gate.sh` exit 3 and re-runs is the correct outcome;
+        # a promoter who cannot tell WHY is the cost this closes. The diagnosis was
+        # missing, never the refusal.
+        jobs_again = collect(args.repo, args.branch, args.pages)
+        matched = {
+            j.head_sha for j in jobs_again if j.head_sha == sha or j.head_sha.startswith(sha)
+        }
+        if matched:
+            # ⚠️ Falls through to the ambiguity check below rather than resolving here: a
+            # re-read that returns two commits sharing the prefix is ambiguous, not absent,
+            # and an early draft of this reported it as "no staging jobs found".
+            print(
+                f"::notice::{sha[:8]} was absent from the first runs listing and present in "
+                f"a second reading taken immediately after."
+            )
+            print("Proceeding on the second reading. This is core#1462's symptom: the list")
+            print("response, not the window, was what lacked the commit.")
+            jobs = jobs_again
+        else:
+            # Two different facts, deliberately worded apart (core#918). Only the
+            # second is an attribution finding; the first is a search that did not
+            # reach far enough, and leading with `::error::` for it trains people to
+            # distrust the tool.
+            print(
+                f"::warning::no staging jobs found for {sha[:8]} in the last {args.pages} runs "
+                f"on `{args.branch}`, in TWO consecutive readings."
+            )
+            print(
+                "This is a WINDOW result, not an attribution failure: the scan did not reach this"
+            )
+            print("commit. Either widen --pages, or CI genuinely has not run on it — and neither")
+            print("of those is a pass.")
+            print()
+            win = read_window(args.repo, args.branch, args.pages, sha)
+            if win is None:
+                print("window boundaries unavailable — the runs list could not be re-read.")
+                print("Nothing here can distinguish a scrolled window from a stale read.")
+                return 1
+            print("The window this refusal looked at:")
+            print(win.describe())
+            when = commit_date(args.repo, sha)
+            print()
+            if when is None:
+                print(f"  {sha[:8]}'s own commit date is unavailable, so which of the two")
+                print("  explanations applies cannot be settled from here.")
+            elif win.oldest and when < win.oldest:
+                print(f"  {sha[:8]} was committed at {when}, which is older than the")
+                print("  oldest run above. This is a SCROLLED WINDOW: the scan did not")
+                print("  reach back far enough. Raise --pages and re-run.")
+            else:
+                print(f"  {sha[:8]} was committed at {when}, so the window already spans")
+                print("  it and still does not contain it. Raising --pages will not help.")
+                print("  This is a STALE READ (core#1462), or CI has genuinely not run on")
+                print("  this commit. Check the Actions tab for the SHA before assuming.")
+            return 1
     if len(matched) > 1:
         print(
             f"::error::{sha} is ambiguous — it prefixes {len(matched)} commits: "
             f"{', '.join(sorted(s[:12] for s in matched))}. Pass more characters."
         )
-        return 1
-    if not matched:
-        # Two different facts, deliberately worded apart (core#918). Only the
-        # second is an attribution finding; the first is a search that did not
-        # reach far enough, and leading with `::error::` for it trains people to
-        # distrust the tool.
-        print(
-            f"::warning::no staging jobs found for {sha[:8]} in the last {args.pages} runs "
-            f"on `{args.branch}`."
-        )
-        print("This is a WINDOW result, not an attribution failure: the scan did not reach this")
-        print("commit. Either widen --pages, or CI genuinely has not run on it — and neither")
-        print("of those is a pass.")
         return 1
     sha = matched.pop()
 

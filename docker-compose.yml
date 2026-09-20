@@ -576,6 +576,32 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env.docker}
       GF_UNIFIED_ALERTING_ENABLED: "true"
+      # ── core#1476: Grafana's SQLite must survive concurrent disk load ──────────────
+      # Measured 2026-09-20. Five merges into `dev` in 35 minutes each triggered a
+      # staging image build ON THIS BOX. From 20:46:31Z Grafana logged **1370**
+      # `database is locked (5) (SQLITE_BUSY)` errors, could not build rule evaluators,
+      # and `/api/prometheus/grafana/api/v1/rules` returned **zero groups** while 44
+      # rules existed.
+      #
+      # 🚨 Every rule carries `execErrState: Alerting` — deliberately, so that a rule
+      # which cannot evaluate never reads as healthy. The cost is that an evaluation
+      # ERROR is indistinguishable from a real condition downstream: the notifier sent
+      # **176 alerts from 11 rules** in ~25 minutes, including `app-unhealthy`,
+      # `app-external-down` and `disk-space-critical`, while production served
+      # `/healthz` 200 in 2.8 ms and the disk was 37% full. **Do not "fix" that by
+      # relaxing `execErrState`** — an error that reads as healthy is the worse failure,
+      # and it is the one this project already paid for. Fix the errors instead.
+      #
+      # `wal` defaults to false, so readers and writers block each other exclusively —
+      # with 44 rules evaluating concurrently against one file, disk pressure is enough.
+      # `query_retries` defaults to **0**, which is why the log reached
+      # `[sqlstore.max-retries-reached]` at `retry 1`: the first lock was fatal to the
+      # evaluation. Both option names were read from the `[database]` section of the
+      # `grafana.ini` shipped inside the running image (13.1.0), lines 192 and 201, with
+      # a nonsense option as the negative control — not from documentation for some
+      # other version.
+      GF_DATABASE_WAL: "true"
+      GF_DATABASE_QUERY_RETRIES: "3"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     volumes:

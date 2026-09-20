@@ -38,7 +38,7 @@ _CARD = {
 
 def _brand() -> rx.Component:
     return rx.hstack(
-        rx.image(src="/logo.png", width="32px", height="32px"),
+        rx.image(src="/logo.png", alt="Datanika", width="32px", height="32px"),
         rx.heading(_t["app.name"], size="5"),
         spacing="2",
         align="center",

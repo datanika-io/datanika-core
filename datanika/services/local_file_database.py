@@ -10,6 +10,17 @@ creating.
 
 from urllib.parse import quote
 
+from datanika.services.duckdb_reflection import install_duckdb_column_reflection
+
+# core#1431. duckdb-engine inherits PostgreSQL's column reflection, which joins a `pg_catalog`
+# table DuckDB does not have, so every column read against a DuckDB database raises. The
+# replacement is installed here rather than at each call site for the same reason the URL spellings
+# above live here: the run reflects in the worker and Test Connection reflects in the web app, and
+# a fix installed at one of them is a fix that has already drifted. This module is imported at
+# module level by both `connection_service` and `dlt_runner`, so the install happens before either
+# builds an engine. It never raises: without duckdb-engine there is nothing to patch.
+install_duckdb_column_reflection()
+
 #: Values of ``path`` that name no file at all. An in-memory database is created fresh on every
 #: connect by definition, so "does it already exist?" is not a question about it, and read-only
 #: is not a mode it has. Measured: duckdb refuses ``:memory:`` with ``read_only=True`` outright.

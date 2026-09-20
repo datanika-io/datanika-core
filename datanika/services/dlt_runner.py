@@ -13,6 +13,7 @@ from dlt.common import json as dlt_json
 from dlt.sources.filesystem import filesystem, read_csv, read_parquet
 from dlt.sources.rest_api import rest_api_source
 from dlt.sources.sql_database import sql_database, sql_table
+from sqlalchemy.exc import InvalidRequestError
 
 from datanika.errors import UserFacingError
 from datanika.services.dlt_mssql_freetds import FREETDS_DESTINATIONS, freetds_credentials
@@ -525,6 +526,197 @@ def _local_file_source_credentials(connection_type: str, creds: dict) -> dict:
         query.update(DUCKDB_READ_ONLY_QUERY)
     shaped["query"] = query
     return shaped
+
+
+# ---------------------------------------------------------------------------
+# A SQL selection that resolves nothing (core#1445)
+# ---------------------------------------------------------------------------
+#
+# ``SPEC_EARNED_VERDICTS`` §4.7. A source run answers two questions: *what did
+# the configuration select*, and *what did the selection hold*. An empty answer
+# to the second is a measurement of the source, and the run succeeded with zero
+# rows (core#883). An empty answer to the first means the run never reached
+# anything it was asked to read, and ``success`` for it is a verdict about a
+# load that did not happen — the same defect ``describe_empty_file_match``
+# refuses for file sources one family over (core#493).
+
+
+def _where_a_sql_source_looked(connection_type: str, config: dict, schema: str | None) -> str:
+    """The place a SQL source run read from, as the refusal names it (core#1445).
+
+    Built from the stored ``config`` rather than from the dlt credentials, because a local-file
+    source's credentials carry the read-only URI form of its path
+    (``file:…?mode=ro&uri=true``) and telling a user to check *that* is telling them to check a
+    path they never typed.
+    """
+    if connection_type in LOCAL_FILE_SOURCE_TYPES:
+        label = _LOCAL_FILE_SOURCE_LABELS.get(connection_type, connection_type)
+        path = config.get("path") or config.get("database") or ""
+        return f"the {label} file '{path}'"
+    where = f"database '{config.get('database', '')}'"
+    if schema:
+        where += f", schema '{schema}'"
+    return where
+
+
+def _nothing_selected_message(where: str, table_names: list[str] | None) -> str:
+    """Why a SQL selection resolved no table: where it looked, and what it looked for.
+
+    Three configurations reach this, and they need different remedies. ``None`` is *load every
+    table*, so the location is the thing to check. An empty list is a selection that names
+    nothing. A populated list that still resolves nothing is a location holding none of them —
+    reachable only where reflection does not raise for a missing name.
+    """
+    if table_names is None:
+        return (
+            f"Nothing was loaded: {where} holds no tables, and this upload is configured to "
+            "load every table it holds. Check the connection's database, schema or file, or "
+            "name the tables to load."
+        )
+    if not table_names:
+        return (
+            f"Nothing was loaded: this upload names no tables to load from {where}. Name the "
+            "tables to load, or configure the upload to load every table."
+        )
+    named = ", ".join(f"'{name}'" for name in table_names)
+    return (
+        f"Nothing was loaded: {where} holds none of the tables named {named}. The run did not "
+        "start, so no table in the selection was read."
+    )
+
+
+def _missing_source_tables(credentials: dict, schema: str | None, names: list[str]) -> list[str]:
+    """The requested names the source does not hold, compared as dlt's reflection compares them.
+
+    ``sql_database`` reflects with ``MetaData.reflect(only=…, views=True)``, which refuses any
+    name missing from the inspector's tables *and* views. The same comparison here decides the
+    same set, so this never contradicts the reflection that has already refused.
+
+    Only ever called **after** that reflection has raised, so the extra connection is paid on a
+    run that is failing regardless — never on one that loads.
+    """
+    from dlt.common.configuration.specs import ConnectionStringCredentials
+    from dlt.sources.sql_database.helpers import engine_from_credentials
+    from sqlalchemy import inspect as sa_inspect
+
+    spec = ConnectionStringCredentials()
+    for key, value in credentials.items():
+        setattr(spec, key, value)
+    engine = engine_from_credentials(spec, may_dispose_after_use=True)
+    try:
+        inspector = sa_inspect(engine)
+        available = set(inspector.get_table_names(schema=schema))
+        available.update(inspector.get_view_names(schema=schema))
+    finally:
+        engine.dispose()
+    return [name for name in names if name not in available]
+
+
+# ---------------------------------------------------------------------------
+# A reflected primary key that comes back nullable (core#1439)
+# ---------------------------------------------------------------------------
+#
+# dlt marks a reflected primary key as the table's primary key, and its ClickHouse destination uses
+# that key as the MergeTree sorting key — which ClickHouse refuses to build from a nullable column.
+# Measured per source, reading the dlt schema the destination actually consumes:
+#
+#   SQLite   `id INTEGER PRIMARY KEY`   nullable=True   primary_key=True   <- the defect
+#   SQLite   `code TEXT PRIMARY KEY`    nullable=True   primary_key=True
+#   Postgres `id SERIAL PRIMARY KEY`    nullable=False  primary_key=True
+#   Postgres `id INTEGER PRIMARY KEY`   nullable=False  primary_key=True
+#   DuckDB   `id INTEGER PRIMARY KEY`   nullable=False  primary_key=None (no key reflected)
+#
+# ⚠️ The correction below is deliberately NARROWER than "a primary key is never nullable", and the
+# reason is measured rather than reasoned: SQLite genuinely accepts a NULL in a `TEXT PRIMARY KEY`
+# — the row is stored — so declaring every key column NOT NULL would assert something untrue of
+# real data and break loads that work today against other destinations.
+#
+# A single-column `INTEGER PRIMARY KEY` is the one case where it is provable. SQLite makes that
+# column an alias for the rowid, and inserting NULL into it auto-assigns the next rowid, measured.
+# The column cannot hold NULL, so calling it NOT NULL corrects an under-report rather than
+# inventing a constraint. `BIGINT PRIMARY KEY` is NOT a rowid alias, which is why this matches on
+# the DECLARED type text and not on the type dlt inferred from it.
+
+
+def _sqlite_rowid_alias(credentials: dict, table: str) -> str | None:
+    """The column that is this SQLite table's rowid alias, or ``None`` (core#1439)."""
+    from dlt.common.configuration.specs import ConnectionStringCredentials
+    from dlt.sources.sql_database.helpers import engine_from_credentials
+    from sqlalchemy import inspect as sa_inspect
+
+    spec = ConnectionStringCredentials()
+    for key, value in credentials.items():
+        setattr(spec, key, value)
+    engine = engine_from_credentials(spec, may_dispose_after_use=True)
+    try:
+        inspector = sa_inspect(engine)
+        keys = inspector.get_pk_constraint(table).get("constrained_columns") or []
+        if len(keys) != 1:
+            return None  # a composite key is not a rowid alias, and may hold NULL
+        for column in inspector.get_columns(table):
+            if column["name"] == keys[0] and str(column["type"]).strip().upper() == "INTEGER":
+                return keys[0]
+    except Exception as exc:  # the run itself will report anything really wrong with the source
+        logger.debug("sqlite rowid-alias probe failed for %s: %s", table, exc)
+    finally:
+        engine.dispose()
+    return None
+
+
+def _resources_of(source):
+    """``(name, resource)`` for either shape a builder returns.
+
+    ``sql_database`` returns a ``DltSource`` with a ``resources`` mapping; ``sql_table`` returns a
+    single ``DltResource`` with no such attribute. Both reach the same destination, so both need
+    the same treatment, and a helper that only understood the first silently skipped `single_table`
+    — which is the mode the defect was reported in.
+    """
+    resources = getattr(source, "resources", None)
+    if resources is None:
+        return [(source.name, source)]
+    return list(resources.items())
+
+
+def _correct_sqlite_rowid_nullability(source, credentials: dict) -> None:
+    """Mark each resource's rowid-alias key NOT NULL, where the reflection under-reported it."""
+    for name, resource in _resources_of(source):
+        schema = resource.compute_table_schema()
+        columns = schema.get("columns") or {}
+        alias = _sqlite_rowid_alias(credentials, name)
+        if alias is None:
+            continue
+        column = columns.get(alias)
+        if column and column.get("primary_key") and column.get("nullable"):
+            resource.apply_hints(columns={alias: {**column, "nullable": False}})
+
+
+#: Destinations that cannot build their sorting key from a nullable column, so a key column still
+#: marked nullable after the correction above is refused before the load rather than at it.
+_DESTINATIONS_REFUSING_A_NULLABLE_KEY = frozenset({"clickhouse"})
+
+
+def describe_nullable_key(destination_type: str, table: str, column: str) -> str:
+    """Why a run stops before loading, in the user's terms rather than the server's."""
+    return (
+        f"Nothing was loaded: the source's primary key '{column}' on table '{table}' can hold "
+        f"NULL, and a {destination_type} destination cannot order a table by a nullable column. "
+        "Declare that column NOT NULL in the source, or choose a different destination for it. "
+        "The run stopped before loading, so the destination is unchanged."
+    )
+
+
+def refuse_a_nullable_key(source, destination_type: str) -> None:
+    """Refuse before ``pipeline.run`` where the destination could only fail at it (core#1439).
+
+    Without this the user gets ClickHouse's own ``Code: 44 ... Sorting key contains nullable
+    columns``, which names neither the table nor the column nor anything they can act on.
+    """
+    if destination_type not in _DESTINATIONS_REFUSING_A_NULLABLE_KEY:
+        return
+    for name, resource in _resources_of(source):
+        for column_name, column in (resource.compute_table_schema().get("columns") or {}).items():
+            if column.get("primary_key") and column.get("nullable"):
+                raise DltRunnerError(describe_nullable_key(destination_type, name, column_name))
 
 
 # ---------------------------------------------------------------------------
@@ -1802,7 +1994,10 @@ class DltRunnerService:
                 if "row_order" in incremental_cfg:
                     inc_kwargs["row_order"] = incremental_cfg["row_order"]
                 kwargs["incremental"] = dlt.sources.incremental(**inc_kwargs)
-            return sql_table(**kwargs)
+            source = sql_table(**kwargs)
+            if connection_type == "sqlite":
+                _correct_sqlite_rowid_nullability(source, creds)
+            return source
         else:
             kwargs = {"credentials": creds, "chunk_size": batch_size}
             if schema is not None:
@@ -1814,7 +2009,41 @@ class DltRunnerService:
                 if connection_type == "oracle":
                     table_names = [_normalize_oracle_identifier(t) for t in table_names]
                 kwargs["table_names"] = table_names
-            return sql_database(**kwargs)
+
+            # core#1445, SPEC_EARNED_VERDICTS §4.7.
+            where = _where_a_sql_source_looked(connection_type, config, schema)
+            try:
+                source = sql_database(**kwargs)
+            except InvalidRequestError as exc:
+                # A named table that does not exist already fails the run, and already fails it
+                # before anything loads — dlt reflects inside this call. What it does not do is
+                # say so: the error is SQLAlchemy's, it names the engine URL, and it never says
+                # that nothing was loaded. Measured on `dev`: "Could not reflect: requested
+                # table(s) not available in Engine(sqlite:///file:…?mode=ro&uri=true):
+                # (orders, refunds)".
+                #
+                # The diagnosis is built here rather than parsed out of that text, and only on
+                # the path that is failing anyway. An InvalidRequestError that is *not* about
+                # missing names re-raises untouched, so this narrows the message and never the
+                # set of runs that fail.
+                missing = _missing_source_tables(creds, schema, table_names or [])
+                if not missing:
+                    raise
+                named = ", ".join(f"'{name}'" for name in missing)
+                raise DltRunnerError(
+                    f"Nothing was loaded: {where} holds no table named {named}. The run did "
+                    "not start, so no table in the selection was read."
+                ) from exc
+
+            # A selection that resolves no table is not a load that found nothing: the run never
+            # reached anything it was asked to read. Refused here, before `pipeline.run`, so the
+            # destination is left exactly as it was — no schema and no `_dlt_*` tables. A table
+            # that exists and holds 0 rows is a resource, and still loads as a success (core#883).
+            if not source.resources:
+                raise DltRunnerError(_nothing_selected_message(where, table_names))
+            if connection_type == "sqlite":
+                _correct_sqlite_rowid_nullability(source, creds)
+            return source
 
     def _build_file_source(self, connection_type: str, config: dict, dlt_config: dict):
         """Build a dlt filesystem source that loads file **contents**.
@@ -2974,6 +3203,9 @@ class DltRunnerService:
         # form's `mode` key came from raw JSON or the API, and is still forwarded.
         if source_type in FORM_HIDES_WRITE_DISPOSITION and is_serialized_form_default(dlt_config):
             run_kwargs.pop("write_disposition", None)
+        # core#1439. Last, so it sees every hint applied above — a merge_config primary key is set
+        # here, not in `build_source`, and it is as much a sorting key as a reflected one.
+        refuse_a_nullable_key(source, destination_type)
         load_info = pipeline.run(source, **run_kwargs)
         rows_loaded = _extract_rows_loaded(pipeline)
 

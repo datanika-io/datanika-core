@@ -987,3 +987,55 @@ cardinality worse.
 
 Related: §1 (what a signal records) · §2 (any green you have not forced red) · §6 (validate
 against the real consumer) · §21 (ask what changed about the instrument).
+
+## 31. An instrument must establish that its SUBJECT is in the population it measured
+
+**(core#1480, 2026-09-21 — written after the same defect appeared four times in two rounds.)**
+
+A verdict is about something. Before the number is worth printing, the instrument has to be able to
+say that the thing it was asked about is **in what it read** — and it has to print that population
+beside the number, because a reader cannot tell otherwise.
+
+| instance | the subject | what was printed instead |
+|---|---|---|
+| core#1447 | *which* cause made a run unmeasured | the **class** word `UNMEASURED`, whose gloss asked nobody to act |
+| core#1448 | how far back the look reached | a **count**-sized page, with a hole wherever the count ran out first |
+| core#1468 | one named spec | `unmeasured: 0 of 12 runs (0%)` over 12 runs it could not read at all |
+| core#1480 | one named spec | a whole **tier's** verdict, attributed to whatever name it was handed |
+
+The fourth is the one worth remembering, because the reasoning was written down and was **almost**
+right. `classify_for_spec`'s docstring said *"a green tier means every spec in it was green, so the
+attribution is sound"* — true, and sound only for a spec **in** that tier, which nothing checked.
+So `classify_for_spec("not-a-real-spec.ts", {}, "success")` returned `PASS`, on the instrument that
+decides graduation, which moves a spec into the **gating** tier that holds promotions.
+
+**The discriminating control is a subject that cannot exist.** Three CLI invocations differing only
+in `--spec` — a real spec of the job, a real spec of a *different* job, and a fabricated name —
+produced **byte-identical** output down to the percentage. A test exercising only the real spec
+passes throughout; so does a human reading the output. Ask for a reading about something that is
+not there, and see whether the instrument notices.
+
+**Rules:**
+
+1. **Report the population next to the verdict**, always: what was examined, how much of it was
+   readable, and — for a windowed reader — how far back it reached.
+2. **Separate *"I could not read this"* from *"this is not here"*.** They need opposite responses:
+   widen the window versus ask a different question. A single "unmeasured" word covers both, and
+   the one it picks is the one nobody acts on.
+3. **An unplaced subject is not a weaker verdict, it is a different question.** Give it its own
+   state and exit **2** — `scripts/slo_report.py`'s convention for *nothing could be measured*
+   (§18a). Returning the ordinary "not yet" code reads as *keep waiting*, and people do.
+4. 🚨 **A permissive default that nothing checks is how this arrives.** Where back-compatibility
+   forces one (`membership=None` here), a repository guard must assert the production caller passes
+   the real value — on the **AST**, since a call spelled in a comment satisfies a grep (§24a).
+
+🔑 **And the finding that made this a class rather than a fourth bug: of the 8 scripts in this repo
+that print a verdict, FIVE already implemented this property** — `check_attribution_trailers.py`
+(*"scanned=0 is reported as its own outcome rather than as clean"*), `assert_overage_coverage.py`
+(executed / skipped / **collected**), `verify_e2e_attribution.py` (*"a WINDOW result, not an
+attribution failure"*), `check_scheduled_workflows.py` (counted **per repo**, never in total) and
+`slo_report.py` (`NO_VERDICT` behind a sample floor). Five solutions, five vocabularies, none aware
+of the others. That is §24's *"sweep the others for the same shape"* one level up: **sweep the
+siblings, not just the repositories.** `tests/test_deploy/test_reader_subject_coverage.py` carries
+the census that forces reader nine to be triaged — and it is named a *census* on purpose, because it
+enumerates rather than verifies, and a guard must not claim more than it does (§20).

@@ -103,6 +103,11 @@ MARKER_ALLOWLIST = frozenset(
         "tests/test_deploy/test_per_spec_graduation.py",  # its tests (core#1221)
         # tests: fakes job logs to drive the reader's main() (core#1447, core#1448)
         "tests/test_deploy/test_blindness_alert_cause_and_lookback.py",
+        # tests: same shape, one job log per run, to drive the reader with and without per-spec
+        # lines — the two cases core#1480 has to tell apart. It builds markers into a fake log
+        # string and prints none, so `test_nothing_outside_the_ci_workflows_prints_a_verdict_marker`
+        # stays green over it, which is the assertion that actually matters here.
+        "tests/test_deploy/test_reader_subject_coverage.py",
     }
 )
 

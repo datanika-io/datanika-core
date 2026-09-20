@@ -1,5 +1,6 @@
 """TDD tests for DltRunnerService — dlt pipeline/source/destination factory."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +16,16 @@ from datanika.services.dlt_runner import (
 )
 from datanika.services.egress_guard import EgressValidationError
 from datanika.services.egress_guard import validate_egress_host as _real_validate_egress_host
+
+
+def a_source_stub(name: str = "source"):
+    """A stand-in for what ``sql_database`` returns.
+
+    It has to carry ``resources``: since core#1445 ``build_source`` reads them to refuse a
+    selection that resolved no table, so a bare string sentinel is no longer a source. A stub
+    that cannot stand in for the real object is a stub that hides exactly that kind of change.
+    """
+    return SimpleNamespace(name=name, resources={name: object()})
 
 
 @pytest.fixture
@@ -315,22 +326,22 @@ class TestBuildDestination:
 class TestBuildSource:
     @patch("datanika.services.dlt_runner.sql_database")
     def test_postgres_source(self, mock_sql_db, svc):
-        mock_sql_db.return_value = "pg_source"
+        mock_sql_db.return_value = a_source_stub("pg_source")
         result = svc.build_source("postgres", {"host": "localhost"}, {})
         mock_sql_db.assert_called_once()
-        assert result == "pg_source"
+        assert result is mock_sql_db.return_value
 
     @patch("datanika.services.dlt_runner.sql_database")
     def test_mysql_source(self, mock_sql_db, svc):
-        mock_sql_db.return_value = "mysql_source"
+        mock_sql_db.return_value = a_source_stub("mysql_source")
         result = svc.build_source("mysql", {"host": "localhost"}, {})
-        assert result == "mysql_source"
+        assert result is mock_sql_db.return_value
 
     @patch("datanika.services.dlt_runner.sql_database")
     def test_mssql_source(self, mock_sql_db, svc):
-        mock_sql_db.return_value = "mssql_source"
+        mock_sql_db.return_value = a_source_stub("mssql_source")
         result = svc.build_source("mssql", {"host": "localhost"}, {})
-        assert result == "mssql_source"
+        assert result is mock_sql_db.return_value
 
     @patch("datanika.services.dlt_runner.sql_database")
     def test_sqlite_source(self, mock_sql_db, svc, tmp_path):
@@ -338,9 +349,9 @@ class TestBuildSource:
         # called (tests/test_services/test_local_file_source_needs_its_file.py).
         path = tmp_path / "db.sqlite"
         path.touch()
-        mock_sql_db.return_value = "sqlite_source"
+        mock_sql_db.return_value = a_source_stub("sqlite_source")
         result = svc.build_source("sqlite", {"path": str(path)}, {})
-        assert result == "sqlite_source"
+        assert result is mock_sql_db.return_value
 
     def test_unsupported_type_raises(self, svc):
         with pytest.raises(DltRunnerError, match="Unsupported source type"):
@@ -610,14 +621,14 @@ class TestBuildSourceModes:
     @patch("datanika.services.dlt_runner.sql_database")
     def test_default_mode_uses_sql_database(self, mock_sql_db, svc):
         """No mode → full_database → sql_database."""
-        mock_sql_db.return_value = "src"
+        mock_sql_db.return_value = a_source_stub("src")
         result = svc.build_source("postgres", {"host": "h"}, {"write_disposition": "append"})
         mock_sql_db.assert_called_once()
-        assert result == "src"
+        assert result is mock_sql_db.return_value
 
     @patch("datanika.services.dlt_runner.sql_database")
     def test_full_database_passes_table_names(self, mock_sql_db, svc):
-        mock_sql_db.return_value = "src"
+        mock_sql_db.return_value = a_source_stub("src")
         svc.build_source(
             "postgres",
             {"host": "h"},
@@ -628,7 +639,7 @@ class TestBuildSourceModes:
 
     @patch("datanika.services.dlt_runner.sql_database")
     def test_full_database_passes_source_schema(self, mock_sql_db, svc):
-        mock_sql_db.return_value = "src"
+        mock_sql_db.return_value = a_source_stub("src")
         svc.build_source(
             "postgres", {"host": "h"}, {"mode": "full_database", "source_schema": "sales"}
         )
@@ -740,7 +751,7 @@ class TestExecute:
         mock_pipeline.run.return_value = load_info
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         result = svc.execute(
             pipeline_id=1,
@@ -760,7 +771,7 @@ class TestExecute:
         mock_pipeline.run.side_effect = RuntimeError("boom")
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         with pytest.raises(RuntimeError, match="boom"):
             svc.execute(
@@ -779,7 +790,7 @@ class TestExecute:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -800,7 +811,7 @@ class TestExecute:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         # core#862: the destination was `mysql`, which is a SOURCE-only type —
         # dlt has no mysql destination and never had one. The test passed anyway
@@ -828,7 +839,7 @@ class TestExecute:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -848,7 +859,7 @@ class TestExecute:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -873,7 +884,7 @@ class TestExecuteModes:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -903,7 +914,7 @@ class TestExecuteModes:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -956,7 +967,7 @@ class TestExecuteModes:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         contract = {"tables": "evolve", "columns": "freeze"}
         svc.execute(
@@ -1143,7 +1154,7 @@ class TestExecuteDatasetName:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,
@@ -1164,7 +1175,7 @@ class TestExecuteDatasetName:
         mock_pipeline.run.return_value = MagicMock()
         mock_dlt.pipeline.return_value = mock_pipeline
         mock_dlt.destinations.postgres.return_value = "pg_dest"
-        mock_sql_db.return_value = "source"
+        mock_sql_db.return_value = a_source_stub("source")
 
         svc.execute(
             pipeline_id=1,

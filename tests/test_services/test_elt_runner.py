@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from datanika.services.elt_runner import StreamStats, stream_to_raw
@@ -129,7 +130,8 @@ class TestDltRunnerBackendPassthrough:
         runner = DltRunnerService()
 
         with patch("datanika.services.dlt_runner.sql_database") as mock_sql_database:
-            mock_sql_database.return_value = object()
+            # core#1445: build_source reads `.resources` off what sql_database returns.
+            mock_sql_database.return_value = SimpleNamespace(resources={"t": object()})
             runner.build_source(
                 "postgres",
                 {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"},

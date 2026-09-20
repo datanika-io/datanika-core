@@ -11,6 +11,7 @@ from datanika.models.upload import Upload, UploadStatus
 from datanika.models.user import MemberRole
 from datanika.services.authorization import assert_org_role
 from datanika.services.connection_service import DESTINATION_TYPES, ConnectionService
+from datanika.services.incremental_identity import refuses_incremental
 from datanika.services.naming import to_snake_case, validate_name
 
 VALID_WRITE_DISPOSITIONS = {"append", "replace", "merge"}
@@ -92,6 +93,7 @@ class UploadService:
             )
 
         self.validate_upload_config(dlt_config)
+        self._refuse_a_cursor_that_would_not_advance(src.connection_type.value, dlt_config)
 
         upload = Upload(
             org_id=org_id,
@@ -139,6 +141,11 @@ class UploadService:
 
         if "dlt_config" in kwargs:
             self.validate_upload_config(kwargs["dlt_config"])
+            source = self._conn_svc.get_connection(session, org_id, upload.source_connection_id)
+            if source is not None:
+                self._refuse_a_cursor_that_would_not_advance(
+                    source.connection_type.value, kwargs["dlt_config"]
+                )
             upload.dlt_config = kwargs["dlt_config"]
         if "name" in kwargs:
             validate_upload_name(kwargs["name"])
@@ -168,6 +175,21 @@ class UploadService:
         upload.deleted_at = datetime.now(UTC)
         session.flush()
         return True
+
+    @staticmethod
+    def _refuse_a_cursor_that_would_not_advance(source_type: str, dlt_config) -> None:
+        """core#1404, ``SPEC_INCREMENTAL_UPLOADS`` §2.5: resume a cursor, or refuse it at save.
+
+        A cursor resumes only on the single-table SQL path. MongoDB applied it as a fixed filter
+        and every other source ignored it, so saving one there made an upload call itself
+        incremental while reading the same rows on every run. Refused here because the form, the
+        REST API, the MCP tools and the YAML import all save through this service.
+        """
+        if not isinstance(dlt_config, dict):
+            return
+        reason = refuses_incremental(source_type, dlt_config)
+        if reason is not None:
+            raise UploadConfigError(reason)
 
     @staticmethod
     def validate_upload_config(dlt_config) -> None:

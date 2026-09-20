@@ -2,7 +2,7 @@
 
 **Issue:** [core#652](https://github.com/datanika-io/datanika-core/issues/652) ·
 **Owner:** Product (contract) → Engineering (implementation) ·
-**Status:** Spec only, no code · **Written:** 2026-09-02 against `origin/dev` @ `969fcb0`
+**Status:** implemented in PR #971, on `master` by content when read on 2026-09-17 (#652 closed 2026-09-08; this line said "Spec only, no code" until then) · **Written:** 2026-09-02 against `origin/dev` @ `969fcb0`
 
 > 🚨 **Read §1 before §3.** #652 is titled *"`notify()` is never passed an `email_service`"*, and a
 > fix that passes one is **not** a fix. There are six independent places where this path loses

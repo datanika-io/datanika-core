@@ -1,6 +1,7 @@
 """Upload execution Celery tasks."""
 
 import logging
+import os
 import traceback
 from pathlib import PurePosixPath
 
@@ -22,7 +23,16 @@ from datanika.services.dlt_runner import (
     destination_dataset_name,
 )
 from datanika.services.encryption import EncryptionService
-from datanika.services.execution_service import ExecutionService, get_org_run
+from datanika.services.execution_service import (
+    ExecutionService,
+    get_org_run,
+    hold_run_secrets,
+    release_run_secrets,
+)
+from datanika.services.incremental_identity import (
+    has_resumable_cursor,
+    incremental_pipeline_name,
+)
 from datanika.services.naming import to_snake_case
 from datanika.services.upload_service import to_dataset_name
 from datanika.tasks.celery_app import celery_app
@@ -132,6 +142,7 @@ def run_upload(
 
         encryption = EncryptionService(settings.credential_encryption_key)
 
+    held_secrets = None
     try:
         # core#657 §7 2a, the pre-flight checkpoint — before the quota gate, so a run the user
         # cancelled while it was queued consults nothing, starts nothing and marks nothing ERROR.
@@ -148,10 +159,6 @@ def run_upload(
 
         emit("run.before_execute", session=session, org_id=org_id, predicted_runs=1)
 
-        execution_service.start_run(session, org_id, run_id)
-        if own_session:
-            session.commit()
-
         run = get_org_run(session, org_id, run_id)
         upload = session.execute(
             select(Upload).where(Upload.id == run.target_id, Upload.org_id == org_id)
@@ -164,8 +171,35 @@ def run_upload(
                 f"Upload {upload.id} references a connection that is not available to org {org_id}"
             )
 
+        # core#1404 §2.4. An incremental upload's runs share one cursor, so a run starts only when
+        # no other run of the upload is running, and a refused run says which one is. It is
+        # recorded as FAILED without touching the upload's own status: the run in progress is
+        # healthy, and the upload is not in error.
+        if upload.mode != UploadMode.ELT and has_resumable_cursor(
+            src_conn.connection_type.value, upload.dlt_config or {}
+        ):
+            busy = execution_service.start_exclusive_upload_run(session, org_id, run_id, upload.id)
+            if busy is not None:
+                refusal = (
+                    f"Another run of this upload is in progress: run {busy}. This run did not "
+                    "start, so nothing was read or loaded. If that run is not actually running, "
+                    "cancel it and run the upload again."
+                )
+                execution_service.fail_run(
+                    session, org_id, run_id, error_message=refusal, logs=refusal
+                )
+                if own_session:
+                    session.commit()
+                return
+        else:
+            execution_service.start_run(session, org_id, run_id)
+        if own_session:
+            session.commit()
+
         src_config = encryption.decrypt(src_conn.config_encrypted)
         dst_config = encryption.decrypt(dst_conn.config_encrypted)
+        # core#1460: from here on, nothing this run stores carries either connection's secrets.
+        held_secrets = hold_run_secrets(src_config, dst_config)
 
         bytes_processed = None  # filled by either ETL or ELT path
 
@@ -236,7 +270,7 @@ def run_upload(
             try:
                 from datanika.config import settings as app_cfg
 
-                runner = DltRunnerService(pipelines_dir=app_cfg.dlt_pipelines_dir)
+                pipelines_dir = app_cfg.dlt_pipelines_dir
                 # Where the rows land (core#610).
                 #
                 # The destination connection's own `dataset` (BigQuery) /
@@ -261,8 +295,25 @@ def run_upload(
                 dataset_name = destination_dataset_name(
                     dst_conn.connection_type.value, dst_config
                 ) or to_dataset_name(upload.name)
+                # core#1404. An incremental upload's runs share one pipeline name, the cursor's
+                # identity, because dlt restores a cursor from the destination by name. Each run
+                # still gets its own working directory, `pipeline_<run>_run_<run>`, which the
+                # `finally` below removes and the hourly sweep still recognises by its run id; the
+                # shared name is one level inside it. Every other upload keeps today's per-run name.
+                pipeline_name = incremental_pipeline_name(
+                    upload_id=upload.id,
+                    source_type=src_conn.connection_type.value,
+                    source_connection_id=src_conn.id,
+                    destination_connection_id=dst_conn.id,
+                    destination_schema=dataset_name,
+                    dlt_config=dlt_config,
+                )
+                if pipeline_name is not None and pipelines_dir:
+                    pipelines_dir = os.path.join(pipelines_dir, f"pipeline_{run_id}_run_{run_id}")
+                runner = DltRunnerService(pipelines_dir=pipelines_dir)
                 result = runner.execute(
                     pipeline_id=run_id,
+                    pipeline_name=pipeline_name,
                     source_type=src_conn.connection_type.value,
                     source_config=src_config,
                     destination_type=dst_conn.connection_type.value,
@@ -465,6 +516,9 @@ def run_upload(
         )
 
     finally:
+        # core#1460: stop redacting with this run's connection secrets once nothing more is stored.
+        if held_secrets is not None:
+            release_run_secrets(held_secrets)
         # Clean up dlt working directory regardless of success/failure
         try:
             from datanika.config import settings as _cleanup_cfg

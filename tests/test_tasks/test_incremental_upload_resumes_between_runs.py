@@ -38,6 +38,14 @@ stable name    merge        ``updated_at >= ?`` (50), 4     3                  8
 
 Also here: core#1414 — an **Initial value** typed in the form is stored as text, and a run with an
 integer cursor fails at extract.
+
+**Fixed together (core#1404, core#1414; contract: ``docs/specs/SPEC_INCREMENTAL_UPLOADS.md``).** An
+incremental upload's runs now share one dlt pipeline name, derived from the cursor's identity
+(``datanika.services.incremental_identity``), and the loader converts a text initial value to the
+cursor column's type. The three strict xfails lost their markers in that change. The arms at the
+end are the spec's §2.2 (a failed run does not move the cursor) and §2.3 (the identity), each with
+its negative control. §2.4, overlapping runs, needs two real database sessions and is in
+``test_incremental_upload_runs_do_not_overlap.py``.
 """
 
 from __future__ import annotations
@@ -169,22 +177,20 @@ def _destination(dest: Path) -> dict:
 
 
 def _hold_pipeline_name_stable(monkeypatch, upload_id: int) -> str:
-    """The control's one change: the same dlt pipeline name on every run of this upload.
+    """The control's one change: a stable dlt pipeline name of the harness's own choosing.
 
-    ``cleanup_pipeline`` follows the same name, so the working directory is still deleted after
-    every run, and a resume can only come from the destination.
+    Since core#1404 the product keeps an incremental upload's name stable itself, inside a
+    working directory named after the run, which ``run_upload`` still deletes after every run. So
+    this patch replaces only the NAME, with one that owes nothing to the product's identity
+    function, and a resume can still only come from the destination.
     """
     stable = 900_000 + upload_id
-    build, cleanup = DltRunnerService.build_pipeline, DltRunnerService.cleanup_pipeline
+    build = DltRunnerService.build_pipeline
 
-    def _build(self, pipeline_id, dest_type, dest_config, dataset_name=None, run_id=None):
+    def _build(self, pipeline_id, dest_type, dest_config, dataset_name=None, **_ignored):
         return build(self, stable, dest_type, dest_config, dataset_name=dataset_name)
 
-    def _cleanup(self, pipeline_id, run_id=None):
-        return cleanup(self, stable)
-
     monkeypatch.setattr(DltRunnerService, "build_pipeline", _build)
-    monkeypatch.setattr(DltRunnerService, "cleanup_pipeline", _cleanup)
     return f"pipeline_{stable}"
 
 
@@ -305,20 +311,10 @@ def test_control_a_stable_pipeline_name_resumes_from_the_destination(
 
 
 # ---------------------------------------------------------------------------------------------
-# core#1404 — as shipped, every run is a new pipeline and the cursor restarts
+# core#1404 — every run of an incremental upload resumes (these two were the strict xfails)
 # ---------------------------------------------------------------------------------------------
 
-_RESTARTS = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "core#1404: run_upload names each dlt pipeline after the run, so run 2 finds no cursor "
-        "in the destination and extracts every row again"
-    ),
-)
 
-
-@_RESTARTS
 def test_under_append_run_two_loads_only_the_new_rows(db_session, encryption, make_upload):
     """``append`` is the form's default: a restart lands run 1's rows a second time."""
     org, upload, source, dest = make_upload(form_write_disposition="append")
@@ -332,7 +328,6 @@ def test_under_append_run_two_loads_only_the_new_rows(db_session, encryption, ma
     )
 
 
-@_RESTARTS
 def test_under_merge_run_two_extracts_only_the_new_rows(db_session, encryption, make_upload):
     """Under ``merge`` the destination is right either way; only the extract can tell."""
     org, upload, source, dest = make_upload(form_write_disposition="merge", form_primary_key="id")
@@ -360,11 +355,6 @@ def test_control_the_same_upload_with_no_initial_value_loads(db_session, encrypt
     assert _destination(dest)["ids"] == [1, 2, 3, 4, 5]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="core#1414: the form stores the Initial value as text; dlt compares it with an int",
-)
 def test_an_initial_value_typed_in_the_form_is_honoured(db_session, encryption, make_upload):
     org, upload, source, dest = make_upload(form_initial_value="30")
     if upload.dlt_config["incremental"].get("initial_value") is None:
@@ -376,3 +366,191 @@ def test_an_initial_value_typed_in_the_form_is_honoured(db_session, encryption, 
         f"an integer cursor with the Initial value 30 failed the run: {reading['error']}"
     )
     assert _destination(dest)["ids"] == [3, 4, 5]
+
+
+# ---------------------------------------------------------------------------------------------
+# SPEC_INCREMENTAL_UPLOADS §2.2 — a failed run does not move the cursor
+# ---------------------------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _events_refuses_inserts(dest: Path):
+    """Replace the destination table with a view of itself, so a load into it fails at `step=load`.
+
+    Everything before the load still happens: the extract reads past run 1's cursor and dlt writes
+    the advanced cursor into the load package. That is the case §2.2 exists for: a cursor that
+    advanced in a package whose rows never landed.
+    """
+    con = duckdb.connect(str(dest))
+    try:
+        schema = con.execute(
+            "SELECT table_schema FROM information_schema.tables "
+            "WHERE table_name = 'events' AND table_type = 'BASE TABLE' "
+            "AND table_schema NOT LIKE '%_staging'"
+        ).fetchone()[0]
+        con.execute(f'ALTER TABLE "{schema}"."events" RENAME TO "events_held"')
+        con.execute(f'CREATE VIEW "{schema}"."events" AS SELECT * FROM "{schema}"."events_held"')
+    finally:
+        con.close()
+    try:
+        yield
+    finally:
+        con = duckdb.connect(str(dest))
+        try:
+            con.execute(f'DROP VIEW "{schema}"."events"')
+            con.execute(f'ALTER TABLE "{schema}"."events_held" RENAME TO "events"')
+        finally:
+            con.close()
+
+
+def test_a_run_that_fails_at_load_does_not_move_the_cursor(db_session, encryption, make_upload):
+    """Run 1 succeeds, rows are added, run 2 fails at load, run 3 succeeds (SPEC §2.2).
+
+    Run 3 must extract from run 1's cursor, and the destination must hold every added row exactly
+    once. A cursor that advanced in run 2's package would make run 3 skip the rows run 2 never
+    landed.
+    """
+    org, upload, source, dest = make_upload(form_write_disposition="append")
+    first = _run(db_session, encryption, org, upload, source)
+    if first["status"] != RunStatus.SUCCESS or first["rows_loaded"] != len(FIRST):
+        raise HarnessError(f"run 1 did not load the source: {first}")
+    _seed(source, LATER)
+
+    with _events_refuses_inserts(dest):
+        second = _run(db_session, encryption, org, upload, source)
+    if second["status"] != RunStatus.FAILED or second.get("parameters") != [RUN_ONE_CURSOR]:
+        raise HarnessError(f"run 2 did not fail after extracting past run 1's cursor: {second}")
+
+    third = _run(db_session, encryption, org, upload, source)
+
+    assert third["status"] == RunStatus.SUCCESS, third["error"]
+    assert third["parameters"] == [RUN_ONE_CURSOR], (
+        f"run 3 extracted from {third['parameters']}, not from run 1's cursor ({RUN_ONE_CURSOR}): "
+        "the failed run moved the cursor"
+    )
+    destination = _destination(dest)
+    assert destination["rows"] == destination["distinct_ids"] == len(FIRST) + len(LATER), (
+        destination
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# SPEC_INCREMENTAL_UPLOADS §2.3 — the cursor belongs to one source table and one destination
+# ---------------------------------------------------------------------------------------------
+
+
+def _another_connection(db_session, encryption, org, name, ctype, direction, path) -> Connection:
+    conn = Connection(
+        org_id=org.id,
+        name=name,
+        connection_type=ctype,
+        direction=direction,
+        config_encrypted=encryption.encrypt({"path": str(path)}),
+    )
+    db_session.add(conn)
+    db_session.flush()
+    return conn
+
+
+def test_a_new_destination_receives_every_row_not_only_those_past_the_old_cursor(
+    db_session, encryption, make_upload, tmp_path
+):
+    org, upload, source, dest = make_upload(form_write_disposition="append")
+    first = _run(db_session, encryption, org, upload, source)
+    if first["status"] != RunStatus.SUCCESS:
+        raise HarnessError(f"run 1 did not load the source: {first}")
+    _seed(source, LATER)
+    new_dest = tmp_path / "second-warehouse.duckdb"
+    moved = _another_connection(
+        db_session,
+        encryption,
+        org,
+        "warehouse two",
+        ConnectionType.DUCKDB,
+        ConnectionDirection.DESTINATION,
+        new_dest,
+    )
+    upload.destination_connection_id = moved.id
+    db_session.flush()
+
+    second = _run(db_session, encryption, org, upload, source)
+
+    assert second["status"] == RunStatus.SUCCESS, second["error"]
+    assert second["where"] is None, f"the new destination's first run filtered: {second['where']}"
+    assert _destination(new_dest)["ids"] == list(range(1, 9))
+
+
+def test_a_new_source_connection_extracts_from_the_initial_value(
+    db_session, encryption, make_upload, tmp_path
+):
+    org, upload, source, dest = make_upload(form_write_disposition="append")
+    first = _run(db_session, encryption, org, upload, source)
+    if first["status"] != RunStatus.SUCCESS:
+        raise HarnessError(f"run 1 did not load the source: {first}")
+    other_source = tmp_path / "second-source.sqlite"
+    _seed(other_source, [(101, 5, "older than run 1's cursor"), (102, 60, "newer")])
+    moved = _another_connection(
+        db_session,
+        encryption,
+        org,
+        "events db two",
+        ConnectionType.SQLITE,
+        ConnectionDirection.SOURCE,
+        other_source,
+    )
+    upload.source_connection_id = moved.id
+    db_session.flush()
+
+    second = _run(db_session, encryption, org, upload, other_source)
+
+    assert second["status"] == RunStatus.SUCCESS, second["error"]
+    assert second["where"] is None, (
+        f"a cursor recorded for the first database was applied to the second: {second['where']} "
+        f"{second['parameters']}, which skips its older rows"
+    )
+    assert {101, 102} <= set(_destination(dest)["ids"])
+
+
+def test_control_a_change_outside_the_key_still_resumes(db_session, encryption, make_upload):
+    """SPEC §2.3's negative control: without it, a key that restarts on every save passes above."""
+    org, upload, source, dest = make_upload(form_write_disposition="append")
+    first = _run(db_session, encryption, org, upload, source)
+    if first["status"] != RunStatus.SUCCESS:
+        raise HarnessError(f"run 1 did not load the source: {first}")
+    _seed(source, LATER)
+    upload.dlt_config = {**upload.dlt_config, "batch_size": 1000}
+    db_session.flush()
+
+    second = _run(db_session, encryption, org, upload, source)
+
+    _assert_run_two_resumed({"run_2": second})
+    destination = _destination(dest)
+    assert destination["rows"] == destination["distinct_ids"] == 8, destination
+
+
+# ---------------------------------------------------------------------------------------------
+# SPEC_INCREMENTAL_UPLOADS §3 — an upload with no cursor behaves exactly as before
+# ---------------------------------------------------------------------------------------------
+
+
+def test_control_an_upload_without_a_cursor_keeps_one_pipeline_name_per_run(
+    db_session, encryption, make_upload
+):
+    """core#1336 designed non-incremental uploads around no dlt state crossing runs.
+
+    Read from the destination: each run's state row carries the pipeline name that run used.
+    """
+    org, upload, source, dest = make_upload(form_write_disposition="append")
+    upload.dlt_config = {k: v for k, v in upload.dlt_config.items() if k != "incremental"}
+    db_session.flush()
+
+    first = _run(db_session, encryption, org, upload, source)
+    second = _run(db_session, encryption, org, upload, source)
+
+    assert first["status"] == second["status"] == RunStatus.SUCCESS, (first, second)
+    states = _destination(dest)["states"]
+    assert len(states) == 2 and len(set(states)) == 2, (
+        f"two runs of an upload with no cursor recorded state under {states}: a shared name would "
+        "carry dlt state from one run into the next"
+    )
+    assert all("_run_" in name for name in states), states

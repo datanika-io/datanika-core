@@ -15,7 +15,12 @@ from datanika.models.user import Organization
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import _build_sa_url
 from datanika.services.dbt_project import DbtProjectService, describe_dbt_failure
-from datanika.services.execution_service import ExecutionService, get_org_run
+from datanika.services.execution_service import (
+    ExecutionService,
+    get_org_run,
+    hold_run_secrets,
+    release_run_secrets,
+)
 from datanika.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -98,6 +103,7 @@ def run_transformation(
 
         session = get_sync_session()
 
+    held_secrets = None
     try:
         # core#657 §7 2a, the pre-flight checkpoint — before the quota gate (see run_upload).
         if execution_service.skip_if_cancelled(session, org_id, run_id):
@@ -152,6 +158,8 @@ def run_transformation(
                 dst_config = conn_svc.get_connection_config(
                     session, org_id, transformation.destination_connection_id
                 )
+                # core#1460: from here on, nothing this run stores carries its secrets.
+                held_secrets = hold_run_secrets(dst_config)
                 if dst_config:
                     dbt_svc.generate_profiles_yml(
                         org_id,
@@ -249,6 +257,9 @@ def run_transformation(
             )
 
     finally:
+        # core#1460: stop redacting with this run's connection secrets once nothing more is stored.
+        if held_secrets is not None:
+            release_run_secrets(held_secrets)
         if own_session:
             session.close()
 

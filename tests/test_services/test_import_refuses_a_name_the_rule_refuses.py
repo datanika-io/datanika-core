@@ -13,20 +13,47 @@ import wearing a 400. The issue records that half as *not measured*; it is measu
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from sqlalchemy import select
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
 
 from datanika.models.connection import Connection
 from datanika.models.transformation import Transformation
 from datanika.models.upload import Upload
-from tests.test_services.test_import_endpoint import (  # noqa: F401  (fixtures)
-    _auth_headers,
-    _patch_auth,
-    app,
-    client,
-    fake_api_key,
-    rate_limit_ok,
-)
+from datanika.services.api_v1_routes import api_v1_routes
+from datanika.services.rate_limit_service import RateLimitResult
+
+# Plain helpers, which `tests/test_fixture_sharing.py` allows to be imported. The **fixtures** are
+# defined below rather than imported: pytest registers an imported fixture as a second FixtureDef,
+# so a module- or session-scoped one would run its body once per importing module.
+from tests.test_services.test_import_endpoint import _auth_headers, _patch_auth
+
+
+@pytest.fixture
+def fake_api_key():
+    key = MagicMock()
+    key.id = 1
+    key.org_id = 10
+    key.user_id = 1
+    key.name = "Test Key"
+    key.scopes = None
+    return key
+
+
+@pytest.fixture
+def rate_limit_ok():
+    return RateLimitResult(
+        allowed=True, current_count=1, limit=60, remaining=59, retry_after=0, reset_at=9999999999
+    )
+
+
+@pytest.fixture
+def client():
+    return TestClient(Starlette(routes=api_v1_routes))
+
 
 #: Refused by `validate_name`: the connection rule allows letters, digits and spaces only.
 BAD_CONNECTION_NAME = "imp_c"
@@ -62,11 +89,11 @@ def _yaml(name: str) -> str:
     )
 
 
-def _post_json(client, payload):  # noqa: F811
+def _post_json(client, payload):
     return client.post("/api/v1/import", json=payload, headers=_auth_headers())
 
 
-def _post_yaml(client, body: str):  # noqa: F811
+def _post_yaml(client, body: str):
     headers = {**_auth_headers(), "Content-Type": "application/x-yaml"}
     return client.post("/api/v1/pipelines/yaml", content=body.encode(), headers=headers)
 
@@ -78,9 +105,9 @@ def _post_yaml(client, body: str):  # noqa: F811
 
 @pytest.mark.parametrize("route", ["json", "yaml"])
 def test_a_name_the_rule_refuses_answers_400_and_writes_nothing(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
     route,
 ):
     with _patch_auth(fake_api_key, rate_limit_ok) as session:
@@ -99,9 +126,9 @@ def test_a_name_the_rule_refuses_answers_400_and_writes_nothing(
 
 
 def test_an_invalid_name_after_a_valid_one_still_writes_nothing(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
 ):
     """The half a status code cannot show: refusing entry two must not keep entry one."""
     with _patch_auth(fake_api_key, rate_limit_ok) as session:
@@ -122,9 +149,9 @@ def test_an_invalid_name_after_a_valid_one_still_writes_nothing(
 
 
 def test_every_invalid_name_in_the_payload_is_reported_at_once(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
 ):
     """One round trip per payload, not one per bad name."""
     with _patch_auth(fake_api_key, rate_limit_ok):
@@ -145,9 +172,9 @@ def test_every_invalid_name_in_the_payload_is_reported_at_once(
 
 @pytest.mark.parametrize("route", ["json", "yaml"])
 def test_control_a_valid_name_still_imports(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
     route,
 ):
     with _patch_auth(fake_api_key, rate_limit_ok) as session:
@@ -161,9 +188,9 @@ def test_control_a_valid_name_still_imports(
 
 
 def test_control_a_transformation_name_follows_its_own_rule(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
 ):
     """Underscores are refused in a connection name and required-ish in a model name.
 
@@ -181,9 +208,9 @@ def test_control_a_transformation_name_follows_its_own_rule(
 
 
 def test_control_an_invalid_transformation_name_is_also_refused_with_400(
-    client,  # noqa: F811
-    fake_api_key,  # noqa: F811
-    rate_limit_ok,  # noqa: F811
+    client,
+    fake_api_key,
+    rate_limit_ok,
 ):
     """Same class, different rule: a model name the model rule refuses is not a 500 either."""
     with _patch_auth(fake_api_key, rate_limit_ok) as session:

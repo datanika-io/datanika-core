@@ -846,22 +846,30 @@ def _redact_secrets(text: str, config: dict) -> str | None:
     to substring-replace cleanly. **Fails closed on purpose**: the caller then
     falls back to the generic message, so the worst case is the old behaviour
     rather than a password on screen.
+
+    ⚠️ **Reads the same walker as :func:`redact_run_text` (cloud#244), and that is the point.**
+    One object, three consumers, one traversal: a value any of them removes is a value all of them
+    remove, so the depth cannot drift apart per consumer.
+
+    🔑 **Walking rather than adding a spelling is what closes the JSON-escaped case.** A text that
+    embeds the config through ``json.dumps`` renders a JSON-text value with its quotes escaped,
+    which is none of the five spellings :func:`_secret_spellings` knows — so replacing the value
+    *as stored* misses it. The walker parses that text and registers its **leaves**, and a leaf
+    appears verbatim inside the escaped rendering.
     """
-    for key in SECRET_CONFIG_KEYS:
-        value = config.get(key)
-        if isinstance(value, dict):
-            # Additive: dicts were skipped entirely before, so this cannot make
-            # an existing message less redacted, and it never trips the
-            # fail-closed rule below.
-            for form in _secret_spellings(json.dumps(value)):
-                text = text.replace(form, "***")
-            continue
-        if not isinstance(value, str) or not value:
-            continue
+    forms: set[str] = set()
+    for value, stands_alone in _secret_values(config):
         if len(value) < _MIN_REDACTABLE_SECRET:
-            return None
-        for form in _secret_spellings(value):
-            text = text.replace(form, "***")
+            # Unchanged for a secret that stands alone: refuse, whether or not it is in this
+            # text. A short *part* of a structure is not the credential (core#1460), and
+            # withholding on one would refuse every message containing those few characters.
+            if stands_alone:
+                return None
+            continue
+        forms |= {form for form in _secret_spellings(value) if form}
+    # Longest first, so a secret that contains another is removed whole rather than cut short.
+    for form in sorted(forms, key=len, reverse=True):
+        text = text.replace(form, "***")
     return text
 
 
@@ -880,6 +888,28 @@ def _json_structure(value: str) -> dict | list | None:
     return parsed if isinstance(parsed, dict | list) else None
 
 
+#: Config keys whose **contents** are credentials, whatever the inner key names are (cloud#244).
+#:
+#: 🚨 **A key-name oracle cannot name a key the user chooses**, and three shapes the product itself
+#: stores are outside it. ``headers`` is declared free-form by ``CONFIG_SCHEMAS["openapi"]`` and is
+#: handed to the HTTP client on every request, so its inner names (`X-Api-Key`, `Private-Token`,
+#: `Authorization`, …) are the user's. ``auth`` is written by the connection form, and its
+#: ``http_basic`` branch stores the value the user typed into a field labelled *API key* under the
+#: key ``username`` — **the product knows it is a credential; only the storage key name loses
+#: that.** ``username`` is not in :data:`SECRET_CONFIG_KEYS` and must not be: a username is not
+#: generally a secret. The container is what carries the knowledge, so the container is what is
+#: declared here.
+SECRET_CONTAINER_KEYS = frozenset({"auth", "headers", "extra_headers"})
+
+#: Keys inside a container whose value is *structure* rather than credential.
+#:
+#: These are exactly what ``_fill_openapi_auth`` writes beside the credential, and exactly what
+#: ``BackupService._resolve_redactions`` carries through an export/import round trip. Preserving
+#: them is why a container is redacted **leaf by leaf** rather than replaced whole: blanking the
+#: container removes the credential and the description of which auth scheme to re-enter with it.
+CONTAINER_STRUCTURE_KEYS = frozenset({"type", "name", "location"})
+
+
 def _secret_values(config: dict) -> list[tuple[str, bool]]:
     """Every secret in a connection config, at any depth, and whether it stands alone (core#1460).
 
@@ -887,30 +917,49 @@ def _secret_values(config: dict) -> list[tuple[str, bool]]:
     deeply that name is nested: a REST connection keeps its key inside ``auth``. A structured
     credential under such a name, whether a dict, a list, or the JSON text a key file is stored
     as, is secret whole, as its JSON text, and every string inside it is secret as a *part*.
+
+    🆕 **A :data:`SECRET_CONTAINER_KEYS` name makes its contents secret by position rather than by
+    name** (cloud#244), excluding :data:`CONTAINER_STRUCTURE_KEYS`. Its leaves are recorded as
+    *parts*, never as standing alone: a container holds values whose names the product does not
+    choose, so a short one must not withhold every text containing those few characters.
     """
     found: list[tuple[str, bool]] = []
 
     def structure(value, within: bool) -> None:
         found.append((json.dumps(value), False))
-        walk(value, within)
+        walk(value, within, False)
 
-    def walk(node, within: bool) -> None:
+    def walk(node, within: bool, container: bool) -> None:
         items = node.items() if isinstance(node, dict) else ((None, item) for item in node)
         for key, value in items:
             named = key in SECRET_CONFIG_KEYS
-            secret = within or named
+            opens = key in SECRET_CONTAINER_KEYS
+            held = container and key not in CONTAINER_STRUCTURE_KEYS
+            secret = within or named or held
             if isinstance(value, dict | list):
-                if secret:
+                if opens:
+                    # The container quoted whole, plus its leaves — but walked in container mode
+                    # so its structure keys stay out of the secret set.
+                    found.append((json.dumps(value), False))
+                    walk(value, False, True)
+                elif secret:
                     structure(value, True)
                 else:
-                    walk(value, False)
-            elif secret and isinstance(value, str) and value:
-                found.append((value, named))
-                parsed = _json_structure(value)
-                if parsed is not None:
-                    structure(parsed, True)
+                    walk(value, False, False)
+            elif isinstance(value, str) and value:
+                if opens:
+                    # `extra_headers` is a container the form stores as JSON *text*.
+                    found.append((value, False))
+                    parsed = _json_structure(value)
+                    if parsed is not None:
+                        walk(parsed, False, True)
+                elif secret:
+                    found.append((value, named))
+                    parsed = _json_structure(value)
+                    if parsed is not None:
+                        structure(parsed, True)
 
-    walk(config, False)
+    walk(config, False, False)
     return found
 
 

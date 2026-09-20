@@ -120,6 +120,13 @@ def test_an_ambiguous_prefix_is_refused_by_name(no_network, monkeypatch, capsys)
 
 def test_a_genuinely_absent_commit_is_still_refused(no_network, monkeypatch, capsys):
     # The refusal itself is CORRECT and must not be weakened: never a vacuous pass.
+    #
+    # core#1462 added two reads to the refusal path (`read_window`, `commit_date`), so they
+    # are stubbed here. `no_network` stays ARMED on purpose: the invariant this test pins is
+    # the refusal and its wording, never "this path makes no API calls" — but any call
+    # beyond those two deliberate ones must still fail loudly.
+    monkeypatch.setattr(vea, "read_window", lambda *a, **k: None)
+    monkeypatch.setattr(vea, "commit_date", lambda *a, **k: None)
     monkeypatch.setattr(vea, "collect", lambda *a, **k: clean_jobs(OTHER))
     rc = vea.main(["--sha", SHORT, "--branch", "dev"])
     out = capsys.readouterr().out
@@ -135,7 +142,13 @@ def test_the_window_case_reads_as_a_window_result_not_an_attribution_finding(
     "The scan did not reach this commit" and "this commit's verdicts describe another
     commit's build" call for opposite responses. Leading with `::error::` for the first is
     what trains a promoter to distrust the tool.
+
+    ⚠️ core#1462 added `read_window` / `commit_date` to this path and they are stubbed, with
+    `no_network` left armed — see the note in the test above. The `::error::` assertion below
+    is the one that constrains the new text: the window diagnosis must stay a warning.
     """
+    monkeypatch.setattr(vea, "read_window", lambda *a, **k: None)
+    monkeypatch.setattr(vea, "commit_date", lambda *a, **k: None)
     monkeypatch.setattr(vea, "collect", lambda *a, **k: clean_jobs(OTHER))
     rc = vea.main(["--sha", SHORT, "--branch", "dev"])
     out = capsys.readouterr().out

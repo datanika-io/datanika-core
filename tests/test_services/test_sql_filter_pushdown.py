@@ -156,6 +156,7 @@ class TestDltRunnerPushdownWiring:
 
     def test_full_database_filters_stay_client_side(self):
         """full_database mode doesn't get pushdown — filters apply in memory."""
+        from types import SimpleNamespace
         from unittest.mock import patch
 
         from datanika.services.dlt_runner import DltRunnerService
@@ -163,7 +164,8 @@ class TestDltRunnerPushdownWiring:
         runner = DltRunnerService()
 
         with patch("datanika.services.dlt_runner.sql_database") as mock_sql_db:
-            mock_sql_db.return_value = object()
+            # core#1445: build_source reads `.resources` off what sql_database returns.
+            mock_sql_db.return_value = SimpleNamespace(resources={"t": object()})
             runner.build_source(
                 "postgres",
                 {"host": "h", "port": 5432, "user": "u", "password": "p", "database": "d"},

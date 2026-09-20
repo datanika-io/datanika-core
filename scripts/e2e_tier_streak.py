@@ -490,8 +490,27 @@ def parse_spec_verdicts(log_lines: list[str]) -> dict[str, str]:
     return found
 
 
-def classify_for_spec(spec: str, per_spec: dict[str, str], tier_verdict: str | None) -> str:
+def classify_for_spec(
+    spec: str,
+    per_spec: dict[str, str],
+    tier_verdict: str | None,
+    *,
+    membership: frozenset[str] | None = None,
+) -> str:
     """What ONE spec's run means, from a log that may or may not carry per-spec lines.
+
+    🚨 **`membership` is the premise the tier branch below rests on, and it went unchecked for
+    three weeks (core#1480).** *"A green tier means every spec in it was green"* is sound only
+    for a spec that IS in the tier. Nothing here knew which specs those were, so a tier-only log
+    graded **`PASS`** for a spec belonging to another job — and for a spec that does not exist.
+    Measured in-process: ``classify_for_spec("not-a-real-spec.ts", {}, "success")`` returned
+    ``PASS``.
+
+    Pass the set of spec names seen in per-spec lines **anywhere in the window**; a spec outside
+    it is ``UNMEASURED`` rather than credited. ``None`` means *nobody established membership* and
+    keeps the old behaviour, which is why ``collect`` is required to pass it and
+    ``tests/test_deploy/test_reader_subject_coverage.py`` asserts that it does — a permissive
+    default nothing checks is how this arrived.
 
     🚨 **The asymmetry is the whole fix, and it is not symmetric on purpose.**
 
@@ -520,6 +539,11 @@ def classify_for_spec(spec: str, per_spec: dict[str, str], tier_verdict: str | N
         if token is None:
             return UNMEASURED
         return VERDICT_CLASS.get(token, UNREADABLE)
+
+    # core#1480. The tier branch attributes a whole tier's verdict to this one spec. That is
+    # only defensible for a spec the tier actually contains, and a tier-only log cannot say.
+    if membership is not None and spec not in membership:
+        return UNMEASURED
 
     if tier_verdict == "success":
         return PASS
@@ -643,6 +667,68 @@ class Reading:
             longest_unmeasured=longest_unmeasured,
             trailing_unmeasured=trailing_unmeasured,
         )
+
+
+#: A spec question the window cannot answer, because no run in it graded specs at all.
+MEMBERSHIP_UNKNOWN = "membership-unknown"
+#: A spec question the window CAN answer, and the answer is that this spec is not in the tier.
+SPEC_NOT_PRESENT = "spec-not-present"
+
+
+@dataclass(frozen=True)
+class SpecCoverage:
+    """Whether the window could see the SUBJECT at all — core#1480's property.
+
+    A streak is a statement about a spec. Before any verdict about one is worth printing, the
+    reader has to be able to say that the spec is in the population it read. Three invocations of
+    this tool differing only in ``--spec`` — one real spec of the job, one spec of a different
+    job, and **one spec that does not exist** — produced byte-identical output, down to
+    ``unmeasured: 0 of 29 runs (0%)``. Nothing in it was a lie; nothing in it was about the spec.
+    """
+
+    spec: str
+    runs_read: int
+    runs_with_spec_lines: int
+    runs_mentioning_spec: int
+    membership: frozenset[str]
+
+    @classmethod
+    def unasked(cls) -> SpecCoverage:
+        """No ``--spec`` was given, so there is no subject to place."""
+        return cls("", 0, 0, 0, frozenset())
+
+    @property
+    def state(self) -> str | None:
+        """``None`` when the subject is placed; otherwise why it is not."""
+        if not self.spec:
+            return None
+        if not self.membership:
+            return MEMBERSHIP_UNKNOWN
+        if self.spec not in self.membership:
+            return SPEC_NOT_PRESENT
+        return None
+
+    def render(self) -> list[str]:
+        """The subject's population, printed beside the verdict rather than instead of it."""
+        if not self.spec:
+            return []
+        lines = [
+            f"subject        : {self.spec} named in {self.runs_mentioning_spec} of "
+            f"{self.runs_read} runs read; {self.runs_with_spec_lines} run(s) graded specs at all"
+        ]
+        if self.state == MEMBERSHIP_UNKNOWN:
+            lines += [
+                "  -> NO run in this window graded individual specs, so this window cannot say",
+                "     whether this spec belongs to this job at all. Every reading above is about",
+                "     the TIER, not about this spec. Try --job e2e-staging, or widen the window.",
+            ]
+        elif self.state == SPEC_NOT_PRESENT:
+            named = ", ".join(sorted(self.membership)[:6]) or "none"
+            lines += [
+                f"  -> this window DID grade specs, and this one is not among them. Seen: {named}",
+                "     That is not 'not yet three greens'; it is 'this job does not run this spec'.",
+            ]
+        return lines
 
 
 @dataclass(frozen=True)
@@ -828,14 +914,17 @@ def collect(
     runs: int,
     spec: str | None = None,
     since: str | None = None,
-) -> list[RunReading]:
-    """One :class:`RunReading` per completed run, oldest first.
+) -> tuple[list[RunReading], SpecCoverage]:
+    """One :class:`RunReading` per completed run, oldest first, and the subject's coverage.
 
     ``event=push`` is not optional. A `dev` head carries a `merge_group` run too, whose staging
     jobs are `skipped` **by design** — byte-identical to the condition that holds a promotion,
     produced by a run nobody asked for.
     """
-    out: list[RunReading] = []
+    # core#1480. TWO passes, because membership is a property of the WINDOW and not of any one
+    # run: pass 1 reads every run, pass 2 classifies once the window can say which specs this
+    # job grades. A one-pass reader cannot place its own subject, which is the whole defect.
+    raw: list[dict] = []
     fetched = failed = 0
     reasons: list[str] = []  # core#1273: why each fetch failed, so the guard can say
     for run in _push_runs(repo, branch, runs, since):
@@ -880,22 +969,45 @@ def collect(
         # it, and a per-spec green from a laptop is exactly the false verdict with a build
         # behind it that #1232 exists to refuse.
         where = attested_environment(lines) if log is not None else None
-        token = verdict
-        if where is not None and where != CI_ENVIRONMENT:
-            klass = LOCAL
-            token = LOCAL_VERDICT
-        elif spec is not None:
-            per_spec = parse_spec_verdicts(lines)
-            info = parse_verdict_line(lines, tier="informational")
-            klass = classify_for_spec(spec, per_spec, info)
-            token = per_spec.get(spec, "absent") if per_spec else info
-        else:
-            klass = classify_verdict(verdict, specs)
-
         # core#1447: keep the gating token beside an informational one. `unknown` says only that
         # the informational step did not run; the gating verdict on the same log says why.
         gating = parse_verdict_line(lines, tier="gating") if tier == "informational" else None
-        out.append(RunReading(run["created_at"], run["head_sha"][:8], klass, token, gating))
+        raw.append(
+            {
+                "created": run["created_at"],
+                "sha": run["head_sha"][:8],
+                "verdict": verdict,
+                "specs": specs,
+                "where": where,
+                "gating": gating,
+                "per_spec": parse_spec_verdicts(lines) if spec is not None else {},
+                "info": parse_verdict_line(lines, tier="informational")
+                if spec is not None
+                else None,
+            }
+        )
+
+    # Pass 2. `membership` is every spec this window was seen grading, which is the only
+    # evidence available that a spec belongs to this job at all.
+    membership = frozenset().union(*(r["per_spec"].keys() for r in raw)) if raw else frozenset()
+    out: list[RunReading] = []
+    mentions = 0
+    graded_specs = 0
+    for r in raw:
+        if r["per_spec"]:
+            graded_specs += 1
+            if spec in r["per_spec"]:
+                mentions += 1
+        token = r["verdict"]
+        if r["where"] is not None and r["where"] != CI_ENVIRONMENT:
+            klass = LOCAL
+            token = LOCAL_VERDICT
+        elif spec is not None:
+            klass = classify_for_spec(spec, r["per_spec"], r["info"], membership=membership)
+            token = r["per_spec"].get(spec, "absent") if r["per_spec"] else r["info"]
+        else:
+            klass = classify_verdict(r["verdict"], r["specs"])
+        out.append(RunReading(r["created"], r["sha"], klass, token, r["gating"]))
 
     # If NOTHING could be fetched, this is an instrument failure and must be loud. Silently
     # classifying every run UNREADABLE blocks a streak, which is the safe direction — and it
@@ -909,7 +1021,12 @@ def collect(
             "(403 = this token may not read job logs; a workflow job needs `actions: read`. "
             "404 = expired or cancelled, which is ordinary.)"
         )
-    return list(reversed(out))
+    coverage = (
+        SpecCoverage(spec, len(out), graded_specs, mentions, membership)
+        if spec is not None
+        else SpecCoverage.unasked()
+    )
+    return list(reversed(out)), coverage
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -959,7 +1076,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    history = collect(args.repo, args.branch, args.job, args.runs, spec=args.spec, since=args.since)
+    history, coverage = collect(
+        args.repo, args.branch, args.job, args.runs, spec=args.spec, since=args.since
+    )
     for run in history:
         print(f"{run.created}  {run.sha}  {run.klass}{run.tag()}")
 
@@ -978,11 +1097,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"look-back      : the {args.runs} newest push runs, of every workflow")
     print(f"oldest run read: {history[0].created if history else 'none'}")
     print(f"runs read      : {r.total}  (measured: {r.measured})")
+    # core#1480: the subject's own population, printed BEFORE the verdict, because a verdict
+    # about a spec this window never saw is not a weaker reading — it is a different question.
+    for line in coverage.render():
+        print(line)
     print(
         f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "
         f"{r.gaps} of which measured nothing"
     )
-    print(f"verdict        : {r.state}")
+    print(f"verdict        : {coverage.state or r.state}")
     if r.state == "sparse":
         print(
             f"  -> {r.gaps} of the {r.span} runs this streak reaches back through carried no\n"
@@ -1042,6 +1165,11 @@ def main(argv: list[str] | None = None) -> int:
             for s in new:
                 print(stretch_signature(job, s))
             return 2
+    # core#1480. `slo_report.py` already spells this: 1 is a missed target, **2 is "nothing could
+    # be measured"** (QA_RULES §18a). A subject the window never saw is the second, and returning
+    # 1 would put it in the same bucket as "not yet three greens" — which reads as *keep waiting*.
+    if coverage.state is not None:
+        return 2
     return 0 if r.graduated else 1
 
 

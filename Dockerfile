@@ -80,7 +80,7 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 # The package layer's refresh date (see HOW TO REFRESH above). Declared directly before the RUN
 # it invalidates and printed by it, so a reorder cannot quietly detach the two
 # (tests/test_deploy/test_base_image_freshness.py).
-ARG APT_REFRESHED_ON=2026-09-17
+ARG APT_REFRESHED_ON=2026-09-21
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let

@@ -592,14 +592,33 @@ services:
       # relaxing `execErrState`** — an error that reads as healthy is the worse failure,
       # and it is the one this project already paid for. Fix the errors instead.
       #
-      # `wal` defaults to false, so readers and writers block each other exclusively —
-      # with 44 rules evaluating concurrently against one file, disk pressure is enough.
+      # 🔑 **`GF_DATABASE_QUERY_RETRIES` IS WHAT FIXED THIS. `GF_DATABASE_WAL` IS INERT
+      # IN 13.1.0 — measured, after an earlier version of this comment claimed otherwise.**
+      #
       # `query_retries` defaults to **0**, which is why the log reached
-      # `[sqlstore.max-retries-reached]` at `retry 1`: the first lock was fatal to the
-      # evaluation. Both option names were read from the `[database]` section of the
-      # `grafana.ini` shipped inside the running image (13.1.0), lines 192 and 201, with
-      # a nonsense option as the negative control — not from documentation for some
-      # other version.
+      # `[sqlstore.max-retries-reached]` at `retry 1`: the first contended read was fatal
+      # to the evaluation. With it at 3, the under-load reading on 2026-09-21 was
+      # **167 `SQLITE_BUSY` and 0 `Failed to evaluate rule`** — the locks still happen and
+      # none of them becomes an error, so none becomes an alert. Retry depths actually
+      # reached: `retry=0` x101, `retry=1` x32, `retry=2` x1. Control on that zero: all
+      # 44 rules carried a fresh `lastEvaluation` with non-zero `evaluationTime`, so it is
+      # "not failing", not "not evaluating".
+      #
+      # ⚠️ **`wal` is accepted, is reported back by `/api/admin/settings` as `wal = true`,
+      # and does not change the database's journal mode.** Probed on a FRESH database
+      # created by this same image with the setting on and the container stopped before
+      # reading: `PRAGMA journal_mode` -> **`delete`**, a `grafana.db-journal` present and
+      # no `-wal`/`-shm` (control: `PRAGMA page_size` -> 4096). An earlier guess that
+      # Grafana applies WAL only at database *creation* was tested and **refuted**.
+      #
+      # It is kept deliberately: harmless, it documents the intent, and it may be wired in
+      # a later Grafana — but **do not reason about this service's concurrency as though
+      # WAL were on**. ⚠️ The image is `:latest` (core#1478), so which of these settings
+      # works is a property of whatever that resolves to, and can change with no diff.
+      #
+      # Both option names were read from the `[database]` section of the `grafana.ini`
+      # shipped inside the running image (13.1.0), lines 192 and 201, with a nonsense
+      # option as the negative control — not from documentation for some other version.
       GF_DATABASE_WAL: "true"
       GF_DATABASE_QUERY_RETRIES: "3"
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}

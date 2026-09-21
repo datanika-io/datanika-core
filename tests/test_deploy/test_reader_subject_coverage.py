@@ -145,8 +145,29 @@ def _log(info: str, gating: str, specs: dict[str, str] | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sso_log(sso: str, info: str, specs: dict[str, str] | None) -> str:
+    """An `e2e-sso` log — and one that ALSO carries an informational line, on purpose.
+
+    Real SSO logs carry no `INFORMATIONAL_RESULT=`. This fake puts one in with a **different**
+    value so the two tiers can be told apart: a reader that follows the job's own tier grades
+    from `sso`, and one that hardcodes the informational tier grades from `info` (core#1468).
+    """
+    lines = [
+        f"2026-09-17T08:23:59.1030364Z SSO specs outcome: success / job status: success / "
+        f"verdict: {sso}",
+        f"2026-09-17T08:24:01.0000000Z INFORMATIONAL_RESULT={info}",
+    ]
+    for name, verdict in (specs or {}).items():
+        lines.append(f"2026-09-17T08:24:05.0000000Z INFORMATIONAL_SPEC_RESULT={name}:{verdict}")
+    return "\n".join(lines) + "\n"
+
+
 class FakeActions:
     """The reader's `_gh` / `_gh_log_or_none` seam, serving one CI run per commit."""
+
+    #: The job name the fake serves. `collect` matches on a substring and derives the tier from
+    #: it, so this is what decides which tier the reader should be reading.
+    job_name = "staging / e2e-staging"
 
     def __init__(self, blocks: list[tuple[str, str, dict[str, str] | None]]) -> None:
         self.runs: list[dict] = []
@@ -175,7 +196,7 @@ class FakeActions:
                 "jobs": [
                     {
                         "id": rid * 10,
-                        "name": "staging / e2e-staging",
+                        "name": self.job_name,
                         "status": "completed",
                         "conclusion": "success",
                     }
@@ -347,3 +368,140 @@ def test_the_two_lists_do_not_overlap() -> None:
 def test_every_listed_reader_still_exists(name: str) -> None:
     """A census naming a deleted file is a census of nothing."""
     assert (ROOT / name).is_file(), name
+
+
+# ── core#1468's two residuals, both of them "report what you could see" ───────────────────────
+
+
+class SsoFakeActions(FakeActions):
+    """The same seam, serving an `e2e-sso` job whose log carries BOTH tiers' verdict lines."""
+
+    job_name = "e2e-sso"
+
+    def __init__(self, blocks: list[tuple[str, str, dict[str, str] | None]]) -> None:
+        super().__init__(blocks)
+        for i, (sso, info, specs) in enumerate(blocks):
+            self.logs[(1000 + i) * 10] = _sso_log(sso, info, specs)
+
+
+def _run_job(monkeypatch, capsys, fake: FakeActions, job: str, *argv: str) -> tuple[int, str]:
+    monkeypatch.setattr(streak, "_gh", fake.gh)
+    monkeypatch.setattr(streak, "_gh_log_or_none", fake.log)
+    code = streak.main(["--job", job, "--branch", "dev", *argv])
+    return code, capsys.readouterr().out
+
+
+#: 🚨 **The shape is the whole test, and my first draft got it wrong in both directions.**
+#: With per-spec lines on EVERY run, `classify_for_spec` takes its `if per_spec:` branch and the
+#: tier is never read. With them on NO run, membership is empty and the core#1480 gate refuses
+#: before the tier is read. **Either way the tier choice is invisible and the guard is vacuous** —
+#: which is what the mutation table said, and nothing else would have.
+#:
+#: So: one oldest run that grades the spec directly, establishing membership for the window,
+#: then tier-only runs that only the tier branch can grade. The two tiers disagree in the loud
+#: direction — SSO red, informational green — so reading the wrong one turns a red tier into a
+#: three-green streak.
+SSO_RED_INFO_GREEN = [
+    ("clean", "success", {INCUMBENT: "success"}),
+    ("specs_failed", "success", None),
+    ("specs_failed", "success", None),
+    ("specs_failed", "success", None),
+]
+#: The staging mirror: informational green, gating red, same shape.
+INFO_GREEN_GATING_RED = [
+    ("success", "clean", {INCUMBENT: "success"}),
+    ("success", "gating_failed", None),
+    ("success", "gating_failed", None),
+    ("success", "gating_failed", None),
+]
+
+
+class TestTheSpecBranchReadsItsOwnJobsTier:
+    """core#1468 residual 1. `--spec` hardcoded the informational tier whatever `--job` said.
+
+    Observed: against `e2e-sso` — which is the **default** `--job` — no informational line
+    exists, so every run graded `UNREADABLE`, including specs that genuinely run there.
+    **The latent half is worse and is what these arms pin:** on a log that carries both, the old
+    code attributed the *other tier's* verdict to the spec — a confident wrong answer rather than
+    a visible absence.
+    """
+
+    def test_an_sso_job_takes_the_sso_tiers_red(self, monkeypatch, capsys) -> None:
+        fake = SsoFakeActions(SSO_RED_INFO_GREEN)
+        code, out = _run_job(monkeypatch, capsys, fake, "e2e-sso", "--spec", INCUMBENT)
+        assert "  FAIL" in out, (
+            "the SSO tier is `specs_failed` on the three newest runs; no FAIL means the spec was "
+            f"graded from some other tier's line (core#1468)\n{out}"
+        )
+        assert "verdict        : graduate" not in out, (
+            "reading the informational tier here turns a red SSO tier into a three-green streak "
+            "— the direction that matters"
+        )
+        assert code != 0
+
+    def test_control_a_staging_job_still_takes_the_informational_tiers_green(
+        self, monkeypatch, capsys
+    ) -> None:
+        """The false-positive control, and it must be green before and after.
+
+        Same shape, opposite job. A fix that simply stopped reading the informational tier — or
+        that read the gating tier for everything — scores identically on the arm above and reds
+        here.
+        """
+        fake = FakeActions(INFO_GREEN_GATING_RED)
+        code, out = _run_job(monkeypatch, capsys, fake, "e2e-staging", "--spec", INCUMBENT)
+        assert "  FAIL" not in out, f"the gating tier's red leaked into a spec question\n{out}"
+        assert "verdict        : graduate" in out and code == 0
+
+    def test_the_observed_half_an_sso_log_carries_no_per_spec_lines_at_all(
+        self, monkeypatch, capsys
+    ) -> None:
+        """What a real `e2e-sso` window does: no run grades specs, so the subject is refused.
+
+        This is the half core#1468 was filed about. It is not the tier discriminator — it passes
+        whichever tier is read — and it is kept separate for exactly that reason.
+        """
+        fake = SsoFakeActions([("clean", "success", None)] * 3)
+        code, out = _run_job(monkeypatch, capsys, fake, "e2e-sso", "--spec", INCUMBENT)
+        assert f"verdict        : {MEMBERSHIP_UNKNOWN}" in out
+        assert code == 2
+
+
+class TestTheSummaryDoesNotCallAnUnreadableRunMeasured:
+    """core#1468 residual 2.
+
+    `measured` groups PASS, FAIL **and UNREADABLE** — right for the streak, which all three
+    block or advance, and wrong as a word printed at a reader: an `UNREADABLE` run is precisely
+    one that could not be read. The old line read `runs read: N (measured: N)` beside
+    `unmeasured: 0 of N (0%)` on a window where **nothing** had been read.
+    """
+
+    def test_the_breakdown_names_each_class(self, monkeypatch, capsys) -> None:
+        fake = FakeActions([("success", "clean", {INCUMBENT: "success"})] * 3)
+        _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging", "--spec", INCUMBENT)
+        assert "a reading on 3 (3 pass / 0 fail)" in out, out
+        assert "no reading on 0 (0 unmeasured, 0 unreadable)" in out, out
+
+    def test_an_unreadable_window_is_not_reported_as_read(self, monkeypatch, capsys) -> None:
+        """The exact shape core#1468 was filed about, with the numbers that made it misleading."""
+        fake = FakeActions([("unparseable-token", "clean", None)] * 4)
+        _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging")
+        assert "a reading on 0 (0 pass / 0 fail)" in out, out
+        assert "no reading on 4 (0 unmeasured, 4 unreadable)" in out, out
+        # And the older blindness line still says 0%, which is correct for what IT names —
+        # the two lines together are what stop that 0% reading as "the window was fine".
+        assert "unmeasured     : 0 of 4 runs (0%)" in out, out
+
+    def test_control_a_mixed_window_splits_correctly(self, monkeypatch, capsys) -> None:
+        """A guard that printed zeroes everywhere would pass both arms above."""
+        fake = FakeActions(
+            [
+                ("success", "clean", None),
+                ("failure", "clean", None),
+                ("unknown", "clean", None),
+                ("unparseable-token", "clean", None),
+            ]
+        )
+        _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging")
+        assert "a reading on 2 (1 pass / 1 fail)" in out, out
+        assert "no reading on 2 (1 unmeasured, 1 unreadable)" in out, out

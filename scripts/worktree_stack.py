@@ -27,8 +27,10 @@ that is not isolated. It never parses compose YAML. It reads compose's own rende
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import re
+import socket
 import sys
 from pathlib import Path
 
@@ -182,6 +184,75 @@ def check(full: dict, agent: str, offset: int) -> tuple[list[str], list[str]]:
     return report, problems
 
 
+# A bind can fail for two reasons that docker reports with one sentence, and they need
+# opposite responses (core#1481).
+#
+# Already held — very often by THIS stack, already up. Refusing on it would make a live
+# stack impossible to re-`up`, which is worse than the defect. ⚠️ The POSIX constant is not
+# enough on Windows: the value observed there is 10048 (WSAEADDRINUSE) while
+# `errno.EADDRINUSE` is 100, so comparing against the constant alone silently misses it.
+IN_USE_ERRNOS = frozenset({errno.EADDRINUSE, 10048, 98})
+# The OS refuses the port outright. On Windows these are WinNAT's reserved ranges
+# (`netsh interface ipv4 show excludedportrange protocol=tcp`), and they MOVE BETWEEN
+# REBOOTS — so this appears and disappears with nothing in the repository changing.
+RESERVED_ERRNOS = frozenset({errno.EACCES, 13, 10013})
+
+
+def probe_bind(host_ip: str, port: int) -> int | None:
+    """Return the errno if this host port cannot be bound, or ``None`` if it can.
+
+    Binds and closes immediately; never listens, so it cannot answer a request or be
+    mistaken for the service. ``host_ip`` is whatever the rendering publishes on.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind((host_ip or "127.0.0.1", port))
+        return None
+    except OSError as failure:
+        return failure.errno
+    finally:
+        sock.close()
+
+
+def unbindable(full: dict, probe=None) -> list[str]:
+    """Host ports the OS will REFUSE, as distinct from ports merely in use.
+
+    Returns one problem per refused port — **not** stopping at the first, because docker
+    reports only the port it trips on first and that is what made this take two passes to
+    diagnose.
+
+    ``probe`` is injected so the reserved-port arm can be tested on any machine. A test
+    that bound real sockets would never execute that arm on a runner where every port is
+    free, leaving the guard green everywhere and unable to fail on the one host it exists
+    for.
+    """
+    probe = probe or probe_bind
+    problems: list[str] = []
+    for name in sorted(full.get("services") or {}):
+        for port in _published((full["services"] or {})[name]):
+            published = int(port["published"])
+            host_ip = port.get("host_ip") or "127.0.0.1"
+            failure = probe(host_ip, published)
+            if failure is None or failure in IN_USE_ERRNOS:
+                continue
+            if failure in RESERVED_ERRNOS:
+                problems.append(
+                    f"{name}: the OS refuses host port {published} (errno {failure}); it is "
+                    f"inside a reserved range, so `up` would start some services and die on "
+                    f"this one. List the ranges with "
+                    f"`netsh interface ipv4 show excludedportrange protocol=tcp` — they are "
+                    f"WinNAT's and move between reboots. Port {published}"
+                )
+            else:
+                problems.append(
+                    f"{name}: host port {published} could not be bound and the reason is not "
+                    f"recognised (errno {failure}). Refusing rather than guessing — see "
+                    f"`netsh interface ipv4 show excludedportrange protocol=tcp`. "
+                    f"Port {published}"
+                )
+    return problems
+
+
 def _stdin_json() -> dict:
     data = sys.stdin.buffer.read()
     if not data.strip():
@@ -213,6 +284,11 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.write(overlay(document, args.agent, args.offset))
             return 0
         report, problems = check(document, args.agent, args.offset)
+        # core#1481. A port the OS refuses outright is not an isolation defect, but it has
+        # the same consequence and must be caught in the same place: BEFORE `up` starts
+        # anything. A pre-flight nothing calls is the same bug one level up, and
+        # `TestTheCheckActuallyRunsIt` exists because that is invisible from the function.
+        problems = problems + unbindable(document)
     except RefusalError as refusal:
         print(f"REFUSED: {refusal}", file=sys.stderr)
         return 1

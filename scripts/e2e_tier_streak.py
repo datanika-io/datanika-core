@@ -579,6 +579,13 @@ class Reading:
     span: int
     gaps: int
     state: str
+    #: The classes, counted separately (core#1468). `measured` groups PASS, FAIL **and
+    #: UNREADABLE**, which is right for the streak arithmetic — all three block or advance it —
+    #: and wrong as a word to print at a reader, because an UNREADABLE run is precisely one that
+    #: could not be read. The summary prints these instead; `measured` keeps its meaning.
+    passed: int = 0
+    failed: int = 0
+    unreadable: int = 0
     #: The worst run of consecutive UNMEASURED runs anywhere in the window (core#1256).
     #: `trailing_` is "are we blind RIGHT NOW"; `longest_` is "did we go blind at all since
     #: the last look" -- and a daily watchdog needs the second, because a gap that has since
@@ -664,6 +671,9 @@ class Reading:
             span=span,
             gaps=gaps,
             state=state,
+            passed=classes.count(PASS),
+            failed=classes.count(FAIL),
+            unreadable=classes.count(UNREADABLE),
             longest_unmeasured=longest_unmeasured,
             trailing_unmeasured=trailing_unmeasured,
         )
@@ -981,9 +991,16 @@ def collect(
                 "where": where,
                 "gating": gating,
                 "per_spec": parse_spec_verdicts(lines) if spec is not None else {},
-                "info": parse_verdict_line(lines, tier="informational")
-                if spec is not None
-                else None,
+                # core#1468: **this tier used to be hardcoded `informational`, whatever `--job`
+                # said.** The non-spec branch above has always named the tier from the job; the
+                # spec branch did not, so `--job e2e-sso --spec X` asked an SSO log for a line
+                # only `e2e-staging` prints. It read `None` and graded every run UNREADABLE —
+                # including specs that genuinely run in that job — and `--job` DEFAULTS to
+                # `e2e-sso`, so the default per-spec invocation was the broken one.
+                # 🔑 The latent half is worse than the observed one: had an SSO log ever carried
+                # an `INFORMATIONAL_RESULT=` line, this would have attributed **another tier's
+                # verdict** to the spec rather than failing to find one.
+                "tier_verdict": parse_verdict_line(lines, tier=tier) if spec is not None else None,
             }
         )
 
@@ -1003,8 +1020,8 @@ def collect(
             klass = LOCAL
             token = LOCAL_VERDICT
         elif spec is not None:
-            klass = classify_for_spec(spec, r["per_spec"], r["info"], membership=membership)
-            token = r["per_spec"].get(spec, "absent") if r["per_spec"] else r["info"]
+            klass = classify_for_spec(spec, r["per_spec"], r["tier_verdict"], membership=membership)
+            token = r["per_spec"].get(spec, "absent") if r["per_spec"] else r["tier_verdict"]
         else:
             klass = classify_verdict(r["verdict"], r["specs"])
         out.append(RunReading(r["created"], r["sha"], klass, token, r["gating"]))
@@ -1096,7 +1113,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"look-back      : the {args.runs} newest push runs, of every workflow")
     print(f"oldest run read: {history[0].created if history else 'none'}")
-    print(f"runs read      : {r.total}  (measured: {r.measured})")
+    # core#1468. `(measured: N)` counted UNREADABLE runs as measured — correct for the streak,
+    # which they block, and wrong at a reader, for whom "measured" is the opposite of what an
+    # unreadable run is. Name the classes instead of grouping them under the reassuring word.
+    no_reading = r.total - r.passed - r.failed
+    print(
+        f"runs read      : {r.total}   a reading on {r.passed + r.failed} "
+        f"({r.passed} pass / {r.failed} fail)   no reading on {no_reading} "
+        f"({r.total - r.measured} unmeasured, {r.unreadable} unreadable)"
+    )
     # core#1480: the subject's own population, printed BEFORE the verdict, because a verdict
     # about a spec this window never saw is not a weaker reading — it is a different question.
     for line in coverage.render():

@@ -126,7 +126,20 @@ KEYFILE="$KEYDIR/loadtest-keys.txt"
 say "seed: minting $KEYS read-scoped keys on staging"
 docker exec -i datanika-staging-app /app/.venv/bin/python - "$KEYS" \
   < "$(dirname "$0")/seed_loadtest_org.py" > "$KEYFILE" 2> "$OUT/seed.err"
-MINTED=$(grep -c . "$KEYFILE" 2>/dev/null || echo 0)
+# 🔴 Defect 6 (core#778), and the worst of the six because it disarmed the guard below.
+# This was `$(grep -c . "$KEYFILE" || echo 0)`. `grep -c` PRINTS its count and exits 1
+# when the count is zero, so on the failure path the `||` fired too and MINTED became
+# the two-line string "0
+0". The comparison then died with "integer expression
+# expected" -- it did not refuse, it ERRORED -- and the run was stopped two lines later
+# only because `set -u` tripped on an unbound CEIL. Had CEIL carried a default, this
+# harness would have gone on to load-test staging with ZERO keys and reported a number.
+#
+# A guard that errors is not a guard. `|| :` keeps the exit status quiet without adding
+# a second line, and the ${MINTED:-0} covers grep being absent entirely.
+MINTED=$(grep -c . "$KEYFILE" 2>/dev/null || :)
+MINTED=${MINTED:-0}
+case "$MINTED" in (*[!0-9]*|"") say "REFUSING: minted count is not a number: $(printf %q "$MINTED")"; rm -rf "$KEYDIR"; exit 15 ;; esac
 say "seed: minted=$MINTED (requested $KEYS)"
 if [ "$MINTED" -lt "$KEYS" ]; then
   say "REFUSING: seeder produced $MINTED of $KEYS keys — the ceiling would be lower than intended"

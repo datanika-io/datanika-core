@@ -183,6 +183,52 @@ and in the core promotion body — and it did not help.** What was missing was a
 of acting*, which is what the gate at the top of this section now is. Second instance in two days
 after [cloud#151]; the first one is why the constraint was written down at all.
 
+**5. The pair's blast window runs in BOTH directions, and its own PRs are not the only casualties
+(measured twice on 2026-09-21, within three hours).** Reasons 1–4 are about promoting. This one is
+about the ~20 minutes while an atomic cross-repo pair is **half-merged into `dev`**, and it bites
+work that has nothing to do with the pair.
+
+The window on 2026-09-21:
+
+| | |
+|---|---|
+| `cloud#248` merged — 13 ratchet arms removed from cloud `dev` | **11:42:34Z** |
+| `core#1484` merged — the walker fix those arms depend on | **12:02:50Z** |
+
+Two casualties, in opposite directions:
+
+| | what ran, and when | what it looked like |
+|---|---|---|
+| **cloud's own CI** on its promotion head, 11:42:36Z | cloud `dev` tested against a core `dev` that did **not yet** have the fix | `test: failure`, 13 failed — *"a credential SURVIVED redaction"*, indistinguishable from a premature ratchet removal |
+| **core PRs `#1491` and `#1492`**, `cloud-suite` at 11:57 and 11:54 | core PR branches tested against a cloud `dev` that had **already** dropped its arms | a **required** check red, so neither PR could enter the merge queue at all |
+
+🔑 **Both reds were TRUE when they ran and false minutes later.** A red that outlives its cause is
+indistinguishable, from the conclusion alone, from a red that describes a real regression — and the
+tempting reading ("someone shipped a broken ratchet") aims a false accusation at whoever merged.
+**What separates them is two timestamps and a content control**, not judgement about whose work it
+is. Here: `SECRET_CONTAINER_KEYS` read **3 on core `dev`, 0 on core `master`**.
+
+🚨 **Recovery differs by PR, and this is the part that cost a wasted cycle.** Ask whether *that
+branch* contains the fix — `gh api repos/<r>/compare/<fix-sha>...<pr-head> --jq .status`:
+
+| the branch | reading | recovery |
+|---|---|---|
+| **contains** the fix (`ahead` / `identical`) | the red is a **fossil** | `gh run rerun --failed` on the **same head** |
+| **does not** (`behind` / `diverged`) | the red is **CURRENT AND CORRECT** for that branch | **rebase** — `gh pr update-branch <n> --rebase` |
+
+On 2026-09-21 `#1491` was `ahead=4, behind=0` and a re-run cleared it; `#1492` was **`diverged`**
+(cut from a commit predating the fix) and **its re-run failed again** — re-running can never import
+a commit the branch does not have. ⚠️ **A re-run that fails a second time is evidence about the
+branch, not about the tooling.**
+
+⚠️ **Never recover either case with an empty commit.** It moves the head and restarts the staging
+cycle, which is usually the thing everyone is waiting on.
+
+⚠️ **And do not read "still waiting" as "waiting on something that can still arrive."** A promoter
+holding for these PRs to land would have waited indefinitely: they were wedged on a required check
+that no amount of time would clear. The fix commit was already an **ancestor of `dev`'s head**, so
+the promotion never needed them — `compare <fix-sha>...<dev-head>` answers that in one call.
+
 **Corollary for issue closure:** a cloud fix's issues close after the **core** deploy verifies it on
 the serving container, not when cloud `master` moves. Use `refs #N` in a cloud promotion body.
 

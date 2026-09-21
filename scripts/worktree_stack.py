@@ -91,12 +91,20 @@ def _published(service: dict) -> list[dict]:
     return [p for p in service.get("ports") or [] if isinstance(p, dict) and p.get("published")]
 
 
-def overlay(base: dict, agent: str, offset: int) -> str:
-    """A compose overlay: every container renamed, every published port moved into the band."""
+def overlay(base: dict, agent: str, offset: int, probe=None) -> str:
+    """A compose overlay: every container renamed, every published port moved into the band.
+
+    ⚠️ ``probe`` is **opt-in and means something different here than in ``unbindable``**:
+    ``None`` leaves every port at ``natural = published + offset``, which is the pure form
+    every existing caller and test relies on. Pass a probe (the CLI passes ``probe_bind``)
+    to additionally relocate ports this host refuses — see ``allocate_ports``.
+    """
     project = f"{PROJECT_PREFIX}{agent}"
     services = base.get("services") or {}
     if not services:
         raise RefusalError("the rendered base configuration has no services")
+    # None -> identity, so the pure form is byte-for-byte what it always was.
+    resolved = allocate_ports(base, offset, probe=probe) if probe is not None else {}
     lines = [
         f"# scripts/worktree_stack.py overlay for '{agent}' (core#1197).",
         "# Streamed to compose on stdin and never written to disk.",
@@ -117,6 +125,7 @@ def overlay(base: dict, agent: str, offset: int) -> str:
                 raise RefusalError(
                     f"{name}: host port {port['published']} + {offset} exceeds 65535"
                 )
+            published = resolved.get(published, published)
             protocol = port.get("protocol") or "tcp"
             suffix = "" if protocol == "tcp" else f"/{protocol}"
             lines.append(f'      - "127.0.0.1:{published}:{port["target"]}{suffix}"')
@@ -253,6 +262,77 @@ def unbindable(full: dict, probe=None) -> list[str]:
     return problems
 
 
+def allocate_ports(base: dict, offset: int, probe=None) -> dict[int, int]:
+    """Map each natural host port to one this host will actually let us bind (core#1481).
+
+    Returns ``{natural: resolved}``. A port the OS refuses outright is moved **inside the
+    department's band**, so isolation is preserved: leaving the band is the cross-agent
+    collision this module exists to prevent, and ``--port-offset`` cannot help because it
+    selects another department's whole band.
+
+    🔑 **The two halves are deliberately not symmetric.**
+
+    * **reserved (``EACCES``)** — the OS will never allow it. Relocate.
+    * **in use (``EADDRINUSE``)** — very often *this stack, already up*. **Keep it.**
+      Relocating here would hand a running stack a new set of ports on every ``up``, which
+      breaks the re-``up`` the pre-flight was careful to preserve.
+
+    ⚠️ **Nothing here encodes a range.** WinNAT's reserved ranges move between reboots, so
+    the host is asked every run. A hardcoded range would pass against today's values and
+    fail the moment they move — which is the failure this function exists to survive.
+    """
+    probe = probe or probe_bind
+    services = base.get("services") or {}
+    natural: list[int] = []
+    for name in sorted(services):
+        for port in _published(services[name]):
+            want = int(port["published"]) + offset
+            if want > 65_535:
+                raise RefusalError(
+                    f"{name}: host port {port['published']} + {offset} exceeds 65535"
+                )
+            natural.append(want)
+
+    answers: dict[int, int | None] = {}
+
+    def refused(port: int) -> int | None:
+        """Ask once per port. A second answer could differ, which would make the mapping
+        non-deterministic inside a single run."""
+        if port not in answers:
+            answers[port] = probe("127.0.0.1", port)
+        return answers[port]
+
+    low = offset
+    high = offset + BAND - 1
+    # Every natural port is spoken for by whoever owns it, even if that service has not
+    # started yet: a candidate that is free *now* because its owner is not up is not free.
+    spoken_for = set(natural)
+    resolved: dict[int, int] = {}
+
+    for want in natural:
+        failure = refused(want)
+        if failure is None or failure in IN_USE_ERRNOS:
+            resolved[want] = want
+            continue
+        replacement = None
+        # Deterministic scan: upward from the natural port, wrapping inside the band.
+        for candidate in [*range(want + 1, high + 1), *range(low, want)]:
+            if candidate in spoken_for:
+                continue
+            if refused(candidate) is None:
+                replacement = candidate
+                break
+        if replacement is None:
+            raise RefusalError(
+                f"no bindable host port left in the band {low}-{high} for {want}: every "
+                f"candidate is reserved by the OS or already taken. List the reserved "
+                f"ranges with `netsh interface ipv4 show excludedportrange protocol=tcp`."
+            )
+        resolved[want] = replacement
+        spoken_for.add(replacement)
+    return resolved
+
+
 def _stdin_json() -> dict:
     data = sys.stdin.buffer.read()
     if not data.strip():
@@ -281,7 +361,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         document = _stdin_json()
         if args.command == "overlay":
-            sys.stdout.write(overlay(document, args.agent, args.offset))
+            # core#1481. The CLI is the real-host path, so it asks the host: a port inside
+            # a reserved range is relocated within the band rather than published and left
+            # to fail halfway through `up`. The pure form (no probe) is still what the unit
+            # tests use.
+            sys.stdout.write(overlay(document, args.agent, args.offset, probe=probe_bind))
             return 0
         report, problems = check(document, args.agent, args.offset)
         # core#1481. A port the OS refuses outright is not an isolation defect, but it has

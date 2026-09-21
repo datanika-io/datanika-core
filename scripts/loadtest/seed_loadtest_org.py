@@ -45,23 +45,67 @@ def _die(msg: str, code: int = 1) -> None:
 
 
 def _guard_not_production(session) -> None:
-    """Refuse to run anywhere that looks like production.
+    """Refuse to run anywhere that is not POSITIVELY staging.
 
-    🚨 This is the single most important line in the file. April's load runs went at
-    production and left its database unusable for the better part of an hour. The check is
-    positive — it requires evidence that this IS staging — because "no evidence it is
-    production" is satisfied by a failed lookup.
+    🚨 The most important function in this file. April's load runs went at production and
+    left its database unusable for the better part of an hour. The check is **positive** — it
+    requires evidence that this IS staging — because "no evidence it is production" is
+    satisfied by a failed lookup.
+
+    🔴 **CORRECTED 2026-09-21, after the first real use. The original version could not tell
+    staging from production at all**, and that is worth more than the fix.
+
+    It tested for ``"staging"`` in ``settings.database_url`` or ``app_env``. Measured on the
+    box: **both** stacks report ``postgres:5432/datanika`` and an empty ``app_env``, because
+    each Compose project has its own network in which the hostname ``postgres`` resolves to
+    *that* project's database. The isolation is at the network layer and is invisible in the
+    URL. So the guard refused **both** — which is the safe direction, and is why nothing was
+    damaged — but it was not discriminating; it was failing closed on everything, and the
+    obvious "fix" for a guard that always refuses is to loosen it, which would have permitted
+    production.
+
+    Two independent signals are now required, both measured as actually differing:
+
+    ========================  ==============================  ==========================
+    signal                    staging                         production
+    ========================  ==============================  ==========================
+    ``settings.frontend_url`` ``staging-app.datanika.io``     ``app.datanika.io``
+    ``PADDLE_ENVIRONMENT``    ``sandbox``                     ``production``
+    ========================  ==============================  ==========================
+
+    ⚠️ **Both, not either.** One misconfigured value must not be able to unlock production, and
+    ``app.datanika.io`` does not contain ``staging`` so the first test is genuinely positive.
+
+    📎 The durable form of this is an explicit opt-in that only the staging manifest sets —
+    a value production has no reason to carry at all. That needs a deploy; these two are
+    properties the two environments already have, and they discriminate today.
     """
+    import os
+
     from datanika.config import settings
 
-    url = str(getattr(settings, "database_url", ""))
-    if "staging" not in url and "staging" not in str(getattr(settings, "app_env", "")):
-        where = url.split("@")[-1][:40]
+    frontend = str(getattr(settings, "frontend_url", "") or "")
+    paddle = os.environ.get("PADDLE_ENVIRONMENT", "")
+
+    if not is_staging(frontend, paddle):
         _die(
-            "REFUSING: this does not look like staging (no 'staging' in database_url or "
-            f"app_env). Seeding load-test keys anywhere else is forbidden. host={where!r}",
+            "REFUSING: this is not positively staging. Seeding load-test keys anywhere else "
+            f"is forbidden. frontend_url={frontend!r} PADDLE_ENVIRONMENT={paddle!r} "
+            "(staging must be a staging frontend_url AND paddle sandbox — both).",
             20,
         )
+
+
+def is_staging(frontend_url: str, paddle_environment: str) -> bool:
+    """The whole decision, as a pure function of two measured signals.
+
+    🔑 Pure and exported **so a test can drive it with the real values of BOTH environments**
+    rather than merely asserting that a guard exists somewhere. The predecessor of this guard
+    was "tested" by a check that it was present and called on both code paths — which it was,
+    and it still could not tell staging from production. **A guard never seen refusing the
+    thing it exists to refuse is not evidence.**
+    """
+    return "staging" in (frontend_url or "") and (paddle_environment or "") == "sandbox"
 
 
 def _org_and_admin(session):

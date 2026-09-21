@@ -860,6 +860,13 @@ class TestEveryTenantModelQueryIsOrgScoped:
             # 2. Deliberate platform-wide sweeps — these are supposed to see
             #    every tenant, and scoping them would break the feature.
             "maintenance_service.py::cleanup_orphaned_archives::UploadedFile",
+            # SPEC_RUN_CANCELLATION §3.1 — the hourly sweep closes runs whose worker never
+            # acknowledged a stop. A worker can die in any tenant, and an org-scoped read
+            # would leave every other tenant's run non-terminal forever: `wait_for_run`
+            # polls until terminal, so each stranded run burns every `?wait=true` client's
+            # full timeout. The org boundary is not weakened — the sweep writes only the
+            # run's own status, finished_at and logs, and touches no cross-tenant field.
+            "maintenance_service.py::reap_stuck_cancelling_runs::Run",
             "scheduler_integration.py::sync_all::Schedule",
             # core#648 — the dedicated scheduler process reconciles the APScheduler
             # job set from `schedules` across every tenant; an org-scoped read here

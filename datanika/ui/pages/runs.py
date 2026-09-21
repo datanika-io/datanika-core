@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.config import settings
+from datanika.models.run import RunStatus
 from datanika.ui.components.elt_nudge_card import elt_nudge_card
 from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
@@ -16,7 +17,8 @@ def filters_bar() -> rx.Component:
     return rx.hstack(
         rx.text(_t["runs.status_filter"], size="2"),
         rx.select(
-            ["pending", "running", "success", "failed", "cancelled"],
+            # Derived: a status the product can return must be findable by filter.
+            [s.value for s in RunStatus],
             value=RunState.filter_status,
             on_change=RunState.set_filter,
             placeholder=_t["common.all"],

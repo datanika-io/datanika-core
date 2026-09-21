@@ -103,7 +103,10 @@ def test_harness_the_held_run_is_stale_after_a_cross_session_cancel(factory, pen
         assert held.status == RunStatus.RUNNING, (
             "the held instance was refreshed, so nothing is stale"
         )
-        assert _final(factory, run_id).status == RunStatus.CANCELLED
+        # §3: the API's cancel of a RUNNING run records `cancelling`; the worker's own
+        # report is what settles it. What this arm is about is that the HELD instance is
+        # stale, which is unchanged.
+        assert _final(factory, run_id).status == RunStatus.CANCELLING
     finally:
         worker.close()
 

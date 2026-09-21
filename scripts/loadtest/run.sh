@@ -168,7 +168,17 @@ say "generator start"
 # script and died with "no exported functions in script" -- an error pointing at the JS
 # file, which parses fine and exports three symbols. The `docker exec -i` used by the
 # seeder above has it; this one did not. Nothing short of executing the harness finds it.
-docker run --rm -i --network host \
+# Defect 8 (core#778): the generator image runs as uid 12345 (`k6`), and KEYDIR is a
+# `mktemp -d` -- 0700, owned by root -- so the container could not stat the key file:
+#     GoError: stat /keys/loadtest-keys.txt: permission denied
+#
+# The obvious fix is `chmod 0755 $KEYDIR; chmod 0644 $KEYFILE`. REJECTED: that file holds
+# live staging API keys in cleartext, and this box has co-tenants (an Apache webdav vhost,
+# and the founder's VPN unit which is currently inactive but can be started at any time).
+# Widening host permissions on a secret to satisfy a container is the wrong trade when the
+# container can simply be told who to be. `--user 0:0` changes nothing outside this
+# ephemeral --rm container and leaves the key file readable only by root.
+docker run --rm -i --user 0:0 --network host \
   -v "$KEYDIR":/keys:ro -v "$OUT":/out \
   -e TARGET_BASE="$STAGING_BE" -e NEIGHBOUR_BASE="$PROD_BE" \
   -e KEYS_FILE=/keys/loadtest-keys.txt -e STAGES="$STAGES" \

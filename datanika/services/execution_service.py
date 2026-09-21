@@ -1,5 +1,6 @@
 """Execution service — run lifecycle management."""
 
+import logging
 from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 
@@ -7,10 +8,18 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, aliased
 
 from datanika.models.dependency import NodeType
-from datanika.models.run import Run, RunStatus
+from datanika.models.run import (
+    CANCEL_REQUESTED_RUN_STATUSES,
+    CANCELLABLE_RUN_STATUSES,
+    TERMINAL_RUN_STATUSES,
+    Run,
+    RunStatus,
+)
 from datanika.models.upload import Upload
 from datanika.models.user import MemberRole
 from datanika.services.authorization import assert_org_role
+
+logger = logging.getLogger(__name__)
 
 #: The decrypted connection configs of the run this context is executing (core#1460).
 _RUN_CONNECTION_CONFIGS: ContextVar[tuple[dict, ...]] = ContextVar(
@@ -68,7 +77,7 @@ def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
 
 
 def is_cancelled(run: Run) -> bool:
-    """Has this run already reached the one terminal state a later report must not undo?
+    """Has a stop been requested for this run, in either of the two forms it takes?
 
     core#657. ``POST /api/v1/runs/{id}/cancel`` returned 200 with ``status: cancelled``
     while the worker ran on and then called ``complete_run``, which set ``SUCCESS``
@@ -79,13 +88,17 @@ def is_cancelled(run: Run) -> bool:
     compare equal; identity would silently stop matching if this column ever round-trips as
     a bare string, and it would fail *open* — back to overwriting.
 
-    🚨 Deliberately only ``CANCELLED``. Whether a terminal ``SUCCESS`` or ``FAILED`` should
-    also be write-once is a real question — ``append_logs`` exists because post-completion
+    🚨 Deliberately only the two cancel statuses. Whether a terminal ``SUCCESS`` or ``FAILED``
+    should also be write-once is a real question — ``append_logs`` exists because post-completion
     work must not change status — but it is a wider contract change across call sites this
     did not audit, and core#657 AC2 asks for this one. Pinned by
     ``TestTheGuardIsNarrow::test_a_success_run_is_not_protected_by_this_change``.
+
+    ``CANCELLING`` joins ``CANCELLED`` here (`SPEC_RUN_CANCELLATION` §3): both mean the user has
+    asked to stop, and neither may be overwritten by an ordinary outcome. They differ only in
+    whether the worker has confirmed, which is :func:`_settle`'s job rather than this predicate's.
     """
-    return run.status == RunStatus.CANCELLED
+    return run.status in CANCEL_REQUESTED_RUN_STATUSES
 
 
 #: What a run that never reached its engine records, beside ``rows_loaded = 0`` (core#657 §7 2a).
@@ -115,12 +128,49 @@ def _transition_unless_cancelled(session: Session, org_id: int, run: Run, **valu
     """
     result = session.execute(
         update(Run)
-        .where(Run.id == run.id, Run.org_id == org_id, Run.status != RunStatus.CANCELLED)
+        .where(
+            Run.id == run.id,
+            Run.org_id == org_id,
+            Run.status.not_in(CANCEL_REQUESTED_RUN_STATUSES),
+        )
         .values(**values)
         .execution_options(synchronize_session=False)
     )
     session.refresh(run, attribute_names=list(values))
     return result.rowcount == 1
+
+
+def _settle(session: Session, org_id: int, run: Run, **values) -> bool:
+    """Finish a run: its own outcome, or ``CANCELLED`` if a stop was asked for first.
+
+    ``SPEC_RUN_CANCELLATION`` §3: *a run that was asked to stop ends `cancelled`, even if the work
+    happened to complete first.* Reporting `success` because we lost the race tells the user their
+    cancel did nothing, which is core#657's bug with better timing. What the run actually did is
+    still described honestly by ``rows_loaded`` and ``logs``, which the caller writes either way.
+
+    Two statements rather than one, because they are two different transitions and only the first
+    is conditional on *not* having been cancelled:
+
+    1. the ordinary outcome, refused when a stop was requested
+       (:func:`_transition_unless_cancelled`);
+    2. failing that, ``CANCELLING`` → ``CANCELLED``, which is the worker confirming the stop.
+
+    ⚠️ ``finished_at`` is stamped **here**, when the run reaches a terminal status — never when the
+    cancel was *requested* (§1b). A duration derived from a request-time stamp is wrong for exactly
+    the runs a user cares most about.
+
+    Returns whether the ordinary outcome was written.
+    """
+    if _transition_unless_cancelled(session, org_id, run, **values):
+        return True
+    session.execute(
+        update(Run)
+        .where(Run.id == run.id, Run.org_id == org_id, Run.status == RunStatus.CANCELLING)
+        .values(status=RunStatus.CANCELLED, finished_at=datetime.now(UTC))
+        .execution_options(synchronize_session=False)
+    )
+    session.refresh(run, attribute_names=["status", "finished_at"])
+    return False
 
 
 class ExecutionService:
@@ -251,7 +301,7 @@ class ExecutionService:
         status = session.execute(
             select(Run.status).where(Run.id == run_id, Run.org_id == org_id)
         ).scalar_one_or_none()
-        return status == RunStatus.CANCELLED
+        return status in CANCEL_REQUESTED_RUN_STATUSES
 
     def skip_if_cancelled(self, session: Session, org_id: int, run_id: int) -> bool:
         """The pre-flight checkpoint (``SPEC_RUN_CANCELLATION`` §7 **2a**, not 2b).
@@ -305,9 +355,7 @@ class ExecutionService:
         #
         # This method emits no hook: `run.*_completed` is announced by the TASKS, with the run's
         # real status read at that point (AC4, `announce_completion`).
-        _transition_unless_cancelled(
-            session, org_id, run, status=RunStatus.SUCCESS, finished_at=datetime.now(UTC)
-        )
+        _settle(session, org_id, run, status=RunStatus.SUCCESS, finished_at=datetime.now(UTC))
         run.rows_loaded = rows_loaded
         run.logs = _storable(logs)
         if bytes_processed is not None:
@@ -332,7 +380,7 @@ class ExecutionService:
         # core#657 AC2, same shape as `complete_run`: the error is recorded, the terminal
         # CANCELLED is not overwritten — decided in the database, and the announce below follows
         # what THIS write did rather than a second read that a cancel could land between.
-        cancelled = not _transition_unless_cancelled(
+        cancelled = not _settle(
             session, org_id, run, status=RunStatus.FAILED, finished_at=datetime.now(UTC)
         )
         run.error_message = error_message
@@ -399,9 +447,30 @@ class ExecutionService:
 
         Returns ``False`` without announcing when the run does not resolve within ``org_id`` —
         the tenancy predicate applies here as everywhere else.
+
+        🚨 **It also refuses a run that has not finished** (`SPEC_RUN_CANCELLATION` §3). A
+        ``run.*_completed`` event for a non-terminal run is a statement that is not true, and it
+        is not harmless: cloud's ``BILLING_POLICY`` scores every non-terminal status ``False``,
+        so announcing ``cancelling`` would meter **nothing** for a run whose partial data the
+        user keeps — option (b), the cancel-to-avoid-billing hole D2 rejects by name.
+
+        Every production path settles the run first (``complete_run`` / ``fail_run``, which turn
+        ``CANCELLING`` into ``CANCELLED``), so this refuses nothing that happens today. It is
+        here because *"a completion event cannot carry a non-terminal status"* was an assumption
+        held in another repository's comments, and that is exactly the shape core#657 was: a
+        correct gate handed a falsehood it could not check.
         """
         run = get_org_run(session, org_id, run_id)
         if run is None:
+            return False
+        if run.status not in TERMINAL_RUN_STATUSES:
+            logger.warning(
+                "Refusing to announce %s for run %s: status is %s, which is not terminal. "
+                "A completion event must describe a run that finished.",
+                event,
+                run_id,
+                getattr(run.status, "value", run.status),
+            )
             return False
 
         from datanika.hooks import announce
@@ -449,10 +518,21 @@ class ExecutionService:
             required=MemberRole.EDITOR,
             operation="cancel_run",
         )
-        if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
+        if run.status not in CANCELLABLE_RUN_STATUSES:
             return None
-        run.status = RunStatus.CANCELLED
-        run.finished_at = datetime.now(UTC)
+        # SPEC_RUN_CANCELLATION §3. A PENDING run has no worker, so the stop is complete the
+        # moment it is recorded and the run is terminal immediately. A RUNNING run does have
+        # one, and `cancelling` is the honest description until the worker confirms — see
+        # `_settle`, and §3.1's reaper for the worker that never does.
+        #
+        # ⚠️ `finished_at` is NOT stamped here for a run that is still going (§1b). It is
+        # stamped when the run reaches a terminal status. A second cancel is the same request
+        # arriving twice: it is idempotent and still returns the run (§5.2), not a 409.
+        if run.status == RunStatus.PENDING:
+            run.status = RunStatus.CANCELLED
+            run.finished_at = datetime.now(UTC)
+        elif run.status == RunStatus.RUNNING:
+            run.status = RunStatus.CANCELLING
         session.flush()
         return run
 

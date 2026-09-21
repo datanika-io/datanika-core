@@ -4,6 +4,8 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
+from datanika.models.run import RunStatus
+
 API_VERSION = "1.0.0"
 API_TITLE = "Datanika API"
 API_DESCRIPTION = (
@@ -47,7 +49,8 @@ _TS = {"type": "string", "format": "date-time", "nullable": True}
 
 _DBT_CMDS = ["build", "run", "test", "seed", "snapshot", "compile"]
 _MAT_TYPES = ["view", "table", "incremental", "ephemeral", "snapshot"]
-_RUN_STATUSES = ["pending", "running", "success", "failed", "cancelled"]
+#: Derived from the enum, so the published schema cannot omit a value the API returns.
+_RUN_STATUSES = [s.value for s in RunStatus]
 _NODE_TYPES = ["upload", "transformation", "pipeline"]
 _CHANNEL_TYPES = ["email", "slack", "telegram", "webhook"]
 _DIRECTIONS = ["source", "destination", "both"]

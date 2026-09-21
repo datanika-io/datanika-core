@@ -40,6 +40,7 @@ def run_maintenance_task() -> dict:
         cleanup_dbt_targets,
         cleanup_orphaned_archives,
         cleanup_orphaned_dlt_dirs,
+        reap_stuck_cancelling_runs,
     )
     from datanika.ui.state.base_state import get_sync_session
 
@@ -67,6 +68,9 @@ def run_maintenance_task() -> dict:
             from datanika.services.password_reset_service import PasswordResetService
 
             results["expired_reset_tokens"] = PasswordResetService.purge_expired(session)
+            # SPEC_RUN_CANCELLATION §3.1. A worker that dies mid-cancel leaves a run
+            # non-terminal forever, which strands every `?wait=true` client on it.
+            results["reaped_cancelling_runs"] = reap_stuck_cancelling_runs(session)
             session.commit()
     except Exception as exc:
         # Report a failure as a failure (core#709). This handler used to log and then fall

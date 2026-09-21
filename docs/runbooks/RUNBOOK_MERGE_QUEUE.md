@@ -202,7 +202,9 @@ before merging, but does not require a pull request author to update their pull 
 branch."* [core#904] recorded as **unsettled** whether leaving the `strict` checkbox ON
 reintroduces the livelock at queue-entry time.
 
-**It does not.** Measured on landing with `strict = true` and the queue active:
+**It does not** — but the measurement below has a scope limit that was found the hard way on
+2026-09-21, and you must read it before relying on this section. Measured on landing with
+`strict = true` and the queue active:
 
 | | |
 |---|---|
@@ -219,6 +221,48 @@ still there rather than silently absent.
 
 Corollary: **the `allow_update_branch` question is moot on a queued branch.** A PR with a
 stale base reads `CLEAN`, so GitHub has no reason to update it and nothing needs it to.
+
+### 🔴 Scope correction, 2026-09-21 — the measurement above holds; the generalisation drawn from it does not
+
+The table is not withdrawn. A PR one commit behind **whose required checks are green** does read
+`CLEAN`, does enqueue, and is rebased by the queue before testing. What that measurement never
+covered is the case where the staleness is *what makes a required check fail*.
+
+🔑 **The queue rebases ENTRIES. It cannot rebase a PR that cannot ENTER.** Entry requires
+mergeability; a PR held non-mergeable by a red required check never becomes an entry, so the rebase
+that would have fixed it never runs. **There is no mechanism by which it recovers on its own** — it
+is not slow, it is stopped, and the two look identical from the PR page.
+
+**Measured, twice, on 2026-09-21** — [core#1491] and [core#1492]. Both were based before
+[core#1484], and **`cloud-suite` is a cross-repo check**: it runs the private cloud tree against the
+core PR, and cloud `dev` had already dropped the 13 ratchet arms that the missing core commit
+replaces. Each PR's own staleness therefore produced a red *required* check, and both sat
+unmergeable — #1492 for roughly 50 minutes — while every other check was green and nothing looked
+broken.
+
+⚠️ **`mergeStateStatus` names a STATE, not a CAUSE.** `BEHIND` on such a PR reads as the ordinary
+cosmetic staleness the table above tells you to ignore, so waiting feels like the right response and
+is the wrong one. **Read the head SHA's check-runs before believing `BEHIND` explains a stall:**
+
+```bash
+gh pr view <n> --repo <r> --json headRefOid,mergeStateStatus,statusCheckRollup \
+  --jq '{head: .headRefOid[0:8], state: .mergeStateStatus,
+         red: [.statusCheckRollup[]? | select(.conclusion=="FAILURE") | .name]}'
+```
+
+A non-empty `red` means the stall has a cause the queue will never clear for you.
+
+**Recovery is a rebase, not a re-run.** A re-run cannot import a commit the branch does not have;
+#1492's re-run failed a second time before that was understood. The discriminator is one call —
+`gh api repos/<r>/compare/<fix-sha>...<pr-head> --jq .status` — and the full two-direction table is
+in [`RUNBOOK_DEV_TO_MASTER.md`](RUNBOOK_DEV_TO_MASTER.md) under the cross-repo pair's blast window.
+⚠️ **Never recover either case with an empty commit**: it moves the head and restarts the staging
+cycle, which is usually what everyone is waiting on.
+
+**What stays true, and the attribution matters:** `strict` is still not changed on either repo, and
+`strict` is still **not** what livelocks here. The livelock is owned by the **cross-repo required
+check** — a repo with no such check sees `CLEAN` exactly as the table records. The correction is to
+the scope of the claim, not to its subject.
 
 ---
 

@@ -57,15 +57,32 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "$STAGING_BE/healthz" || echo 000)
 code=$(curl -s -o /dev/null -w '%{http_code}' "$PROD_BE/healthz" || echo 000)
 [ "$code" = "200" ] || { say "REFUSING: production /healthz = $code — do not add load to a sick box"; exit 11; }
 
-say "preflight: no e2e-staging in flight (rule 2)"
-if docker ps --format '{{.Names}}' | grep -q 'datanika-staging-e2e'; then
-  say "REFUSING: an e2e-staging container is running"; exit 12
+say "preflight: no E2E suite in flight (rule 2)"
+# 🔴 CORRECTED 2026-09-21, on this harness's FIRST rehearsal. The pattern here was
+# `datanika-staging-e2e`, a name that does not exist. The real containers an E2E run brings
+# up are `e2e-authentik-server-1`, `-worker-1`, `-redis-1`, `-db-1` — measured while
+# `e2e-sso` was live against staging. **The guard matched nothing and would have let the
+# load test start on top of a running suite**, producing exactly the false gating red it was
+# written to prevent. A guard aimed at a guessed name is not a guard.
+E2E_RUNNING="$(docker ps --format '{{.Names}}' | grep -ciE '(^|-)e2e-|authentik|playwright' || true)"
+if [ "${E2E_RUNNING:-0}" -gt 0 ]; then
+  say "REFUSING: an E2E suite is running ($E2E_RUNNING container(s)) — added load would"
+  say "          produce a gating red indistinguishable from a real regression."
+  docker ps --format '          {{.Names}}' | grep -iE '(^|-)e2e-|authentik|playwright' | tee -a "$LOG"
+  exit 12
 fi
 
 # 🚨 core#1476: a staging image build starves Grafana's SQLite. Adding a load test on top of
 # one measures contention, not the app. Refuse rather than produce a number nobody can use.
-if pgrep -f 'buildkitd|docker-untar' >/dev/null 2>&1 && [ "$(uptime | sed 's/.*average: //' | cut -d, -f1 | tr -d ' ')" \> "3.0" ]; then
-  say "REFUSING: a build appears to be running and load is already above 3.0 — wait for a quiet box"
+#
+# ⚠️ The load comparison uses awk, not `[ "$a" \> "$b" ]`. That form compares STRINGS: a load
+# of "10.5" is lexicographically LESS than "3.0", so the original refused nothing at exactly
+# the load that matters most. Corrected in the same pass as the E2E pattern above.
+LOAD1="$(cut -d' ' -f1 /proc/loadavg)"
+BUILDING="$(ps -eo comm= | grep -cE '^(buildkitd|docker-untar)$' || true)"
+say "preflight: load1=$LOAD1 build-processes=$BUILDING"
+if [ "${BUILDING:-0}" -gt 0 ] && awk -v l="$LOAD1" 'BEGIN{exit !(l>3.0)}'; then
+  say "REFUSING: a build is running and load ($LOAD1) is already above 3.0 — wait for a quiet box"
   exit 13
 fi
 

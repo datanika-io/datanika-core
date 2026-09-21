@@ -18,6 +18,7 @@ ban and fails these instead.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -83,9 +84,66 @@ def test_the_runner_targets_staging_and_watches_the_neighbour():
     src = RUNNER.read_text(encoding="utf-8")
     assert "127.0.0.1:8100" in src, "staging's backend port is not the target"
     assert "8000" in src, "production is not sampled as the neighbour"
-    # The refusals, by the thing each one protects.
     assert "healthz" in src
-    assert "e2e" in src, "no refusal covering a concurrent e2e-staging run"
+
+
+def test_the_e2e_refusal_matches_the_containers_an_e2e_run_really_creates():
+    """🔴 Found on this harness's first rehearsal: the pattern was aimed at a guessed name.
+
+    It read `datanika-staging-e2e`, which does not exist. The containers an E2E run really
+    brings up — measured while `e2e-sso` was live against staging — are:
+
+        e2e-authentik-server-1, e2e-authentik-worker-1, e2e-authentik-redis-1, e2e-authentik-db-1
+
+    **The guard matched none of them and would have let a load test start on top of a running
+    suite**, producing exactly the false gating red it exists to prevent.
+
+    So this test drives the pattern against the real names rather than asserting the word
+    "e2e" appears somewhere in the script.
+    """
+    src = RUNNER.read_text(encoding="utf-8")
+    m = re.search(r"grep -ciE '([^']+)'", src)
+    assert m, "the E2E refusal no longer uses a greppable pattern"
+    pattern = m.group(1)
+
+    real = [
+        "e2e-authentik-server-1",
+        "e2e-authentik-worker-1",
+        "e2e-authentik-redis-1",
+        "e2e-authentik-db-1",
+    ]
+    for name in real:
+        assert re.search(pattern, name, re.IGNORECASE), (
+            f"the refusal pattern {pattern!r} does not match {name!r}, a container an E2E run "
+            f"actually creates"
+        )
+
+    # Negative control: it must NOT match the ordinary stack, or the harness can never run.
+    for name in ("datanika-staging-app", "datanika-app-b", "datanika-postgres", "datanika-grafana"):
+        assert not re.search(pattern, name, re.IGNORECASE), (
+            f"the refusal pattern {pattern!r} matches {name!r} — it would refuse every run"
+        )
+
+    # And the superseded pattern is shown unable to do the job.
+    assert not re.search("datanika-staging-e2e", real[0]), (
+        "control is malformed: the old pattern must be demonstrated not to match"
+    )
+
+
+def test_the_load_threshold_compares_numerically_not_as_strings():
+    """`[ "10.5" \\> "3.0" ]` is FALSE — string comparison, at exactly the load that matters.
+
+    The original refusal used that form, so a box at load 10.5 passed a check meant to stop it
+    at 3.0. Corrected to `awk`; pinned here because the shell form reads correct.
+    """
+    src = RUNNER.read_text(encoding="utf-8")
+    assert "awk" in src, "the load comparison is not numeric"
+    assert '\\> "3.0"' not in src and '\\> "3.0"' not in src, (
+        "the string-comparison form is back; 10.5 would compare as less than 3.0"
+    )
+    # Demonstrate the defect the fix removes, so the assertion above is not a bare taboo.
+    assert "10.5" < "3.0", "string comparison must be shown to get this wrong"
+    assert float("10.5") > float("3.0")
 
 
 def test_cleanup_is_verified_by_effect_not_merely_attempted():
@@ -106,20 +164,43 @@ def test_cleanup_is_verified_by_effect_not_merely_attempted():
 
 
 def test_the_seeder_refuses_anywhere_that_is_not_staging():
-    """🚨 The single most important line in the harness.
+    """🚨 The single most important behaviour in the harness — and it is tested by DRIVING it.
 
-    April's runs went at production and left its database unusable for ~an hour. The guard is
-    POSITIVE — it requires evidence that this IS staging — because "no evidence it is
-    production" is satisfied by a failed lookup.
+    April's runs went at production and left its database unusable for ~an hour.
+
+    🔴 **The previous version of this test asserted that a guard existed and was called on both
+    paths. It was, and it still could not tell staging from production** — both stacks report
+    `postgres:5432/datanika` and an empty `app_env`, because each Compose project resolves
+    `postgres` inside its own network. The guard refused *everything*, which is the safe
+    direction and why nothing was damaged, but this test could not have noticed the difference.
+    **A guard never seen refusing the thing it exists to refuse is not evidence.**
+
+    So the decision is now a pure function and this drives it with the **real measured values
+    of both environments**.
     """
-    src = SEEDER.read_text(encoding="utf-8")
-    assert "_guard_not_production" in src
-    assert src.count("_guard_not_production(session)") >= 2, (
-        "the production guard is not called on BOTH paths; revoke touches the same database "
-        "as mint and must be guarded identically"
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_seed_loadtest_org", SEEDER)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # Measured on the box, 2026-09-21.
+    assert mod.is_staging("https://staging-app.datanika.io", "sandbox") is True, (
+        "the guard refuses the real staging environment, so the harness cannot run at all"
     )
-    assert '"staging" not in url' in src or "'staging' not in url" in src, (
-        "the guard is not written as a positive requirement for 'staging'"
+    assert mod.is_staging("https://app.datanika.io", "production") is False, (
+        "🚨 the guard PERMITS the real production environment"
+    )
+
+    # Both signals are required: one misconfigured value must not unlock production.
+    assert mod.is_staging("https://app.datanika.io", "sandbox") is False
+    assert mod.is_staging("https://staging-app.datanika.io", "production") is False
+    # And absence is never staging.
+    assert mod.is_staging("", "") is False
+
+    src = SEEDER.read_text(encoding="utf-8")
+    assert src.count("_guard_not_production(session)") >= 2, (
+        "the guard is not called on BOTH paths; revoke touches the same database as mint"
     )
 
 

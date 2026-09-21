@@ -42,7 +42,19 @@ const BASE = __ENV.TARGET_BASE || 'http://127.0.0.1:8100';
 // The neighbour. Read-only, low rate, and deliberately a DIFFERENT origin: the founder's
 // condition on this test is that production must not be harmed, and the only honest way to
 // show that is to sample it throughout rather than to assert it afterwards.
-const NEIGHBOUR = __ENV.NEIGHBOUR_BASE || 'http://127.0.0.1:8000';
+// 🔴 No default. NEIGHBOUR_BASE points at the PRODUCTION backend, whose port alternates with
+// the blue/green colour (8000/8010), so any literal here is right half the time and silently
+// wrong the other half — and a neighbour sampled on the colour that serves no traffic reports
+// a reassuring number that means nothing. run.sh resolves it from the active vhost and passes
+// it in; if it is missing, that is a driver bug and this must say so rather than guess.
+const NEIGHBOUR = __ENV.NEIGHBOUR_BASE;
+if (!NEIGHBOUR) {
+  throw new Error(
+    'NEIGHBOUR_BASE is unset. It must be the CURRENTLY SERVING production backend, which ' +
+      'alternates 8000/8010 per deploy — run this through scripts/loadtest/run.sh, which ' +
+      'reads the colour from the active vhost, rather than invoking k6 directly.',
+  );
+}
 
 // Stages: "rate:duration,rate:duration,...". The default reproduces Run 9 exactly and then
 // continues past its top stage, which is gap 1 on the issue (Run 9 found no knee because 60

@@ -232,3 +232,106 @@ def test_the_guards_can_fail():
 
     # And the fixture is reading real files, or every test above is vacuous.
     assert len(k6) > 2000 and len(runner) > 2000 and len(seeder) > 2000
+
+
+# ======================================================================================
+# The serving colour — defect 4, found on the harness's FIRST REAL EXECUTION (core#622 class)
+# ======================================================================================
+#
+# `PROD_BE` was hardcoded to `http://127.0.0.1:8000`. The production backend port ALTERNATES
+# on every deploy (8000 blue / 8010 green), and the 2026-09-21 promotion had swapped prod to
+# green — so the preflight curl returned 000 and the harness refused to start with
+# "do not add load to a sick box" while production served 200 through Cloudflare throughout.
+#
+# The false refusal is the loud half. The quiet half is worse: mid-swap both colours are
+# briefly up, so a hardcoded port can resolve to the colour that is NOT serving, and the
+# neighbour scenario would sample a container taking no real traffic. The founder's label on
+# every result from this harness is "a floor under NEIGHBOUR LOAD"; measured against the wrong
+# process that label is not imprecise, it is unearned.
+
+
+def _colour_resolution_snippet() -> str:
+    """The real block out of run.sh, with `say` stubbed so it can be driven directly."""
+    text = (ROOT / "scripts" / "loadtest" / "run.sh").read_text(encoding="utf-8")
+    start = text.index('ACTIVE_CONF="${ACTIVE_CONF:-')
+    end = text.index('say "preflight: serving colour', start)
+    end = text.index("\n", end) + 1
+    return "say() { printf '%s\n' \"$*\"; }\n" + text[start:end]
+
+
+@pytest.mark.parametrize(
+    ("conf_body", "expect_port", "expect_colour"),
+    [
+        ("ProxyPass / http://127.0.0.1:8010/\n", "8010", "green"),
+        ("ProxyPass / http://127.0.0.1:8000/\n", "8000", "blue"),
+    ],
+)
+def test_the_serving_colour_is_read_from_the_vhost_not_assumed(
+    tmp_path: Path, conf_body: str, expect_port: str, expect_colour: str
+) -> None:
+    """Drive the real snippet against both colours; a hardcoded value cannot pass both."""
+    import shutil
+    import subprocess
+
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh unavailable")
+
+    conf = tmp_path / "datanika-prod-active.conf"
+    conf.write_text(conf_body, encoding="utf-8")
+
+    proc = subprocess.run(
+        ["sh", "-c", f'ACTIVE_CONF="{conf.as_posix()}"\n' + _colour_resolution_snippet()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"resolution refused a valid conf:\n{proc.stdout}{proc.stderr}"
+    assert expect_colour in proc.stdout, (
+        f"expected colour {expect_colour!r} for backend {expect_port}, got: {proc.stdout!r}"
+    )
+    assert expect_port in proc.stdout
+
+
+def test_an_unreadable_vhost_refuses_rather_than_defaulting(tmp_path: Path) -> None:
+    """A default here is a guess, and a guessed colour is how the neighbour reading lies."""
+    import shutil
+    import subprocess
+
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh unavailable")
+
+    missing = tmp_path / "nope.conf"
+    proc = subprocess.run(
+        ["sh", "-c", f'ACTIVE_CONF="{missing.as_posix()}"\n' + _colour_resolution_snippet()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 16, (
+        f"expected the documented refusal (exit 16), got {proc.returncode}:\n{proc.stdout}"
+    )
+    assert "cannot determine the serving colour" in proc.stdout
+
+
+def test_no_production_backend_port_is_hardcoded_in_the_harness() -> None:
+    """Either literal is right half the time, which is the whole defect."""
+    for name in ("run.sh", "k6_baseline.js"):
+        text = (ROOT / "scripts" / "loadtest" / name).read_text(encoding="utf-8")
+        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith(("#", "//")))
+        for literal in ("127.0.0.1:8000", "127.0.0.1:8010"):
+            assert literal not in code, (
+                f"{name} hardcodes {literal} outside a comment. The production backend port "
+                "alternates every deploy; read it from the active vhost instead."
+            )
+
+
+def test_the_generator_refuses_to_guess_a_neighbour() -> None:
+    """k6 invoked without a driver must fail loudly, not probe a possibly-dead port."""
+    js = (ROOT / "scripts" / "loadtest" / "k6_baseline.js").read_text(encoding="utf-8")
+    assert "const NEIGHBOUR = __ENV.NEIGHBOUR_BASE;" in js, (
+        "NEIGHBOUR_BASE must have no fallback value"
+    )
+    assert "throw new Error(" in js, (
+        "an unset NEIGHBOUR_BASE must throw. Silently probing a default port produces a "
+        "neighbour figure that describes whichever colour happens to answer."
+    )

@@ -163,7 +163,12 @@ trap cleanup EXIT
 
 # ── run ───────────────────────────────────────────────────────────────────────────────────
 say "generator start"
-docker run --rm --network host \
+# Defect 7 (core#778): `-i` is load-bearing and was missing. The k6 script is PIPED into
+# this command, but `docker run` does not attach stdin without it, so k6 received an EMPTY
+# script and died with "no exported functions in script" -- an error pointing at the JS
+# file, which parses fine and exports three symbols. The `docker exec -i` used by the
+# seeder above has it; this one did not. Nothing short of executing the harness finds it.
+docker run --rm -i --network host \
   -v "$KEYDIR":/keys:ro -v "$OUT":/out \
   -e TARGET_BASE="$STAGING_BE" -e NEIGHBOUR_BASE="$PROD_BE" \
   -e KEYS_FILE=/keys/loadtest-keys.txt -e STAGES="$STAGES" \

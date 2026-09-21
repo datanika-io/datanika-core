@@ -56,7 +56,24 @@ def grafana_env() -> dict[str, str]:
 
 
 def test_write_ahead_logging_is_on(grafana_env):
-    """Readers must stop blocking the writer. This is the structural half of the fix."""
+    """The setting must be declared — but ⚠️ it is INERT in Grafana 13.1.0.
+
+    🔴 An earlier version of this docstring called WAL "the structural half of the fix". That
+    was wrong and is corrected here rather than quietly deleted. **Measured 2026-09-21** on a
+    FRESH database created by this same image with `GF_DATABASE_WAL=true` and the container
+    stopped before reading: `PRAGMA journal_mode` -> **`delete`**, with a `grafana.db-journal`
+    present and no `-wal`/`-shm` (control: `PRAGMA page_size` -> 4096). Grafana accepts the
+    setting and reports it back as `wal = true` through `/api/admin/settings`; the database
+    file disagrees, and the file is what governs behaviour.
+
+    A prior guess — that Grafana applies WAL only at database *creation* — was tested and
+    **refuted** by that same probe.
+
+    The assertion stays because the setting is kept deliberately: harmless, it records the
+    intent, and it may be wired in a later Grafana. **What must not happen is someone reading
+    this service's concurrency as though WAL were on.** `test_a_query_that_hits_a_lock_retries`
+    guards the setting that is actually doing the work.
+    """
     assert "GF_DATABASE_WAL" in grafana_env, (
         "GF_DATABASE_WAL is absent, so Grafana falls back to wal=false — the default that "
         "produced 1370 SQLITE_BUSY errors and 176 false alerts on 2026-09-20 (core#1476)."
@@ -67,7 +84,29 @@ def test_write_ahead_logging_is_on(grafana_env):
 
 
 def test_a_query_that_hits_a_lock_retries(grafana_env):
-    """`query_retries` defaults to 0, which makes the FIRST lock fatal to an evaluation."""
+    """🔑 THIS is the setting that fixed the storm. `query_retries` defaults to **0**.
+
+    That default is why the 2026-09-20 log reached `[sqlstore.max-retries-reached]` at
+    `retry 1` — the first contended read ended the evaluation, and `execErrState: Alerting`
+    turned that into a Telegram alert.
+
+    **Under-load reading after the fix (2026-09-21), against a matched before-window:**
+
+    ======================  ==================  ==================
+    ..                      before              after
+    ======================  ==================  ==================
+    SQLITE_BUSY             123                 167
+    Failed to evaluate rule **20**              **0**
+    max-retries-reached     present             **0**
+    ======================  ==================  ==================
+
+    The locks did **not** go away; none of them became an error. Retry depths actually
+    reached: ``retry=0`` x101, ``retry=1`` x32, ``retry=2`` x1, against a ceiling of 3.
+
+    ⚠️ **The margin is one retry deep.** That burst was 167 lock events; the storm that
+    started this peaked at **419 per minute**. If this value is ever lowered, the failure
+    mode returns exactly as before.
+    """
     assert "GF_DATABASE_QUERY_RETRIES" in grafana_env, (
         "GF_DATABASE_QUERY_RETRIES is absent, so it defaults to 0 and a single contended "
         "read ends the evaluation with an error — which execErrState turns into an alert."

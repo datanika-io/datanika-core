@@ -4,6 +4,7 @@ Export/import connections, uploads, pipelines, and transformations as JSON.
 """
 
 import enum
+import json
 import re
 from datetime import UTC, datetime
 
@@ -17,7 +18,13 @@ from datanika.models.transformation import Materialization, Transformation
 from datanika.models.upload import Upload, UploadStatus
 from datanika.models.user import MemberRole, Organization
 from datanika.services.authorization import assert_org_role
-from datanika.services.connection_service import SECRET_CONFIG_KEYS, ConnectionService
+from datanika.services.connection_service import (
+    CONTAINER_STRUCTURE_KEYS,
+    SECRET_CONFIG_KEYS,
+    SECRET_CONTAINER_KEYS,
+    ConnectionService,
+    _json_structure,
+)
 from datanika.services.encryption import EncryptionService
 from datanika.services.pipeline_service import PipelineService
 from datanika.services.transformation_service import TransformationService
@@ -369,8 +376,44 @@ class BackupService:
         The key stays so the importer can tell "this was redacted" from "this
         connector has no such field" — which is what makes the round trip
         non-destructive.
+
+        **Descends, and redacts a credential container leaf by leaf** (cloud#244). An export file
+        is the one artifact that leaves the deployment, so it is redacted to the same depth as
+        every other consumer of a config: whatever :data:`SECRET_CONTAINER_KEYS` declares, at any
+        depth, whatever the inner key names are.
+
+        ⚠️ **Replacing the whole container is the obvious shape and it is the worse one.** The
+        container also holds ``type``, ``name`` and ``location`` — which auth scheme, which header
+        — and those are precisely what :meth:`_resolve_redactions` carries through a round trip.
+        Blanking the container removes the credential *and* the description of how to re-enter it,
+        so an import with nothing stored to carry forward leaves the user re-deriving the scheme
+        rather than retyping one value. Leaf by leaf removes exactly the secret.
         """
-        return {k: (REDACTED if k in SENSITIVE_KEYS else v) for k, v in config.items()}
+
+        def walk(node, within: bool, container: bool):
+            if isinstance(node, list):
+                return [walk(v, within, container) for v in node]
+            if not isinstance(node, dict):
+                return node
+            out = {}
+            for key, value in node.items():
+                opens = key in SECRET_CONTAINER_KEYS
+                held = container and key not in CONTAINER_STRUCTURE_KEYS
+                secret = within or key in SENSITIVE_KEYS or held
+                if opens and isinstance(value, dict | list):
+                    out[key] = walk(value, False, True)
+                elif opens and isinstance(value, str) and value:
+                    # `extra_headers` is a container stored as JSON text. Its *shape* is not the
+                    # secret; re-emitting the redacted shape keeps the round trip readable.
+                    parsed = _json_structure(value)
+                    out[key] = json.dumps(walk(parsed, False, True)) if parsed else REDACTED
+                elif secret:
+                    out[key] = REDACTED
+                else:
+                    out[key] = walk(value, False, False)
+            return out
+
+        return walk(config, False, False)
 
     @staticmethod
     def _resolve_redactions(config: dict, stored: dict | None) -> tuple[dict, bool]:
@@ -385,17 +428,34 @@ class BackupService:
 
         Returns ``(config, needs_credentials)``.
         """
-        resolved: dict = {}
-        needs_credentials = False
-        for key, value in config.items():
-            if isinstance(value, str) and value in _REDACTION_MARKERS:
-                if stored is not None and key in stored:
-                    resolved[key] = stored[key]
-                else:
-                    needs_credentials = True
-                continue
-            resolved[key] = value
-        return resolved, needs_credentials
+        needs = False
+
+        def walk(node: dict, had: dict | None) -> dict:
+            nonlocal needs
+            resolved: dict = {}
+            for key, value in node.items():
+                previous = had.get(key) if isinstance(had, dict) else None
+                if isinstance(value, str) and value in _REDACTION_MARKERS:
+                    # 🆕 cloud#244: a marker can now sit at any depth, because `_redact` descends.
+                    if previous is not None:
+                        resolved[key] = previous
+                    else:
+                        needs = True
+                    continue
+                if isinstance(value, dict):
+                    resolved[key] = walk(value, previous)
+                    continue
+                if key in SECRET_CONTAINER_KEYS and isinstance(value, str) and value:
+                    # A container stored as JSON text: descend into it, then re-emit the text.
+                    parsed = _json_structure(value)
+                    if parsed is not None:
+                        was = _json_structure(previous) if isinstance(previous, str) else None
+                        resolved[key] = json.dumps(walk(parsed, was))
+                        continue
+                resolved[key] = value
+            return resolved
+
+        return walk(config, stored), needs
 
     @staticmethod
     def export_backup(

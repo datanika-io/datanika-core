@@ -32,8 +32,9 @@ KEYS=161                  # Run 9's count. See the ceiling formula in k6_baselin
 STAGES="5:120s,10:120s,20:120s,30:120s,40:120s,60:120s,80:120s,100:120s"
 OUT=""
 K6_IMAGE="grafana/k6:1.7.1"   # Pinned. `:latest` on an instrument is how two runs stop comparing.
-STAGING_BE="http://127.0.0.1:8100"
-PROD_BE="http://127.0.0.1:8000"
+STAGING_BE="http://127.0.0.1:8100"   # staging is NOT blue/green; this port is stable.
+PROD_BE=""                            # resolved from the active vhost below - never hardcoded.
+PROD_COLOUR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +50,36 @@ LOG="$OUT/run.log"
 say() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$LOG"; }
 
 say "run start  keys=$KEYS  stages=$STAGES  out=$OUT"
+
+# ── resolve the serving colour (core#622 class) ───────────────────────────────────────────
+# 🔴 FOUND ON THE FIRST REAL EXECUTION, 2026-09-21. PROD_BE was hardcoded to :8000. The
+# production backend port ALTERNATES on every deploy — 8000 blue, 8010 green — and the
+# promotion that day had swapped prod to green, so `curl :8000/healthz` returned 000 and the
+# preflight below refused with "do not add load to a sick box" while production was serving
+# 200 through Cloudflare the whole time.
+#
+# Two failure modes, and the quiet one is worse:
+#   1. A FALSE REFUSAL that names a healthy production as sick, sending whoever reads it
+#      after an incident that does not exist.
+#   2. Mid-swap both colours are briefly up, so a hardcoded port can resolve to the colour
+#      that is NOT serving. The neighbour scenario would then sample a container taking no
+#      real traffic and report a reassuring number. The founder's label on every result is
+#      "a floor under NEIGHBOUR LOAD" — measured against the wrong process, that label is
+#      not merely imprecise, it is unearned.
+#
+# So: ask the vhost, and refuse if it cannot be read. Never assume, never default.
+ACTIVE_CONF="${ACTIVE_CONF:-/etc/apache2/conf-enabled/datanika-prod-active.conf}"
+PROD_PORT="$(grep -oE '\b80[01]0\b' "$ACTIVE_CONF" 2>/dev/null | head -1 || true)"
+case "${PROD_PORT:-}" in
+  8000) PROD_COLOUR="blue" ;;
+  8010) PROD_COLOUR="green" ;;
+  *) say "REFUSING: cannot determine the serving colour from $ACTIVE_CONF"
+     say "          got '${PROD_PORT:-<nothing>}'. Guessing a colour is how the neighbour"
+     say "          reading ends up describing a container that serves no traffic."
+     exit 16 ;;
+esac
+PROD_BE="http://127.0.0.1:${PROD_PORT}"
+say "preflight: serving colour is $PROD_COLOUR (backend $PROD_PORT), read from $ACTIVE_CONF"
 
 # ── preflight ─────────────────────────────────────────────────────────────────────────────
 say "preflight: staging must be healthy BEFORE we load it, or the result describes a sick box"

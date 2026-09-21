@@ -113,8 +113,28 @@ case "$COMMAND" in
     fi
     stack up -d --no-build "$@"
     echo
-    echo "worktree-stack: up. One origin, through the proxy: http://localhost:$((OFFSET + 3100))"
-    echo "                frontend http://localhost:$((OFFSET + 3000))  backend http://localhost:$((OFFSET + 8000))"
+    # core#1481: a port inside an OS-reserved range is relocated INSIDE the band, so the
+    # arithmetic that used to print these URLs can now be wrong -- and this is the line a
+    # reader copies. Read the ports back out of the overlay that was actually streamed to
+    # compose, and say so when any of them moved.
+    _from_overlay() { printf '%s' "$OVERLAY" | sed -n "$1" | head -1; }
+    FRONT="$(_from_overlay 's/.*REFLEX_DEPLOY_URL: "http:\/\/localhost:\([0-9]*\)".*/\1/p')"
+    BACK="$(_from_overlay 's/.*REFLEX_API_URL: "http:\/\/localhost:\([0-9]*\)".*/\1/p')"
+    PROXY="$(_from_overlay 's/.*"127\.0\.0\.1:\([0-9]*\):80"$/\1/p')"
+    if [ -n "$FRONT" ] && [ -n "$BACK" ] && [ -n "$PROXY" ]; then
+      echo "worktree-stack: up. One origin, through the proxy: http://localhost:$PROXY"
+      echo "                frontend http://localhost:$FRONT  backend http://localhost:$BACK"
+      if [ "$FRONT" != "$((OFFSET + 3000))" ] || [ "$BACK" != "$((OFFSET + 8000))" ] \
+         || [ "$PROXY" != "$((OFFSET + 3100))" ]; then
+        echo "worktree-stack: NOTE -- one or more ports were relocated inside the band because"
+        echo "                this host reserves their usual value (core#1481). The numbers above"
+        echo "                are the live ones; the port table from the isolation check lists all."
+      fi
+    else
+      # Never fall back to the arithmetic: a confidently wrong URL is worse than a pointer.
+      echo "worktree-stack: up. Could not read the ports back from the overlay -- see the port"
+      echo "                table printed by the isolation check above for the live values."
+    fi
     ;;
   ps) stack ps ;;
   logs) stack logs --tail 100 "$@" ;;

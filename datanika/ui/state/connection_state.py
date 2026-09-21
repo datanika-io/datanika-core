@@ -1118,8 +1118,13 @@ class ConnectionState(BaseState):
             # `resources: []`, silently, and every run then failed. Refuse it here, with the
             # parser's own reasons, which otherwise reach only the API response.
             if not parsed.resources:
-                reasons = "; ".join(parsed.warnings[:3]) or "no GET operation returns a JSON array"
-                more = len(parsed.warnings) - 3
+                # core#1416. `skip_reasons`, not `warnings`: an auth or base-URL warning
+                # is not a reason no endpoint loaded, and with only three slots it pushed
+                # a real reason out behind `and N more`.
+                reasons = (
+                    "; ".join(parsed.skip_reasons[:3]) or "no GET operation returns a JSON array"
+                )
+                more = len(parsed.skip_reasons) - 3
                 if more > 0:
                     reasons = f"{reasons}; and {more} more"
                 raise UserFacingError(

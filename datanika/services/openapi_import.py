@@ -77,6 +77,11 @@ class ParsedConnector:
     auth_schemes: list[dict]
     resources: list[dict]
     warnings: list[str] = field(default_factory=list)
+    #: The subset of ``warnings`` that says why an ENDPOINT was not loaded (core#1416).
+    #: ``warnings`` stays the complete record, so the API response loses nothing; this is
+    #: what the form shows when it refuses a spec, because an auth or base-URL warning is
+    #: not a reason no endpoint loaded and must not take a reason's slot.
+    skip_reasons: list[str] = field(default_factory=list)
 
 
 def _load(raw: str | dict) -> dict:
@@ -110,7 +115,13 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
     Extracts the base URL (``servers``), auth schemes (``securitySchemes``), and
     one resource per GET collection endpoint — each with ``columns`` derived
     from the response schema (no live call). Templated (detail) endpoints are
-    skipped in P1. Anything skipped or ambiguous is recorded in ``warnings``.
+    skipped. Anything skipped or ambiguous is recorded in ``warnings``.
+
+    ⚠️ **Two lists, and the difference is user-facing** (core#1416): ``warnings`` is
+    everything, and ``skip_reasons`` is the subset saying why an *endpoint* did not
+    load. The form shows ``skip_reasons`` when it refuses a spec, because an auth or
+    base-URL warning is not a reason no endpoint loaded — and with only three slots it
+    used to push a real reason out of the message.
     """
     spec = _load(raw)
 
@@ -130,6 +141,10 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
         )
 
     warnings: list[str] = []
+    # Reasons an endpoint did not load, which is a strict subset of `warnings`. Kept as a
+    # second list rather than by filtering `warnings` on wording: a classification that
+    # depends on how a sentence is phrased breaks the first time somebody rewords one.
+    skip_reasons: list[str] = []
     base_url = base_url_override or _extract_base_url(spec, warnings)
     auth_schemes = _extract_auth(spec, warnings)
 
@@ -144,14 +159,16 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
         if not isinstance(item, dict):
             continue
         if "{" in path:
-            warnings.append(
-                f"Skipped templated endpoint {path} — detail endpoints need a parent (P3)."
+            _skip(
+                warnings,
+                skip_reasons,
+                f"Skipped {path}: a path with a parameter returns one record, not a list",
             )
             continue
         op = item.get("get")
         if not isinstance(op, dict):
             continue
-        resource = _resource_from_get(spec, path, item, op, warnings)
+        resource = _resource_from_get(spec, path, item, op, warnings, skip_reasons)
         if resource is not None:
             resources.append(resource)
         if len(resources) > MAX_RESOURCES:
@@ -160,7 +177,11 @@ def parse_openapi_spec(raw: str | dict, *, base_url_override: str | None = None)
             )
 
     return ParsedConnector(
-        base_url=base_url, auth_schemes=auth_schemes, resources=resources, warnings=warnings
+        base_url=base_url,
+        auth_schemes=auth_schemes,
+        resources=resources,
+        warnings=warnings,
+        skip_reasons=skip_reasons,
     )
 
 
@@ -198,20 +219,43 @@ def _extract_auth(spec: dict, warnings: list[str]) -> list[dict]:
                 }
             )
         elif t == "oauth2":
-            warnings.append(
-                f"OAuth2 scheme '{name}' is not supported in P1 — supply a static token."
-            )
+            # NOT a skip reason: an unsupported auth scheme does not decide whether an
+            # endpoint loads. It stays in `warnings` so the API response still carries it
+            # (core#1416 AC1), and the form shows it on its own rather than in the
+            # zero-endpoint refusal.
+            warnings.append(f"OAuth2 scheme '{name}' is not supported — supply a static token")
         else:
             warnings.append(f"Unsupported auth scheme '{name}' (type {t}).")
     return out
 
 
+def _skip(warnings: list[str], skip_reasons: list[str], reason: str) -> None:
+    """Record a reason an endpoint did not load, in both lists (core#1416).
+
+    ⚠️ No trailing full stop, ever. The form joins these with ``"; "``, so a reason that
+    punctuates itself renders ``…(P3).; Skipped…``. That is AC3, and
+    ``test_no_reason_ends_in_a_period_so_the_join_cannot_double_up`` holds every future
+    reason to it rather than only the two that exist today.
+    """
+    warnings.append(reason)
+    skip_reasons.append(reason)
+
+
 def _resource_from_get(
-    spec: dict, path: str, path_item: dict, op: dict, warnings: list[str]
+    spec: dict,
+    path: str,
+    path_item: dict,
+    op: dict,
+    warnings: list[str],
+    skip_reasons: list[str],
 ) -> dict | None:
     item_schema, data_selector = _response_item_schema(spec, op)
     if item_schema is None:
-        warnings.append(f"Skipped GET {path} — no array/collection JSON response schema.")
+        _skip(
+            warnings,
+            skip_reasons,
+            f"Skipped GET {path}: its JSON response declares no list of records",
+        )
         return None
     columns = _columns_from_schema(spec, item_schema)
     endpoint: dict = {"path": path.lstrip("/"), "method": "GET"}

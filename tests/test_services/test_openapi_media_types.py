@@ -5,7 +5,9 @@ What QA measured, 2026-09-15
 FakeRESTApi's published spec (Swashbuckle, OpenAPI 3.0.1, sha256 `c0367244…`) declares every
 collection GET under `text/plain; v=1.0`, `application/json; v=1.0` and `text/json; v=1.0`. That
 is what Swashbuckle emits when ASP.NET API versioning is on. `parse_openapi_spec` returned
-**0 resources** and 12 warnings, each `Skipped GET … — no array/collection JSON response schema.`
+**0 resources** and 12 warnings, each a `Skipped GET …` reason. (That reason was reworded by
+core#1416 to `Skipped GET <path>: its JSON response declares no list of records`; this paragraph
+records what was measured in 2026-09, and the count is the load-bearing part, not the wording.)
 A minimal spec with plain `application/json`, in the same container, returned 1.
 
 The mechanism

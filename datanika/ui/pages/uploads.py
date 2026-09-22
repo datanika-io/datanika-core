@@ -125,7 +125,7 @@ def upload_form() -> rx.Component:
             rx.text(
                 _t["uploads.destination_help"],
                 size="1",
-                color="var(--gray-9)",
+                color="var(--gray-11)",
             ),
             # SaaS endpoint selector (shown for SaaS sources)
             rx.cond(
@@ -506,7 +506,7 @@ def _run_control(u) -> rx.Component:
                 rx.text(
                     _t["uploads.run_blocked_reason"],
                     size="1",
-                    color="var(--gray-9)",
+                    color="var(--gray-11)",
                 ),
                 spacing="1",
                 align="center",

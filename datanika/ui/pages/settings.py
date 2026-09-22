@@ -56,7 +56,7 @@ def _delete_account_dialog() -> rx.Component:
             rx.vstack(
                 rx.text(_t["account.delete_what_goes"], size="2"),
                 rx.text(_t["account.delete_what_stays"], size="2", color="var(--gray-11)"),
-                rx.text(_t["account.delete_backups_note"], size="1", color="var(--gray-9)"),
+                rx.text(_t["account.delete_backups_note"], size="1", color="var(--gray-11)"),
                 # The org consequence, stated BEFORE the confirm control is used. D9
                 # requires the choice to be put to the user rather than discovered.
                 rx.cond(
@@ -486,9 +486,9 @@ def _remove_member_dialog(member: MemberItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", member.id, "  ", member.email, size="2", weight="bold"),
-                    rx.text(member.role, size="1", color="var(--gray-9)"),
+                    rx.text(member.role, size="1", color="var(--gray-11)"),
                 ),
-                rx.text(_t["settings.remove_member_reversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["settings.remove_member_reversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",
@@ -558,7 +558,7 @@ def _leave_org_dialog() -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text(SettingsState.org_name, size="2", weight="bold"),
-                    rx.text(SettingsState.org_slug, size="1", color="var(--gray-9)"),
+                    rx.text(SettingsState.org_slug, size="1", color="var(--gray-11)"),
                 ),
                 # Exactly one of these renders. They are branches of the same
                 # `rx.cond`, so "both" and "neither" are unreachable by
@@ -580,7 +580,7 @@ def _leave_org_dialog() -> rx.Component:
                         width="100%",
                     ),
                 ),
-                rx.text(_t["settings.leave_org_reversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["settings.leave_org_reversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",
@@ -684,7 +684,7 @@ def _transfer_ownership_dialog() -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text(SettingsState.transfer_to_email, size="2", weight="bold"),
-                    rx.text(SettingsState.org_name, size="1", color="var(--gray-9)"),
+                    rx.text(SettingsState.org_name, size="1", color="var(--gray-11)"),
                 ),
                 rx.callout(
                     _t["settings.transfer_ownership_irreversible"],
@@ -780,12 +780,12 @@ def _cancel_invitation_dialog(inv: InvitationItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", inv.id, "  ", inv.email, size="2", weight="bold"),
-                    rx.text(inv.role, size="1", color="var(--gray-9)"),
+                    rx.text(inv.role, size="1", color="var(--gray-11)"),
                 ),
                 rx.text(
                     _t["settings.cancel_invitation_reversible"],
                     size="1",
-                    color="var(--gray-9)",
+                    color="var(--gray-11)",
                 ),
                 spacing="3",
                 width="100%",
@@ -1145,7 +1145,7 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", ch.id, "  ", ch.name, size="2", weight="bold"),
-                    rx.text(ch.channel_type, size="1", color="var(--gray-9)"),
+                    rx.text(ch.channel_type, size="1", color="var(--gray-11)"),
                 ),
                 rx.callout(
                     _t["notifications.delete_secret"],
@@ -1264,7 +1264,7 @@ def channel_row(ch: ChannelItem) -> rx.Component:
                 # log line on a box the user cannot read is not feedback.
                 rx.cond(
                     ch.last_error != "",
-                    rx.text(ch.last_error, size="1", color="var(--gray-9)"),
+                    rx.text(ch.last_error, size="1", color="var(--gray-11)"),
                     rx.fragment(),
                 ),
                 spacing="1",

@@ -42,7 +42,7 @@ def getting_started_checklist() -> rx.Component:
                         rx.text(
                             _t["onboarding.subtitle"],
                             size="2",
-                            color="var(--slate-10)",
+                            color="var(--slate-11)",
                         ),
                         spacing="1",
                         align="start",

@@ -198,7 +198,7 @@ def transformation_form() -> rx.Component:
             rx.text(
                 _t["transformations.destination_help"],
                 size="1",
-                color="var(--gray-9)",
+                color="var(--gray-11)",
             ),
             rx.el.label(
                 rx.text(_t["transformations.sql"], size="2", weight="bold"),
@@ -345,13 +345,13 @@ def _delete_transformation_dialog(t) -> rx.Component:
                             "  ",
                             t.schema_name,
                             size="1",
-                            color="var(--gray-9)",
+                            color="var(--gray-11)",
                         ),
                     ),
                     rx.text(
                         _t["transformations.delete_reversible"],
                         size="1",
-                        color="var(--gray-9)",
+                        color="var(--gray-11)",
                     ),
                     spacing="3",
                     width="100%",

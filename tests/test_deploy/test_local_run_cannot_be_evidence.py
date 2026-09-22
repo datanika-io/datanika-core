@@ -27,6 +27,11 @@ Two guards, failing closed in opposite directions — **neither is sufficient al
   silent log therefore cannot have come from a local runner, which is what lets the veto stay
   silent about the entire pre-core#1232 history instead of reddening it.
 
+A third half arrived by FILE rather than by text, and is at the bottom of this module: the
+Playwright JSON reports that four harness scripts read in CI carry the same names a local run
+writes, so a committed one is read as this run's. Both guards above are about what a local
+run PRINTS; that one is about what it LEAVES BEHIND.
+
 ⚠️ Measured before it was written, because an over-firing guard gets switched off (core#1162
 put a proposed one at 29% precision; core#1168's at 40.2%): across **848 tracked files** the
 three markers appear in **8**, of which **3** are under an executable path and all three are
@@ -35,8 +40,11 @@ comments. The allowlist below is that measurement, not a guess.
 
 from __future__ import annotations
 
+import posixpath
+import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -476,3 +484,232 @@ class TestTheAttestationRoundTrips:
             "copies is how the emitter and the parser drift apart, which disarms the veto "
             "without reddening anything."
         )
+
+
+# ── the file half: a report a CI reader reads can only be one THIS run wrote ─────────────
+#
+# Infra found this path on core#1232 itself, the day after it was filed, and fixed the cheap
+# half: `e2e/.gitignore` now ignores `results-*.json`. The question it left on the issue —
+# should the readers refuse a report they did not see written? — is answered here.
+#
+# Four harness scripts read a Playwright JSON report from a fixed path relative to the
+# checkout, and none of them checks that the report is fresh:
+#
+#   detect_flaky_gating.py         its `no-evidence` is what makes the gating verdict `no_verdict`
+#   informational_spec_results.py  prints the per-spec lines graduation credits (core#1221)
+#   assert_sso_coverage.py         core#1130's executed-IdP-specs floor
+#   assert_overage_coverage.py     the overage soak's executed floor (core#1301)
+#
+# A local run writes those same names. So a report committed from a worktree is read by CI on
+# any run whose own Playwright step wrote nothing — an informational tier of zero SKIPS the run
+# that would overwrite it, and a Playwright process that dies before its reporter finishes
+# writes nothing at all. The per-spec reader then prints the committed report's verdicts, and
+# `classify_for_spec` returns a per-spec verdict before it ever reads the tier line. That is a
+# local green graduating a spec, by file — this module's subject, arriving by a path its first
+# two halves cannot see, because a JSON report carries no attestation to veto.
+#
+# 🔑 The refusal belongs at the CHECKOUT BOUNDARY, not in each reader. Every job here runs on a
+# fresh `ubuntu-latest` workspace, so the only way a report can exist before its step is to be
+# tracked. An mtime check in four readers would need the workflow to hand each one a clock,
+# and it would refuse at run time, after the report is already on `dev`; these refuse at PR
+# time. Two assertions carry the property, and each is useless without the other:
+#
+# * nothing a reader reads is TRACKED (nor ignorable by accident — `git add e2e/` must stage
+#   nothing a local run left behind);
+# * every reader reads only what an EARLIER step of its OWN job wrote. A read with no writer
+#   before it in its job can only ever see a file that arrived some other way.
+
+#: A harness script handed a report on a workflow `run:` line:
+#: `python3 scripts/<reader>.py <report>.json [flags]`.
+_READER_CALL = re.compile(
+    r"\bpython3?\s+(?P<script>[\w./-]+\.py)\s+(?P<report>[\w./-]+\.json)(?=\s|$)"
+)
+
+#: The JSON reporter's default `outputFile` — what every Playwright run WITHOUT an override
+#: writes, which includes every local run.
+_CONFIG_DEFAULT_REPORT = re.compile(
+    r'PLAYWRIGHT_JSON_OUTPUT_NAME\s*\?\?\s*"(?P<name>[\w.-]+\.json)"'
+)
+
+E2E_DIR = "e2e"
+
+#: The anti-vacuity control, in the shape of REAL_EMITTERS: an extractor that finds none of
+#: these is broken, and a broken extractor passes both assertions below it forever — it reads
+#: zero reports, and zero reports are all untracked and all written earlier.
+REAL_REPORT_READERS = (
+    "e2e/scripts/detect_flaky_gating.py",
+    "e2e/scripts/informational_spec_results.py",
+    "e2e/scripts/assert_sso_coverage.py",
+    "e2e/scripts/assert_overage_coverage.py",
+)
+
+
+@dataclass(frozen=True)
+class ReportRead:
+    workflow: str
+    job: str
+    step: str
+    script: str  # repo-relative
+    report: str  # repo-relative
+    written_earlier: bool
+
+
+def _config_default_report() -> str:
+    """`e2e/<name>` — the report the config writes when nothing overrides it."""
+    text = (REPO_ROOT / E2E_DIR / "playwright.config.ts").read_text(encoding="utf-8")
+    names = [m.group("name") for m in _CONFIG_DEFAULT_REPORT.finditer(text)]
+    assert len(names) == 1, (
+        f'expected exactly one `PLAYWRIGHT_JSON_OUTPUT_NAME ?? "<name>.json"` default in '
+        f"{E2E_DIR}/playwright.config.ts, found {names}. The guards below need the name every "
+        "un-overridden run writes — including every local one — and cannot guess it."
+    )
+    return posixpath.join(E2E_DIR, names[0])
+
+
+def _report_reads(jobs: list[tuple[str, str, dict]], config_default: str) -> list[ReportRead]:
+    """Every harness report read in these jobs, and whether an EARLIER step of the same job
+    wrote it. A pure function of the parsed workflows, so the controls can drive it."""
+    reads: list[ReportRead] = []
+    for workflow, job_id, job in jobs:
+        job_wd = ((job.get("defaults") or {}).get("run") or {}).get("working-directory") or "."
+        job_env = job.get("env") or {}
+        written: set[str] = set()
+        for index, step in enumerate(job.get("steps") or []):
+            run = str(step.get("run") or "")
+            wd = str(step.get("working-directory") or job_wd)
+            label = str(step.get("name") or step.get("id") or f"step {index}")
+            for m in _READER_CALL.finditer(run):
+                script = posixpath.normpath(posixpath.join(wd, m.group("script")))
+                if not script.startswith(f"{E2E_DIR}/scripts/"):
+                    continue  # not an E2E harness reader
+                report = posixpath.normpath(posixpath.join(wd, m.group("report")))
+                reads.append(ReportRead(workflow, job_id, label, script, report, report in written))
+            if "playwright test" in run:
+                override = {**job_env, **(step.get("env") or {})}.get("PLAYWRIGHT_JSON_OUTPUT_NAME")
+                written.add(
+                    posixpath.normpath(posixpath.join(wd, str(override)))
+                    if override
+                    else config_default
+                )
+    return reads
+
+
+def _real_report_reads() -> list[ReportRead]:
+    from tests.test_deploy._workflows import all_jobs
+
+    return _report_reads(all_jobs(), _config_default_report())
+
+
+def _real_report_paths() -> set[str]:
+    """Everything a reader reads, plus the default every local run writes."""
+    return {r.report for r in _real_report_reads()} | {_config_default_report()}
+
+
+def test_control_the_report_extractor_finds_the_real_readers() -> None:
+    """Run first. An extractor that sees no reader passes every assertion below it."""
+    found = {r.script for r in _real_report_reads()}
+    missing = [s for s in REAL_REPORT_READERS if s not in found]
+    assert not missing, (
+        f"the extractor found no workflow step handing a report to {missing}. Either the call "
+        f"changed shape (found: {sorted(found)}) — in which case `_READER_CALL` is now blind "
+        "to it and the two guards below are vacuous for it — or the reader was retired, and "
+        "REAL_REPORT_READERS must change in the same commit."
+    )
+    for script in REAL_REPORT_READERS:
+        assert (REPO_ROOT / script).exists(), f"{script} is named here and does not exist"
+
+
+def test_every_report_a_ci_reader_reads_was_written_earlier_in_its_own_job() -> None:
+    orphans = [
+        f"{r.workflow} / {r.job} / {r.step!r}: {r.script} reads {r.report}"
+        for r in _real_report_reads()
+        if not r.written_earlier
+    ]
+    assert not orphans, (
+        "these read a report that no EARLIER Playwright step of the same job writes:\n  "
+        + "\n  ".join(orphans)
+        + "\nOn a fresh runner such a read can only ever see a file that arrived another way — "
+        "committed from a worktree, say — and it will read it as this run's evidence. Point "
+        "the reader at the name its own job's Playwright step writes (PLAYWRIGHT_JSON_OUTPUT_NAME)."
+    )
+
+
+def test_no_report_a_ci_reader_reads_is_tracked() -> None:
+    tracked = sorted(_real_report_paths() & set(_tracked_files()))
+    assert not tracked, (
+        f"{tracked} is tracked. CI's harness readers read it by that exact path, with no "
+        "freshness check, so a committed report is graded as this run's result on every run "
+        "whose own Playwright step writes nothing. `git rm --cached` it; a fixture a test "
+        "needs belongs under another name."
+    )
+
+
+def test_every_such_report_is_ignored_by_git() -> None:
+    """The cheap half Infra shipped, held: `git add e2e/` after a local run stages nothing."""
+    not_ignored = [
+        path
+        for path in sorted(_real_report_paths())
+        if subprocess.run(
+            ["git", "-C", str(REPO_ROOT), "check-ignore", "-q", "--", path],
+            check=False,
+        ).returncode
+        != 0
+    ]
+    assert not not_ignored, (
+        f"{not_ignored} is not git-ignored, so the report a local run leaves behind is one "
+        "`git add` away from being read by CI as evidence. `e2e/.gitignore` must cover it."
+    )
+
+
+def _step(name: str, run: str, **extra: object) -> dict:
+    return {"name": name, "working-directory": E2E_DIR, "run": run, **extra}
+
+
+def test_control_the_extractor_tells_an_orphan_read_from_a_fresh_one() -> None:
+    """🔑 Both populations through one function, answered differently — a guard that calls
+    every read an orphan, or none, fails here rather than in a quiet CI run."""
+    jobs = [
+        (
+            "wf.yml",
+            "writes-then-reads",
+            {
+                "steps": [
+                    _step(
+                        "run",
+                        "npx playwright test",
+                        env={"PLAYWRIGHT_JSON_OUTPUT_NAME": "results-x.json"},
+                    ),
+                    _step("fresh", "python3 scripts/reader.py results-x.json --github-output"),
+                    _step("orphan: nothing wrote it", "python3 scripts/reader.py results-y.json"),
+                    {"name": "not a harness reader", "run": "python3 scripts/other.py data.json"},
+                ]
+            },
+        ),
+        (
+            "wf.yml",
+            "reads-before-it-writes",
+            {
+                "steps": [
+                    _step("orphan: too early", "python3 scripts/reader.py results-gating.json"),
+                    _step("default writer", "npx playwright test --list"),
+                    _step("fresh: the config default", "python3 scripts/r.py results-gating.json"),
+                ]
+            },
+        ),
+        (
+            "wf.yml",
+            "another-job-wrote-it",
+            {"steps": [_step("orphan: other job", "python3 scripts/reader.py results-x.json")]},
+        ),
+    ]
+    got = [
+        (r.step, r.report, r.written_earlier)
+        for r in _report_reads(jobs, "e2e/results-gating.json")
+    ]
+    assert got == [
+        ("fresh", "e2e/results-x.json", True),
+        ("orphan: nothing wrote it", "e2e/results-y.json", False),
+        ("orphan: too early", "e2e/results-gating.json", False),
+        ("fresh: the config default", "e2e/results-gating.json", True),
+        ("orphan: other job", "e2e/results-x.json", False),
+    ]

@@ -413,7 +413,7 @@ def preview_section() -> rx.Component:
                     + " "
                     + ModelDetailState.preview_rows.length().to(str),
                     size="1",
-                    color="var(--slate-10)",
+                    color="var(--slate-11)",
                 ),
                 rx.fragment(),
             ),
@@ -445,7 +445,7 @@ def preview_section() -> rx.Component:
                 ),
                 rx.cond(
                     ModelDetailState.preview_rows.length() == 0,
-                    rx.text(_t["model_detail.preview.empty"], size="1", color="var(--slate-10)"),
+                    rx.text(_t["model_detail.preview.empty"], size="1", color="var(--slate-11)"),
                     rx.box(
                         rx.table.root(
                             rx.table.header(

@@ -288,7 +288,7 @@ def _remove_dependency_dialog(d) -> rx.Component:
                         align="center",
                     ),
                 ),
-                rx.text(_t["dag.delete_reversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["dag.delete_reversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",

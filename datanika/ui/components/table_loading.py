@@ -48,7 +48,7 @@ def table_loading(min_height: str = "120px") -> rx.Component:
     return rx.center(
         rx.hstack(
             rx.spinner(size="2"),
-            rx.text(_t["common.loading"], size="2", color="var(--gray-9)"),
+            rx.text(_t["common.loading"], size="2", color="var(--gray-11)"),
             spacing="3",
             align="center",
         ),

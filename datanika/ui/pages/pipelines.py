@@ -217,7 +217,7 @@ def pipeline_form() -> rx.Component:
             rx.text(
                 _t["pipelines.destination_help"],
                 size="1",
-                color="var(--gray-9)",
+                color="var(--gray-11)",
             ),
             # dbt command
             rx.text(_t["pipelines.command"], size="2", weight="bold"),
@@ -322,9 +322,9 @@ def _delete_pipeline_dialog(p) -> rx.Component:
                 rx.vstack(
                     rx.card(
                         rx.text("#", p.id, "  ", p.name, size="2", weight="bold"),
-                        rx.text(p.command, size="1", color="var(--gray-9)"),
+                        rx.text(p.command, size="1", color="var(--gray-11)"),
                     ),
-                    rx.text(_t["pipelines.delete_reversible"], size="1", color="var(--gray-9)"),
+                    rx.text(_t["pipelines.delete_reversible"], size="1", color="var(--gray-11)"),
                     spacing="3",
                     width="100%",
                     margin_top="12px",

@@ -46,9 +46,9 @@ def _mode_labels_row() -> rx.Component:
     # is the distinction #682 turned on — see ui/components/i18n_text.py.
     return rx.hstack(
         rx.text(_t["pipelines.mode_auto"], size="1", color="var(--gray-11)"),
-        rx.text("·", size="1", color="var(--gray-9)"),
+        rx.text("·", size="1", color="var(--gray-11)"),
         rx.text(_t["pipelines.mode_etl"], size="1", color="var(--gray-11)"),
-        rx.text("·", size="1", color="var(--gray-9)"),
+        rx.text("·", size="1", color="var(--gray-11)"),
         rx.text(_t["pipelines.mode_elt"], size="1", color="var(--gray-11)"),
         spacing="2",
         align="center",

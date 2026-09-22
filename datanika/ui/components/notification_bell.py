@@ -67,7 +67,7 @@ def _notification_row(n) -> rx.Component:
                 rx.text(n.title, size="2", weight="medium"),
                 rx.cond(
                     n.message != "",
-                    rx.text(n.message, size="1", color="var(--slate-10)", trim="end"),
+                    rx.text(n.message, size="1", color="var(--slate-11)", trim="end"),
                     rx.fragment(),
                 ),
                 spacing="0",
@@ -143,7 +143,7 @@ def _notification_dropdown_content() -> rx.Component:
                 rx.text(
                     _t["notifications.center.empty"],
                     size="2",
-                    color="var(--slate-10)",
+                    color="var(--slate-11)",
                 ),
                 align="center",
                 padding_y="4",

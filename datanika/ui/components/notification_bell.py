@@ -93,6 +93,7 @@ def _notification_row(n) -> rx.Component:
                     variant="ghost",
                     size="1",
                     color_scheme="gray",
+                    aria_label=_t["notifications.dismiss"],
                 ),
                 spacing="1",
                 align="center",
@@ -162,6 +163,11 @@ def _notification_dropdown_content() -> rx.Component:
 
 
 def notification_bell() -> rx.Component:
+    # core#1409. The handler is on the TRIGGER, not on the button inside it. Reflex wraps a
+    # trigger's children in a Flex <div> whenever a child carries `on_click`, and Radix's asChild
+    # then puts `type="button"`, `aria-haspopup` and `aria-expanded` on that div — axe's
+    # `aria-allowed-attr`, on every page, because the bell is in the header. On the trigger, the
+    # props land on the button itself and Radix composes the click with its own toggle.
     return rx.popover.root(
         rx.popover.trigger(
             rx.icon_button(
@@ -182,10 +188,11 @@ def notification_bell() -> rx.Component:
                     ),
                     position="relative",
                 ),
-                on_click=NotificationCenterState.load_notifications,
+                aria_label=_t["notifications.center.title"],
                 variant="ghost",
                 size="1",
             ),
+            on_click=NotificationCenterState.load_notifications,
         ),
         rx.popover.content(
             _notification_dropdown_content(),

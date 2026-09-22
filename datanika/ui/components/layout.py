@@ -46,6 +46,7 @@ def sidebar_user_section() -> rx.Component:
                 on_change=AuthState.switch_org_by_name,
                 size="1",
                 width="100%",
+                custom_attrs={"aria-label": _t["nav.switch_org"]},
             ),
         ),
         rx.hstack(
@@ -61,6 +62,7 @@ def sidebar_user_section() -> rx.Component:
                 on_click=AuthState.logout,
                 variant="ghost",
                 size="1",
+                aria_label=_t["nav.sign_out"],
             ),
             width="100%",
             padding_x="12px",

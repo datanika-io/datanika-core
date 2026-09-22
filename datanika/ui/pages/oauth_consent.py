@@ -80,6 +80,7 @@ def _org_block() -> rx.Component:
                     value=AuthState.current_org.name,
                     on_change=AuthState.switch_org_by_name_in_place,
                     width="100%",
+                    custom_attrs={"aria-label": _t["mcp_consent.org_label"]},
                 ),
                 rx.text(AuthState.current_org.name, size="3", weight="medium"),
             ),

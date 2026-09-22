@@ -77,7 +77,8 @@ services:
     # Prod's own invocation is unchanged; `--profile monitoring` is for anyone bringing
     # the stack up by hand.
     profiles: ["monitoring"]
-    image: prometheuscommunity/postgres-exporter:latest
+    # Pinned to version AND digest (core#1478) — the policy is at `# --- Monitoring ---`.
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
     container_name: datanika-postgres-exporter
     ports:
       - "127.0.0.1:9187:9187"
@@ -373,7 +374,8 @@ services:
   # unaffected. Every other operator-only service here carries the same profile.
   celery-exporter:
     profiles: ["monitoring"]
-    image: danihodovic/celery-exporter:0.12.2
+    # Pinned to version AND digest (core#1478) — the policy is at `# --- Monitoring ---`.
+    image: danihodovic/celery-exporter:0.12.2@sha256:91e0b314cb5d62f0b2cd0ccdd059178d2d26f816ae0df2a4eeeb6b3c6feb5937
     container_name: datanika-celery-exporter
     environment:
       # Passed as an env var rather than `--broker-url` on purpose: the URL carries the
@@ -517,10 +519,26 @@ services:
     restart: unless-stopped
 
   # --- Monitoring ---
+  #
+  # 🔑 Every third-party monitoring image is pinned to a VERSION and a DIGEST (core#1478).
+  # They all floated on `:latest` until 2026-09-22, and the deploy runs
+  # `up -d --force-recreate prometheus grafana blackbox` on EVERY promotion — so any promotion
+  # could move a version underneath configuration validated against a specific one, with no diff
+  # to show it. That already happened in kind: core#1476's two Grafana `[database]` options were
+  # verified against 13.1.0's own shipped grafana.ini, and whether `wal = true` does anything at
+  # all turned out to be a property of whichever build `latest` resolved to. By 2026-09-22 Docker
+  # Hub's `grafana/grafana:latest` had already moved OFF the digest production runs.
+  #
+  # Each pin below is the version production was RUNNING on 2026-09-22, read from the binary's own
+  # `--version` inside its container, with the digest read from the running image's RepoDigests
+  # and cross-checked: the version tag resolves to that same digest on its registry. The version
+  # is for the reader; the digest is what docker actually pulls. To move one, change both
+  # together, and re-validate anything configured against the old version.
+  # `tests/test_deploy/test_monitoring_images_pinned.py` refuses a floating or digest-less tag.
 
   prometheus:
     profiles: ["monitoring"]
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893
     container_name: datanika-prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -542,7 +560,7 @@ services:
   # via the scrape configs in monitoring/prometheus.yml.
   blackbox:
     profiles: ["monitoring"]
-    image: prom/blackbox-exporter:latest
+    image: prom/blackbox-exporter:v0.28.0@sha256:e753ff9f3fc458d02cca5eddab5a77e1c175eee484a8925ac7d524f04366c2fc
     container_name: datanika-blackbox
     ports:
       - "127.0.0.1:9115:9115"
@@ -562,7 +580,8 @@ services:
     # `--profile monitoring` from a core-only clone still hits them; the durable fix is a
     # compose override the cloud edition supplies, which needs a deploy change (Infra).
     profiles: ["monitoring"]
-    image: grafana/grafana:latest
+    # The version core#1476's [database] options were validated against (grafana.ini lines 192/201).
+    image: grafana/grafana:13.1.0@sha256:121a7a9ece6dc10b969f1f96eed64b4f07dfac0d0b8abc070f7cb83bbde86f63
     container_name: datanika-grafana
     ports:
       - "127.0.0.1:3001:3000"
@@ -636,7 +655,7 @@ services:
 
   node-exporter:
     profiles: ["monitoring"]
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.12.1@sha256:1b4e4438faca4dd7e001dd445d161a4a2091b0fededa84093b3a8dfeae1f1be0
     container_name: datanika-node-exporter
     ports:
       - "127.0.0.1:9100:9100"
@@ -656,7 +675,7 @@ services:
 
   cadvisor:
     profiles: ["monitoring"]
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: gcr.io/cadvisor/cadvisor:v0.55.1@sha256:3de2bd5203120b866d74a9b283b2ffb8ec382fbf9dc321814700c6ea6f44ec57
     container_name: datanika-cadvisor
     ports:
       - "127.0.0.1:8080:8080"

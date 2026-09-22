@@ -200,7 +200,8 @@ services:
   # this exists to make the exporter's behaviour testable on a real worker before a
   # prod deploy rather than reasoned about afterwards.
   celery-exporter:
-    image: danihodovic/celery-exporter:0.12.2
+    # Same pin as production's (core#1478): version for the reader, digest for docker.
+    image: danihodovic/celery-exporter:0.12.2@sha256:91e0b314cb5d62f0b2cd0ccdd059178d2d26f816ae0df2a4eeeb6b3c6feb5937
     container_name: datanika-staging-celery-exporter
     environment:
       CE_BROKER_URL: ${REDIS_URL:?REDIS_URL must be set in the staging .env.docker}

@@ -360,10 +360,18 @@ jobs:
       # without it). `prometheus_config_last_reload_successful` was 1 the whole time.
       # Grafana's provisioning escaped only because it is a DIRECTORY mount.
       # Recreating rebinds the current inode.
+      # core#1476: Grafana's SQLite is converted to write-ahead logging while Grafana is
+      # stopped, BEFORE it is recreated. `GF_DATABASE_WAL=true` alone is inert on 13.1.0
+      # (modernc.org/sqlite); a converted file stays WAL. The conversion is idempotent and
+      # its failure is a WARNING, not a failed deploy — the worst case is the journal mode
+      # production already runs, never a Grafana that does not come back. The reasoning
+      # and the probe behind it are in scripts/grafana-sqlite-wal.sh.
       - name: Reload monitoring config
         run: |
           ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
             'cd /opt/datanika/datanika && set -a && . ./.env.docker && set +a && \
+             docker compose stop grafana && \
+             { bash scripts/grafana-sqlite-wal.sh || echo "::warning::Grafana SQLite WAL conversion did not complete (core#1476); Grafana starts in its previous journal mode"; } && \
              docker compose up -d --force-recreate prometheus grafana blackbox && \
              for i in $(seq 1 20); do curl -fsS -X POST http://127.0.0.1:9090/-/reload >/dev/null 2>&1 && { echo "prometheus reloaded"; break; }; sleep 3; \
                [ "$i" = 20 ] && { echo "prometheus /-/reload never succeeded"; exit 1; }; done && \
@@ -510,6 +518,18 @@ jobs:
           sys.exit(1 if failed else 0)
           PY
           VERIFY
+      # core#1476. Read the journal mode off what Grafana is RUNNING with, not off the setting:
+      # a WAL database keeps `grafana.db-wal` and `-shm` present while any connection is open,
+      # and a rollback-journal one never has them. Informational by design — the conversion
+      # above is fail-safe, so a miss here is a warning to read, not a reason to fail a deploy.
+      - name: Report Grafana's SQLite journal mode (core#1476)
+        run: |
+          ssh -i ~/.ssh/deploy "root@${{ secrets.POINTER_HOST }}" \
+            'if docker exec datanika-grafana sh -c "test -e /var/lib/grafana/grafana.db-wal && test -e /var/lib/grafana/grafana.db-shm"; then
+               echo "grafana SQLite: WAL (grafana.db-wal and -shm present on the running database)";
+             else
+               echo "::warning::grafana SQLite is NOT in WAL mode (no grafana.db-wal while running) - core#1476";
+             fi'
       - name: Smoke through Cloudflare
         run: curl -fsS -o /dev/null -w "app.datanika.io/login -> %{http_code}\n" https://app.datanika.io/login
 

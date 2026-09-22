@@ -477,6 +477,44 @@ jobs:
             --image datanika-core:probe \
             --lock-pins lock-pins.txt
 
+      # core#1498 — assert on the ARTIFACT that the build's CDN dependency is gone.
+      #
+      # The Dockerfile pre-installs a pinned bun so `reflex init` short-circuits instead
+      # of fetching an unpinned installer from a third party's default branch. That claim
+      # is worth only what it can be caught failing on, so this runs the real
+      # install_bun() inside the built image with `--network none`.
+      #
+      # The NEGATIVE CONTROL is the point, not padding. A green from the first call is
+      # also exactly what you would see if install_bun() had quietly become a no-op, or
+      # if `--network none` were not actually isolating anything. The control removes bun
+      # and demands the same call FAIL. If both pass, this step reports nothing and says
+      # so loudly rather than banking the green.
+      - name: Assert the image needs no CDN to initialise (core#1498)
+        if: steps.token.outputs.available == 'true'
+        run: |
+          set -uo pipefail
+          CALL='from reflex.utils.js_runtimes import install_bun; install_bun()'
+
+          echo "--- positive: pinned bun present, no network"
+          if docker run --rm --network none datanika-core:probe \
+               /app/.venv/bin/python -c "${CALL}" > pos.log 2>&1; then
+            echo "::notice::install_bun() succeeded with --network none — the pinned bun is in place."
+          else
+            echo "::error::install_bun() needed the network INSIDE the built image. The bun pre-install is not taking effect, so an upstream outage can fail a production deploy (core#1498). Fix the artifact; do not delete this assertion."
+            tail -20 pos.log
+            exit 1
+          fi
+
+          echo "--- negative control: same call, bun removed, still no network (MUST fail)"
+          if docker run --rm --network none datanika-core:probe \
+               sh -c "rm -rf /root/.local/share/reflex/bun && /app/.venv/bin/python -c \"${CALL}\"" \
+               > neg.log 2>&1; then
+            echo "::error::CONTROL FAILED — install_bun() succeeded with NO bun and NO network. This probe cannot discriminate, so the green above proves nothing about the artifact."
+            tail -20 neg.log
+            exit 1
+          fi
+          echo "::notice::control behaved as required: $(tail -1 neg.log)"
+
       # The tick is now load-bearing, so this step no longer has to substitute
       # for it. It stays because the *reason* still needs saying out loud, and
       # because "did not run" and "passed" must never look alike in a log.

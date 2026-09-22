@@ -52,6 +52,30 @@ ADD_MASK = "::add-mask::"
 SECRET_DEREF = "\\$\\{?%s\\b"
 
 
+def commands_only(run: str) -> str:
+    """A ``run:`` block with its comment lines removed (core#1499, ``QA_RULES`` §24a).
+
+    🚨 **Every ``ADD_MASK`` assertion below used to read the RAW text, so a ``run:`` block that
+    merely MENTIONED ``::add-mask::`` in a comment satisfied them.** The guard was checking that
+    we still *talk about* masking.
+
+    Found by sweeping this guard's sibling in ``datanika-cloud`` (cloud#159), where the real
+    workflow's ``run:`` explains itself — *"``::add-mask::`` each credential-shaped value FIRST"* —
+    and **both mutations of that real file passed**: deleting the executable mask line left the
+    string present, and the ordering check found the comment's occurrence comfortably before the
+    write.
+
+    ⚠️ **Here it is LATENT, not live.** ``_materializers()`` on this tree returns **0** since
+    core#983 replaced the bundle with per-key secrets, so nothing is wrong today — and the
+    weakness arms on the day the next workflow materializes a secret, which is exactly the day
+    this guard is supposed to earn its keep.
+
+    In a ``run:`` block a line whose first non-space character is ``#`` is a comment by
+    definition, so nothing executable is lost.
+    """
+    return "\n".join(line for line in run.splitlines() if not line.lstrip().startswith("#"))
+
+
 def _env_map(obj) -> dict:
     env = obj.get("env") or {}
     return env if isinstance(env, dict) else {}
@@ -162,7 +186,7 @@ class TestSecretsWrittenToGithubEnvAreMasked:
             "this passes, 'zero offenders in the real tree' is not evidence of "
             f"anything. Got: {found}"
         )
-        offenders = [n for _wf, _j, _i, n, run in found if ADD_MASK not in run]
+        offenders = [n for _wf, _j, _i, n, run in found if ADD_MASK not in commands_only(run)]
         assert offenders == ["Materialize"], (
             "The predicate found the step but did not classify the unmasked write as "
             "an offender, so the rule below cannot fire either."
@@ -219,7 +243,9 @@ class TestSecretsWrittenToGithubEnvAreMasked:
         a green here as evidence on its own; read it together with them.
         """
         offenders = [
-            (wf, name) for wf, _job, _i, name, run in _materializers() if ADD_MASK not in run
+            (wf, name)
+            for wf, _job, _i, name, run in _materializers()
+            if ADD_MASK not in commands_only(run)
         ]
         assert not offenders, (
             f"{len(offenders)} step(s) decode a repository secret into $GITHUB_ENV without "
@@ -237,7 +263,8 @@ class TestSecretsWrittenToGithubEnvAreMasked:
         Registering the value late is not equivalent — the runner only redacts output
         produced *after* the command runs.
         """
-        for wf, _job, _i, name, run in _materializers():
+        for wf, _job, _i, name, raw in _materializers():
+            run = commands_only(raw)
             if ADD_MASK not in run:
                 continue  # covered by the test above
             mask_at = run.index(ADD_MASK)
@@ -435,7 +462,7 @@ class TestSecretsInheritedFromJobOrWorkflowLevel:
         """It is still a materializer — it just masks first, so the rule is met."""
         found = _scan(tmp_path, _JOB_LEVEL_MASKED)
         assert [n for _wf, _j, _i, n, _r in found] == ["Materialize"]
-        offenders = [n for _wf, _j, _i, n, run in found if ADD_MASK not in run]
+        offenders = [n for _wf, _j, _i, n, run in found if ADD_MASK not in commands_only(run)]
         assert not offenders, "a correctly masked hoisted secret must not be an offender"
 
 
@@ -573,3 +600,75 @@ class TestPerKeyRegistrationDoesNotOverMask:
             "Promoting a configuration constant to a secret was not detected, so this "
             f"pin cannot catch the over-masking regression it exists for. Got: {wrong}"
         )
+
+
+# ---------------------------------------------------------------------------
+# core#1499 — the guard must not be satisfied by a comment.
+# ---------------------------------------------------------------------------
+
+_PROSE_ONLY = """
+name: probe
+on: [push]
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Materialize
+        env:
+          BUNDLE: ${{ secrets.QA_CONNECTOR_CREDENTIALS }}
+        run: |
+          # ::add-mask:: each credential-shaped value FIRST -- prose, not a command
+          echo "$BUNDLE" | base64 -d | while IFS='=' read -r k v; do
+            echo "$k=$v" >> "$GITHUB_ENV"
+          done
+"""
+
+
+class TestACommentDoesNotSatisfyTheRule:
+    """core#1499. Every ``ADD_MASK`` assertion above used to read the RAW ``run:`` text.
+
+    ⚠️ **This class is driven from a SYNTHETIC tree and that is not a shortcut.**
+    ``_materializers()`` on the real tree returns **0** since core#983, so **no mutation of a real
+    workflow here can arm this** — there is no materializer to mutate. The synthetic block is the
+    only control available in this repository, and saying so is the point: the sibling repo
+    (cloud#159) *does* have a live materializer, and there the same defect let **both** mutations
+    of the real file pass.
+    """
+
+    def test_the_predicate_still_finds_a_prose_only_materializer(self, tmp_path: Path) -> None:
+        """The predicate was never the problem — only what was asserted about what it found."""
+        found = _scan(tmp_path, _PROSE_ONLY)
+        assert [n for _wf, _j, _i, n, _r in found] == ["Materialize"]
+
+    def test_a_prose_only_mention_is_an_offender(self, tmp_path: Path) -> None:
+        found = _scan(tmp_path, _PROSE_ONLY)
+        run = found[0][4]
+        assert ADD_MASK in run, "the raw text does contain it — that is the whole trap"
+        assert ADD_MASK not in commands_only(run), (
+            "a run block that only DISCUSSES masking must not satisfy the rule"
+        )
+
+    def test_the_stripper_keeps_real_commands(self) -> None:
+        """The other direction.
+
+        Without it, the next person repairs a false positive by narrowing the stripper until it
+        matches nothing at all.
+        """
+        block = (
+            "# ::add-mask:: explains itself here\n"
+            "  # indented comment mentioning ::add-mask:: too\n"
+            'echo "::add-mask::$v"\n'
+            'echo "$k=$v" >> "$GITHUB_ENV"\n'
+        )
+        stripped = commands_only(block)
+        assert stripped.count(ADD_MASK) == 1, stripped
+        assert 'echo "$k=$v" >> "$GITHUB_ENV"' in stripped, "a real command was stripped"
+
+    def test_a_masked_prose_carrying_block_still_satisfies_the_rule(self, tmp_path: Path) -> None:
+        """The false-positive control: prose ALONGSIDE a real mask call must still pass."""
+        both = _PROSE_ONLY.replace(
+            '            echo "$k=$v" >> "$GITHUB_ENV"',
+            '            echo "::add-mask::$v"\n            echo "$k=$v" >> "$GITHUB_ENV"',
+        )
+        found = _scan(tmp_path, both)
+        assert ADD_MASK in commands_only(found[0][4])

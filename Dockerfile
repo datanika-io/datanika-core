@@ -117,6 +117,70 @@ RUN printf 'apt layer refresh %s ran at %s\n' "${APT_REFRESHED_ON}" "$(date -u +
     fi && \
     rm -rf /var/lib/apt/lists/* /tmp/apt-upgradable
 
+# ---------------------------------------------------------------------------
+# Pinned bun, installed BEFORE `reflex init` so the build does not depend on a
+# third-party CDN at the moment it runs (core#1498).
+#
+# `uv run reflex init` calls reflex's install_bun(), which fetches
+#     https://raw.githubusercontent.com/reflex-dev/reflex/main/scripts/bun_install.sh
+# and runs it, and that script then downloads the bun binary. A 504 from either
+# host fails the build - and THIS Dockerfile is what the production deploy builds
+# (`docker compose build app celery app_b`), so an upstream outage removes the
+# only route back: core#1014 records that the box cannot pull a pinned image.
+# Measured 2026-09-21: a documentation-only PR was ejected from the merge queue
+# by exactly this, `curl: (22) ... 504`.
+#
+# Read the URL again: branch `main`, unpinned. The pre-fix build also executed
+# whatever sat on a third party's default branch at build time. Removing that is
+# a supply-chain reduction, not only an availability one - which is why this is a
+# pre-install rather than a retry around the same fetch.
+#
+# Why this WORKS rather than merely narrowing the window: install_bun() returns
+# early when a bun >= Bun.MIN_VERSION already exists at Bun.DEFAULT_PATH
+# (reflex/utils/js_runtimes.py). Measured on the built image, control included -
+# the second line is what makes the first one mean anything:
+#     bun present, --network none  ->  install_bun() returns OK
+#     bun removed, --network none  ->  "Failed to download bun install script"
+#     bun removed, with network    ->  re-downloads 1.3.5
+#
+# Fails SOFT by design. If reflex raises MIN_VERSION above BUN_VERSION,
+# install_bun() just downloads as it does today - degraded to the status quo, not
+# broken. tests/test_deploy/test_bun_pin.py stops that fallback from becoming
+# silently permanent, and the stamp check after `reflex init` notices it here.
+#
+# `bun --version` below is not decoration: bun ships a separate `baseline` build
+# for CPUs without AVX2, so RUNNING the binary is what turns a build-host /
+# run-host mismatch into a loud build failure instead of a SIGILL later.
+ARG BUN_VERSION=1.3.5
+ARG BUN_SHA256_AMD64=7051d86a924aefea3e0b96213b5fd8f79c0793f9cae6534233e627e5c3db4669
+RUN set -eu; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) asset="bun-linux-x64.zip"; sum="${BUN_SHA256_AMD64}" ;; \
+      *) echo "FATAL: no pinned bun checksum for architecture '${arch}' (core#1498)." >&2; \
+         echo "       Add the asset and its sha256 above; do not let the pin fall" >&2; \
+         echo "       back to the unpinned installer, which is what this removes." >&2; \
+         exit 1 ;; \
+    esac; \
+    url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${asset}"; \
+    ok=""; \
+    for attempt in 1 2 3 4 5; do \
+      if curl -fsSL --connect-timeout 10 --max-time 300 -o /tmp/bun.zip "$url"; then ok=1; break; fi; \
+      echo "bun download attempt ${attempt}/5 failed; retrying" >&2; \
+      sleep "$((attempt * 5))"; \
+    done; \
+    [ -n "$ok" ] || { echo "FATAL: could not download pinned bun ${BUN_VERSION} after 5 attempts" >&2; exit 1; }; \
+    echo "${sum}  /tmp/bun.zip" | sha256sum -c -; \
+    mkdir -p /root/.local/share/reflex/bun/bin; \
+    unzip -j -o -q /tmp/bun.zip "*/bun" -d /root/.local/share/reflex/bun/bin; \
+    chmod 0755 /root/.local/share/reflex/bun/bin/bun; \
+    rm -f /tmp/bun.zip; \
+    got="$(/root/.local/share/reflex/bun/bin/bun --version)"; \
+    [ "$got" = "${BUN_VERSION}" ] || { echo "FATAL: pinned bun reports '${got}', expected '${BUN_VERSION}'" >&2; exit 1; }; \
+    { sha256sum /root/.local/share/reflex/bun/bin/bun; \
+      stat -c '%Y %s' /root/.local/share/reflex/bun/bin/bun; } > /tmp/bun-pin.stamp; \
+    echo "bun ${BUN_VERSION} pinned at Bun.DEFAULT_PATH - reflex init will skip its download"
+
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -235,6 +299,43 @@ RUN set -e; \
 
 # Reflex needs to initialize on first run (recreates .venv)
 RUN uv run reflex init
+
+# Assert `reflex init` did NOT replace the pinned bun, and that we pinned it
+# where reflex actually looks (core#1498). TWO checks, because each is blind to
+# what the other catches.
+#
+# 1. THE PATH. The stamp below cannot catch a path change: if reflex started
+#    looking somewhere else, our file would sit untouched at the old path, the
+#    stamp would pass, and `reflex init` would have downloaded to the new one -
+#    green, and back on the CDN. So ask reflex where it looks, on the real
+#    installed reflex, and compare against the literal used above.
+#
+# 2. THE STAMP. A content hash ALONE cannot do this job either: a re-download of
+#    the same 1.3.5 produces identical bytes, so sha256 would pass while the
+#    build had quietly gone back to depending on the network. The stamp therefore
+#    carries mtime and size as well, which a rewrite necessarily changes.
+#    Verified before shipping it: with bun pre-present, `reflex init` leaves
+#    mtime, size, inode AND sha256 all identical, so it does not false-alarm on
+#    the healthy path.
+#
+# Without these, a MIN_VERSION bump or a moved default path would silently
+# restore the outage risk while every comment above still claimed it was gone - a
+# fix whose own documentation describes a world it no longer produces.
+RUN set -eu; \
+    want="$(/app/.venv/bin/python -c 'from reflex.constants import Bun; print(Bun.DEFAULT_PATH)')"; \
+    [ "$want" = "/root/.local/share/reflex/bun/bin/bun" ] || { \
+      echo "FATAL: reflex looks for bun at '${want}', but this image pinned it at" >&2; \
+      echo "       /root/.local/share/reflex/bun/bin/bun (core#1498). The pre-install" >&2; \
+      echo "       is a no-op and the build is back on the CDN. Update both together." >&2; \
+      exit 1; }; \
+    cur="$(sha256sum /root/.local/share/reflex/bun/bin/bun; \
+           stat -c '%Y %s' /root/.local/share/reflex/bun/bin/bun)"; \
+    [ "$cur" = "$(cat /tmp/bun-pin.stamp)" ] || { \
+      echo "FATAL: the pinned bun was replaced during 'reflex init' (core#1498)." >&2; \
+      echo "       The build depends on the network again. Compare reflex's" >&2; \
+      echo "       Bun.MIN_VERSION against BUN_VERSION above." >&2; \
+      exit 1; }; \
+    echo "bun pin intact after reflex init, at reflex's own DEFAULT_PATH"
 
 # Install cloud plugin AFTER reflex init (which recreates the venv).
 # Skipped entirely in the core edition — there is nothing at /cloud to install,

@@ -363,6 +363,9 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "auth_token": _str("Auth token (for bearer/api_key)", sensitive=True),
             "auth_user": _str("Username (for basic auth)"),
             "auth_password": _str("Password (for basic auth)", sensitive=True),
+            # core#1467: the key the form's Extra Headers field writes and `dlt_runner` sends.
+            # A credential container (`SECRET_CONTAINER_KEYS`): every value may be a secret.
+            "headers": {"type": "object", "description": "Optional static request headers"},
         },
         required=["base_url"],
     ),

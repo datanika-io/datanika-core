@@ -5,20 +5,13 @@ import reflex as rx
 from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
+from datanika.ui.components.run_status import run_in_progress_color
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.upload_state import UploadState
 
 _t = I18nState.translations
-
-
-def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
-    return rx.cond(
-        (status == "running") | (status == "pending"),
-        "yellow",
-        "gray",
-    )
 
 
 def _mode_fields() -> rx.Component:
@@ -504,7 +497,7 @@ def _run_control(u) -> rx.Component:
             rx.button(
                 _t["common.run"],
                 size="1",
-                color_scheme=_run_button_color(u.last_run_status),
+                color_scheme=run_in_progress_color(u.last_run_status),
                 on_click=UploadState.run_upload(u.id),
             ),
         ),

@@ -183,6 +183,47 @@ must then clean up, and hiding that is how a stop button becomes a support ticke
 `rows_loaded` must carry the **partial** count on a cancelled run — it is the only honest answer to
 "what did I get?", and it is already the field the UI shows.
 
+> ## 🔴 D3a — THE SENTENCE THAT SHIPS, 2026-09-22 (Engineering, with the Cancel control, AC9)
+>
+> §2 says: *"If implementation finds one of them unbuildable, change the spec and say so — do not
+> resolve it silently in code."* **D3's sentence is unbuildable today, so this is me saying so.**
+>
+> D3 describes a **mid-flight** stop: *"Cancelling stops further loading … `append` will duplicate
+> the **partial** rows."* §7.2 declares that stop (2b) unbuildable: both engines do their work in one
+> opaque call, so a run already inside it runs to the end and loads **everything**. What is shipped
+> is 2a — a run that has not reached its engine never starts it. Shipped verbatim, D3 would tell the
+> user the one thing about cancelling that is not true, on the control whose whole purpose is to be
+> believed. The **intent** is unchanged — say what stops, what stays, and what a re-run costs — so
+> the 2a sentence says exactly that much:
+>
+> > **A run that has not started its work yet stops before anything is read or written. Work
+> > already in progress cannot be interrupted: it runs to the end, and the run is then marked
+> > cancelled. Data already written to your destination stays there, so re-running an upload that
+> > appends loads those rows again.**
+>
+> **And AC12's billing sentence:** *You are billed for what was processed before the run stopped.*
+> Under 2a that is the whole run once its work has started, which the sentence before it makes
+> plain.
+>
+> Four things follow, each asserted in `tests/test_services/test_run_cancellation_wording.py`:
+>
+> 1. **One wording, three surfaces.** The English lives once, in
+>    `datanika/services/run_cancellation.py`. The dialog's `runs.cancel_body` / `runs.cancel_billing`
+>    equal it, `POST /api/v1/runs/{id}/cancel` returns it as `notice`, and the OpenAPI operation's
+>    description is built from it. The landing docs page carries the same text by hand — the one
+>    copy no core test can see.
+> 2. 🔑 **The billing sentence follows the edition.** The open-source edition bills nobody, and
+>    *"you are billed for what was processed"* told to a self-hoster is false. It renders only under
+>    `DATANIKA_EDITION=cloud`, the setting that gates billing everywhere else. **This narrows AC12
+>    deliberately:** "present on all three surfaces" holds for the hosted product.
+> 3. **`append` is still named**, for D3's reason — it is the one disposition where cancelling
+>    leaves the user a cleanup — but the rows it duplicates are *all* of them, not "the partial
+>    rows", because under 2a a started run loads in full.
+> 4. 🚦 **The flip condition, with a reader.** When 2b ships — an engine call a cancel can
+>    interrupt — D3's original sentence becomes true and this one becomes an understatement.
+>    `test_work_already_in_progress_is_said_to_run_to_the_end` is the assertion that will go red on
+>    the correct change, which puts whoever builds 2b in front of this paragraph.
+
 ### D4 — No new column; `updated_at` is the cancellation clock *(new)*
 
 The reaper in §3.1 needs to know how long a run has been trying to stop. `TimestampMixin` already
@@ -284,6 +325,18 @@ this spec exists:
 sets** — not a test asserting the current membership, which is an eighth hand-maintained list and
 would have passed on every one of the seven defects above.
 
+> ⚠️ **Seven was a floor, not the count (Engineering, 2026-09-22).** Found while building §5.3, and
+> each is now derived: **three more colour maps** — `_status_color` in `runs.py`, `dashboard.py` and
+> `models.py`, each falling through to `gray`, which is `pending`'s colour — and **two Run-button
+> colours** in `pipelines.py` and `uploads.py` that tested `running`/`pending` by literal, so a
+> `cancelling` run whose worker is still busy read *idle*. They now read one map total over the enum
+> and the non-terminal set (`datanika/ui/components/run_status.py`). And **two lists in published
+> prose**: the `?wait=true` `408`/`422` descriptions in both the OpenAPI document and the agent guide
+> read *"still pending/running"* and *"(`failed`, `cancelled`)"*, and the first went stale the day
+> `cancelling` was added. Both now read `datanika/services/run_status_prose.py`. 🔑 **A status list
+> in prose that ships with the product is a consumer like any other**; §4's table missed these because
+> it was drawn from code.
+
 ⚠️ **Verify that test goes red before it goes green**, by adding a throwaway eighth status and
 confirming the failure names it. A membership assertion that can only be satisfied by editing it is
 this project's signature defect, and §4 is a list of what it costs.
@@ -343,6 +396,13 @@ this is a launch blocker rather than an API tidy-up, and the button ships in the
 - **i18n ×9** for the button, the dialog title and body, the confirm/cancel labels and *Stopping…*.
   Status enum values rendered raw in the badge (`runs.py:70`) stay untranslated, consistent with the
   standing rule.
+
+> ✅ **Built 2026-09-22 (Engineering).** The dialog body is D3a, not D3 — see D3a above for why.
+> Two details the list above does not state: what a row offers is computed in the state from the
+> model's sets (`can_offer_cancel`, `is_stopping`) so the template branches on two booleans and never
+> on status literals; and the trigger is a labelled button, not an icon, because an icon-only button
+> inside an `alert_dialog.trigger` is the shape [core#1409] found reported as `button-name` and
+> `aria-allowed-attr`.
 
 ### 5.4 Docs
 
@@ -491,3 +551,4 @@ carried forward and renumbered here.
 [core#658]: https://github.com/datanika-io/datanika-core/issues/658
 [core#659]: https://github.com/datanika-io/datanika-core/issues/659
 [core#681]: https://github.com/datanika-io/datanika-core/issues/681
+[core#1409]: https://github.com/datanika-io/datanika-core/issues/1409

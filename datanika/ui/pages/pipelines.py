@@ -7,6 +7,7 @@ from datanika.ui.components.cost_estimator_card import cost_estimator_card
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.pipeline_mode_selector import pipeline_mode_selector
 from datanika.ui.components.quota_callout import error_or_quota_callout
+from datanika.ui.components.run_status import run_in_progress_color
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.components.volume_quota_modal import volume_quota_modal
 from datanika.ui.state.auth_state import AuthState
@@ -14,14 +15,6 @@ from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.pipeline_state import PipelineState
 
 _t = I18nState.translations
-
-
-def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
-    return rx.cond(
-        (status == "running") | (status == "pending"),
-        "yellow",
-        "gray",
-    )
 
 
 COMMAND_OPTIONS = ["build", "run", "test", "seed", "snapshot", "compile"]
@@ -401,7 +394,7 @@ def pipelines_table() -> rx.Component:
                                 rx.button(
                                     _t["common.run"],
                                     size="1",
-                                    color_scheme=_run_button_color(p.last_run_status),
+                                    color_scheme=run_in_progress_color(p.last_run_status),
                                     on_click=PipelineState.run_pipeline(p.id),
                                 ),
                             ),

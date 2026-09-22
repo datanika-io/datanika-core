@@ -160,9 +160,12 @@ TIERS: tuple[Tier, ...] = (
             ),
             Capability(
                 name="Control",
+                # core#1354 / core#657. Cancelling stops a run whose work has not started — the
+                # pre-flight checkpoint — and does not interrupt one already working, which is the
+                # run an agent calls "stuck". Say both, so this never reads as a remedy for it.
                 description=(
-                    "Mark runs cancelled (this does not stop a run), monitor run history, "
-                    "stream logs, browse the data catalog."
+                    "Cancel runs whose work has not started (a run already working is not "
+                    "interrupted), monitor run history, stream logs, browse the data catalog."
                 ),
                 endpoints=(
                     "POST /api/v1/runs/{id}/cancel",

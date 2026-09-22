@@ -36,6 +36,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.notification_service import NotificationService
 from datanika.services.pipeline_service import PipelineService
+from datanika.services.run_cancellation import cancellation_notice
 from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService, validate_upload_name
@@ -1166,7 +1167,10 @@ def cancel_run(request, api_key, session):
         return _typed_error(
             409, "not_cancellable", "Run reached a terminal status before it could be cancelled"
         )
-    return JSONResponse(_ser_run(cancelled))
+    # SPEC_RUN_CANCELLATION §5.2 / AC10 / AC12: the body is still the run, and it also says what
+    # cancelling did and did not do — a `200` alone is exactly what this endpoint returned while
+    # it cancelled nothing. The same words as the /runs dialog (`services/run_cancellation.py`).
+    return JSONResponse({**_ser_run(cancelled), "notice": cancellation_notice()})
 
 
 # ---------------------------------------------------------------------------

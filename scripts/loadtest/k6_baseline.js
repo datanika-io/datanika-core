@@ -107,9 +107,30 @@ export const options = {
   // 🚨 THE ABORT CRITERIA. Fixed here, before the run, so the pass bar cannot be chosen after
   // seeing the numbers. `abortOnFail` stops the run rather than letting it keep loading a box
   // that is already failing — this runs beside production.
+  //
+  // ⏱️ `delayAbortEval` on the LATENCY abort (core#778 gap 1, decided 2026-09-22). k6 evaluates
+  // a threshold continuously over the cumulative metric from t=0, so in the opening seconds of
+  // an open-model ladder the percentile is taken over a handful of samples: at the opening
+  // rate r0, after t seconds p95 is the ceil(0.05 * r0 * t)-th slowest request — the 6th of
+  // 120 at 5 req/s and 24 s. A few slow requests then decide the whole run, and the ladder can
+  // never reach the stages it exists to measure. That follows from the sample size alone, not
+  // from any run's numbers.
+  //
+  // What changes is WHEN the abort may fire — not the bar (p95 < 1 s) and not the population
+  // (every `api` sample from t=0, the opening included). It may not fire until the first full
+  // stage is in: at 5:120s that is 600 samples, so p95 is the 30th slowest. A target that is
+  // genuinely failing — 5% of a full stage over 1 s — still aborts, one stage later.
+  // `scripts/loadtest/abort_rehearsal.sh` drives both halves against a synthetic target and
+  // must be run after any change here: a sustained-slow target MUST abort, and an opening tail
+  // of a few slow requests must NOT decide the run.
+  //
+  // The FAILURE-rate abort is deliberately left immediate: an error is not sampling noise, and
+  // a run whose keys are being refused should stop at once rather than a stage later.
   thresholds: {
     'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }],
-    'http_req_duration{scenario:api}': [{ threshold: 'p(95)<1000', abortOnFail: true }],
+    'http_req_duration{scenario:api}': [
+      { threshold: 'p(95)<1000', abortOnFail: true, delayAbortEval: first.duration },
+    ],
     // The neighbour is the founder's condition and is therefore the hardest line here.
     datanika_neighbour_non_200: [{ threshold: 'count<1', abortOnFail: true }],
     datanika_neighbour_healthz_ms: ['p(99)<250'],

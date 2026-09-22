@@ -57,12 +57,44 @@ bar cannot be chosen after seeing the numbers:
 | threshold | why |
 |---|---|
 | `http_req_failed < 1%` (abort) | a run past this is measuring failure, not throughput |
-| `http_req_duration p(95) < 1s` (abort) | the knee |
+| `http_req_duration p(95) < 1s` (abort, **not before the first stage ends**) | the knee. The bar and the population are unchanged; only *when* the abort may fire is (`delayAbortEval`, core#778 gap 1) — see below |
 | `datanika_neighbour_non_200 < 1` (abort) | **the founder's condition.** Production must not be harmed |
 | `datanika_neighbour_healthz_ms p(99) < 250` | the neighbour's latency, not just its status code |
 
 A non-zero k6 exit means a threshold aborted the run. **That is the abort criteria working**,
 not a broken harness.
+
+### Why the latency abort waits for the first stage — and how that is proven, not asserted
+
+k6 evaluates a threshold over the **cumulative** metric, continuously, from t=0. In the opening
+seconds of an open-model ladder that is a percentile over a handful of samples: at the opening
+rate r0, after t seconds p95 is the ⌈0.05 · r0 · t⌉-th slowest request — the 6th of 120 at
+5 req/s and 24 s. So a few slow requests decided the whole run, and on 2026-09-21 the ladder
+aborted in stage 1 and never reached the stages it exists to measure. That follows from the
+sample size alone; it needed no run's numbers to see.
+
+The latency abort therefore may not fire until the first stage is complete (`delayAbortEval:
+first.duration` — derived from `STAGES`, never a literal). At the default `5:120s` that is 600
+samples, so p95 is the 30th slowest. A target that is genuinely failing still aborts, one stage
+later. The **failure-rate** abort stays immediate: an error is not sampling noise.
+
+A delay that has never been seen doing anything is not evidence, so **run the rehearsal after
+any change to the thresholds.** It drives the real `k6_baseline.js` against a synthetic target
+on a private docker network and requires three different answers:
+
+```bash
+bash scripts/loadtest/abort_rehearsal.sh      # anywhere with docker; ~2 minutes
+```
+
+| case | target | must |
+|---|---|---|
+| A | every request 1.5 s | **abort** (k6 exit 99), and not before the first stage ends |
+| B | an opening tail of 3 slow requests | **not** abort — the ladder runs to completion |
+| C | B, with the delay removed | **abort early** — the pre-fix behaviour, i.e. gap 1 |
+
+C is what makes B mean anything: without it, "B did not abort" is also what a threshold that can
+never fire would print. First run, 2026-09-22 on Docker Desktop: A exit 99 after 26 s, B exit 0
+after 44 s, C exit 99 after 5 s — **all six verdicts PASS**.
 
 ## What the driver refuses to do, and why each refusal exists
 
@@ -95,11 +127,13 @@ effect is how a test fixture ends up in a production-shaped database.
 
 ## Status of this harness — read before quoting a number from it
 
-🔴 **Committed 2026-09-21 and NOT yet executed end to end.** Its structure is guarded by
-`tests/test_deploy/test_loadtest_harness.py`, and the pieces were written against the real
-signatures (`ApiKeyService.create_api_key` / `revoke_api_key` / `list_api_keys`, `get_sync_session`)
-rather than from memory — but **no run has been performed with these exact files**, and the
-first one should be treated as a rehearsal whose job is to make the harness fail somewhere.
+🔴 **Executed end to end on 2026-09-21, and NOT yet executed to a result.** Its structure is
+guarded by `tests/test_deploy/test_loadtest_harness.py`. The first execution did what a first
+run should: it found **eight defects in the harness itself** (core#1492, core#1503), and both runs
+it produced aborted in stage 1 at 5 req/s on the latency threshold — gap 1 above. Since
+2026-09-22 that abort waits for the first full stage, and the rehearsal shows it still aborts a
+failing target. **Until a run completes the ladder with this code, no number from it validates
+the ≥ 60 req/s floor.**
 
 **Do not attach Run 9's numbers to this code.** The five gaps on `core#778` — the knee above 60,
 a real sustain at 50 req/s, `/meta` at >= 100, production's 4-worker shape, and query cost on

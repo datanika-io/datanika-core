@@ -102,6 +102,7 @@ def schedule_form() -> rx.Component:
                 value=ScheduleState.form_target_type,
                 on_change=ScheduleState.set_form_target_type,
                 width="100%",
+                custom_attrs={"aria-label": _t["schedules.target_type"]},
             ),
             rx.box(
                 rx.input(

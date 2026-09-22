@@ -57,6 +57,7 @@ def models_table() -> rx.Component:
                                 rx.icon("eye", size=16),
                                 size="1",
                                 variant="ghost",
+                                aria_label=_t["models.view_details"],
                             ),
                             href=rx.cond(
                                 m.id > 0,

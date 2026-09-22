@@ -341,7 +341,10 @@ class TestConnectionBuildConfig:
         config = state._build_config()
         assert config["base_url"] == "https://api.example.com"
         assert config["api_key"] == "my-key"
-        assert config["extra_headers"] == '{"X-Custom": "val"}'
+        # core#1467, repointed rather than deleted: this pinned the defect — the raw text under
+        # `extra_headers`, a key nothing reads. The field now writes the object the runner sends.
+        assert config["headers"] == {"X-Custom": "val"}
+        assert "extra_headers" not in config
 
     def test_build_config_rest_api_minimal(self):
         state = self._make_state(
@@ -351,7 +354,7 @@ class TestConnectionBuildConfig:
         config = state._build_config()
         assert config == {"base_url": "https://api.example.com"}
         assert "api_key" not in config
-        assert "extra_headers" not in config
+        assert "headers" not in config
 
     def _call_set_form_type(self, state, value):
         """Call the underlying set_form_type function, bypassing Reflex EventHandler."""

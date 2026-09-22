@@ -28,11 +28,11 @@ _t = I18nState.translations
 def _current_mode_hint() -> rx.Component:
     return rx.cond(
         PipelineState.form_mode == "auto",
-        rx.text(_t["pipelines.mode_auto_hint"], size="1", color="gray"),
+        rx.text(_t["pipelines.mode_auto_hint"], size="1", color="var(--gray-11)"),
         rx.cond(
             PipelineState.form_mode == "etl",
-            rx.text(_t["pipelines.mode_etl_hint"], size="1", color="gray"),
-            rx.text(_t["pipelines.mode_elt_hint"], size="1", color="gray"),
+            rx.text(_t["pipelines.mode_etl_hint"], size="1", color="var(--gray-11)"),
+            rx.text(_t["pipelines.mode_elt_hint"], size="1", color="var(--gray-11)"),
         ),
     )
 
@@ -57,7 +57,7 @@ def _mode_labels_row() -> rx.Component:
 
 def _resolved_mode_indicator() -> rx.Component:
     return rx.hstack(
-        rx.text(_t["pipelines.mode_resolved_prefix"], size="1", color="gray"),
+        rx.text(_t["pipelines.mode_resolved_prefix"], size="1", color="var(--gray-11)"),
         rx.badge(
             PipelineState.form_mode,
             color_scheme=rx.cond(
@@ -118,7 +118,7 @@ def _volume_estimate_field() -> rx.Component:
             min="0",
             width="160px",
         ),
-        rx.text(_t["pipelines.volume_estimate_hint"], size="1", color="gray"),
+        rx.text(_t["pipelines.volume_estimate_hint"], size="1", color="var(--gray-11)"),
         spacing="1",
         align="start",
         width="100%",

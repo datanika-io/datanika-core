@@ -74,7 +74,7 @@ def recent_runs_table() -> rx.Component:
 def _guide_step(title: rx.Var[str], desc: rx.Var[str]) -> rx.Component:
     return rx.box(
         rx.text(title, size="2", weight="bold"),
-        rx.text(desc, size="2", color="gray"),
+        rx.text(desc, size="2", color="var(--gray-11)"),
         padding_y="2",
     )
 
@@ -264,7 +264,7 @@ def dashboard_page() -> rx.Component:
                 rx.text(_t["dashboard.welcome"], size="4"),
                 rx.text(
                     _t["dashboard.welcome_sub"],
-                    color="gray",
+                    color="var(--gray-11)",
                 ),
                 width="100%",
             ),

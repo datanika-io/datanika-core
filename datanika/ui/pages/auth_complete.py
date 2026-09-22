@@ -11,7 +11,7 @@ def auth_complete_page() -> rx.Component:
     return rx.center(
         rx.vstack(
             rx.spinner(size="3"),
-            rx.text(_t["auth.completing_sign_in"], size="3", color="gray"),
+            rx.text(_t["auth.completing_sign_in"], size="3", color="var(--gray-11)"),
             spacing="4",
             align="center",
         ),

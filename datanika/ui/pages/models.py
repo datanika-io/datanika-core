@@ -46,7 +46,7 @@ def models_table() -> rx.Component:
                                 m.last_run_status,
                                 color_scheme=run_status_color(m.last_run_status),
                             ),
-                            rx.text("-", color="gray"),
+                            rx.text("-", color="var(--gray-11)"),
                         ),
                     ),
                     rx.table.cell(rx.text(m.last_run_datetime)),

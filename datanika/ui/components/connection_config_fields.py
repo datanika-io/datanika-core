@@ -1099,7 +1099,7 @@ def mongodb_fields() -> rx.Component:
             value=ConnectionState.form_auth_source,
             on_change=ConnectionState.set_form_auth_source,
         ),
-        rx.text(_t["connections.auth_source_hint"], size="1", color="gray"),
+        rx.text(_t["connections.auth_source_hint"], size="1", color="var(--gray-11)"),
         rx.flex(
             rx.checkbox(
                 _t["connections.mongodb_srv"],

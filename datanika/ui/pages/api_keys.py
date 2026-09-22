@@ -85,7 +85,7 @@ def api_keys_page() -> rx.Component:
                     ),
                     width="100%",
                 ),
-                rx.text(_t["api_keys.no_keys"], color="gray"),
+                rx.text(_t["api_keys.no_keys"], color="var(--gray-11)"),
             ),
             spacing="6",
             width="100%",

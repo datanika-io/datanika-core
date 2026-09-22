@@ -57,8 +57,9 @@ RUN_OUTCOME = ROOT / "datanika" / "tasks" / "run_outcome.py"
 UID = "celery-task-failures"
 
 # Production's version, read from /api/v1/status/buildinfo on 2026-09-15 and again on 2026-09-16.
-# docker-compose.yml pins `prom/prometheus:latest`, so this is a measurement, not something the
-# repository can tell you.
+# Since core#1478 (2026-09-22) docker-compose.yml pins `prom/prometheus:v3.13.1@sha256:…`, so the
+# repository CAN now tell you — and `test_monitoring_images_pinned.py` asserts this constant equals
+# that pin, so promtool keeps running the Prometheus production runs.
 PROMETHEUS_VERSION = "3.13.1"
 
 # The rule as it was provisioned until core#1356: the negative control for a first failure.

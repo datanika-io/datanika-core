@@ -7,22 +7,11 @@ from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.components.getting_started_checklist import getting_started_checklist
 from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.run_status import run_status_color
 from datanika.ui.state.dashboard_state import DashboardState
 from datanika.ui.state.i18n_state import I18nState
 
 _t = I18nState.translations
-
-
-def _status_color(status: rx.Var[str]) -> rx.Var[str]:
-    return rx.cond(
-        status == "success",
-        "green",
-        rx.cond(
-            status == "failed",
-            "red",
-            rx.cond(status == "running", "blue", "gray"),
-        ),
-    )
 
 
 def stat_card(title: rx.Var[str], value: rx.Var, icon: str) -> rx.Component:
@@ -69,7 +58,7 @@ def recent_runs_table() -> rx.Component:
                         rx.table.cell(r.id),
                         rx.table.cell(rx.text(r.target_name)),
                         rx.table.cell(
-                            rx.badge(r.status, color_scheme=_status_color(r.status)),
+                            rx.badge(r.status, color_scheme=run_status_color(r.status)),
                         ),
                         rx.table.cell(r.started_at),
                         rx.table.cell(r.rows_loaded),

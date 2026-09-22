@@ -96,6 +96,9 @@ ACKNOWLEDGES = frozenset(
         "SettingsState.change_member_role",  # D7d — changes another person's privileges
         "SettingsState.transfer_ownership",  # D7b — irreversible by the actor
         "SettingsState.cancel_invitation",  # D7c — core#851's eleventh site
+        # core#657 §5.3. A stop is exactly the mutation a user repeats when nothing answers —
+        # and the toast says WHICH outcome they got: cancelled at once, or stopping.
+        "RunState.cancel_run",
         # Destructive — already shipped by core#804 / core#851.
         "ApiKeyState.revoke_api_key",
         "ConnectionState.delete_connection",

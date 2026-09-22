@@ -3,6 +3,7 @@
 import reflex as rx
 
 from datanika.ui.components.layout import page_layout
+from datanika.ui.components.run_status import run_status_color
 from datanika.ui.components.table_loading import table_loading
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.model_state import ModelState
@@ -12,18 +13,6 @@ _t = I18nState.translations
 
 def _type_color(entry_type: rx.Var[str]) -> rx.Var[str]:
     return rx.cond(entry_type == "source_table", "blue", "purple")
-
-
-def _status_color(status: rx.Var[str]) -> rx.Var[str]:
-    return rx.cond(
-        status == "success",
-        "green",
-        rx.cond(
-            status == "failed",
-            "red",
-            rx.cond(status == "running", "blue", "gray"),
-        ),
-    )
 
 
 def models_table() -> rx.Component:
@@ -55,7 +44,7 @@ def models_table() -> rx.Component:
                             m.last_run_status,
                             rx.badge(
                                 m.last_run_status,
-                                color_scheme=_status_color(m.last_run_status),
+                                color_scheme=run_status_color(m.last_run_status),
                             ),
                             rx.text("-", color="gray"),
                         ),

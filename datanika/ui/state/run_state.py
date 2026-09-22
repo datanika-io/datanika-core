@@ -1,14 +1,21 @@
 """Run state for Reflex UI."""
 
+import reflex as rx
 from pydantic import BaseModel
 
 from datanika.config import settings
 from datanika.models.dependency import NodeType
-from datanika.models.run import RunStatus
+from datanika.models.run import (
+    CANCEL_REQUESTED_RUN_STATUSES,
+    CANCELLABLE_RUN_STATUSES,
+    NON_TERMINAL_RUN_STATUSES,
+    RunStatus,
+)
 from datanika.services.connection_service import ConnectionService
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.pipeline_service import PipelineService
+from datanika.services.run_cancellation import bills_usage as _bills_usage
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService
 from datanika.ui.state.base_state import BaseState, get_sync_session
@@ -32,6 +39,29 @@ def _format_rows(value: int | None) -> str:
     return ROWS_NOT_MEASURED if value is None else str(value)
 
 
+# What a row on /runs offers (core#657, SPEC_RUN_CANCELLATION §5.3). Derived from the model's
+# status sets and computed here, in Python, so the template branches on two booleans and never
+# on status literals — `runs.py` comparing to "pending"/"running" would be an eighth
+# hand-maintained status list, which is the defect §4 exists to retire.
+#
+# Every status gets exactly one of three answers — cancel offered, stopping, or finished — and
+# `TestWhatARowOffersIsDerived` fails for a status that gets none.
+
+
+def can_offer_cancel(status: RunStatus) -> bool:
+    """An active Cancel control: the run accepts a cancel and nobody has asked for one yet.
+
+    ``CANCELLING`` is in ``CANCELLABLE_RUN_STATUSES`` because a second API cancel is the same
+    request arriving twice (§5.2), not because the UI should offer it twice.
+    """
+    return status in CANCELLABLE_RUN_STATUSES and status not in CANCEL_REQUESTED_RUN_STATUSES
+
+
+def is_stopping(status: RunStatus) -> bool:
+    """A stop was asked for and the worker has not confirmed it: the badge reads *Stopping…*."""
+    return status in CANCEL_REQUESTED_RUN_STATUSES and status in NON_TERMINAL_RUN_STATUSES
+
+
 class RunItem(BaseModel):
     id: int = 0
     target_type: str = ""
@@ -47,6 +77,11 @@ class RunItem(BaseModel):
     rows_loaded: str = ""
     error_message: str = ""
     logs: str = ""
+    #: :func:`can_offer_cancel` — the row renders an active Cancel control.
+    can_cancel: bool = False
+    #: :func:`is_stopping` — the badge reads *Stopping…* and the control is disabled, not
+    #: removed, because a control that vanishes reads as a failed click (§5.3).
+    stopping: bool = False
 
 
 class RunState(BaseState):
@@ -55,6 +90,14 @@ class RunState(BaseState):
     filter_target_type: str = ""
     selected_run_logs: str = ""
     selected_run_id: int = 0
+
+    @rx.var
+    def bills_usage(self) -> bool:
+        """Whether the Cancel dialog says what is billed (``SPEC_RUN_CANCELLATION`` AC12).
+
+        The open-source edition bills nobody, so the sentence renders only where it is true.
+        """
+        return _bills_usage()
 
     async def load_runs(self):
         from datanika.ui.state.auth_state import AuthState
@@ -109,6 +152,8 @@ class RunState(BaseState):
                     rows_loaded=_format_rows(r.rows_loaded),
                     error_message=r.error_message or "",
                     logs=r.logs or "",
+                    can_cancel=can_offer_cancel(r.status),
+                    stopping=is_stopping(r.status),
                 )
                 for r in rows
             ]
@@ -155,6 +200,60 @@ class RunState(BaseState):
 
     def view_logs(self, run_id: int):
         self._select_run(run_id)
+
+    async def cancel_run(self, run_id: int):
+        """Stop a run from `/runs` (core#657, ``SPEC_RUN_CANCELLATION`` §5.3).
+
+        Until this existed, a user with a runaway run had no way to stop it without an API key.
+
+        🚨 **The role check is here as well as on the control, and both are mandatory.** Hiding
+        the button from a ``viewer`` is the affordance; this is the enforcement (D5: cancelling
+        is gated at ``editor``, the role that may start a run). The service repeats the check
+        against the database (``assert_org_role``), so a role changed since sign-in is refused
+        too.
+
+        What the stop *did* is the service's answer and is said back to the user: a pending
+        run is cancelled at once, a running one is ``cancelling`` until its worker finishes —
+        and a run that finished first is refused rather than reported as stopped.
+        """
+        if not await self._check_role("editor"):
+            return
+        from datanika.ui.state.auth_state import AuthState
+
+        auth = await self.get_state(AuthState)
+        org_id = auth.current_org.id or 0
+        user_id = auth.current_user.id or 0
+        try:
+            with get_sync_session() as session:
+                run = ExecutionService().cancel_run(session, org_id, run_id, actor_user_id=user_id)
+                outcome = run.status if run is not None else None
+                session.commit()
+        except Exception as exc:
+            self._set_error(exc, "The run could not be cancelled")
+            auth.action_error = self.error_message
+            return
+        await self.load_runs()
+        if outcome is None:
+            # Not in this org, or already terminal — `cancel_run` answers both with None, and
+            # from this page the second is the one a member can reach: the run finished between
+            # the page rendering its Cancel button and the click arriving.
+            #
+            # Written to `AuthState.action_error`, the channel `page_layout` renders, and not to
+            # this state's own `error_message`, which no page reads (core#744, core#887).
+            auth.action_error = await self._translated(
+                "runs.cannot_cancel",
+                "This run has already finished, so there is nothing to cancel.",
+            )
+            return
+        self.error_message = ""
+        auth.action_error = ""
+        if outcome == RunStatus.CANCELLING:
+            yield await self._saved_toast(
+                "runs.stopping_toast",
+                "Stopping. The run is marked cancelled when its current work ends.",
+            )
+        else:
+            yield await self._saved_toast("runs.cancelled_toast", "Run cancelled")
 
     def close_logs(self):
         self.selected_run_id = 0

@@ -110,12 +110,12 @@ KNOWN_UNLABELLED: dict[str, int] = {
     "datanika/ui/components/captcha.py": 1,
     # connection_config_fields.py, language_switcher.py, pipeline_mode_selector.py, audit_logs.py,
     # connections.py and sql_editor.py reached 0 on 2026-09-16 (core#720's component fixes) and
-    # their entries were removed: a file at 0 needs no allowance.
+    # their entries were removed: a file at 0 needs no allowance. settings.py followed on
+    # 2026-09-22 (core#1409 `label`): 13 -> 0, the six axe reported plus seven placeholder-only.
     "datanika/ui/pages/dag.py": 1,
     "datanika/ui/pages/model_detail.py": 13,
     "datanika/ui/pages/pipelines.py": 3,
     "datanika/ui/pages/schedules.py": 2,
-    "datanika/ui/pages/settings.py": 13,
     "datanika/ui/pages/transformations.py": 6,
     "datanika/ui/pages/uploads.py": 16,
 }

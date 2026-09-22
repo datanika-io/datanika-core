@@ -90,7 +90,7 @@ def connection_form() -> rx.Component:
                 " ",
                 _t["connections.required_legend"],
                 size="1",
-                color="gray",
+                color="var(--gray-11)",
             ),
             # A config input, not rx.input: this is the first text field on the
             # form, so it is exactly the slot Chrome fills with the saved

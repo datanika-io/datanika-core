@@ -93,7 +93,7 @@ def social_login_row() -> rx.Component:
     """
     return rx.fragment(
         rx.divider(),
-        rx.text(_t["auth.or_continue_with"], size="2", color="gray", text_align="center"),
+        rx.text(_t["auth.or_continue_with"], size="2", color="var(--gray-11)", text_align="center"),
         rx.hstack(
             social_login_button("Google", "google"),
             social_login_button("GitHub", "github"),

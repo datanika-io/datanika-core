@@ -229,12 +229,21 @@ def pipeline_form() -> rx.Component:
             ),
             rx.match(
                 PipelineState.form_command,
-                ("build", rx.text(_t["pipelines.cmd_build_hint"], size="1", color="gray")),
-                ("run", rx.text(_t["pipelines.cmd_run_hint"], size="1", color="gray")),
-                ("test", rx.text(_t["pipelines.cmd_test_hint"], size="1", color="gray")),
-                ("seed", rx.text(_t["pipelines.cmd_seed_hint"], size="1", color="gray")),
-                ("snapshot", rx.text(_t["pipelines.cmd_snapshot_hint"], size="1", color="gray")),
-                ("compile", rx.text(_t["pipelines.cmd_compile_hint"], size="1", color="gray")),
+                (
+                    "build",
+                    rx.text(_t["pipelines.cmd_build_hint"], size="1", color="var(--gray-11)"),
+                ),
+                ("run", rx.text(_t["pipelines.cmd_run_hint"], size="1", color="var(--gray-11)")),
+                ("test", rx.text(_t["pipelines.cmd_test_hint"], size="1", color="var(--gray-11)")),
+                ("seed", rx.text(_t["pipelines.cmd_seed_hint"], size="1", color="var(--gray-11)")),
+                (
+                    "snapshot",
+                    rx.text(_t["pipelines.cmd_snapshot_hint"], size="1", color="var(--gray-11)"),
+                ),
+                (
+                    "compile",
+                    rx.text(_t["pipelines.cmd_compile_hint"], size="1", color="var(--gray-11)"),
+                ),
                 rx.fragment(),
             ),
             # Full refresh

@@ -79,7 +79,7 @@ def _form() -> rx.Component:
                     custom_attrs=autofill_attrs("new-password"),
                     width="100%",
                 ),
-                rx.text(_t["account.password_rules"], size="1", color="gray"),
+                rx.text(_t["account.password_rules"], size="1", color="var(--gray-11)"),
                 rx.button(
                     _t["auth.set_password"],
                     type="submit",
@@ -99,7 +99,7 @@ def _form() -> rx.Component:
 
 def _invalid() -> rx.Component:
     return rx.vstack(
-        rx.text(_t["auth.reset_link_invalid_body"], size="2", color="gray"),
+        rx.text(_t["auth.reset_link_invalid_body"], size="2", color="var(--gray-11)"),
         rx.link(
             _t["auth.request_new_link"],
             href="/forgot-password",

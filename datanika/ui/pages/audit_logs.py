@@ -108,7 +108,7 @@ def audit_logs_page() -> rx.Component:
                     ),
                     width="100%",
                 ),
-                rx.text(_t["audit.no_logs"], color="gray"),
+                rx.text(_t["audit.no_logs"], color="var(--gray-11)"),
             ),
             spacing="6",
             width="100%",

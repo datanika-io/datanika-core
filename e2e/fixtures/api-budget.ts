@@ -117,8 +117,9 @@ type SubjectState = {
   /** Set once the server has told us the real number, for the log line. */
   calibrated: boolean;
   /**
-   * Our-clock send time of each request since the last roll — what {@link ApiBudget.rollTo}
-   * needs to carry the ones the server may count in the NEXT window (core#1296).
+   * Our-clock send time of every request still counted against `window`: those sent since the
+   * last roll, plus any {@link ApiBudget.rollTo} carried across it (core#1296). The next roll
+   * keeps only the ones the server may count in the NEXT window.
    */
   sentAt: number[];
 };

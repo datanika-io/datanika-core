@@ -85,9 +85,19 @@ def _sign_state(state: str) -> str:
 
 
 def _verify_state(state: str, signature: str) -> bool:
-    """Verify an OAuth state parameter signature."""
+    """Verify an OAuth state parameter signature.
+
+    ``False`` for a signature that is not ASCII, instead of letting ``hmac.compare_digest``
+    raise ``TypeError`` on it: the value comes from a cookie, so a crafted one must be a
+    refusal, not a 500. The raise was reachable before on the equal-state path; since
+    core#624 AC13 this also runs when the two states differ, to tell a superseded flow from a
+    forged cookie.
+    """
     expected = _sign_state(state)
-    return hmac.compare_digest(expected, signature)
+    try:
+        return hmac.compare_digest(expected, signature)
+    except TypeError:
+        return False
 
 
 def _as_text(value) -> str:
@@ -209,15 +219,16 @@ async def oauth_callback(request: Request) -> RedirectResponse:
     if ":" not in cookie_value:
         return RedirectResponse(url=_frontend(login_error_path("invalid_state")), status_code=302)
     stored_state, signature = cookie_value.rsplit(":", 1)
-    if (
-        not returned_state
-        or returned_state != stored_state
-        or not _verify_state(stored_state, signature)
-    ):
-        # 🚨 Two tabs share one cookie jar, so a second flow started before this one completed
-        # lands here too (§8d, AC12). The comparison stays exact: loosening it to make that case
-        # succeed would complete this flow against the OTHER flow's context — its invitation.
+    if not returned_state or not _verify_state(stored_state, signature):
         return RedirectResponse(url=_frontend(login_error_path("invalid_state")), status_code=302)
+    if returned_state != stored_state:
+        # 🚨 Two tabs share one cookie jar, so a second flow started before this one completed
+        # lands here (§8d, AC12). The comparison stays exact: loosening it to make that case
+        # succeed would complete this flow against the OTHER flow's context — its invitation.
+        # core#624 AC13: the cookie VERIFIED, so this browser really started another flow, and the
+        # refusal says so. "Please try again" from /login would sign the user in without this
+        # flow's invitation or template. A missing or forged cookie keeps the generic reason above.
+        return RedirectResponse(url=_frontend(login_error_path("superseded_flow")), status_code=302)
 
     # core#624. Read only once the state has verified, and only as bound to that state.
     context = _decode_context(request.cookies.get(_OAUTH_CONTEXT_COOKIE, ""), stored_state)

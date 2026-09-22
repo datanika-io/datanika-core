@@ -116,13 +116,17 @@ class TestOAuthCallback:
             assert "/auth/complete" in resp.headers["location"]
             assert "is_new=1" in resp.headers["location"]
 
-    def test_invalid_state_redirects_to_login(self, client):
+    def test_a_mismatched_state_redirects_to_login(self, client):
+        """Was ``test_invalid_state_redirects_to_login``. The cookie here is one we signed, so
+        since core#624 AC13 the mismatch carries its own reason, ``superseded_flow``; a missing
+        or forged cookie still gets ``invalid_state`` (the next test, and
+        ``test_oauth_superseded_flow.py``)."""
         with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             client.cookies.set("oauth_state", _make_state_cookie("real_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=forged_state")
             assert resp.status_code == 302
-            assert "auth_error=invalid_state" in resp.headers["location"]
+            assert "auth_error=superseded_flow" in resp.headers["location"]
 
     def test_missing_state_cookie_redirects_to_login(self, client):
         with patch("datanika.services.oauth_routes._get_providers") as mock:

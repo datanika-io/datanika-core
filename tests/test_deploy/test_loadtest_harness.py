@@ -31,7 +31,7 @@ SEEDER = LOADTEST / "seed_loadtest_org.py"
 README = LOADTEST / "README.md"
 
 
-@pytest.mark.parametrize("path", [K6, RUNNER, SEEDER, README])
+@pytest.mark.parametrize("path", [K6, RUNNER, SEEDER, README, LOADTEST / "abort_rehearsal.sh"])
 def test_the_instrument_is_in_the_repository(path):
     """The whole point. `.scratch/` is swept; a floor's instrument cannot live there."""
     assert path.is_file(), (
@@ -334,4 +334,74 @@ def test_the_generator_refuses_to_guess_a_neighbour() -> None:
     assert "throw new Error(" in js, (
         "an unset NEIGHBOUR_BASE must throw. Silently probing a default port produces a "
         "neighbour figure that describes whichever colour happens to answer."
+    )
+
+
+# ======================================================================================
+# Gap 1 — the LATENCY abort waits for the first full stage (core#778, decided 2026-09-22)
+# ======================================================================================
+#
+# k6 evaluates a threshold over the cumulative metric from t=0. In the opening seconds of an
+# open-model ladder that is a percentile over a handful of samples — at 5 req/s after 24 s,
+# p95 is the 6th slowest of 120 — so the first run on 2026-09-21 aborted in stage 1 and the
+# ladder could never reach the stages it exists to measure. The decision changes WHEN the
+# latency abort may fire (after the first stage), not the bar and not the population.
+#
+# These assert structure only. The BEHAVIOUR — that a sustained-slow target still aborts and an
+# opening tail no longer decides the run — is proven by `abort_rehearsal.sh`, which drives the
+# real generator against a synthetic target and must be run after any change to the thresholds.
+
+REHEARSAL = LOADTEST / "abort_rehearsal.sh"
+
+
+def _threshold_entry(src: str, metric: str) -> str:
+    """One entry of the ``thresholds:`` block, from its key to the list's closing bracket."""
+    start = src.index(f"'{metric}':")
+    return src[start : src.index("]", start) + 1]
+
+
+def test_the_latency_abort_waits_for_the_first_stage() -> None:
+    """Derived from the first stage, never a literal: a stage spec change must move it too."""
+    entry = _threshold_entry(K6.read_text(encoding="utf-8"), "http_req_duration{scenario:api}")
+    assert "threshold: 'p(95)<1000'" in entry, entry  # the bar is unchanged
+    assert "abortOnFail: true" in entry, entry
+    assert "delayAbortEval: first.duration" in entry, entry
+
+
+def test_the_failure_abort_stays_immediate() -> None:
+    """An error is not sampling noise. Stated as the exact shape, not as a banned word."""
+    entry = _threshold_entry(K6.read_text(encoding="utf-8"), "http_req_failed{scenario:api}")
+    assert (
+        entry == "'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }]"
+    )
+
+
+def test_the_rehearsal_drives_the_real_generator_in_three_populations() -> None:
+    text = REHEARSAL.read_text(encoding="utf-8")
+    assert 'GEN="$(cat "$HERE/k6_baseline.js")"' in text, "it must drive the real script"
+    for case in ("run_case A slow", "run_case B tail", "run_case C tail"):
+        assert case in text, case
+    # C removes the delay to reproduce gap 1; if that removal silently matched nothing, C would
+    # compare the script with itself. The refusal is what makes C a control.
+    assert 'if [ "$NODELAY" = "$GEN" ]; then' in text
+    assert 'verdict "C aborted (exit 99)' in text
+
+
+def test_the_gap1_guards_can_fail() -> None:
+    """Each of the three tests above, shown red on the mutation it exists for."""
+    k6 = K6.read_text(encoding="utf-8")
+    dropped = k6.replace(", delayAbortEval: first.duration", "")
+    assert dropped != k6, "control constructed wrongly: the delay clause was not found"
+    assert "delayAbortEval" not in _threshold_entry(dropped, "http_req_duration{scenario:api}")
+    literal = k6.replace("delayAbortEval: first.duration", "delayAbortEval: '120s'")
+    assert "delayAbortEval: first.duration" not in _threshold_entry(
+        literal, "http_req_duration{scenario:api}"
+    )
+    delayed = k6.replace(
+        "[{ threshold: 'rate<0.01', abortOnFail: true }]",
+        "[{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '120s' }]",
+    )
+    assert delayed != k6
+    assert _threshold_entry(delayed, "http_req_failed{scenario:api}") != (
+        "'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }]"
     )

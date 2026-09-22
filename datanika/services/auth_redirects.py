@@ -33,6 +33,7 @@ AUTH_ERROR_KEYS: dict[str, str] = {
     "unknown_provider": "auth.error.unknown_provider",
     "missing_code": "auth.error.retry",
     "invalid_state": "auth.error.retry",
+    "superseded_flow": "auth.error.superseded",
     "oauth_failed": "auth.error.provider_failed",
     # --- SSO (services/sso_routes.py) ---
     "sso_invalid_state": "auth.error.retry",
@@ -56,7 +57,7 @@ def login_error_path(reason: str) -> str:
     """
     if reason not in AUTH_ERROR_KEYS:
         # An instruction to edit source. Unreachable from any request today — all
-        # 18 call sites pass literals, 13 distinct, every one already in
+        # 19 call sites pass literals, 14 distinct, every one already in
         # AUTH_ERROR_KEYS, and `auth_state.py` filters `?auth_error=` before it can
         # arrive. It stays a hard failure because a future caller passing a
         # variable is exactly what the marker should not silently render (core#1113).

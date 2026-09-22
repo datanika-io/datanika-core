@@ -161,6 +161,7 @@ def login_page() -> rx.Component:
                         ("sso_not_configured", _t["auth.error.sso_not_configured"]),
                         ("sso_unreachable", _t["auth.error.sso_unreachable"]),
                         ("sso_unsupported_protocol", _t["auth.error.sso_not_configured"]),
+                        ("superseded_flow", _t["auth.error.superseded"]),
                         ("unknown_provider", _t["auth.error.unknown_provider"]),
                         "",
                     ),

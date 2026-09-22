@@ -17,6 +17,7 @@ import pathlib
 
 import pytest
 
+from datanika.errors import InternalInvariantError
 from datanika.models.run import RunStatus
 from datanika.services.run_status_prose import statuses_in_prose
 
@@ -43,7 +44,7 @@ class TestStatusesInProse:
         assert statuses_in_prose(statuses) == "`cancelling`, `pending` or `running`"
 
     def test_an_empty_set_is_refused_rather_than_rendered_as_nothing(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(InternalInvariantError):
             statuses_in_prose(set())
 
 

@@ -14,14 +14,20 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from datanika.errors import InternalInvariantError
 from datanika.models.run import NON_TERMINAL_RUN_STATUSES, TERMINAL_RUN_STATUSES, RunStatus
 
 
 def statuses_in_prose(statuses: Iterable[RunStatus]) -> str:
-    """``{PENDING, RUNNING, CANCELLING}`` -> "`cancelling`, `pending` or `running`" (sorted)."""
+    """``{PENDING, RUNNING, CANCELLING}`` -> "`cancelling`, `pending` or `running`" (sorted).
+
+    An empty set is a programming error, not an input to render: the published sentence would
+    read "still  when the wait expired". ``InternalInvariantError``, never a bare ``ValueError``,
+    whose text core#1094's contract stops from reaching anyone.
+    """
     names = [f"`{s.value}`" for s in sorted(statuses)]
     if not names:
-        raise ValueError("an empty status set has no prose")
+        raise InternalInvariantError("an empty run-status set has no prose")
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} or {names[-1]}"
 
 

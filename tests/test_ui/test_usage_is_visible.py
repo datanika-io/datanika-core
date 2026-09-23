@@ -301,13 +301,25 @@ class TestACapAndAnAllowanceDoNotLookTheSame:
 
 
 class TestNoTemplateKeyIsPaintedWithItsBracesShowing:
-    """🚨 Core has **no i18n substitution layer**, so ``_t["some.key"]`` paints the raw value.
+    """🚨 i18n substitution here is **per call site**, so ``_t["some.key"]`` paints the raw value.
 
-    Fifteen ``en.json`` values carry ``{placeholder}`` spans and **eight of them are rendered
-    through ``_t[...]`` with no substitution anywhere in their file** — measured, not reasoned.
-    Two are on this meter, which has never rendered in production because the UX flag has been
-    off since V2 P1. Un-gating it without this would put ``{used} / {limit} GB processed this
-    month`` on every customer's dashboard.
+    Fifteen ``en.json`` values carry ``{placeholder}`` spans. Two of them are on this meter,
+    which has never rendered in production because the UX flag has been off since V2 P1 —
+    un-gating it without this would put ``{used} / {limit} GB processed this month`` on every
+    customer's dashboard.
+
+    🔴 **A correction worth keeping, because the first measurement of this was wrong.** The
+    initial census asked *"does this FILE contain ``.replace(``"* and reported **eight**
+    unsubstituted keys. Core has a **second** substitution mechanism that heuristic could not
+    see — ``ui/components/i18n_text.py::interpolate``, which weaves components into a template
+    and is used on the signup sentence. Re-measured per call site against **both** mechanisms,
+    the real figure is **five** unsubstituted sites: three in ``volume_quota_modal`` (latent —
+    gated by the same UX flag at ``pipelines.py:269-272``) and **two live ones on the account
+    deletion flow** in ``settings.py``, which render ``{org}`` to real users today. Tracked
+    separately; they are not this card.
+    🔑 *An instrument that knows about one mechanism reports the other as absent* — and the
+    false positive here was in the flattering direction, making the defect look larger and
+    this fix look more complete than it was.
 
     🔑 **Re-wording the nine values to drop the braces is NOT an equivalent fix**, which is why
     this asserts substitution rather than absence: ru, zh and ar place the numbers *mid-phrase*

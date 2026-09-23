@@ -206,6 +206,7 @@ def _prompt() -> rx.Component:
                 on_click=McpConsentState.deny,
                 variant="soft",
                 color_scheme="gray",
+                high_contrast=True,
                 size="3",
                 width="100%",
                 disabled=McpConsentState.is_submitting,

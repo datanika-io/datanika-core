@@ -90,11 +90,31 @@ jobs:
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
           uv pip install --system -e . --no-deps
 
+      # core#1288 AC4. These two steps carried `--exclude datanika/migrations` and
+      # `--exclude datanika/i18n`; the pre-push hook passes neither, so the two gates read
+      # different file sets and a local green did not predict a CI green. Both flags are
+      # gone rather than copied into the hook, because one gate with one file set is true
+      # by construction and two agreeing gates is a thing somebody has to keep true.
+      #
+      # Each was safe to drop for its own reason, measured on ruff 0.15.1 (what uv.lock
+      # resolves) before removing, with a positive control so the zeros were readings:
+      #   migrations — the exemption that flag encoded MOVED into pyproject.toml's
+      #     per-file-ignores in ae6bdd7 ("datanika/migrations/** = [S608]"). The flag
+      #     outlived its reason and all it still did was drop files from CI's view, so a
+      #     migration carrying an E501 passed CI and failed the hook.
+      #   i18n — added in 0792b8b as a rider on an unrelated UI PR. datanika/i18n has
+      #     exactly one .py file, __init__.py, which is hand-written, carries no generated
+      #     marker, and is already correctly formatted.
+      #
+      # 🚨 Do not re-add an exclude here to make a red go away. An exclude is a set of
+      # files NO gate reads, and it will diverge from the hook again the moment it lands.
+      # Fix the file, or add a per-file-ignore in pyproject.toml where BOTH gates see it.
+      # Pinned by tests/test_deploy/test_lint_gates_cover_what_they_name.py.
       - name: Ruff check
-        run: ruff check datanika tests scripts e2e/scripts --exclude "datanika/migrations"
+        run: ruff check datanika tests scripts e2e/scripts
 
       - name: Ruff format check
-        run: ruff format --check datanika tests scripts e2e/scripts --exclude "datanika/i18n"
+        run: ruff format --check datanika tests scripts e2e/scripts
 
       # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of
       # which assert a REFUSAL — including the two shapes that read as green: no stamp on

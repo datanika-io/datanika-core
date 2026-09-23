@@ -48,7 +48,7 @@ def _template_card(tpl: PipelineTemplate) -> rx.Component:
                 rx.hstack(
                     rx.badge(tpl.icon_source, color_scheme="blue", size="2"),
                     rx.icon("arrow_right", size=18, color="var(--slate-9)"),
-                    rx.badge(tpl.icon_destination, color_scheme="violet", size="2"),
+                    rx.badge(tpl.icon_destination, size="2"),
                     align="center",
                     spacing="2",
                 ),

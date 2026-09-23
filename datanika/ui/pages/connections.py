@@ -195,6 +195,7 @@ def connection_form() -> rx.Component:
                         _t["common.cancel"],
                         variant="soft",
                         color_scheme="gray",
+                        high_contrast=True,
                         on_click=ConnectionState.cancel_edit,
                     ),
                 ),
@@ -232,7 +233,13 @@ def _delete_connection_dialog(conn) -> rx.Component:
         AuthState.can_delete,
         rx.alert_dialog.root(
             rx.alert_dialog.trigger(
-                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+                rx.button(
+                    _t["common.delete"],
+                    color_scheme="red",
+                    variant="soft",
+                    high_contrast=True,
+                    size="1",
+                ),
             ),
             rx.alert_dialog.content(
                 rx.alert_dialog.title(_t["connections.delete_title"]),
@@ -270,12 +277,19 @@ def _delete_connection_dialog(conn) -> rx.Component:
                 ),
                 rx.flex(
                     rx.alert_dialog.cancel(
-                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                        rx.button(
+                            _t["common.cancel"],
+                            variant="soft",
+                            color_scheme="gray",
+                            high_contrast=True,
+                        ),
                     ),
                     rx.alert_dialog.action(
                         rx.button(
                             _t["connections.delete_confirm"],
                             color_scheme="red",
+                            variant="soft",
+                            high_contrast=True,
                             on_click=ConnectionState.delete_connection(conn.id),
                         ),
                     ),

@@ -39,7 +39,6 @@ def _free_hard_block_content() -> rx.Component:
             rx.button(
                 _t["quota.upgrade_to_next_tier"],
                 size="2",
-                color_scheme="violet",
                 variant="solid",
             ),
             href=BILLING_ROUTE,

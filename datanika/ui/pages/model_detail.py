@@ -234,7 +234,6 @@ def _custom_test_form() -> rx.Component:
                         _t["common.add"],
                         on_click=ModelDetailState.add_custom_test,
                         size="1",
-                        color_scheme="blue",
                     ),
                     rx.button(
                         _t["common.cancel"],
@@ -477,7 +476,6 @@ def actions_section() -> rx.Component:
         rx.button(
             _t["common.save"],
             on_click=ModelDetailState.save_model_detail,
-            color_scheme="blue",
         ),
         rx.link(
             rx.button(_t["model_detail.back_to_models"], variant="outline"),

@@ -45,6 +45,7 @@ from datanika.ui.state.schedule_state import ScheduleState
 from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState
+from datanika.ui.theme import ACCENT_COLOR, GRAY_COLOR
 
 setup_logging(debug=_settings.debug)
 
@@ -78,7 +79,15 @@ _head_components: list[rx.Component] = [
 ]
 _head_components.extend(plugin_head_components())
 
-app = rx.App(head_components=_head_components)
+# The theme is passed explicitly, and that is the whole point of these two lines.
+# ``rx.App`` defaults to ``accent_color="blue"`` (``reflex/app.py``), so omitting the theme
+# does not leave the product unthemed — it leaves it wearing Reflex's choice, and Radix's
+# ``blue-9`` carries white text at 3.26:1, below WCAG AA. Every solid button in the app
+# inherited that. See ``docs/specs/SPEC_BUTTON_CONTRAST.md`` and ``datanika/ui/theme.py``.
+app = rx.App(
+    theme=rx.theme(accent_color=ACCENT_COLOR, gray_color=GRAY_COLOR),
+    head_components=_head_components,
+)
 
 if _settings.datanika_edition == "cloud":
     from datanika_cloud.plugin import init_cloud  # noqa: E402
@@ -321,6 +330,31 @@ from datanika.services.metrics import PrometheusMiddleware, metrics_routes  # no
 for _route in metrics_routes:
     app._api.routes.append(_route)
 app._api.add_middleware(PrometheusMiddleware)
+
+# core#1287 — an unhandled exception on a backend route must leave a traceback.
+#
+# Reflex builds the production server command itself and hardcodes granian's
+# `--log-level critical` (`reflex/utils/exec.py:run_granian_backend_prod`), so the
+# traceback granian would normally print is discarded before it reaches stdout. The
+# Prometheus middleware above still records `http_requests_total{status="500"}`, so
+# we learn THAT a 500 happened and never WHICH failure it was.
+#
+# ⚠️ This covers the routes that are NOT `api_endpoint`-decorated — the OAuth AS
+# routes, SSO/SAML, `/mcp`, `/metrics`, the agent docs, and the cloud plugin's
+# webhook and `/api/admin/e2e/*` handlers, which is where core#1269's 500 lived.
+# `api_endpoint` already ends in `except Exception: logger.exception("API handler
+# error")`, and a Reflex EVENT-handler exception goes to Reflex's own console as
+# `[Reflex Backend Exception]`. Neither of those was ever silent.
+#
+# 🔑 Installed AFTER PrometheusMiddleware on purpose. `add_middleware` inserts at
+# position 0 and Starlette builds the stack outermost-first, so the last one added
+# wraps the rest: Prometheus's `.app` chain (which it walks at construction to find
+# the route table) is unchanged, and an exception raised by the metrics middleware
+# itself is inside this try. Pinned by
+# tests/test_services/test_unhandled_exception_logging.py.
+from datanika.services.error_logging import ExceptionLoggingMiddleware  # noqa: E402
+
+app._api.add_middleware(ExceptionLoggingMiddleware)
 
 # Mount remote MCP endpoint (/mcp) — Streamable HTTP, bearer=API-key, read-only
 # (Remote-MCP P1, #370). The datanika-mcp tool-surface package is installed in

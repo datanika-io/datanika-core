@@ -103,6 +103,7 @@ def revoke_api_key_dialog(key: ApiKeyItem) -> rx.Component:
                 _t["api_keys.revoke"],
                 size="1",
                 color_scheme="red",
+                high_contrast=True,
                 variant="ghost",
             ),
         ),
@@ -123,12 +124,16 @@ def revoke_api_key_dialog(key: ApiKeyItem) -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["api_keys.revoke_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=ApiKeyState.revoke_api_key(key.id),
                     ),
                 ),

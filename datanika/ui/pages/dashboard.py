@@ -199,7 +199,7 @@ def usage_bar() -> rx.Component:
     children = [
         rx.hstack(
             rx.text(_t["dashboard.usage_title"], weight="bold", size="3"),
-            rx.badge(DashboardState.plan_name, color_scheme="violet", size="1"),
+            rx.badge(DashboardState.plan_name, size="1"),
             align="center",
             spacing="2",
         ),
@@ -243,7 +243,6 @@ def getting_started_card() -> rx.Component:
                     ),
                     href="https://datanika.io/docs",
                     is_external=True,
-                    color_scheme="violet",
                     padding_top="2",
                 ),
                 spacing="1",

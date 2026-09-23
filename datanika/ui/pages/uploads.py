@@ -456,7 +456,13 @@ def _delete_upload_dialog(u) -> rx.Component:
         AuthState.can_delete,
         rx.alert_dialog.root(
             rx.alert_dialog.trigger(
-                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+                rx.button(
+                    _t["common.delete"],
+                    color_scheme="red",
+                    variant="soft",
+                    high_contrast=True,
+                    size="1",
+                ),
             ),
             rx.alert_dialog.content(
                 rx.alert_dialog.title(_t["uploads.delete_title"]),
@@ -467,12 +473,19 @@ def _delete_upload_dialog(u) -> rx.Component:
                 ),
                 rx.flex(
                     rx.alert_dialog.cancel(
-                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                        rx.button(
+                            _t["common.cancel"],
+                            variant="soft",
+                            color_scheme="gray",
+                            high_contrast=True,
+                        ),
                     ),
                     rx.alert_dialog.action(
                         rx.button(
                             _t["uploads.delete_confirm"],
                             color_scheme="red",
+                            variant="soft",
+                            high_contrast=True,
                             on_click=UploadState.delete_upload(u.id),
                         ),
                     ),
@@ -502,7 +515,14 @@ def _run_control(u) -> rx.Component:
         rx.cond(
             u.is_blocked,
             rx.hstack(
-                rx.button(_t["common.run"], size="1", color_scheme="gray", disabled=True),
+                rx.button(
+                    _t["common.run"],
+                    size="1",
+                    color_scheme="gray",
+                    variant="soft",
+                    high_contrast=True,
+                    disabled=True,
+                ),
                 rx.text(
                     _t["uploads.run_blocked_reason"],
                     size="1",

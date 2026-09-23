@@ -71,7 +71,9 @@ def _cancel_dialog(r) -> rx.Component:
     """
     return rx.alert_dialog.root(
         rx.alert_dialog.trigger(
-            rx.button(_t["runs.cancel"], size="1", variant="soft", color_scheme="red"),
+            rx.button(
+                _t["runs.cancel"], size="1", variant="soft", color_scheme="red", high_contrast=True
+            ),
         ),
         rx.alert_dialog.content(
             rx.alert_dialog.title(_t["runs.cancel_title"]),
@@ -90,12 +92,19 @@ def _cancel_dialog(r) -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["runs.cancel_keep"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["runs.cancel_keep"],
+                        variant="soft",
+                        color_scheme="gray",
+                        high_contrast=True,
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["runs.cancel_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=RunState.cancel_run(r.id),
                     ),
                 ),
@@ -130,6 +139,7 @@ def _cancel_control(r) -> rx.Component:
                     size="1",
                     variant="soft",
                     color_scheme="gray",
+                    high_contrast=True,
                     disabled=True,
                 ),
             ),

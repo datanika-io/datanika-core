@@ -270,6 +270,7 @@ def _remove_dependency_dialog(d) -> rx.Component:
                 rx.icon("trash-2", size=14),
                 variant="ghost",
                 color_scheme="red",
+                high_contrast=True,
                 size="1",
                 aria_label=_t["common.delete"],
             ),
@@ -295,12 +296,16 @@ def _remove_dependency_dialog(d) -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["dag.delete_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=DagState.remove_dependency(d.id),
                     ),
                 ),

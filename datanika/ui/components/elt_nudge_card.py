@@ -64,7 +64,6 @@ def elt_nudge_card() -> rx.Component:
                 rx.button(
                     _t["nudge.switch_cta"],
                     size="1",
-                    color_scheme="violet",
                 ),
                 rx.link(
                     _t["nudge.learn_more"],
@@ -81,6 +80,7 @@ def elt_nudge_card() -> rx.Component:
                     size="1",
                     variant="ghost",
                     color_scheme="gray",
+                    high_contrast=True,
                 ),
                 width="100%",
                 align="center",
@@ -90,6 +90,5 @@ def elt_nudge_card() -> rx.Component:
             width="100%",
         ),
         icon="lightbulb",
-        color_scheme="violet",
         width="100%",
     )

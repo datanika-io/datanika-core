@@ -78,7 +78,6 @@ def _mode_split_hint() -> rx.Component:
         rx.callout(
             _t["cost.mode_split_hint"],
             icon="lightbulb",
-            color_scheme="violet",
             size="1",
         ),
     )

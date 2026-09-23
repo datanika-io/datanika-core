@@ -63,6 +63,7 @@ def getting_started_checklist() -> rx.Component:
                             variant="ghost",
                             size="1",
                             color_scheme="gray",
+                            high_contrast=True,
                         ),
                         align="center",
                         spacing="2",

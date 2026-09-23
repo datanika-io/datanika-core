@@ -144,6 +144,27 @@ def _pair(component, field: str) -> _Pair:
 
 
 class TestTheMarkerAndTheAttributeAreOneValue:
+    """AC5 — and 🔑 **this class becomes unfalsifiable at every site that adopts the helper.**
+
+    Measured by mutation, 2026-09-23: marking MongoDB's Port `required=True` — restoring exactly
+    the §1c contradiction this slice removes — leaves every test in this class **green**.
+    `labelled_config_input` derives the marker *and* the attribute from one value, so they agree
+    **by construction**; there is no longer a pair that can disagree.
+
+    That is not a gap, it is the fix working, and the distinction matters for what guards what:
+
+    * AC5 was the right test for the **pre-helper** world. It caught the original defect
+      (`openapi_fields` rendering "Base URL *" over an input with no `required`), and it still
+      guards every call site that has **not** been migrated — which is most of them, since ten
+      ` *` keys remain.
+    * Once a site is derived, the only remaining question is whether the derived **value** is
+      correct. That is :class:`TestTheFormAndTheSchema`'s question, and it is what actually
+      caught the mutation above.
+
+    ⚠️ **So do not read this class's green as covering a migrated field.** Conflating the two
+    leaves a slice looking guarded when only half of it is.
+    """
+
     @pytest.mark.parametrize(
         "builder, field",
         [pytest.param(b, f, id=f"{b.__name__}-{f}") for b, f in _SLICE],

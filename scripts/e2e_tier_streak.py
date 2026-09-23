@@ -104,6 +104,40 @@ UNREADABLE = "UNREADABLE"
 #: source it should not be reading, and a contaminated history would read clean — which is
 #: the failure this class exists for, not the one UNMEASURED handles.
 LOCAL = "LOCAL"
+#: A run whose tier job never executed because a newer push had already taken `dev`'s head
+#: (core#975's residual gate). **Transparent to the streak**, and counted as its own
+#: population — never folded into UNMEASURED (core#1507).
+#:
+#: 🔑 This is the MOST certain non-measurement in the system and it used to grade as the least
+#: certain one. A skipped job has no log, GitHub answers 404, `parse_verdict_line` returns
+#: `None`, and `classify_verdict(None)` is UNREADABLE — which BLOCKS. So `QA_RULES` §10's own
+#: test (*"we know these carried no reading"*) was satisfied and the code said the opposite:
+#: a job with `conclusion=skipped` and **zero steps** demonstrably graded nothing.
+#:
+#: ⚠️ It is a class of its own rather than UNMEASURED because the two need **opposite
+#: responses**. `wrong_build` / `no_verdict` mean a run TRIED to grade and failed — somebody
+#: should look, and the blindness alert exists to make them. `superseded` means a push ran
+#: nothing by design, on a day when `dev` moved fast. Folding it into UNMEASURED would move
+#: the defect rather than close it: the blindness alert would then be governed by the MERGE
+#: RATE instead of by the instrument's health, which is the same complaint one level up.
+SUPERSEDED = "SUPERSEDED"
+
+#: The token a supersession reading carries. **Deliberately in no tier's vocabulary**: it is
+#: DERIVED from the jobs API, never parsed from a log, and
+#: `tests/test_superseded_run_is_transparent.py` asserts it appears in no workflow. A workflow
+#: that could print it could forge a run that is transparent to a graduation streak. Same
+#: shape, and the same reason, as `LOCAL_VERDICT`.
+SUPERSEDED_VERDICT = "superseded"  # noqa: S105 - a verdict token, not a credential
+
+#: Its own map, kept out of the three TIER vocabularies so their workflow-derived controls stay
+#: exactly as strict as they were (the same carve-out `LOCAL_VERDICTS` has).
+SUPERSEDED_VERDICTS: dict[str, str] = {SUPERSEDED_VERDICT: SUPERSEDED}
+
+#: The `ci.yml` job that decides whether this run's commit is still `dev`'s head, and the
+#: reusable-workflow caller it gates. **Exact names, compared with `==`** — see
+#: :func:`skipped_by_supersession` for why a substring match is not merely sloppy here.
+SUPERSESSION_JOB = "supersession"
+STAGING_CALLER_JOB = "staging"
 
 #: `ci.yml`, `e2e-sso`, step "Classify what this job's result means".
 SSO_VERDICTS: dict[str, str] = {
@@ -198,6 +232,7 @@ VERDICT_CLASS: dict[str, str] = {
     **INFORMATIONAL_VERDICTS,
     **INFORMATIONAL_SPEC_VERDICTS,
     **LOCAL_VERDICTS,
+    **SUPERSEDED_VERDICTS,
 }
 
 #: Why a run carried no reading, keyed by the classifier's OWN token (core#1447).
@@ -358,6 +393,62 @@ def classify_verdict(verdict: str | None, specs_outcome: str | None = None) -> s
     if verdict in ("wrong_build", "cancelled") and specs_outcome == "failure":
         return FAIL
     return VERDICT_CLASS.get(verdict, UNREADABLE)
+
+
+def _job_named(jobs: list[dict], name: str) -> dict | None:
+    """The job whose name is EXACTLY `name`.
+
+    🚨 Not a substring match, and the difference is load-bearing here. `collect` finds the
+    *tier* job with `job_name in j["name"]`, which is right for it: `e2e-staging` has to match
+    `staging / e2e-staging`. Reused for the caller it would be a disaster — `"staging" in
+    "staging / e2e-staging"` is **True**, so the reusable workflow's own job would be read as
+    its caller, and the evidence below would be manufactured out of the very thing it exists to
+    explain.
+    """
+    return next((j for j in jobs if j.get("name") == name), None)
+
+
+def skipped_by_supersession(jobs: list[dict], tier_job: dict | None) -> bool:
+    """Did this run's tier job skip because a newer push had already taken `dev`'s head?
+
+    **Positive evidence of three facts, never the absence of a log** (core#1507). The absence
+    of a log is what a skipped job and an expired one have in common, and they are the two
+    cases this whole class has to keep apart:
+
+    1. the ``supersession`` job concluded **success** — the gate ran and *decided*;
+    2. the ``staging`` caller concluded **skipped** — which is what the gate does to a
+       non-head push, since its ``if:`` is ``… && needs.supersession.outputs.is_head ==
+       'true'``;
+    3. the tier job itself is **skipped**, or was never created at all — a reusable workflow's
+       jobs do not exist when its caller is skipped, which is exactly why the two tiers used to
+       disagree about the same push.
+
+    Measured on the Actions API for runs ``35533616464``, ``35534590675`` and ``35599284862``:
+    ``supersession=success``, ``staging=skipped``, ``e2e-sso=skipped`` with **0 steps**, and no
+    ``staging / e2e-staging`` job in the run at all.
+
+    🔑 **Why fact 1 is sufficient for "the gate answered false" and not merely correlated with
+    it.** ``scripts/staging-supersession.sh`` runs under ``set -u`` and writes ``is_head=`` on
+    every path, including the fail-open one; the only way to leave it unwritten is the
+    ``${REPO:?}`` / ``${SHA:?}`` expansion, which exits non-zero. So a **successful** gate has
+    written an answer, and a skipped caller means that answer was not ``true``.
+
+    ⚠️ **What this deliberately does NOT cover, because the fix must not become invisibility.**
+    ``supersession`` itself ``needs: [lint, test, helm-lint]``, so a red one skips the gate,
+    which skips the caller, which skips the tier — tier jobs **byte-identical** to the
+    superseded shape, with nobody having decided anything. That run stays UNREADABLE and keeps
+    blocking. Same for a tier that stops running because somebody added a ``paths:`` filter:
+    a tier whose job is always skipped must go loud, not quiet.
+    """
+    gate = _job_named(jobs, SUPERSESSION_JOB)
+    if gate is None or gate.get("conclusion") != "success":
+        return False
+    caller = _job_named(jobs, STAGING_CALLER_JOB)
+    if caller is None or caller.get("conclusion") != "skipped":
+        return False
+    if tier_job is None:
+        return True
+    return tier_job.get("conclusion") == "skipped"
 
 
 def attested_environment(log_lines: list[str]) -> str | None:
@@ -560,7 +651,7 @@ def streak(classes: list[str]) -> int:
     """
     n = 0
     for cls in reversed(classes):
-        if cls == UNMEASURED:
+        if cls in (UNMEASURED, SUPERSEDED):
             continue  # transparent: we know this run carried no reading
         if cls != PASS:
             break  # FAIL resets; UNREADABLE blocks, because we cannot rule out a FAIL
@@ -586,6 +677,10 @@ class Reading:
     passed: int = 0
     failed: int = 0
     unreadable: int = 0
+    #: Runs whose tier job never executed because a newer push had taken the head (core#1507).
+    #: Its own number, because it answers a different question from every other one here: not
+    #: *"how healthy is the tier"* but *"how fast was `dev` moving"*.
+    superseded: int = 0
     #: The worst run of consecutive UNMEASURED runs anywhere in the window (core#1256).
     #: `trailing_` is "are we blind RIGHT NOW"; `longest_` is "did we go blind at all since
     #: the last look" -- and a daily watchdog needs the second, because a gap that has since
@@ -620,7 +715,18 @@ class Reading:
         """
         total = len(classes)
         measured = sum(1 for c in classes if c in (PASS, FAIL, UNREADABLE))
-        n = streak(classes)
+
+        # core#1507. A superseded run is not IN the population this streak is about: nothing
+        # ran, so there was no opportunity to grade. Dropping it from the sequence — rather
+        # than merely skipping it in `streak()` — is what keeps `gaps` honest.
+        #
+        # 🚨 Skipping it in `streak()` alone would have moved the defect into `sparse` instead
+        # of closing it. `gaps = span - streak` counts runs inside the window that carried no
+        # reading, so ten superseded pushes between three greens would exceed `max_gaps` and
+        # refuse the graduation — graduation held by the MERGE RATE again, one state over,
+        # with a more reassuring word on it.
+        graded = [c for c in classes if c != SUPERSEDED]
+        n = streak(graded)
 
         # core#1256. UNMEASURED specifically -- not UNREADABLE, not LOCAL. Those two BLOCK
         # the streak, so a run of them is already loud. UNMEASURED is transparent by design
@@ -637,10 +743,12 @@ class Reading:
                 break
             trailing_unmeasured += 1
 
-        # How many calendar runs the trailing streak reaches back through.
+        # How many gradeable runs the trailing streak reaches back through. Superseded runs are
+        # already out of `graded`, so a burst of them neither lengthens the window nor dilutes
+        # it — see the note above `graded`.
         span = 0
         seen = 0
-        for c in reversed(classes):
+        for c in reversed(graded):
             span += 1
             if c == UNMEASURED:
                 continue
@@ -655,7 +763,10 @@ class Reading:
         # `sparse` state is named for; the window's absolute length is not (core#1154).
         gaps = span - n
 
-        if total < required:
+        # core#1507: over the GRADEABLE runs. A window of nothing but superseded pushes holds
+        # no reading at all, and `no-data`'s own sentence — *"there is nothing here to read"* —
+        # is the true one for it. With no superseded runs this is the old condition exactly.
+        if len(graded) < required:
             state = "no-data"
         elif n < required:
             state = "not-yet"
@@ -674,9 +785,71 @@ class Reading:
             passed=classes.count(PASS),
             failed=classes.count(FAIL),
             unreadable=classes.count(UNREADABLE),
+            superseded=classes.count(SUPERSEDED),
             longest_unmeasured=longest_unmeasured,
             trailing_unmeasured=trailing_unmeasured,
         )
+
+
+#: The window read no run carrying the job asked about, so it cannot grade it (core#1507).
+JOB_NEVER_SEEN = "job-never-seen"
+
+
+@dataclass(frozen=True)
+class JobCoverage:
+    """Whether the window contained the JOB asked about — core#1480's property, one level up.
+
+    core#1480 established that an instrument must be able to say its subject is in the
+    population it read, and closed it for ``--spec``. **Supersession re-opens it for
+    ``--job``**, because a superseded run's evidence is a fact about the *run* — the gate
+    decided, the caller skipped — and is true no matter which job name was asked for. Without
+    this, a mistyped ``--job`` would be absent from every run, collect a ``SUPERSEDED`` reading
+    from each superseded one, and print a confident population about a job that never existed.
+
+    ⚠️ The two reasons a job was never seen need **opposite responses**, so they get different
+    sentences: *every run was superseded* means widen the window; *runs graded something else*
+    means check the name. One word for both is the defect §31 names.
+    """
+
+    job: str
+    runs_considered: int
+    runs_with_job: int
+    runs_superseded: int
+
+    @property
+    def state(self) -> str | None:
+        """``None`` when the subject is placed; otherwise why it is not."""
+        if self.runs_considered == 0:
+            return None  # `no-data` already says there was nothing to read at all
+        if self.runs_with_job == 0:
+            return JOB_NEVER_SEEN
+        return None
+
+    def render(self) -> list[str]:
+        lines = [
+            f"subject job    : {self.job} present in {self.runs_with_job} of "
+            f"{self.runs_considered} runs read"
+        ]
+        if self.state != JOB_NEVER_SEEN:
+            return lines
+        # 🔑 The discriminator is whether ANY run in the window could have carried the job, not
+        # whether some were superseded. A window with three graded runs and two superseded ones
+        # that never names this job is a mistyped `--job`, and telling that reader to widen the
+        # window sends them to look for something that was never there.
+        if self.runs_superseded >= self.runs_considered:
+            lines += [
+                f"  -> NO run in this window carried this job, and {self.runs_superseded} of "
+                f"{self.runs_considered} were superseded: a newer push had already taken",
+                "     dev's head, so the tier ran nothing. The window is not wrong, it is too",
+                "     narrow — widen it with --since or --runs. This is NOT 'the job is gone'.",
+            ]
+        else:
+            lines += [
+                "  -> NO run in this window carried this job, and none was superseded — so the",
+                "     runs that DID grade something graded something else. Check --job against",
+                "     the workflow. Nothing below is about the name you asked for.",
+            ]
+        return lines
 
 
 #: A spec question the window cannot answer, because no run in it graded specs at all.
@@ -924,8 +1097,14 @@ def collect(
     runs: int,
     spec: str | None = None,
     since: str | None = None,
-) -> tuple[list[RunReading], SpecCoverage]:
-    """One :class:`RunReading` per completed run, oldest first, and the subject's coverage.
+) -> tuple[list[RunReading], SpecCoverage, JobCoverage]:
+    """One :class:`RunReading` per completed run, oldest first, and both subjects' coverage.
+
+    ⚠️ **The return arity changed with core#1507** (it gained :class:`JobCoverage`). That is the
+    shape of contract change [core#1288] is about, so the caller set was **measured** before it
+    was changed rather than indexed: ``git grep`` on this tree finds exactly one caller,
+    :func:`main` — the tests all drive ``main()``, and ``verify_e2e_attribution.py`` has a
+    ``collect()`` of its own that is a different function.
 
     ``event=push`` is not optional. A `dev` head carries a `merge_group` run too, whose staging
     jobs are `skipped` **by design** — byte-identical to the condition that holds a promotion,
@@ -936,15 +1115,35 @@ def collect(
     # job grades. A one-pass reader cannot place its own subject, which is the whole defect.
     raw: list[dict] = []
     fetched = failed = 0
+    considered = with_job = superseded_runs = 0  # core#1507: the job subject's own population
     reasons: list[str] = []  # core#1273: why each fetch failed, so the guard can say
     for run in _push_runs(repo, branch, runs, since):
         if run.get("path") != WORKFLOW or run.get("status") != "completed":
             continue
-        jobs = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
-        job = next(
-            (j for j in jobs.get("jobs", []) if job_name in j["name"]),  # type: ignore[union-attr]
-            None,
-        )
+        considered += 1
+        payload = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
+        job_list: list[dict] = list(payload.get("jobs", []))  # type: ignore[union-attr]
+        job = next((j for j in job_list if job_name in j["name"]), None)
+        if job is not None:
+            with_job += 1
+
+        # core#1507. Decided BEFORE the log fetch, and that ordering is half the fix: a
+        # skipped job has no log, so asking for one costs a 404 that lands in `failed` beside
+        # the genuinely unreachable logs. On a window of superseded pushes that tripped the
+        # `failed and not fetched` guard below — the guard that exists to say the READER is
+        # broken, fired by a healthy burst of merges.
+        if skipped_by_supersession(job_list, job):
+            superseded_runs += 1
+            raw.append(
+                {
+                    "created": run["created_at"],
+                    "sha": run["head_sha"][:8],
+                    "superseded": True,
+                    "job_present": job is not None,
+                }
+            )
+            continue
+
         # An IN-PROGRESS job has no verdict YET, which is a different fact from a completed
         # job whose verdict cannot be read. Conflating them makes a healthy running job read
         # as an instrument failure, and a check that reds on a healthy system gets deleted.
@@ -1006,11 +1205,22 @@ def collect(
 
     # Pass 2. `membership` is every spec this window was seen grading, which is the only
     # evidence available that a spec belongs to this job at all.
-    membership = frozenset().union(*(r["per_spec"].keys() for r in raw)) if raw else frozenset()
+    membership = (
+        frozenset().union(*(r.get("per_spec", {}).keys() for r in raw)) if raw else frozenset()
+    )
     out: list[RunReading] = []
     mentions = 0
     graded_specs = 0
     for r in raw:
+        # core#1507 meeting core#1480. A superseded run is evidence about the RUN — the gate
+        # decided, the caller skipped — and that is true whatever `--job` was asked for. So it
+        # may only be credited to a job this window was actually seen carrying. Otherwise a
+        # mistyped `--job` collects a confident SUPERSEDED population about a name that never
+        # existed, which is core#1480's defect arriving through a new door.
+        if r.get("superseded"):
+            if r["job_present"] or with_job:
+                out.append(RunReading(r["created"], r["sha"], SUPERSEDED, SUPERSEDED_VERDICT))
+            continue
         if r["per_spec"]:
             graded_specs += 1
             if spec in r["per_spec"]:
@@ -1043,7 +1253,11 @@ def collect(
         if spec is not None
         else SpecCoverage.unasked()
     )
-    return list(reversed(out)), coverage
+    return (
+        list(reversed(out)),
+        coverage,
+        JobCoverage(job_name, considered, with_job, superseded_runs),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1093,7 +1307,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    history, coverage = collect(
+    history, coverage, job_coverage = collect(
         args.repo, args.branch, args.job, args.runs, spec=args.spec, since=args.since
     )
     for run in history:
@@ -1117,20 +1331,27 @@ def main(argv: list[str] | None = None) -> int:
     # which they block, and wrong at a reader, for whom "measured" is the opposite of what an
     # unreadable run is. Name the classes instead of grouping them under the reassuring word.
     no_reading = r.total - r.passed - r.failed
+    # core#1507: `superseded` gets its own cell rather than being folded into `unmeasured`.
+    # A run that TRIED to grade and failed and a push that ran nothing by design need opposite
+    # responses, and the word `unmeasured` covered both while asking for neither.
+    blind = r.total - r.measured - r.superseded
     print(
         f"runs read      : {r.total}   a reading on {r.passed + r.failed} "
         f"({r.passed} pass / {r.failed} fail)   no reading on {no_reading} "
-        f"({r.total - r.measured} unmeasured, {r.unreadable} unreadable)"
+        f"({blind} unmeasured, {r.superseded} superseded, {r.unreadable} unreadable)"
     )
-    # core#1480: the subject's own population, printed BEFORE the verdict, because a verdict
-    # about a spec this window never saw is not a weaker reading — it is a different question.
+    # core#1480/#1507: each subject's own population, printed BEFORE the verdict, because a
+    # verdict about a spec — or a job — this window never saw is not a weaker reading. It is a
+    # different question, and a reader cannot tell which they are looking at from the number.
+    for line in job_coverage.render():
+        print(line)
     for line in coverage.render():
         print(line)
     print(
         f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "
         f"{r.gaps} of which measured nothing"
     )
-    print(f"verdict        : {coverage.state or r.state}")
+    print(f"verdict        : {job_coverage.state or coverage.state or r.state}")
     if r.state == "sparse":
         print(
             f"  -> {r.gaps} of the {r.span} runs this streak reaches back through carried no\n"
@@ -1145,12 +1366,26 @@ def main(argv: list[str] | None = None) -> int:
 
     # core#1256. Printed unconditionally, because the number nobody asked for is the one
     # that was invisible: this tier read 23 of 50 runs as UNMEASURED and nothing was red.
-    blind = r.total - r.measured
     pct = (100.0 * blind / r.total) if r.total else 0.0
     print(
         f"unmeasured     : {blind} of {r.total} runs ({pct:.0f}%)   "
         f"longest run of consecutive non-readings: {r.longest_unmeasured}   "
         f"trailing: {r.trailing_unmeasured}"
+    )
+    # core#1507. Printed unconditionally, for the same reason the line above is: the number
+    # nobody asked for is the one that was invisible. Ten of these reset a streak on 2026-09-21
+    # while the line above reported `0 unmeasured` — a population that blocked graduation and
+    # appeared in no output at all.
+    print(
+        f"superseded     : {r.superseded} of {r.total} runs   a newer push had already taken "
+        f"dev's head, so"
+    )
+    print(
+        "                 the tier ran NOTHING (core#975). Transparent to the streak, and NOT "
+        "blindness:"
+    )
+    print(
+        "                 alerting on these would grade the merge rate rather than the instrument."
     )
 
     if args.max_unmeasured is not None:
@@ -1193,7 +1428,9 @@ def main(argv: list[str] | None = None) -> int:
     # core#1480. `slo_report.py` already spells this: 1 is a missed target, **2 is "nothing could
     # be measured"** (QA_RULES §18a). A subject the window never saw is the second, and returning
     # 1 would put it in the same bucket as "not yet three greens" — which reads as *keep waiting*.
-    if coverage.state is not None:
+    # core#1507 rides the same convention: a job the window never carried is not "not yet three
+    # greens", it is a question this window cannot answer.
+    if job_coverage.state is not None or coverage.state is not None:
         return 2
     return 0 if r.graduated else 1
 

@@ -340,7 +340,7 @@
   "runs.logs_run": "Registros — Ejecución #",
   "runs.cancel": "Cancelar",
   "runs.cancel_title": "¿Detener esta ejecución?",
-  "runs.cancel_body": "Una ejecución que aún no ha empezado su trabajo se detiene antes de que se lea o escriba nada. El trabajo que ya está en curso no se puede interrumpir: llega hasta el final y después la ejecución se marca como cancelada. Los datos ya escritos en tu destino permanecen allí, así que volver a ejecutar una carga que añade (append) vuelve a cargar esas filas.",
+  "runs.cancel_body": "Una ejecución que aún no ha empezado su trabajo se detiene antes de que se lea o escriba nada. El trabajo que ya está en curso no se puede interrumpir: llega hasta el final y después la ejecución se marca como cancelada. Los datos ya escritos en tu destino permanecen allí, así que volver a ejecutar en modo de adición (append) vuelve a cargar esas filas.",
   "runs.cancel_billing": "Se te factura lo que se procesó antes de que se detuviera la ejecución.",
   "runs.cancel_confirm": "Detener la ejecución",
   "runs.cancel_keep": "Seguir ejecutando",

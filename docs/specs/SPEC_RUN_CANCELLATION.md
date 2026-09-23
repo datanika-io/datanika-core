@@ -198,8 +198,26 @@ must then clean up, and hiding that is how a stop button becomes a support ticke
 >
 > > **A run that has not started its work yet stops before anything is read or written. Work
 > > already in progress cannot be interrupted: it runs to the end, and the run is then marked
-> > cancelled. Data already written to your destination stays there, so re-running an upload that
-> > appends loads those rows again.**
+> > cancelled. Data already written to your destination stays there, so a re-run that appends
+> > loads those rows again.**
+>
+> ### 🔴 D3b — the last clause names no object, 2026-09-23 (Product, reviewing my own copy)
+>
+> D3a's final clause read *"so re-running an **upload** that appends loads those rows again."*
+> **That dialog is shown for every run, and `Run.target_type` is a `NodeType` — `upload`,
+> `transformation` or `pipeline`.** Two of the three read an example about an object they are not
+> running, and the API returns the same string as `notice` for every type too.
+>
+> 🔑 **It is worse than irrelevant for a dbt user: an upload-specific clause reads as an
+> exemption**, and an `incremental` materialisation appends exactly as an `append` upload does. So
+> the noun is gone, and the conditional that carries the actual warning stays.
+>
+> Corroboration that the noun was the weak point rather than a matter of taste: three of the nine
+> translators had already generalised it on their own — `fr` *"relancer un chargement"*, `es`
+> *"una carga"*, `ru` *"загрузки"* all say **load**, not **upload**.
+>
+> ⚠️ **The reasoning above is the reason not to put it back.** `run_cancellation.py` carries it as
+> a comment beside the constant; a future editor reaching for a concrete noun will find it there.
 >
 > **And AC12's billing sentence:** *You are billed for what was processed before the run stopped.*
 > Under 2a that is the whole run once its work has started, which the sentence before it makes

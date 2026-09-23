@@ -151,12 +151,21 @@ def _volume_dimension() -> rx.Component:
         rx.vstack(
             rx.hstack(
                 rx.text(_t["quota.volume_title"], weight="bold", size="2"),
+                # 🚨 SUBSTITUTED, not concatenated. `quota.volume_usage` is a TEMPLATE —
+                # "{used} / {limit} GB processed this month" — and core has no i18n
+                # substitution layer, so painting `_t[...]` directly puts the braces in the
+                # DOM. This component has never rendered in production (the UX flag has been
+                # off since V2 P1), which is why nobody ever saw it.
+                #
+                # 🔑 Re-wording the nine values to drop the braces would NOT be equivalent:
+                # ru, zh and ar place the numbers mid-phrase ("本月已处理 {used} / {limit} GB"),
+                # so a component that hardcodes "<used> / <limit> <sentence>" is wrong in those
+                # locales even with no braces left. `Var.replace` compiles to JS `replaceAll`
+                # and keeps each locale's own word order.
                 rx.text(
-                    DashboardState.bytes_used_display,
-                    " / ",
-                    DashboardState.bytes_limit_display,
-                    " ",
-                    _t["quota.volume_usage"],
+                    _t["quota.volume_usage"]
+                    .replace("{used}", DashboardState.bytes_used_gb)
+                    .replace("{limit}", DashboardState.bytes_limit_gb),
                     size="2",
                 ),
                 rx.text(
@@ -193,17 +202,28 @@ def _volume_dimension() -> rx.Component:
                     # overage is false in both halves: nothing is billed and the run is blocked.
                     rx.cond(
                         DashboardState.bytes_hard_cap,
+                        # A wall. No placeholders in this key, in any locale.
                         rx.text(
                             _t["quota.volume_quota_reached_title"],
                             size="2",
                             color="var(--red-11)",
                             weight="medium",
                         ),
-                        rx.text(
-                            _t["quota.volume_overage"],
-                            size="2",
-                            color="var(--red-11)",
-                            weight="medium",
+                        # Overage. Drawn only when the biller supplied every figure the
+                        # sentence names — see `has_overage_figures`. Unreachable in production
+                        # today: `subscriptions` holds 0 rows, so every org resolves to `free`,
+                        # which is hard-capped and takes the branch above.
+                        rx.cond(
+                            DashboardState.has_overage_figures,
+                            rx.text(
+                                _t["quota.volume_overage"]
+                                .replace("{gb}", DashboardState.bytes_overage_gb)
+                                .replace("{rate}", DashboardState.bytes_overage_rate)
+                                .replace("{total}", DashboardState.bytes_overage_total),
+                                size="2",
+                                color="var(--red-11)",
+                                weight="medium",
+                            ),
                         ),
                     ),
                     align="center",

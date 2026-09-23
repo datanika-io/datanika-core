@@ -96,6 +96,15 @@ class _Usage:
         self.runs_limit = runs_limit
 
 
+class _Overage:
+    """A stand-in for DashboardState's three pre-formatted overage figures."""
+
+    def __init__(self, *, gb: str = "", rate: str = "", total: str = "") -> None:
+        self.bytes_overage_gb = gb
+        self.bytes_overage_rate = rate
+        self.bytes_overage_total = total
+
+
 def _walk(node):
     """Every node in a built component tree, ``rx.cond`` branches included."""
     yield node
@@ -291,6 +300,119 @@ class TestACapAndAnAllowanceDoNotLookTheSame:
         assert VOLUME_OVERAGE not in true_branch
 
 
+class TestNoTemplateKeyIsPaintedWithItsBracesShowing:
+    """🚨 Core has **no i18n substitution layer**, so ``_t["some.key"]`` paints the raw value.
+
+    Fifteen ``en.json`` values carry ``{placeholder}`` spans and **eight of them are rendered
+    through ``_t[...]`` with no substitution anywhere in their file** — measured, not reasoned.
+    Two are on this meter, which has never rendered in production because the UX flag has been
+    off since V2 P1. Un-gating it without this would put ``{used} / {limit} GB processed this
+    month`` on every customer's dashboard.
+
+    🔑 **Re-wording the nine values to drop the braces is NOT an equivalent fix**, which is why
+    this asserts substitution rather than absence: ru, zh and ar place the numbers *mid-phrase*
+    (``"本月已处理 {used} / {limit} GB"``), so a component hardcoding ``"<used> / <limit>
+    <sentence>"`` is wrong in those locales with or without braces. The templates are correct;
+    the painting was not.
+    """
+
+    @staticmethod
+    def _placeholders(value: str) -> set[str]:
+        import re
+
+        return set(re.findall(r"\{[a-z_]+\}", value))
+
+    def test_the_probe_finds_placeholders_at_all(self):
+        """Anti-vacuity: a regex that matches nothing makes every case below pass."""
+        with open(I18N_DIR / "en.json", encoding="utf-8") as fh:
+            en = json.load(fh)
+        assert self._placeholders(en[VOLUME_USAGE]) == {"{used}", "{limit}"}
+        assert self._placeholders(en[VOLUME_OVERAGE]) == {"{gb}", "{rate}", "{total}"}
+        assert self._placeholders(en[VOLUME_TITLE]) == set()
+
+    @pytest.mark.parametrize("key", [VOLUME_USAGE, VOLUME_OVERAGE])
+    def test_every_placeholder_of_every_painted_template_is_substituted(self, key):
+        with open(I18N_DIR / "en.json", encoding="utf-8") as fh:
+            en = json.load(fh)
+        painted = str(usage_bar())
+        assert f'["{key}"]' in painted, f"{key} is not painted by this card at all"
+        for ph in sorted(self._placeholders(en[key])):
+            assert f'replaceAll("{ph}"' in painted, (
+                f"{key} is painted but {ph} is never substituted — that brace reaches the DOM"
+            )
+
+    @pytest.mark.parametrize("locale", LOCALES)
+    def test_every_locale_uses_the_same_placeholder_set(self, locale):
+        """A translator who dropped or renamed one would leave an unsubstituted brace in that
+        locale only — invisible to an English-only check."""
+        with open(I18N_DIR / "en.json", encoding="utf-8") as fh:
+            en = json.load(fh)
+        with open(I18N_DIR / f"{locale}.json", encoding="utf-8") as fh:
+            other = json.load(fh)
+        for key in (VOLUME_USAGE, VOLUME_OVERAGE):
+            assert self._placeholders(other[key]) == self._placeholders(en[key]), (
+                f"{locale}.json's {key} names different placeholders from en.json"
+            )
+
+    def test_the_substituted_values_carry_no_unit_of_their_own(self):
+        """``quota.volume_usage`` already says "GB". Feeding it the unit-bearing display var
+        yields "10 GB GB processed this month" — the bug the unit-free vars exist to avoid."""
+        st = _Usage(bytes_used=5 * GIB, bytes_limit=10 * GIB)
+        assert DashboardState.bytes_used_gb.fget(st) == "5.0"
+        assert DashboardState.bytes_limit_gb.fget(st) == "10"
+        assert "GB" in DashboardState.bytes_limit_display.fget(st)
+        painted = str(usage_bar())
+        assert "bytes_limit_gb" in painted, (
+            "the meter substitutes the unit-BEARING var into a template that already says GB"
+        )
+
+    def test_the_unit_free_vars_never_drift_from_the_unit_bearing_ones(self):
+        for raw in (0, 1, 5 * GIB, 10 * GIB, 137 * GIB):
+            st = _Usage(bytes_used=raw, bytes_limit=raw)
+            assert DashboardState.bytes_used_display.fget(st) == (
+                DashboardState.bytes_used_gb.fget(st) + " GB"
+            )
+            assert DashboardState.bytes_limit_display.fget(st) == (
+                DashboardState.bytes_limit_gb.fget(st) + " GB"
+            )
+
+
+class TestTheOverageSentenceIsAllOrNothing:
+    """A figure the biller did not supply must not be invented.
+
+    The template names three. Painting it with any of them missing gives either a visible
+    ``{gb}`` or a confident ``$0.00`` — and ``$0.00`` is the worse of the two, because it says
+    *free* on the one line whose job is to say what something costs. Core deliberately does not
+    compute them: the biller bills a **started** GB (``-(-q // 1024**3)``), so a division here
+    would disagree with the invoice. ``SPEC_USAGE_VISIBILITY`` §2.5.
+    """
+
+    def test_no_figures_means_no_line(self):
+        assert DashboardState.has_overage_figures.fget(_Overage()) is False
+
+    @pytest.mark.parametrize(
+        "gb,rate,total",
+        [("3", "0.50", ""), ("3", "", "1.50"), ("", "0.50", "1.50"), ("", "", "")],
+    )
+    def test_a_partial_set_is_not_enough(self, gb, rate, total):
+        assert (
+            DashboardState.has_overage_figures.fget(_Overage(gb=gb, rate=rate, total=total))
+            is False
+        )
+
+    def test_a_complete_set_draws_the_line(self):
+        assert (
+            DashboardState.has_overage_figures.fget(_Overage(gb="3", rate="0.50", total="1.50"))
+            is True
+        )
+
+    def test_the_line_is_behind_that_gate_in_the_tree(self):
+        node = _cond_naming(_volume_dimension(), includes=("has_overage_figures",))
+        drawn, not_drawn = _branches(node)
+        assert VOLUME_OVERAGE in drawn
+        assert VOLUME_OVERAGE not in not_drawn
+
+
 class TestTheDivisorIsBinary:
     """AC6. ``billing/tasks.py`` converts with ``1024**3`` and ``/pricing`` publishes binary GB,
     so a surface picking ``1000**3`` disagrees with the invoice."""
@@ -329,6 +451,11 @@ class TestTheUsageContextOffersEveryFieldTheCardReads:
         assert "bytes_hard_cap" in ctx, (
             "cloud has no way to tell the dashboard whether the volume allowance is a wall"
         )
+        for figure in ("bytes_overage_gb", "bytes_overage_rate", "bytes_overage_total"):
+            assert figure in ctx, (
+                f"{figure} is not offered, so the overage sentence can never be completed and "
+                "the line is silently never drawn"
+            )
 
     def test_the_context_defaults_are_the_no_cloud_plugin_reading(self):
         from datanika.ui.state.dashboard_state import usage_context

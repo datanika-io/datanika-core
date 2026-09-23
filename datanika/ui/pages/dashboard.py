@@ -2,7 +2,6 @@
 
 import reflex as rx
 
-from datanika.config import settings
 from datanika.plugin_registry import BILLING_ROUTE
 from datanika.ui.components.getting_started_checklist import getting_started_checklist
 from datanika.ui.components.info_tooltip import info_tooltip
@@ -80,6 +79,16 @@ def _guide_step(title: rx.Var[str], desc: rx.Var[str]) -> rx.Component:
 
 
 def _runs_dimension() -> rx.Component:
+    """The runs meter, self-gating on its own allowance.
+
+    core#1513 / ``SPEC_USAGE_VISIBILITY`` §2.3: a ``NULL`` allowance renders nothing, never
+    ``0 / 0``. This used to be implicit in the *card's* visibility test, which is precisely what
+    made the runs dimension gate the volume one.
+    """
+    return rx.cond(DashboardState.has_usage_data, _runs_meter())
+
+
+def _runs_meter() -> rx.Component:
     return rx.vstack(
         rx.hstack(
             rx.text(
@@ -178,11 +187,24 @@ def _volume_dimension() -> rx.Component:
                 DashboardState.bytes_percent >= 100,
                 rx.hstack(
                     rx.icon("triangle-alert", size=14, color="var(--red-11)"),
-                    rx.text(
-                        _t["quota.volume_overage"],
-                        size="2",
-                        color="var(--red-11)",
-                        weight="medium",
+                    # SPEC_USAGE_VISIBILITY §2.4 — a cap and an allowance must not look the
+                    # same. `hard_cap_bytes = true` means runs STOP; `false` means overage
+                    # BILLS (core#713). Telling a hard-capped Free org it is being billed for
+                    # overage is false in both halves: nothing is billed and the run is blocked.
+                    rx.cond(
+                        DashboardState.bytes_hard_cap,
+                        rx.text(
+                            _t["quota.volume_quota_reached_title"],
+                            size="2",
+                            color="var(--red-11)",
+                            weight="medium",
+                        ),
+                        rx.text(
+                            _t["quota.volume_overage"],
+                            size="2",
+                            color="var(--red-11)",
+                            weight="medium",
+                        ),
                     ),
                     align="center",
                     spacing="1",
@@ -195,23 +217,39 @@ def _volume_dimension() -> rx.Component:
 
 
 def usage_bar() -> rx.Component:
-    runs_section = _runs_dimension()
-    children = [
-        rx.hstack(
-            rx.text(_t["dashboard.usage_title"], weight="bold", size="3"),
-            rx.badge(DashboardState.plan_name, size="1"),
-            align="center",
-            spacing="2",
-        ),
-        runs_section,
-    ]
-    if settings.datanika_dual_mode_ux_enabled:
-        children.append(rx.divider())
-        children.append(_volume_dimension())
+    """The dashboard's Plan Usage card (core#1513, ``SPEC_USAGE_VISIBILITY`` §3.1).
+
+    🚨 **The volume dimension is deliberately NOT behind
+    ``settings.datanika_dual_mode_ux_enabled`` any more.** Bytes are the billed dimension, and
+    for as long as the meter asked that flag we charged in a unit no screen displayed. The flag
+    itself is untouched and must stay off — it also mounts the ETL/ELT mode selector, which
+    persists nothing (landing#656), so flipping it would publish a broken control to fix an
+    unrelated one.
+
+    ⚠️ This is necessary and **not sufficient**. ``has_volume_data`` is ``bytes_limit > 0``, and
+    the only thing that assigns ``bytes_limit`` is cloud's ``BillingService.fill_usage_summary``.
+    Without cloud's half this card mounts a volume dimension that renders nothing.
+
+    Volume leads and runs follow (§2.2); each dimension gates only itself (§2.1).
+    """
     return rx.cond(
-        DashboardState.has_usage_data,
+        DashboardState.has_any_usage_data,
         rx.card(
-            rx.vstack(*children, spacing="3", width="100%"),
+            rx.vstack(
+                rx.hstack(
+                    rx.text(_t["dashboard.usage_title"], weight="bold", size="3"),
+                    rx.badge(DashboardState.plan_name, size="1"),
+                    align="center",
+                    spacing="2",
+                ),
+                _volume_dimension(),
+                # Only a real separator: two meters to separate. Otherwise a plan with one
+                # dimension draws a rule under a single row.
+                rx.cond(DashboardState.shows_both_dimensions, rx.divider()),
+                _runs_dimension(),
+                spacing="3",
+                width="100%",
+            ),
             width="100%",
         ),
     )

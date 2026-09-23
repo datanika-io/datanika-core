@@ -245,9 +245,13 @@ class TestTheHandler:
 
         await _press_stop(state, run.id)
 
-        rows = db_session.execute(
-            select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.resource_type == "run")
-        ).scalars().all()
+        rows = (
+            db_session.execute(
+                select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.resource_type == "run")
+            )
+            .scalars()
+            .all()
+        )
         assert [(r.action, r.resource_id, r.user_id) for r in rows] == [
             (AuditAction.UPDATE, run.id, members["editor"])
         ]
@@ -268,9 +272,47 @@ class TestTheHandler:
 
         await _press_stop(state, run.id)
 
-        assert not db_session.execute(
-            select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.resource_type == "run")
-        ).scalars().all()
+        assert (
+            not db_session.execute(
+                select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.resource_type == "run")
+            )
+            .scalars()
+            .all()
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_second_stop_on_a_stopping_run_writes_no_second_row(
+        self, db_session, org_with_members, run_state_as
+    ):
+        """The case an unconditional writer gets wrong while staying green on everything else.
+
+        ``CANCELLING`` is itself in ``CANCELLABLE_RUN_STATUSES``, so a second stop is
+        idempotent (§5.2) and returns the run **unchanged**. Auditing on a non-``None``
+        return would file a ``cancelling -> cancelling`` transition that never happened, and
+        a trail that invents transitions is the worse of ``SPEC_AUDIT_TRAIL`` §1's two
+        failure modes — an absent log is not consulted, a lying one is believed.
+        """
+        from sqlalchemy import select
+
+        from datanika.models.audit_log import AuditLog
+
+        org_id, members = org_with_members
+        run = _run(db_session, org_id, RunStatus.RUNNING)
+        state, _ = run_state_as("editor", org_id, members["editor"])
+
+        await _press_stop(state, run.id)
+        await _press_stop(state, run.id)
+
+        rows = (
+            db_session.execute(
+                select(AuditLog).where(AuditLog.org_id == org_id, AuditLog.resource_type == "run")
+            )
+            .scalars()
+            .all()
+        )
+        assert [(r.old_values, r.new_values) for r in rows] == [
+            ({"status": "running"}, {"status": "cancelling"})
+        ]
 
     def test_the_role_check_is_the_first_thing_the_handler_does(self):
         """Anything before it runs for a member who is about to be refused."""

@@ -21,22 +21,56 @@ import pytest
 
 from datanika.i18n import SUPPORTED_LOCALES, get_translations
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
-from datanika.ui.components.connection_config_fields import openapi_fields, rest_api_fields
+from datanika.ui.components.connection_config_fields import (
+    db_fields,
+    mongodb_fields,
+    openapi_fields,
+    rest_api_fields,
+)
 from datanika.ui.pages.connections import connection_form
 
 EN = get_translations("en")
 _KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
 
 #: (builder, field) — the slice, in the order the two directions are asserted.
+#:
+#: Slice 2 adds ``connections.port`` (core#1311 AC4). It has the same both-directions property
+#: AC3 requires, and it is the one shared key whose contradiction is fully measured: the seven
+#: ``_DB_TYPES`` connectors are refused a blank port by ``_validate_connection_form``, MongoDB is
+#: not — its branch checks host and database and deliberately omits port, because MongoDB has a
+#: real default port and the connector works without one.
 _SLICE = [
     (openapi_fields, "base_url"),
     (rest_api_fields, "base_url"),
     (connection_form, "name"),
+    (db_fields, "port"),
+    (mongodb_fields, "port"),
 ]
 
 
 def _children(node) -> list:
-    return node.get("children", []) if isinstance(node, dict) else []
+    """Every child, **including both branches of an ``rx.cond``**.
+
+    🚨 Widened for slice 2, and the widening is the point. A rendered cond does not put its
+    branches in ``children`` — it exposes them as ``true_value`` / ``false_value`` — so this used
+    to return ``[]`` for one, and **every conditionally-rendered field was outside this guard's
+    population**. MongoDB's Port is exactly such a field (it is hidden when a DNS seed list is
+    used, which takes no port), and it is the shared key whose label and attribute contradict.
+
+    ``_pair`` **raises** when it finds no input, so this failed loudly rather than passing — but
+    the same blind spot on a *scanning* assertion would have read as clean. Both branches are
+    followed because a field is a field whichever arm renders it.
+    """
+    if not isinstance(node, dict):
+        return []
+    out = list(node.get("children", []))
+    for arm in ("true_value", "false_value"):
+        branch = node.get(arm)
+        if isinstance(branch, dict):
+            out.append(branch)
+        elif isinstance(branch, list):
+            out.extend(branch)
+    return out
 
 
 def _walk(node):
@@ -131,9 +165,29 @@ class TestTheMarkerAndTheAttributeAreOneValue:
         assert (False, False) in states, f"no unmarked, optional field in the slice: {states}"
 
 
+#: (key, locale) pairs whose translation legitimately EQUALS the English string, because the word
+#: is the same in that language. Each entry is a claim about the language, not a licence.
+#:
+#: The ``value != EN[key]`` check below is a proxy for *"this locale was translated rather than
+#: copy-pasted"*, and it is a good proxy for a sentence. It is a **false positive for a loanword**,
+#: and `connections.port` is one: `de` and `fr` both use "Port" for a network port, and a
+#: translator chose it in each — the marker was the only thing this change removed.
+#:
+#: 🔑 The entry is a two-way ratchet. If one of these locales later diverges from English, the
+#: test fails **for having a stale entry**, so this set cannot quietly accumulate exemptions —
+#: which is the failure mode of every allowlist (`WORKFLOW_RULES` §5a: repoint a guard at its
+#: invariant, never relax it).
+_SAME_WORD_AS_ENGLISH = {
+    ("connections.port", "de"),
+    ("connections.port", "fr"),
+}
+
+
 class TestTheTranslatedLabelsCarryNoMarker:
     @pytest.mark.parametrize("locale", sorted(SUPPORTED_LOCALES))
-    @pytest.mark.parametrize("key", ["connections.base_url", "connections.name"])
+    @pytest.mark.parametrize(
+        "key", ["connections.base_url", "connections.name", "connections.port"]
+    )
     def test_the_label_is_a_name_not_a_sentence_about_the_form(self, locale, key):
         """AC1 for this slice (§2.2) — paired with presence, so deleting the label cannot pass."""
         value = get_translations(locale).get(key, "")
@@ -143,7 +197,14 @@ class TestTheTranslatedLabelsCarryNoMarker:
             "cannot vary by connector and nothing ties it to the input's required attribute"
         )
         if locale != "en":
-            assert value != EN[key], f"{locale}: {key} is the English string"
+            if (key, locale) in _SAME_WORD_AS_ENGLISH:
+                assert value == EN[key], (
+                    f"{locale}: {key} no longer matches English, so its entry in "
+                    "_SAME_WORD_AS_ENGLISH is stale — remove it rather than leaving a dead "
+                    "exemption behind"
+                )
+            else:
+                assert value != EN[key], f"{locale}: {key} is the English string"
 
 
 class TestTheFormAndTheSchema:
@@ -160,22 +221,58 @@ class TestTheFormAndTheSchema:
             "The form leaves Base URL optional: a blank value saves, and connection_state.py "
             "backfills it from the spec's `servers` entry. CONFIG_SCHEMAS describes the STORED "
             "config, which always carries base_url after that backfill, so it lists the field as "
-            "required. Which of the two the marker should follow is Product's decision on "
-            "core#1311, not this markup's."
+            "required. Ruled by Product 2026-09-15 on core#1311: the marker follows the FORM."
+        ),
+        ("postgres", "port"): (
+            "The form REQUIRES a port and the stored-config schema does not — the difference "
+            "points the opposite way to openapi's, which is why recording it is worth more than "
+            "the string fix that surfaced it. `_validate_connection_form` refuses a blank port "
+            "for every `_DB_TYPES` connector, while CONFIG_SCHEMAS omits `port` from `required` "
+            "because it carries a default (5432). Neither side is wrong: §2.7 says the marker "
+            "describes what THIS FORM asks of the person, and this form asks. Changing the "
+            "validator to match the schema would change which fields are required, which §4 "
+            "puts out of scope."
         ),
     }
 
+    #: (connection type, builder, field) — every pair this ratchet compares. MongoDB's port is
+    #: here precisely because it is NOT expected to differ: form optional, schema optional. An
+    #: agreement is only evidence when the instrument could have reported a disagreement.
+    COMPARED = (
+        ("rest_api", rest_api_fields, "base_url"),
+        ("openapi", openapi_fields, "base_url"),
+        ("postgres", db_fields, "port"),
+        ("mongodb", mongodb_fields, "port"),
+    )
+
     def test_the_form_follows_the_schema_except_where_recorded(self):
         observed = set()
-        for conn_type, builder in (("rest_api", rest_api_fields), ("openapi", openapi_fields)):
-            form_required = _pair(builder(), "base_url").required
-            schema_required = "base_url" in CONFIG_SCHEMAS[conn_type]["required"]
+        for conn_type, builder, field in self.COMPARED:
+            form_required = _pair(builder(), field).required
+            schema_required = field in CONFIG_SCHEMAS[conn_type]["required"]
             if form_required != schema_required:
-                observed.add((conn_type, "base_url"))
+                observed.add((conn_type, field))
         assert observed == set(self.KNOWN_DIFFERENCES), (
             f"form/schema differences observed: {sorted(observed)}; recorded: "
             f"{sorted(self.KNOWN_DIFFERENCES)}. A new difference is a requiredness question for "
             "Product (SPEC_FIELD_REQUIREDNESS §4); a vanished one means the record is stale."
+        )
+
+    def test_the_comparison_sees_both_answers(self):
+        """Anti-vacuity for the ratchet itself.
+
+        A comparison that only ever visits pairs which differ, or only pairs which agree, cannot
+        distinguish a working ratchet from a broken one. This requires the set it walks to
+        contain at least one of each.
+        """
+        verdicts = set()
+        for conn_type, builder, field in self.COMPARED:
+            verdicts.add(
+                _pair(builder(), field).required == (field in CONFIG_SCHEMAS[conn_type]["required"])
+            )
+        assert verdicts == {True, False}, (
+            f"the ratchet's population yields only {verdicts}; it cannot tell agreement from "
+            "disagreement and its verdict says nothing"
         )
 
 

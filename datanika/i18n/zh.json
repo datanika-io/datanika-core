@@ -178,7 +178,7 @@
   "connections.service_account_json": "服务账户 JSON",
   "connections.share_spreadsheet": "请将电子表格共享给服务账户邮箱",
   "connections.host": "主机 *",
-  "connections.port": "端口 *",
+  "connections.port": "端口",
   "connections.user": "用户",
   "connections.password": "密码",
   "connections.database": "数据库 *",

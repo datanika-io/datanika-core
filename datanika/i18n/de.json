@@ -178,7 +178,7 @@
   "connections.service_account_json": "Dienstkonto-JSON",
   "connections.share_spreadsheet": "Teilen Sie die Tabelle mit der E-Mail des Dienstkontos",
   "connections.host": "Host *",
-  "connections.port": "Port *",
+  "connections.port": "Port",
   "connections.user": "Benutzer",
   "connections.password": "Passwort",
   "connections.database": "Datenbank *",

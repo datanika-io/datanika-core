@@ -178,7 +178,7 @@
   "connections.service_account_json": "Service Account JSON",
   "connections.share_spreadsheet": "Share the spreadsheet with the service account email",
   "connections.host": "Host *",
-  "connections.port": "Port *",
+  "connections.port": "Port",
   "connections.user": "User",
   "connections.password": "Password",
   "connections.database": "Database *",

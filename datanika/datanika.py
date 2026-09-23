@@ -322,6 +322,31 @@ for _route in metrics_routes:
     app._api.routes.append(_route)
 app._api.add_middleware(PrometheusMiddleware)
 
+# core#1287 — an unhandled exception on a backend route must leave a traceback.
+#
+# Reflex builds the production server command itself and hardcodes granian's
+# `--log-level critical` (`reflex/utils/exec.py:run_granian_backend_prod`), so the
+# traceback granian would normally print is discarded before it reaches stdout. The
+# Prometheus middleware above still records `http_requests_total{status="500"}`, so
+# we learn THAT a 500 happened and never WHICH failure it was.
+#
+# ⚠️ This covers the routes that are NOT `api_endpoint`-decorated — the OAuth AS
+# routes, SSO/SAML, `/mcp`, `/metrics`, the agent docs, and the cloud plugin's
+# webhook and `/api/admin/e2e/*` handlers, which is where core#1269's 500 lived.
+# `api_endpoint` already ends in `except Exception: logger.exception("API handler
+# error")`, and a Reflex EVENT-handler exception goes to Reflex's own console as
+# `[Reflex Backend Exception]`. Neither of those was ever silent.
+#
+# 🔑 Installed AFTER PrometheusMiddleware on purpose. `add_middleware` inserts at
+# position 0 and Starlette builds the stack outermost-first, so the last one added
+# wraps the rest: Prometheus's `.app` chain (which it walks at construction to find
+# the route table) is unchanged, and an exception raised by the metrics middleware
+# itself is inside this try. Pinned by
+# tests/test_services/test_unhandled_exception_logging.py.
+from datanika.services.error_logging import ExceptionLoggingMiddleware  # noqa: E402
+
+app._api.add_middleware(ExceptionLoggingMiddleware)
+
 # Mount remote MCP endpoint (/mcp) — Streamable HTTP, bearer=API-key, read-only
 # (Remote-MCP P1, #370). The datanika-mcp tool-surface package is installed in
 # the Docker image (``uv pip install ./datanika-mcp``) but is optional in

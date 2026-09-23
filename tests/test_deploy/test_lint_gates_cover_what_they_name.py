@@ -37,9 +37,13 @@ HOOK = REPO_ROOT / "scripts" / "hooks" / "pre-push"
 #: `ruff check <paths…>` / `ruff format --check <paths…>`, capturing the argument tail.
 _RUFF = re.compile(r"ruff\s+(?:check|format)\s+((?:--check\s+)?[^\n|&;]+)")
 
-#: Flags CI passes and the hook does not. Recorded rather than asserted away — see
-#: :func:`test_the_ci_only_excludes_are_exactly_the_two_known_ones`.
-KNOWN_CI_ONLY_EXCLUDES = {"datanika/migrations", "datanika/i18n"}
+#: Flags CI passes and the hook does not. **Empty since core#1288 AC4** — see
+#: :func:`test_neither_gate_carries_a_ruff_exclude`.
+#:
+#: It held ``{"datanika/migrations", "datanika/i18n"}`` while the divergence was merely
+#: recorded. Keeping the constant (rather than deleting it with the old assertion) is what
+#: makes a re-added exclude read as a change to a named decision instead of a new detail.
+KNOWN_CI_ONLY_EXCLUDES: set[str] = set()
 
 
 def _ruff_invocations(text: str) -> list[list[str]]:
@@ -252,29 +256,37 @@ def test_both_gates_name_the_same_paths() -> None:
     )
 
 
-def test_the_ci_only_excludes_are_exactly_the_two_known_ones() -> None:
-    """⚠️ Records a divergence rather than asserting it away, because it is real.
+def test_neither_gate_carries_a_ruff_exclude() -> None:
+    """core#1288 AC4: one gate, one file set — asserted now, not merely recorded.
 
-    `pyproject.toml` says the migration exemption was moved into `per-file-ignores` so *"both
-    read the same rules, which is the only way a local green predicts a CI green"*. CI still
-    passes `--exclude datanika/migrations` as well — and `--exclude` drops the files entirely,
-    while `per-file-ignores` only silences `S608` there. So a migration carrying an `E501`
-    passes CI and fails the hook.
+    This test used to *record* a divergence: CI passed ``--exclude datanika/migrations`` and
+    ``--exclude datanika/i18n``, the hook passed neither, and the gap was pinned as deliberate
+    on the grounds that it was one-directional (the hook being stricter is the safe direction).
 
-    That is a small, one-directional gap (the hook is the stricter of the two, which is the
-    safe direction) and it is **not** what core#1237 is about. It is pinned here so it stays
-    deliberate: a third exclusion appearing, or these two changing, should be a decision.
+    That reasoning was sound and the conclusion still expired. QA hit the divergence from the
+    other end while adding a *third* tool to these gates ([core#1288]), and AC4 asks that both
+    gates see the same file set. Two gates that agree is a property somebody has to maintain;
+    one gate with one file set is true by construction. So the flags are gone, and this asserts
+    the invariant instead of the instance:
+
+        **Neither gate may drop files the other reads.**
+
+    ⚠️ The right way to exempt something is ``per-file-ignores`` in ``pyproject.toml``, which
+    **both** gates read — that is exactly what ``ae6bdd7`` did for ``S608`` in migrations, and
+    the ``--exclude`` flag that outlived it is what this test now refuses. An ``--exclude`` is
+    a set of files *no* gate reads, and it re-diverges the moment it lands.
     """
-    ci_flags: set[str] = set()
-    for _paths, flags in _ci_lint_paths():
-        ci_flags |= {f for f in flags if not f.startswith("--")}
-    assert ci_flags == KNOWN_CI_ONLY_EXCLUDES, (
-        f"CI's ruff excludes are {sorted(ci_flags)}, expected {sorted(KNOWN_CI_ONLY_EXCLUDES)}. "
-        "Every exclude is a set of files no CI gate reads; adding one is a decision, not a "
-        "detail."
+    for label, invocations in (("ci.yml", _ci_lint_paths()), ("pre-push", _hook_lint_paths())):
+        for _paths, flags in invocations:
+            excludes = {f for f in flags if not f.startswith("--")}
+            assert not excludes, (
+                f"{label} passes ruff --exclude {sorted(excludes)}. Since core#1288 AC4 neither "
+                "gate carries one: an exclude drops files the other gate still reads, so a local "
+                "green stops predicting a CI green. Exempt a rule in pyproject.toml's "
+                "per-file-ignores, where both gates see it, or fix the file."
+            )
+
+    assert not KNOWN_CI_ONLY_EXCLUDES, (
+        "KNOWN_CI_ONLY_EXCLUDES is non-empty, so someone re-recorded a divergence instead of "
+        f"closing it: {sorted(KNOWN_CI_ONLY_EXCLUDES)}. That is a decision, not a detail."
     )
-    for _paths, flags in _hook_lint_paths():
-        assert not {f for f in flags if not f.startswith("--")}, (
-            "the pre-push hook has grown an exclude. It is currently the stricter gate, and "
-            "that is the safe direction; narrowing it needs to be deliberate."
-        )

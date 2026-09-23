@@ -1072,7 +1072,10 @@ def _push_runs(repo: str, branch: str, runs: int, since: str | None) -> list[dic
     """
     if since is None:
         payload = _gh(f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}")
-        return list(payload.get("workflow_runs", []))  # type: ignore[union-attr]
+        # core#1288: `_gh` returns `object` (it is `json.loads` output), so `.get` is
+        # `attr-defined`, not `union-attr`. This comment named `union-attr` and therefore
+        # suppressed NOTHING — harmless only because no type checker ran here until now.
+        return list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
     created = quote(f">={since}", safe="")
     listed: list[dict] = []
     for page in range(1, _MAX_PAGES + 1):
@@ -1080,7 +1083,7 @@ def _push_runs(repo: str, branch: str, runs: int, since: str | None) -> list[dic
             f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page=100"
             f"&page={page}&created={created}"
         )
-        batch = list(payload.get("workflow_runs", []))  # type: ignore[union-attr]
+        batch = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
         listed.extend(batch)
         if len(batch) < 100:
             return listed
@@ -1122,7 +1125,7 @@ def collect(
             continue
         considered += 1
         payload = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")
-        job_list: list[dict] = list(payload.get("jobs", []))  # type: ignore[union-attr]
+        job_list: list[dict] = list(payload.get("jobs", []))  # type: ignore[attr-defined]
         job = next((j for j in job_list if job_name in j["name"]), None)
         if job is not None:
             with_job += 1

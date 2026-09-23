@@ -375,3 +375,55 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "S"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# ── mypy: the SHAPE half of a contract change (core#1288) ────────────────────────────────
+#
+# Why this exists. `_gh_log_or_none` lives in `scripts/e2e_tier_streak.py` and has a consumer
+# in `scripts/verify_e2e_attribution.py`, a different department's module. Its contract has
+# broken that consumer TWICE, and both times a human running a promotion found it, not CI:
+#
+#   core#1205  it began RAISING on a two-tier log          -> AmbiguousVerdictError at runtime
+#   core#1273  it began returning `(log, reason)`          -> "'tuple' object has no
+#                                                              attribute 'splitlines'"
+#
+# 🚨 A TYPE CHECKER SEES SHAPE. IT DOES NOT SEE BEHAVIOUR, AND THAT IS NOT A GAP TO CLOSE
+# LATER — IT IS THE BOUNDARY OF WHAT THIS GATE CLAIMS. (core#1288 AC3.)
+#
+#   shape      signature, argument names, return type. Caught here, before it runs, for
+#              EVERY caller, with no per-seam test. The second row above is exactly this.
+#   behaviour  what it raises, what it returns for an edge case, whether a silent `None`
+#              became a loud exception. The FIRST row changed no signature. **mypy is blind
+#              to it.** That half needs a test at the seam, which is what core#1285 added
+#              after the crash.
+#
+# So a green type check is NOT evidence that a seam is covered. The next core#1205 will
+# arrive with this gate green. Said here and in ci.yml's step, per AC3, because the reader
+# who needs it is whoever is about to conclude the seam was checked.
+#
+# Scope is declared HERE rather than on the command line so there is exactly one statement
+# of it (AC4): `mypy` with no path argument in CI, in the hook (there is none — CI only, per
+# Infra 2026-09-23), and in your shell all read this line. A second declaration is a second
+# thing to keep true.
+#
+# `datanika/` is deliberately out of scope: 248 files that have never been checked is a
+# different proposal with a different cost, and bundling it sinks this one.
+[tool.mypy]
+files = ["scripts"]
+python_version = "3.12"
+
+# Raises the bar rather than lowering it, and it is the reason this section is not just a
+# `files` line. SIX `# type: ignore[union-attr]` comments in `scripts/` named a code mypy
+# does not emit for those lines (it reports `attr-defined`), so they suppressed NOTHING and
+# read exactly like suppressions. Nobody could have known: there was no type checker.
+# With this on, an ignore that stops being needed — or never was — goes red and has to be
+# removed, so the suppression list can only shrink by itself.
+warn_unused_ignores = true
+
+# Named, never blanket (AC2). `--ignore-missing-imports` was how core#1288 measured the
+# baseline; it would silence every unresolved import in the directory, including a real
+# typo. Measured: with no flag at all the ONLY unresolved import in `scripts/` is `yaml`,
+# which is a declared dependency (`pyyaml>=6.0,<7`) that ships no inline types. So the
+# exemption is one module by name, and a new unresolved import still fails.
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true

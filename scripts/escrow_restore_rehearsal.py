@@ -199,7 +199,13 @@ def main() -> int:
 
     print("\n[4] The escrowed CREDENTIAL_ENCRYPTION_KEY")
     key = _env_value(args.env, "CREDENTIAL_ENCRYPTION_KEY")
-    if not r.check("present in the escrow file", bool(key)):
+    # core#1288: the `or key is None` disjunct is unreachable — `Reporter.check` returns its
+    # own `ok` argument, so `not r.check(..., bool(key))` already IS `key is falsy`. It is
+    # restated because a narrowing that depends on reading another function's body is not a
+    # narrowing: without it mypy keeps `key` as `str | None` and the three uses below
+    # (`urlsafe_b64decode`, `_sha`, `.encode`) each read as a latent None crash. Cleared by
+    # construction rather than suppressed, and behaviour is identical in every case.
+    if not r.check("present in the escrow file", bool(key)) or key is None:
         return 1
     try:
         shaped = len(base64.urlsafe_b64decode(key)) == 32

@@ -523,7 +523,14 @@ def collect(repo: str) -> list[WorkflowState]:
                     name=wf["name"],
                     path=wf["path"],
                     state=wf["state"],
-                    created_at=_ts(wf["created_at"]),
+                    # core#1288. `_ts` returns None only for an absent or empty value, and
+                    # GitHub always sets `created_at` on a workflow record — but the types
+                    # cannot say so, and `WorkflowState.created_at` is a bare `datetime`.
+                    # Recorded rather than papered over: if it ever IS None, the age
+                    # computation at `_stale_schedules` raises, which is louder than any
+                    # fallback we could invent here. Widening the field to `datetime | None`
+                    # is the real fix and belongs to whoever owns that comparison.
+                    created_at=_ts(wf["created_at"]),  # type: ignore[arg-type]
                     crons=[],
                     last_schedule_run=_sched[0],
                     recent_conclusions=_sched[1],
@@ -540,7 +547,7 @@ def collect(repo: str) -> list[WorkflowState]:
                 name=wf["name"],
                 path=wf["path"],
                 state=wf["state"],
-                created_at=_ts(wf["created_at"]),
+                created_at=_ts(wf["created_at"]),  # type: ignore[arg-type]  # see above
                 crons=crons,
                 last_schedule_run=_sched[0],
                 recent_conclusions=_sched[1],

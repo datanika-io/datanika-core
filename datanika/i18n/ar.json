@@ -178,7 +178,7 @@
   "connections.service_account_json": "JSON حساب الخدمة",
   "connections.share_spreadsheet": "شارك جدول البيانات مع البريد الإلكتروني لحساب الخدمة",
   "connections.host": "المضيف *",
-  "connections.port": "المنفذ *",
+  "connections.port": "المنفذ",
   "connections.user": "المستخدم",
   "connections.password": "كلمة المرور",
   "connections.database": "قاعدة البيانات *",

@@ -178,7 +178,7 @@
   "connections.service_account_json": "JSON сервисног налога",
   "connections.share_spreadsheet": "Поделите табелу са е-поштом сервисног налога",
   "connections.host": "Хост *",
-  "connections.port": "Порт *",
+  "connections.port": "Порт",
   "connections.user": "Корисник",
   "connections.password": "Лозинка",
   "connections.database": "База података *",

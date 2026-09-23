@@ -17,6 +17,32 @@ from datanika.ui.state.base_state import BaseState, get_sync_session
 from datanika.ui.state.run_state import RunItem, _format_rows
 
 
+def usage_context(org_id: int) -> dict:
+    """The context dict the ``usage.get_summary`` hook is invited to fill.
+
+    Core creates it, the cloud plugin fills it (``SPEC_USAGE_VISIBILITY`` §3.2). The values here
+    are the **no-cloud-plugin reading**, not placeholders: an OSS deployment has no plan rows, so
+    every allowance is legitimately zero and no meter is drawn.
+
+    It is a function rather than a literal inside :meth:`DashboardState.load_dashboard` so the
+    contract can be asserted. A field the card renders but this dict never offers is a field
+    cloud has no way to supply — which is core#1513's defect one level down: the byte fields
+    were offered here all along and simply never assigned.
+    """
+    return {
+        "org_id": org_id,
+        "runs_used": 0,
+        "runs_limit": 0,
+        "plan_name": "",
+        "bytes_used": 0,
+        "bytes_limit": 0,
+        #: ``True`` when exceeding ``bytes_limit`` STOPS runs, ``False`` when it bills overage
+        #: (core#713). The two must not be shown the same way — ``SPEC_USAGE_VISIBILITY`` §2.4.
+        "bytes_hard_cap": False,
+        "cycle_ends_at": "",
+    }
+
+
 class DashboardStats(BaseModel):
     total_uploads: int = 0
     total_transformations: int = 0
@@ -36,10 +62,15 @@ class DashboardState(BaseState):
     runs_limit: int = 0
     plan_name: str = ""
 
-    # Volume (bytes) usage — V2 pricing pivot dual-dim bar, gated by
-    # settings.datanika_dual_mode_ux_enabled at the component level.
+    # Volume (bytes) usage — the BILLED dimension. Populated by the cloud plugin via
+    # `usage.get_summary`; zero when no plugin is active or the plan carries no volume
+    # allowance. No longer gated on settings.datanika_dual_mode_ux_enabled (core#1513):
+    # that flag also mounts the ETL/ELT mode selector, which persists nothing.
     bytes_used: int = 0
     bytes_limit: int = 0
+    #: True when the volume allowance is a WALL (runs stop), False when exceeding it bills
+    #: overage. Free is the only hard-capped tier and was the only one with no meter.
+    bytes_hard_cap: bool = False
 
     # Billing cycle close date (ISO YYYY-MM-DD). Populated via
     # usage.get_summary hook; empty string when cloud plugin is not
@@ -83,6 +114,24 @@ class DashboardState(BaseState):
     @rx.var
     def has_volume_data(self) -> bool:
         return self.bytes_limit > 0
+
+    @rx.var
+    def has_any_usage_data(self) -> bool:
+        """Whether the usage card is shown at all.
+
+        ``SPEC_USAGE_VISIBILITY`` §2.1: a dimension the plan row carries is a dimension the
+        customer sees. Gating the whole card on the RUNS allowance hid the volume meter from any
+        plan with a ``NULL`` ``runs_included`` — so one dimension must never gate the other.
+
+        Reads the raw fields rather than the two vars above because a computed var is resolved
+        through the state machinery; ``test_usage_is_visible`` pins this against them.
+        """
+        return self.runs_limit > 0 or self.bytes_limit > 0
+
+    @rx.var
+    def shows_both_dimensions(self) -> bool:
+        """True only when both meters are drawn — i.e. when a separator between them is real."""
+        return self.runs_limit > 0 and self.bytes_limit > 0
 
     @rx.var
     def bytes_used_display(self) -> str:
@@ -182,21 +231,17 @@ class DashboardState(BaseState):
             ]
 
         # Load usage data via hook (cloud plugin fills this in)
-        usage_ctx = {
-            "org_id": org_id,
-            "runs_used": 0,
-            "runs_limit": 0,
-            "plan_name": "",
-            "bytes_used": 0,
-            "bytes_limit": 0,
-            "cycle_ends_at": "",
-        }
+        usage_ctx = usage_context(org_id)
         emit("usage.get_summary", context=usage_ctx)
         self.runs_used = usage_ctx["runs_used"]
         self.runs_limit = usage_ctx["runs_limit"]
         self.plan_name = usage_ctx["plan_name"]
         self.bytes_used = usage_ctx["bytes_used"]
         self.bytes_limit = usage_ctx["bytes_limit"]
+        # `.get` rather than `[...]`: a cloud build predating core#1513 replaces the dict
+        # wholesale in some handlers, and a missing cap flag must read as "not a wall" rather
+        # than raise — the safe direction, since the overage wording promises nothing is blocked.
+        self.bytes_hard_cap = bool(usage_ctx.get("bytes_hard_cap", False))
         self.cycle_ends_at = usage_ctx.get("cycle_ends_at", "")
 
         self.error_message = ""

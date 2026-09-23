@@ -9,12 +9,42 @@ did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning
 > Coordinator rule 9: if a measurement will become a floor, the instrument ships in the same PR
 > — not the number.
 
-## Run it
+## Run it — two machines, in this order
+
+**1. On the dev machine, gate the invocation.** `preflight.sh` reads the Actions API, the merge
+queue and the open-PR list — none of which the box can see — and exits non-zero if anything is
+positioned to rebuild staging during the ladder.
 
 ```bash
-# ON THE PRODUCTION BOX. Targets staging. Never run this against production.
+bash scripts/loadtest/preflight.sh --duration-min 25     # exit 0 = go; anything else = do not start
+```
+
+**2. Only then, on the production box.** Targets staging. Never run this against production.
+
+```bash
 bash scripts/loadtest/run.sh --keys 161 --stages "5:120s,10:120s,20:120s,30:120s,40:120s,60:120s"
 ```
+
+> 🔑 **Why the gate is on the other machine, and why `run.sh`'s own preflight is not enough.**
+> `run.sh` asks *"is an E2E suite running right now"*. A 25-minute ladder needs *"will one
+> START during my run"*. Those differ, and they differ **worst** in the gap between a `dev`
+> run's unit jobs finishing and its staging jobs starting: in that window the container census
+> reads a confident zero and a staging deploy is minutes away.
+>
+> Measured twice, on two sessions: E2E containers **0**, staging `Up 3 hours`, `load1 0.46` —
+> every box-side check clean — while the Actions API showed an in-flight `dev` run whose
+> staging jobs did not exist yet. **All four box-side checks would have passed and staging
+> would have been rebuilt underneath the run.**
+>
+> ⚠️ A `PASS` lowers the probability of a collision; it does not remove it. Nothing can see a
+> merge that has not happened. Re-read the preflight before the ladder's top stage, and stop
+> the run rather than reasoning afterwards about a staging deploy that started mid-ladder.
+>
+> `bash scripts/loadtest/preflight.sh --self-check` drives the decision against ten synthetic
+> populations — a clear board and each gate failing on its own — and is what proves the guard
+> **discriminates** rather than merely refuses. Guarded by
+> `tests/test_deploy/test_loadtest_preflight.py`, which mutates each gate and requires the
+> self-check to go red.
 
 Results land in a fresh `mktemp -d` (override with `--out`): `summary.json`, `raw.csv`,
 `k6.out`, `run.log`.

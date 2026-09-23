@@ -24,13 +24,19 @@ class TestOAuthCSRF:
     """CSRF attacks via state parameter manipulation."""
 
     def test_forged_state_rejected(self, client):
-        """Attacker replaces state in callback URL with their own value."""
+        """Attacker replaces state in callback URL with their own value.
+
+        Still refused at the state check, before the provider is contacted. Since core#624 AC13 a
+        cookie that VERIFIES but holds another state carries its own reason, ``superseded_flow``,
+        and this cookie is one we signed. Repointed rather than deleted (WORKFLOW_RULES §5a): what
+        it protects is the refusal, and ``superseded_flow`` is only ever sent from the state check.
+        """
         with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             client.cookies.set("oauth_state", _make_state_cookie("legitimate_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=attacker_state")
             assert resp.status_code == 302
-            assert "auth_error=invalid_state" in resp.headers["location"]
+            assert "auth_error=superseded_flow" in resp.headers["location"]
 
     def test_empty_state_parameter_rejected(self, client):
         """Empty state in callback URL."""
@@ -51,14 +57,20 @@ class TestOAuthCSRF:
             assert "auth_error=invalid_state" in resp.headers["location"]
 
     def test_replayed_state_with_different_cookie(self, client):
-        """Attacker uses a valid state from a different session."""
+        """Attacker uses a valid state from a different session.
+
+        Still refused at the state check, before the provider is contacted. Since core#624 AC13 a
+        cookie that VERIFIES but holds another state carries its own reason, ``superseded_flow``,
+        and this cookie is one we signed. Repointed rather than deleted (WORKFLOW_RULES §5a): what
+        it protects is the refusal, and ``superseded_flow`` is only ever sent from the state check.
+        """
         with patch("datanika.services.oauth_routes._get_providers") as mock:
             mock.return_value = {"google": google_provider("gid", "gsecret")}
             # Cookie has state A, but URL has state B (attacker's captured state)
             client.cookies.set("oauth_state", _make_state_cookie("session_A_state"))
             resp = client.get("/api/auth/callback/google?code=abc&state=session_B_state")
             assert resp.status_code == 302
-            assert "auth_error=invalid_state" in resp.headers["location"]
+            assert "auth_error=superseded_flow" in resp.headers["location"]
 
     def test_tampered_signature_in_cookie(self, client):
         """Attacker modifies the HMAC signature in the cookie."""

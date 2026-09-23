@@ -20,12 +20,13 @@ import logging
 import os
 import shutil
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from datanika.models.run import Run, RunStatus
+from datanika.models.run import NON_TERMINAL_RUN_STATUSES, Run, RunStatus
 from datanika.models.uploaded_file import UploadedFile
 from datanika.services.file_upload_service import resolve_archive_path
 
@@ -53,7 +54,9 @@ def cleanup_orphaned_dlt_dirs(
         active_runs = (
             session.execute(
                 select(Run.id).where(
-                    Run.status.in_([RunStatus.RUNNING, RunStatus.PENDING]),
+                    # §4 consumer #5, a data hazard: a non-terminal status missing from this
+                    # list makes a LIVE worker's directory eligible for deletion.
+                    Run.status.in_(NON_TERMINAL_RUN_STATUSES),
                     Run.deleted_at.is_(None),
                 )
             )
@@ -80,6 +83,55 @@ def cleanup_orphaned_dlt_dirs(
         removed += 1
 
     return removed
+
+
+#: How long a run may sit in ``CANCELLING`` before the sweep calls it (`SPEC_RUN_CANCELLATION`
+#: §3.1). Long enough that an ordinary worker finishing its engine call confirms the stop itself;
+#: short enough that a dead worker does not strand the run. The spec invites Engineering to argue
+#: the number, not the existence.
+CANCELLING_REAP_AFTER_MINUTES = 15
+
+
+def reap_stuck_cancelling_runs(session: Session, after_minutes: int | None = None) -> int:
+    """Terminate runs whose worker never acknowledged the stop (`SPEC_RUN_CANCELLATION` §3.1).
+
+    A worker that dies mid-cancel leaves a run non-terminal **forever**, which is worse than the
+    defect this whole change is about: ``wait_for_run`` polls until terminal, so every
+    ``?wait=true`` client on that run burns its full timeout and the run never leaves the active
+    set.
+
+    ⚠️ **The clock is ``updated_at``, not a new column** (D4). ``TimestampMixin`` already stamps it
+    on the status write, so it answers *how long has this been trying to stop* without a migration
+    — and under blue/green a migration the previously-deployed code has never seen is a cost this
+    does not need to pay for a timestamp already there.
+
+    ``logs`` records that the worker never acknowledged, because a run that reads ``cancelled``
+    with no explanation is indistinguishable from one the worker confirmed.
+    """
+    window = CANCELLING_REAP_AFTER_MINUTES if after_minutes is None else after_minutes
+    cutoff = datetime.now(UTC) - timedelta(minutes=window)
+    stuck = (
+        session.execute(
+            select(Run).where(
+                Run.status == RunStatus.CANCELLING,
+                Run.updated_at < cutoff,
+                Run.deleted_at.is_(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for run in stuck:
+        run.status = RunStatus.CANCELLED
+        run.finished_at = datetime.now(UTC)
+        note = (
+            f"Stopped: the worker did not acknowledge the cancellation within {window} minutes, "
+            "so the run was closed by the maintenance sweep. Any rows already written to the "
+            "destination are still there."
+        )
+        run.logs = "\n".join([run.logs, note]) if run.logs else note
+    session.flush()
+    return len(stuck)
 
 
 def _extract_run_id(dirname: str) -> int | None:

@@ -231,6 +231,7 @@ def transformation_form() -> rx.Component:
                 value=TransformationState.form_materialization,
                 on_change=TransformationState.set_form_materialization,
                 width="100%",
+                custom_attrs={"aria-label": _t["transformations.materialization"]},
             ),
             rx.cond(
                 TransformationState.form_materialization == "incremental",
@@ -250,6 +251,7 @@ def transformation_form() -> rx.Component:
                             value=TransformationState.form_strategy,
                             on_change=TransformationState.set_form_strategy,
                             width="100%",
+                            custom_attrs={"aria-label": _t["transformations.strategy"]},
                         ),
                         rx.input(
                             placeholder=_t["transformations.ph_updated_at"],
@@ -263,6 +265,7 @@ def transformation_form() -> rx.Component:
                             value=TransformationState.form_on_schema_change,
                             on_change=TransformationState.set_form_on_schema_change,
                             width="100%",
+                            custom_attrs={"aria-label": _t["transformations.on_schema_change"]},
                         ),
                         spacing="2",
                         width="100%",

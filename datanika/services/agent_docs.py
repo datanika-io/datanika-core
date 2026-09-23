@@ -37,6 +37,7 @@ from datanika.services.agent_tiers import (
     tier_count,
     to_json_dict,
 )
+from datanika.services.run_status_prose import STILL_GOING, TERMINAL_NOT_SUCCESS
 
 
 def _render_llms_txt() -> str:
@@ -173,18 +174,19 @@ Content-Type: application/json
   the transport's — so `curl --fail` and `raise_for_status()` are correct
   idioms for "did my pipeline work?":
   - `200` — the run finished **successfully**
-  - `408` — still `pending`/`running` when the wait timed out; the body has
+  - `408` — still {STILL_GOING} when the wait timed out; the body has
     `"timed_out": true` and the run is still going. Poll `GET /runs/{{id}}`
     or re-wait; this is not a failure.
-  - `422` — the run reached a **terminal, non-success** status (`failed`,
-    `cancelled`). Not a 5xx: the failure is in your pipeline, not our server.
+  - `422` — the run reached a **terminal, non-success** status
+    ({TERMINAL_NOT_SUCCESS}). Not a 5xx: the failure is in your pipeline, not our server.
   The serialised run is the body in all three cases, so `status` and
   `error_message` remain the source of truth. Without `?wait=true` the trigger
   still returns `202` immediately and says nothing about the outcome.
 - **Do not cancel and re-trigger a slow run.** `POST /runs/{{id}}/cancel`
-  marks the run cancelled but does not stop it, so re-triggering runs the
-  same job a second time beside the first. Wait with `?wait=true`, or poll
-  `GET /runs/{{id}}`.
+  stops a run only if its work has not started yet, and does not interrupt a
+  run that is already working: that run reads `cancelling` and runs to its end.
+  So re-triggering runs the same job a second time beside the first. Wait with
+  `?wait=true`, or poll `GET /runs/{{id}}`.
 - **Introspect before building** — list source tables and columns
   before writing the upload config. Don't guess table names.
 

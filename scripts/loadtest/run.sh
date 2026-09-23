@@ -32,8 +32,9 @@ KEYS=161                  # Run 9's count. See the ceiling formula in k6_baselin
 STAGES="5:120s,10:120s,20:120s,30:120s,40:120s,60:120s,80:120s,100:120s"
 OUT=""
 K6_IMAGE="grafana/k6:1.7.1"   # Pinned. `:latest` on an instrument is how two runs stop comparing.
-STAGING_BE="http://127.0.0.1:8100"
-PROD_BE="http://127.0.0.1:8000"
+STAGING_BE="http://127.0.0.1:8100"   # staging is NOT blue/green; this port is stable.
+PROD_BE=""                            # resolved from the active vhost below - never hardcoded.
+PROD_COLOUR=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,6 +50,36 @@ LOG="$OUT/run.log"
 say() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$LOG"; }
 
 say "run start  keys=$KEYS  stages=$STAGES  out=$OUT"
+
+# ── resolve the serving colour (core#622 class) ───────────────────────────────────────────
+# 🔴 FOUND ON THE FIRST REAL EXECUTION, 2026-09-21. PROD_BE was hardcoded to :8000. The
+# production backend port ALTERNATES on every deploy — 8000 blue, 8010 green — and the
+# promotion that day had swapped prod to green, so `curl :8000/healthz` returned 000 and the
+# preflight below refused with "do not add load to a sick box" while production was serving
+# 200 through Cloudflare the whole time.
+#
+# Two failure modes, and the quiet one is worse:
+#   1. A FALSE REFUSAL that names a healthy production as sick, sending whoever reads it
+#      after an incident that does not exist.
+#   2. Mid-swap both colours are briefly up, so a hardcoded port can resolve to the colour
+#      that is NOT serving. The neighbour scenario would then sample a container taking no
+#      real traffic and report a reassuring number. The founder's label on every result is
+#      "a floor under NEIGHBOUR LOAD" — measured against the wrong process, that label is
+#      not merely imprecise, it is unearned.
+#
+# So: ask the vhost, and refuse if it cannot be read. Never assume, never default.
+ACTIVE_CONF="${ACTIVE_CONF:-/etc/apache2/conf-enabled/datanika-prod-active.conf}"
+PROD_PORT="$(grep -oE '\b80[01]0\b' "$ACTIVE_CONF" 2>/dev/null | head -1 || true)"
+case "${PROD_PORT:-}" in
+  8000) PROD_COLOUR="blue" ;;
+  8010) PROD_COLOUR="green" ;;
+  *) say "REFUSING: cannot determine the serving colour from $ACTIVE_CONF"
+     say "          got '${PROD_PORT:-<nothing>}'. Guessing a colour is how the neighbour"
+     say "          reading ends up describing a container that serves no traffic."
+     exit 16 ;;
+esac
+PROD_BE="http://127.0.0.1:${PROD_PORT}"
+say "preflight: serving colour is $PROD_COLOUR (backend $PROD_PORT), read from $ACTIVE_CONF"
 
 # ── preflight ─────────────────────────────────────────────────────────────────────────────
 say "preflight: staging must be healthy BEFORE we load it, or the result describes a sick box"
@@ -95,7 +126,20 @@ KEYFILE="$KEYDIR/loadtest-keys.txt"
 say "seed: minting $KEYS read-scoped keys on staging"
 docker exec -i datanika-staging-app /app/.venv/bin/python - "$KEYS" \
   < "$(dirname "$0")/seed_loadtest_org.py" > "$KEYFILE" 2> "$OUT/seed.err"
-MINTED=$(grep -c . "$KEYFILE" 2>/dev/null || echo 0)
+# 🔴 Defect 6 (core#778), and the worst of the six because it disarmed the guard below.
+# This was `$(grep -c . "$KEYFILE" || echo 0)`. `grep -c` PRINTS its count and exits 1
+# when the count is zero, so on the failure path the `||` fired too and MINTED became
+# the two-line string "0
+0". The comparison then died with "integer expression
+# expected" -- it did not refuse, it ERRORED -- and the run was stopped two lines later
+# only because `set -u` tripped on an unbound CEIL. Had CEIL carried a default, this
+# harness would have gone on to load-test staging with ZERO keys and reported a number.
+#
+# A guard that errors is not a guard. `|| :` keeps the exit status quiet without adding
+# a second line, and the ${MINTED:-0} covers grep being absent entirely.
+MINTED=$(grep -c . "$KEYFILE" 2>/dev/null || :)
+MINTED=${MINTED:-0}
+case "$MINTED" in (*[!0-9]*|"") say "REFUSING: minted count is not a number: $(printf %q "$MINTED")"; rm -rf "$KEYDIR"; exit 15 ;; esac
 say "seed: minted=$MINTED (requested $KEYS)"
 if [ "$MINTED" -lt "$KEYS" ]; then
   say "REFUSING: seeder produced $MINTED of $KEYS keys — the ceiling would be lower than intended"
@@ -119,7 +163,22 @@ trap cleanup EXIT
 
 # ── run ───────────────────────────────────────────────────────────────────────────────────
 say "generator start"
-docker run --rm --network host \
+# Defect 7 (core#778): `-i` is load-bearing and was missing. The k6 script is PIPED into
+# this command, but `docker run` does not attach stdin without it, so k6 received an EMPTY
+# script and died with "no exported functions in script" -- an error pointing at the JS
+# file, which parses fine and exports three symbols. The `docker exec -i` used by the
+# seeder above has it; this one did not. Nothing short of executing the harness finds it.
+# Defect 8 (core#778): the generator image runs as uid 12345 (`k6`), and KEYDIR is a
+# `mktemp -d` -- 0700, owned by root -- so the container could not stat the key file:
+#     GoError: stat /keys/loadtest-keys.txt: permission denied
+#
+# The obvious fix is `chmod 0755 $KEYDIR; chmod 0644 $KEYFILE`. REJECTED: that file holds
+# live staging API keys in cleartext, and this box has co-tenants (an Apache webdav vhost,
+# and the founder's VPN unit which is currently inactive but can be started at any time).
+# Widening host permissions on a secret to satisfy a container is the wrong trade when the
+# container can simply be told who to be. `--user 0:0` changes nothing outside this
+# ephemeral --rm container and leaves the key file readable only by root.
+docker run --rm -i --user 0:0 --network host \
   -v "$KEYDIR":/keys:ro -v "$OUT":/out \
   -e TARGET_BASE="$STAGING_BE" -e NEIGHBOUR_BASE="$PROD_BE" \
   -e KEYS_FILE=/keys/loadtest-keys.txt -e STAGES="$STAGES" \

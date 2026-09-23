@@ -141,7 +141,9 @@ class TestCancelRun:
             db_session.commit()
             resp = client.post(f"/api/v1/runs/{run.id}/cancel", headers=_headers())
             assert resp.status_code == 200
-            assert resp.json()["status"] == "cancelled"
+            # SPEC_RUN_CANCELLATION §3: a worker is still going, so the API must not claim the
+            # run has stopped. It reaches "cancelled" when the worker settles.
+            assert resp.json()["status"] == "cancelling"
 
     def test_cancel_completed_run_returns_409(
         self, client, fake_api_key, rate_limit_ok, db_session

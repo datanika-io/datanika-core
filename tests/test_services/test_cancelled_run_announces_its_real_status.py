@@ -105,6 +105,10 @@ class TestTheAnnouncedStatusIsReadFromTheRun:
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 1)
         svc.start_run(db_session, org.id, run.id)
         svc.cancel_run(db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id))
+        # The worker settles the run, as every production path does: `complete_run` turns the
+        # requested stop into the terminal `cancelled`. Announcing before that point is now
+        # refused outright — see `test_a_run_that_has_not_finished_announces_nothing`.
+        svc.complete_run(db_session, org.id, run.id, rows_loaded=3, logs="partial")
 
         status = _announced_status(svc, db_session, org.id, run.id)
         assert status == RunStatus.CANCELLED.value, (
@@ -140,6 +144,10 @@ class TestTheAnnouncedStatusIsReadFromTheRun:
 
     def test_the_payload_is_passed_through(self, svc, db_session, org):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 5)
+        # Settled first: since SPEC_RUN_CANCELLATION §3 a completion event is refused for a run
+        # that has not finished. What this arm is about is the payload, not the status.
+        svc.start_run(db_session, org.id, run.id)
+        svc.complete_run(db_session, org.id, run.id, rows_loaded=1, logs="ok")
         with patch("datanika.hooks.announce") as announce:
             svc.announce_completion(
                 db_session,
@@ -156,6 +164,31 @@ class TestTheAnnouncedStatusIsReadFromTheRun:
         assert kwargs["bytes_processed"] == 99
         assert kwargs["run_id"] == run.id
         assert announce.call_args.args[0] == "run.upload_completed"
+
+    def test_a_run_that_has_not_finished_announces_nothing(self, svc, db_session, org):
+        """A completion event for a run that has not completed is a statement that is untrue.
+
+        🚨 And it is not harmless. Cloud's `BILLING_POLICY` scores every non-terminal status
+        `False`, so announcing `cancelling` would meter **nothing** for a run whose partial data
+        the user keeps — option (b), the cancel-to-avoid-billing hole `SPEC_RUN_CANCELLATION` D2
+        rejects by name. Every production path settles the run first, so this refuses nothing
+        that happens today; it is here because that was an assumption held in another
+        repository's comments, which is the exact shape core#657 was.
+        """
+        run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 9)
+        svc.start_run(db_session, org.id, run.id)
+        svc.cancel_run(db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id))
+
+        assert _announced_status(svc, db_session, org.id, run.id) is None
+
+    def test_control_the_same_run_announces_once_it_has_settled(self, svc, db_session, org):
+        """Without this, the refusal above is equally explained by an announce that never fires."""
+        run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 10)
+        svc.start_run(db_session, org.id, run.id)
+        svc.cancel_run(db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id))
+        svc.complete_run(db_session, org.id, run.id, rows_loaded=2, logs="partial")
+
+        assert _announced_status(svc, db_session, org.id, run.id) == RunStatus.CANCELLED.value
 
 
 # --------------------------------------------------------------------------------------

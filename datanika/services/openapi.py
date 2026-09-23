@@ -4,6 +4,11 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
 
+from datanika.models.run import RunStatus
+from datanika.services.run_cancellation import cancellation_notice
+from datanika.services.run_status_prose import STILL_GOING as _STILL_GOING
+from datanika.services.run_status_prose import TERMINAL_NOT_SUCCESS as _TERMINAL_NOT_SUCCESS
+
 API_VERSION = "1.0.0"
 API_TITLE = "Datanika API"
 API_DESCRIPTION = (
@@ -47,7 +52,8 @@ _TS = {"type": "string", "format": "date-time", "nullable": True}
 
 _DBT_CMDS = ["build", "run", "test", "seed", "snapshot", "compile"]
 _MAT_TYPES = ["view", "table", "incremental", "ephemeral", "snapshot"]
-_RUN_STATUSES = ["pending", "running", "success", "failed", "cancelled"]
+#: Derived from the enum, so the published schema cannot omit a value the API returns.
+_RUN_STATUSES = [s.value for s in RunStatus]
 _NODE_TYPES = ["upload", "transformation", "pipeline"]
 _CHANNEL_TYPES = ["email", "slack", "telegram", "webhook"]
 _DIRECTIONS = ["source", "destination", "both"]
@@ -236,6 +242,45 @@ SCHEMAS = {
             "run_id": {"type": "integer"},
             "logs": {"type": "string"},
         }
+    ),
+    # core#657. The run, plus the plain-language statement of what the cancel did — the same words
+    # as the /runs dialog (`services/run_cancellation.py`).
+    "RunCancellation": _obj(
+        {
+            "id": {"type": "integer"},
+            "target_type": {"type": "string"},
+            "target_id": {"type": "integer"},
+            "status": {
+                "type": "string",
+                "enum": _RUN_STATUSES,
+                "description": (
+                    "`cancelled` if the run had not started; `cancelling` while work already "
+                    "in progress runs to its end."
+                ),
+            },
+            "started_at": _TS,
+            "finished_at": _TS,
+            "rows_loaded": {"type": "integer", "nullable": True},
+            "error_message": {"type": "string", "nullable": True},
+            "created_at": _TS,
+            "notice": {
+                "type": "string",
+                "description": "What cancelling did and did not do, in plain language.",
+            },
+        },
+        required=["id", "status", "notice"],
+    ),
+    "CancelRefusal": _obj(
+        {
+            "error": _obj(
+                {
+                    "code": {"type": "string", "enum": ["not_cancellable"]},
+                    "message": {"type": "string"},
+                },
+                required=["code", "message"],
+            ),
+        },
+        required=["error"],
     ),
     "NotificationChannel": _obj(
         {
@@ -622,7 +667,7 @@ def _trigger_op(tag, summary, *, waitable=False):
         }
         responses["408"] = {
             "description": (
-                "`wait=true` — still pending/running when the wait expired. The "
+                f"`wait=true` — still {_STILL_GOING} when the wait expired. The "
                 "body is the run with `timed_out: true`; it is still going. Not "
                 "a failure — poll `GET /api/v1/runs/{id}` or wait again."
             ),
@@ -631,7 +676,7 @@ def _trigger_op(tag, summary, *, waitable=False):
         responses["422"] = {
             "description": (
                 "`wait=true` — the run reached a terminal status that is not "
-                "success (`failed`, `cancelled`). The body is the run, so "
+                f"success ({_TERMINAL_NOT_SUCCESS}). The body is the run, so "
                 "`status` and `error_message` remain the source of truth. Not a "
                 "5xx: the failure is in your pipeline, not in the server."
             ),
@@ -814,7 +859,7 @@ def build_openapi_spec() -> dict:
         },
     }
 
-    # Runs (read-only)
+    # Runs — read, plus cancel
     paths["/api/v1/runs"] = {
         "get": _list_op("Runs", "Run", "List runs", _RUNS_PARAMS),
     }
@@ -823,6 +868,44 @@ def build_openapi_spec() -> dict:
     }
     paths["/api/v1/runs/{id}/logs"] = {
         "get": _get_op("Runs", "RunLogs", "Get run logs"),
+    }
+    # core#657. Served since the API existed and never published, so a client generated from this
+    # document could not cancel at all. The description is the same wording as the /runs dialog
+    # and the response's `notice` (`services/run_cancellation.py`), and the billing sentence is in
+    # it only where this deployment bills.
+    paths["/api/v1/runs/{id}/cancel"] = {
+        "post": {
+            "tags": ["Runs"],
+            "summary": "Cancel a run",
+            "description": (
+                "Stop a `pending` or `running` run. "
+                f"{cancellation_notice()} "
+                "Cancelling a run that is already `cancelling` is the same request arriving "
+                "twice and returns `200` again. Requires the `runs:write` scope and a key whose "
+                "owner is at least `editor`."
+            ),
+            "parameters": [_ID_PARAM],
+            "responses": {
+                "200": {
+                    "description": "Accepted — the run, and what the cancel did",
+                    "content": _json_content(_ref("RunCancellation")),
+                },
+                "401": _401,
+                "403": {
+                    "description": "The key lacks `runs:write`, or its owner is below `editor`",
+                    "content": _err_content,
+                },
+                "404": _404,
+                "409": {
+                    "description": (
+                        "`not_cancellable` — the run had already finished, so there was nothing "
+                        "to cancel"
+                    ),
+                    "content": _json_content(_ref("CancelRefusal")),
+                },
+                "429": _429,
+            },
+        },
     }
 
     # Notification channels

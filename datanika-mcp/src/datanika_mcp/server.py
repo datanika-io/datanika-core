@@ -215,7 +215,8 @@ async def list_runs(
 
     Args:
         target_type: Filter by type — 'upload', 'pipeline', or 'transformation'.
-        status: Filter by status — 'pending', 'running', 'success', 'failed', 'cancelled'.
+        status: Filter by status — 'pending', 'running', 'cancelling', 'success', 'failed',
+            'cancelled'. A 'cancelling' run was asked to stop and is still finishing its work.
         limit: Max results (default 50, max 200).
     """
     return json.dumps(await _session().client.list_runs(target_type, status, limit), indent=2)

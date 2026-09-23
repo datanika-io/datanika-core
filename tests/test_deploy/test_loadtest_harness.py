@@ -31,7 +31,7 @@ SEEDER = LOADTEST / "seed_loadtest_org.py"
 README = LOADTEST / "README.md"
 
 
-@pytest.mark.parametrize("path", [K6, RUNNER, SEEDER, README])
+@pytest.mark.parametrize("path", [K6, RUNNER, SEEDER, README, LOADTEST / "abort_rehearsal.sh"])
 def test_the_instrument_is_in_the_repository(path):
     """The whole point. `.scratch/` is swept; a floor's instrument cannot live there."""
     assert path.is_file(), (
@@ -232,3 +232,176 @@ def test_the_guards_can_fail():
 
     # And the fixture is reading real files, or every test above is vacuous.
     assert len(k6) > 2000 and len(runner) > 2000 and len(seeder) > 2000
+
+
+# ======================================================================================
+# The serving colour — defect 4, found on the harness's FIRST REAL EXECUTION (core#622 class)
+# ======================================================================================
+#
+# `PROD_BE` was hardcoded to `http://127.0.0.1:8000`. The production backend port ALTERNATES
+# on every deploy (8000 blue / 8010 green), and the 2026-09-21 promotion had swapped prod to
+# green — so the preflight curl returned 000 and the harness refused to start with
+# "do not add load to a sick box" while production served 200 through Cloudflare throughout.
+#
+# The false refusal is the loud half. The quiet half is worse: mid-swap both colours are
+# briefly up, so a hardcoded port can resolve to the colour that is NOT serving, and the
+# neighbour scenario would sample a container taking no real traffic. The founder's label on
+# every result from this harness is "a floor under NEIGHBOUR LOAD"; measured against the wrong
+# process that label is not imprecise, it is unearned.
+
+
+def _colour_resolution_snippet() -> str:
+    """The real block out of run.sh, with `say` stubbed so it can be driven directly."""
+    text = (ROOT / "scripts" / "loadtest" / "run.sh").read_text(encoding="utf-8")
+    start = text.index('ACTIVE_CONF="${ACTIVE_CONF:-')
+    end = text.index('say "preflight: serving colour', start)
+    end = text.index("\n", end) + 1
+    return "say() { printf '%s\n' \"$*\"; }\n" + text[start:end]
+
+
+@pytest.mark.parametrize(
+    ("conf_body", "expect_port", "expect_colour"),
+    [
+        ("ProxyPass / http://127.0.0.1:8010/\n", "8010", "green"),
+        ("ProxyPass / http://127.0.0.1:8000/\n", "8000", "blue"),
+    ],
+)
+def test_the_serving_colour_is_read_from_the_vhost_not_assumed(
+    tmp_path: Path, conf_body: str, expect_port: str, expect_colour: str
+) -> None:
+    """Drive the real snippet against both colours; a hardcoded value cannot pass both."""
+    import shutil
+    import subprocess
+
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh unavailable")
+
+    conf = tmp_path / "datanika-prod-active.conf"
+    conf.write_text(conf_body, encoding="utf-8")
+
+    proc = subprocess.run(
+        ["sh", "-c", f'ACTIVE_CONF="{conf.as_posix()}"\n' + _colour_resolution_snippet()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, f"resolution refused a valid conf:\n{proc.stdout}{proc.stderr}"
+    assert expect_colour in proc.stdout, (
+        f"expected colour {expect_colour!r} for backend {expect_port}, got: {proc.stdout!r}"
+    )
+    assert expect_port in proc.stdout
+
+
+def test_an_unreadable_vhost_refuses_rather_than_defaulting(tmp_path: Path) -> None:
+    """A default here is a guess, and a guessed colour is how the neighbour reading lies."""
+    import shutil
+    import subprocess
+
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh unavailable")
+
+    missing = tmp_path / "nope.conf"
+    proc = subprocess.run(
+        ["sh", "-c", f'ACTIVE_CONF="{missing.as_posix()}"\n' + _colour_resolution_snippet()],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 16, (
+        f"expected the documented refusal (exit 16), got {proc.returncode}:\n{proc.stdout}"
+    )
+    assert "cannot determine the serving colour" in proc.stdout
+
+
+def test_no_production_backend_port_is_hardcoded_in_the_harness() -> None:
+    """Either literal is right half the time, which is the whole defect."""
+    for name in ("run.sh", "k6_baseline.js"):
+        text = (ROOT / "scripts" / "loadtest" / name).read_text(encoding="utf-8")
+        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith(("#", "//")))
+        for literal in ("127.0.0.1:8000", "127.0.0.1:8010"):
+            assert literal not in code, (
+                f"{name} hardcodes {literal} outside a comment. The production backend port "
+                "alternates every deploy; read it from the active vhost instead."
+            )
+
+
+def test_the_generator_refuses_to_guess_a_neighbour() -> None:
+    """k6 invoked without a driver must fail loudly, not probe a possibly-dead port."""
+    js = (ROOT / "scripts" / "loadtest" / "k6_baseline.js").read_text(encoding="utf-8")
+    assert "const NEIGHBOUR = __ENV.NEIGHBOUR_BASE;" in js, (
+        "NEIGHBOUR_BASE must have no fallback value"
+    )
+    assert "throw new Error(" in js, (
+        "an unset NEIGHBOUR_BASE must throw. Silently probing a default port produces a "
+        "neighbour figure that describes whichever colour happens to answer."
+    )
+
+
+# ======================================================================================
+# Gap 1 — the LATENCY abort waits for the first full stage (core#778, decided 2026-09-22)
+# ======================================================================================
+#
+# k6 evaluates a threshold over the cumulative metric from t=0. In the opening seconds of an
+# open-model ladder that is a percentile over a handful of samples — at 5 req/s after 24 s,
+# p95 is the 6th slowest of 120 — so the first run on 2026-09-21 aborted in stage 1 and the
+# ladder could never reach the stages it exists to measure. The decision changes WHEN the
+# latency abort may fire (after the first stage), not the bar and not the population.
+#
+# These assert structure only. The BEHAVIOUR — that a sustained-slow target still aborts and an
+# opening tail no longer decides the run — is proven by `abort_rehearsal.sh`, which drives the
+# real generator against a synthetic target and must be run after any change to the thresholds.
+
+REHEARSAL = LOADTEST / "abort_rehearsal.sh"
+
+
+def _threshold_entry(src: str, metric: str) -> str:
+    """One entry of the ``thresholds:`` block, from its key to the list's closing bracket."""
+    start = src.index(f"'{metric}':")
+    return src[start : src.index("]", start) + 1]
+
+
+def test_the_latency_abort_waits_for_the_first_stage() -> None:
+    """Derived from the first stage, never a literal: a stage spec change must move it too."""
+    entry = _threshold_entry(K6.read_text(encoding="utf-8"), "http_req_duration{scenario:api}")
+    assert "threshold: 'p(95)<1000'" in entry, entry  # the bar is unchanged
+    assert "abortOnFail: true" in entry, entry
+    assert "delayAbortEval: first.duration" in entry, entry
+
+
+def test_the_failure_abort_stays_immediate() -> None:
+    """An error is not sampling noise. Stated as the exact shape, not as a banned word."""
+    entry = _threshold_entry(K6.read_text(encoding="utf-8"), "http_req_failed{scenario:api}")
+    assert (
+        entry == "'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }]"
+    )
+
+
+def test_the_rehearsal_drives_the_real_generator_in_three_populations() -> None:
+    text = REHEARSAL.read_text(encoding="utf-8")
+    assert 'GEN="$(cat "$HERE/k6_baseline.js")"' in text, "it must drive the real script"
+    for case in ("run_case A slow", "run_case B tail", "run_case C tail"):
+        assert case in text, case
+    # C removes the delay to reproduce gap 1; if that removal silently matched nothing, C would
+    # compare the script with itself. The refusal is what makes C a control.
+    assert 'if [ "$NODELAY" = "$GEN" ]; then' in text
+    assert 'verdict "C aborted (exit 99)' in text
+
+
+def test_the_gap1_guards_can_fail() -> None:
+    """Each of the three tests above, shown red on the mutation it exists for."""
+    k6 = K6.read_text(encoding="utf-8")
+    dropped = k6.replace(", delayAbortEval: first.duration", "")
+    assert dropped != k6, "control constructed wrongly: the delay clause was not found"
+    assert "delayAbortEval" not in _threshold_entry(dropped, "http_req_duration{scenario:api}")
+    literal = k6.replace("delayAbortEval: first.duration", "delayAbortEval: '120s'")
+    assert "delayAbortEval: first.duration" not in _threshold_entry(
+        literal, "http_req_duration{scenario:api}"
+    )
+    delayed = k6.replace(
+        "[{ threshold: 'rate<0.01', abortOnFail: true }]",
+        "[{ threshold: 'rate<0.01', abortOnFail: true, delayAbortEval: '120s' }]",
+    )
+    assert delayed != k6
+    assert _threshold_entry(delayed, "http_req_failed{scenario:api}") != (
+        "'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }]"
+    )

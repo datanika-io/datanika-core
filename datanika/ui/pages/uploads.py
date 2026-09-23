@@ -5,20 +5,13 @@ import reflex as rx
 from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
+from datanika.ui.components.run_status import run_in_progress_color
 from datanika.ui.components.searchable_select import searchable_select
 from datanika.ui.state.auth_state import AuthState
 from datanika.ui.state.i18n_state import I18nState
 from datanika.ui.state.upload_state import UploadState
 
 _t = I18nState.translations
-
-
-def _run_button_color(status: rx.Var[str]) -> rx.Var[str]:
-    return rx.cond(
-        (status == "running") | (status == "pending"),
-        "yellow",
-        "gray",
-    )
 
 
 def _mode_fields() -> rx.Component:
@@ -65,6 +58,7 @@ def _mode_fields() -> rx.Component:
                             on_change=UploadState.set_form_row_order,
                             placeholder=_t["uploads.ph_row_order"],
                             width="100%",
+                            custom_attrs={"aria-label": _t["uploads.ph_row_order"]},
                         ),
                         spacing="2",
                         width="100%",
@@ -213,6 +207,7 @@ def upload_form() -> rx.Component:
                         on_change=UploadState.set_form_file_format,
                         placeholder=_t["uploads.ph_file_format"],
                         width="100%",
+                        custom_attrs={"aria-label": _t["uploads.file_format"]},
                     ),
                     rx.text(_t["uploads.delimiter"], size="2", weight="bold"),
                     rx.input(
@@ -247,6 +242,7 @@ def upload_form() -> rx.Component:
                         value=UploadState.form_mode,
                         on_change=UploadState.set_form_mode,
                         width="100%",
+                        custom_attrs={"aria-label": _t["uploads.load_mode"]},
                     ),
                     rx.hstack(
                         rx.text(_t["uploads.write_disposition"], size="2", weight="bold"),
@@ -259,6 +255,7 @@ def upload_form() -> rx.Component:
                         value=UploadState.form_write_disposition,
                         on_change=UploadState.set_form_write_disposition,
                         width="100%",
+                        custom_attrs={"aria-label": _t["uploads.write_disposition"]},
                     ),
                     # core#1242. These three strings existed in nine locales and were
                     # rendered on no screen: SPEC_CONTEXTUAL_TOOLTIPS scoped them as
@@ -356,6 +353,7 @@ def upload_form() -> rx.Component:
                     on_change=UploadState.set_form_sc_tables,
                     placeholder=_t["uploads.ph_tables"],
                     width="33%",
+                    custom_attrs={"aria-label": _t["uploads.tables"]},
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
@@ -363,6 +361,7 @@ def upload_form() -> rx.Component:
                     on_change=UploadState.set_form_sc_columns,
                     placeholder=_t["uploads.ph_columns"],
                     width="33%",
+                    custom_attrs={"aria-label": _t["uploads.columns"]},
                 ),
                 rx.select(
                     ["evolve", "freeze", "discard_value", "discard_row"],
@@ -370,6 +369,7 @@ def upload_form() -> rx.Component:
                     on_change=UploadState.set_form_sc_data_type,
                     placeholder=_t["uploads.ph_data_type"],
                     width="33%",
+                    custom_attrs={"aria-label": _t["uploads.data_type"]},
                 ),
                 spacing="2",
                 width="100%",
@@ -504,7 +504,7 @@ def _run_control(u) -> rx.Component:
             rx.button(
                 _t["common.run"],
                 size="1",
-                color_scheme=_run_button_color(u.last_run_status),
+                color_scheme=run_in_progress_color(u.last_run_status),
                 on_click=UploadState.run_upload(u.id),
             ),
         ),

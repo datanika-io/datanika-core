@@ -42,10 +42,11 @@ def _patch_sweeps(
     dlt_dirs=11,
     orphaned_archives=33,
     expired_reset_tokens=44,
+    reaped_cancelling_runs=55,
     session_factory=None,
     commit=None,
 ):
-    """Patch all four sweeps plus the session factory at the modules the task imports from.
+    """Patch every sweep plus the session factory at the modules the task imports from.
 
     The task's imports are *function-local*, so they re-resolve on every call — patching the
     source module is what takes effect, not patching a name on ``maintenance_tasks``.
@@ -75,6 +76,10 @@ def _patch_sweeps(
         patch(
             "datanika.services.password_reset_service.PasswordResetService.purge_expired",
             **_spec(expired_reset_tokens),
+        ),
+        patch(
+            "datanika.services.maintenance_service.reap_stuck_cancelling_runs",
+            **_spec(reaped_cancelling_runs),
         ),
         patch("datanika.ui.state.base_state.get_sync_session", factory),
     ]
@@ -106,11 +111,14 @@ def _run(**kwargs):
 
 
 class TestSuccessPathIsUnchanged:
-    def test_all_four_sweep_counts_are_reported_individually(self):
+    def test_every_sweep_reports_its_own_count(self):
         """AC-3. A fix that collapses the counters into a status flag fails here.
 
-        Five until core#1000 removed the run purge; the assertion is exhaustive on purpose,
-        so a re-introduced sweep shows up here as well as in ``TestRunHistoryIsNeverPurged``.
+        The assertion is exhaustive on purpose, so a sweep added or removed shows up here as
+        well as in ``TestRunHistoryIsNeverPurged`` — which is exactly what it did for
+        ``reaped_cancelling_runs`` (`SPEC_RUN_CANCELLATION` §3.1). ⚠️ **Do not re-introduce a
+        count into this test's name**: it was ``..._all_four_...`` and the number went stale the
+        first time the set changed, which is the module docstring's own warning.
         """
         result = _run()
 
@@ -119,6 +127,7 @@ class TestSuccessPathIsUnchanged:
             "dlt_dirs": 11,
             "orphaned_archives": 33,
             "expired_reset_tokens": 44,
+            "reaped_cancelling_runs": 55,
         }
 
     def test_a_clean_run_still_logs_maintenance_complete_at_info(self, caplog):
@@ -373,11 +382,11 @@ class TestRunHistoryIsNeverPurged:
             f"the run left the org's history after one sweep; list_runs returned {listed!r}"
         )
 
-    def test_the_sweep_reports_four_counters_and_no_run_purge(self, db_session):
+    def test_the_sweep_reports_each_counter_and_no_run_purge(self, db_session):
         """Both directions in one assertion.
 
         ``purged_runs`` absent is the regression half — the hourly INFO line used to report
-        a purge count, so reading the log was enough to conclude retention worked. The four
+        a purge count, so reading the log was enough to conclude retention worked. The
         named keys are the control: a fix that deletes the task, empties the block or
         collapses the counters fails here rather than passing by doing nothing.
         """
@@ -390,4 +399,5 @@ class TestRunHistoryIsNeverPurged:
             "dlt_dirs",
             "orphaned_archives",
             "expired_reset_tokens",
+            "reaped_cancelling_runs",
         }, f"sweep counters changed shape: {result}"

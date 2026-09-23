@@ -295,6 +295,10 @@ class TestTheContextCannotBeForgedOrCrossed:
         would complete the first tab against the SECOND tab's invitation. So the assertion is
         not merely that an error appeared: it is that the first flow never reached the service
         that applies invitations.
+
+        Since AC13 (core#624, §8g.3) the refusal also says what happened: ``superseded_flow``
+        rather than the generic ``invalid_state``, because the first tab's cookie was overwritten
+        by one this browser really started. The two assertions below the reason are unchanged.
         """
         browser = _client()
         first = _state_of(_login(browser, invite_token="org-a-token"))
@@ -303,7 +307,7 @@ class TestTheContextCannotBeForgedOrCrossed:
         superseded = _Service()
         response = _callback(browser, first, superseded)
 
-        assert "auth_error=invalid_state" in response.headers["location"]
+        assert "auth_error=superseded_flow" in response.headers["location"]
         assert superseded.calls == [], (
             "the superseded flow reached the service, which is where the second flow's "
             "invitation would have been applied to it"

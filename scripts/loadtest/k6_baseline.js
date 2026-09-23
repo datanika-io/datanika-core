@@ -42,7 +42,19 @@ const BASE = __ENV.TARGET_BASE || 'http://127.0.0.1:8100';
 // The neighbour. Read-only, low rate, and deliberately a DIFFERENT origin: the founder's
 // condition on this test is that production must not be harmed, and the only honest way to
 // show that is to sample it throughout rather than to assert it afterwards.
-const NEIGHBOUR = __ENV.NEIGHBOUR_BASE || 'http://127.0.0.1:8000';
+// 🔴 No default. NEIGHBOUR_BASE points at the PRODUCTION backend, whose port alternates with
+// the blue/green colour (8000/8010), so any literal here is right half the time and silently
+// wrong the other half — and a neighbour sampled on the colour that serves no traffic reports
+// a reassuring number that means nothing. run.sh resolves it from the active vhost and passes
+// it in; if it is missing, that is a driver bug and this must say so rather than guess.
+const NEIGHBOUR = __ENV.NEIGHBOUR_BASE;
+if (!NEIGHBOUR) {
+  throw new Error(
+    'NEIGHBOUR_BASE is unset. It must be the CURRENTLY SERVING production backend, which ' +
+      'alternates 8000/8010 per deploy — run this through scripts/loadtest/run.sh, which ' +
+      'reads the colour from the active vhost, rather than invoking k6 directly.',
+  );
+}
 
 // Stages: "rate:duration,rate:duration,...". The default reproduces Run 9 exactly and then
 // continues past its top stage, which is gap 1 on the issue (Run 9 found no knee because 60
@@ -95,9 +107,30 @@ export const options = {
   // 🚨 THE ABORT CRITERIA. Fixed here, before the run, so the pass bar cannot be chosen after
   // seeing the numbers. `abortOnFail` stops the run rather than letting it keep loading a box
   // that is already failing — this runs beside production.
+  //
+  // ⏱️ `delayAbortEval` on the LATENCY abort (core#778 gap 1, decided 2026-09-22). k6 evaluates
+  // a threshold continuously over the cumulative metric from t=0, so in the opening seconds of
+  // an open-model ladder the percentile is taken over a handful of samples: at the opening
+  // rate r0, after t seconds p95 is the ceil(0.05 * r0 * t)-th slowest request — the 6th of
+  // 120 at 5 req/s and 24 s. A few slow requests then decide the whole run, and the ladder can
+  // never reach the stages it exists to measure. That follows from the sample size alone, not
+  // from any run's numbers.
+  //
+  // What changes is WHEN the abort may fire — not the bar (p95 < 1 s) and not the population
+  // (every `api` sample from t=0, the opening included). It may not fire until the first full
+  // stage is in: at 5:120s that is 600 samples, so p95 is the 30th slowest. A target that is
+  // genuinely failing — 5% of a full stage over 1 s — still aborts, one stage later.
+  // `scripts/loadtest/abort_rehearsal.sh` drives both halves against a synthetic target and
+  // must be run after any change here: a sustained-slow target MUST abort, and an opening tail
+  // of a few slow requests must NOT decide the run.
+  //
+  // The FAILURE-rate abort is deliberately left immediate: an error is not sampling noise, and
+  // a run whose keys are being refused should stop at once rather than a stage later.
   thresholds: {
     'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }],
-    'http_req_duration{scenario:api}': [{ threshold: 'p(95)<1000', abortOnFail: true }],
+    'http_req_duration{scenario:api}': [
+      { threshold: 'p(95)<1000', abortOnFail: true, delayAbortEval: first.duration },
+    ],
     // The neighbour is the founder's condition and is therefore the hardest line here.
     datanika_neighbour_non_200: [{ threshold: 'count<1', abortOnFail: true }],
     datanika_neighbour_healthz_ms: ['p(99)<250'],

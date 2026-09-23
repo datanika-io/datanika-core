@@ -18,7 +18,11 @@ from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
 from datanika.models.notification_channel import ChannelType
 from datanika.models.pipeline import DbtCommand
-from datanika.models.run import RunStatus
+from datanika.models.run import (
+    CANCELLABLE_RUN_STATUSES,
+    NON_TERMINAL_RUN_STATUSES,
+    RunStatus,
+)
 from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
 from datanika.services.authorization import InsufficientRoleError, assert_org_role
@@ -32,6 +36,7 @@ from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.notification_service import NotificationService
 from datanika.services.pipeline_service import PipelineService
+from datanika.services.run_cancellation import cancellation_notice
 from datanika.services.schedule_service import ScheduleService
 from datanika.services.transformation_service import TransformationService
 from datanika.services.upload_service import UploadService, validate_upload_name
@@ -659,7 +664,10 @@ async def _trigger_and_maybe_wait(request, api_key, run):
         return _error(404, "Run not found after dispatch")
 
     result = _ser_run(final_run)
-    if final_run.status.value in ("pending", "running"):
+    # §4 consumer #2, and the dangerous one. This tested two string literals to mean *still
+    # going*, so a non-terminal status added later fell through to the branch below and
+    # returned `422 terminal-not-success` for a run that was still working.
+    if final_run.status in NON_TERMINAL_RUN_STATUSES:
         result["timed_out"] = True
         return JSONResponse(result, status_code=408)
     if final_run.status.value != RunStatus.SUCCESS.value:
@@ -1145,7 +1153,7 @@ def cancel_run(request, api_key, session):
     run = _exec_svc.get_run(session, api_key.org_id, run_id)
     if run is None:
         return _error(404, "Run not found")
-    if run.status not in (RunStatus.PENDING, RunStatus.RUNNING):
+    if run.status not in CANCELLABLE_RUN_STATUSES:
         return _typed_error(
             409,
             "not_cancellable",
@@ -1153,8 +1161,16 @@ def cancel_run(request, api_key, session):
         )
     cancelled = _exec_svc.cancel_run(session, api_key.org_id, run_id, actor_user_id=api_key.user_id)
     if cancelled is None:
-        return _error(500, "Failed to cancel run")
-    return JSONResponse(_ser_run(cancelled))
+        # §1a. The only way to reach this is the run finishing between the check above and
+        # `cancel_run`'s own — an ordinary race on a busy worker, which is a `409`, not a
+        # server fault. Reporting it as a 500 pointed the caller at us for their own timing.
+        return _typed_error(
+            409, "not_cancellable", "Run reached a terminal status before it could be cancelled"
+        )
+    # SPEC_RUN_CANCELLATION §5.2 / AC10 / AC12: the body is still the run, and it also says what
+    # cancelling did and did not do — a `200` alone is exactly what this endpoint returned while
+    # it cancelled nothing. The same words as the /runs dialog (`services/run_cancellation.py`).
+    return JSONResponse({**_ser_run(cancelled), "notice": cancellation_notice()})
 
 
 # ---------------------------------------------------------------------------

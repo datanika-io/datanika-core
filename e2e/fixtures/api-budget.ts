@@ -116,6 +116,12 @@ type SubjectState = {
   limit: number;
   /** Set once the server has told us the real number, for the log line. */
   calibrated: boolean;
+  /**
+   * Our-clock send time of every request still counted against `window`: those sent since the
+   * last roll, plus any {@link ApiBudget.rollTo} carried across it (core#1296). The next roll
+   * keeps only the ones the server may count in the NEXT window.
+   */
+  sentAt: number[];
 };
 
 function currentWindow(): number {
@@ -167,13 +173,36 @@ export class ApiBudget {
   private state(subject: string): SubjectState {
     let s = this.subjects.get(subject);
     if (!s) {
-      s = { window: currentWindow(), spent: 0, limit: DEFAULT_RPM, calibrated: false };
+      s = { window: currentWindow(), spent: 0, limit: DEFAULT_RPM, calibrated: false, sentAt: [] };
       this.subjects.set(subject, s);
     }
     return s;
   }
 
-  /** Block until the server's fixed window rolls over, then reset the counter. */
+  /**
+   * Move `s` to `window`, carrying every request the SERVER may count there (core#1296).
+   *
+   * 🚨 This used to be `s.spent = 0`, and that was a second half of core#1209's hazard which
+   * core#1209's fix could not see. Rolling `BOUNDARY_SKEW_MS` late stops the counter
+   * resetting while the server still enforces the old window. But a request sent INSIDE that
+   * lag is charged to the old window and then forgotten here, while the server counts it in
+   * the new one. With exactly one such request we spend a full allowance the server has
+   * already spent one of. The 31st request goes out at our 30/30, is refused with a 429, and
+   * the probe it carried never reaches the tenant check. That is the flake core#1296 records
+   * twice on `POST /api/v1/runs/{id}/cancel`. `api-budget.test.ts` replays it, and sweeps
+   * every burst start in a minute at skews inside the bound.
+   *
+   * A request sent within `BOUNDARY_SKEW_MS` of the boundary may be counted on either side of
+   * it, so it is counted on BOTH. That errs toward one extra wait, never toward a 429.
+   */
+  private rollTo(s: SubjectState, window: number): void {
+    const ambiguousFrom = window * 60_000 - BOUNDARY_SKEW_MS;
+    s.sentAt = s.sentAt.filter((sentAt) => sentAt >= ambiguousFrom);
+    s.window = window;
+    s.spent = s.sentAt.length;
+  }
+
+  /** Block until the server's fixed window rolls over, then roll the counter with it. */
   private async waitForWindow(subject: string, s: SubjectState): Promise<void> {
     const resumeAt = (s.window + 1) * 60_000 + BOUNDARY_SKEW_MS;
     const waitMs = Math.max(0, resumeAt - Date.now());
@@ -184,24 +213,24 @@ export class ApiBudget {
     // eslint-disable-next-line no-console
     console.log(this.log[this.log.length - 1]);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
-    s.window = currentWindow();
-    s.spent = 0;
+    this.rollTo(s, currentWindow());
   }
 
   /** Reserve one request against `subject`, waiting for the window if needed. */
   private async reserve(subject: string): Promise<void> {
     const s = this.state(subject);
     // `safeWindow()`, not `currentWindow()` — core#1209. Rolling on our own clock resets the
-    // counter while the server is still enforcing the previous window.
+    // counter while the server is still enforcing the previous window. `rollTo`, not a bare
+    // reset — core#1296: rolling late forgets what was sent during the lag.
     const now = safeWindow();
     if (now !== s.window) {
-      s.window = now;
-      s.spent = 0;
+      this.rollTo(s, now);
     }
     if (s.spent >= s.limit) {
       await this.waitForWindow(subject, s);
     }
     s.spent += 1;
+    s.sentAt.push(Date.now());
   }
 
   /** Adopt the server's own allowance whenever it tells us one. */

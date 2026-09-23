@@ -38,14 +38,17 @@ def _delete_account_dialog() -> rx.Component:
     it cannot be undone.
     """
     return rx.alert_dialog.root(
+        # core#1409: the handler is on the trigger, not the button. A child carrying `on_click`
+        # makes Reflex wrap it in a Flex <div> that receives the trigger's `aria-haspopup` —
+        # axe's `aria-allowed-attr`. See `components/notification_bell.py`.
         rx.alert_dialog.trigger(
             rx.button(
                 _t["account.delete_button"],
                 size="2",
                 color_scheme="red",
                 variant="soft",
-                on_click=AccountState.load_delete_preconditions,
             ),
+            on_click=AccountState.load_delete_preconditions,
         ),
         rx.alert_dialog.content(
             rx.alert_dialog.title(_t["account.delete_confirm_heading"]),
@@ -622,6 +625,7 @@ def member_row(member: MemberItem) -> rx.Component:
                     on_change=lambda val: SettingsState.change_member_role(member.id, val),
                     size="1",
                     width="100%",
+                    custom_attrs={"aria-label": _t["settings.role"]},
                 ),
                 rx.text(member.role, size="2"),
             ),
@@ -725,6 +729,7 @@ def transfer_ownership_card() -> rx.Component:
                     value=SettingsState.transfer_to_email,
                     on_change=SettingsState.set_transfer_to_email,
                     size="2",
+                    custom_attrs={"aria-label": _t["settings.transfer_ownership"]},
                 ),
                 _transfer_ownership_dialog(),
                 spacing="2",
@@ -901,6 +906,7 @@ def members_card() -> rx.Component:
                                 value=SettingsState.invite_role,
                                 on_change=SettingsState.set_invite_role,
                                 size="2",
+                                custom_attrs={"aria-label": _t["settings.role"]},
                             ),
                             rx.button(
                                 _t["common.add"],
@@ -938,6 +944,7 @@ def _conflict_row(conflict: dict) -> rx.Component:
             value=conflict["resolution"],
             on_change=lambda val: BackupState.set_conflict_resolution(conflict["key"], val),
             size="1",
+            custom_attrs={"aria-label": _t["settings.conflict_choice"]},
         ),
         spacing="3",
         align="center",
@@ -1122,6 +1129,7 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
                 variant="ghost",
                 size="1",
                 color_scheme="red",
+                aria_label=_t["common.delete"],
             ),
         ),
         rx.alert_dialog.content(
@@ -1190,12 +1198,14 @@ def _channel_actions(ch: ChannelItem) -> rx.Component:
             on_click=NotificationState.toggle_channel_active(ch.id),
             variant="ghost",
             size="1",
+            aria_label=_t["notifications.toggle_active"],
         ),
         rx.button(
             rx.icon("pencil", size=14),
             on_click=NotificationState.edit_channel(ch.id),
             variant="ghost",
             size="1",
+            aria_label=_t["common.edit"],
         ),
         _delete_channel_dialog(ch),
         spacing="1",
@@ -1273,6 +1283,7 @@ def notification_form() -> rx.Component:
             value=NotificationState.form_channel_type,
             on_change=NotificationState.set_form_channel_type,
             width="100%",
+            custom_attrs={"aria-label": _t["notifications.type"]},
         ),
         rx.cond(
             NotificationState.form_channel_type == "slack",

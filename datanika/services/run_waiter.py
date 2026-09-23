@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from datanika.db import get_sync_session
-from datanika.models.run import Run, RunStatus
+from datanika.models.run import TERMINAL_RUN_STATUSES, Run
 from datanika.services.execution_service import get_org_run
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,9 @@ DEFAULT_TIMEOUT = 120
 MAX_TIMEOUT = 300
 POLL_INTERVAL = 2.0
 
-_TERMINAL = frozenset({RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.CANCELLED})
+#: Derived, never restated (`SPEC_RUN_CANCELLATION` §4). `cancelling` is genuinely
+#: non-terminal, so a waiter must keep polling through it rather than return it as an outcome.
+_TERMINAL = TERMINAL_RUN_STATUSES
 
 
 async def wait_for_run(

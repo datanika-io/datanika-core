@@ -389,6 +389,14 @@ above. **Control:** with no cookie at all, the redirect still carries `invalid_s
 joins no org, which is the property §8d exists to protect. AC13 makes that failure legible, and it is
 owed before core#624 closes.
 
+✅ **Built 2026-09-22 (core#624).** A cookie that verifies but holds another state now refuses with
+`superseded_flow`, rendered as the sentence above in all nine locales. A missing, malformed, unsigned
+or tampered cookie, or no returned state, keeps `invalid_state`. The witness, the control and the arm
+that makes the witness discriminate (a mismatch under a forged signature stays generic) are in
+`tests/test_services/test_oauth_superseded_flow.py`, and each was seen failing first. ⚠️ Verifying the
+signature on the mismatch path meant `_verify_state` had to refuse a non-ASCII signature instead of
+raising on it, which it now does.
+
 ### 8g.4 The invitation notice must name the cause the social path makes common
 
 `auth.invite_not_applied_help` reads *"The invitation link may have expired or already been used —
@@ -409,6 +417,9 @@ lists every cause without saying which one applied.**
 
 All nine locales. **Witness:** render the notice for `invite_notice == "not_applied"` and assert that
 the address clause is present in the rendered text.
+
+✅ **Built 2026-09-22 (core#624):** the sentence above, in all nine locales. The witness is in the same
+test file.
 
 ---
 

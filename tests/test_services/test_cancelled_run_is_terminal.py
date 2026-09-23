@@ -44,7 +44,7 @@ from unittest.mock import patch
 import pytest
 
 from datanika.models.dependency import NodeType
-from datanika.models.run import RunStatus
+from datanika.models.run import CANCEL_REQUESTED_RUN_STATUSES, RunStatus
 from datanika.models.user import Organization
 from datanika.services.execution_service import ExecutionService
 from tests.factories import make_org_admin
@@ -65,13 +65,21 @@ def org(db_session):
 
 @pytest.fixture
 def cancelled_run(svc, db_session, org):
-    """A run that reached CANCELLED the way the API reaches it."""
+    """A run whose stop was requested the way the API requests it.
+
+    ⚠️ Repointed for `SPEC_RUN_CANCELLATION` §3. Cancelling a *running* run records
+    `CANCELLING`, not `CANCELLED`: a status claiming the run has stopped while the worker is
+    still writing is the same lie core#657 is about, one layer up. What this file asserts is
+    unchanged and is the invariant that matters — **a later report never overwrites a requested
+    stop with an ordinary outcome**. The precondition is therefore that a stop is on record, in
+    whichever of its two forms.
+    """
     run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 1)
     svc.start_run(db_session, org.id, run.id)
     cancelled = svc.cancel_run(
         db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
     )
-    assert cancelled is not None and cancelled.status == RunStatus.CANCELLED, (
+    assert cancelled is not None and cancelled.status in CANCEL_REQUESTED_RUN_STATUSES, (
         "fixture precondition failed — the rest of this file would assert nothing"
     )
     return cancelled
@@ -94,8 +102,16 @@ class TestCompleteRunDoesNotResurrectACancelledRun:
             "run stopped, and a later read confirms it did not (core#657)."
         )
 
-    def test_the_cancellation_timestamp_is_not_moved(self, svc, db_session, org, cancelled_run):
-        """`finished_at` is when it was cancelled, not when the worker gave up.
+    def test_finished_at_is_stamped_when_the_run_actually_finishes(
+        self, svc, db_session, org, cancelled_run
+    ):
+        """🔴 **INVERTED by `SPEC_RUN_CANCELLATION` §1b, deliberately.**
+
+        This used to assert that `finished_at` was *not moved* by the worker's report, because
+        `cancel_run` stamped it at request time. §1b calls that a defect by name: a duration
+        derived from a request-time stamp is wrong for exactly the runs a user cares most
+        about. So a still-running run now carries no finish time until it finishes, and this
+        asserts the corrected direction rather than being deleted.
 
         ⚠️ Both sides are read from the database. The first draft captured `original`
         from the in-memory instance and compared it to a post-`refresh` read, which
@@ -105,10 +121,17 @@ class TestCompleteRunDoesNotResurrectACancelledRun:
         would have been reported as the fix not working.
         """
         db_session.refresh(cancelled_run)
-        original = cancelled_run.finished_at
+        assert cancelled_run.finished_at is None, (
+            "a run that is still stopping was stamped with a finish time at request time"
+        )
+
         svc.complete_run(db_session, org.id, cancelled_run.id, rows_loaded=1, logs="x")
+
         db_session.refresh(cancelled_run)
-        assert cancelled_run.finished_at == original
+        assert cancelled_run.status == RunStatus.CANCELLED
+        assert cancelled_run.finished_at is not None, (
+            "the run reached a terminal status with no finish time"
+        )
 
     def test_it_still_returns_the_run_rather_than_none(self, svc, db_session, org, cancelled_run):
         """`None` already means two things here; it must not come to mean a third.
@@ -232,11 +255,17 @@ def test_cancel_run_still_refuses_a_finished_run(svc, db_session, org, running_r
     )
 
 
-def test_finished_at_is_actually_set_by_cancel(cancelled_run):
-    """`test_the_cancellation_timestamp_is_not_moved` compares against this value.
+def test_finished_at_is_set_by_cancelling_a_run_that_has_no_worker(svc, db_session, org):
+    """A `pending` run is terminal the moment it is cancelled, so it IS stamped then.
 
-    If `cancel_run` left `finished_at` NULL, that assertion would be `None == None` and would
-    pass no matter what `complete_run` did.
+    Repointed with the arm above: `finished_at` follows *finishing*, not the request. A run with
+    no worker finishes at request time; a running one does not. Both halves are asserted, because
+    the corrected rule is a distinction rather than a blanket.
     """
-    assert cancelled_run.finished_at is not None
-    assert isinstance(cancelled_run.finished_at, datetime)
+    run = svc.create_run(db_session, org.id, NodeType.UPLOAD, 3)
+    cancelled = svc.cancel_run(
+        db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
+    )
+
+    assert cancelled.status == RunStatus.CANCELLED
+    assert isinstance(cancelled.finished_at, datetime)

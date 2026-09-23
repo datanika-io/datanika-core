@@ -11,9 +11,62 @@ from datanika.models.dependency import NodeType
 class RunStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
+    #: A stop was requested and the worker has not confirmed it yet (`SPEC_RUN_CANCELLATION` §3).
+    #: Non-terminal on purpose: a status reading `cancelled` while the warehouse is still being
+    #: written is the same lie core#657 is about, moved one layer up.
+    CANCELLING = "cancelling"
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+# ---------------------------------------------------------------------------------------------
+# The status sets. Define once; every consumer derives (`SPEC_RUN_CANCELLATION` §4).
+# ---------------------------------------------------------------------------------------------
+#
+# 🚨 **Adding a value to `RunStatus` is not a one-line change**, which is why these exist. Seven
+# places used to enumerate these statuses by hand with nothing linking them, and two of those
+# produced a confident wrong answer rather than an error:
+#
+#   * the `?wait=true` timeout branch tested `("pending", "running")` to mean *still going*, so a
+#     non-terminal status added later fell through and returned `422 terminal-not-success` for a
+#     run that was still working;
+#   * `cleanup_orphaned_dlt_dirs` protected only `RUNNING`/`PENDING` directories, so any other
+#     non-terminal status had its working directory deleted **while the worker was writing to
+#     it** — live since `datanika-beat` began running that sweep hourly.
+#
+# Both follow from the same thing: a hand-maintained list cannot be wrong loudly.
+#
+# ⚠️ `TERMINAL` and `NON_TERMINAL` are written out rather than derived from each other. A
+# complement (`set(RunStatus) - TERMINAL`) would silently make every future status non-terminal,
+# which is the failure mode this replaces, one level up. The guard in
+# `tests/test_models/test_run_status_sets_are_total.py` is what forces a deliberate choice: it
+# fails when a status is in the enum and in neither set.
+
+#: No further transition happens from here. A run in one of these is finished.
+TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.CANCELLED}
+)
+
+#: The run may still change on its own — something is, or should be, working on it.
+NON_TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.PENDING, RunStatus.RUNNING, RunStatus.CANCELLING}
+)
+
+#: A cancel request is accepted in these. ⚠️ Equal to :data:`NON_TERMINAL_RUN_STATUSES` today and
+#: kept separate anyway: they answer different questions, and a future status could be
+#: non-terminal without being cancellable (a run mid-rollback, say). Deriving one from the other
+#: would make that divergence impossible to express without first untangling them.
+CANCELLABLE_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.PENDING, RunStatus.RUNNING, RunStatus.CANCELLING}
+)
+
+#: A stop has been asked for, whether or not the worker has acknowledged it. Cross-cutting rather
+#: than a partition: `CANCELLING` is non-terminal and `CANCELLED` is terminal, and what these two
+#: share is that a later report must not overwrite them with an ordinary outcome.
+CANCEL_REQUESTED_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.CANCELLING, RunStatus.CANCELLED}
+)
 
 
 class CatalogSyncVerdict(enum.StrEnum):

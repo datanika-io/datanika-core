@@ -622,15 +622,14 @@ class TestRun:
         assert _pk_is_autoincrement("runs")
 
     def test_run_status_enum(self):
-        from datanika.models.run import RunStatus
+        # Repointed (SPEC_RUN_CANCELLATION §4): this restated the enum's membership by hand,
+        # which is the eighth such list and can only be satisfied by editing it. What it should
+        # assert is the property — every status is classified — which still trips deliberately
+        # when someone adds one. The full guard, with its can-it-fail control, lives in
+        # tests/test_models/test_run_status_sets_are_total.py.
+        from datanika.models.run import NON_TERMINAL_RUN_STATUSES, TERMINAL_RUN_STATUSES, RunStatus
 
-        assert set(RunStatus) == {
-            RunStatus.PENDING,
-            RunStatus.RUNNING,
-            RunStatus.SUCCESS,
-            RunStatus.FAILED,
-            RunStatus.CANCELLED,
-        }
+        assert set(RunStatus) == TERMINAL_RUN_STATUSES | NON_TERMINAL_RUN_STATUSES
 
     def test_create_run(self, db_session):
         from datanika.models.connection import Connection, ConnectionDirection, ConnectionType

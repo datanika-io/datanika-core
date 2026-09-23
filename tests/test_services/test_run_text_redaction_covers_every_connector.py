@@ -193,15 +193,17 @@ _CONNECTION_STATE = (
 #: Every schema-derived check in this repository — this sweep, and
 #: ``test_secret_key_coverage.py``'s link from ``format: password`` to ``SECRET_CONFIG_KEYS`` —
 #: takes its input from ``CONFIG_SCHEMAS``. A key outside it is therefore outside all of them, and
-#: nothing anywhere goes red to say so. This list is the ratchet: it is asserted **exactly**, so a
-#: twelfth undeclared key fails this test rather than arriving unexamined.
+#: nothing anywhere goes red to say so. This list is the ratchet: it is asserted **exactly**, so an
+#: undeclared key the form starts writing fails this test rather than arriving unexamined.
+#:
+#: 11 -> 10 on 2026-09-22 (core#1467): the REST API form stopped writing ``extra_headers`` and
+#: writes ``headers``, which ``CONFIG_SCHEMAS["rest_api"]`` now declares.
 _UNDECLARED_FORM_KEYS = frozenset(
     {
         "aws_access_key_id",
         "aws_secret_access_key",
         "bucket_url",
         "endpoint_url",
-        "extra_headers",
         "instance_url",
         "region_name",
         "spreadsheet_url",

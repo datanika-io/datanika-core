@@ -154,7 +154,10 @@ class TestCancelRun:
             db_session, org.id, run.id, actor_user_id=make_org_admin(db_session, org.id)
         )
         assert cancelled is not None
-        assert cancelled.status == RunStatus.CANCELLED
+        # SPEC_RUN_CANCELLATION §3: a worker is still going, so the honest status is
+        # `cancelling`. It reaches `cancelled` when the worker settles — asserted in
+        # tests/test_services/test_a_cancelled_run_ends_cancelled.py.
+        assert cancelled.status == RunStatus.CANCELLING
 
     def test_cancel_completed_fails(self, svc, db_session, org, upload):
         run = svc.create_run(db_session, org.id, NodeType.UPLOAD, upload.id)

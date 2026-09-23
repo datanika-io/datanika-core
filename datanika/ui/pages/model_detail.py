@@ -352,6 +352,7 @@ def _column_row(col: rx.Var[ColumnItem]) -> rx.Component:
                 size="1",
                 variant="ghost",
                 on_click=ModelDetailState.toggle_column_expand(col.name),
+                aria_label=_t["model_detail.column_details"],
             ),
             width="100%",
             align="center",

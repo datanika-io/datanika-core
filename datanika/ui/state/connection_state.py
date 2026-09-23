@@ -216,6 +216,51 @@ _TEMPLATE_FORM_FIELD_MAP: dict[str, str] = {
 }
 
 
+#: The refusal for a header field that is not a JSON object of text. It names the field and never
+#: quotes the input: a header value is very often a credential (`X-Api-Key`, `Authorization`).
+_EXTRA_HEADERS_REFUSAL = (
+    'Extra Headers must be a JSON object of text values, like {"X-Api-Version": "2"}.'
+)
+
+
+def _parse_extra_headers(text: str) -> dict[str, str]:
+    """The REST API form's header field, as the object ``dlt_runner`` sends (core#1467).
+
+    Parsed and checked at save, so a typo is refused where the user can fix it rather than
+    surfacing as a failed run: a mapping the HTTP client cannot send is a broken connection, which
+    is worse than the inert field this replaces.
+    """
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        # `from None`: the decoder's message and context carry the input, and the input is the
+        # credential. The field name is the whole of what the user needs.
+        raise UserFacingError(_EXTRA_HEADERS_REFUSAL) from None
+    if not isinstance(value, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in value.items()
+    ):
+        raise UserFacingError(_EXTRA_HEADERS_REFUSAL)
+    return value
+
+
+def _extra_headers_for_the_form(config: dict) -> str:
+    """What the header field shows when a REST API connection is opened for editing.
+
+    ``headers`` is the live key and wins. A connection saved before core#1467 still carries its
+    header text under ``extra_headers``, which has never affected a request: it is shown so it is
+    not lost, and **only an explicit save** moves it to ``headers``. Activating it here, or in the
+    runner, would change what an existing connection sends without anyone asking.
+    """
+    headers = config.get("headers")
+    if isinstance(headers, dict):
+        return json.dumps(headers) if headers else ""
+    legacy = config.get("extra_headers", "")
+    if isinstance(legacy, str):
+        return legacy
+    # The raw-JSON editor and the API can store anything under a key the form never validated.
+    return json.dumps(legacy)
+
+
 def _fill_openapi_auth(scheme: dict, token: str) -> dict:
     """Merge a user-supplied token into a detected OpenAPI auth scheme."""
     t = scheme.get("type")
@@ -924,8 +969,11 @@ class ConnectionState(BaseState):
                 config["base_url"] = self.form_base_url
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
-            if self.form_extra_headers:
-                config["extra_headers"] = self.form_extra_headers
+            # core#1467: the field writes `headers`, the key `dlt_runner` reads, as an OBJECT.
+            # It used to write the raw text under `extra_headers`, which nothing read — so the
+            # field accepted input, stored it, and changed nothing about any request.
+            if self.form_extra_headers.strip():
+                config["headers"] = _parse_extra_headers(self.form_extra_headers)
 
         elif t == "mongodb":
             if self.form_host:
@@ -1318,7 +1366,7 @@ class ConnectionState(BaseState):
         elif conn_type == "rest_api":
             self.form_base_url = config.get("base_url", "")
             self.form_api_key = config.get("api_key", "")
-            self.form_extra_headers = config.get("extra_headers", "")
+            self.form_extra_headers = _extra_headers_for_the_form(config)
         elif conn_type == "mongodb":
             self.form_host = config.get("host", "")
             self.form_port = str(config.get("port", _DEFAULT_PORTS.get("mongodb", "")))

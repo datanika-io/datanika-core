@@ -152,10 +152,16 @@ def _volume_dimension() -> rx.Component:
             rx.hstack(
                 rx.text(_t["quota.volume_title"], weight="bold", size="2"),
                 # 🚨 SUBSTITUTED, not concatenated. `quota.volume_usage` is a TEMPLATE —
-                # "{used} / {limit} GB processed this month" — and core has no i18n
-                # substitution layer, so painting `_t[...]` directly puts the braces in the
-                # DOM. This component has never rendered in production (the UX flag has been
-                # off since V2 P1), which is why nobody ever saw it.
+                # "{used} / {limit} GB processed this month" — and substitution here is
+                # per-call-site, not automatic: painting `_t[...]` directly puts the braces in
+                # the DOM. This component has never rendered in production (the UX flag has
+                # been off since V2 P1), which is why nobody ever saw it.
+                #
+                # `.replace` rather than `i18n_text.interpolate`, deliberately: that helper
+                # weaves *components* (the signup sentence's links) into a template and splits
+                # sequentially, so it requires every locale to keep the slots in the order they
+                # are passed. These are plain values, and `replaceAll` has no ordering
+                # constraint — which matters precisely because the locales disagree on order.
                 #
                 # 🔑 Re-wording the nine values to drop the braces would NOT be equivalent:
                 # ru, zh and ar place the numbers mid-phrase ("本月已处理 {used} / {limit} GB"),

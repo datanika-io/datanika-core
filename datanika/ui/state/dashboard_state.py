@@ -39,6 +39,20 @@ def usage_context(org_id: int) -> dict:
         #: ``True`` when exceeding ``bytes_limit`` STOPS runs, ``False`` when it bills overage
         #: (core#713). The two must not be shown the same way — ``SPEC_USAGE_VISIBILITY`` §2.4.
         "bytes_hard_cap": False,
+        #: The overage sentence's three figures, **pre-formatted by whoever owns the pricing
+        #: arithmetic** — i.e. the biller, not this page. ``SPEC_USAGE_VISIBILITY`` §2.5: every
+        #: published figure is read from the plan row, never recomputed in the page. Core paints
+        #: them into the locale's own template; it does not know the rate and must not guess a
+        #: total (the biller bills a *started* GB, so a floor division here would disagree with
+        #: the invoice). Empty means "not supplied", and the overage line is then not drawn at
+        #: all — silence beats a fabricated ``$0.00``.
+        #:
+        #: ⚠️ **Bare numbers, no unit and no currency symbol**: the locale template already
+        #: supplies both (``"Overage: {gb} GB x ${rate} = ${total} this month"``), so ``"3"``
+        #: and ``"0.50"``, never ``"3 GB"`` or ``"$0.50"``.
+        "bytes_overage_gb": "",
+        "bytes_overage_rate": "",
+        "bytes_overage_total": "",
         "cycle_ends_at": "",
     }
 
@@ -71,6 +85,10 @@ class DashboardState(BaseState):
     #: True when the volume allowance is a WALL (runs stop), False when exceeding it bills
     #: overage. Free is the only hard-capped tier and was the only one with no meter.
     bytes_hard_cap: bool = False
+    #: Pre-formatted overage figures from the biller — see :func:`usage_context`.
+    bytes_overage_gb: str = ""
+    bytes_overage_rate: str = ""
+    bytes_overage_total: str = ""
 
     # Billing cycle close date (ISO YYYY-MM-DD). Populated via
     # usage.get_summary hook; empty string when cloud plugin is not
@@ -134,6 +152,17 @@ class DashboardState(BaseState):
         return self.runs_limit > 0 and self.bytes_limit > 0
 
     @rx.var
+    def has_overage_figures(self) -> bool:
+        """Whether the biller supplied every number the overage sentence names.
+
+        The template is ``"Overage: {gb} GB x ${rate} = ${total} this month"``. Painting it with
+        any figure missing produces either a visible ``{gb}`` or a confident ``$0.00`` — and
+        ``$0.00`` is the worse of the two, because it says *free* on the one screen whose job is
+        to say what something costs. All three or none.
+        """
+        return bool(self.bytes_overage_gb and self.bytes_overage_rate and self.bytes_overage_total)
+
+    @rx.var
     def bytes_used_display(self) -> str:
         gb = self.bytes_used / (1024**3)
         return f"{gb:.1f} GB"
@@ -142,6 +171,19 @@ class DashboardState(BaseState):
     def bytes_limit_display(self) -> str:
         gb = self.bytes_limit / (1024**3)
         return f"{gb:.0f} GB"
+
+    # The two above carry the unit, which is right for a labelled row ("Volume included:
+    # 10 GB"). The two below do NOT, because they are substituted into a template that already
+    # supplies it — `quota.volume_usage` is "{used} / {limit} GB processed this month", so
+    # feeding it the unit-bearing form yields "10 GB GB processed". Same divisor, same
+    # precision; only the unit differs, and `test_usage_is_visible` pins that pairing.
+    @rx.var
+    def bytes_used_gb(self) -> str:
+        return f"{self.bytes_used / (1024**3):.1f}"
+
+    @rx.var
+    def bytes_limit_gb(self) -> str:
+        return f"{self.bytes_limit / (1024**3):.0f}"
 
     @rx.var
     def has_cycle_end(self) -> bool:
@@ -242,6 +284,9 @@ class DashboardState(BaseState):
         # wholesale in some handlers, and a missing cap flag must read as "not a wall" rather
         # than raise — the safe direction, since the overage wording promises nothing is blocked.
         self.bytes_hard_cap = bool(usage_ctx.get("bytes_hard_cap", False))
+        self.bytes_overage_gb = usage_ctx.get("bytes_overage_gb", "")
+        self.bytes_overage_rate = usage_ctx.get("bytes_overage_rate", "")
+        self.bytes_overage_total = usage_ctx.get("bytes_overage_total", "")
         self.cycle_ends_at = usage_ctx.get("cycle_ends_at", "")
 
         self.error_message = ""

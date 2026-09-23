@@ -43,7 +43,12 @@ DEPLOY_WORKFLOW = ROOT / ".github" / "workflows" / "deploy-pointer.yml"
 GITATTRIBUTES = ROOT / ".gitattributes"
 
 # `NAME=( a b c )` across however many lines, up to the closing paren.
-_ARRAY = re.compile(r"^(INSTALL|INSTALL_DATA)=\(\s*(.*?)^\)", re.M | re.S)
+#
+# ⚠️ Adding an install category to the installer means adding it HERE too, or its files read
+# as orphans and this suite fails — which is the intended direction: a new category is a new
+# way for a file to reach production and should not be silent. `INSTALL_CRON` (core#1477)
+# installs to /etc/cron.d rather than /opt/datanika/scripts, under a DIFFERENT basename.
+_ARRAY = re.compile(r"^(INSTALL|INSTALL_DATA|INSTALL_CRON)=\(\s*(.*?)^\)", re.M | re.S)
 
 
 # Files deliberately present in `deploy/server/` and deliberately NOT installed from it.

@@ -474,20 +474,27 @@ class TestTheSummaryDoesNotCallAnUnreadableRunMeasured:
     block or advance, and wrong as a word printed at a reader: an `UNREADABLE` run is precisely
     one that could not be read. The old line read `runs read: N (measured: N)` beside
     `unmeasured: 0 of N (0%)` on a window where **nothing** had been read.
+
+    🔁 **Repointed 2026-09-23 for core#1507, not relaxed** (`WORKFLOW_RULES` §5a). These three
+    went red on a CORRECT change: the breakdown gained a `superseded` cell, and the assertions
+    pinned the two-cell line of the day they were written rather than the property they are
+    named for. The property is *each class gets its own number*, so a new class must appear —
+    which is why the right move was to widen the expected strings rather than to loosen them
+    to a substring that a missing cell would also satisfy.
     """
 
     def test_the_breakdown_names_each_class(self, monkeypatch, capsys) -> None:
         fake = FakeActions([("success", "clean", {INCUMBENT: "success"})] * 3)
         _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging", "--spec", INCUMBENT)
         assert "a reading on 3 (3 pass / 0 fail)" in out, out
-        assert "no reading on 0 (0 unmeasured, 0 unreadable)" in out, out
+        assert "no reading on 0 (0 unmeasured, 0 superseded, 0 unreadable)" in out, out
 
     def test_an_unreadable_window_is_not_reported_as_read(self, monkeypatch, capsys) -> None:
         """The exact shape core#1468 was filed about, with the numbers that made it misleading."""
         fake = FakeActions([("unparseable-token", "clean", None)] * 4)
         _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging")
         assert "a reading on 0 (0 pass / 0 fail)" in out, out
-        assert "no reading on 4 (0 unmeasured, 4 unreadable)" in out, out
+        assert "no reading on 4 (0 unmeasured, 0 superseded, 4 unreadable)" in out, out
         # And the older blindness line still says 0%, which is correct for what IT names —
         # the two lines together are what stop that 0% reading as "the window was fine".
         assert "unmeasured     : 0 of 4 runs (0%)" in out, out
@@ -504,4 +511,4 @@ class TestTheSummaryDoesNotCallAnUnreadableRunMeasured:
         )
         _, out = _run_job(monkeypatch, capsys, fake, "e2e-staging")
         assert "a reading on 2 (1 pass / 1 fail)" in out, out
-        assert "no reading on 2 (1 unmeasured, 1 unreadable)" in out, out
+        assert "no reading on 2 (1 unmeasured, 0 superseded, 1 unreadable)" in out, out

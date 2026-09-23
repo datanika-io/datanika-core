@@ -40,7 +40,7 @@ def header_section() -> rx.Component:
             _t["model_detail.origin_label"],
             ": ",
             ModelDetailState.origin_name,
-            color="gray",
+            color="var(--gray-11)",
             size="2",
         ),
         spacing="3",
@@ -373,7 +373,7 @@ def editable_columns_section() -> rx.Component:
                 spacing="2",
                 width="100%",
             ),
-            rx.text(_t["model_detail.no_columns"], color="gray"),
+            rx.text(_t["model_detail.no_columns"], color="var(--gray-11)"),
         ),
         spacing="2",
         width="100%",
@@ -413,7 +413,7 @@ def preview_section() -> rx.Component:
                     + " "
                     + ModelDetailState.preview_rows.length().to(str),
                     size="1",
-                    color="var(--slate-10)",
+                    color="var(--slate-11)",
                 ),
                 rx.fragment(),
             ),
@@ -445,7 +445,7 @@ def preview_section() -> rx.Component:
                 ),
                 rx.cond(
                     ModelDetailState.preview_rows.length() == 0,
-                    rx.text(_t["model_detail.preview.empty"], size="1", color="var(--slate-10)"),
+                    rx.text(_t["model_detail.preview.empty"], size="1", color="var(--slate-11)"),
                     rx.box(
                         rx.table.root(
                             rx.table.header(

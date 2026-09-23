@@ -56,7 +56,7 @@ def _delete_account_dialog() -> rx.Component:
             rx.vstack(
                 rx.text(_t["account.delete_what_goes"], size="2"),
                 rx.text(_t["account.delete_what_stays"], size="2", color="var(--gray-11)"),
-                rx.text(_t["account.delete_backups_note"], size="1", color="var(--gray-9)"),
+                rx.text(_t["account.delete_backups_note"], size="1", color="var(--gray-11)"),
                 # The org consequence, stated BEFORE the confirm control is used. D9
                 # requires the choice to be put to the user rather than discovered.
                 rx.cond(
@@ -164,7 +164,7 @@ def delete_account_section() -> rx.Component:
     return rx.vstack(
         rx.divider(),
         rx.heading(_t["account.delete_heading"], size="3", color_scheme="red"),
-        rx.text(_t["account.delete_body"], size="2", color="gray"),
+        rx.text(_t["account.delete_body"], size="2", color="var(--gray-11)"),
         _delete_account_dialog(),
         spacing="2",
         width="100%",
@@ -189,7 +189,7 @@ def account_card() -> rx.Component:
     return rx.card(
         rx.vstack(
             rx.heading(_t["account.title"], size="4"),
-            rx.text(_t["account.subtitle"], size="2", color="gray"),
+            rx.text(_t["account.subtitle"], size="2", color="var(--gray-11)"),
             rx.cond(
                 AccountState.error != "",
                 rx.callout(
@@ -211,7 +211,7 @@ def account_card() -> rx.Component:
                     rx.text(
                         _t["account.review_api_keys"],
                         size="1",
-                        color="gray",
+                        color="var(--gray-11)",
                     ),
                     spacing="2",
                     width="100%",
@@ -248,7 +248,7 @@ def account_card() -> rx.Component:
                             size="2",
                             variant="outline",
                         ),
-                        rx.text(AccountState.account_email, size="2", color="gray"),
+                        rx.text(AccountState.account_email, size="2", color="var(--gray-11)"),
                         align="center",
                         spacing="3",
                     ),
@@ -320,11 +320,12 @@ def account_card() -> rx.Component:
                                 type="password",
                                 custom_attrs={"autoComplete": "current-password"},
                                 width="100%",
+                                aria_label=_t["account.current_password"],
                             ),
                             spacing="1",
                             width="100%",
                         ),
-                        rx.text(_t["account.set_password_hint"], size="2", color="gray"),
+                        rx.text(_t["account.set_password_hint"], size="2", color="var(--gray-11)"),
                     ),
                     rx.text(_t["auth.new_password"], size="2", weight="medium"),
                     rx.input(
@@ -332,6 +333,7 @@ def account_card() -> rx.Component:
                         type="password",
                         custom_attrs={"autoComplete": "new-password"},
                         width="100%",
+                        aria_label=_t["auth.new_password"],
                     ),
                     rx.text(_t["auth.confirm_password"], size="2", weight="medium"),
                     rx.input(
@@ -339,8 +341,9 @@ def account_card() -> rx.Component:
                         type="password",
                         custom_attrs={"autoComplete": "new-password"},
                         width="100%",
+                        aria_label=_t["auth.confirm_password"],
                     ),
-                    rx.text(_t["account.password_rules"], size="1", color="gray"),
+                    rx.text(_t["account.password_rules"], size="1", color="var(--gray-11)"),
                     rx.button(
                         rx.cond(
                             AccountState.has_password,
@@ -389,18 +392,21 @@ def _org_profile_form() -> rx.Component:
             value=SettingsState.edit_org_name,
             on_change=SettingsState.set_edit_org_name,
             width="100%",
+            aria_label=_t["common.name"],
         ),
         rx.text(_t["settings.slug"], size="2", weight="medium"),
         rx.input(
             value=SettingsState.edit_org_slug,
             on_change=SettingsState.set_edit_org_slug,
             width="100%",
+            aria_label=_t["settings.slug"],
         ),
         rx.text(_t["settings.default_dbt_schema"], size="2", weight="medium"),
         rx.input(
             value=SettingsState.edit_default_dbt_schema,
             on_change=SettingsState.set_edit_default_dbt_schema,
             width="100%",
+            aria_label=_t["settings.default_dbt_schema"],
         ),
         rx.button(_t["common.save"], on_click=SettingsState.update_org, size="2"),
         spacing="3",
@@ -480,9 +486,9 @@ def _remove_member_dialog(member: MemberItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", member.id, "  ", member.email, size="2", weight="bold"),
-                    rx.text(member.role, size="1", color="var(--gray-9)"),
+                    rx.text(member.role, size="1", color="var(--gray-11)"),
                 ),
-                rx.text(_t["settings.remove_member_reversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["settings.remove_member_reversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",
@@ -552,7 +558,7 @@ def _leave_org_dialog() -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text(SettingsState.org_name, size="2", weight="bold"),
-                    rx.text(SettingsState.org_slug, size="1", color="var(--gray-9)"),
+                    rx.text(SettingsState.org_slug, size="1", color="var(--gray-11)"),
                 ),
                 # Exactly one of these renders. They are branches of the same
                 # `rx.cond`, so "both" and "neither" are unreachable by
@@ -574,7 +580,7 @@ def _leave_org_dialog() -> rx.Component:
                         width="100%",
                     ),
                 ),
-                rx.text(_t["settings.leave_org_reversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["settings.leave_org_reversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",
@@ -678,7 +684,7 @@ def _transfer_ownership_dialog() -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text(SettingsState.transfer_to_email, size="2", weight="bold"),
-                    rx.text(SettingsState.org_name, size="1", color="var(--gray-9)"),
+                    rx.text(SettingsState.org_name, size="1", color="var(--gray-11)"),
                 ),
                 rx.callout(
                     _t["settings.transfer_ownership_irreversible"],
@@ -722,7 +728,7 @@ def transfer_ownership_card() -> rx.Component:
         rx.vstack(
             rx.separator(),
             rx.heading(_t["settings.transfer_ownership"], size="3"),
-            rx.text(_t["settings.transfer_ownership_help"], size="2", color="gray"),
+            rx.text(_t["settings.transfer_ownership_help"], size="2", color="var(--gray-11)"),
             rx.hstack(
                 rx.select(
                     SettingsState.transfer_candidates,
@@ -774,12 +780,12 @@ def _cancel_invitation_dialog(inv: InvitationItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", inv.id, "  ", inv.email, size="2", weight="bold"),
-                    rx.text(inv.role, size="1", color="var(--gray-9)"),
+                    rx.text(inv.role, size="1", color="var(--gray-11)"),
                 ),
                 rx.text(
                     _t["settings.cancel_invitation_reversible"],
                     size="1",
-                    color="var(--gray-9)",
+                    color="var(--gray-11)",
                 ),
                 spacing="3",
                 width="100%",
@@ -898,6 +904,7 @@ def members_card() -> rx.Component:
                             value=SettingsState.invite_email,
                             on_change=SettingsState.set_invite_email,
                             width="100%",
+                            aria_label=_t["settings.email"],
                         ),
                         rx.text(_t["settings.role"], size="2", weight="medium"),
                         rx.hstack(
@@ -1103,7 +1110,7 @@ def api_keys_card() -> rx.Component:
                     ),
                     width="100%",
                 ),
-                rx.text(_t["api_keys.no_keys"], color="gray"),
+                rx.text(_t["api_keys.no_keys"], color="var(--gray-11)"),
             ),
             spacing="4",
             width="100%",
@@ -1138,7 +1145,7 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
             rx.vstack(
                 rx.card(
                     rx.text("#", ch.id, "  ", ch.name, size="2", weight="bold"),
-                    rx.text(ch.channel_type, size="1", color="var(--gray-9)"),
+                    rx.text(ch.channel_type, size="1", color="var(--gray-11)"),
                 ),
                 rx.callout(
                     _t["notifications.delete_secret"],
@@ -1257,7 +1264,7 @@ def channel_row(ch: ChannelItem) -> rx.Component:
                 # log line on a box the user cannot read is not feedback.
                 rx.cond(
                     ch.last_error != "",
-                    rx.text(ch.last_error, size="1", color="var(--gray-9)"),
+                    rx.text(ch.last_error, size="1", color="var(--gray-11)"),
                     rx.fragment(),
                 ),
                 spacing="1",
@@ -1277,6 +1284,7 @@ def notification_form() -> rx.Component:
             value=NotificationState.form_name,
             on_change=NotificationState.set_form_name,
             width="100%",
+            aria_label=_t["notifications.name"],
         ),
         rx.select(
             ["slack", "telegram", "email", "webhook"],
@@ -1292,6 +1300,7 @@ def notification_form() -> rx.Component:
                 value=NotificationState.form_webhook_url,
                 on_change=NotificationState.set_form_webhook_url,
                 width="100%",
+                aria_label=_t["notifications.webhook_url"],
             ),
         ),
         rx.cond(
@@ -1302,12 +1311,14 @@ def notification_form() -> rx.Component:
                     value=NotificationState.form_telegram_token,
                     on_change=NotificationState.set_form_telegram_token,
                     width="100%",
+                    aria_label=_t["notifications.telegram_token"],
                 ),
                 rx.input(
                     placeholder=_t["notifications.telegram_chat_id"],
                     value=NotificationState.form_telegram_chat_id,
                     on_change=NotificationState.set_form_telegram_chat_id,
                     width="100%",
+                    aria_label=_t["notifications.telegram_chat_id"],
                 ),
                 spacing="2",
                 width="100%",
@@ -1320,6 +1331,7 @@ def notification_form() -> rx.Component:
                 value=NotificationState.form_email,
                 on_change=NotificationState.set_form_email,
                 width="100%",
+                aria_label=_t["notifications.email_address"],
             ),
         ),
         rx.cond(
@@ -1329,6 +1341,7 @@ def notification_form() -> rx.Component:
                 value=NotificationState.form_custom_url,
                 on_change=NotificationState.set_form_custom_url,
                 width="100%",
+                aria_label=_t["notifications.custom_url"],
             ),
         ),
         rx.hstack(
@@ -1400,7 +1413,7 @@ def notifications_card() -> rx.Component:
                 NotificationState.channels.length() == 0,
                 rx.text(
                     _t["notifications.no_channels"],
-                    color="gray",
+                    color="var(--gray-11)",
                     size="2",
                 ),
                 rx.table.root(

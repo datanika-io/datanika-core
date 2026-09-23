@@ -307,6 +307,34 @@ memorise:
 - **A run we cannot read is NOT transparent.** An unrecognised verdict, or a log GitHub will no
   longer serve, blocks the streak: we do not know what it carried, and assuming it was not a red
   is the reassuring assumption.
+- 🆕 **A run SUPERSEDED before it ran is transparent, and is its own population** (core#1507,
+  2026-09-23). Since core#975's residual gate, a push that is no longer `dev`'s head skips
+  `staging` and `e2e-sso` outright. **This population arrived after the two bullets above were
+  written, and for two weeks the code said the opposite of the policy**: a skipped job has no
+  log, GitHub answers 404, and an absent verdict grades `UNREADABLE`, which *blocks*. So the
+  **most** certain non-measurement in the system — a job with `conclusion=skipped` and zero
+  steps — was graded as the least certain one, and the streak was reset by pushes that ran
+  nothing. Measured at 18 of 62 runs in one `e2e-sso` window, and at 10 of 24 on 2026-09-21
+  with the blindness alert reporting `0 unmeasured`.
+  - It is **not** `UNMEASURED`, deliberately. Those two need opposite responses: *unmeasured*
+    means a run tried to grade and failed and somebody should look; *superseded* means nothing
+    ran by design. Folding them would put the blindness alert under the control of the **merge
+    rate** rather than the instrument's health.
+  - It is recognised only on **positive evidence of three job conclusions** — the gate ran and
+    **decided** (`supersession` success), the caller was **skipped**, and the tier job is
+    skipped or was never created — never on the absence of a log. ⚠️ **A skip without that
+    evidence stays `UNREADABLE` and keeps blocking**: `supersession` itself needs
+    `[lint, test, helm-lint]`, so a red one produces byte-identical tier jobs with nobody having
+    decided anything, and a tier that stops running behind a `paths:` filter must go loud rather
+    than quiet. **The fix must not become invisibility.**
+  - ⚠️ **Transparency to `streak()` is not enough on its own.** `gaps = span - streak` grades
+    dilution, so leaving superseded runs inside the window re-creates the same defect as
+    `sparse` — a friendlier word for *graduation held by the merge rate*. They are dropped from
+    `span`/`gaps` too.
+  🔑 **The general shape, which is why this bullet is this long: a policy and its implementation
+  can disagree for a population that arrived LATER, and neither of them changed.** Nothing was
+  edited into conflict; the world grew a case the rule predates. When you add a mechanism that
+  can skip a job, ask which written rule now has a case it has never seen.
 - **A streak drawn from a window that measured almost nothing reports `sparse`, not `graduate`.**
   Three greens across a fortnight and three greens across three runs are not the same evidence,
   and only a human should decide which one they are looking at.

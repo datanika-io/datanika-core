@@ -56,7 +56,7 @@ _KEYS_FOR_SCANNER = (
 
 def _usage_row(label_key: str, value: rx.Var) -> rx.Component:
     return rx.hstack(
-        rx.text(_t[label_key], size="2", color="gray"),
+        rx.text(_t[label_key], size="2", color="var(--gray-11)"),
         rx.spacer(),
         rx.text(value, size="2", weight="medium"),
         width="100%",

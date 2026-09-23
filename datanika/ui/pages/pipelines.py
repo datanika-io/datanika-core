@@ -217,7 +217,7 @@ def pipeline_form() -> rx.Component:
             rx.text(
                 _t["pipelines.destination_help"],
                 size="1",
-                color="var(--gray-9)",
+                color="var(--gray-11)",
             ),
             # dbt command
             rx.text(_t["pipelines.command"], size="2", weight="bold"),
@@ -229,12 +229,21 @@ def pipeline_form() -> rx.Component:
             ),
             rx.match(
                 PipelineState.form_command,
-                ("build", rx.text(_t["pipelines.cmd_build_hint"], size="1", color="gray")),
-                ("run", rx.text(_t["pipelines.cmd_run_hint"], size="1", color="gray")),
-                ("test", rx.text(_t["pipelines.cmd_test_hint"], size="1", color="gray")),
-                ("seed", rx.text(_t["pipelines.cmd_seed_hint"], size="1", color="gray")),
-                ("snapshot", rx.text(_t["pipelines.cmd_snapshot_hint"], size="1", color="gray")),
-                ("compile", rx.text(_t["pipelines.cmd_compile_hint"], size="1", color="gray")),
+                (
+                    "build",
+                    rx.text(_t["pipelines.cmd_build_hint"], size="1", color="var(--gray-11)"),
+                ),
+                ("run", rx.text(_t["pipelines.cmd_run_hint"], size="1", color="var(--gray-11)")),
+                ("test", rx.text(_t["pipelines.cmd_test_hint"], size="1", color="var(--gray-11)")),
+                ("seed", rx.text(_t["pipelines.cmd_seed_hint"], size="1", color="var(--gray-11)")),
+                (
+                    "snapshot",
+                    rx.text(_t["pipelines.cmd_snapshot_hint"], size="1", color="var(--gray-11)"),
+                ),
+                (
+                    "compile",
+                    rx.text(_t["pipelines.cmd_compile_hint"], size="1", color="var(--gray-11)"),
+                ),
                 rx.fragment(),
             ),
             # Full refresh
@@ -313,9 +322,9 @@ def _delete_pipeline_dialog(p) -> rx.Component:
                 rx.vstack(
                     rx.card(
                         rx.text("#", p.id, "  ", p.name, size="2", weight="bold"),
-                        rx.text(p.command, size="1", color="var(--gray-9)"),
+                        rx.text(p.command, size="1", color="var(--gray-11)"),
                     ),
-                    rx.text(_t["pipelines.delete_reversible"], size="1", color="var(--gray-9)"),
+                    rx.text(_t["pipelines.delete_reversible"], size="1", color="var(--gray-11)"),
                     spacing="3",
                     width="100%",
                     margin_top="12px",

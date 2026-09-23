@@ -46,7 +46,7 @@ def _brand() -> rx.Component:
 
 def _request_form() -> rx.Component:
     return rx.vstack(
-        rx.text(_t["auth.forgot_password_intro"], size="2", color="gray"),
+        rx.text(_t["auth.forgot_password_intro"], size="2", color="var(--gray-11)"),
         rx.cond(
             PasswordResetState.error != "",
             rx.callout(
@@ -102,14 +102,14 @@ def _confirmation() -> rx.Component:
             width="100%",
             word_break="break-all",
         ),
-        rx.text(_t["auth.reset_link_sent_body"], size="2", color="gray"),
-        rx.text(_t["auth.reset_link_sent_hint"], size="2", color="gray"),
+        rx.text(_t["auth.reset_link_sent_body"], size="2", color="var(--gray-11)"),
+        rx.text(_t["auth.reset_link_sent_hint"], size="2", color="var(--gray-11)"),
         rx.text(
             _t["auth.no_account"],
             " ",
-            rx.link(_t["auth.sign_up"], href="/signup"),
+            rx.link(_t["auth.sign_up"], href="/signup", underline="always"),
             size="2",
-            color="gray",
+            color="var(--gray-11)",
         ),
         spacing="3",
         width="100%",

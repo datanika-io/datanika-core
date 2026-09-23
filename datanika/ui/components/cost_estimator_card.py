@@ -48,7 +48,7 @@ def _rate_display() -> rx.Component:
     return rx.text(
         _t["cost.per_gb_rate"],
         size="1",
-        color="gray",
+        color="var(--gray-11)",
     )
 
 
@@ -67,7 +67,7 @@ def _total_estimate() -> rx.Component:
             spacing="1",
             align="start",
         ),
-        rx.text(_t["cost.unknown"], size="1", color="gray"),
+        rx.text(_t["cost.unknown"], size="1", color="var(--gray-11)"),
     )
 
 

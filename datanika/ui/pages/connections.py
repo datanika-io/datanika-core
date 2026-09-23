@@ -90,7 +90,7 @@ def connection_form() -> rx.Component:
                 " ",
                 _t["connections.required_legend"],
                 size="1",
-                color="gray",
+                color="var(--gray-11)",
             ),
             # A config input, not rx.input: this is the first text field on the
             # form, so it is exactly the slot Chrome fills with the saved
@@ -243,7 +243,7 @@ def _delete_connection_dialog(conn) -> rx.Component:
                     # recognises.
                     rx.card(
                         rx.text("#", conn.id, "  ", conn.name, size="2", weight="bold"),
-                        rx.text(conn.connection_type, size="1", color="var(--gray-9)"),
+                        rx.text(conn.connection_type, size="1", color="var(--gray-11)"),
                     ),
                     rx.cond(
                         conn.dependent_count > 0,
@@ -263,7 +263,7 @@ def _delete_connection_dialog(conn) -> rx.Component:
                             width="100%",
                         ),
                     ),
-                    rx.text(_t["connections.delete_reversible"], size="1", color="var(--gray-9)"),
+                    rx.text(_t["connections.delete_reversible"], size="1", color="var(--gray-11)"),
                     spacing="3",
                     width="100%",
                     margin_top="12px",

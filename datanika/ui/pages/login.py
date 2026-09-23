@@ -32,7 +32,7 @@ def _forgot_password_link() -> rx.Component:
         href="/forgot-password",
         on_click=AuthState.clear_auth_error,
         size="2",
-        color="gray",
+        color="var(--gray-11)",
     )
 
 
@@ -61,7 +61,7 @@ def login_page() -> rx.Component:
                 spacing="3",
                 align="center",
             ),
-            rx.text(_t["auth.sign_in_heading"], size="3", color="gray"),
+            rx.text(_t["auth.sign_in_heading"], size="3", color="var(--gray-11)"),
             rx.cond(
                 AuthState.show_reset_done,
                 rx.callout(
@@ -238,7 +238,7 @@ def login_page() -> rx.Component:
             rx.text(
                 _t["auth.social_creates_account"],
                 size="1",
-                color="gray",
+                color="var(--gray-11)",
                 text_align="center",
                 width="100%",
             ),
@@ -256,7 +256,7 @@ def login_page() -> rx.Component:
             # keeps it below the solid primary and distinct from the outline pair.
             # Both keys already exist in all nine locales — no new strings here.
             rx.vstack(
-                rx.text(_t["auth.no_account"], size="2", color="gray"),
+                rx.text(_t["auth.no_account"], size="2", color="var(--gray-11)"),
                 rx.link(
                     rx.button(
                         _t["auth.sign_up"],

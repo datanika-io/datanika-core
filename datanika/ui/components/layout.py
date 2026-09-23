@@ -52,7 +52,7 @@ def sidebar_user_section() -> rx.Component:
         rx.hstack(
             rx.vstack(
                 rx.text(AuthState.current_user.full_name, size="2", weight="medium"),
-                rx.text(AuthState.current_org.name, size="1", color="gray"),
+                rx.text(AuthState.current_org.name, size="1", color="var(--gray-11)"),
                 spacing="0",
             ),
             rx.spacer(),
@@ -101,7 +101,7 @@ def legal_links() -> rx.Component:
         # A list separator between two standalone links, not a connective inside
         # a sentence — so unlike the signup line (#682) it carries no grammar and
         # needs no locale to place it. Do not "fix" this by analogy.
-        rx.text("·", size="1", color="gray"),
+        rx.text("·", size="1", color="var(--gray-11)"),
         rx.link(
             rx.text(_t["legal.privacy"], size="1"),
             href=PRIVACY_URL,

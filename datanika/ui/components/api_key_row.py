@@ -114,9 +114,9 @@ def revoke_api_key_dialog(key: ApiKeyItem) -> rx.Component:
                 # name is what a human recognises (core#804 AC2).
                 rx.card(
                     rx.text("#", key.id, "  ", key.name, size="2", weight="bold"),
-                    rx.text(key.scopes, size="1", color="var(--gray-9)"),
+                    rx.text(key.scopes, size="1", color="var(--gray-11)"),
                 ),
-                rx.text(_t["api_keys.revoke_irreversible"], size="1", color="var(--gray-9)"),
+                rx.text(_t["api_keys.revoke_irreversible"], size="1", color="var(--gray-11)"),
                 spacing="3",
                 width="100%",
                 margin_top="12px",

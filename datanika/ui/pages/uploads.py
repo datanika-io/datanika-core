@@ -125,7 +125,7 @@ def upload_form() -> rx.Component:
             rx.text(
                 _t["uploads.destination_help"],
                 size="1",
-                color="var(--gray-9)",
+                color="var(--gray-11)",
             ),
             # SaaS endpoint selector (shown for SaaS sources)
             rx.cond(
@@ -276,17 +276,27 @@ def upload_form() -> rx.Component:
                         UploadState.form_write_disposition,
                         (
                             "append",
-                            rx.text(_t["tooltip.write_disposition_append"], size="1", color="gray"),
+                            rx.text(
+                                _t["tooltip.write_disposition_append"],
+                                size="1",
+                                color="var(--gray-11)",
+                            ),
                         ),
                         (
                             "replace",
                             rx.text(
-                                _t["tooltip.write_disposition_replace"], size="1", color="gray"
+                                _t["tooltip.write_disposition_replace"],
+                                size="1",
+                                color="var(--gray-11)",
                             ),
                         ),
                         (
                             "merge",
-                            rx.text(_t["tooltip.write_disposition_merge"], size="1", color="gray"),
+                            rx.text(
+                                _t["tooltip.write_disposition_merge"],
+                                size="1",
+                                color="var(--gray-11)",
+                            ),
                         ),
                         rx.fragment(),
                     ),
@@ -496,7 +506,7 @@ def _run_control(u) -> rx.Component:
                 rx.text(
                     _t["uploads.run_blocked_reason"],
                     size="1",
-                    color="var(--gray-9)",
+                    color="var(--gray-11)",
                 ),
                 spacing="1",
                 align="center",

@@ -215,6 +215,10 @@ class RunState(BaseState):
         What the stop *did* is the service's answer and is said back to the user: a pending
         run is cancelled at once, a running one is ``cancelling`` until its worker finishes —
         and a run that finished first is refused rather than reported as stopped.
+
+        A real transition writes an audit row naming the actor and what the stop changed, so
+        *"who stopped this run?"* has an answer (core#657). An idempotent second stop changes
+        nothing and writes none.
         """
         if not await self._check_role("editor"):
             return
@@ -225,8 +229,39 @@ class RunState(BaseState):
         user_id = auth.current_user.id or 0
         try:
             with get_sync_session() as session:
-                run = ExecutionService().cancel_run(session, org_id, run_id, actor_user_id=user_id)
+                service = ExecutionService()
+                # Read the status BEFORE the mutation. `cancel_run` returns the run already
+                # changed and flushes, which clears the attribute history — so afterwards
+                # nothing can say what the stop actually did. Same session, so this is the
+                # value the mutation is about to replace.
+                before = service.get_run(session, org_id, run_id)
+                was = before.status if before is not None else None
+                run = service.cancel_run(session, org_id, run_id, actor_user_id=user_id)
                 outcome = run.status if run is not None else None
+                if outcome is not None and outcome != was:
+                    # core#657: nothing recorded who stopped a run, so "who stopped this?"
+                    # had no answer.
+                    #
+                    # ⚠️ Conditional on a REAL transition, not merely on a non-None return.
+                    # `CANCELLING` is itself in `CANCELLABLE_RUN_STATUSES`, so a second stop
+                    # on an already-stopping run is idempotent (§5.2) and returns the run
+                    # unchanged — an unconditional write would file a row asserting a
+                    # `cancelling -> cancelling` transition that never happened.
+                    # SPEC_AUDIT_TRAIL §1: an absent log is not consulted, a lying one is
+                    # believed, so inventing transitions is the worse failure, not the safer.
+                    #
+                    # Inside the mutation's own transaction, before the commit, so the row
+                    # and the change it describes stand or fall together.
+                    self._audit(
+                        session,
+                        org_id,
+                        user_id,
+                        "update",
+                        "run",
+                        resource_id=run_id,
+                        old_values={"status": was.value},
+                        new_values={"status": outcome.value},
+                    )
                 session.commit()
         except Exception as exc:
             self._set_error(exc, "The run could not be cancelled")

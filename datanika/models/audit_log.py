@@ -69,6 +69,11 @@ class AuditResourceType(enum.StrEnum):
     # word itself and is written to `audit_logs.resource_type` verbatim.
     PASSWORD = "password"  # noqa: S105
     PIPELINE = "pipeline"
+    #: A run in its own right (core#657). *Starting* one is audited against the thing that
+    #: was started — ``action="run"``, ``resource_type="pipeline"``/``"upload"`` — because
+    #: that is what the user chose. *Stopping* one is about a single run and names it, so
+    #: the run id is the resource id and the run is the resource.
+    RUN = "run"
     SCHEDULE = "schedule"
     SESSION = "session"
     TRANSFORMATION = "transformation"

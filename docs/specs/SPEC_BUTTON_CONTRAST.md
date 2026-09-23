@@ -6,6 +6,12 @@
 > here because the options change how the product looks; that is a brand decision, not a lint fix.
 >
 > This is a **contract**, not a description of what shipped. It binds every button written after it.
+>
+> **Amended 2026-09-23** — **§11** rules callouts (they were excluded by §7 on purpose, and
+> [cloud#255] showed the exclusion had no reader), and **§5 carries a correction to its own `soft`
+> column**, found while taking §11's measurements. Every §11 number is read from the **running
+> app's served stylesheet**, arithmetic armed against two published pairs first, with the token pair
+> confirmed against a rendered element.
 
 ## 0. The decision
 
@@ -131,6 +137,39 @@ Two traps this table exists to prevent, both of which the obvious repair walks s
 Plain `soft` red is **4.54:1 — a margin of +0.04**, and is rejected for the same reason. Under rule 3
 it becomes 10.84:1.
 
+> 🔴 **CORRECTED 2026-09-23 — the `soft` column above composites the label onto WHITE instead of onto
+> the element's own tinted background. It understates every alpha-label scale.** Found while ruling
+> §11, by taking the same measurements off the **running app's served stylesheet** rather than off the
+> package files, and reproducing both models side by side:
+>
+> | scale | `a11` opaque? | §5 above (label over **white**) | corrected (label over **its own `a3` background**) |
+> |---|---|---|---|
+> | `orange` | yes | 3.99 | **3.99** |
+> | `amber` | yes | 4.25 | **4.25** |
+> | `yellow` | yes | 4.27 | **4.27** |
+> | `blue` | no | 4.24 | **4.26** |
+> | `green` | no | 4.19 | **4.27** |
+> | `red` | no | 4.54 | **4.61** |
+> | `mauve` | no | 5.16 | **5.64** |
+> | `violet` | no | 5.50 | **5.80** |
+>
+> 🔑 **The two models agree exactly wherever `a11` is fully opaque and diverge wherever it carries
+> alpha** — which is what identifies the cause rather than merely noticing a discrepancy. A `soft`
+> label is painted *on top of* the `a3`-over-white field, so the corrected column is the physically
+> real one.
+>
+> ✅ **No decision in this spec moves, and the error is in the conservative direction** — it
+> understates contrast by 0.02–0.48, so it can never have let a failing pair read as passing. Every
+> ❌ above is still ❌ and every AA is still AA; plain `soft` red goes from +0.04 to +0.11 over the
+> threshold, which §5 rejects on margin either way. **It is corrected rather than left alone because
+> §11 quotes these numbers, and a spec carrying two tables of the same quantity makes the reader
+> decide which one is real.**
+>
+> ⚠️ **Independent corroboration that the arithmetic is otherwise sound:** [cloud#255]'s grader,
+> written separately by Engineering, reported `orange` soft at **3.99** — a scale where the two
+> models *cannot* disagree. Agreement there and divergence only on alpha labels is the signature of
+> this cause and not of a broken calculator.
+
 ## 6. Destructive actions
 
 **One treatment, not two: `variant="soft" color_scheme="red" high_contrast=True`** — a light red
@@ -159,8 +198,15 @@ Quieting destructive controls is the correct direction independently of WCAG.
 #1409 sweep covers.
 
 **Out of scope, deliberately:** `radius`, `scaling`, `panel_background` and `appearance` stay at
-their defaults — this spec changes colour, not shape. Badges, callouts and text colours are
-Engineering's mechanical half of #1409 and are not governed here, except for §10's finding.
+their defaults — this spec changes colour, not shape. Text colours are Engineering's mechanical half
+of #1409 and are not governed here, except for §10's finding.
+
+🔴 **CALLOUTS ARE NOW IN SCOPE — §11, ruled 2026-09-23 on [cloud#255].** This sentence used to
+exclude them alongside badges, and the exclusion was about **who owned which half of #1409**, not a
+judgement that callouts need no contrast rule. Read as a standing scope decision it did real damage:
+a callout below AA is **correct by this spec** and reportable by nothing, which is how
+[cloud#255] had to be found by hand. **Badges remain out of scope and §11.7 says why — that one
+*is* a judgement, and it names what has to exist before it can be ruled.**
 
 **Flip conditions — the sentences that make this spec expire:**
 
@@ -224,3 +270,168 @@ Recorded here because acting only on what axe printed would leave both in place.
   `delete_reversible` / `remove_member_reversible` copy lives inside alert-dialog content that is
   not mounted until the dialog opens. **That copy is precisely the text a user reads before doing
   something irreversible.** AC3 is written to cover it; a green sweep alone does not.
+
+---
+
+## 11. Callouts
+
+**Ruled 2026-09-23 (Product)**, on [cloud#255]. Engineering held its fix pending this decision
+because §7 had excluded callouts on purpose; §7 now points here. **The build is [core#1535]**, which
+covers core and cloud together — cloud ships inside core's image, so one of them alone is half a
+fix.
+
+[core#1535]: https://github.com/datanika-io/datanika-core/issues/1535
+
+### 11.1 · The mechanism, measured on a rendered element rather than relayed
+
+A callout is painted exactly like a `soft` button: background `var(--accent-a3)`, label
+`var(--accent-a11)`. That was the load-bearing claim in [cloud#255] and it is the one thing worth
+re-deriving, because *a relayed mechanism is worse than a relayed number* — a wrong number
+eventually contradicts something, a wrong mechanism never does.
+
+Read off the **real element** in the running app (the connection form's validation callout,
+`color_scheme="red"`, `rt-variant-soft`):
+
+| | computed | token |
+|---|---|---|
+| `background-color` | `rgba(243, 0, 13, 0.08)` | `--red-a3` = `#f3000d14` |
+| label `color` | `rgba(196, 0, 6, 0.827)` | `--red-a11` = `#c40006d3` |
+
+Both match to the byte. **So §5's `soft` column transfers to callouts verbatim**, and this ruling
+needs no new arithmetic — only the correction §5 now carries.
+
+`rx.callout` exposes `variant`, `color_scheme` **and `high_contrast`**
+(`reflex/components/radix/themes/components/callout.py`, `CalloutVariant = "soft" | "surface" |
+"outline"`, default `soft`). As with §0, nothing here is a new mechanism.
+
+### 11.2 · The decision
+
+> **Every `rx.callout` that names a `color_scheme` carries `high_contrast=True`.**
+
+This is **rule 3, unchanged, applied to the component it was always true of.** One rule for "a
+soft-painted Radix surface that chooses a colour" is easier to follow and easier to guard than two,
+and §5's trap applies here word for word: *"just make it soft" creates new failures*, and the
+exceptions are not where intuition puts them.
+
+A callout with **no** `color_scheme` inherits the accent and needs nothing — see 11.5.
+
+⚠️ **`variant="surface"` and `variant="outline"` are not an escape hatch.** They change the field,
+not the label: both keep `--accent-a11`, and §5 already rejects `ghost`/`outline` on the scales that
+pass *by a hair*. If a future callout uses them, it still carries `high_contrast=True`.
+
+**What it costs and what it buys**, measured off the running app's served stylesheet with the
+arithmetic armed against `#000`/`#fff` = 21.00 and `#767676`/`#fff` = 4.54 before anything was
+reported:
+
+| `color_scheme` | core call sites | plain `soft` | `soft` + `high_contrast` |
+|---|---|---|---|
+| `red` | 15 | 4.61 (+0.11) | **10.93** |
+| `amber` | 8 | **4.25 ❌** | **10.61** |
+| `green` | 6 | **4.27 ❌** | **11.14** |
+| `gray` | 3 | 5.68 | 14.61 |
+| `orange` | 2 | **3.99 ❌** | **10.44** |
+| `blue` | 1 | **4.26 ❌** | **11.40** |
+
+**17 of the 35 explicitly-coloured callouts in core are below AA today**, and **0 of 62 callouts
+carry `high_contrast`**. The hue still carries the meaning — the *background* is untouched and
+`a12` keeps the hue — so a red callout stays unmistakably red. This is §6's treatment for
+destructive buttons, arriving at the component that holds the words.
+
+### 11.3 · 🚨 The instance that matters most is not the one on the issue
+
+[cloud#255] is a callout on `/settings/billing`, reachable only by an org with a subscription, of
+which we have **none**. It is correct and it is the least important instance.
+
+**`ui/pages/connections.py:150-168` renders the connection-test verdict as a callout whose
+`color_scheme` is computed:**
+
+```python
+color_scheme=rx.cond(test_untested, "gray", rx.cond(test_success, "green", "red"))
+```
+
+So the product's answer to *"did my connection work?"* — on the onboarding path, reached by every
+user who ever adds a connection, in all nine locales — renders:
+
+| verdict | scale | ratio |
+|---|---|---|
+| **success** | `green` | **4.27 ❌ below AA** |
+| failure | `red` | 4.61 (+0.11) |
+| not tested ([core#821]) | `gray` | 5.68 ✅ |
+
+🔑 **The success case is the failing one.** A user who cannot read the green verdict is a user who
+cannot tell success from the neutral "not tested" state that [core#821] introduced *specifically*
+so those two would not be confused.
+
+⚠️ **And the `color_scheme` is an `rx.cond`, not a literal** — the computed-variant shape §9.1 was
+written about. A guard that reads source literals sees `"gray"`, `"green"`, `"red"` only if it
+walks every branch of the expression. **This is the single call site most likely to be missed by
+the guard that is supposed to catch it.**
+
+### 11.4 · Where the population is, and the control that says the census can see it
+
+Measured on `origin/dev` @ `890e6c5`:
+
+| | count |
+|---|---|
+| `rx.callout(` call sites in `datanika/` | **62** |
+| …naming a `color_scheme` | **35** |
+| …carrying `high_contrast` | **0** |
+| `rx.button(` call sites — **anti-vacuity control** | 129 |
+
+The control is there because a census that finds 62 of something and 0 of another thing is
+indistinguishable from a pattern that matches almost nothing. The heaviest files are
+`pages/settings.py` (18), `pages/login.py` (9) and `components/connection_config_fields.py` (5).
+
+### 11.5 · 🚨 The theme fixes the callouts that INHERIT and cannot touch the ones that CHOOSE
+
+The 27 callouts that name no `color_scheme` inherit the accent. Read off the running app's own
+theme element — `data-accent-color`, not from our source:
+
+- **today: `blue`** (`--accent-a3` = `#008ff519`, identical to `--blue-a3`), `data-gray-color="slate"`
+  — so those 27 render at **4.26:1, below AA**. *(This also corroborates §4: `gray_color="auto"`
+  really does map blue → slate.)*
+- **after §0's theme lands: `violet`** → **5.80:1**, AA.
+
+**So §0's accent change silently repairs 27 of the 62 and leaves all 17 real failures in place**,
+because a site that names `amber` or `green` keeps naming it. 🔑 **A post-promotion sweep will
+therefore look substantially better while the worst instances — an error message and a success
+verdict — are still below AA.** That improvement is real and it is not this ruling; do not let the
+first be read as the second.
+
+### 11.6 · Acceptance criteria
+
+- **AC1** Every `rx.callout` naming a `color_scheme` carries `high_contrast=True`, in core **and**
+  in `datanika-cloud` (which is where [cloud#255] lives, and which ships inside core's image).
+- **AC2** The connection-test verdict is legible at ≥ 4.5:1 in all three of its states, success
+  included. Assert it on the **rendered** element, not on the source literal — 11.3's
+  `color_scheme` does not exist as a literal anywhere.
+- **AC3** The guard of §9 is extended to `rx.callout`, resolving `(variant, color_scheme,
+  high_contrast)` the same way, and **walking every branch of an `rx.cond`**. Per `WORKFLOW_RULES`
+  §5a it asserts the invariant, not today's 62: a callout added tomorrow in a scale nobody has used
+  is checked the first time it exists.
+- **AC4** The guard is **seen failing** — revert one callout to plain `soft` `green` and watch it
+  red — and carries the anti-vacuity arm of 11.4, so a walker that stops finding callouts fails
+  loudly instead of passing.
+
+⚠️ **Do not write AC3's guard as "no source line says `rx.callout` without `high_contrast`".** That
+is the absence-of-the-wrong-word shape; it is satisfied by deleting the callout, and it would red on
+the 27 correct un-schemed callouts of 11.5.
+
+### 11.7 · Badges stay out of scope, and this is the argued version of §7's mistake
+
+`rx.badge` is painted the same way and has **33 call sites** in core. I am not ruling it here, and
+the reason is not ownership this time:
+
+**8 of those 33 compute their `color_scheme` at runtime** — `run_status_color(r.status)`,
+`_type_color(m.entry_type)`, `u.status_color`, `rx.cond(...)`. Those resolve to scales chosen by a
+*status enum*, so the set of scales a badge can render is not visible in the source at all, and a
+rule written today would bind a population I have not enumerated. Ruling it now would repeat §7's
+error in the opposite direction: a contract over sites I am guessing about.
+
+🔔 **Flip condition, so this does not become permanently deferred:** when AC3's guard can resolve an
+`rx.cond`/helper-call `color_scheme` — which AC3 requires anyway for 11.3 — **that same capability
+enumerates the badge population, and badges are ruled in the next Product pass.** The capability is
+the blocker, and it is being built for another reason.
+
+[cloud#255]: https://github.com/datanika-io/datanika-cloud/issues/255
+[core#821]: https://github.com/datanika-io/datanika-core/issues/821

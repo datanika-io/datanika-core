@@ -46,6 +46,7 @@ def _delete_account_dialog() -> rx.Component:
                 _t["account.delete_button"],
                 size="2",
                 color_scheme="red",
+                high_contrast=True,
                 variant="soft",
             ),
             on_click=AccountState.load_delete_preconditions,
@@ -119,12 +120,15 @@ def _delete_account_dialog() -> rx.Component:
                                     _t["common.cancel"],
                                     variant="soft",
                                     color_scheme="gray",
+                                    high_contrast=True,
                                     type="button",
                                 ),
                             ),
                             rx.button(
                                 _t["account.delete_button"],
                                 color_scheme="red",
+                                variant="soft",
+                                high_contrast=True,
                                 type="submit",
                                 # Disabled while a sole-owner refusal stands: the service
                                 # would refuse anyway, and offering a control that cannot
@@ -373,7 +377,6 @@ def account_card() -> rx.Component:
                 ),
                 href="https://datanika.io/docs/organizations",
                 is_external=True,
-                color_scheme="violet",
             ),
             delete_account_section(),
             spacing="4",
@@ -477,6 +480,7 @@ def _remove_member_dialog(member: MemberItem) -> rx.Component:
                 _t["settings.remove"],
                 size="1",
                 color_scheme="red",
+                high_contrast=True,
                 variant="ghost",
             ),
         ),
@@ -495,12 +499,16 @@ def _remove_member_dialog(member: MemberItem) -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["settings.remove_member_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=SettingsState.remove_member(member.id),
                     ),
                 ),
@@ -549,6 +557,7 @@ def _leave_org_dialog() -> rx.Component:
                 _t["settings.leave_org"],
                 size="1",
                 color_scheme="red",
+                high_contrast=True,
                 variant="ghost",
             ),
         ),
@@ -587,12 +596,16 @@ def _leave_org_dialog() -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["settings.leave_org_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=SettingsState.leave_org,
                     ),
                 ),
@@ -698,7 +711,9 @@ def _transfer_ownership_dialog() -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
@@ -772,6 +787,7 @@ def _cancel_invitation_dialog(inv: InvitationItem) -> rx.Component:
                 _t["common.cancel"],
                 size="1",
                 color_scheme="red",
+                high_contrast=True,
                 variant="ghost",
             ),
         ),
@@ -801,12 +817,15 @@ def _cancel_invitation_dialog(inv: InvitationItem) -> rx.Component:
                         _t["settings.cancel_invitation_keep"],
                         variant="soft",
                         color_scheme="gray",
+                        high_contrast=True,
                     ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["settings.cancel_invitation_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=SettingsState.cancel_invitation(inv.id),
                     ),
                 ),
@@ -1136,6 +1155,7 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
                 variant="ghost",
                 size="1",
                 color_scheme="red",
+                high_contrast=True,
                 aria_label=_t["common.delete"],
             ),
         ),
@@ -1159,12 +1179,16 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
             ),
             rx.flex(
                 rx.alert_dialog.cancel(
-                    rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                    rx.button(
+                        _t["common.cancel"], variant="soft", color_scheme="gray", high_contrast=True
+                    ),
                 ),
                 rx.alert_dialog.action(
                     rx.button(
                         _t["notifications.delete_confirm"],
                         color_scheme="red",
+                        variant="soft",
+                        high_contrast=True,
                         on_click=NotificationState.delete_channel(ch.id),
                     ),
                 ),

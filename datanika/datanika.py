@@ -45,6 +45,7 @@ from datanika.ui.state.schedule_state import ScheduleState
 from datanika.ui.state.settings_state import SettingsState
 from datanika.ui.state.transformation_state import TransformationState
 from datanika.ui.state.upload_state import UploadState
+from datanika.ui.theme import ACCENT_COLOR, GRAY_COLOR
 
 setup_logging(debug=_settings.debug)
 
@@ -78,7 +79,15 @@ _head_components: list[rx.Component] = [
 ]
 _head_components.extend(plugin_head_components())
 
-app = rx.App(head_components=_head_components)
+# The theme is passed explicitly, and that is the whole point of these two lines.
+# ``rx.App`` defaults to ``accent_color="blue"`` (``reflex/app.py``), so omitting the theme
+# does not leave the product unthemed — it leaves it wearing Reflex's choice, and Radix's
+# ``blue-9`` carries white text at 3.26:1, below WCAG AA. Every solid button in the app
+# inherited that. See ``docs/specs/SPEC_BUTTON_CONTRAST.md`` and ``datanika/ui/theme.py``.
+app = rx.App(
+    theme=rx.theme(accent_color=ACCENT_COLOR, gray_color=GRAY_COLOR),
+    head_components=_head_components,
+)
 
 if _settings.datanika_edition == "cloud":
     from datanika_cloud.plugin import init_cloud  # noqa: E402

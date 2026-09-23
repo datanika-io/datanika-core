@@ -182,7 +182,13 @@ def _delete_schedule_dialog(s) -> rx.Component:
         AuthState.can_delete,
         rx.alert_dialog.root(
             rx.alert_dialog.trigger(
-                rx.button(_t["common.delete"], color_scheme="red", size="1"),
+                rx.button(
+                    _t["common.delete"],
+                    color_scheme="red",
+                    variant="soft",
+                    high_contrast=True,
+                    size="1",
+                ),
             ),
             rx.alert_dialog.content(
                 rx.alert_dialog.title(_t["schedules.delete_title"]),
@@ -205,12 +211,19 @@ def _delete_schedule_dialog(s) -> rx.Component:
                 ),
                 rx.flex(
                     rx.alert_dialog.cancel(
-                        rx.button(_t["common.cancel"], variant="soft", color_scheme="gray"),
+                        rx.button(
+                            _t["common.cancel"],
+                            variant="soft",
+                            color_scheme="gray",
+                            high_contrast=True,
+                        ),
                     ),
                     rx.alert_dialog.action(
                         rx.button(
                             _t["schedules.delete_confirm"],
                             color_scheme="red",
+                            variant="soft",
+                            high_contrast=True,
                             on_click=ScheduleState.delete_schedule(s.id),
                         ),
                     ),

@@ -48,25 +48,66 @@ def _walk(component, parent=None):
 
 
 def _literal(value) -> str | None:
-    """The literal string behind a style value or prop, if it is one."""
+    """The literal string behind a style value or prop, if the **whole** value is one."""
     if value is None:
         return None
     literal = getattr(value, "_var_value", value)
     return literal if isinstance(literal, str) else None
 
 
+#: A double-quoted token inside a rendered ``Var`` expression. ``rx.cond`` renders as
+#: ``(test ? "a" : "b")`` and nests, so every branch appears as one of these.
+_RENDERED_STRING = re.compile(r'"([^"\\]*)"')
+
+
+def _colour_literals(value) -> list[str]:
+    """Every colour a colour prop can resolve to — **including each branch of a cond**.
+
+    🚨 This guard's first version reduced a colour with ``_literal`` alone and returned
+    ``None`` for anything that was not a plain string — and ``None`` read as *"fine"* at both
+    call sites below. That is a skip, and a skip is the same colour as a pass, in a guard
+    whose entire subject is which colour text is painted.
+
+    It was not hypothetical. ``getting_started_checklist`` painted a completed item's label
+    ``rx.cond(done, "var(--slate-10)", "var(--slate-12)")`` — a step-10 on real ``rx.text``,
+    exactly the class this file exists to stop — and the guard passed. Measured on the census
+    rather than argued: **7** of the coloured components reachable from the page factories
+    carry a composite colour (the checklist's five item labels and ``/dashboard``'s two usage
+    percents), and all 7 were invisible.
+
+    A ``Var`` renders its whole expression, so reading the quoted tokens out of it checks
+    *every* branch instead of none of them, and a nested cond renders all of its branches too.
+    ``test_it_saw_colours_written_as_a_cond`` asserts the census still meets composite
+    colours, so this cannot quietly stop being exercised.
+    """
+    if value is None:
+        return []
+    literal = _literal(value)
+    if literal is not None:
+        return [literal]
+    return _RENDERED_STRING.findall(str(value))
+
+
+def _is_css_grey(colour: str) -> bool:
+    return colour.strip().lower() in _CSS_GREYS
+
+
+def _is_background_step(colour: str) -> bool:
+    match = _GREY_STEP.fullmatch(colour.strip())
+    return bool(match) and int(match.group(2)) < 11
+
+
 def is_painted_css_grey(component) -> bool:
-    colour = _literal((getattr(component, "style", None) or {}).get("color"))
-    return colour is not None and colour.strip().lower() in _CSS_GREYS
+    colours = _colour_literals((getattr(component, "style", None) or {}).get("color"))
+    return any(_is_css_grey(colour) for colour in colours)
 
 
 def is_text_on_a_background_step(component) -> bool:
     """``rx.text`` painted with a grey step below 11. Icons are not text, and are not checked."""
     if type(component).__name__ != "Text":
         return False
-    colour = _literal((getattr(component, "style", None) or {}).get("color")) or ""
-    match = _GREY_STEP.fullmatch(colour.strip())
-    return bool(match) and int(match.group(2)) < 11
+    colours = _colour_literals((getattr(component, "style", None) or {}).get("color"))
+    return any(_is_background_step(colour) for colour in colours)
 
 
 def is_link_in_a_sentence_without_a_cue(component, parent) -> bool:
@@ -76,13 +117,16 @@ def is_link_in_a_sentence_without_a_cue(component, parent) -> bool:
 
 
 def _census():
-    grey, low_step, uncued, links_in_text, coloured = [], [], [], 0, 0
+    grey, low_step, uncued, links_in_text, coloured, composite = [], [], [], 0, 0, 0
     for module, attr in FACTORIES:
         with redirect_stdout(io.StringIO()):
             tree = getattr(importlib.import_module(f"datanika.ui.pages.{module}"), attr)()
         for component, parent in _walk(tree):
-            if (getattr(component, "style", None) or {}).get("color") is not None:
+            painted = (getattr(component, "style", None) or {}).get("color")
+            if painted is not None:
                 coloured += 1
+                if _literal(painted) is None:
+                    composite += 1
             if is_painted_css_grey(component):
                 grey.append(f"{module}.{attr}: {type(component).__name__}")
             if is_text_on_a_background_step(component):
@@ -91,10 +135,10 @@ def _census():
                 links_in_text += 1
             if is_link_in_a_sentence_without_a_cue(component, parent):
                 uncued.append(f"{module}.{attr}")
-    return grey, low_step, uncued, links_in_text, coloured
+    return grey, low_step, uncued, links_in_text, coloured, composite
 
 
-GREY, LOW_STEP, UNCUED, LINKS_IN_TEXT, COLOURED = _census()
+GREY, LOW_STEP, UNCUED, LINKS_IN_TEXT, COLOURED, COMPOSITE = _census()
 
 
 class TestTheCensusSawTheSubjects:
@@ -104,6 +148,15 @@ class TestTheCensusSawTheSubjects:
     def test_it_saw_links_inside_sentences(self):
         """Five today (signup ×3, oauth consent, forgot password)."""
         assert LINKS_IN_TEXT >= 4, LINKS_IN_TEXT
+
+    def test_it_saw_colours_written_as_a_cond(self):
+        """Seven today — the checklist's five item labels and ``/dashboard``'s two percents.
+
+        Every one of these was invisible to this file's first version. If this reaches 0,
+        ``_colour_literals``' branch reading is exercised by no real page and the two checks
+        below have silently narrowed back to plain literals — passing all the way down.
+        """
+        assert COMPOSITE >= 2, COMPOSITE
 
 
 class TestTextIsLegible:
@@ -131,6 +184,39 @@ class TestTheChecksTellTheShapesApart:
         assert is_text_on_a_background_step(rx.text("x", color="var(--slate-10)"))
         assert not is_text_on_a_background_step(rx.text("x", color="var(--gray-11)"))
         assert not is_text_on_a_background_step(rx.icon("bell", color="var(--slate-8)"))
+
+    def test_a_background_step_hidden_in_a_cond_is_caught(self):
+        """The shape this file shipped blind to, and ``/dashboard``'s legitimate one beside it.
+
+        A ``Var`` is not a ``str``, so reducing the colour with ``_literal`` alone returned
+        ``None`` and both checks answered *no offence* — for a real step-10 on real text.
+        """
+        done = rx.Var.create(True)
+        assert is_text_on_a_background_step(
+            rx.text("x", color=rx.cond(done, "var(--slate-10)", "var(--slate-12)"))
+        )
+        assert is_painted_css_grey(rx.text("x", color=rx.cond(done, "gray", "var(--gray-11)")))
+        # /dashboard's usage percents: every branch is step 11, and must stay acceptable.
+        assert not is_text_on_a_background_step(
+            rx.text("x", color=rx.cond(done, "var(--red-11)", "var(--green-11)"))
+        )
+
+    def test_the_branch_reader_returns_every_branch(self):
+        """Anti-vacuity for the test above, which passes just as well on one branch.
+
+        A reader that returned only the *first* branch would catch the assertions above and
+        miss a step-9 hiding in an else, so the count is asserted rather than the verdict.
+        """
+        done = rx.Var.create(True)
+        assert _colour_literals(rx.cond(done, "var(--slate-10)", "var(--slate-12)")) == [
+            "var(--slate-10)",
+            "var(--slate-12)",
+        ]
+        assert _colour_literals(
+            rx.cond(done, "var(--red-11)", rx.cond(done, "gray", "var(--gray-11)"))
+        ) == ["var(--red-11)", "gray", "var(--gray-11)"]
+        assert _colour_literals("var(--gray-11)") == ["var(--gray-11)"]
+        assert _colour_literals(None) == []
 
     def test_an_uncued_link_in_a_sentence_is_caught_and_an_underlined_one_is_not(self):
         sentence = rx.text("Read the ", rx.link("terms", href="/t"))

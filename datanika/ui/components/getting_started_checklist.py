@@ -19,7 +19,7 @@ def _step_row(done: rx.Var[bool], label: rx.Var[str], href: str) -> rx.Component
             rx.text(
                 label,
                 size="2",
-                color=rx.cond(done, "var(--slate-10)", "var(--slate-12)"),
+                color=rx.cond(done, "var(--slate-11)", "var(--slate-12)"),
                 style={"textDecoration": rx.cond(done, "line-through", "none")},
             ),
             align="center",

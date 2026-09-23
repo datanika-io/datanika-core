@@ -29,5 +29,12 @@ deploy/server/*.yml text eol=lf
 # found by test_the_deployed_conf_files_are_pinned_to_lf rather than by anyone noticing.
 deploy/server/*.asc text eol=lf
 
+# core#1477. Installed to /etc/cron.d/datanika, where CRLF is not diff noise: cron would
+# carry the trailing \r into the command and try to execute `grafana-watchdog.sh\r`, which
+# does not exist. The job would be scheduled, present and permanently failing — the same
+# "installed, verified, and never runs" shape the cron-in-git change exists to end. Same
+# reason as the .asc rule above, and found the same way.
+deploy/server/*.cron text eol=lf
+
 # Read by FreeTDS's C parser inside a Linux image; keep it byte-identical across checkouts.
 datanika/pymssql_freetds.conf text eol=lf

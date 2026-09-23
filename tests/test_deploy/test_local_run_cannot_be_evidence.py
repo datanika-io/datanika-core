@@ -116,6 +116,17 @@ MARKER_ALLOWLIST = frozenset(
         # string and prints none, so `test_nothing_outside_the_ci_workflows_prints_a_verdict_marker`
         # stays green over it, which is the assertion that actually matters here.
         "tests/test_deploy/test_reader_subject_coverage.py",
+        # tests: fakes whole JOB LISTS as well as logs, to drive the reader across a run whose
+        # tier job supersession skipped (core#1507). It builds markers into fake log strings and
+        # prints none, so `test_nothing_outside_the_ci_workflows_prints_a_verdict_marker` stays
+        # green over it — which, as above, is the assertion that actually matters.
+        #
+        # 🔑 This guard caught that file at the pre-push hook and NOT in the local run minutes
+        # earlier, and the difference was one fact about `git status`: `_tracked_files()` is
+        # `git ls-files`, so an untracked new file is invisible to it. A full local
+        # `tests/test_deploy` run went 1945 passed / exit 0 with the offender sitting in the
+        # tree. **A pre-commit green is not evidence about the file you are adding.**
+        "tests/test_deploy/test_superseded_run_is_transparent.py",
     }
 )
 

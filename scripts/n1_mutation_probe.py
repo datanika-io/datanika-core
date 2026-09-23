@@ -131,7 +131,13 @@ def _scoped_status(paths: list[Path]) -> list[str]:
 def main(argv: list[str]) -> int:
     store = Store(STATE)
     if "--restore" in argv:
-        return store.restore_scoped()
+        # core#1288: `restore_scoped` is attached to the imported `Store` at module scope
+        # further down this file (`Store.restore_scoped = _restore_scoped`), which runs
+        # before `main` ever does. mypy reads the class as `mutation_probe` defines it and
+        # cannot see a runtime-attached method, so this is a limitation of the tool, not a
+        # latent AttributeError. Kept per-line so `warn_unused_ignores` reds it the day the
+        # method moves into the class and the patch is no longer needed.
+        return store.restore_scoped()  # type: ignore[attr-defined]
 
     targets = [a for a in argv if not a.startswith("-")]
     if not targets:
@@ -141,7 +147,7 @@ def main(argv: list[str]) -> int:
     # A previous run may have been killed. Recover before mutating anything further.
     if store.sentinel.exists():
         print("[n1] a sentinel from an earlier run exists — restoring first")
-        if store.restore_scoped() != 0:
+        if store.restore_scoped() != 0:  # type: ignore[attr-defined]
             return 3
 
     files = sorted({*DELETIONS, *SUBSTITUTIONS}, key=lambda p: p.as_posix())
@@ -193,7 +199,7 @@ def main(argv: list[str]) -> int:
             env=clean_env(UV_NO_SYNC="1", PYTHONIOENCODING="utf-8"),
         ).returncode
     finally:
-        restore_rc = store.restore_scoped()
+        restore_rc = store.restore_scoped()  # type: ignore[attr-defined]
     return rc or restore_rc
 
 

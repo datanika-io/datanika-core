@@ -367,11 +367,24 @@ export async function runUploadAndAwait(
         `run_upload went out — but no run row ever appeared within ${timeoutMs}ms.` +
         "\n\nThis is the APP, not the worker. `UploadState.run_upload` INSERTs the " +
         "run row and commits it before `run_upload_task.delay(...)` is ever called, " +
-        "so a missing row means no task was enqueued and Celery is not implicated. " +
-        "Look at the paths that return without writing anything: " +
-        "`_check_role(\"editor\")` returning False (it only sets `error_message`), " +
-        "the cloud plugin's `run.before_execute` quota hook refusing a fresh Free " +
-        "org, or the handler raising before `session.commit()`.",
+        "so a missing row means no task was enqueued and Celery is not implicated." +
+        "\n\nFOUR paths reach this state, and they are TWO KINDS. Three return " +
+        "quietly; the fourth RAISES — so only one of them leaves a traceback, and " +
+        "knowing which you are looking for is the difference between reading a log " +
+        "and searching one (core#1528):" +
+        "\n  1. `_check_role(\"editor\")` returns False — sets `error_message` only, " +
+        "and `uploads.py` renders that var nowhere (core#887). Silent." +
+        "\n  2. The source or destination connection is soft-deleted. `run_upload` " +
+        "refuses BEFORE creating anything, sets `auth_state.action_error` and " +
+        "returns (core#805, `connections.py`'s own comment says why). Silent — and " +
+        "this path was missing from this message entirely." +
+        "\n  3. The cloud plugin's `run.before_execute` quota hook refusing a fresh " +
+        "Free org. Silent." +
+        "\n  4. `ExecutionService.create_requested_run` calls `assert_org_role(..., " +
+        "EDITOR)`, which RAISES. So a ROLE problem can arrive either way — as 1's " +
+        "quiet return or as an exception here — and this message used to describe " +
+        "only the quiet one. Look for the traceback in the staging app container's " +
+        "log, which `e2e-staging` now captures for the test window (core#1528).",
     );
   }
 

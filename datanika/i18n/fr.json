@@ -340,7 +340,7 @@
   "runs.logs_run": "Journaux — Exécution #",
   "runs.cancel": "Annuler",
   "runs.cancel_title": "Arrêter cette exécution ?",
-  "runs.cancel_body": "Une exécution qui n'a pas encore commencé son travail s'arrête avant que quoi que ce soit ne soit lu ou écrit. Un travail déjà en cours ne peut pas être interrompu : il va jusqu'au bout, puis l'exécution est marquée comme annulée. Les données déjà écrites dans votre destination y restent, donc relancer un chargement en mode ajout (append) charge ces lignes une nouvelle fois.",
+  "runs.cancel_body": "Une exécution qui n'a pas encore commencé son travail s'arrête avant que quoi que ce soit ne soit lu ou écrit. Un travail déjà en cours ne peut pas être interrompu : il va jusqu'au bout, puis l'exécution est marquée comme annulée. Les données déjà écrites dans votre destination y restent, donc une réexécution en mode ajout (append) charge ces lignes une nouvelle fois.",
   "runs.cancel_billing": "Vous êtes facturé pour ce qui a été traité avant l'arrêt de l'exécution.",
   "runs.cancel_confirm": "Arrêter l'exécution",
   "runs.cancel_keep": "Continuer l'exécution",

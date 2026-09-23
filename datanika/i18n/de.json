@@ -340,7 +340,7 @@
   "runs.logs_run": "Protokolle — Ausführung #",
   "runs.cancel": "Abbrechen",
   "runs.cancel_title": "Diese Ausführung stoppen?",
-  "runs.cancel_body": "Eine Ausführung, die ihre Arbeit noch nicht begonnen hat, stoppt, bevor etwas gelesen oder geschrieben wird. Bereits laufende Arbeit kann nicht unterbrochen werden: Sie läuft bis zum Ende, und die Ausführung wird danach als abgebrochen markiert. Bereits in Ihr Ziel geschriebene Daten bleiben dort, daher lädt eine erneute Ausführung eines Uploads, der anhängt (append), diese Zeilen noch einmal.",
+  "runs.cancel_body": "Eine Ausführung, die ihre Arbeit noch nicht begonnen hat, stoppt, bevor etwas gelesen oder geschrieben wird. Bereits laufende Arbeit kann nicht unterbrochen werden: Sie läuft bis zum Ende, und die Ausführung wird danach als abgebrochen markiert. Bereits in Ihr Ziel geschriebene Daten bleiben dort, daher lädt eine erneute Ausführung, die anhängt (append), diese Zeilen noch einmal.",
   "runs.cancel_billing": "Berechnet wird, was vor dem Stopp der Ausführung verarbeitet wurde.",
   "runs.cancel_confirm": "Ausführung stoppen",
   "runs.cancel_keep": "Weiterlaufen lassen",

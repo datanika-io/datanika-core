@@ -23,11 +23,20 @@ from __future__ import annotations
 from datanika.config import settings
 
 #: D3 in its 2a form: what a stop does and does not do, and what is left behind.
+#:
+#: ⚠️ **The last sentence names no object on purpose (Product, 2026-09-23).** This text is shown
+#: for every ``Run``, and ``Run.target_type`` is a :class:`~datanika.models.dependency.NodeType`
+#: — ``upload``, ``transformation`` or ``pipeline``. It said *"re-running an upload that
+#: appends"*, so two of the three read an example about an object they are not running; worse, a
+#: dbt user could read the upload-specific clause as an exemption, and an ``incremental``
+#: materialisation appends exactly as an ``append`` upload does. Do not put the noun back. If a
+#: per-type sentence is ever wanted, it has to branch here, because the API returns this string
+#: as ``notice`` for every run type too.
 CANCEL_EFFECT = (
     "A run that has not started its work yet stops before anything is read or written. "
     "Work already in progress cannot be interrupted: it runs to the end, and the run is then "
-    "marked cancelled. Data already written to your destination stays there, so re-running an "
-    "upload that appends loads those rows again."
+    "marked cancelled. Data already written to your destination stays there, so a re-run that "
+    "appends loads those rows again."
 )
 
 #: AC12's sentence. Only true where something bills — see :func:`bills_usage`.

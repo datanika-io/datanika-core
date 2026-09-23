@@ -1,0 +1,44 @@
+# /etc/cron.d/datanika — the first box-side schedule that lives in git (core#1477).
+#
+# Installed from `deploy/server/datanika.cron` by `scripts/install-server-scripts.sh` on every
+# deploy, 0644 root:root. ⚠️ The destination basename is `datanika`, WITHOUT the `.cron`
+# suffix: cron silently ignores any file in /etc/cron.d whose name contains a dot. A file
+# named `datanika.cron` there would sit present, correct, readable and never execute — the
+# exact "installed, verified, and never runs" shape this file exists to end. The installer
+# asserts the destination name, and `tests/test_deploy/test_grafana_watchdog.py` pins it.
+#
+# WHY ONLY ONE LINE IS HERE, AND WHAT IT WOULD TAKE TO MOVE THE OTHERS
+# --------------------------------------------------------------------
+# Five jobs are scheduled on this box today, ALL of them added by hand to root's crontab and
+# none of them in git:
+#
+#     0 3 * * *      backup-offsite.sh
+#     0 5 1 * *      restore-drill.sh
+#     */5 * * * *    export-prod-settings.sh
+#     30 5 1 * *     rebuild-parity-drill.sh
+#     */10 * * * *   export-watchdog-freshness.sh
+#
+# 🚨 Copying those five here WITHOUT removing them from root's crontab schedules each of them
+# TWICE — two concurrent `backup-offsite.sh` runs at 03:00 doing a pg_dump and an off-site
+# rsync against the same paths, and two `restore-drill.sh` runs on the 1st. So the migration
+# is a deliberate two-step, not an edit to this file:
+#
+#   1. add the line here and promote;
+#   2. then, on the box, remove that one line from root's crontab:
+#        crontab -l | grep -v '<script-name>' | crontab -
+#
+# The installer REFUSES to install this file while any command it names is also in root's
+# crontab, and prints which. That guard is armed now and costs nothing while this file holds
+# one line; it is what makes step 1 safe to do before step 2 rather than after.
+#
+# A deploy does not need to reload anything: cron re-reads /etc/cron.d by mtime.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Is Grafana still able to evaluate alert rules? Nothing else on this box asks, because
+# everything else that could ask IS a Grafana alert rule (core#1477). Every 2 minutes, with a
+# 2-failure debounce, so detection is 2–4 minutes and a single transient 500 never pages.
+# Output is discarded: the script is a reporter and talks to Telegram directly. A non-zero
+# exit means the watchdog itself could not run, and cron mails root about that.
+*/2 * * * * root /opt/datanika/scripts/grafana-watchdog.sh >/dev/null 2>&1

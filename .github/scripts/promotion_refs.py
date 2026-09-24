@@ -126,6 +126,54 @@ CROSS_REPO = re.compile(
 )
 
 
+def neutralise(text: str) -> str:
+    """Render borrowed text so GitHub's closing-keyword parser cannot act on it (core#1543).
+
+    This script writes each promoted issue's **title**, and each unaccounted commit's
+    **subject**, into the generated block. Those strings are not ours: they are whatever
+    somebody typed. When one contains a closing keyword followed by a number, *this
+    generator writes a live closing reference for an issue nobody promoted.*
+
+    Measured on a real promotion. PR #1188's block carries::
+
+        - Closes #1162 — [QA] A commit saying "Does not close #1130" CLOSED #1130 …
+
+    `#1162` is correct and intended. The rest is **the title of #1162**, and GitHub's parser
+    does not know that. Asked what #1188 would close, GitHub answered `#1162` *and* `#1130`.
+    Nobody linked #1130; the generator did.
+
+    🚨 **Not by escaping the hash.** `scripts/check_closing_keyword_intent.py` measured that
+    `&#35;` / `%23` do TWO things: the closing grammar stops matching, *and* a bare-reference
+    scan reads the entity's own hash-then-digits and returns an **unrelated** issue. In the
+    one document whose reference list is trusted because it is mechanical, that is worse than
+    the defect.
+
+    A code span is the repair, and it is **unconditional on purpose**. Neutralising only
+    titles that "look dangerous" would mean detecting GitHub's grammar here — a second model
+    of the parser, which is exactly what core#1541 rejected. Wrapping every borrowed string
+    needs no predicate and so has nothing to drift.
+
+    Measured rather than assumed, because every document in this project asserts it and
+    nothing had checked: across 309 merged PRs into a default branch, a closing keyword
+    inside a code span appears in `closingIssuesReferences` **0 times out of 65**. The 65 are
+    this script's own boilerplate, which cites `closes #272` on every promotion — a natural
+    control that has been running for months.
+
+    The fence is sized to the content: a title containing backticks (this project writes
+    those constantly) would otherwise close the span early and leak the rest of the line.
+    """
+    if not text:
+        return ""
+    flat = text.replace("\r", " ").replace("\n", " ")
+    runs = re.findall(r"`+", flat)
+    fence = "`" * (max((len(r) for r in runs), default=0) + 1)
+    # CommonMark strips one leading and one trailing space, so this pads without changing
+    # what a reader sees -- and without it a title that starts or ends with a backtick
+    # cannot be spanned at all.
+    pad = " " if flat.startswith("`") or flat.endswith("`") else ""
+    return f"{fence}{pad}{flat}{pad}{fence}"
+
+
 def repo_aliases(repo: str) -> set[str]:
     """The spellings that mean *this* repository, lower-cased.
 
@@ -440,9 +488,9 @@ def main() -> int:
             # parses the raw text, so `~~Closes #N~~` still fires. An already-closed
             # issue needs no keyword, and omitting it means a stale or false-positive
             # reference cannot act on an issue this promotion does not own.
-            lines.append(f"- #{num} — {title} _(already closed)_ · via {via}")
+            lines.append(f"- #{num} — {neutralise(title)} _(already closed)_ · via {via}")
         else:
-            lines.append(f"- Closes #{num} — {title} · via {via}")
+            lines.append(f"- Closes #{num} — {neutralise(title)} · via {via}")
 
     # The candidate half. NO closing keyword on any of these lines, by design: a bare
     # `#N` in a PR body closes nothing, which is exactly the property that lets this list
@@ -461,14 +509,18 @@ def main() -> int:
             continue
         title = (issue.get("title") or "").strip()
         via = ", ".join(sorted(tracking[num]))
-        candidate_lines.append(f"- #{num} — {title} · via {via}")
+        candidate_lines.append(f"- #{num} — {neutralise(title)} · via {via}")
 
     # The "I could not tell" half (core#1040). Two distinct states, kept distinct:
     # a commit that referenced ANOTHER repo's tracker, and a commit that referenced
     # nothing at all. Both used to vanish; only one of them is a convention lapse.
     unaccounted_lines = []
     for sha in unaccounted:
-        unaccounted_lines.append(f"- `{sha[:7]}` — {subjects.get(sha, '')}")
+        # The commit SUBJECT is borrowed text too, and core#1543's issue body names only
+        # titles. It is the same injection: a subject reading `… does not close #123 …`
+        # would plant the reference here just as a title does one section up. Found by
+        # asking which OTHER strings this block renders that nobody in this repo wrote.
+        unaccounted_lines.append(f"- `{sha[:7]}` — {neutralise(subjects.get(sha, ''))}")
 
     # `unresolved` belongs in this condition. Without it, a promotion whose only
     # references are unresolvable renders NO block at all and exits 0 -- which is

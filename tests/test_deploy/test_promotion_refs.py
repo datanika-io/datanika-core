@@ -24,6 +24,7 @@ branch at promotion time is the normal case, not a rare one.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -577,6 +578,33 @@ class TestABorrowedStringCannotInjectAClosingReference:
         out = capsys.readouterr().out
         return next(ln for ln in out.splitlines() if ln.startswith("- Closes #1162"))
 
+    #: An INDEPENDENT code-span stripper, deliberately not built from `neutralise`.
+    #:
+    #: 🔑 The first version of the assertions below removed the title by computing
+    #: `line.replace(refs.neutralise(TITLE), " ")` — i.e. it asked the function under test
+    #: where its own output was. With `neutralise` mutated to a no-op the expected value
+    #: became the raw title, the raw title was of course present, and **every one of these
+    #: tests stayed green against the pre-fix code.** Found by the arming pass; reading them
+    #: did not find it, because each assertion is locally correct.
+    #:
+    #: A test that derives its expectation from the thing in doubt is satisfied by that
+    #: thing doing nothing. This regex is the cheap markdown approximation (core#1543 AC3);
+    #: the oracle is `closingIssuesReferences`, and `neutralise`'s docstring carries what it
+    #: said.
+    _CODE_SPAN = re.compile(r"(`+).*?\1", re.DOTALL)
+
+    @classmethod
+    def _outside_code_spans(cls, text):
+        return cls._CODE_SPAN.sub(" ", text)
+
+    def test_control_the_stripper_can_see_both_kinds_of_text(self):
+        """§24a's lesson: without this, narrowing the stripper until it matches nothing
+        would 'fix' any false positive and leave every assertion below vacuous."""
+        assert self._outside_code_spans("keep `drop` keep") == "keep   keep"
+        assert self._outside_code_spans("no spans here") == "no spans here"
+        assert "inner`tick" not in self._outside_code_spans("``inner`tick`` after")
+        assert "after" in self._outside_code_spans("``inner`tick`` after")
+
     def test_the_intended_reference_still_fires(self, monkeypatch, capsys):
         """AC2's first half. A repair that neutralised the whole line passes only this."""
         assert "Closes #1162" in self._line(monkeypatch, capsys, self.REAL_TITLE)
@@ -584,15 +612,14 @@ class TestABorrowedStringCannotInjectAClosingReference:
     def test_the_title_contributes_no_live_reference(self, monkeypatch, capsys):
         """AC2's second half, and the two must hold together.
 
-        Asserted without a markdown parser: remove exactly the fenced title from the line
-        and scan what is left. Everything the title contributed is inside the span, so the
-        only live reference remaining is the one this promotion actually declares.
+        Strip every code span from the rendered line with a stripper that knows nothing
+        about `neutralise`, then scan what is left. The only live reference remaining must
+        be the one this promotion actually declares.
         """
         line = self._line(monkeypatch, capsys, self.REAL_TITLE)
-        fenced = refs.neutralise(self.REAL_TITLE)
-        assert fenced in line, "the title was not rendered inside a code span at all"
-        outside = line.replace(fenced, " ")
+        outside = self._outside_code_spans(line)
         assert {int(n) for n in refs.KEYWORD.findall(outside)} == {1162}
+        assert "1130" not in outside, "the borrowed title still reaches GitHub's parser"
 
     def test_the_title_is_still_readable(self, monkeypatch, capsys):
         """The false-positive control. Neutralising by deleting would pass the test above
@@ -621,8 +648,7 @@ class TestABorrowedStringCannotInjectAClosingReference:
             monkeypatch.setenv(key, value)
         assert refs.main() == 0
         line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("- #872"))
-        outside = line.replace(refs.neutralise(self.REAL_TITLE), " ")
-        assert not refs.KEYWORD.search(outside)
+        assert not refs.KEYWORD.search(self._outside_code_spans(line))
 
     def _drive(self, monkeypatch, capsys, log, issue):
         monkeypatch.setattr(refs, "run", lambda *a: log if a[:2] == ("git", "log") else "")
@@ -649,8 +675,7 @@ class TestABorrowedStringCannotInjectAClosingReference:
         )
         line = next(ln for ln in out.splitlines() if ln.startswith("- #1162"))
         assert "already closed" in line
-        outside = line.replace(refs.neutralise(self.REAL_TITLE), " ")
-        assert not refs.KEYWORD.search(outside)
+        assert not refs.KEYWORD.search(self._outside_code_spans(line))
 
     def test_an_unaccounted_commit_subject_is_neutralised(self, monkeypatch, capsys):
         """The fourth render site — and reaching it exposed a sharper point.
@@ -683,9 +708,7 @@ class TestABorrowedStringCannotInjectAClosingReference:
         )
         line = next(ln for ln in out.splitlines() if ln.startswith("- `ddddddd`"))
         assert "1130" in line, "the subject must still be shown to the promoter, not stripped"
-        fenced = refs.neutralise(subject)
-        assert fenced in line, "the subject was not rendered inside a code span"
-        assert "issues/1130" not in line.replace(fenced, " ")
+        assert "issues/1130" not in self._outside_code_spans(line)
 
     def test_the_generators_parser_is_narrower_than_githubs(self):
         """States the gap above as its own assertion, so it cannot be read as incidental."""

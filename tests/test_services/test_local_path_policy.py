@@ -35,6 +35,8 @@ because a validator bolted onto the wrong layer breaks the connections page for
 everyone who has one.
 """
 
+from pathlib import Path
+
 import pytest
 
 from datanika.models.connection import ConnectionType
@@ -47,6 +49,11 @@ from datanika.services.connection_service import (
 )
 from datanika.services.encryption import EncryptionService
 from tests.factories import make_org_admin
+
+#: Anchored to this file, never to the cwd (core#1551). A bare
+#: ``Path("datanika/i18n")`` resolves only when pytest is invoked from the repo
+#: root, and reads empty — not loudly — from anywhere else.
+I18N = Path(__file__).resolve().parents[2] / "datanika/i18n"
 
 KEY = "3Zq7Yq5wJvXk9nR2mT8pL4sV6dC0bN1hG5jF7aE3uI0="
 
@@ -442,10 +449,9 @@ def test_the_refusal_is_translated_not_surfaced_verbatim():
 @pytest.mark.parametrize("locale", ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"])
 def test_the_refusal_exists_in_every_locale(locale):
     import json
-    from pathlib import Path
 
-    data = json.loads((Path("datanika/i18n") / f"{locale}.json").read_text(encoding="utf-8"))
-    en = json.loads((Path("datanika/i18n") / "en.json").read_text(encoding="utf-8"))
+    data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+    en = json.loads((I18N / "en.json").read_text(encoding="utf-8"))
     key = "connections.local_path_not_allowed"
     assert key in data and data[key].strip()
     if locale != "en":
@@ -469,7 +475,6 @@ def test_no_locale_names_a_withdrawn_connector():
     revisit — the sentence should get S3 back alongside the connector.
     """
     import json
-    from pathlib import Path
 
     from datanika.services.connection_service import WITHDRAWN_SOURCE_TYPES
 
@@ -478,7 +483,7 @@ def test_no_locale_names_a_withdrawn_connector():
         "poorer for having only one alternative to offer"
     )
     for locale in ["en", "ru", "el", "de", "fr", "es", "zh", "ar", "sr"]:
-        text = json.loads((Path("datanika/i18n") / f"{locale}.json").read_text(encoding="utf-8"))[
+        text = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))[
             "connections.local_path_not_allowed"
         ]
         assert "S3" not in text and "s3://" not in text, (

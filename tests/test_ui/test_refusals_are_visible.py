@@ -43,7 +43,11 @@ from datanika.services.user_service import UserService
 from datanika.ui.state.auth_state import AuthState, OrgInfo, UserInfo
 from datanika.ui.state.base_state import BaseState
 
-I18N = Path("datanika/i18n")
+#: Anchored to this file, never to the cwd (core#1551). Unanchored, this directory
+#: is simply *missing* from any other cwd — and ``Path.glob`` on a missing directory
+#: yields nothing instead of raising, so an absence-shaped assertion below passed
+#: while grading zero locales.
+I18N = Path(__file__).resolve().parents[2] / "datanika/i18n"
 SECRET = "test-secret-key-for-refusal-visibility"
 
 
@@ -297,9 +301,26 @@ class TestTheShellShowsBoth:
 
 class TestTheBannerTextIsTranslated:
     def test_every_locale_carries_the_key(self):
+        """🚨 The population is asserted before the offenders are, and that line is
+        the point of this test rather than housekeeping.
+
+        ``missing == []`` is **absence-shaped**, so an empty population satisfies it.
+        That was not hypothetical: until core#1551 this glob ran against a
+        cwd-relative ``Path("datanika/i18n")``, and from any cwd but the repo root it
+        yielded **nothing** — ``Path.glob`` on a missing directory returns an empty
+        iterator instead of raising — so this test **passed having graded zero
+        locales**. Its sibling below failed loudly from the same cwd, because that one
+        reaches into the result (``values["en.json"]``). Same directory, same glob,
+        opposite verdicts, decided entirely by the shape of the assertion.
+        """
+        locales = sorted(I18N.glob("*.json"))
+        assert len(locales) == 9, (
+            f"expected 9 locale files, found {[p.name for p in locales]} — "
+            "grading an empty population is not a pass"
+        )
         missing = [
             p.name
-            for p in sorted(I18N.glob("*.json"))
+            for p in locales
             if "app.connection_lost" not in json.loads(p.read_text(encoding="utf-8"))
         ]
         assert missing == [], f"locales missing app.connection_lost: {missing}"

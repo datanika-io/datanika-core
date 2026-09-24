@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pytest
 
-I18N = Path("datanika/i18n")
-LAYOUT = Path("datanika/ui/components/layout.py")
+#: Anchored to this file, never to the cwd (core#1551).
+REPO = Path(__file__).resolve().parents[2]
+I18N = REPO / "datanika/i18n"
+LAYOUT = REPO / "datanika/ui/components/layout.py"
 
 
 def _build_layout_capturing_output():

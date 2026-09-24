@@ -20,9 +20,14 @@ The signal is a **bounded flag**, not the message text, for the same reason
 its own query string is a phishing surface anyone can aim.
 """
 
+from pathlib import Path
+
 import pytest
 
 from datanika.services.user_service import UserServiceError
+
+#: Anchored to this file, never to the cwd (core#1551).
+I18N = Path(__file__).resolve().parents[2] / "datanika/i18n"
 
 
 class TestTheCallbackDistinguishesARefusalFromAFailure:
@@ -102,9 +107,8 @@ class TestTheLoginPageShowsIt:
     def test_the_copy_is_translated_everywhere(self):
         """All three keys, all nine locales — heading plus two remedy variants."""
         import json
-        from pathlib import Path
 
-        i18n_dir = Path("datanika/i18n")
+        i18n_dir = I18N
         locales = sorted(p.stem for p in i18n_dir.glob("*.json"))
         assert len(locales) == 9, f"expected 9 locale files, found {locales}"
         for locale in locales:

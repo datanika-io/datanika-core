@@ -110,11 +110,16 @@ jobs:
       # files NO gate reads, and it will diverge from the hook again the moment it lands.
       # Fix the file, or add a per-file-ignore in pyproject.toml where BOTH gates see it.
       # Pinned by tests/test_deploy/test_lint_gates_cover_what_they_name.py.
+      # core#1558 added `.github/scripts` and `rxconfig.py`. The first holds five programs,
+      # two of which decide whether a promotion may proceed and what it closes, and neither
+      # gate read them. Completeness of THIS list is now pinned by
+      # tests/test_deploy/test_lint_gates_name_every_python_directory.py -- the inverse of the
+      # file named above, which only asks whether what is named resolves to real files.
       - name: Ruff check
-        run: ruff check datanika tests scripts e2e/scripts
+        run: ruff check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 
       - name: Ruff format check
-        run: ruff format --check datanika tests scripts e2e/scripts
+        run: ruff format --check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 
       # core#1288. A step inside `lint`, NOT a separate `typecheck` job, and the reason is a
       # measurement rather than a preference: this file's `on:` block already carries

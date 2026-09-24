@@ -167,6 +167,7 @@ def _models_section() -> rx.Component:
                 ),
                 icon="triangle_alert",
                 color_scheme="orange",
+                high_contrast=True,
                 size="1",
             ),
         ),

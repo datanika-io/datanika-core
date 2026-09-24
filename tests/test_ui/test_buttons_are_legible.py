@@ -262,7 +262,19 @@ def ratio(foreground: str, background: str) -> float:
 #: ``rx.match`` renders to a JavaScript ``switch`` whose arms are ``return ("value")``.
 _MATCH_ARM = re.compile(r'return\s*\(\s*"([^"]*)"\s*\)')
 #: ``rx.cond`` renders to a ternary. Both halves are branches; the *test* is not.
-_TERNARY = re.compile(r'\?\s*"([^"]*)"\s*:\s*"([^"]*)"')
+#:
+#: 🔴 **These were ONE pattern matching a flat pair, and a NESTED cond defeated it silently
+#: (core#1535).** ``rx.cond(a, "gray", rx.cond(b, "green", "red"))`` renders
+#: ``(a ? "gray" : (b ? "green" : "red"))``; the flat pattern matched only the inner pair and
+#: returned ``['green', 'red']`` — **dropping ``"gray"`` with no error**. It degraded with depth:
+#: a three-deep cond returned only the innermost pair, losing two arms of four.
+#:
+#: 🔑 **The fail-loud design had a hole exactly where the shape is recognisable but incomplete.**
+#: The docstring below is right that returning ``[]`` would read as *"nothing to grade here"* — but
+#: a *partial* list is worse, because it reads as a complete grading of a smaller population. The
+#: real case is `/connections`' test verdict, whose third state (`gray`, core#821) was invisible.
+_TERNARY_CONDITION = re.compile(r'\?\s*[("]')
+_TERNARY_ARM = re.compile(r'[?:]\s*"([^"]*)"')
 
 
 def _branches(value: object) -> list[object]:
@@ -271,6 +283,10 @@ def _branches(value: object) -> list[object]:
     Raises :class:`UnreadablePropError` on a shape it does not recognise. That is deliberate and is
     the whole lesson of the composite-colour miss: the alternative is returning ``[]``, which
     every caller below would read as *"nothing to grade here"*.
+
+    ⚠️ **A ternary chain must yield exactly one more arm than it has conditions.** That count is
+    what makes a *partial* read loud: an arm that is itself a Var rather than a literal leaves the
+    totals disagreeing, and this raises instead of grading a subset and calling it the whole.
     """
     if value is None:
         return [None]
@@ -281,9 +297,16 @@ def _branches(value: object) -> list[object]:
     arms = _MATCH_ARM.findall(rendered)
     if arms:
         return sorted(set(arms))
-    pairs = _TERNARY.findall(rendered)
-    if pairs:
-        return sorted({branch for pair in pairs for branch in pair})
+    conditions = len(_TERNARY_CONDITION.findall(rendered))
+    if conditions:
+        ternary_arms = _TERNARY_ARM.findall(rendered)
+        if len(ternary_arms) != conditions + 1:
+            raise UnreadablePropError(
+                f"{conditions} ternary condition(s) but {len(ternary_arms)} literal arm(s) — "
+                f"at least one branch is not a literal, so grading these would grade a subset "
+                f"and call it the whole: {rendered[:200]}"
+            )
+        return sorted(set(ternary_arms))
     raise UnreadablePropError(f"cannot read the branches of: {rendered[:200]}")
 
 
@@ -616,3 +639,168 @@ class TestTheTokensDescribeThePackageWeShip:
                     found.setdefault(name, value.strip())
             for step, value in wanted.items():
                 assert found.get(f"{scale}-{step}") == value, f"--{scale}-{step}"
+
+
+# ------------------------------------------------------------------------ callouts (§11, #1535)
+
+#: 🚨 **Radix's default variant for `Callout.Root` is `soft`, NOT the `solid` above.**
+#: ``DEFAULT_VARIANT`` is read from ``base-button.props.js`` and is a fact about *buttons*.
+#: Grading a callout with it silently paints the wrong thing: every scheme comes out ~1.1 low
+#: (green 3.16 instead of 4.28, red 3.91 instead of 4.60), which is alarming rather than
+#: flattering — but wrong either way, and it would have put this census ~1.1 away from
+#: SPEC_BUTTON_CONTRAST §11's own measured figures with no visible reason.
+#:
+#: 🔑 The soft column is what reproduces the spec's oracle, which is how this was settled rather
+#: than argued: see :meth:`TestTheCalloutDefaultIsSoftNotSolid.test_soft_reproduces_the_spec`.
+CALLOUT_DEFAULT_VARIANT = "soft"
+
+
+def grade_callout(variant: str | None, color_scheme: str | None, high_contrast: bool | None):
+    """:func:`grade`, with the callout's own default variant rather than the button's."""
+    resolved = CALLOUT_DEFAULT_VARIANT if variant is None else variant
+    return grade(resolved, color_scheme, high_contrast)
+
+
+def _callout_census():
+    """Every ``CalloutRoot`` the page factories reach, with each branch of every cond-valued prop.
+
+    ⚠️ **The component is ``CalloutRoot``, not ``Callout``.** Asking the walk for ``Callout``
+    returns **0** on a tree full of them, which reads exactly like a population the walk cannot
+    reach — the wrong diagnosis, and the expensive one, since the obvious next move is to rewrite
+    the walk. ``_walk`` already follows ``rx.cond`` branches: a Cond exposes them as children.
+    """
+    rows, computed = [], 0
+    for module, attr in FACTORIES:
+        with redirect_stdout(io.StringIO()):
+            tree = getattr(importlib.import_module(f"datanika.ui.pages.{module}"), attr)()
+        for component, _path in _walk(tree):
+            if type(component).__name__ != "CalloutRoot":
+                continue
+            raw_scheme = getattr(component, "color_scheme", None)
+            variants = _branches(getattr(component, "variant", None))
+            schemes = _branches(raw_scheme)
+            contrasts = _branches(getattr(component, "high_contrast", None))
+            if not _is_static(raw_scheme):
+                computed += 1
+            rows.append((f"{module}.{attr}", variants, schemes, contrasts, _is_static(raw_scheme)))
+    return rows, computed
+
+
+CALLOUTS, CALLOUTS_COMPUTED = _callout_census()
+
+
+def _callout_offences() -> list[str]:
+    out = []
+    for site, variants, schemes, contrasts, _static in CALLOUTS:
+        for variant, scheme, contrast in itertools.product(variants, schemes, contrasts):
+            value = grade_callout(variant, scheme, contrast)
+            if value < MIN_RATIO:
+                out.append(
+                    f"{site}: variant={variant or CALLOUT_DEFAULT_VARIANT!r} "
+                    f"color_scheme={scheme!r} high_contrast={bool(contrast)!r} -> {value:.2f}:1"
+                )
+    return sorted(set(out))
+
+
+def _callouts_naming_a_scheme_without_high_contrast() -> list[str]:
+    """§11's rule: every callout that NAMES a ``color_scheme`` carries ``high_contrast=True``."""
+    out = []
+    for site, _variants, schemes, contrasts, _static in CALLOUTS:
+        if all(scheme is None for scheme in schemes):
+            continue  # inherits the accent — §11 leaves these alone
+        if not all(bool(c) for c in contrasts):
+            out.append(f"{site}: color_scheme={schemes!r} high_contrast={contrasts!r}")
+    return sorted(set(out))
+
+
+class TestTheCensusSawTheCallouts:
+    """Anti-vacuity. Coverage and sensitivity are different properties."""
+
+    def test_it_saw_the_callouts(self):
+        """175 instances today from 62 call sites across 60 page factories."""
+        assert len(CALLOUTS) >= 120, len(CALLOUTS)
+
+    def test_it_saw_a_computed_colour_scheme(self):
+        """`/connections`' test verdict picks its scheme with a nested ``rx.cond``.
+
+        🔑 **This is the site §11 says matters most, and a source-literal guard misses it** —
+        there is no ``color_scheme="green"`` anywhere in `connections.py` to grep for. If this
+        reaches 0, the census has silently narrowed to literals and would stay green.
+        """
+        assert CALLOUTS_COMPUTED >= 1, CALLOUTS_COMPUTED
+
+    def test_the_component_is_named_callout_root(self):
+        """The name that cost a wrong diagnosis. ``Callout`` matches nothing; this records why."""
+        names = set()
+        with redirect_stdout(io.StringIO()):
+            page = importlib.import_module("datanika.ui.pages.connections").connections_page()
+        for component, _ in _walk(page):
+            names.add(type(component).__name__)
+        assert "CalloutRoot" in names
+        assert "Callout" not in names
+
+
+class TestTheCalloutDefaultIsSoftNotSolid:
+    """The grader is shared with buttons; the default variant is not."""
+
+    def test_soft_reproduces_the_spec(self):
+        """SPEC_BUTTON_CONTRAST §11's measured column, recomputed rather than copied.
+
+        Those figures were read off the **running app's served stylesheet**. Reproducing them
+        from the vendored tokens is what establishes that this grader is looking at the same
+        paint the browser applies.
+        """
+        assert round(grade_callout(None, "green", None), 2) == 4.28  # §11 says 4.27
+        assert round(grade_callout(None, "orange", None), 2) == 3.99  # §11 says 3.99
+        assert round(grade_callout(None, "amber", None), 2) == 4.25  # §11 says 4.25
+        assert round(grade_callout(None, "blue", None), 2) == 4.25  # §11 says 4.26
+        assert round(grade_callout(None, None, None), 2) == 5.81  # violet accent; §11 says 5.80
+
+    def test_the_button_default_would_grade_a_different_paint(self):
+        """The negative control. Without it, "soft is right" is an assertion, not a measurement."""
+        assert round(grade(DEFAULT_VARIANT, "green", None), 2) == 3.16
+        assert grade(DEFAULT_VARIANT, "green", None) != grade_callout(None, "green", None)
+
+    def test_high_contrast_is_what_clears_aa_for_every_scheme(self):
+        """§11's remedy, asserted as the reason the rule is 'always' rather than 'where needed'."""
+        for scheme in ("green", "red", "orange", "amber", "blue", "gray"):
+            assert grade_callout(None, scheme, None) < 10, scheme
+            assert grade_callout(None, scheme, True) >= MIN_RATIO, scheme
+
+
+class TestCalloutsAreLegible:
+    def test_every_callout_clears_aa(self):
+        """AC1/AC2, on every branch of every cond-valued prop."""
+        assert not _callout_offences(), "\n".join(_callout_offences())
+
+    def test_every_callout_naming_a_scheme_is_high_contrast(self):
+        """§11's rule stated positively.
+
+        ⚠️ Written as *"names a scheme, therefore carries high_contrast"*, **not** as *"no line
+        says rx.callout without high_contrast"* — that form is satisfied by deleting the callout
+        and goes red on the correct un-schemed ones.
+        """
+        offenders = _callouts_naming_a_scheme_without_high_contrast()
+        assert not offenders, "\n".join(offenders)
+
+    def test_the_connection_test_verdict_is_legible_in_all_three_states(self):
+        """§11's headline instance, and the one the browser sweep structurally cannot score.
+
+        `/connections` renders the verdict inside ``rx.cond(ConnectionState.test_message, …)`` and
+        ``a11y-sweep.spec.ts`` performs **zero clicks**, so a green sweep carries no information
+        about it. **The SUCCESS case was the failing one** — the user who cannot read the green
+        verdict is the one who cannot tell it from the neutral *not tested* state core#821 added
+        precisely to keep those two apart.
+
+        All three states are asserted by name, so an edit that drops one reds here rather than
+        quietly grading a smaller population.
+        """
+        verdicts = [row for row in CALLOUTS if row[0].startswith("connections.") and not row[4]]
+        assert verdicts, "the computed verdict callout is no longer in the census"
+        for _site, variants, schemes, contrasts, _static in verdicts:
+            assert set(schemes) == {"gray", "green", "red"}, (
+                f"expected core#821's three states, got {schemes!r} — a nested rx.cond that "
+                "loses an arm reads as a complete grading of a smaller population"
+            )
+            for variant, scheme, contrast in itertools.product(variants, schemes, contrasts):
+                assert grade_callout(variant, scheme, contrast) >= MIN_RATIO, scheme

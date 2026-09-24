@@ -58,6 +58,7 @@ def preview_display() -> rx.Component:
                 TransformationState.preview_result_message,
                 icon="info",
                 color_scheme="blue",
+                high_contrast=True,
             ),
         ),
         rx.cond(
@@ -288,6 +289,7 @@ def transformation_form() -> rx.Component:
                     TransformationState.error_message,
                     icon="triangle_alert",
                     color_scheme="red",
+                    high_contrast=True,
                 ),
             ),
             rx.hstack(

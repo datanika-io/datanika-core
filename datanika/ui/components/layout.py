@@ -186,6 +186,7 @@ def verification_mail_notice() -> rx.Component:
                 ),
                 icon="mail_check",
                 color_scheme="green",
+                high_contrast=True,
                 width="100%",
             ),
         ),
@@ -211,6 +212,7 @@ def verification_mail_notice() -> rx.Component:
                 ),
                 icon="mail_warning",
                 color_scheme="amber",
+                high_contrast=True,
                 width="100%",
             ),
         ),
@@ -256,6 +258,7 @@ def invite_notice() -> rx.Component:
             ),
             icon="mail_warning",
             color_scheme="amber",
+            high_contrast=True,
             width="100%",
         ),
     )
@@ -449,6 +452,7 @@ def action_error_notice() -> rx.Component:
             ),
             icon="shield_alert",
             color_scheme="red",
+            high_contrast=True,
             width="100%",
         ),
     )

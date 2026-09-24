@@ -164,6 +164,7 @@ def _mode_change_confirm_dialog() -> rx.Component:
             ),
             icon="triangle-alert",
             color_scheme="amber",
+            high_contrast=True,
         ),
     )
 

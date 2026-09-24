@@ -440,6 +440,7 @@ def preview_section() -> rx.Component:
                     ModelDetailState.preview_error,
                     icon="triangle-alert",
                     color_scheme="red",
+                    high_contrast=True,
                     size="1",
                 ),
                 rx.cond(
@@ -494,6 +495,7 @@ def model_detail_page() -> rx.Component:
                     ModelDetailState.error_message,
                     icon="triangle_alert",
                     color_scheme="red",
+                    high_contrast=True,
                 ),
                 rx.fragment(),
             ),

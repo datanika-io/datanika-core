@@ -3,13 +3,18 @@
 **Author:** Product · **Status:** implemented on `dev`, **not yet in production** · **Written:** 2026-09-06
 **Amended:** 2026-09-07 — §4 (three clauses falsified by measurement), §4.4 (the mutation table
 restated them), §6 (a branch-status ruling).
-**Binds:** Engineering. **Source of truth for:** [core#934].
+**Amended:** 2026-09-23 — §2 (its scope heading silently excluded the API surface) and new **§8**,
+ruling what a mutating API route owes the record. §8's measurements are `origin/dev` @ `890e6c5`.
+**Binds:** Engineering. **Source of truth for:** [core#934] and — via §8 — the audit half of
+[core#657].
 **Verified against:** `origin/dev` @ `e9e5b51` (fetched 2026-09-06), re-verified against
 `origin/dev` @ `dc92f45` and `origin/master` @ `5726b8f` on 2026-09-07 for every production claim.
 
-> ⚠️ **This spec decides one thing and refuses three others.** It states the contract every audit
+> ⚠️ **This spec decides two things and refuses three others.** It states the contract every audit
 > writer is held to, then applies it to the one persisted mutating surface in the product that has
-> never had one. It does **not** decide [core#670] (whether to start collecting client IPs),
+> never had one (§3), and — since 2026-09-23 — to the **API door**, which the contract's own scope
+> heading had been excluding without saying so (§8). It does **not** decide [core#670] (whether to
+> start collecting client IPs),
 > [core#694] (giving `old_values`/`new_values` a reader), or [core#693] (index + `jsonb`). Two
 > further defects were found while writing it; both are filed separately and are named in §6 so an
 > implementer does not absorb them into this one.
@@ -39,6 +44,13 @@ clause in §2 exists to close one of these two.
 
 `BaseState._audit` → `AuditService.log_action` is the single chokepoint (`audit_service.py:141-166`).
 These clauses are what a call site owes it.
+
+> 🆕 **This heading names a scope, and for two weeks that scope quietly excluded half the product.**
+> `_audit` is a method on `BaseState`, so *"every `_audit` call site"* means **every Reflex state
+> class** — the UI door. A Starlette route has no `BaseState` and therefore no `_audit`, so a reader
+> checking a route against this contract finds the contract does not reach it, and concludes
+> correctly that nothing is owed. **§8 rules the API surface and is binding in the same way.** The
+> five clauses below are unchanged and apply to both; what §8 adds is *which* routes owe a row.
 
 ### 2.1 · The audit row and the mutation are in **one transaction**
 
@@ -470,6 +482,183 @@ same correction `PII_PAYLOAD_KEYS` already made for the redactor, for the same r
   §2.4's key naming.
 - **The audit page's own gaps** — no `old_values`/`new_values` column, no actor name, no date range.
   [core#694] and [core#735].
+
+---
+
+## §8 — The API surface: what a mutating route owes the record
+
+**Ruled 2026-09-23 (Product)**, on Engineering's question *"does `POST /api/v1/runs/{id}/cancel`
+write an audit row?"* — asked because starting with that one route is a decision about the API
+surface rather than a bug fix. It is. Here is the decision.
+
+**Measured against `origin/dev` @ `890e6c5`, 2026-09-23.** Every line and number below was read this
+session, not carried from §1–§7's 2026-09-07 verification.
+
+### 8.1 · The question is not whether to start recording. We already record this action.
+
+| door | handler | audit row |
+|---|---|---|
+| **UI** | `ui/state/run_state.py:255` | **yes** — `update` / `run`, `old_values`/`new_values` carrying the status pair, conditional on a real transition, inside the mutation's own transaction |
+| **API** | `services/api_v1_routes.py:1149` (`cancel_run`) | **none** |
+
+Both doors call the same `ExecutionService.cancel_run`. So the same action, on the same run, in the
+same org, by the same person, is recorded or not **according to which door it came through**.
+
+🚨 **That is worse than recording neither door, and §1 says why in its own words:** *"an absent one
+is not consulted and a lying one is believed."* An empty `audit_logs` prompts the question *"do we
+even log this?"* A table that holds **some** cancels does not — so an admin asking *"who stopped
+run 42?"* about an API cancel gets a well-formed, confident **silence**, and reads it as
+*"nobody did."* This is failure mode A wearing failure mode B's clothes: the record under-reports,
+and the instrument that reads it looks healthy because it is healthy.
+
+🔑 **So this is a consistency decision, not a collection decision.** The asymmetry is the defect,
+and it would be a defect in whichever direction it pointed.
+
+### 8.2 · The decision
+
+**`POST /api/v1/runs/{id}/cancel` writes an audit row.** The route writes it — **not** the service.
+
+**The invariant, binding beyond this one route:**
+
+> **A mutating API route owes the record whatever its UI twin already writes for the same action.**
+> Where the two doors reach the same service, they must be **indistinguishable in `audit_logs`**
+> except for facts that genuinely differ (§8.6).
+
+**Why the route and not the service**, since putting it in `ExecutionService.cancel_run` would cover
+both doors in one edit and is the obviously cheaper diff:
+
+1. **It would double-write.** The UI handler audits *and* the service would audit, so every UI
+   cancel files two rows. An over-reporting audit log is the same class of defect as an
+   under-reporting one — §1 — and it is the harder one to notice, because nothing is missing.
+2. **Removing the UI handler's call to compensate relocates a discrimination that lives in the
+   handler for a measured reason.** `run_state.py:233-236` reads the status **before** the mutation
+   and says why: *"`cancel_run` returns the run already changed and flushes, which clears the
+   attribute history — so afterwards nothing can say what the stop actually did."* The service
+   cannot see its own before-state at the point it would write. Moving the write there is a real
+   refactor of a production path, and it is not what was asked.
+3. **The existing design already puts the write at the caller that knows the actor.** `_audit` takes
+   the session precisely so the handler — which knows *who* — writes the row. A route knows who; a
+   service knows only an `actor_user_id` it was handed.
+
+⚠️ **None of that is an architectural objection to services auditing** — see 8.3.
+
+### 8.3 · Two premises in the question, both measured, one of them false
+
+1. 🔴 **"The cheapest implementation would make a service an audit writer for the first time" —
+   FALSE.** `services/user_service.py:1276` already calls `AuditService().log_action(...)` directly,
+   passing the session, inside `erase_user`; it is deliberate, commented, and belongs to
+   `SPEC_PII_SEPARATION` D11 / [core#655]. **A service is already an audit writer.** The precedent
+   exists, so "this would be the first" is not among the reasons to hesitate. §8.2's reasons stand
+   on their own and none of them is precedent.
+2. ✅ **"No API route audits anything" — TRUE, and the grep that shows it has to be aimed
+   correctly.** `datanika/api/` **does not exist**, so a count at that path returns `0` about
+   nothing — the vacuous-zero shape `WORKFLOW_RULES` §4 and coordinator rule 26 both name. Aimed at
+   the real file, with a live positive control in the same run:
+
+   | | `_audit(` | `log_action` | `AuditService` |
+   |---|---|---|---|
+   | `services/api_v1_routes.py` — 1932 lines, **54 routes**, 55 `@api_endpoint` | 0 | 0 | 0 |
+   | `ui/state/base_state.py` — **positive control** | — | **1** | **2** |
+
+   The control is what makes the zeros a reading. Without it they are indistinguishable from three
+   patterns that match nothing anywhere.
+
+### 8.4 · The row
+
+Mirror the UI handler exactly, so the two doors are one story in the table:
+
+| field | value |
+|---|---|
+| `action` | `"update"` |
+| `resource_type` | `"run"` |
+| `resource_id` | the `run_id` path parameter |
+| `old_values` | `{"status": <status before the call>}` |
+| `new_values` | `{"status": <status after the call>, "api_key_id": <the acting key's id>}` |
+
+- **`"update"`, not a new `"cancel"` member.** §2.2 binds: the action must be an `AuditAction`
+  member, and a misspelling is a **silently dropped row**. `AuditAction` is
+  `create · update · delete · login · logout · run`. 🚨 **Do not add `cancel` to the enum** — the
+  same expand/contract hazard `AuditResourceType`'s own docstring spells out applies, and the UI
+  door already writes `"update"` for this transition. A second vocabulary for one action splits the
+  filter.
+- **Same transaction as the mutation** (§2.1), on the session `@api_endpoint` already hands the
+  handler. No second session.
+- **Conditional on a real transition**, exactly as the UI door is: write the row only when the
+  status actually changed. `CANCELLING` is itself in `CANCELLABLE_RUN_STATUSES`, so a second stop on
+  an already-stopping run is idempotent, and an unconditional write files a
+  `cancelling → cancelling` row asserting something that did not happen.
+
+### 8.5 · 🚨 The trap that makes the row lie, and the route walks into it by default
+
+`cancel_run` already holds `run` from its own pre-flight `get_run` (`api_v1_routes.py:1153`) and
+receives `cancelled` from the service. **Under one session and one identity map these are very
+likely the same object**, so reading `run.status` *after* the service call yields the **new** status
+— and a row built that way records `old_values == new_values`: a transition that never happened,
+filed under the name of the person who did something else.
+
+**Capture the before-status into a local scalar before calling the service:**
+
+```python
+was = run.status                      # BEFORE. Not `run.status` read afterwards.
+cancelled = _exec_svc.cancel_run(...)
+```
+
+This is not a new discovery — `run_state.py:233-236` documents it for the UI door and works around
+it the same way. It is written here because **the route's existing shape makes the wrong version
+look like the natural one**: `run` is already in scope, already fetched, and reads perfectly.
+
+⚠️ **A test asserting only that a row exists is satisfied by this bug**, which is §4.2's lesson
+arriving on a new surface. The assertion that discriminates is on the row's **contents**:
+`old_values["status"] != new_values["status"]`.
+
+### 8.6 · Which key acted: record the id, never the name
+
+An API key acts *on behalf of* an absent user, which is the whole point of it — so the audit log's
+question, *"did somebody do this, and who?"*, is **more** likely to be asked about an API cancel
+than a UI one, not less. `user_id` alone answers *"Alice"* when the useful answer is *"Alice's CI
+bot"*, and one user may own several keys.
+
+- ✅ **Record `api_key_id`.** An integer the user chose nothing about; it resolves to the key, which
+  resolves to its name and owner. §2.5's own formulation: *"the id is what stays resolvable."*
+- ⛔ **Do not record the key's name.** It is user-chosen free text, so it can contain anything —
+  including an email address. §2.4 is explicit that `redact_pii_payload` is **nominal**: it matches
+  key *names*, so personal data arriving under `api_key_name` is invisible to it. A name in the
+  payload would be exactly the *"never put personal data under a non-PII key name"* failure, made
+  by the spec rather than by a careless call site.
+
+**The UI door's row carries no `api_key_id`, deliberately, and that is a decision rather than an
+oversight** (`PRODUCT_RULES` §12). No key acted, and writing `api_key_id: null` would assert that
+one was involved and was empty. **The presence of the field is itself the signal for which door was
+used** — which is the one fact the two rows should differ on.
+🔔 **Flip condition:** when [core#694] gives `old_values`/`new_values` a reader, decide the payload
+shape for both doors together. Until then there are 30 writers and 0 readers, and changing a live
+production handler for a field nothing reads is the more expensive half of the trade.
+
+### 8.7 · Scope: this rules ONE route. The other 27 are filed, not implied.
+
+Measured this session: `api_v1_routes.py` declares **54 routes, 28 of them mutating**
+(15 `POST`, 6 `PUT`, 6 `DELETE`, 1 `PATCH`), and **none writes an audit row** — while the UI door
+carries **37** `_audit` calls across 13 state classes, so most of those 28 have a twin that already
+records the action.
+
+🚨 **This section deliberately does not rule the other 27.** I have not measured which have auditing
+twins, what each one's before/after shape is, or which are idempotent — and a contract written over
+a population I have not read is a contract for routes I am guessing about. Ruling them here would
+be the mistake coordinator rule 20 names, pointed the other way: naming a superset nobody checked.
+
+**The sweep is [core#1534], so that it is neither silently implied nor silently dropped.** §8.2's
+invariant is what it will be measured against; §8.4–§8.6 are the worked example. The cancel route
+itself is **[core#1533]**.
+
+Three questions that survey has to answer per route, because each changes the verdict for some of
+them: **does an auditing UI twin exist** (where it does, the invariant decides and there is nothing
+to debate); **is there a no-op path** (§8.4's condition exists because an unconditional write files
+transitions that never happened — `PATCH /notifications/{id}/read` is the obvious candidate); and
+**is it bulk** (`POST /api/v1/import` and `POST /api/v1/pipelines/yaml` create many objects in one
+call — one row each, or one for the import?).
+
+[core#1533]: https://github.com/datanika-io/datanika-core/issues/1533
+[core#1534]: https://github.com/datanika-io/datanika-core/issues/1534
 
 [core#655]: https://github.com/datanika-io/datanika-core/issues/655
 [core#670]: https://github.com/datanika-io/datanika-core/issues/670

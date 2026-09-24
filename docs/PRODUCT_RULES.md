@@ -156,6 +156,73 @@ opposite of [#672](https://github.com/datanika-io/datanika-core/issues/672)'s.**
 fields must *suppress* password managers; `/login` and `/signup` must *invite* them. Reusing
 `no_autofill_attrs()` on an auth form is a usability regression wearing a security label.
 
+## 4a. The other half of the gate: a shot whose subject is DATA
+
+🚨 **§4 sweeps inputs, and it passed a screenshot that rendered every contact's email and name.**
+(2026-09-23, on the HubSpot walk for [landing#395].) The shot's subject was the **destination
+preview** — rows loaded out of a CRM into our warehouse — and §4 read the page's inputs, found them
+empty, and cleared it. **It was right about what it measured.** The samples were seeded, so nothing
+was published; **a HubSpot account holding real customers would have gone to a public repo on that
+pass**, and every check would have been green.
+
+🔑 **The two halves need OPPOSITE instruments, which is why one gate could never have covered both.**
+§5 says `innerText` is blind to input values — true, and it is what makes §4 read `.value` per
+input. Invert it here: **a rendered data row is text, and `.value` cannot see it.** An agent
+carrying §5's lesson into a data sweep reaches for the wrong instrument and gets a confident empty
+answer. *Ask which of the two blindnesses applies before choosing the reader.*
+
+### When it applies
+
+Whenever the subject of the shot is **records rather than controls**: a first-run preview, a
+destination table or query result, a models/DAG output grid, **run logs** (they quote row values and
+echo source errors), a notification body. If you are photographing something *because it proves data
+landed*, this is the half that governs.
+
+### 🔑 The rule: assert PROVENANCE, never "no PII"
+
+**A PII detector cannot work here and must not be claimed.** A real customer called `John Smith` and
+a seeded contact called `John Smith` are the same string; a classifier that reports "no PII found"
+on the second will report it on the first. **An instrument that cannot fail is worse than none,
+because its clean reading is believed** (`SPEC_AUDIT_TRAIL` §1, the same shape).
+
+So the gate is not *"does this look like personal data?"* but:
+
+> **Every record on screen must be traceable to a dataset I seeded, into an account I provisioned.**
+> If I cannot say where a row came from, the shot does not happen.
+
+Three checks, cheapest first — and the first one usually makes the other two a formality:
+
+1. **The account is the structural control.** Connect only a throwaway/developer tenant carrying the
+   vendor's own sample data. Then provenance holds by construction and there is nothing to
+   classify. This is the whole of the work; the rest is verification that it held.
+2. **Enumerate the namespace, then count what falls outside it.** Read the rendered cells and assert
+   that every value belongs to the seeded set — e.g. *"every email domain is `hubspot.com`"* →
+   **count of values outside the namespace must be 0**. Count the **unfiltered total too**: `0 of 0`
+   is a broken selector, not a clean sweep.
+3. **Never the operator's own identity.** Explicitly assert the founder's address, the org's real
+   name and any signed-in account's email appear **0** times. Autofill and a shared browser profile
+   put these on screen without anybody typing them — which is exactly how #618 happened.
+
+### 🚨 Arm it, and arm it in the direction that matters
+
+**Plant a value that MUST trip the gate, and confirm it trips, in the same run.** A control proving
+the classifier returns 0 for something that is not there proves only that it is not stuck on a
+constant — it is a *negative* control, and on the HubSpot pass it is the only one I ran. It cannot
+distinguish a working sweep from a selector matching nothing.
+
+```
+seed a synthetic row value the namespace forbids   -> the gate MUST refuse   (positive control)
+remove it, re-run                                  -> the gate MUST clear     (negative control)
+```
+
+Both halves, or the zero beside your screenshot is a reading about your selector.
+
+### If a shot is refused
+
+**Do not crop, blur or redact and ship it.** Reseed the source, or photograph a different step.
+A redacted region is an assertion that you found every instance, which is the claim this rule exists
+to say you cannot make.
+
 ## 5. `innerText` is blind in three specific ways
 
 Each of these has produced a confident wrong answer:

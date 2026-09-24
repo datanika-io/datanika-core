@@ -286,11 +286,16 @@ def collect(repo: str, branch: str, pages: int) -> list[Job]:
     """Every staging job on the recent `ci.yml` runs of `branch`."""
     runs = _gh(f"repos/{repo}/actions/runs?branch={branch}&per_page={pages}")
     jobs: list[Job] = []
-    for run in runs.get("workflow_runs", []):  # type: ignore[union-attr]
+    # core#1288: `_gh` returns `object`, so `.get` is `attr-defined`. These three comments
+    # named `union-attr`, a code mypy does not emit here, and so suppressed NOTHING. The
+    # narrowing fix (`assert isinstance(payload, dict)`, which `scripts/**` already permits)
+    # is deliberately NOT bundled: a PR that adds a gate must not also rewrite the code it
+    # gates, or a red attributes to neither.
+    for run in runs.get("workflow_runs", []):  # type: ignore[attr-defined]
         if run.get("path") != WORKFLOW:
             continue
         payload = _gh(f"repos/{repo}/actions/runs/{run['id']}/jobs")
-        for job in payload.get("jobs", []):  # type: ignore[union-attr]
+        for job in payload.get("jobs", []):  # type: ignore[attr-defined]
             name = short_name(job["name"])
             if name not in (MUTATION, *VERIFIERS):
                 continue
@@ -331,7 +336,7 @@ def read_window(repo: str, branch: str, pages: int, sha: str = "") -> Window | N
         runs = _gh(f"repos/{repo}/actions/runs?branch={branch}&per_page={pages}")
     except (SystemExit, json.JSONDecodeError):
         return None
-    all_runs = runs.get("workflow_runs", []) or []  # type: ignore[union-attr]
+    all_runs = runs.get("workflow_runs", []) or []  # type: ignore[attr-defined]
     ci = [r for r in all_runs if r.get("path") == WORKFLOW]
     created = sorted(r["created_at"] for r in all_runs if r.get("created_at"))
     for_head = sum(1 for r in ci if str(r.get("head_sha", "")).startswith(sha)) if sha else 0

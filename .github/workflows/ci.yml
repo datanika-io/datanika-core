@@ -116,6 +116,38 @@ jobs:
       - name: Ruff format check
         run: ruff format --check datanika tests scripts e2e/scripts
 
+      # core#1288. A step inside `lint`, NOT a separate `typecheck` job, and the reason is a
+      # measurement rather than a preference: this file's `on:` block already carries
+      # pull_request, push AND an unfiltered merge_group, so a step inherits all three free.
+      # A new required check would cost an ADDITIVE branch-protection `contexts` POST (never a
+      # full PATCH -- that replaces the protection object and is the quiet way to drop `strict`)
+      # plus a verified merge_group run, because check_response_timeout_minutes is 30 and a
+      # required check producing no run on merge_group ejects the entry with NOTHING RED.
+      # Same signal, none of the silent-failure surface. (Infra, on the issue, 2026-09-23.)
+      #
+      # The one real cost is legibility -- a mypy failure reads as "lint failed" -- which is why
+      # the step is named for what it checks and for what it does NOT.
+      #
+      # 🚨 PINNED EXACTLY, AND DELIBERATELY NOT IN uv.lock. `uv.lock` is what the production
+      # image installs; a lint-only tool must not be able to move a production pin during its
+      # own re-resolve. `==` is also a stronger guarantee than the range a lock entry would
+      # carry. Bumping it is a one-line decision somebody makes on purpose.
+      - name: Install mypy (pinned)
+        run: uv pip install --system "mypy==2.3.1"
+
+      # 🚨 SHAPE ONLY. A type checker sees signatures and return types. It does NOT see
+      # behaviour -- what a function raises, what it returns for an edge case, whether a silent
+      # `None` became a loud exception. core#1205 broke a cross-module caller WITHOUT changing
+      # a signature, and this step would have been green through it. **A green here is not
+      # evidence that a seam is covered.** (core#1288 AC3. The longer form, with both incidents,
+      # is in pyproject.toml's [tool.mypy] block -- kept there too because that is where the
+      # next person configures this.)
+      #
+      # No path argument: the file set is declared once, in pyproject.toml's `files = ["scripts"]`,
+      # so this command and a local `mypy` cannot disagree about what is checked (AC4).
+      - name: Type check (scripts/ — shape only, never behaviour)
+        run: mypy
+
       # core#876. Seventeen controls over the staging SHA attribution scripts, thirteen of
       # which assert a REFUSAL — including the two shapes that read as green: no stamp on
       # the box at all, and an EXPECTED_SHA that evaluates empty so nothing is compared

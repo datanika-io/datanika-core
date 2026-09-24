@@ -429,6 +429,30 @@ jobs:
         working-directory: e2e
         run: npx playwright install chromium --with-deps
 
+      # core#1528. The opening edge of the log window the capture below bounds.
+      #
+      # 🚨 Read from the BOX's clock, not the runner's. `docker logs --since` is interpreted by
+      # the daemon on pointer.gr; a runner timestamp differs by whatever the two clocks differ
+      # by, and the failure is silent in the worst direction — a marker a few seconds FAST
+      # returns an empty capture, which is indistinguishable from a silent container.
+      #
+      # Last step before the specs on purpose: every second between this and `gating` is
+      # unrelated log the responder has to read past.
+      - name: Mark the log window (the box's clock)
+        id: logmark
+        env:
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        run: |
+          MARK=$(ssh -q -i ~/.ssh/id_rsa -o StrictHostKeyChecking=accept-new \
+                 "root@$SSH_HOST" 'date -u +%Y-%m-%dT%H:%M:%SZ' | tr -d '\r')
+          # A window that failed to open must not read as one that opened at the epoch.
+          case "$MARK" in
+            [0-9][0-9][0-9][0-9]-*Z) ;;
+            *) echo "refusing: the box returned no usable timestamp (got '$MARK')"; exit 1 ;;
+          esac
+          echo "since=$MARK" >> "$GITHUB_OUTPUT"
+          echo "log window opens at $MARK (box clock); runner clock says $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
       # ── TIER 1: GATING ──────────────────────────────────────────────────────
       # Proven specs. Red here holds the promotion, which is the whole point of
       # the job. Note this job is not a required check on `dev` (those are lint
@@ -471,6 +495,46 @@ jobs:
         if: always()
         working-directory: e2e
         run: python3 scripts/detect_flaky_gating.py results-gating.json --github-output
+
+      # ── core#1528: a gating failure preserved the BROWSER's view and none of the APP's ─────
+      #
+      # core#1296 is closed as UN-DIAGNOSABLE. Its failure had already localised itself — the
+      # assertion text reads "This is the APP, not the worker." — and eight days later nothing
+      # survived that could say which app path it was. A Reflex event-handler exception prints
+      # `[Reflex Backend Exception]` and a full traceback at INFO, so that line existed on
+      # staging and nothing read it. Staging is recreated on the next push to `dev`, so the
+      # window closes in minutes.
+      #
+      # Placed immediately after the flaky detector so it runs before the informational tier
+      # drives the same stack for another few minutes.
+      #
+      # 🚨 Gated on the two STEP outcomes, never on job-level `failure()` — core#873's lesson,
+      # applied rather than rediscovered. A GitHub artifact-service timeout once paged Telegram
+      # and filed an issue for a run whose every spec passed, because a filer keyed on the job.
+      #
+      # ⚠️ On a FLAKY run the job is otherwise green and a capture failure can turn it red. That
+      # is deliberate: a flaky detector that files a durable issue pointing at evidence nobody
+      # captured is core#1296 itself. The classifier below keys on `steps.gating.outcome`, so a
+      # capture failure is never CLAIMED as a spec failure — the two reds keep their own names.
+      - name: Capture staging app and worker logs for the test window
+        id: applogs
+        if: always() && (steps.gating.outcome == 'failure' || steps.flaky_gate.outputs.status == 'flaky')
+        env:
+          SINCE: ${{ steps.logmark.outputs.since }}
+          SSH_HOST: ${{ secrets.POINTER_HOST }}
+        run: bash scripts/capture-staging-logs.sh
+
+      - name: Upload staging logs
+        if: always() && (steps.gating.outcome == 'failure' || steps.flaky_gate.outputs.status == 'flaky')
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-logs
+          path: e2e/staging-logs/
+          # Deliberately NOT `if-no-files-found: ignore`. An empty capture is the defect this
+          # step exists to prevent, and ignoring it is how a step comes to always succeed and
+          # never record anything. The script refuses first; this is the second line.
+          if-no-files-found: error
+          retention-days: 14
 
       # ── TIER 2: INFORMATIONAL ───────────────────────────────────────────────
       # New specs earning a track record. `continue-on-error` quarantines the
@@ -606,7 +670,14 @@ jobs:
         with:
           name: test-results
           path: e2e/test-results/
-          retention-days: 7
+          # core#1528. Was 7, against playwright-report's 14 — so the artifact that says WHY
+          # expired in half the time of the one that says THAT, and the issue the alert files
+          # never expires at all. core#1296's traces were gone on 2026-09-22 while its report
+          # lives to 09-29, leaving a permanent record of an unanswerable question.
+          # 🔑 Raised rather than lowering the report: an alert must not outlive its evidence.
+          # Pinned as a COMPARISON by tests/test_deploy/test_staging_log_capture.py, because
+          # pinning `14` twice would pass a change that lowered both.
+          retention-days: 14
           if-no-files-found: ignore
 
       # ── core#873: what is this job's red actually SAYING? ───────────────────

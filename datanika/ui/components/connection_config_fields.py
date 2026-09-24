@@ -64,15 +64,16 @@ def db_fields() -> rx.Component:
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
         ),
-        rx.el.label(
-            rx.text(_t["connections.database"], size="2", weight="bold"), html_for="cfg-database"
-        ),
-        config_input(
+        # `_validate_connection_form` refuses a blank database for every `_DB_TYPES` connector
+        # (:317) and for mongodb (:343), so by SPEC_FIELD_REQUIREDNESS §2.7 the field is required
+        # on this form and one value now sets both the marker and the attribute.
+        labelled_config_input(
+            _t["connections.database"],
             "database",
+            required=True,
             placeholder=_t["connections.ph_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
-            required=True,
         ),
         spacing="2",
         width="100%",
@@ -100,25 +101,24 @@ def sqlite_fields() -> rx.Component:
 def bigquery_fields() -> rx.Component:
     """Fields for bigquery."""
     return rx.vstack(
-        rx.el.label(
-            rx.text(_t["connections.gcp_project"], size="2", weight="bold"), html_for="cfg-project"
-        ),
-        config_input(
+        # Both refused blank by `_validate_connection_form`'s bigquery branch (:323, :325).
+        # The i18n key is `connections.gcp_project`; the field — and so the input's name and the
+        # label's `html_for` — is `project`. The two are deliberately not the same string.
+        labelled_config_input(
+            _t["connections.gcp_project"],
             "project",
+            required=True,
             placeholder=_t["connections.ph_gcp_project"],
             value=ConnectionState.form_project,
             on_change=ConnectionState.set_form_project,
-            required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.dataset"], size="2", weight="bold"), html_for="cfg-dataset"
-        ),
-        config_input(
+        labelled_config_input(
+            _t["connections.dataset"],
             "dataset",
+            required=True,
             placeholder=_t["connections.ph_dataset"],
             value=ConnectionState.form_dataset,
             on_change=ConnectionState.set_form_dataset,
-            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
@@ -138,15 +138,14 @@ def bigquery_fields() -> rx.Component:
 def snowflake_fields() -> rx.Component:
     """Fields for snowflake."""
     return rx.vstack(
-        rx.el.label(
-            rx.text(_t["connections.account"], size="2", weight="bold"), html_for="cfg-account"
-        ),
-        config_input(
+        # Refused blank by `_validate_connection_form`'s snowflake branch (:328).
+        labelled_config_input(
+            _t["connections.account"],
             "account",
+            required=True,
             placeholder=_t["connections.ph_snowflake_account"],
             value=ConnectionState.form_account,
             on_change=ConnectionState.set_form_account,
-            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.user"], " *", size="2", weight="bold"), html_for="cfg-user"
@@ -168,15 +167,14 @@ def snowflake_fields() -> rx.Component:
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
         ),
-        rx.el.label(
-            rx.text(_t["connections.database"], size="2", weight="bold"), html_for="cfg-database"
-        ),
-        config_input(
+        # Refused blank by `_validate_connection_form`'s snowflake branch (:332).
+        labelled_config_input(
+            _t["connections.database"],
             "database",
+            required=True,
             placeholder=_t["connections.ph_snowflake_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
-            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.warehouse"], size="2", weight="bold"), html_for="cfg-warehouse"
@@ -211,16 +209,16 @@ def snowflake_fields() -> rx.Component:
 def s3_fields() -> rx.Component:
     """Fields for s3."""
     return rx.vstack(
-        rx.el.label(
-            rx.text(_t["connections.bucket_url"], size="2", weight="bold"),
-            html_for="cfg-bucket-url",
-        ),
-        config_input(
+        # Refused blank by `_validate_connection_form`'s s3 branch (:335). ⚠️ `s3` is the one
+        # ConnectionType member of 37 with no `CONFIG_SCHEMAS` entry, so this site has no schema
+        # side for the AC2 ratchet to compare against — see `TestTheFormAndTheSchema.UNCOMPARABLE`.
+        labelled_config_input(
+            _t["connections.bucket_url"],
             "bucket_url",
+            required=True,
             placeholder=_t["connections.ph_bucket_url"],
             value=ConnectionState.form_bucket_url,
             on_change=ConnectionState.set_form_bucket_url,
-            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.aws_access_key"], size="2", weight="bold"),
@@ -1088,15 +1086,16 @@ def mongodb_fields() -> rx.Component:
             value=ConnectionState.form_password,
             on_change=ConnectionState.set_form_password,
         ),
-        rx.el.label(
-            rx.text(_t["connections.database"], size="2", weight="bold"), html_for="cfg-database"
-        ),
-        config_input(
+        # `_validate_connection_form` refuses a blank database for every `_DB_TYPES` connector
+        # (:317) and for mongodb (:343), so by SPEC_FIELD_REQUIREDNESS §2.7 the field is required
+        # on this form and one value now sets both the marker and the attribute.
+        labelled_config_input(
+            _t["connections.database"],
             "database",
+            required=True,
             placeholder=_t["connections.ph_database"],
             value=ConnectionState.form_database,
             on_change=ConnectionState.set_form_database,
-            required=True,
         ),
         # core#625 added `auth_source` to CONFIG_SCHEMAS with a test whose
         # docstring reads "a setting with no surface is the core#499 mistake".

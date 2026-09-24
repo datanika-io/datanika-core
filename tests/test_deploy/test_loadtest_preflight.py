@@ -33,6 +33,7 @@ contain, and then **mutate a copy and require it to go red**.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -201,15 +202,54 @@ def test_the_preflight_states_what_it_cannot_promise():
     )
 
 
+# The RUN command, not today's arguments. `run.sh --keys` was the original anchor, which made
+# this guard red on a correct change: documenting the defaults invocation (core#1556 fixed them,
+# so `bash scripts/loadtest/run.sh` is now the documented call) removed the literal and the
+# assertion raised ValueError. WORKFLOW_RULES §5a — assert the invariant, not the instance.
+RUN_INVOCATION = re.compile(r"bash\s+scripts/loadtest/run\.sh")
+PREFLIGHT_INVOCATION = re.compile(r"\bpreflight\.sh\b")
+
+
 def test_the_readme_sends_the_operator_through_the_preflight_first():
     """A gate nothing invokes is the original bug one level up, and looks identical to a fix."""
     text = README.read_text(encoding="utf-8")
-    assert "preflight.sh" in text, (
+    pre = PREFLIGHT_INVOCATION.search(text)
+    run = RUN_INVOCATION.search(text)
+    assert pre, (
         "the README's Run-it section does not name preflight.sh, so the documented path "
         "still goes straight to run.sh — which is the state this instrument was built to end"
     )
-    assert text.index("preflight.sh") < text.index("run.sh --keys"), (
+    assert run, "the README no longer shows how to invoke run.sh at all"
+    assert pre.start() < run.start(), (
         "preflight.sh is mentioned only after the run command; the order is the instruction"
+    )
+
+
+def test_the_ordering_guard_can_fail_and_survives_a_change_of_arguments():
+    """Driven with both populations, plus the change that broke the previous anchor.
+
+    🔴 The old assertion indexed the literal ``run.sh --keys``. That is a snapshot: it pinned
+    the *arguments* as a stand-in for *the run command*, so documenting the defaults invocation
+    — the correct outcome of core#1556 — made it raise instead of pass. The repointed pattern
+    must accept either form and must still refuse the wrong order.
+    """
+    right = "First: bash scripts/loadtest/preflight.sh\nThen: bash scripts/loadtest/run.sh\n"
+    wrong = "Just run: bash scripts/loadtest/run.sh\n...later, preflight.sh exists too.\n"
+    with_args = (
+        "First: bash scripts/loadtest/preflight.sh\n"
+        "Then: bash scripts/loadtest/run.sh --keys 300 --stages '5:120s'\n"
+    )
+
+    for label, text in (("correct order", right), ("with arguments", with_args)):
+        pre = PREFLIGHT_INVOCATION.search(text)
+        run = RUN_INVOCATION.search(text)
+        assert pre and run and pre.start() < run.start(), f"{label} must pass"
+
+    pre = PREFLIGHT_INVOCATION.search(wrong)
+    run = RUN_INVOCATION.search(wrong)
+    assert pre and run and pre.start() > run.start(), (
+        "the guard must still refuse a README that sends the operator to run.sh first — "
+        "otherwise it passes on the very state it exists to prevent"
     )
 
 

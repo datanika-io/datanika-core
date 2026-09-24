@@ -195,13 +195,66 @@ def strip_non_declarative(text: str) -> str:
 
 
 def find_refs(subject: str, body: str) -> set[int]:
-    """Closing refs from a subject/title (a declaration by convention) and a body.
+    """Closing refs from a COMMIT MESSAGE's subject and body.
 
-    The subject is scanned whole -- our convention is `[Dept] Title (closes #N)`. The body
-    is scanned only for line-initial declarations, after code and quotes are stripped, so
-    a paragraph *about* closing keywords is not mistaken for one.
+    The subject is scanned whole. That is correct **here and not for a PR title**, and the
+    asymmetry is deliberate: GitHub parses commit messages itself, so harvesting one agrees
+    with what will happen on merge anyway. Narrowing it would make this script *under*-report
+    a closure that fires regardless -- the invisible direction, which is the whole failure
+    WORKFLOW_RULES section 8 automated away. See `find_pr_refs` for the other call site.
+
+    The body is scanned only for line-initial declarations, after code and quotes are
+    stripped, so a paragraph *about* closing keywords is not mistaken for one.
     """
     found = {int(n) for n in KEYWORD.findall(subject or "")}
+    found |= {int(n) for n in DECLARATION.findall(strip_non_declarative(body or ""))}
+    return found
+
+
+# A PR title's declaration position: the trailing parenthetical our convention writes,
+# `[Dept] Title (closes #N)`. Several references share one pair -- `(refs #1534, refs #1311)`
+# and `(QA restore-verification fixes #300/#301/#302)` are both real -- so the whole group is
+# handed to KEYWORD rather than parsed here.
+#
+# ⚠️ NOT `DECLARATION`, which is the obvious reach and is wrong: it is line-initial-anchored
+# while a title's keyword sits at the END, so applying it would harvest nothing and silently
+# empty the closing set (core#1554 AC1).
+TITLE_DECLARATION_TAIL = re.compile(r"\(([^()]*)\)\s*[.!?]?\s*$")
+
+
+def title_declaration_segment(title: str) -> str:
+    """The part of a PR title where our convention writes a declaration, or ''.
+
+    Deliberately narrow. A title that writes `closes #N` with no parentheses yields nothing
+    here, and that is the safer failure: the commit then reaches the promotion body under
+    *"No issue reference derived -- I could not tell"* (core#1040), which a human reads, rather
+    than closing an issue nobody chose to close.
+    """
+    if not title:
+        return ""
+    match = TITLE_DECLARATION_TAIL.search(title)
+    return match.group(1) if match else ""
+
+
+def find_pr_refs(title: str, body: str) -> set[int]:
+    """Closing refs from a PULL REQUEST's title and body (core#1554).
+
+    Same body rule as `find_refs`; the **title** is read only in declaration position,
+    because prose in a title was becoming a declaration. Measured over 711 merged PRs in
+    both repos on 2026-09-24:
+
+    * **GitHub does not parse a PR title.** `closingIssuesReferences` answers only for the
+      311 PRs based on a default branch (the oracle's domain, core#1541). There, 188 PRs
+      whose *body* declared an issue have it in the oracle -- the positive control -- while
+      the one PR declaring a number only in its *title* (core#308, in perfect declaration
+      position) closed **nothing**. So this harvest CREATES the closure rather than agreeing
+      with one, which is why it must be narrow -- and why it must not be deleted, since it is
+      then the only thing that makes a source PR's `(closes #N)` fire at all.
+    * The narrowing costs nothing: **63** titles harvest under the old whole-title grep and
+      **63** under this rule. 0 lost, 0 gained -- so there is no live instance in the corpus
+      and this is a latent defect closed before it fired.
+    """
+    found = {int(n) for n in KEYWORD.findall(title_declaration_segment(title))}
     found |= {int(n) for n in DECLARATION.findall(strip_non_declarative(body or ""))}
     return found
 
@@ -395,7 +448,11 @@ def main() -> int:
             if not introduced_the_commit(pull):
                 continue
             title, body_text = pull.get("title", ""), pull.get("body") or ""
-            for num in find_refs(title, body_text):
+            # `find_pr_refs`, NOT `find_refs`: a PR title is not a closing surface for
+            # GitHub, so a keyword harvested from prose here would be a closure this
+            # script invented (core#1554). The commit-message call site above keeps
+            # scanning its subject whole, on purpose.
+            for num in find_pr_refs(title, body_text):
                 refs.setdefault(num, set()).add(f"#{pull['number']}")
                 accounted[sha].add(f"closes #{num}")
             for num in find_tracking_refs(title, body_text):

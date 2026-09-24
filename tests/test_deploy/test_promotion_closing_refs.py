@@ -417,6 +417,20 @@ class TestTheOracleIsAskedRatherThanModelled:
     def test_it_asks_for_the_oracle_by_name(self) -> None:
         assert "closingIssuesReferences" in _CHECK_PATH.read_text(encoding="utf-8")
 
+    def test_it_states_what_the_oracle_does_not_answer(self) -> None:
+        """A reader who takes this check's reading AFTER a merge would otherwise conclude
+        the link fired. Two of the three flagged PRs are merged with the issue still open.
+
+        Asserting the PRESENCE of the caveat, not the absence of an overclaim -- a guard
+        written the other way is satisfied by deleting the whole paragraph (`QA_RULES` §24a
+        / `WORKFLOW_RULES` §4). The live fact itself is deliberately not pinned: it would go
+        red the day somebody closes one of those issues.
+        """
+        doc = _CHECK_PATH.read_text(encoding="utf-8")
+        assert "links now" in doc
+        assert "not a record of what fired" in doc
+        assert "runs BEFORE the merge" in doc
+
     def test_a_failed_lookup_is_not_a_pass(self, monkeypatch) -> None:
         monkeypatch.setattr(check, "fetch_closing_refs", lambda repo, pr: None)
         monkeypatch.setattr(check, "fetch_body", lambda repo, pr: "whatever")

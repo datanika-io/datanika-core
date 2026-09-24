@@ -30,6 +30,27 @@ wrong twice over.**
 merge"*, available **before** the merge. Asking it makes the keyword list, the escaping
 edge cases, the code-span stripping and the sidebar route all unnecessary at once.
 
+⚠️ What the oracle does NOT answer, measured 2026-09-24
+--------------------------------------------------------
+
+It says what GitHub **links now**. It is not a record of what fired at some past merge. Of
+the three already-merged PRs this check flags, one closed its undeclared issue (``#1526`` →
+``#1477``, two seconds after the merge) and **two did not**: ``#1188`` → ``#1130`` and
+``landing#530`` → ``#395`` are both still open while GitHub still reports the link. Why is
+not established; the likeliest reading is that a link created *after* a merge cannot have
+fired at it.
+
+🔑 **This does not weaken the check, because the check runs BEFORE the merge** -- which is
+exactly where the oracle is the forward-looking answer it claims to be. What it does mean is
+that a reading taken *after* a merge must not be reported as a record of what fired, and that
+this instrument errs toward over-reporting rather than under-reporting. On a warning that is
+the safe direction, and the corpus says it is not noisy: 119 of the 125 block-carrying PRs
+agree exactly.
+
+⚠️ Deliberately **not** asserted by a test. It is a live fact about two issues, and a guard
+pinning it would go red the day somebody closes one of them -- a criterion that fails on a
+correct change (``QA_RULES`` §29, ``WORKFLOW_RULES`` §5a).
+
 What is compared
 ----------------
 

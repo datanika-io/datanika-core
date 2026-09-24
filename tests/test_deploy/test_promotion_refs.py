@@ -156,11 +156,27 @@ class TestAPullRequestTitleDeclaresOnlyInTrailingPosition:
     # ⚠️ Every expected value is a LITERAL. Computing it with the function under test is
     # satisfied by that function doing nothing — WORKFLOW_RULES section 4, core#1543.
     REAL_CONVENTION = [
-        ("[QA] Lint the directory that decides whether a promotion may proceed (closes #1237)", {1237}),
-        ("[Product] The audit page can finally say what changed (closes #694)", {694}),
-        ("[Growth] Stop pointing readers at an in-app byte figure no screen shows (Closes #663)", {663}),
-        ("[Infra] Promote dev -> master (QA restore-verification fixes #300/#301/#302)", {300}),
-        ("[Engineering] /docs/runs and /api/reference describe the Cancel control that shipped (closes #672)", {672}),
+        (  # core#1244
+            "[QA] Lint the directory that decides whether a promotion may proceed (closes #1237)",
+            {1237},
+        ),
+        (  # core#1250
+            "[Product] The audit page can finally say what changed (closes #694)",
+            {694},
+        ),
+        (  # landing#664 -- a capitalised keyword, which the corpus really contains
+            "[Growth] Stop pointing readers at an in-app byte figure no screen shows (Closes #663)",
+            {663},
+        ),
+        (  # core#308 -- three numbers, one parenthetical; only the keyword-qualified one counts
+            "[Infra] Promote dev -> master (QA restore-verification fixes #300/#301/#302)",
+            {300},
+        ),
+        (  # landing#674
+            "[Engineering] /docs/runs and /api/reference describe the Cancel control "
+            "that shipped (closes #672)",
+            {672},
+        ),
     ]
 
     # The title of core#1162, verbatim. Our PR titles take exactly this shape.
@@ -181,7 +197,8 @@ class TestAPullRequestTitleDeclaresOnlyInTrailingPosition:
 
     def test_a_keyword_in_a_non_trailing_parenthetical_is_not_a_declaration(self):
         """A parenthetical that is not the title's tail is prose like any other."""
-        assert refs.find_pr_refs("[QA] (closes #1) was the old convention, now we do X", "") == set()
+        title = "[QA] (closes #1) was the old convention, now we do X"
+        assert refs.find_pr_refs(title, "") == set()
 
     def test_a_commit_subject_is_deliberately_left_scanning_whole(self):
         """The asymmetry IS the fix, which is why `find_refs` was not simply edited.
@@ -194,7 +211,8 @@ class TestAPullRequestTitleDeclaresOnlyInTrailingPosition:
     def test_the_body_half_is_untouched(self):
         """A line-initial declaration still counts; mid-sentence prose still does not."""
         assert refs.find_pr_refs("[QA] no refs in this title", "Closes #77") == {77}
-        assert refs.find_pr_refs("[QA] no refs in this title", "I will close #77 by hand later") == set()
+        prose = "I will close #77 by hand later"
+        assert refs.find_pr_refs("[QA] no refs in this title", prose) == set()
 
     def test_tracking_refs_are_deliberately_not_narrowed(self):
         """Scoped out on purpose, and recorded so the omission is a decision.
@@ -203,7 +221,8 @@ class TestAPullRequestTitleDeclaresOnlyInTrailingPosition:
         reviews, so a false one costs a review line rather than a closure. Narrowing it
         buys nothing and would have to be argued separately.
         """
-        assert refs.find_tracking_refs("[Product] Rule the routes (refs #1534, refs #1311)", "") == {1534, 1311}
+        title = "[Product] Rule the routes (refs #1534, refs #1311)"
+        assert refs.find_tracking_refs(title, "") == {1534, 1311}
 
 
 class TestFindTrackingRefs:

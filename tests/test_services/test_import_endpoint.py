@@ -575,6 +575,28 @@ class TestImportObjectCap:
             assert listed.status_code == 200
             assert listed.json()["items"] == []
 
+    def test_the_cap_is_the_documented_number(self):
+        """Pinned to a LITERAL, because every other test here cannot see this.
+
+        Measured, not feared: mutating `MAX_IMPORT_OBJECTS` to 10_000_000 was caught by NONE of
+        the other five tests in this class. They each build their payload as
+        `MAX_IMPORT_OBJECTS + 1`, so raising the constant moves their input in lockstep and the
+        refusal still fires -- an assertion that computes its expected value with the thing under
+        test is satisfied by that thing being wrong. The cap is a product decision
+        (`SPEC_AUDIT_TRAIL` §9.8 leans on its magnitude), so changing it should require changing a
+        test that says so.
+        """
+        assert MAX_IMPORT_OBJECTS == 1000
+
+    def test_a_payload_of_1001_objects_is_refused(self):
+        """The same guard from the behaviour side, with a fixed count rather than a derived one.
+
+        1001 is written out deliberately: `MAX_IMPORT_OBJECTS + 1` would follow the constant
+        upward and stay green, which is precisely what the mutation showed.
+        """
+        errors = _validate_import_payload(self._n("connections", 1001), {})
+        assert errors[0]["code"] == "IMPORT_TOO_LARGE"
+
     def test_the_refusal_names_the_limit_and_the_count_received(self):
         """AC3. 'Too large' without the two numbers does not tell the caller how to split."""
         over = MAX_IMPORT_OBJECTS + 1

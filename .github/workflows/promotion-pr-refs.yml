@@ -20,9 +20,17 @@
 # (WORKFLOW_RULES §8: issues close only once the code is live on master).
 name: Promotion PR refs
 
+# `edited` was added for core#1541. The closing-reference check below must see the body a
+# human last left, and a promotion body is routinely edited after opening -- the narrative
+# half is written by hand while the generated block is written by the step above it.
+#
+# It does not loop. `gh pr edit` here runs as `github.token`, and GitHub does not start new
+# workflow runs from events raised by GITHUB_TOKEN; and even if it did, `promotion_refs.py`
+# is idempotent and the second run would report "body already up to date" and edit nothing,
+# so there would be no third event.
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, edited]
     branches: [master]
 
 permissions:
@@ -49,3 +57,28 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 .github/scripts/promotion_refs.py
+
+      # core#1541. Ask GitHub what this PR will close and compare it against what the block
+      # above just declared. Any difference is the finding, in both directions.
+      #
+      # It is a STEP IN THIS JOB rather than a workflow of its own, and that is the load-
+      # bearing detail: it must read the body *after* the generator has written the block.
+      # A separate workflow on `pull_request` would race it on `opened` and read a body with
+      # no block yet, which is the one state this check must not mistake for a finding.
+      #
+      # 🚨 ADVISORY BY CONSTRUCTION -- do not write this up as a gate. `master` carries no
+      # required checks and no strict mode, and every promotion merges with
+      # `gh pr merge --merge --admin`, which bypasses. A red here cannot stop a promotion.
+      # What it can do is sit on the PR the promoter is about to read, which is worth
+      # having; claiming more than that would be false and the next reader would rely on it.
+      #
+      # `!cancelled()` rather than `always()`: the generator can exit 1 on an empty
+      # derivation, and this check still has something useful to say when it does -- but a
+      # cancelled job measured nothing and must not report.
+      - name: Does GitHub agree with what the body declares? (advisory — core#1541)
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/check_promotion_closing_refs.py --repo "$REPO" --pr "$PR_NUMBER"

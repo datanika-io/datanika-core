@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from datanika.errors import UserFacingError
+from datanika.models.audit_log import AuditAction
 from datanika.models.catalog_entry import CatalogEntryType
 from datanika.models.connection import ConnectionType
 from datanika.models.dependency import NodeType
@@ -25,6 +26,7 @@ from datanika.models.run import (
 )
 from datanika.models.transformation import Materialization
 from datanika.services.api_middleware import api_endpoint
+from datanika.services.audit_service import AuditService
 from datanika.services.authorization import InsufficientRoleError, assert_org_role
 from datanika.services.catalog_service import CatalogService
 from datanika.services.connection_service import (
@@ -1146,6 +1148,52 @@ def get_run_logs(request, api_key, session):
     return JSONResponse({"run_id": run.id, "logs": run.logs or ""})
 
 
+def _audit_run_cancel(session, api_key, run_id: int, was, now) -> None:
+    """Record an API cancel the way the UI door records a UI one (SPEC_AUDIT_TRAIL §8.4).
+
+    Both doors call the same ``ExecutionService.cancel_run``, and until core#1533 only the UI one
+    wrote a row — so the same action was recorded or not **according to which door it came
+    through**. §1: *an absent log is not consulted, a lying one is believed.* A table holding
+    **some** cancels answers *"who stopped run 42?"* with a well-formed silence that reads as
+    *"nobody did."*
+
+    ``"update"``, never a new ``cancel`` member: §2.2 binds the action to an ``AuditAction``
+    member, and the UI door already writes ``"update"`` for this transition — a second vocabulary
+    for one action splits the filter.
+
+    ⚠️ **``api_key_id`` and never the key's NAME** (§8.6). A name is user-chosen free text and can
+    contain anything, including an email address, and ``redact_pii_payload`` is **nominal** — it
+    matches key *names*, so personal data arriving under ``api_key_name`` would be invisible to it.
+    The id is what stays resolvable. The UI door's row carries no ``api_key_id`` at all, which is
+    deliberate: no key acted, and ``api_key_id: null`` would assert one was involved and was empty.
+    **The presence of the field is itself the signal for which door was used.**
+
+    The swallow mirrors ``BaseState._audit`` rather than inventing a second policy for this door
+    (core#723: *"audit logging must never break the operation it describes; the LOG is what makes
+    it safe"*). ⚠️ It is a narrower guarantee than it looks: ``log_action`` flushes, so a failure
+    that leaves the session unusable still fails the caller's commit. It protects against a bad
+    payload, not against a broken session.
+    """
+    try:
+        AuditService().log_action(
+            session,
+            api_key.org_id,
+            api_key.user_id,
+            AuditAction.UPDATE,
+            "run",
+            resource_id=run_id,
+            old_values={"status": was.value},
+            new_values={"status": now.value, "api_key_id": api_key.id},
+        )
+    except Exception:
+        logger.exception(
+            "Audit write failed and was dropped: api cancel run=%s org=%s key=%s",
+            run_id,
+            api_key.org_id,
+            api_key.id,
+        )
+
+
 @api_endpoint(required_scope="runs:write")
 def cancel_run(request, api_key, session):
     """POST /api/v1/runs/{id}/cancel — cancel a pending or running run."""
@@ -1159,6 +1207,13 @@ def cancel_run(request, api_key, session):
             "not_cancellable",
             f"Run is already {run.status.value} and cannot be cancelled",
         )
+    # 🚨 SPEC_AUDIT_TRAIL §8.5. Read the status into a scalar BEFORE the call. `run` came from
+    # this handler's own `get_run` on this session, so under one identity map it is very likely
+    # the SAME OBJECT the service mutates — `run.status` afterwards yields the NEW status and the
+    # row would record `old == new`: a transition that never happened, filed under the name of
+    # somebody who did something else. `run_state.py:233-236` works around the same hazard.
+    # The wrong version reads perfectly here, which is why this comment exists.
+    was = run.status
     cancelled = _exec_svc.cancel_run(session, api_key.org_id, run_id, actor_user_id=api_key.user_id)
     if cancelled is None:
         # §1a. The only way to reach this is the run finishing between the check above and
@@ -1167,6 +1222,13 @@ def cancel_run(request, api_key, session):
         return _typed_error(
             409, "not_cancellable", "Run reached a terminal status before it could be cancelled"
         )
+    # Conditional on a REAL transition, exactly as the UI door is (§8.4). `CANCELLING` is itself
+    # in `CANCELLABLE_RUN_STATUSES`, so the guard above lets a second stop through and the service
+    # returns the run unchanged — an unconditional write files a `cancelling -> cancelling` row
+    # asserting something that did not happen, and §1 is explicit that inventing transitions is
+    # the worse of the two failure modes, not the safer one.
+    if cancelled.status != was:
+        _audit_run_cancel(session, api_key, run_id, was, cancelled.status)
     # SPEC_RUN_CANCELLATION §5.2 / AC10 / AC12: the body is still the run, and it also says what
     # cancelling did and did not do — a `200` alone is exactly what this endpoint returned while
     # it cancelled nothing. The same words as the /runs dialog (`services/run_cancellation.py`).

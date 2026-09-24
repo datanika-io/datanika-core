@@ -1,8 +1,13 @@
 # Load-test harness (`core#778`)
 
-**The published floor is `>= 60 authed req/s` on the current hardware.** This directory is the
-instrument that produced it. It exists because the instrument that produced it the *first* time
-did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning, and by
+🔴 **There is currently NO validated sustained-throughput floor. Do not cite `>= 60 req/s`.**
+That figure was carried for weeks; run 10 (2026-09-24) showed the ladder that produced it never
+*held* any rate, so the number was never measured in the form it was quoted ([core#1560], now
+fixed here — but fixed means *the next run can measure it*, not that it has been measured).
+What is currently defensible is a **~50 req/s sustain** — see *Status of this harness* below.
+
+This directory is the instrument. It exists because the instrument that produced the original
+number did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning, and by
 2026-09-20 the number was being cited while nothing could re-run it.
 
 > 🔑 **A floor whose instrument cannot be re-run is not a measurement, it is a memory.**
@@ -22,12 +27,31 @@ bash scripts/loadtest/preflight.sh --duration-min 25     # exit 0 = go; anything
 **2. Only then, on the production box.** Targets staging. Never run this against production.
 
 ```bash
-bash scripts/loadtest/run.sh --keys 161 --stages "5:120s,10:120s,20:120s,30:120s,40:120s,60:120s"
+bash scripts/loadtest/run.sh          # defaults: --keys 300, a ladder to 100 req/s, --ramp 30s
 ```
 
-🚨 **`N:DUR` means "ramp to N over DUR", not "hold N for DUR".** No stage above repeats a target, so
-this spec never sustains any rate and its `60` stage actually delivers ~50 req/s. **Do not quote a
-stage label as a throughput figure** — see *Status of this harness* below and [core#1560].
+🔑 **A rate is measured only where it is HELD.** `ramping-arrival-rate` *interpolates*, so a
+segment whose target differs from the current rate is travel, not a measurement — its achieved
+rate is the mean of the ramp. Run 10's `60:120s` therefore delivered **49.92 = (40+60)/2** while
+k6's console printed `60.00 iters/s` beside it ([core#1560]).
+
+`run.sh` now expands each requested rung into **ramp, then hold**, and prints the effective spec:
+
+```
+--stages "5:120s,10:120s"   ->   5:120s,10:30s,10:120s
+                                 ^^^^^^ flat: startRate == the first target
+                                        ^^^^^^^ ramp    ^^^^^^^^ HOLD — the measured window
+```
+
+The expansion is idempotent, so a spec you wrote out with holds yourself is passed through
+untouched. **Attribute every figure to a hold**: each held rung now carries its own
+`http_reqs{rung:N}` threshold, so the summary states the *achieved* count against the count the
+requested rate implies — the gap can no longer hide behind the label.
+
+🚨 **`--keys` is a gate, not a suggestion.** The top stage must be strictly below the limiter
+ceiling (`keys x rpm / 60`) or the upper rungs measure the rate limiter and report it as
+throughput. `run.sh` **refuses** and prints the key count that would satisfy it ([core#1556]).
+There is deliberately no override: mint more keys, or lower the top stage.
 
 > 🔑 **Why the gate is on the other machine, and why `run.sh`'s own preflight is not enough.**
 > `run.sh` asks *"is an E2E suite running right now"*. A 25-minute ladder needs *"will one
@@ -161,6 +185,10 @@ effect is how a test fixture ends up in a production-shaped database.
 
 ## Status of this harness — read before quoting a number from it
 
+**Execution status:** executed end to end — run 10, 2026-09-24. ⚠️ **That run used the PRE-FIX
+stage spec**, so it validates the harness's safety and plumbing but not a sustained figure above
+~50 req/s; the hold stages below have not yet been exercised against staging.
+
 🟢 **Run 10 (2026-09-24) completed the ladder with this code — the first run that did.** k6 exit 0;
 **16,980 requests, `http_req_failed` 0.00%**, `http_req_duration` p95 **33.12 ms**, production
 sampled throughout with **`datanika_neighbour_non_200` = 0**. Both validity controls clean:
@@ -170,11 +198,15 @@ and not the fixture. Structure still guarded by `tests/test_deploy/test_loadtest
 *(The 2026-09-21 first execution found eight defects in the harness itself — core#1492, core#1503 —
 and both runs it produced aborted in stage 1 on the latency threshold, which is gap 1 above.)*
 
-🔴 **It still does NOT validate the `>= 60 req/s` floor, and the reason is the stage spec, not the
-box — [core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation
-above repeats a target, so **the ladder never holds any rate.** Measured per-stage achieved rates
-are the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`. The
-run touched 60 only at the final instant of the last ramp.
+🔴 **Run 10 did NOT validate the `>= 60 req/s` floor, and the reason was the stage spec, not the
+box — [core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation of
+the day repeated a target, so **that ladder never held any rate.** Every per-stage achieved rate
+was the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`, and
+the run touched 60 only at the final instant of the last ramp.
+
+✅ **The spec defect is fixed** (hold stages, per-rung achieved thresholds, and the limiter-ceiling
+gate of [core#1556]). ⚠️ **A fix is not a measurement.** Until a ladder that holds a rate has
+actually run against staging, the `>= 60 req/s` floor stays **unvalidated** and must not be cited.
 
 ✅ **What Run 10 does establish, and what may be quoted:**
 
@@ -187,13 +219,15 @@ run touched 60 only at the final instant of the last ramp.
 
 ⚠️ **The top stage's NAME and the load it applies are different numbers, and the name is the one
 that gets published.** k6's console prints the stage *target* (`60.00 iters/s`) beside the
-scenario's completion, which is exactly what makes the gap invisible. Until [core#1560] adds hold
-stages, **attribute any figure to the achieved rate computed from `raw.csv`, never to the stage
-label.**
+scenario's completion, which is exactly what made the gap invisible in every artefact run 10
+produced. The per-rung `http_reqs{rung:N}` thresholds exist to close that: they put the
+**achieved** count for each held rung into the summary, graded against what the requested rate
+implies. A red rung line means **that rung was not delivered** — a finding about the target or the
+fixture, not a broken harness — so it is deliberately not `abortOnFail`.
 
-**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps: the knee **above** 60
-(which now needs a spec with a *hold*, not merely a higher top), `/meta` at >= 100, production's
-4-worker shape, and query cost on real data volume.
+**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps: a run on the fixed
+spec that actually **holds** 60 and above, `/meta` at >= 100, production's 4-worker shape, and
+query cost on real data volume.
 
 ⚠️ **Operational, learned in Run 10: do not drive the ladder from a foreground SSH session.** The
 control channel dropped ~10 minutes in. The remote processes survived and the run finished

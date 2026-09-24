@@ -28,8 +28,15 @@
 # path another session would inherit, and nothing is written into the repository.
 set -uo pipefail
 
-KEYS=161                  # Run 9's count. See the ceiling formula in k6_baseline.js.
+# 🔴 core#1556: this was 161 — Run 9's count — while STAGES below tops out at 100 req/s. 161
+# keys is a 80 req/s ceiling, so the script's own defaults asked for a ladder its own fixture
+# could not deliver, and the last two stages would have measured the RATE LIMITER. 300 is the
+# count `preflight.sh`'s own closing line already tells the operator to pass (ceiling 150).
+KEYS=300
 STAGES="5:120s,10:120s,20:120s,30:120s,40:120s,60:120s,80:120s,100:120s"
+# Ramp inserted before each new rate so the rate that follows is HELD rather than merely touched
+# (core#1560). Only the hold is a measurement; see expand_stages below.
+RAMP="30s"
 OUT=""
 K6_IMAGE="grafana/k6:1.7.1"   # Pinned. `:latest` on an instrument is how two runs stop comparing.
 STAGING_BE="http://127.0.0.1:8100"   # staging is NOT blue/green; this port is stable.
@@ -40,6 +47,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --keys)   KEYS="$2"; shift 2 ;;
     --stages) STAGES="$2"; shift 2 ;;
+    --ramp)   RAMP="$2"; shift 2 ;;
     --out)    OUT="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -49,7 +57,77 @@ mkdir -p "$OUT"
 LOG="$OUT/run.log"
 say() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*" | tee -a "$LOG"; }
 
+# ── stage expansion (core#1560) ───────────────────────────────────────────────────────────
+# `ramping-arrival-rate` INTERPOLATES. A segment whose target differs from the rate we are
+# already at is a RAMP, and its achieved rate is the mean of that ramp, not its label — run 10's
+# `60:120s` delivered 49.92 = (40+60)/2 while k6's console printed `60.00 iters/s` beside it.
+# A rate is HELD only where two consecutive segments share a target.
+#
+# So each requested rung becomes "ramp to R, then HOLD R". Idempotent by construction: a spec
+# that already contains a hold is passed through untouched, so expanding twice is the same as
+# expanding once, and a hand-written expanded spec is never double-ramped.
+already_holds() {   # $1 = spec. returns 0 if any two consecutive segments share a target.
+  ah_prev=""
+  for ah_part in $(printf '%s' "$1" | tr ',' ' '); do
+    ah_rate="${ah_part%%:*}"
+    if [ "$ah_rate" = "$ah_prev" ]; then return 0; fi
+    ah_prev="$ah_rate"
+  done
+  return 1
+}  # end already_holds
+
+expand_stages() {   # $1 = spec, $2 = ramp duration -> prints the effective spec
+  es_spec="$1"; es_ramp="$2"; es_out=""; es_prev=""
+  if already_holds "$es_spec"; then printf '%s\n' "$es_spec"; return 0; fi
+  for es_part in $(printf '%s' "$es_spec" | tr ',' ' '); do
+    es_rate="${es_part%%:*}"
+    # The first rung needs no ramp: startRate == the first target, so it is already flat.
+    if [ -n "$es_prev" ] && [ "$es_rate" != "$es_prev" ]; then
+      es_out="${es_out:+$es_out,}${es_rate}:${es_ramp}"
+    fi
+    es_out="${es_out:+$es_out,}${es_part}"
+    es_prev="$es_rate"
+  done
+  printf '%s\n' "$es_out"
+}  # end expand_stages
+
+# ── the limiter-ceiling GATE (core#1556) ──────────────────────────────────────────────────
+# This used to be a SENTENCE. The script computed the ceiling, printed "top stage must be under
+# it", and proceeded regardless — a report wearing a gate's clothes. It failed quietly in the
+# direction that matters, because a limiter-bound stage does not error: it returns plausible,
+# LOWER numbers, which then get published as application throughput.
+#
+# There is deliberately NO override. The correct action is always available — mint more keys, or
+# lower the top stage — so an override could only ever be a way to skip the check. A run that
+# deliberately measures the limiter is a DIFFERENT run and must be labelled one.
+ceiling_gate() {   # $1 = minted keys, $2 = stage spec, $3 = rpm per key (default 30)
+  cg_minted="$1"; cg_spec="$2"; cg_rpm="${3:-30}"
+  cg_top="$(printf '%s' "$cg_spec" | tr ',' '\n' | cut -d: -f1 | grep -E '^[0-9]+$' | sort -n | tail -1)"
+  if [ -z "${cg_top:-}" ]; then
+    say "REFUSING: no numeric stage rate could be parsed out of '$cg_spec'"
+    return 18
+  fi
+  cg_ceil=$(( cg_minted * cg_rpm / 60 ))
+  if [ "$cg_top" -lt "$cg_ceil" ]; then
+    say "gate: top stage ${cg_top} req/s is below the ${cg_ceil} req/s limiter ceiling"
+    say "      (${cg_minted} keys x ${cg_rpm} rpm / 60) — permitted"
+    return 0
+  fi
+  # Ceiling division, and the +1 is load-bearing: the requirement is strict. 201 keys yields a
+  # ceiling of exactly 100 for a top stage of 100, which is AT the ceiling, not under it.
+  cg_need=$(( ( (cg_top + 1) * 60 + cg_rpm - 1 ) / cg_rpm ))
+  say "REFUSING: top stage ${cg_top} req/s is NOT below the ${cg_ceil} req/s limiter ceiling"
+  say "          (${cg_minted} keys x ${cg_rpm} rpm / 60). The upper stages would measure the"
+  say "          RATE LIMITER and report it as application throughput — quietly, because a"
+  say "          limiter-bound stage does not error, it just returns lower numbers."
+  say "          Remedy: --keys ${cg_need} (or more), or lower the top stage below ${cg_ceil}."
+  return 17
+}  # end ceiling_gate
+
+EFFECTIVE_STAGES="$(expand_stages "$STAGES" "$RAMP")"
 say "run start  keys=$KEYS  stages=$STAGES  out=$OUT"
+say "stages: effective $EFFECTIVE_STAGES"
+say "stages: ramp $RAMP precedes each new rate; ONLY THE HOLD IS A MEASUREMENT (core#1560)"
 
 # ── resolve the serving colour (core#622 class) ───────────────────────────────────────────
 # 🔴 FOUND ON THE FIRST REAL EXECUTION, 2026-09-21. PROD_BE was hardcoded to :8000. The
@@ -146,8 +224,14 @@ if [ "$MINTED" -lt "$KEYS" ]; then
   rm -rf "$KEYDIR"; exit 15
 fi
 
-CEIL=$(( MINTED * 30 / 60 ))
-say "seed: per-key ceiling implies <= ${CEIL} req/s at 30 rpm/key — top stage must be under it"
+# core#1556: this is now a GATE, not a caption. It is evaluated against the EFFECTIVE spec,
+# because that is what k6 will actually offer.
+# ⚠️ `|| { rm ...; exit $?; }` would exit with the status of `rm`, not of the gate — so a refusal
+# would leave with 0. Capture the status first; this is the same "assert the outcome, not the
+# exit code of the last command" trap the harness has already been bitten by twice.
+CG_RC=0
+ceiling_gate "$MINTED" "$EFFECTIVE_STAGES" || CG_RC=$?
+if [ "$CG_RC" -ne 0 ]; then rm -rf "$KEYDIR"; exit "$CG_RC"; fi
 
 cleanup() {
   say "cleanup: revoking keys"
@@ -181,12 +265,17 @@ say "generator start"
 docker run --rm -i --user 0:0 --network host \
   -v "$KEYDIR":/keys:ro -v "$OUT":/out \
   -e TARGET_BASE="$STAGING_BE" -e NEIGHBOUR_BASE="$PROD_BE" \
-  -e KEYS_FILE=/keys/loadtest-keys.txt -e STAGES="$STAGES" \
+  -e KEYS_FILE=/keys/loadtest-keys.txt -e STAGES="$EFFECTIVE_STAGES" \
   "$K6_IMAGE" run --summary-export=/out/summary.json --out "csv=/out/raw.csv" - \
   < "$(dirname "$0")/k6_baseline.js" > "$OUT/k6.out" 2>&1
 K6RC=$?
 echo "$K6RC" > "$OUT/k6.exit"
-say "generator exit $K6RC  (non-zero = a threshold in k6_baseline.js aborted the run; that is the abort criteria working)"
+# ⚠️ Non-zero now has TWO meanings and they call for opposite responses, so do not collapse them:
+#   - an abortOnFail criterion stopped the run   -> the abort criteria working
+#   - a `http_reqs{rung:N}` threshold was missed -> that rung did NOT deliver its requested rate
+# The second is a finding about the target or the fixture, not a broken harness. Read which one
+# it was in summary.json rather than inferring it from the exit status.
+say "generator exit $K6RC  (non-zero = an abort criterion fired, OR a rung did not deliver its rate — read summary.json)"
 
 # ── drain (rule 4) ────────────────────────────────────────────────────────────────────────
 for s in 30 60 90 120; do

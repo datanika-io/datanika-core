@@ -34,6 +34,7 @@
 // unread-count ~40%, connections ~28%, runs ~20%, notifications ~15%.
 
 import http from 'k6/http';
+import exec from 'k6/execution';
 import { check } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
@@ -56,10 +57,28 @@ if (!NEIGHBOUR) {
   );
 }
 
-// Stages: "rate:duration,rate:duration,...". The default reproduces Run 9 exactly and then
-// continues past its top stage, which is gap 1 on the issue (Run 9 found no knee because 60
-// was where it stopped, not where it broke).
-const STAGE_SPEC = __ENV.STAGES || '5:120s,10:120s,20:120s,30:120s,40:120s,60:120s,80:120s,100:120s';
+// ── STAGES: A RATE IS "HELD" ONLY WHERE TWO CONSECUTIVE SEGMENTS SHARE A TARGET ───────────
+// 🔴 core#1560, found by running this harness (run 10, 2026-09-24) and reconciling the achieved
+// rate against the stage label. `ramping-arrival-rate` LINEARLY INTERPOLATES from the current
+// rate to each stage's target over that stage's duration. A spec whose targets never repeat
+// therefore never sustains anything — every achieved rate is the **mean of its ramp**:
+//
+//     stage `60:120s`, entered at 40  ->  delivered 49.92 req/s  =  (40 + 60) / 2
+//
+// 🔑 And k6's console prints the stage TARGET (`60.00 iters/s`), so the gap was invisible in
+// every artefact the run produced. The number that gets published was never measured.
+//
+// So the unit of measurement here is a RUNG: a ramp segment followed by a HOLD segment at the
+// same target. **Only the hold is a measurement; the ramp is travel.** `run.sh` expands a plain
+// "rate:duration" ladder into rungs, and passes an already-expanded spec through untouched. The
+// default below is written out already expanded, so this file is honest when read on its own.
+//
+//     5:120s            rung 1 is flat -- startRate == the first target, so this IS a hold
+//     10:30s,10:120s    ramp to 10 over 30s, then HOLD 10 for 120s   <- the measured window
+const STAGE_SPEC =
+  __ENV.STAGES ||
+  '5:120s,10:30s,10:120s,20:30s,20:120s,30:30s,30:120s,40:30s,40:120s,' +
+    '60:30s,60:120s,80:30s,80:120s,100:30s,100:120s';
 
 const keys = new SharedArray('keys', function () {
   // One key per line. `run.sh` writes this file from the seeder and deletes it afterwards.
@@ -76,6 +95,69 @@ function stages() {
     const [target, duration] = part.split(':');
     return { target: parseInt(target, 10), duration };
   });
+}
+
+function durationSeconds(d) {
+  const m = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(String(d).trim());
+  if (!m) {
+    throw new Error(
+      `unparseable stage duration ${JSON.stringify(d)} in STAGES. Use 30s / 2m / 1h. Guessing ` +
+        'one would silently mis-attribute which samples belong to a hold, which is the whole ' +
+        'defect core#1560 is about.',
+    );
+  }
+  return parseFloat(m[1]) * { ms: 0.001, s: 1, m: 60, h: 3600 }[m[2]];
+}
+
+// The schedule, with every segment classified. A segment is a HOLD iff its target equals the
+// rate we were already at when it began — derived from the spec, never from how the spec was
+// written down. `startRate` is the first target, so segment 1 is always flat and always a hold.
+const SCHEDULE = (function () {
+  const out = [];
+  let t = 0;
+  let prev = null;
+  for (const s of stages()) {
+    const secs = durationSeconds(s.duration);
+    out.push({
+      target: s.target,
+      phase: prev === null || s.target === prev ? 'hold' : 'ramp',
+      from: t,
+      to: t + secs,
+    });
+    t += secs;
+    prev = s.target;
+  }
+  return out;
+})();
+
+const LADDER_SECONDS = SCHEDULE.length ? SCHEDULE[SCHEDULE.length - 1].to : 0;
+
+// Held seconds per target — the denominator of every achieved-rate figure this run reports.
+const HELD = {};
+for (const seg of SCHEDULE) {
+  if (seg.phase === 'hold') HELD[seg.target] = (HELD[seg.target] || 0) + (seg.to - seg.from);
+}
+
+function segmentAt(elapsedSeconds) {
+  for (const seg of SCHEDULE) {
+    if (elapsedSeconds >= seg.from && elapsedSeconds < seg.to) return seg;
+  }
+  return null;
+}
+
+// 🔑 THE OTHER HALF OF core#1560: put the ACHIEVED rate of every held rung into the run's own
+// artefact. k6 prints a sub-metric in the end-of-test summary when that sub-metric carries a
+// threshold — so grading `http_reqs{rung:N}` against the count N implies over its own hold
+// makes "did the ladder actually hold this rate" a CHECKED property rather than a stated one.
+//
+// A red line here means THAT RUNG WAS NOT DELIVERED. That is a finding about the target or the
+// fixture, not a broken harness, so it is deliberately **not** `abortOnFail`: the ladder should
+// finish and report every rung rather than stop at the first one the box cannot serve.
+const HOLD_TOLERANCE = parseFloat(__ENV.HOLD_TOLERANCE || '0.95');
+const rungThresholds = {};
+for (const target of Object.keys(HELD)) {
+  const expected = Math.floor(target * HELD[target] * HOLD_TOLERANCE);
+  rungThresholds[`http_reqs{rung:${target}}`] = [`count>=${expected}`];
 }
 
 const first = stages()[0];
@@ -98,7 +180,12 @@ export const options = {
       executor: 'constant-arrival-rate',
       rate: 1,
       timeUnit: '2s',
-      duration: __ENV.NEIGHBOUR_DURATION || '16m',
+      // 🔴 DERIVED, never a literal. This was `'16m'`, which happened to equal the old ladder's
+      // 8 x 120s exactly — so it was correct by coincidence, and any change to STAGES silently
+      // stopped sampling production before the ladder finished. The founder's condition is that
+      // production is watched THROUGHOUT; a neighbour that stops early reports a reassuring
+      // number about the part of the run that mattered least.
+      duration: __ENV.NEIGHBOUR_DURATION || `${Math.ceil(LADDER_SECONDS + 60)}s`,
       preAllocatedVUs: 2,
       maxVUs: 4,
       exec: 'neighbour',
@@ -126,7 +213,10 @@ export const options = {
   //
   // The FAILURE-rate abort is deliberately left immediate: an error is not sampling noise, and
   // a run whose keys are being refused should stop at once rather than a stage later.
-  thresholds: {
+  //
+  // `rungThresholds` is merged in first so every held rung's achieved count is graded and
+  // printed; the abort criteria below are the ones that can stop the run.
+  thresholds: Object.assign(rungThresholds, {
     'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }],
     'http_req_duration{scenario:api}': [
       { threshold: 'p(95)<1000', abortOnFail: true, delayAbortEval: first.duration },
@@ -134,7 +224,7 @@ export const options = {
     // The neighbour is the founder's condition and is therefore the hardest line here.
     datanika_neighbour_non_200: [{ threshold: 'count<1', abortOnFail: true }],
     datanika_neighbour_healthz_ms: ['p(99)<250'],
-  },
+  }),
 };
 
 function nextKey() {
@@ -145,7 +235,15 @@ function nextKey() {
 
 export function api() {
   const key = nextKey();
-  const params = { headers: { Authorization: `Bearer ${key}` }, tags: { scenario: 'api' } };
+  // Which rung is this sample part of? Only a HOLD is a measurement, so ramp samples are tagged
+  // as travel and cannot be averaged into a rung's achieved rate — which is exactly how the old
+  // ladder reported (prev + target) / 2 under the name `target`.
+  const seg = segmentAt(exec.instance.currentTestRunDuration / 1000);
+  const rung = seg === null ? 'outside' : seg.phase === 'hold' ? String(seg.target) : 'ramp';
+  const params = {
+    headers: { Authorization: `Bearer ${key}` },
+    tags: { scenario: 'api', rung: rung },
+  };
 
   // Weighted by Run 9's observed mix.
   const r = Math.random();

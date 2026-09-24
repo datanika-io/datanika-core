@@ -70,8 +70,9 @@ _KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
 #: 🔑 Measured by mutation, because the obvious reading is wrong in a way that matters: dropping
 #: EITHER one leaves ``test_the_slice_exercises_both_directions`` **green**, and is caught only by
 #: :class:`TestTheSliceCoversEveryDerivedSite`. Only dropping both reds it. So neither member is
-#: redundant and neither is sufficient — the slice is one deletion away from an all-required
-#: population, which is precisely what a marker-always mechanism passes.
+#: redundant and neither is sufficient: **either deletion on its own is invisible to AC3's test**,
+#: and it is the pair that stands between this slice and an all-required population — which is
+#: precisely the population a marker-always mechanism passes.
 _SLICE = [
     (openapi_fields, "base_url"),
     (rest_api_fields, "base_url"),

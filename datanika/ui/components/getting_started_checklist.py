@@ -103,6 +103,7 @@ def getting_started_checklist() -> rx.Component:
                         _t["onboarding.all_done"],
                         icon="party_popper",
                         color_scheme="green",
+                        high_contrast=True,
                     ),
                     rx.fragment(),
                 ),

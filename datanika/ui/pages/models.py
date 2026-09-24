@@ -91,6 +91,7 @@ def uncatalogued_upload_notices() -> rx.Component:
             ),
             icon="triangle_alert",
             color_scheme="amber",
+            high_contrast=True,
             width="100%",
         ),
     )

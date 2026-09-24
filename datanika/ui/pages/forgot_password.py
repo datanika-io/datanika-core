@@ -53,6 +53,7 @@ def _request_form() -> rx.Component:
                 PasswordResetState.error,
                 icon="triangle_alert",
                 color_scheme="red",
+                high_contrast=True,
                 width="100%",
             ),
         ),
@@ -123,6 +124,7 @@ def _unavailable() -> rx.Component:
         _t["auth.reset_unavailable"],
         icon="info",
         color_scheme="gray",
+        high_contrast=True,
         width="100%",
     )
 

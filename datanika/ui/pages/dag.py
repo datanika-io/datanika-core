@@ -231,6 +231,7 @@ def add_dependency_form() -> rx.Component:
                     DagState.error_message,
                     icon="triangle_alert",
                     color_scheme="red",
+                    high_contrast=True,
                 ),
                 rx.fragment(),
             ),

@@ -1346,10 +1346,17 @@ def mark_notification_read(request, api_key, session):
     from datanika.services.in_app_notification_service import InAppNotificationService
 
     nid = int(request.path_params["id"])
-    notif = InAppNotificationService.mark_read(session, nid, api_key.org_id, api_key.user_id)
+    notif, transitioned = InAppNotificationService.mark_read_status(
+        session, nid, api_key.org_id, api_key.user_id
+    )
     if notif is None:
         return _error(404, "Notification not found")
-    return JSONResponse(_ser_notification(notif))
+    # Additive (#1548 AC3): every existing field is unchanged, and `marked` counts what THIS call
+    # changed -- 1 on a real unread->read transition, 0 on a re-mark. Same reading as
+    # mark_all_read's {"marked": n}. `read_at` now stays at the first read rather than being
+    # overwritten, so the pair tells a client both when the user first saw it and whether this
+    # call did anything.
+    return JSONResponse({**_ser_notification(notif), "marked": 1 if transitioned else 0})
 
 
 @api_endpoint(required_scope="notifications:write")

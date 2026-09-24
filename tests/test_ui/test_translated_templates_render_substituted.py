@@ -81,6 +81,25 @@ class TestTheInstrumentCanSee:
     def test_a_missing_key_is_not_silently_a_pass(self):
         assert not _substituted("anything at all", "account.delete_org_too", "org")
 
+    def test_the_window_is_anchored_to_the_key(self):
+        """An unrelated ``replaceAll`` elsewhere in the tree must NOT satisfy the assertion.
+
+        🔑 **Added because a mutation escaped.** Dropping the window — ``... in tree`` instead of
+        ``... in tree[start:start + 2000]`` — left every test in this file passing, and the two
+        negative cases above could not see it: neither of them contains a ``replaceAll`` at all,
+        so anchored and unanchored agree on both. A control has to **answer the two populations
+        differently**, and these did not.
+
+        It matters because the settings page renders *two* substituted callouts a few hundred
+        characters apart, plus whatever else the tree grows later. Unanchored, this file degrades
+        into "the page contains a substitution somewhere" — which it always does.
+        """
+        far = 'x?.["account.delete_org_too"]' + ("." * 3000) + '.replaceAll("{org}", y)'
+        near = 'x?.["account.delete_org_too"].replaceAll("{org}", y)'
+        # Both halves in one test: the correct shape passes AND the defective one still fails.
+        assert _substituted(near, "account.delete_org_too", "org")
+        assert not _substituted(far, "account.delete_org_too", "org")
+
     def test_the_dialog_actually_rendered(self, delete_dialog):
         """A tree that failed to build would make every negative assertion above vacuous."""
         assert len(delete_dialog) > 2000

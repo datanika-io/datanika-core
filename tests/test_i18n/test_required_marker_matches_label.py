@@ -262,3 +262,86 @@ class TestTheApiKeySplit:
         for locale in SUPPORTED_LOCALES:
             path = Path(datanika.ui.__file__).parent.parent / "i18n" / f"{locale}.json"
             json.loads(path.read_text(encoding="utf-8"))
+
+
+#: Keys whose *translated string* already ends in the marker — the second authoring surface.
+#: Nine today, all ``connections.*`` (SPEC_FIELD_REQUIREDNESS §2.8). core#1311 empties this set;
+#: the guard below must keep working when it does, which is why nothing here names a key.
+BAKED_MARKER_KEYS = frozenset(
+    key
+    for key, value in EN.items()
+    if isinstance(value, str) and value.rstrip().endswith(REQUIRED_MARKER)
+)
+
+
+def _double_marked(sites) -> list[str]:
+    """Sites that render the marker over a string which already carries one."""
+    return [
+        f"{path}:{lineno} {key!r} = {EN.get(key)!r}"
+        for path, lineno, key, marked in sites
+        if marked and key in BAKED_MARKER_KEYS
+    ]
+
+
+class TestNoFieldShowsTwoRequiredMarkers:
+    """SPEC_FIELD_REQUIREDNESS §2.9 — call-site markers + baked markers <= 1 for every field.
+
+    ``field_label`` appends ``required_marker()`` **after** the label it is handed, so porting a
+    call site whose translated string still ends in ``*`` renders ``Host * *``. Four keys are in
+    that state today — ``connections.host``, ``http_path``, ``token``, ``db_path`` — and they are
+    exactly the labels core#1547's AC2 was written to add a marker to.
+
+    🚨 **Neither existing instrument can express this, and both are correct for their own
+    question.** ``test_ui/test_field_requiredness.py::_label_state`` computes a label's marker as
+    ``rendered or baked``: an OR, so one marker and two are the same value to it, and AC5's
+    ``marker == required`` is **green** on a double. ``_label_sites`` above scans call sites only
+    and never reads the string's own suffix, so the baked marker is outside its population. This is
+    the third question, and it needs the two populations intersected.
+
+    The invariant is not *"these four keys are baked"* — that is today's instance, and core#1311
+    removes it (``WORKFLOW_RULES`` §5a). It is that the two authoring surfaces never both fire for
+    one field, which is true before that work, during it and after it.
+    """
+
+    def test_both_populations_are_non_empty(self):
+        """Anti-vacuity. An intersection with an empty set is empty, so without this the
+        assertion below passes the day either scan goes blind — and a blind scan reads exactly
+        like a clean sweep."""
+        assert BAKED_MARKER_KEYS, (
+            "no en.json value ends in the marker, so the baked-marker population is empty and "
+            "the intersection below cannot report anything. If core#1311 has genuinely emptied "
+            "it, this guard's subject is gone: delete the class rather than leaving it green."
+        )
+        assert REQUIRED_SITES, (
+            "no call site renders the marker; the site extractor has stopped matching"
+        )
+
+    def test_a_synthetic_double_marked_site_is_caught(self):
+        """The control, driven with a site that does not exist today.
+
+        A guard whose real population happens to be clean is indistinguishable from one that
+        cannot see — so ask it for a reading about a fabricated offender and require it to fire.
+        """
+        baked_key = sorted(BAKED_MARKER_KEYS)[0]
+        fabricated = [("<synthetic>", 0, baked_key, True)]
+        assert _double_marked(fabricated), (
+            "the predicate does not flag a call site rendering the marker over an already-marked "
+            "string, so its verdict on the real population says nothing"
+        )
+
+    def test_a_synthetic_single_marked_site_is_not_caught(self):
+        """The negative half. A predicate that flags everything is not discriminating, and the
+        obvious repair for "it flags everything" is to loosen it until it flags nothing."""
+        unbaked = sorted(k for k in EN if k not in BAKED_MARKER_KEYS)
+        assert unbaked, "every key is baked; the negative control has no subject"
+        assert not _double_marked([("<synthetic>", 0, unbaked[0], True)])
+        assert not _double_marked([("<synthetic>", 0, sorted(BAKED_MARKER_KEYS)[0], False)])
+
+    def test_no_site_renders_a_marker_over_an_already_marked_string(self):
+        offenders = _double_marked(SITES)
+        assert not offenders, (
+            "these call sites render a required marker over a translated string that already ends "
+            "in one, so the user sees it twice (SPEC_FIELD_REQUIREDNESS §2.9). Fix by removing the "
+            "marker from the string in all nine locales in the SAME change, never by leaving both:"
+            "\n  " + "\n  ".join(offenders)
+        )

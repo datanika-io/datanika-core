@@ -20,6 +20,13 @@ agree with the oracle exactly; a guard that flagged them too would be refusing e
 and the obvious repair for *"it flags everything"* is to loosen it until it permits
 everything.
 
+🚨 **All three are PROMOTIONS, and that is a limit on what they can prove.**
+``closingIssuesReferences`` is empty **by construction** on a PR that does not target the
+default branch, so these three would behave identically whether or not the script checked its
+own population — and the first version did not, returning ``PASS`` / exit ``0`` for every
+feature PR in the repository. ``TestTheOracleIsBlindOffTheDefaultBranch`` is that half, and it
+exists because a set of controls drawn from one population cannot tell you about another.
+
 Why the originally-specified design is in here as a control
 -----------------------------------------------------------
 
@@ -84,13 +91,23 @@ def _controls() -> dict[str, dict]:
 
 
 def _report(number: str):
+    """All three named controls are PROMOTIONS, so `master` is both their base and the
+    default branch. That is not incidental -- see `TestTheOracleIsBlindOffTheDefaultBranch`,
+    which is the half these three cannot speak for."""
     pr = _controls()[number]
     return check.compare(
         "datanika-io/datanika-core",
         int(number),
         pr["body"],
         frozenset(pr["closing_issues_references"]),
+        "master",
+        "master",
     )
+
+
+def _cmp(body: str, will_close, base: str = "main", default: str = "main"):
+    """`compare` with the population arguments spelled out, for the synthetic cases."""
+    return check.compare("o/n", 1, body, frozenset(will_close), base, default)
 
 
 class TestTheFixtureIsWhatItClaims:
@@ -279,20 +296,20 @@ class TestBothDirections:
         after the generator ran can leave the block describing a merge that will not happen.
         """
         body = f"{check.START}\n- Closes #500 — a real one\n{check.END}\n"
-        report = check.compare("o/n", 1, body, frozenset())
+        report = _cmp(body, set())
         assert report.verdict == "FAIL"
         assert report.unfired == frozenset({500})
         assert not report.undeclared
 
     def test_agreement_is_a_pass(self) -> None:
         body = f"{check.START}\n- Closes #500 — a real one\n{check.END}\n"
-        report = check.compare("o/n", 1, body, frozenset({500}))
+        report = _cmp(body, {500})
         assert report.verdict == "PASS"
         assert report.exit_code == 0
 
     def test_both_directions_at_once(self) -> None:
         body = f"{check.START}\n- Closes #500 — a real one\n{check.END}\n"
-        report = check.compare("o/n", 1, body, frozenset({600}))
+        report = _cmp(body, {600})
         assert report.undeclared == frozenset({600})
         assert report.unfired == frozenset({500})
 
@@ -301,20 +318,20 @@ class TestTheUnmeasurableCaseIsNotAPass:
     """`QA_RULES` §31: separate *I could not read this* from *this is not here*."""
 
     def test_no_block_and_nothing_closing_is_a_pass(self) -> None:
-        report = check.compare("o/n", 1, "A short promotion with no references.", frozenset())
+        report = _cmp("A short promotion with no references.", set())
         assert report.verdict == "PASS"
 
     def test_no_block_but_github_closes_something_is_no_verdict(self) -> None:
-        report = check.compare("o/n", 1, "Narrative only, no block.", frozenset({77}))
+        report = _cmp("Narrative only, no block.", {77})
         assert report.verdict == "NO_VERDICT"
         assert report.exit_code == 2, "2, not 0 — nothing was compared, so this is not a pass"
 
     def test_the_three_exit_codes_are_distinct(self) -> None:
         body = f"{check.START}\n- Closes #500 — x\n{check.END}\n"
         codes = {
-            check.compare("o/n", 1, body, frozenset({500})).exit_code,
-            check.compare("o/n", 1, body, frozenset({600})).exit_code,
-            check.compare("o/n", 1, "no block", frozenset({77})).exit_code,
+            _cmp(body, {500}).exit_code,
+            _cmp(body, {600}).exit_code,
+            _cmp("no block", {77}).exit_code,
         }
         assert codes == {0, 1, 2}
 
@@ -322,19 +339,19 @@ class TestTheUnmeasurableCaseIsNotAPass:
 class TestTheReportNamesItsPopulation:
     def test_the_render_prints_both_sets_and_the_verdict(self) -> None:
         body = f"{check.START}\n- Closes #1507 — x\n{check.END}\n"
-        text = check.render(check.compare("o/n", 1526, body, frozenset({1477, 1507})))
+        text = check.render(_cmp(body, {1477, 1507}))
         assert "1477" in text and "1507" in text
         assert "FAIL" in text
         assert "generated block present" in text
 
     def test_the_no_verdict_message_says_it_is_not_a_pass(self) -> None:
-        text = check.render(check.compare("o/n", 1, "no block", frozenset({77})))
+        text = check.render(_cmp("no block", {77}))
         assert "NOTHING COULD BE COMPARED" in text
         assert "not a pass" in text
 
     def test_the_message_offers_backticks_and_refuses_escaping(self) -> None:
         body = f"{check.START}\n- Closes #1507 — x\n{check.END}\n"
-        text = check.render(check.compare("o/n", 1526, body, frozenset({1477, 1507})))
+        text = check.render(_cmp(body, {1477, 1507}))
         assert "Do NOT escape the hash" in text
         assert "backticks" in text.lower()
         for bad in ("&#35;", "%23", "&num;"):
@@ -344,7 +361,7 @@ class TestTheReportNamesItsPopulation:
         """Sibling of `check_closing_keyword_intent.py`'s own rule. In every measured
         instance the author knew and said so beside the reference."""
         body = f"{check.START}\n- Closes #1507 — x\n{check.END}\n"
-        text = check.render(check.compare("o/n", 1526, body, frozenset({1477, 1507}))).lower()
+        text = check.render(_cmp(body, {1477, 1507})).lower()
         for scold in ("be careful", "be more careful", "pay attention", "carelessness"):
             assert scold not in text
 
@@ -432,30 +449,125 @@ class TestTheOracleIsAskedRatherThanModelled:
         assert "runs BEFORE the merge" in doc
 
     def test_a_failed_lookup_is_not_a_pass(self, monkeypatch) -> None:
-        monkeypatch.setattr(check, "fetch_closing_refs", lambda repo, pr: None)
-        monkeypatch.setattr(check, "fetch_body", lambda repo, pr: "whatever")
-        assert check.main(["--repo", "o/n", "--pr", "1"]) == 2
-
-    def test_a_failed_body_read_is_not_a_pass(self, monkeypatch) -> None:
-        monkeypatch.setattr(check, "fetch_closing_refs", lambda repo, pr: frozenset())
-        monkeypatch.setattr(check, "fetch_body", lambda repo, pr: None)
+        monkeypatch.setattr(check, "fetch_pr_facts", lambda repo, pr: None)
         assert check.main(["--repo", "o/n", "--pr", "1"]) == 2
 
     def test_the_cli_exits_1_on_a_real_disagreement(self, monkeypatch) -> None:
         pr = _controls()["1526"]
         monkeypatch.setattr(
-            check, "fetch_closing_refs", lambda repo, n: frozenset(pr["closing_issues_references"])
+            check,
+            "fetch_pr_facts",
+            lambda repo, n: (
+                "master",
+                "master",
+                pr["body"],
+                frozenset(pr["closing_issues_references"]),
+            ),
         )
-        monkeypatch.setattr(check, "fetch_body", lambda repo, n: pr["body"])
         assert check.main(["--repo", "datanika-io/datanika-core", "--pr", "1526"]) == 1
 
     def test_the_cli_exits_0_on_the_false_positive_control(self, monkeypatch) -> None:
         pr = _controls()["1519"]
         monkeypatch.setattr(
-            check, "fetch_closing_refs", lambda repo, n: frozenset(pr["closing_issues_references"])
+            check,
+            "fetch_pr_facts",
+            lambda repo, n: (
+                "master",
+                "master",
+                pr["body"],
+                frozenset(pr["closing_issues_references"]),
+            ),
         )
-        monkeypatch.setattr(check, "fetch_body", lambda repo, n: pr["body"])
         assert check.main(["--repo", "datanika-io/datanika-core", "--pr", "1519"]) == 0
+
+    def test_the_cli_exits_2_on_a_pr_the_oracle_cannot_see(self, monkeypatch) -> None:
+        """The whole point of the population check, at the CLI boundary."""
+        monkeypatch.setattr(
+            check,
+            "fetch_pr_facts",
+            lambda repo, n: ("master", "dev", "Closes #1541\nCloses #1543", frozenset()),
+        )
+        assert check.main(["--repo", "datanika-io/datanika-core", "--pr", "1552"]) == 2
+
+
+class TestTheOracleIsBlindOffTheDefaultBranch:
+    """core#1541, second correction: `closingIssuesReferences` is empty BY CONSTRUCTION on a
+    PR that does not target the default branch.
+
+    Found by Infra mid-build, re-derived here with controls in the same invocation before
+    being acted on. The three named controls above are all promotions, so **they cannot
+    speak for this half at all** -- they would behave identically whether or not this guard
+    existed, which is precisely the shape of blindness this issue is about.
+
+    Measured on the real API 2026-09-24::
+
+        landing #674   base dev     default main     MERGED  totalCount=0   title declares a closure
+        core    #1552  base dev     default master   OPEN    totalCount=0   body declares TWO
+        core    #1519  base master  default master   MERGED  totalCount=2   <- positive control
+        landing #676   base main    default main     MERGED  totalCount=1   <- positive control
+
+    The two controls are not decoration: Infra's first reading of this returned `0` with a
+    positive control that **also** returned `0`, so the zero had measured nothing.
+    """
+
+    def test_a_non_default_base_is_no_verdict_not_a_pass(self) -> None:
+        report = _cmp("no block at all", set(), base="dev", default="master")
+        assert report.verdict == "NO_VERDICT"
+        assert report.reason == "not-default-base"
+        assert report.exit_code == 2
+
+    def test_this_is_the_measured_regression_core_1552(self) -> None:
+        """Before the fix, THIS returned PASS and exit 0 — on a body declaring two closures.
+
+        The body is the shape of PR #1552's own: two line-initial closing declarations, no
+        generated block, and an oracle that returns nothing because the base is `dev`.
+        """
+        body = "Two complementary changes.\n\nCloses #1541\nCloses #1543\n"
+        report = _cmp(body, set(), base="dev", default="master")
+        assert report.verdict != "PASS", (
+            "a feature PR reads as a clean promotion — this is the defect, and it shipped "
+            "in the first version of this script"
+        )
+        assert report.exit_code == 2
+
+    def test_the_population_check_outranks_the_block_check(self) -> None:
+        """A `dev` PR that somehow carries a block is still unmeasurable, not a comparison."""
+        body = f"{check.START}\n- Closes #500 — x\n{check.END}\n"
+        report = _cmp(body, set(), base="dev", default="master")
+        assert report.reason == "not-default-base"
+
+    def test_control_the_same_body_on_the_default_branch_is_measured(self) -> None:
+        """Without this, the refusals above are equally explained by a guard that refuses
+        everything — and the obvious repair for that is to loosen it until it permits
+        everything."""
+        body = f"{check.START}\n- Closes #500 — x\n{check.END}\n"
+        report = _cmp(body, {500}, base="master", default="master")
+        assert report.oracle_applies
+        assert report.verdict == "PASS"
+
+    def test_the_two_no_verdict_causes_are_distinguishable(self) -> None:
+        """`QA_RULES` §31 rule 2: a single 'unmeasured' word covers both, and the one it
+        picks is the one nobody acts on."""
+        blind = _cmp("x", set(), base="dev", default="master")
+        no_block = _cmp("Narrative only.", {77}, base="main", default="main")
+        assert blind.verdict == no_block.verdict == "NO_VERDICT"
+        assert blind.reason != no_block.reason
+
+    def test_the_message_says_it_is_a_fact_about_the_branch(self) -> None:
+        text = check.render(_cmp("Closes #1541", set(), base="dev", default="master"))
+        assert "CANNOT SEE THIS PR" in text
+        assert "fact about the branch" in text
+        assert "check_closing_keyword_intent.py" in text, (
+            "a refusal must name the instrument that DOES apply to a feature PR, or it "
+            "reads as 'nothing checks this'"
+        )
+
+    def test_the_report_prints_the_base_and_the_default(self) -> None:
+        """§31 rule 1: report the population next to the verdict, always."""
+        text = check.render(_cmp("x", set(), base="dev", default="master"))
+        assert "base branch" in text
+        assert "dev" in text and "master" in text
+        assert "oracle applies here" in text
 
 
 @pytest.mark.parametrize("number", ["1526", "1188", "1519"])

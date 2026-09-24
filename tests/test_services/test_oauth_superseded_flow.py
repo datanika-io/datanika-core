@@ -38,8 +38,10 @@ from datanika.services.auth_redirects import AUTH_ERROR_KEYS
 from datanika.services.oauth_routes import _sign_state, _verify_state, oauth_routes
 from datanika.services.oauth_service import google_provider
 
-I18N = Path("datanika/i18n")
-LOGIN_PAGE = Path("datanika/ui/pages/login.py")
+#: Anchored to this file, never to the cwd (core#1551).
+REPO = Path(__file__).resolve().parents[2]
+I18N = REPO / "datanika/i18n"
+LOGIN_PAGE = REPO / "datanika/ui/pages/login.py"
 
 AC13_EN = (
     "You started another sign-in in this browser before this one finished, so this one was "

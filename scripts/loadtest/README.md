@@ -25,6 +25,10 @@ bash scripts/loadtest/preflight.sh --duration-min 25     # exit 0 = go; anything
 bash scripts/loadtest/run.sh --keys 161 --stages "5:120s,10:120s,20:120s,30:120s,40:120s,60:120s"
 ```
 
+🚨 **`N:DUR` means "ramp to N over DUR", not "hold N for DUR".** No stage above repeats a target, so
+this spec never sustains any rate and its `60` stage actually delivers ~50 req/s. **Do not quote a
+stage label as a throughput figure** — see *Status of this harness* below and [core#1560].
+
 > 🔑 **Why the gate is on the other machine, and why `run.sh`'s own preflight is not enough.**
 > `run.sh` asks *"is an E2E suite running right now"*. A 25-minute ladder needs *"will one
 > START during my run"*. Those differ, and they differ **worst** in the gap between a `dev`
@@ -157,15 +161,45 @@ effect is how a test fixture ends up in a production-shaped database.
 
 ## Status of this harness — read before quoting a number from it
 
-🔴 **Executed end to end on 2026-09-21, and NOT yet executed to a result.** Its structure is
-guarded by `tests/test_deploy/test_loadtest_harness.py`. The first execution did what a first
-run should: it found **eight defects in the harness itself** (core#1492, core#1503), and both runs
-it produced aborted in stage 1 at 5 req/s on the latency threshold — gap 1 above. Since
-2026-09-22 that abort waits for the first full stage, and the rehearsal shows it still aborts a
-failing target. **Until a run completes the ladder with this code, no number from it validates
-the ≥ 60 req/s floor.**
+🟢 **Run 10 (2026-09-24) completed the ladder with this code — the first run that did.** k6 exit 0;
+**16,980 requests, `http_req_failed` 0.00%**, `http_req_duration` p95 **33.12 ms**, production
+sampled throughout with **`datanika_neighbour_non_200` = 0**. Both validity controls clean:
+`dropped_iterations` **0** (17 of 202 VUs used, so the generator never bottlenecked) and
+`datanika_rate_limited` **0** with every response a `200` — so the result describes the application
+and not the fixture. Structure still guarded by `tests/test_deploy/test_loadtest_harness.py`.
+*(The 2026-09-21 first execution found eight defects in the harness itself — core#1492, core#1503 —
+and both runs it produced aborted in stage 1 on the latency threshold, which is gap 1 above.)*
 
-**Do not attach Run 9's numbers to this code.** The five gaps on `core#778` — the knee above 60,
-a real sustain at 50 req/s, `/meta` at >= 100, production's 4-worker shape, and query cost on
-real data volume — remain open, and the first credible run against this harness is what starts
-closing them.
+🔴 **It still does NOT validate the `>= 60 req/s` floor, and the reason is the stage spec, not the
+box — [core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation
+above repeats a target, so **the ladder never holds any rate.** Measured per-stage achieved rates
+are the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`. The
+run touched 60 only at the final instant of the last ramp.
+
+✅ **What Run 10 does establish, and what may be quoted:**
+
+- a **real ~50 req/s sustain** — 5,991 requests in 120 s at a mean 49.92/s, **zero errors, zero
+  429s**, p95 **26.57 ms**, p99 85.21 ms. That closes the *"a real sustain at 50 req/s"* gap.
+- **no knee anywhere up to 60 instantaneous**: p95 *improved* 126.75 → 26.57 ms and p99 727 → 85 ms
+  as load rose. (Early-stage figures are cold-start over few samples — a statement about warm-up,
+  not about load.)
+- **production was not harmed**: 0 non-200s across 481 neighbour samples, healthz p99 2.55 ms.
+
+⚠️ **The top stage's NAME and the load it applies are different numbers, and the name is the one
+that gets published.** k6's console prints the stage *target* (`60.00 iters/s`) beside the
+scenario's completion, which is exactly what makes the gap invisible. Until [core#1560] adds hold
+stages, **attribute any figure to the achieved rate computed from `raw.csv`, never to the stage
+label.**
+
+**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps: the knee **above** 60
+(which now needs a spec with a *hold*, not merely a higher top), `/meta` at >= 100, production's
+4-worker shape, and query cost on real data volume.
+
+⚠️ **Operational, learned in Run 10: do not drive the ladder from a foreground SSH session.** The
+control channel dropped ~10 minutes in. The remote processes survived and the run finished
+correctly — but `say()` pipes through `tee` to stdout, so **every later log line died of SIGPIPE
+and `run.log` freezes at `generator start`, missing the drain and cleanup sections, while the run
+itself completed.** A truncated log there means a dead console, not a dead run; and the wrapper
+reported **exit 0** describing its own last call rather than the ladder. Verify cleanup **by
+effect** — keys revoked, keys file gone, image removed — which is what this harness asks for
+anyway.

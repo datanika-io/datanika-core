@@ -837,3 +837,46 @@ class TestCalloutsAreLegible:
             )
             for variant, scheme, contrast in itertools.product(variants, schemes, contrasts):
                 assert grade_callout(variant, scheme, contrast) >= MIN_RATIO, scheme
+
+
+class TestBranchesReadsEveryArm:
+    """:func:`_branches` on the shapes that broke it, driven directly.
+
+    🔑 **These exist because a mutation escaped the census.** Dropping the arm-count check left
+    all 28 tests green — the check is a fail-loud net for a shape the tree does not contain today,
+    so no real page exercises it. A guard whose safety net is unexercised has a safety net nobody
+    has ever seen work.
+    """
+
+    def test_a_flat_cond_yields_both_arms(self):
+        assert _branches(rx.cond(rx.Var.create(True), "green", "red")) == ["green", "red"]
+
+    def test_a_nested_cond_yields_every_arm(self):
+        """The real `/connections` shape. The flat pattern returned ``['green', 'red']`` —
+        dropping ``'gray'``, core#821's *not tested* state, with no error."""
+        value = rx.cond(rx.Var.create(True), "gray", rx.cond(rx.Var.create(False), "green", "red"))
+        assert _branches(value) == ["gray", "green", "red"]
+
+    def test_it_does_not_degrade_with_depth(self):
+        """A three-deep cond returned only the innermost pair — two arms of four."""
+        inner = rx.cond(rx.Var.create(True), "amber", "red")
+        middle = rx.cond(rx.Var.create(False), "green", inner)
+        value = rx.cond(rx.Var.create(True), "gray", middle)
+        assert _branches(value) == ["amber", "gray", "green", "red"]
+
+    def test_a_non_literal_arm_raises_rather_than_grading_a_subset(self):
+        """The arm-count check, seen working.
+
+        ⚠️ **A partial list is worse than an empty one.** An empty list reads as *"nothing to
+        grade here"* — the composite-colour miss this module's docstring is about. A partial list
+        reads as a **complete grading of a smaller population**, which is indistinguishable from
+        a clean result.
+        """
+        value = rx.cond(rx.Var.create(True), "gray", rx.Var.create(False))
+        with pytest.raises(UnreadablePropError, match="grade a subset"):
+            _branches(value)
+
+    def test_a_plain_literal_is_unchanged(self):
+        """The control: the common path must not have been broken by any of the above."""
+        assert _branches("red") == ["red"]
+        assert _branches(None) == [None]

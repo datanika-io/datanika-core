@@ -158,6 +158,47 @@ _SAVED_TOAST_KEY_RE = re.compile(r'_saved_toast\(\s*"([^"]+)"')
 # orphaned key look used, which is this check failing in the silent direction.
 _KEY_MAP_VALUE_RE = re.compile(r'^\s*"[a-z_]+"\s*:\s*"([a-z_]+\.[a-z_.]+)"\s*,?\s*$', re.M)
 
+# ---------------------------------------------------------------------------
+# Keys that are DELIBERATELY unreferenced, and must NOT be deleted.
+#
+# Every comment above this one is about a *false* orphan — a key the scanner
+# could not see through a new indirection — and each ends with the same
+# warning: the documented remedy for an orphan is to DELETE the key, which
+# silently drops the translation in all nine locales. This constant is for the
+# other case, which those four comments do not cover and which #1540 produced:
+# a key that is **genuinely** unreferenced on purpose.
+#
+# `volume_quota_modal.py` painted two templates raw. Neither can be filled from
+# anything the UI holds — one needs the size of the run being refused, the other
+# needs the NEXT tier's name and allowance — and substituting only the fillable
+# half renders a confident sentence with a rendering bug inside it. So the modal
+# renders placeholder-free keys and these two stay translated, unused, for
+# whenever a producer exists.
+#
+# 🔑 This is a REPOINT, not a loophole (WORKFLOW_RULES §5a rule 2). The
+# invariant `test_no_orphan_keys_in_json` protects is *"no key is dead weight
+# nobody can account for"*, and an entry here accounts for one. It is held from
+# BOTH sides by `test_placeholders_are_substituted.py`, which fails if a
+# reserved key gains a reference (stale exemption) or stops existing (stale
+# exemption) — so an exemption cannot quietly outlive its reason, which is the
+# only thing that would make this a hole.
+RESERVED_UNUSED_KEYS = {
+    "quota.volume_quota_reached_body": (
+        "Needs {needed} — the projected size of the run being refused. No producer exists: "
+        "BaseState carries is_quota_error and quota_metric and nothing else about the run. "
+        "Substituting {plan} and {remaining} and leaving {needed} would paint a confident "
+        "sentence with a rendering bug in the middle of it, which is worse than the template. "
+        "The modal renders the placeholder-free quota.upgrade_hint instead; the key stays "
+        "translated in all nine locales for when a producer exists. #1540."
+    ),
+    "quota.upgrade_to_next_tier": (
+        "Needs the NEXT tier's {plan} and {gb}. DashboardState.plan_name is the CURRENT plan, so "
+        "substituting it renders 'Upgrade to Free (... included)' to a Free user — worse than "
+        "braces. No next-tier data reaches the UI. The modal renders the placeholder-free "
+        "quota.upgrade_button instead. #1540."
+    ),
+}
+
 
 def _collect_keys_from_code() -> set[str]:
     """Scan all .py files under datanika/ui/ for translation-key references."""
@@ -250,11 +291,49 @@ class TestCodeJsonSync:
             )
 
     def test_no_orphan_keys_in_json(self):
-        """Every key in en.json should be referenced in at least one UI file."""
+        """Every key in en.json is referenced in a UI file, or declared reserved.
+
+        ⚠️ **Before deleting a key this reports, read the four comments above
+        `_collect_keys_from_code`.** Four times now the answer has been that the
+        scanner could not see a new indirection, and the "obvious" remedy would
+        have dropped nine translations while every check stayed green.
+        """
         code_keys = _collect_keys_from_code()
         en_keys = _collect_keys_from_json()["en"]
-        orphans = en_keys - code_keys
-        assert not orphans, f"Keys in en.json but never used in code: {sorted(orphans)}"
+        orphans = en_keys - code_keys - set(RESERVED_UNUSED_KEYS)
+        assert not orphans, (
+            f"Keys in en.json but never used in code: {sorted(orphans)}.\n"
+            "Three possibilities, in the order they have actually occurred here:\n"
+            "  1. The scanner cannot see a new indirection — add the pattern above, do NOT "
+            "delete the key (this has been the answer four times).\n"
+            "  2. The key is deliberately reserved for a producer that does not exist yet — "
+            "add it to RESERVED_UNUSED_KEYS with the reason.\n"
+            "  3. It really is dead — delete it from all nine locale files."
+        )
+
+    def test_reserved_keys_are_still_unreferenced(self):
+        """A reserved key that gained a reference has a stale exemption.
+
+        The exemption exists because nothing paints the key. The moment something
+        does, the reason is gone and the entry must go with it — otherwise an
+        exemption outlives what justified it, which is the only way this becomes
+        a hole rather than a repoint.
+        """
+        code_keys = _collect_keys_from_code()
+        stale = sorted(k for k in RESERVED_UNUSED_KEYS if k in code_keys)
+        assert not stale, (
+            f"RESERVED_UNUSED_KEYS entries that are now referenced in code: {stale}. "
+            "Delete the entry — the key is live again."
+        )
+
+    def test_reserved_keys_still_exist_and_carry_a_reason(self):
+        en_keys = _collect_keys_from_json()["en"]
+        missing = sorted(k for k in RESERVED_UNUSED_KEYS if k not in en_keys)
+        assert not missing, (
+            f"RESERVED_UNUSED_KEYS entries no longer in en.json: {missing}. Delete the entry."
+        )
+        for key, reason in RESERVED_UNUSED_KEYS.items():
+            assert len(reason) > 80, f"{key}: an exemption without a reason is just a hole"
 
     def test_code_references_at_least_one_key(self):
         """Sanity: the regex scanner should find a reasonable number of keys."""

@@ -63,7 +63,13 @@ def _delete_account_dialog() -> rx.Component:
                 rx.cond(
                     AccountState.sole_member_org != "",
                     rx.callout(
-                        _t["account.delete_org_too"],
+                        # 🚨 SUBSTITUTED, not painted raw (#1540). `account.delete_org_too` is a
+                        # TEMPLATE — "{org} has no other members, so it will be deleted with your
+                        # account." — and substitution in core is per call site, never automatic:
+                        # `_t[...]` is a dict lookup that puts the braces straight in the DOM.
+                        # This is the screen where someone decides whether to delete everything
+                        # they have, and it was naming their organisation as `{org}`.
+                        _t["account.delete_org_too"].replace("{org}", AccountState.sole_member_org),
                         icon="triangle_alert",
                         color_scheme="amber",
                         width="100%",
@@ -74,7 +80,14 @@ def _delete_account_dialog() -> rx.Component:
                 rx.cond(
                     AccountState.blocking_org != "",
                     rx.callout(
-                        _t["account.delete_last_owner"],
+                        # Same template defect as the callout above (#1540). `.replace` rather
+                        # than `i18n_text.interpolate`: that helper weaves *components* into a
+                        # sentence and splits sequentially, so it constrains every locale to keep
+                        # the slots in the order they are passed. This is a plain value, and
+                        # `Var.replace` compiles to JS `replaceAll`, which has no such ordering
+                        # constraint — the reason it is the right tool here rather than merely a
+                        # simpler one.
+                        _t["account.delete_last_owner"].replace("{org}", AccountState.blocking_org),
                         icon="octagon_alert",
                         color_scheme="red",
                         width="100%",

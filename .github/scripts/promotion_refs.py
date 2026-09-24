@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 START = "<!-- promotion-refs:start -->"
 END = "<!-- promotion-refs:end -->"
@@ -247,7 +248,11 @@ def run(*args: str) -> str:
     # issue title comes back as mojibake. On the ubuntu runner it happens to be right,
     # so the defect is invisible in CI and appears only in the local DRY_RUN rehearsal
     # below -- i.e. exactly where someone is checking the block before a promotion.
-    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    # S603: `args` is a fixed argv tuple and no shell is involved -- the callers pass literal
+    # `gh`/`git` subcommands. core#1558 turned the lint gate on over this directory; the finding
+    # is annotated rather than "fixed", because the only change that would silence it honestly
+    # is one this file does not need.
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")  # noqa: S603
     if result.returncode != 0:
         print(f"  ! command failed: {' '.join(args)}\n    {result.stderr.strip()[:300]}")
         return ""
@@ -303,7 +308,7 @@ def run_capture(*args: str) -> tuple[int, str, str]:
     `run()` throws it away, which is why a 404 and a network failure were
     indistinguishable.
     """
-    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")  # noqa: S603
     return result.returncode, result.stdout, result.stderr
 
 
@@ -658,10 +663,16 @@ def main() -> int:
         print("  body already up to date")
         return 0
 
-    path = "/tmp/promotion-body.md"
-    with open(path, "w", encoding="utf-8") as handle:
+    # S108, and this one is a real finding rather than a false positive, so it is fixed rather
+    # than annotated: `/tmp/promotion-body.md` was a predictable path, and nothing outside this
+    # function ever referenced it (measured before changing it -- the only hit in the repository
+    # was this line). `mkstemp` keeps the `.md` suffix `gh` is handed and the path is still
+    # printed, so a local DRY_RUN rehearsal can still read the file it wrote.
+    handle_fd, path = tempfile.mkstemp(prefix="promotion-body-", suffix=".md")
+    with os.fdopen(handle_fd, "w", encoding="utf-8") as handle:
         handle.write(body)
     run("gh", "pr", "edit", pr_number, "--repo", repo, "--body-file", path)
+    print(f"  body written to {path}")
     print(
         f"  wrote {len(lines)} closing + {len(candidate_lines)} candidate reference(s), "
         f"{len(unaccounted_lines)} unaccounted commit(s):"

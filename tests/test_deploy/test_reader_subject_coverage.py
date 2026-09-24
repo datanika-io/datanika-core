@@ -312,6 +312,13 @@ READERS_AUDITED = frozenset(
         "scripts/slo_report.py",
         # "a WINDOW result, not an attribution failure" — core#1447 / core#1448's own fix
         "scripts/verify_e2e_attribution.py",
+        # core#1541. Prints the population beside the verdict every time — whether a
+        # generated block was present at all, what GitHub will close, and what the block
+        # declares. A promotion carrying no block is NO_VERDICT and exit 2, never a pass:
+        # there is nothing to compare the oracle against, and 184 of the 309-PR corpus are
+        # in exactly that state. Covered by TestTheUnmeasurableCaseIsNotAPass and
+        # TestTheReportNamesItsPopulation in test_promotion_closing_refs.py.
+        "scripts/check_promotion_closing_refs.py",
         # executed / skipped / collected, and refuses on collected == 0
         "e2e/scripts/assert_overage_coverage.py",
     }

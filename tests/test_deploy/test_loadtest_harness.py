@@ -498,7 +498,8 @@ def _held_rates(targets: list[int]) -> set[int]:
     """
     if not targets:
         return set()
-    return {targets[0]} | {b for a, b in zip(targets, targets[1:]) if a == b}
+    # strict=False is deliberate: the two sequences differ in length by one by construction.
+    return {targets[0]} | {b for a, b in zip(targets, targets[1:], strict=False) if a == b}
 
 
 _EXPANDER = None

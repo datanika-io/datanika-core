@@ -112,6 +112,100 @@ class TestFindRefs:
         assert 628 in refs.find_refs("[Infra] Watchdog", "Some prose.\n\ncloses #628\n")
 
 
+class TestAPullRequestTitleDeclaresOnlyInTrailingPosition:
+    """core#1554 — prose in a PR title became a closing declaration.
+
+    `find_refs` scans its *subject* whole. That is right for a **commit message** and
+    wrong for a **PR title**, and the difference is not a matter of taste:
+
+    **GitHub does not parse a PR title.** Measured 2026-09-24 over 711 merged PRs across
+    both repos. `closingIssuesReferences` can only answer for the 311 based on a *default*
+    branch — the oracle's domain (core#1541) — and in that population **188** PRs whose
+    BODY declared an issue have it in the oracle (the positive control, without which the
+    next sentence is not a reading), while the **one** PR that declared a number only in
+    its TITLE closed **nothing**:
+
+        core#308  base=master  closingIssuesReferences: []
+        "[Infra] Promote dev -> master (QA restore-verification fixes #300/#301/#302)"
+
+    Two consequences, pointing opposite ways:
+
+    * the title harvest is **load-bearing** — since GitHub ignores titles, this script is
+      the only thing that turns a source PR's ``(closes #N)`` into a real closure in the
+      promotion body. Removing it leaks issues open, the WORKFLOW_RULES section 8 defect
+      this automation exists to prevent;
+    * and it **manufactures** closures from prose, because nothing else would have.
+
+    So the title narrows to the declaration position our convention writes, and the commit
+    subject does not. GitHub scans commit messages itself, so harvesting one agrees with
+    what will happen anyway; narrowing it would make this script *under*-report a closure
+    that fires regardless — the invisible direction.
+
+    Measured on the same corpus, discharging the acceptance criterion's warning that a
+    narrowed rule might "harvest nothing and silently empty the closing set": **63** titles
+    harvest under the shipped whole-title grep and **63** under this rule. 0 lost, 0 gained.
+
+    There is therefore **no live instance in 711 PRs** — the defect is latent. The prose
+    fixture below is consequently a *real* title of ours rather than one invented to fail.
+    """
+
+    # Real merged-PR titles, with provenance, so the population these controls speak for is
+    # the population the generator actually meets (round-16 lesson: controls drawn from one
+    # population cannot speak for another).
+    #
+    # ⚠️ Every expected value is a LITERAL. Computing it with the function under test is
+    # satisfied by that function doing nothing — WORKFLOW_RULES section 4, core#1543.
+    REAL_CONVENTION = [
+        ("[QA] Lint the directory that decides whether a promotion may proceed (closes #1237)", {1237}),
+        ("[Product] The audit page can finally say what changed (closes #694)", {694}),
+        ("[Growth] Stop pointing readers at an in-app byte figure no screen shows (Closes #663)", {663}),
+        ("[Infra] Promote dev -> master (QA restore-verification fixes #300/#301/#302)", {300}),
+        ("[Engineering] /docs/runs and /api/reference describe the Cancel control that shipped (closes #672)", {672}),
+    ]
+
+    # The title of core#1162, verbatim. Our PR titles take exactly this shape.
+    PROSE_TITLE = (
+        '[QA] A commit saying "Does not close #1130" CLOSED #1130 — the keyword parser has '
+        "no negation, and it took an unanswered founder decision off the board"
+    )
+
+    def test_the_real_convention_still_declares(self):
+        """Half one. If this goes red, the narrowing has emptied the closing set."""
+        assert self.REAL_CONVENTION, "anti-vacuity: an empty fixture list passes every loop below"
+        for title, expected in self.REAL_CONVENTION:
+            assert refs.find_pr_refs(title, "") == expected, title
+
+    def test_prose_in_a_title_declares_nothing(self):
+        """Half two, in the same class as half one, so neither can be satisfied alone."""
+        assert refs.find_pr_refs(self.PROSE_TITLE, "") == set()
+
+    def test_a_keyword_in_a_non_trailing_parenthetical_is_not_a_declaration(self):
+        """A parenthetical that is not the title's tail is prose like any other."""
+        assert refs.find_pr_refs("[QA] (closes #1) was the old convention, now we do X", "") == set()
+
+    def test_a_commit_subject_is_deliberately_left_scanning_whole(self):
+        """The asymmetry IS the fix, which is why `find_refs` was not simply edited.
+
+        Identical text, the other call site. GitHub closes from a commit message, so
+        reporting it is honest; refusing to report it would hide a closure that happens.
+        """
+        assert refs.find_refs(self.PROSE_TITLE, "") == {1130}
+
+    def test_the_body_half_is_untouched(self):
+        """A line-initial declaration still counts; mid-sentence prose still does not."""
+        assert refs.find_pr_refs("[QA] no refs in this title", "Closes #77") == {77}
+        assert refs.find_pr_refs("[QA] no refs in this title", "I will close #77 by hand later") == set()
+
+    def test_tracking_refs_are_deliberately_not_narrowed(self):
+        """Scoped out on purpose, and recorded so the omission is a decision.
+
+        A tracking reference is rendered **without** a keyword, as a candidate a human
+        reviews, so a false one costs a review line rather than a closure. Narrowing it
+        buys nothing and would have to be argued separately.
+        """
+        assert refs.find_tracking_refs("[Product] Rule the routes (refs #1534, refs #1311)", "") == {1534, 1311}
+
+
 class TestFindTrackingRefs:
     """The non-closing half (core#1040). `refs #N` is a real signal and used to be
     invisible: core's generator matched closing keywords only, so a `refs`-only commit

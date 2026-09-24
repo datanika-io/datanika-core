@@ -254,10 +254,27 @@ class TestTheInstrumentCanSee:
         also = ast.parse('open(Path(__file__).parent / "datanika/x.py")')
         assert _unanchored_calls(also) == []
 
-    def test_it_does_not_flag_a_mode_or_an_encoding(self):
-        """Core really contains these — eight sites. See ``_resolver_name``."""
-        assert _unanchored_calls(ast.parse('p.open("rb")')) == []
-        assert _unanchored_calls(ast.parse('p.read_text("utf-8")')) == []
+    def test_a_mode_or_an_encoding_is_not_treated_as_a_path(self):
+        """Pins the **resolver decision**, because the end verdict cannot discriminate.
+
+        ⚠️ The obvious form of this control — ``_unanchored_calls(ast.parse('p.open("rb")'))
+        == []`` — passes whether or not ``read_text``/``x.open`` are in the resolver set,
+        because ``_is_repo_relative`` rejects ``"rb"`` and ``"utf-8"`` as names anyway. Two
+        independent reasons produce the same empty list, so the assertion cannot fail in the
+        direction of its own conclusion and would go on passing the day the set is widened.
+        (Core has eight such calls; cloud's copy lists both methods and is saved only by that
+        coincidence.) Asserting ``_resolver_name`` directly is the version that reds.
+        """
+        for src, expected in (
+            ('p.open("rb")', None),
+            ('p.read_text("utf-8")', None),
+            ("p.read_bytes()", None),
+            ('Path("datanika")', "Path"),
+            ('pathlib.Path("datanika")', "Path"),
+            ('open("datanika/x")', "open"),
+        ):
+            node = ast.parse(src).body[0].value
+            assert _resolver_name(node) == expected, src
 
     def test_it_does_not_flag_things_that_are_not_repo_paths(self):
         for src in (

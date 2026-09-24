@@ -9,6 +9,12 @@ difference. This is the ruling on the question the first slice put to Product on
 **Amended again:** 2026-09-24 — §2.7's enforcement premise struck as **measured false**, §2.8 added
 (the gate is the source of truth), AC4 settled for its two *unverified* cases, §4 records the second
 per-connector ruling. **The 2026-09-15 ruling is unchanged; only the reason it rests on is.**
+**Corrected later the same day:** 2026-09-24 — §2.8's marker table said `databricks` and `duckdb`
+display **0** markers. **They display 3 and 1**, baked into the translated strings. The census counted
+markers at the **call site** and reported them as what the user **sees**. §2.8's characterisation,
+AC4's settled note and §4's second ruling all inverted with it, and §4's *"the marker is added too"*
+would have shipped **`Host * *`**. Corrected below; §2.9 states the ordering constraint on
+[core#1311] as an invariant rather than a schedule, and a guard now enforces it.
 
 [core#1311]: https://github.com/datanika-io/datanika-core/issues/1311
 [landing#572]: https://github.com/datanika-io/datanika-landing/issues/572
@@ -176,27 +182,60 @@ adding a branch is not a one-line change: the field has to be handed to the vali
 is the *only* gate — `save_connection` calls `_validate_form()` at `:1501` and returns on its message
 (`:1759` is the Test-Connection path), with nothing else between the form and `ConnectionService`.
 
-**And most of those 20 DO show the user a marker.** Counted per renderer:
+**And 14 of those 20 DO show the user a marker.** Counted per renderer, on `origin/dev` 2026-09-24:
 
-| connector | `required=True` attrs | ` *` markers | gate |
-|---|---|---|---|
-| `google_ads` | 5 | 5 | **none** |
-| `github` | 3 | 3 | **none** |
-| `airtable`, `facebook_ads`, `freshdesk`, `jira`, `kafka`, `salesforce`, `shopify`, `zendesk` | 2 each | 2 each | **none** |
-| `google_analytics`, `stripe` | 1 | 1 | **none** |
-| **`databricks`** | 3 (+Catalog with none) | **0** | **none** |
-| **`duckdb`** | 1 | **0** | **none** |
+| connector | `required=True` attrs | markers the user SEES | authored where | gate |
+|---|---|---|---|---|
+| `google_ads` | 5 | 5 | call site | **none** |
+| `github` | 3 | 3 | call site | **none** |
+| `airtable`, `facebook_ads`, `freshdesk`, `jira`, `kafka`, `salesforce`, `shopify`, `zendesk` | 2 each | 2 each | call site | **none** |
+| `google_analytics`, `stripe` | 1 | 1 | call site | **none** |
+| **`databricks`** | 3 (+Catalog with none) | **3** | **the translated string** | **none** |
+| **`duckdb`** | 1 | **1** | **the translated string** | **none** |
+
+> 🔴 **The last two rows read `0` until 2026-09-24, and that was an instrument defect rather than a
+> measurement.** The census counted the ` *` **literal at the call site** — the
+> `rx.text(_t[…], " *", …)` shape — and reported it as *whether the user sees a marker*. For the
+> twelve connectors above them the two coincide. For these two they do not, because these are exactly
+> the connectors whose marker lives **inside the translated string**: `connections.host` is
+> `"Host *"`, `http_path` `"HTTP Path *"`, `token` `"Access Token *"` and `db_path`
+> `"Database Path *"` — **in all nine locales**.
+>
+> ⚠️ **Re-derived here with a working instrument, and the first attempt was the same defect again:**
+> a probe that assumed a *nested* `{"connections": {"host": …}}` shape found the file is **flat**
+> (780 dotted top-level keys), reported every key `ABSENT` and the marker count **0** — which is the
+> number it was meant to test. *The flattering reading is the one that agrees with what is already
+> written, and it arrives looking like confirmation.* The control that refuted it was unrelated: 31
+> call sites append `" *"`, so the keys plainly exist.
+>
+> ✅ **`connections.catalog` is `"Catalog"` — plain, in all nine locales.** It is the one field of the
+> five that genuinely shows no marker, and the only one AC2 described correctly.
+>
+> **Controls, so the other zeros are readings:** 31 call sites append `" *"`; 9 `connections.*`
+> strings carry a baked marker; their intersection is **empty**, so nothing double-marks today — and
+> both sets are non-empty, so the intersection *could* have been.
 
 🚨 **So the general case is: the form prints `*`, announces `required`, and saves the field empty.**
 That is the defect, and it is not a labelling defect — under §2.3's invariant (*every required field
 carries the marker*) these markers are **telling the truth about the product's intent and lying about
 the product's behaviour.** The marker is correct; **the gate is missing.**
 
-⚠️ **`databricks` and `duckdb` are the sub-case where even the marker is absent**, which is §1c
-inverted: a field that looks *optional* to a sighted user, is announced *required* to a screen
-reader, and saves empty. Their field sites are `connection_config_fields.py:430-439` (duckdb Path)
-and `:508-545` (databricks Host, HTTP Path, Token, Catalog — Catalog carrying no attribute either,
-while `connection_schemas.py:162-170` requires it).
+🔴 **CORRECTED 2026-09-24. This paragraph read: *"`databricks` and `duckdb` are the sub-case where
+even the marker is absent, which is §1c inverted: a field that looks optional to a sighted user, is
+announced required to a screen reader, and saves empty."* **Measured, it is the opposite.** Those
+four fields look **required** to a sighted user, are **announced required** to a screen reader, and
+**save empty**. The two display signals agree with each other and both disagree with the gate — which
+is the **plain** case stated immediately above, not an inverted sub-case.
+
+➡️ **So for those four fields nothing needs adding. Only the gate is missing**, exactly as for the
+other 18. `databricks` and `duckdb` are not a sub-case at all; they differ from the other 18 only in
+*where their marker is authored*, which is [core#1311]'s subject and not this one's.
+
+⚠️ **`databricks` Catalog is the one real exception, and it survives the correction intact:** no
+marker, no `required` attribute, and `connection_schemas.py:162-170` requires it. It is the single
+field of the five where something must be **added** to the call site. Their field sites are
+`connection_config_fields.py:430-439` (duckdb Path) and `:508-545` (databricks Host, HTTP Path,
+Token, Catalog).
 
 ⚠️ **Unlike `openapi`'s Base URL there is no fallback filling any of these.** `connection_service.py:1104`
 builds `databricks://token:{token}@{host}` and `:1119` builds `duckdb:///{path}`; from blank values
@@ -223,6 +262,40 @@ the driver does with the empty string.
 is §2.1. `databricks_fields()` and `duckdb_fields()` still hand-write `rx.el.label(rx.text(...))`
 beside a separate `config_input(required=...)` — two copies, which is the thing this spec exists to
 remove. **Porting a call site to `field_label` is what "derived" means in AC1.**
+
+**2.9 · 🆕 A field displays AT MOST ONE required marker** *(added 2026-09-24)*.
+
+`field_label` appends `required_marker()` **after** the label it is handed. So porting one of the four
+baked-marker call sites while its string still carries the marker renders two:
+`field_label(_t["connections.host"], required=True, field="host")` → **`Host * *`**.
+
+> **The invariant:** for every field, `markers authored at the call site` + `markers baked into the
+> translated string` **≤ 1**.
+
+**Stated as a property and not as an ordering, deliberately.** The natural form of this constraint is
+a schedule — *"[core#1311]'s remainder lands before [core#1547]"* — and a schedule expires, cannot be
+checked, and is satisfied by whoever merges first. The invariant is true before AC1, during it and
+after it. Two consequences follow from it mechanically rather than from anyone remembering:
+
+- **A key's string can be de-asterisked only once**, so AC1's edit to that key and any new call-site
+  marker for it are **one change**, not two that happen to be adjacent.
+- **De-asterisking one of the four without adding the call-site marker leaves an un-gated field with
+  no marker at all** — the state §2.8 wrongly attributed to them in the first place. And the edit is
+  not confined to the un-gated connectors: `connections.db_path` is also rendered by `sqlite` and
+  `connections.host` by `db` and `mongodb`, all of which **are** gated. One string change touches
+  sites that are fine and sites that are not.
+
+⚠️ **Nothing caught this before 2026-09-24, and the two obvious instruments structurally cannot.**
+
+| instrument | how it reads a marker | why `Host * *` passes |
+|---|---|---|
+| `tests/test_ui/test_field_requiredness.py::_label_state` | `rendered **or** baked` | an OR cannot distinguish one marker from two; AC5's `marker == required` is green on a double |
+| `tests/test_i18n/test_required_marker_matches_label.py::_label_sites` | call sites only | it never reads the string's own suffix, so the baked marker is outside its population |
+
+**Both are correct for the question they were built to ask.** Neither can express *"exactly one"*,
+and a third instrument is the fix rather than a change to either — `TestNoFieldShowsTwoRequiredMarkers`
+in `test_required_marker_matches_label.py`, which intersects the two populations and is driven with a
+synthetic double-marked site so that its zero is a reading.
 
 ## 3. Acceptance criteria
 
@@ -256,6 +329,13 @@ known-wrong.** Do not describe fixing them as correcting an error.
 > at its `duckdb` site. **Both save blank** (§2.8). They are no longer "unverified"; fixing them *is*
 > correcting an error, and AC6's "derived, not deleted" applies — the correct end state is the marker
 > **present** and the gate refusing, not the attribute removed.
+>
+> 🔑 **Corrected later the same day: "the marker present" is ALREADY TRUE for both.** The marker is
+> baked into `connections.host` and `connections.db_path` in all nine locales (§2.8). So the end state
+> AC6 names is reached by **de-asterisking the string and re-deriving the marker at the call site as
+> one change** (§2.9) — never by adding a second marker beside the first. The error to correct is the
+> **gate**, and that was true of these two all along; what was wrong was the belief that their users
+> saw nothing.
 >
 > 🔑 **And the method generalises, which is worth more than the two answers.** `_validate_connection_form`
 > is a **pure function of `(name, conn_type, use_raw_json, **fields)` with no I/O** — so *"does this
@@ -309,17 +389,28 @@ and `rest_api`'s Base URL.
   precedent rather than either alone.** **Ruling: where a field carries a marker or the attribute and
   nothing fills it, the form must refuse. `_validate_connection_form` gains a branch for each of the
   20 un-gated types (§2.8), and the fields are handed to it as parameters — they are not parameters
-  today.** For `databricks` (Host, HTTP Path, Token, **Catalog**) and `duckdb` (Database Path) the
-  marker is added too, via `field_label`; for the other 18 the marker is already right and only the
-  gate is missing.
+  today.**
+
+  🔴 **CORRECTED 2026-09-24 (later).** This ruling used to end: *"For `databricks` (Host, HTTP Path,
+  Token, **Catalog**) and `duckdb` (Database Path) the marker is added too, via `field_label`; for the
+  other 18 the marker is already right and only the gate is missing."* **Four of those five already
+  display a marker** (§2.8), so adding one renders `Host * *` (§2.9). **The corrected ruling:
+  `databricks` Catalog is the only field of the five that gains a marker. For the other four — and
+  for all 18 other un-gated connectors — the marker is already right and only the gate is missing.**
+  The `field_label` port for those four is [core#1311]'s de-asterisking carried out as one change per
+  §2.9; it is not a second marker, and it is not part of this ruling.
 
   **Scope note, because 20 types is not one change.** The per-connector question §4 reserves for
-  Product is *"which fields does this connector genuinely require?"*, and for 18 of the 20 it is
-  **already answered by the call site** — someone wrote `required=True` and a `*` deliberately. Those
-  need no new product decision, only a gate that matches. **The two that need a decision are the two
-  with no marker** (`databricks`, `duckdb`), and both are ruled above. **`openapi` is the one
-  genuinely open case** (§2.8's last note): its Base URL may stay unmarked, but the save must refuse
-  when the spec yields no usable value.
+  Product is *"which fields does this connector genuinely require?"*, and for **19 of the 20** it is
+  **already answered** — someone wrote `required=True`, and a `*` either beside it at the call site or
+  inside the label string, deliberately. Those need no new product decision, only a gate that matches.
+  **The one FIELD that carried neither signal and needed a ruling is `databricks` Catalog**, ruled
+  above. **`openapi` is the one CONNECTOR still genuinely open** (§2.8's last note): its Base URL may
+  stay unmarked, but the save must refuse when the spec yields no usable value.
+
+  🔴 *Corrected 2026-09-24 (later): this read "the two that need a decision are the two with no
+  marker (`databricks`, `duckdb`)". Both show markers — 3 and 1 — so neither connector needed a
+  decision; one field inside one of them did.*
 
   **The test that separates this from the `openapi` ruling, and it is the only one that matters:
   does the form FILL the field when it is blank?** `openapi` does — from the spec's `servers` entry —
@@ -337,5 +428,12 @@ and `rest_api`'s Base URL.
   `required=True`" will not see it. It is schema-required all the same
   (`connection_schemas.py:162-170`). *An instrument built from the wrong population reports the rest
   as clean.*
+
+  🆕 **And after the 2026-09-24 correction it is invisible to the *other* obvious sweep too.** It is
+  now the only one of the five with no marker, so a sweep starting from *"fields showing a `*`"* also
+  misses it — **the single field that needs work is the one absent from both populations, while the
+  four that need none are present in both.** That is not a coincidence to note in passing: it is why
+  AC2 was written backwards. Enumerate `CONFIG_SCHEMAS[<type>]["required"]` and diff against what the
+  renderer draws, rather than starting from either signal.
 - Error-message copy for a missing required field.
 - The `uploads` and `model_detail` placeholder hints (§2.2).

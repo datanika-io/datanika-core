@@ -98,6 +98,7 @@ def pipeline_templates_page() -> rx.Component:
                 _t["templates.help_text"],
                 icon="info",
                 color_scheme="gray",
+                high_contrast=True,
                 size="1",
                 margin_top="1rem",
             ),

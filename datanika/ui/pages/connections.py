@@ -165,6 +165,7 @@ def connection_form() -> rx.Component:
                         "gray",
                         rx.cond(ConnectionState.test_success, "green", "red"),
                     ),
+                    high_contrast=True,
                 ),
             ),
             rx.hstack(
@@ -267,6 +268,7 @@ def _delete_connection_dialog(conn) -> rx.Component:
                             ),
                             icon="triangle_alert",
                             color_scheme="amber",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),

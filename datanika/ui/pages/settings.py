@@ -63,9 +63,16 @@ def _delete_account_dialog() -> rx.Component:
                 rx.cond(
                     AccountState.sole_member_org != "",
                     rx.callout(
-                        _t["account.delete_org_too"],
+                        # 🚨 SUBSTITUTED, not painted raw (#1540). `account.delete_org_too` is a
+                        # TEMPLATE — "{org} has no other members, so it will be deleted with your
+                        # account." — and substitution in core is per call site, never automatic:
+                        # `_t[...]` is a dict lookup that puts the braces straight in the DOM.
+                        # This is the screen where someone decides whether to delete everything
+                        # they have, and it was naming their organisation as `{org}`.
+                        _t["account.delete_org_too"].replace("{org}", AccountState.sole_member_org),
                         icon="triangle_alert",
                         color_scheme="amber",
+                        high_contrast=True,
                         width="100%",
                     ),
                 ),
@@ -74,9 +81,17 @@ def _delete_account_dialog() -> rx.Component:
                 rx.cond(
                     AccountState.blocking_org != "",
                     rx.callout(
-                        _t["account.delete_last_owner"],
+                        # Same template defect as the callout above (#1540). `.replace` rather
+                        # than `i18n_text.interpolate`: that helper weaves *components* into a
+                        # sentence and splits sequentially, so it constrains every locale to keep
+                        # the slots in the order they are passed. This is a plain value, and
+                        # `Var.replace` compiles to JS `replaceAll`, which has no such ordering
+                        # constraint — the reason it is the right tool here rather than merely a
+                        # simpler one.
+                        _t["account.delete_last_owner"].replace("{org}", AccountState.blocking_org),
                         icon="octagon_alert",
                         color_scheme="red",
+                        high_contrast=True,
                         width="100%",
                     ),
                 ),
@@ -86,6 +101,7 @@ def _delete_account_dialog() -> rx.Component:
                         AccountState.delete_error,
                         icon="triangle_alert",
                         color_scheme="red",
+                        high_contrast=True,
                         width="100%",
                     ),
                 ),
@@ -200,6 +216,7 @@ def account_card() -> rx.Component:
                     AccountState.error,
                     icon="triangle_alert",
                     color_scheme="red",
+                    high_contrast=True,
                     width="100%",
                 ),
             ),
@@ -210,6 +227,7 @@ def account_card() -> rx.Component:
                         _t["account.password_updated"],
                         icon="circle_check",
                         color_scheme="green",
+                        high_contrast=True,
                         width="100%",
                     ),
                     rx.text(
@@ -243,6 +261,7 @@ def account_card() -> rx.Component:
                         ),
                         icon="mail-warning",
                         color_scheme="amber",
+                        high_contrast=True,
                         width="100%",
                     ),
                     rx.hstack(
@@ -265,6 +284,7 @@ def account_card() -> rx.Component:
                             _t["account.resend_queued"],
                             icon="circle_check",
                             color_scheme="green",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -274,6 +294,7 @@ def account_card() -> rx.Component:
                             _t["account.resend_no_relay"],
                             icon="info",
                             color_scheme="gray",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -283,6 +304,7 @@ def account_card() -> rx.Component:
                             _t["account.resend_failed"],
                             icon="triangle_alert",
                             color_scheme="red",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -292,6 +314,7 @@ def account_card() -> rx.Component:
                             _t["account.resend_rate_limited"],
                             icon="clock",
                             color_scheme="amber",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -578,6 +601,7 @@ def _leave_org_dialog() -> rx.Component:
                         _t["settings.leave_org_signs_you_out"],
                         icon="log_out",
                         color_scheme="red",
+                        high_contrast=True,
                         width="100%",
                     ),
                     rx.callout(
@@ -586,6 +610,7 @@ def _leave_org_dialog() -> rx.Component:
                         + SettingsState.leaving_switches_me_to,
                         icon="arrow_right_left",
                         color_scheme="amber",
+                        high_contrast=True,
                         width="100%",
                     ),
                 ),
@@ -703,6 +728,7 @@ def _transfer_ownership_dialog() -> rx.Component:
                     _t["settings.transfer_ownership_irreversible"],
                     icon="triangle_alert",
                     color_scheme="amber",
+                    high_contrast=True,
                     width="100%",
                 ),
                 spacing="3",
@@ -1021,6 +1047,7 @@ def backup_restore_card() -> rx.Component:
                             ),
                             icon="shield_alert",
                             color_scheme="red",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -1030,6 +1057,7 @@ def backup_restore_card() -> rx.Component:
                             _t["settings.restore_conflicts"],
                             icon="triangle_alert",
                             color_scheme="orange",
+                            high_contrast=True,
                             width="100%",
                         ),
                     ),
@@ -1062,6 +1090,7 @@ def backup_restore_card() -> rx.Component:
                     ),
                     icon="check",
                     color_scheme="green",
+                    high_contrast=True,
                     width="100%",
                 ),
             ),
@@ -1108,6 +1137,7 @@ def api_keys_card() -> rx.Component:
                     ),
                     icon="key",
                     color_scheme="green",
+                    high_contrast=True,
                     width="100%",
                 ),
             ),
@@ -1171,6 +1201,7 @@ def _delete_channel_dialog(ch: ChannelItem) -> rx.Component:
                     _t["notifications.delete_secret"],
                     icon="triangle_alert",
                     color_scheme="amber",
+                    high_contrast=True,
                     width="100%",
                 ),
                 spacing="3",

@@ -637,9 +637,10 @@ production handler for a field nothing reads is the more expensive half of the t
 ### 8.7 · Scope: this rules ONE route. The other 27 are filed, not implied.
 
 Measured this session: `api_v1_routes.py` declares **54 routes, 28 of them mutating**
-(15 `POST`, 6 `PUT`, 6 `DELETE`, 1 `PATCH`), and **none writes an audit row** — while the UI door
-carries **37** `_audit` calls across 13 state classes, so most of those 28 have a twin that already
-records the action.
+(~~15 `POST`, 6 `PUT`, 6 `DELETE`, 1 `PATCH`~~ — 🔴 **corrected 2026-09-24: 14 `POST`, 6 `PUT`,
+**7** `DELETE`, 1 `PATCH`**; see §9.1, the total agreed only by coincidence), and **none writes an
+audit row** — while the UI door carries **37** `_audit` calls across 13 state classes, so most of
+those 28 have a twin that already records the action.
 
 🚨 **This section deliberately does not rule the other 27.** I have not measured which have auditing
 twins, what each one's before/after shape is, or which are idempotent — and a contract written over
@@ -656,6 +657,208 @@ to debate); **is there a no-op path** (§8.4's condition exists because an uncon
 transitions that never happened — `PATCH /notifications/{id}/read` is the obvious candidate); and
 **is it bulk** (`POST /api/v1/import` and `POST /api/v1/pipelines/yaml` create many objects in one
 call — one row each, or one for the import?).
+
+---
+
+## §9 — The other 27, ruled ([core#1534])
+
+**Added 2026-09-24.** §8.7 filed this rather than implying it. This is the survey, and every one of
+the 28 carries a verdict — including the ones that owe nothing, with the reason (`PRODUCT_RULES` §12:
+*an unargued absence is an oversight; an argued one is a decision*).
+
+### 9.1 · The inventory, and two corrections to my own numbers
+
+Re-measured against `origin/dev` @ `70ff3fd`. **54 `Route(...)` declarations** in the module-level
+list `api_v1_routes = [` (`api_v1_routes.py:1838-1932`) — counted two ways that agree, `Route(` = 54
+and `methods=[` = 54. Starlette, so there are no routing decorators; `@api_endpoint` is auth and
+rate-limiting only, which is why a decorator-shaped grep finds nothing.
+
+🔴 **Two corrections to [core#1534]'s own body, and the second is the instructive one.**
+
+1. **The verb split was wrong: 14 `POST` / 6 `PUT` / **7** `DELETE` / 1 `PATCH`, not 15/6/6/1.**
+   The seventh DELETE is notification channels (`:1930`). 🔑 **The total still came to 28, so the
+   error was invisible in the only figure anyone quotes.** Two compensating mistakes summing to the
+   right answer is the shape that survives review.
+2. **7 of the 21 POSTs are declared `required_scope="*:read"` and write nothing** — `parse_openapi`
+   (`:314`, its docstring says *"Stateless: creates no connection"*), `introspect_connection` (`:444`),
+   `list_connection_columns` (`:463`), `preview_connection` (`:487`), `query_connection` (`:512`,
+   `is_select_only` enforced at `:522`), `compile_transformation_endpoint` (`:929`),
+   `preview_transformation_endpoint` (`:969`). **A POST is not a mutation.** Counting by verb is what
+   produced the wrong split.
+
+**Confirmed unchanged:** `api_v1_routes.py` contains **zero** matches for `audit|AuditService|log_action`.
+Positive controls in the same run: `ui/state/base_state.py` → 1 (the **definition** at `:239`, not a
+call site) and `ui/state/settings_state.py` → **8**. So the honest figure is **36 call sites + 1
+definition = 37 occurrences across 13 files**, and §8.7's "37 `_audit` calls" overstates the call
+sites by one.
+
+⚠️ **My twin tally and its summary disagreed, and the table is the one to trust.** A summary line read
+*"24 of 28 have a twin that audits"*; counting the rows with file:line evidence gives **21 clean yes +
+1 mixed**. **Where a count and its own evidence disagree, the evidence is the measurement and the
+count is a claim about arithmetic.**
+
+### 9.2 · Four classes, and the class decides
+
+| class | population | ruling |
+|---|---|---|
+| **A — twin audits** | 21 routes + 1 mixed | §8.2's invariant decides. **Owes the row, mirroring the twin's verbatim `action` / `resource_type`.** Nothing to debate. |
+| **B — neither door audits** | 3 (notification centre) | **Owes nothing.** Reason in 9.4. |
+| **C — no twin exists** | 2 | **Owes a row**, shaped from its siblings. A missing UI twin is a UI gap, not a licence. |
+| **D — no database write** | 1 | **Owes nothing; it is not a mutation.** The docket is **27**, not 28. Reason in 9.5. |
+
+### 9.3 · The table
+
+Line numbers are `api_v1_routes.py` unless prefixed. Audit arguments are the twin's, verbatim.
+
+| # | route | handler | twin audits? | **verdict** |
+|---|---|---|---|---|
+| 1 | `POST /connections` | `:280` | ✅ `connection_state.py:1556` `"create"`,`"connection"` | **A — write it** |
+| 2 | `POST /connections/{id}/test` | `:393` | ❌ twin exists, does not audit | **D — no row** (9.5) |
+| 3 | `PUT /connections/{id}` | `:356` | ✅ `connection_state.py:1533` `"update"`,`"connection"` | **A — write it, conditional** (9.6) |
+| 4 | `DELETE /connections/{id}` | `:383` | ✅ `connection_state.py:1676` `"delete"`,`"connection"` | **A — write it** |
+| 5 | `POST /uploads` | `:555` | ✅ `upload_state.py:445` `"create"`,`"upload"` | **A — write it** |
+| 6 | `PUT /uploads/{id}` | `:583` | ✅ `upload_state.py:421` `"update"`,`"upload"` | **A — write it, conditional** |
+| 7 | `DELETE /uploads/{id}` | `:608` | ✅ `upload_state.py:689` `"delete"`,`"upload"` | **A — write it** |
+| 8 | `POST /uploads/{id}/run` | `:679` | ✅ `upload_state.py:747` `"run"`,`"upload"` | **A — write it** |
+| 9 | `POST /pipelines` | `:715` | ✅ `pipeline_state.py:323` `"create"`,`"pipeline"` | **A — write it** |
+| 10 | `PUT /pipelines/{id}` | `:750` | ✅ `pipeline_state.py:301` `"update"`,`"pipeline"` | **A — write it, conditional** |
+| 11 | `DELETE /pipelines/{id}` | `:782` | ✅ `pipeline_state.py:438` `"delete"`,`"pipeline"` | **A — write it** |
+| 12 | `POST /pipelines/{id}/run` | `:792` | ✅ `pipeline_state.py:467` `"run"`,`"pipeline"` | **A — write it** |
+| 13 | `POST /transformations` | `:828` | ✅ `transformation_state.py:322` `"create"`,`"transformation"` | **A — write it** |
+| 14 | `PUT /transformations/{id}` | `:865` | ✅ `transformation_state.py:296` `"update"`,`"transformation"` | **A — write it, conditional** |
+| 15 | `DELETE /transformations/{id}` | `:903` | ✅ `transformation_state.py:520` `"delete"`,`"transformation"` | **A — write it** |
+| 16 | `POST /transformations/{id}/run` | `:913` | ⬜ **no twin** | **C — write `"run"`,`"transformation"`** (9.7) |
+| 17 | `POST /schedules` | `:1039` | ✅ `schedule_state.py:262` `"create"`,`"schedule"` | **A — write it** |
+| 18 | `PUT /schedules/{id}` | `:1070` | ✅ **two** twins, both audit `"update"`,`"schedule"` (`:239`, `:337`) | **A — write it, conditional** |
+| 19 | `DELETE /schedules/{id}` | `:1091` | ✅ `schedule_state.py:366` `"delete"`,`"schedule"` | **A — write it** |
+| 20 | `POST /runs/{id}/cancel` | `:1150` | ✅ `run_state.py:255` `"update"`,`"run"` | **already ruled — §8** |
+| 21 | `PATCH /notifications/{id}/read` | `:1283` | ❌ **neither door** | **B — no row** (9.4) |
+| 22 | `POST /notifications/read-all` | `:1294` | ❌ **neither door** | **B — no row** (9.4) |
+| 23 | `DELETE /notifications/{id}` | `:1306` | ❌ **neither door** | **B — no row** (9.4) |
+| 24 | `POST /import` | `:1740` | ✅ near-twin `backup_state.py:147` `"create"`,`"import"` | **A — ONE row per call** (9.8) |
+| 25 | `POST /pipelines/yaml` | `:1772` | ⬜ **no twin** | **C — ONE row per call**, same shape as 24 |
+| 26 | `POST /notifications/channels` | `:1352` | ✅ `notification_state.py:184` `"create"`,`"notification_channel"` | **A — write it** |
+| 27 | `PUT /notifications/channels/{id}` | `:1378` | ⚠️ **mixed** — `save_channel` audits (`:165` `"update"`,`"notification_channel"`), `toggle_channel_active` (`:233`) does **not** | **A — write it, conditional** (9.9) |
+| 28 | `DELETE /notifications/channels/{id}` | `:1399` | ✅ `notification_state.py:214` `"delete"`,`"notification_channel"` | **A — write it** |
+
+**AC1 is satisfied by this table: 28 rows, 28 verdicts, 25 owing a row and 3 not.**
+
+### 9.4 · Class B — the notification centre owes nothing, and the reason is not "the UI forgot"
+
+Rows 21–23 are the only ones where **neither door audits**. `ui/state/notification_center_state.py`
+is a **14th** mutating state class — outside the 13 that hold the 37 — with `mark_read` (`:74`),
+`mark_all_read` (`:95`) and `dismiss` (`:113`), and **zero** `_audit` calls. §8.2's invariant is
+therefore *silent* here: there is no twin record to be indistinguishable from.
+
+**Ruling: no audit row, on all three.** Marking your own notification read is not a change to the
+org's configuration or data, it is not visible to anyone else, and it is per-user high-volume. §1's
+concern is a log that under- or over-reports; **filing a row every time a user clicks a bell is
+over-reporting that degrades every query run against the table.** The UI's silence is correct and
+the API should match it.
+
+⚠️ **This is a ruling about the audit trail, not a clean bill of health.** Row 21 has a real defect
+next door: `in_app_notification_service.py:115-121` captures `was_unread = notif.read_at is None`,
+then sets `notif.read_at = now()` **unconditionally** — so re-marking an already-read notification
+**overwrites the original read timestamp** and returns 200. `was_unread` gates only the cache
+invalidation. That is a lost write, and it is invisible precisely because nothing records it.
+**Filed separately; it is not an audit question and must not be fixed by adding a row.**
+
+✅ Row 22 is genuinely idempotent — `mark_all_read` filters `read_at.is_(None)` at
+`in_app_notification_service.py:126-131`, so a second call marks zero and returns `{"marked": 0}`.
+Row 23 likewise excludes an already-dismissed row via `deleted_at.is_(None)` (`:152`) and 404s.
+
+### 9.5 · Class D — `POST /connections/{id}/test` is not a mutation, and the docket is 27
+
+The handler (`:393`) is gated on `required_scope="connections:write"` and
+`assert_org_role(required="editor")` (`:411-417`) but **performs no database write**: it reads the
+config and calls `run_connection_test_bounded` (`:423`). **Ruling: no audit row.** §8.2's invariant is
+about *mutating* routes; a write-scope declaration is a permission, not a mutation.
+
+⚠️ **The counter-argument, stated because it is real and I am rejecting it deliberately.** A key with
+`connections:write` can probe stored credentials against live systems and learn which are valid,
+leaving no trace. That is a **credential-use telemetry** question, and answering it inside
+`audit_logs` would put non-mutations into a table every existing query assumes is a mutation log.
+**If we want it, it is a separate feature with its own table and its own retention** — not a row here.
+
+🔑 **This ruling is what decides the docket size**, and it is why the count moved: **27 routes owe
+work, not 28** (25 rows to write, 2 further no-row rulings in class B, plus row 20 already ruled).
+
+### 9.6 · 🚨 One rule discharges three of the survey's questions: capture before, compare, write on difference
+
+§8.5 records the trap for the cancel route — the route's object is very likely the **same object** the
+service mutates under one session and one identity map, so reading the field *after* the call yields
+the new value and files `old == new`. **That trap and the no-op question are the same question**, and
+one rule answers both:
+
+> **Capture the before-state into a local variable BEFORE calling the service. Compare. Write the row
+> only if it differs.**
+
+This is not a per-route judgement — it is the shape for every class-A row, and it discharges:
+
+1. **§8.5's stale-read trap** — `was` is a value, not an attribute of a live object, so nothing can
+   overwrite it.
+2. **The six `PUT` no-op paths.** Rows 3, 6, 10, 14, 18, 27 build `kwargs` only from keys present in
+   the body, so an empty or unchanged body returns 200 having changed nothing. ⚠️ **Whether the
+   services dirty-check before writing was NOT measured** — and under this rule **it does not matter**,
+   because the route compares values rather than trusting the service. *A rule that is correct
+   regardless of an unmeasured fact is worth more than the measurement.*
+3. **Row 20's idempotent second cancel**, which §8.4 already requires conditionally.
+
+🚨 **AC3's guard must be seen failing on this specific mutation**: delete the `was` capture, move it
+after the service call, and the test must go red. A row-exists assertion is satisfied by the bug
+(§8.5), so *"a row was written"* is not the assertion — *"`old_values` differs from `new_values`"* is.
+
+### 9.7 · Class C — the two routes with no UI twin
+
+- **Row 16, `POST /transformations/{id}/run`.** Its two siblings — rows 8 and 12 — both audit, as
+  `"run"`,`"upload"` and `"run"`,`"pipeline"`. **Ruling: `"run"`,`"transformation"`.** The UI's
+  `transformation_state.py` carries only preview/compile methods, so the twin's absence is a gap in
+  the UI, not evidence that the action is unremarkable. **Do not add a `transformation` member to
+  `AuditResourceType` without checking it is already there** — rows 13–15 write it, so it is.
+- **Row 25, `POST /pipelines/yaml`.** Same executor as row 24 (`_execute_validated_import`, `:1641`),
+  so the same row (9.8).
+
+### 9.8 · Bulk: ONE row per call, not one per object
+
+Rows 24 and 25 both funnel into `_execute_validated_import` (`:1641`), four sequential phases each a
+bare `for` over an unbounded list (`:1663`, `:1677`, `:1692`, `:1712`). **Measured: there is no cap
+anywhere** — no per-section item limit, no total-object limit, no payload-size limit in that module.
+
+**Ruling: one audit row for the import, with counts in the payload.** Three reasons:
+
+1. **The precedent is the UI door's** — `backup_state.py:147` writes `"create"`,`"import"` with
+   `connections_imported` / `uploads_imported` / `skipped`. §8.2 says match it.
+2. **Per-object rows on an unbounded import is unbounded write amplification inside one transaction**,
+   on a path that is already atomic.
+3. **§2.5 is satisfied by counts**: they identify what happened to a human better than N rows that
+   each identify one object and none of which says "this was an import".
+
+⚠️ **AC2 binds here and it is not optional.** `"import"` is [core#1128]'s known case in §6.2 —
+**written but not a member of `AuditResourceType`, so it is unfilterable.** Adding the member is part
+of this PR, not a follow-up, or the rows land in the same hole the existing ones are in.
+
+⚠️ **The near-twin is a precedent for the SHAPE, not a code twin:** `backup_state._do_import` calls
+`BackupService.import_backup`, not `_execute_validated_import`, and covers connections + uploads only
+— not pipelines or transformations. The row's payload must count all four.
+
+🔑 **And note what this table cannot see: the absence of a cap is a separate finding.** One
+unauthenticated-scope call (`required_scope=None` at `:1739` and `:1771`) can create an arbitrary
+number of objects across four resource types. **That is a quota and abuse question, not an audit one**
+— filed separately, and it must not be smuggled into this PR as "while we were there".
+
+### 9.9 · Two vocabulary rules that decide whether any of this reaches the table
+
+1. 🚨 **Pass the `AuditAction` MEMBER, never a string.** `_audit` (`base_state.py:239`) coerces via
+   `AuditAction(action)` inside a `try/except Exception` that swallows and logs (`:271`). **A string
+   that is not a member is a silently dropped row** — that is [core#1127] exactly: `transfer_ownership`
+   passed `"transfer_ownership"` and **had never written anything**. The service-layer precedent does
+   it right: `user_service.py:1276` passes `AuditAction.DELETE`. **A route that passes the member
+   fails at import on a typo; one that passes a string fails at runtime, silently, forever.**
+2. ⚠️ **Row 27's mixed twin is a finding about the UI, not a licence for the route.**
+   `toggle_channel_active` (`notification_state.py:233`) mutates and does not audit, while
+   `save_channel` does. The route must write the row; **the UI gap is filed, not inherited.** *Where
+   two twins disagree, the invariant follows the one that records — a silent door is the defect, not
+   the standard.*
 
 [core#1533]: https://github.com/datanika-io/datanika-core/issues/1533
 [core#1534]: https://github.com/datanika-io/datanika-core/issues/1534

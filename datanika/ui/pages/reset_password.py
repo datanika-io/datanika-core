@@ -52,6 +52,7 @@ def _form() -> rx.Component:
                 PasswordResetState.error,
                 icon="triangle_alert",
                 color_scheme="red",
+                high_contrast=True,
                 width="100%",
             ),
         ),

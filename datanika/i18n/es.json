@@ -178,7 +178,7 @@
   "connections.service_account_json": "JSON de cuenta de servicio",
   "connections.share_spreadsheet": "Comparta la hoja de cálculo con el correo de la cuenta de servicio",
   "connections.host": "Host *",
-  "connections.port": "Puerto *",
+  "connections.port": "Puerto",
   "connections.user": "Usuario",
   "connections.password": "Contraseña",
   "connections.database": "Base de datos *",

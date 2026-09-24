@@ -36,13 +36,16 @@ def db_fields() -> rx.Component:
             on_change=ConnectionState.set_form_host,
             required=True,
         ),
-        rx.el.label(rx.text(_t["connections.port"], size="2", weight="bold"), html_for="cfg-port"),
-        config_input(
+        # core#1311 slice 2. `_validate_connection_form` refuses a blank port for every
+        # `_DB_TYPES` connector, so by SPEC_FIELD_REQUIREDNESS §2.7 the field is required on
+        # THIS form, and one value now sets both the marker and the attribute.
+        labelled_config_input(
+            _t["connections.port"],
             "port",
+            required=True,
             placeholder=_t["connections.ph_port"],
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
-            required=True,
         ),
         rx.el.label(rx.text(_t["connections.user"], size="2", weight="bold"), html_for="cfg-user"),
         config_input(
@@ -1046,16 +1049,26 @@ def mongodb_fields() -> rx.Component:
         # the spec forbids it in.
         rx.cond(
             ~ConnectionState.form_mongodb_srv,
-            rx.fragment(
-                rx.el.label(
-                    rx.text(_t["connections.port"], size="2", weight="bold"), html_for="cfg-port"
-                ),
-                config_input(
-                    "port",
-                    placeholder=_t["connections.ph_port"],
-                    value=ConnectionState.form_port,
-                    on_change=ConnectionState.set_form_port,
-                ),
+            # 🚨 core#1311 slice 2, and this site is why the slice exists. The label rendered
+            # "Port *" — the marker baked into the translation, which cannot vary by connector —
+            # over an input with NO `required` attribute. So the field told a sighted user it was
+            # mandatory and told a screen reader it was not: SPEC_FIELD_REQUIREDNESS §1c, at a
+            # second site, with Postgres rendering the SAME i18n key as the positive control.
+            #
+            # It is OPTIONAL, and that is correct rather than a bug to fix the other way.
+            # `_validate_connection_form`'s mongodb branch checks host and database and omits
+            # port deliberately: MongoDB has a real default port (27017, and `CONFIG_SCHEMAS`
+            # carries it) and the connector works without the field. Adding it to the validator
+            # would change WHICH fields are required — out of scope per §4 — and would break a
+            # working leave-it-blank path to make a label true. Product ruled this on the issue,
+            # with the same reasoning as openapi's base_url.
+            labelled_config_input(
+                _t["connections.port"],
+                "port",
+                required=False,
+                placeholder=_t["connections.ph_port"],
+                value=ConnectionState.form_port,
+                on_change=ConnectionState.set_form_port,
             ),
         ),
         rx.el.label(rx.text(_t["connections.user"], size="2", weight="bold"), html_for="cfg-user"),

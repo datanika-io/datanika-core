@@ -178,7 +178,7 @@
   "connections.service_account_json": "JSON сервисного аккаунта",
   "connections.share_spreadsheet": "Предоставьте доступ к таблице сервисному аккаунту",
   "connections.host": "Хост *",
-  "connections.port": "Порт *",
+  "connections.port": "Порт",
   "connections.user": "Пользователь",
   "connections.password": "Пароль",
   "connections.database": "База данных *",

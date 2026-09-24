@@ -24,6 +24,7 @@ branch at promotion time is the normal case, not a rare one.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -525,3 +526,232 @@ class TestGhIssueSeparates404FromFailure:
         """Belt and braces: rc 0 with a body that has no `number` is not an issue."""
         self._with(monkeypatch, 0, '{"message": "something else"}')
         assert refs.gh_issue("datanika-io/datanika-core", 500) is None
+
+
+class TestABorrowedStringCannotInjectAClosingReference:
+    """core#1543. This generator renders text nobody here wrote, and it can carry a keyword.
+
+    The block quotes each promoted issue's **title** and each unaccounted commit's
+    **subject**. A title of the form `… close #N …` therefore becomes a live closing
+    reference for an issue nobody promoted — written by the tooling, not by a person.
+
+    ⚠️ **These are unit assertions over the rendered string, which is the cheap
+    approximation** (core#1543 AC3). The end-to-end oracle is `closingIssuesReferences`, and
+    what it says is recorded in `neutralise`'s docstring: across 309 merged PRs a closing
+    keyword inside a code span appears in a closing set **0 times out of 65**.
+    """
+
+    #: The real title of core#1162, verbatim from the API. This exact string is what PR
+    #: #1188 rendered into its block, and it is why GitHub linked #1130 as a closing
+    #: reference that no human wrote.
+    REAL_TITLE = (
+        '[QA] A commit saying "Does not close #1130" CLOSED #1130 — the keyword parser '
+        "has no negation, and it took an unanswered founder decision off the board"
+    )
+
+    def test_the_arming_control_this_title_really_does_carry_two_references(self):
+        """Without this, every assertion below could pass against a harmless title."""
+        found = {int(n) for n in refs.KEYWORD.findall(self.REAL_TITLE)}
+        assert found == {1130}, (
+            "the real title no longer carries a closing reference, so it can no longer "
+            "demonstrate the defect — re-derive the instance before trusting this class"
+        )
+        assert len(refs.KEYWORD.findall(self.REAL_TITLE)) == 2, (
+            "both `close #1130` and `CLOSED #1130` fire; a repair that silences one is not a repair"
+        )
+
+    def _line(self, monkeypatch, capsys, title, state="open"):
+        log = f"{'a' * 40}\x1f[Infra] Promote (closes #1162)\n\x1e"
+        monkeypatch.setattr(refs, "run", lambda *a: log if a[:2] == ("git", "log") else "")
+        monkeypatch.setattr(refs, "gh_api", lambda path: None)
+        monkeypatch.setattr(
+            refs,
+            "gh_issue",
+            lambda repo, num: {"number": num, "state": state, "title": title},
+        )
+        monkeypatch.setenv("REPO", "datanika-io/datanika-core")
+        monkeypatch.setenv("PR_NUMBER", "0")
+        monkeypatch.setenv("BASE_SHA", "aaa")
+        monkeypatch.setenv("HEAD_SHA", "bbb")
+        monkeypatch.setenv("DRY_RUN", "1")
+        assert refs.main() == 0
+        out = capsys.readouterr().out
+        return next(ln for ln in out.splitlines() if ln.startswith("- Closes #1162"))
+
+    #: An INDEPENDENT code-span stripper, deliberately not built from `neutralise`.
+    #:
+    #: 🔑 The first version of the assertions below removed the title by computing
+    #: `line.replace(refs.neutralise(TITLE), " ")` — i.e. it asked the function under test
+    #: where its own output was. With `neutralise` mutated to a no-op the expected value
+    #: became the raw title, the raw title was of course present, and **every one of these
+    #: tests stayed green against the pre-fix code.** Found by the arming pass; reading them
+    #: did not find it, because each assertion is locally correct.
+    #:
+    #: A test that derives its expectation from the thing in doubt is satisfied by that
+    #: thing doing nothing. This regex is the cheap markdown approximation (core#1543 AC3);
+    #: the oracle is `closingIssuesReferences`, and `neutralise`'s docstring carries what it
+    #: said.
+    _CODE_SPAN = re.compile(r"(`+).*?\1", re.DOTALL)
+
+    @classmethod
+    def _outside_code_spans(cls, text):
+        return cls._CODE_SPAN.sub(" ", text)
+
+    def test_control_the_stripper_can_see_both_kinds_of_text(self):
+        """§24a's lesson: without this, narrowing the stripper until it matches nothing
+        would 'fix' any false positive and leave every assertion below vacuous."""
+        assert self._outside_code_spans("keep `drop` keep") == "keep   keep"
+        assert self._outside_code_spans("no spans here") == "no spans here"
+        assert "inner`tick" not in self._outside_code_spans("``inner`tick`` after")
+        assert "after" in self._outside_code_spans("``inner`tick`` after")
+
+    def test_the_intended_reference_still_fires(self, monkeypatch, capsys):
+        """AC2's first half. A repair that neutralised the whole line passes only this."""
+        assert "Closes #1162" in self._line(monkeypatch, capsys, self.REAL_TITLE)
+
+    def test_the_title_contributes_no_live_reference(self, monkeypatch, capsys):
+        """AC2's second half, and the two must hold together.
+
+        Strip every code span from the rendered line with a stripper that knows nothing
+        about `neutralise`, then scan what is left. The only live reference remaining must
+        be the one this promotion actually declares.
+        """
+        line = self._line(monkeypatch, capsys, self.REAL_TITLE)
+        outside = self._outside_code_spans(line)
+        assert {int(n) for n in refs.KEYWORD.findall(outside)} == {1162}
+        assert "1130" not in outside, "the borrowed title still reaches GitHub's parser"
+
+    def test_the_title_is_still_readable(self, monkeypatch, capsys):
+        """The false-positive control. Neutralising by deleting would pass the test above
+        and destroy the one thing the block exists to show a promoter."""
+        line = self._line(monkeypatch, capsys, self.REAL_TITLE)
+        assert "unanswered founder decision off the board" in line
+        assert "[QA] A commit saying" in line
+
+    def test_a_candidate_line_is_neutralised_too(self, monkeypatch, capsys):
+        """`refs #N` renders a title in a different branch of the same function."""
+        log = f"{'b' * 40}\x1f[Product] Step one (refs #872)\n\x1e"
+        monkeypatch.setattr(refs, "run", lambda *a: log if a[:2] == ("git", "log") else "")
+        monkeypatch.setattr(refs, "gh_api", lambda path: None)
+        monkeypatch.setattr(
+            refs,
+            "gh_issue",
+            lambda repo, num: {"number": num, "state": "open", "title": self.REAL_TITLE},
+        )
+        for key, value in {
+            "REPO": "datanika-io/datanika-core",
+            "PR_NUMBER": "0",
+            "BASE_SHA": "aaa",
+            "HEAD_SHA": "bbb",
+            "DRY_RUN": "1",
+        }.items():
+            monkeypatch.setenv(key, value)
+        assert refs.main() == 0
+        line = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("- #872"))
+        assert not refs.KEYWORD.search(self._outside_code_spans(line))
+
+    def _drive(self, monkeypatch, capsys, log, issue):
+        monkeypatch.setattr(refs, "run", lambda *a: log if a[:2] == ("git", "log") else "")
+        monkeypatch.setattr(refs, "gh_api", lambda path: None)
+        monkeypatch.setattr(refs, "gh_issue", lambda repo, num: dict(issue, number=num))
+        for key, value in {
+            "REPO": "datanika-io/datanika-core",
+            "PR_NUMBER": "0",
+            "BASE_SHA": "aaa",
+            "HEAD_SHA": "bbb",
+            "DRY_RUN": "1",
+        }.items():
+            monkeypatch.setenv(key, value)
+        assert refs.main() == 0
+        return capsys.readouterr().out
+
+    def test_an_already_closed_line_is_neutralised_too(self, monkeypatch, capsys):
+        """The other branch of the same `if`. Both render a title; both borrow it."""
+        out = self._drive(
+            monkeypatch,
+            capsys,
+            f"{'c' * 40}\x1f[Infra] Promote (closes #1162)\n\x1e",
+            {"state": "closed", "title": self.REAL_TITLE},
+        )
+        line = next(ln for ln in out.splitlines() if ln.startswith("- #1162"))
+        assert "already closed" in line
+        assert not refs.KEYWORD.search(self._outside_code_spans(line))
+
+    def test_an_unaccounted_commit_subject_is_neutralised(self, monkeypatch, capsys):
+        """The fourth render site — and reaching it exposed a sharper point.
+
+        core#1543's body names titles only. A commit **subject** is borrowed text by the
+        same argument and reaches the block by the same route, in the *"I could not tell"*
+        section.
+
+        🔑 Getting here required the URL form, and the reason is the finding: a subject
+        containing `close #N` is *parsed* by this generator, so it counts as accounted and
+        never reaches that section at all. What lands there is precisely what the
+        generator's own regex could **not** read — and GitHub's grammar is wider than it
+        is. GitHub closes on `closes <issue URL>`; `KEYWORD` requires a literal `#`, so it
+        sees nothing. **The commits this script understands least are the ones whose raw
+        text it prints most verbatim.**
+        """
+        subject = (
+            "[Infra] Tidy up — this does not close "
+            "https://github.com/datanika-io/datanika-core/issues/1130"
+        )
+        out = self._drive(
+            monkeypatch,
+            capsys,
+            f"{'d' * 40}\x1f{subject}\n\x1e{'e' * 40}\x1f[QA] Real (closes #500)\n\x1e",
+            {"state": "open", "title": "A real issue"},
+        )
+        assert "I could not tell" in out, (
+            "the control: this subject must be UNACCOUNTED, or the assertion below is "
+            "reading a line from a different section"
+        )
+        line = next(ln for ln in out.splitlines() if ln.startswith("- `ddddddd`"))
+        assert "1130" in line, "the subject must still be shown to the promoter, not stripped"
+        assert "issues/1130" not in self._outside_code_spans(line)
+
+    def test_the_generators_parser_is_narrower_than_githubs(self):
+        """States the gap above as its own assertion, so it cannot be read as incidental."""
+        url_form = "closes https://github.com/datanika-io/datanika-core/issues/1130"
+        assert not refs.KEYWORD.search(url_form)
+        assert not refs.TRACKING.search(url_form)
+        assert not refs.CROSS_REPO.search(url_form)
+
+
+class TestNeutralise:
+    """The fence has to survive the strings this project actually writes."""
+
+    def test_an_ordinary_title_round_trips(self):
+        assert refs.neutralise("A plain title") == "`A plain title`"
+
+    def test_a_title_containing_backticks_gets_a_longer_fence(self):
+        """We write these constantly — `--since` did not bound this capture, and so on."""
+        out = refs.neutralise("`--since` did not bound this")
+        assert out.startswith("``") and out.endswith("``")
+        assert "`--since`" in out, "the inner span must survive intact"
+
+    def test_a_title_that_starts_with_a_backtick_is_padded(self):
+        out = refs.neutralise("`code` first")
+        assert out.startswith("`` ") and out.endswith(" ``")
+
+    def test_the_fence_always_exceeds_the_longest_run(self):
+        for n in range(1, 6):
+            inner = "`" * n
+            out = refs.neutralise(f"x{inner}y")
+            fence = out[: len(out) - len(out.lstrip("`"))]
+            assert len(fence) > n, f"fence {fence!r} cannot contain a run of {n}"
+
+    def test_a_newline_cannot_break_out_of_the_span(self):
+        """A blank line ends the paragraph and would end the span with it."""
+        assert "\n" not in refs.neutralise("first\n\nsecond")
+
+    def test_empty_stays_empty(self):
+        assert refs.neutralise("") == ""
+
+    def test_it_never_escapes_the_hash(self):
+        """The measured non-repair: an entity for `#` contains a hash and digits of its
+        own, so it silences the closure AND plants a reference to an unrelated issue."""
+        out = refs.neutralise("close #1130")
+        for bad in ("&#35;", "&#x23;", "&num;", "%23"):
+            assert bad not in out
+        assert "#1130" in out, "the number must survive verbatim inside the span"

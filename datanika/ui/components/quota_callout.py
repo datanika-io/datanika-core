@@ -45,12 +45,14 @@ def error_or_quota_callout(state_cls: type[BaseState]) -> rx.Component:
                 # only to stdout where nothing was listening.
                 icon="circle_arrow_up",
                 color_scheme="amber",
+                high_contrast=True,
             ),
             # Regular error — plain red callout
             rx.callout(
                 state_cls.error_message,
                 icon="triangle_alert",
                 color_scheme="red",
+                high_contrast=True,
             ),
         ),
     )

@@ -138,6 +138,7 @@ def _write_access() -> rx.Component:
             _t["mcp_consent.write_caution"],
             icon="triangle-alert",
             color_scheme="amber",
+            high_contrast=True,
             size="1",
             width="100%",
         ),

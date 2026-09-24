@@ -30,6 +30,36 @@ wrong twice over.**
 merge"*, available **before** the merge. Asking it makes the keyword list, the escaping
 edge cases, the code-span stripping and the sidebar route all unnecessary at once.
 
+🚨 The oracle is EMPTY BY CONSTRUCTION outside the default branch
+-----------------------------------------------------------------
+
+Found by Infra, re-derived here with controls in the same invocation before being acted on.
+``closingIssuesReferences`` is GitHub's *"what closes when this merges"*, and a PR that does
+not target the **default** branch closes nothing -- which is the same rule that makes
+``Closes #N`` on a ``dev`` PR never fire::
+
+    landing #674   base dev     default main     MERGED   totalCount=0   <- title declares a closure
+    core    #1552  base dev     default master   OPEN     totalCount=0   <- body declares TWO
+    core    #1519  base master  default master   MERGED   totalCount=2   <- positive control
+    landing #676   base main    default main     MERGED   totalCount=1   <- positive control
+
+🔑 **So this instrument is authoritative on a PROMOTION and structurally BLIND on a feature
+PR** -- and a feature PR into ``dev`` is exactly the population a closing-keyword guard would
+otherwise be pointed at. The two controls are in that table because Infra's first reading of
+this returned ``0`` **with a positive control that also returned 0**, i.e. the zero had
+measured nothing at all.
+
+**Measured on the shipped code before this guard existed:** pointed at ``core#1552`` -- a PR
+whose body carries two closing declarations -- it printed ``verdict : PASS`` and exited ``0``.
+A confident clean reading over a population it cannot see. That is `QA_RULES` §31 arriving one
+layer above the blindness this script was written to catch, and in this script.
+
+So the base branch is checked **first**, and a PR that does not target the default branch is
+``NO_VERDICT`` / exit ``2``, never a pass. In production the refusal should never fire --
+``promotion-pr-refs.yml`` already scopes the job to ``branches: [master]`` with
+``head_ref == 'dev'`` -- and that is the point: it is the guard that makes lifting this script
+somewhere else safe, rather than a condition anybody expects to see.
+
 ⚠️ What the oracle does NOT answer, measured 2026-09-24
 --------------------------------------------------------
 
@@ -114,10 +144,16 @@ END = "<!-- promotion-refs:end -->"
 #: the measured corpus.
 DECLARED_LINE = re.compile(r"^[ \t]*-[ \t]+Closes[ \t]+#(\d+)\b", re.MULTILINE)
 
+#: One call for every fact the verdict depends on. `baseRefName` and `defaultBranchRef` are
+#: not extras: without them the closing set's emptiness is unattributable, because "closes
+#: nothing" and "cannot close anything from here" are the same empty list.
 _GRAPHQL = """
 query($owner:String!, $name:String!, $number:Int!) {
   repository(owner:$owner, name:$name) {
+    defaultBranchRef { name }
     pullRequest(number:$number) {
+      baseRefName
+      body
       closingIssuesReferences(first:100) {
         totalCount
         nodes { number state }
@@ -138,9 +174,21 @@ class Report:
 
     repo: str
     pr: int
+    base_ref: str
+    default_branch: str
     block_present: bool
     will_close: frozenset[int] = field(default_factory=frozenset)
     declared: frozenset[int] = field(default_factory=frozenset)
+
+    @property
+    def oracle_applies(self) -> bool:
+        """Can ``closingIssuesReferences`` say anything at all about this PR?
+
+        Only on the default branch. Everywhere else the answer is empty by construction, so
+        reading it as *"closes nothing"* is reading a fact about the branch as a fact about
+        the body.
+        """
+        return self.base_ref == self.default_branch
 
     @property
     def undeclared(self) -> frozenset[int]:
@@ -154,11 +202,23 @@ class Report:
 
     @property
     def verdict(self) -> str:
+        # The population check comes FIRST and outranks everything below it. Without it this
+        # returns PASS for every feature PR in the repository -- measured on core#1552.
+        if not self.oracle_applies:
+            return "NO_VERDICT"
         if not self.block_present:
             # Nothing closes and nothing is declared: consistent, and there is nothing this
             # check could have got wrong. Anything else with no block is unmeasurable here.
             return "PASS" if not self.will_close else "NO_VERDICT"
         return "FAIL" if (self.undeclared or self.unfired) else "PASS"
+
+    @property
+    def reason(self) -> str | None:
+        """WHICH non-measurement this is. A single "unmeasured" word covers both, and the
+        one it picks is the one nobody acts on (``QA_RULES`` §31 rule 2)."""
+        if self.verdict != "NO_VERDICT":
+            return None
+        return "not-default-base" if not self.oracle_applies else "no-generated-block"
 
     @property
     def exit_code(self) -> int:
@@ -185,12 +245,16 @@ def declared_refs(body: str) -> frozenset[int]:
     return frozenset(int(n) for n in DECLARED_LINE.findall(block))
 
 
-def fetch_closing_refs(repo: str, pr: int) -> frozenset[int] | None:
-    """Ask GitHub what this PR closes. ``None`` means the lookup failed.
+def fetch_pr_facts(repo: str, pr: int) -> tuple[str, str, str, frozenset[int]] | None:
+    """``(default_branch, base_ref, body, closing_refs)``. ``None`` means the lookup failed.
 
     ``None`` is deliberately distinct from an empty set: *"closes nothing"* and *"I could
     not find out"* need opposite responses, and folding them puts the reassuring reading in
     the default position.
+
+    All four facts come from ONE call on purpose. Fetched separately, the closing set can be
+    read before the branch it depends on is known -- which is the shape that let an empty
+    list be reported as a clean verdict.
     """
     owner, _, name = repo.partition("/")
     result = subprocess.run(  # noqa: S603
@@ -215,31 +279,31 @@ def fetch_closing_refs(repo: str, pr: int) -> frozenset[int] | None:
         print(f"  ! closingIssuesReferences lookup failed: {result.stderr.strip()[:300]}")
         return None
     try:
-        payload = json.loads(result.stdout)
-        nodes = payload["data"]["repository"]["pullRequest"]["closingIssuesReferences"]["nodes"]
+        repository = json.loads(result.stdout)["data"]["repository"]
+        default_branch = repository["defaultBranchRef"]["name"]
+        pull = repository["pullRequest"]
+        base_ref = pull["baseRefName"]
+        body = pull["body"] or ""
+        nodes = pull["closingIssuesReferences"]["nodes"]
     except (json.JSONDecodeError, KeyError, TypeError):
-        print("  ! closingIssuesReferences came back in a shape this script does not know")
+        print("  ! the PR lookup came back in a shape this script does not know")
         return None
-    return frozenset(int(n["number"]) for n in nodes)
+    return default_branch, base_ref, body, frozenset(int(n["number"]) for n in nodes)
 
 
-def fetch_body(repo: str, pr: int) -> str | None:
-    result = subprocess.run(  # noqa: S603
-        ["gh", "pr", "view", str(pr), "--repo", repo, "--json", "body", "-q", ".body"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
-    if result.returncode != 0:
-        print(f"  ! could not read the PR body: {result.stderr.strip()[:300]}")
-        return None
-    return result.stdout
-
-
-def compare(repo: str, pr: int, body: str, will_close: frozenset[int]) -> Report:
+def compare(
+    repo: str,
+    pr: int,
+    body: str,
+    will_close: frozenset[int],
+    base_ref: str,
+    default_branch: str,
+) -> Report:
     return Report(
         repo=repo,
         pr=pr,
+        base_ref=base_ref,
+        default_branch=default_branch,
         block_present=block_of(body) is not None,
         will_close=will_close,
         declared=declared_refs(body),
@@ -255,12 +319,33 @@ def render(report: Report) -> str:
     out = [
         "",
         f"  promotion closing-reference check — {report.repo}#{report.pr}",
+        f"    base branch             : {report.base_ref}  (default: {report.default_branch})",
+        f"    oracle applies here     : {'yes' if report.oracle_applies else 'NO'}",
         f"    generated block present : {'yes' if report.block_present else 'NO'}",
         f"    GitHub will close       : {sorted(report.will_close) or '(nothing)'}",
         f"    the block declares      : {sorted(report.declared) or '(nothing)'}",
-        f"    verdict                 : {report.verdict}",
+        f"    verdict                 : {report.verdict}"
+        + (f"  ({report.reason})" if report.reason else ""),
         "",
     ]
+    if report.reason == "not-default-base":
+        out += [
+            "  THIS INSTRUMENT CANNOT SEE THIS PR, and that is a fact about the branch",
+            "  rather than about the body. `closingIssuesReferences` is GitHub's answer to",
+            "  *what closes when this merges*, and a PR that does not target the default",
+            f"  branch closes nothing — so it is empty for {report.base_ref!r} whatever the",
+            "  body says.",
+            "",
+            "  Measured: core#1552 targets `dev`, its body carries TWO closing declarations,",
+            "  and the oracle returns 0. Reading that as *closes nothing* is reading the",
+            "  branch as the body — the mistake this check exists to catch, one level up.",
+            "",
+            f"  Point it at a PR based on {report.default_branch!r} (a promotion). For a",
+            "  feature PR the commit-message gate is the one that applies:",
+            "  scripts/check_closing_keyword_intent.py.",
+            "",
+        ]
+        return "\n".join(out)
     if report.verdict == "NO_VERDICT":
         out += [
             "  NOTHING COULD BE COMPARED. This PR carries no generated promotion-refs block,",
@@ -312,9 +397,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pr", required=True, type=int)
     args = parser.parse_args(argv)
 
-    will_close = fetch_closing_refs(args.repo, args.pr)
-    body = fetch_body(args.repo, args.pr)
-    if will_close is None or body is None:
+    facts = fetch_pr_facts(args.repo, args.pr)
+    if facts is None:
         # An unreadable subject measures nothing, and reporting it as clean is the failure
         # this whole file is about. Exit 2, loudly.
         print(
@@ -323,7 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    report = compare(args.repo, args.pr, body, will_close)
+    default_branch, base_ref, body, will_close = facts
+    report = compare(args.repo, args.pr, body, will_close, base_ref, default_branch)
     print(render(report))
     return report.exit_code
 

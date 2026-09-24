@@ -1508,12 +1508,54 @@ def _invalid_name_error(section: str, index: int, name) -> list[dict]:
     return []
 
 
+#: The sections ``_execute_validated_import`` creates from, in phase order.
+_IMPORT_SECTIONS = ("connections", "uploads", "pipelines", "transformations")
+
+#: Ceiling on how many objects one import call may create, summed across every section (#1549).
+#:
+#: The four phases in ``_execute_validated_import`` are sequential bare loops inside a single
+#: transaction, so with no ceiling one request creates an arbitrary number of rows and holds that
+#: transaction open for as long as it takes. Only ``connections`` is bounded by anything today, and
+#: only on the cloud edition, where ``max_connections`` is enforced per plan on
+#: ``connection.before_create``; uploads, pipelines and transformations are bounded by nothing.
+#:
+#: 1000 sits well above any plausible real workspace -- the largest published plan allows 50
+#: connections, and a large dbt project is a few hundred models -- while still bounding the worst
+#: case. It also keeps ``SPEC_AUDIT_TRAIL`` §9.8's one-row-per-import-with-counts ruling honest:
+#: that row records counts rather than names, which is a faithful summary at this scale and would
+#: stop being one at 12,000. Raising it is a product decision, not a tuning knob.
+MAX_IMPORT_OBJECTS = 1000
+
+
 def _validate_import_payload(data: dict, existing_conn_names: dict[str, int]) -> list[dict]:
     """Validate the entire import payload and return a list of error dicts.
 
     ``existing_conn_names`` maps connection name → id for connections
     already present in the org.
     """
+    # --- per-call object cap (#1549) ---
+    # First, and returned ALONE. First because the phases that follow are sequential, so a refusal
+    # has to land before phase 1 creates anything -- a refusal during phase 3 would leave phases 1
+    # and 2 applied. Alone because per-item validation on an oversized payload answers an unbounded
+    # request with an unbounded response, which is the same defect one layer up.
+    per_section: dict[str, int] = {}
+    for section in _IMPORT_SECTIONS:
+        value = data.get(section)
+        if isinstance(value, list):
+            per_section[section] = len(value)
+    total = sum(per_section.values())
+    if total > MAX_IMPORT_OBJECTS:
+        breakdown = ", ".join(f"{n} {s}" for s, n in per_section.items() if n)
+        return [
+            {
+                "code": "IMPORT_TOO_LARGE",
+                "message": (
+                    f"this import carries {total} objects ({breakdown}); one call may create at "
+                    f"most {MAX_IMPORT_OBJECTS}. Split it into smaller imports."
+                ),
+            }
+        ]
+
     errors: list[dict] = []
 
     # --- connections ---

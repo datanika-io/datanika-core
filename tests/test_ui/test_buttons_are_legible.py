@@ -689,9 +689,16 @@ def _callout_census():
 CALLOUTS, CALLOUTS_COMPUTED = _callout_census()
 
 
-def _callout_offences() -> list[str]:
+def _callout_offences(rows=None) -> list[str]:
+    """Takes its population as an argument so it can be driven with one the tree does not hold.
+
+    🔑 Without that, swapping :func:`grade_callout` here for :func:`grade` is **uncaught** — a
+    mutation measured, not imagined. Every real callout now carries ``high_contrast``, and both
+    graders clear AA on those, so the census cannot tell them apart on today's population. The
+    case that discriminates is a *plain amber* callout, which does not exist in the tree.
+    """
     out = []
-    for site, variants, schemes, contrasts, _static in CALLOUTS:
+    for site, variants, schemes, contrasts, _static in CALLOUTS if rows is None else rows:
         for variant, scheme, contrast in itertools.product(variants, schemes, contrasts):
             value = grade_callout(variant, scheme, contrast)
             if value < MIN_RATIO:
@@ -760,6 +767,32 @@ class TestTheCalloutDefaultIsSoftNotSolid:
         """The negative control. Without it, "soft is right" is an assertion, not a measurement."""
         assert round(grade(DEFAULT_VARIANT, "green", None), 2) == 3.16
         assert grade(DEFAULT_VARIANT, "green", None) != grade_callout(None, "green", None)
+
+    def test_the_offence_finder_uses_the_callout_grader(self):
+        """🔑 Added because a mutation escaped: swapping the grader in ``_callout_offences`` was
+        **uncaught** by all 27 tests.
+
+        Two things made it invisible, and both are worth stating because the obvious control has
+        neither property. **Green does not discriminate** — 3.16 solid and 4.28 soft, *both below
+        AA* — so a control built on the scheme that motivated the issue proves nothing about which
+        grader is in use. **And every real callout now carries `high_contrast`**, where the two
+        graders agree (12.04 and 11.00, both passing), so today's population cannot tell them
+        apart at all.
+
+        **Amber is the case that separates them**: `solid` amber **passes** at 10.33 while `soft`
+        amber **fails** at 4.25. So a callout that lost its `high_contrast` would be reported clean
+        by the button grader — the exact defect this census exists to catch, invisible to it.
+
+        Driven through the real finder with a synthetic population, and required to answer the two
+        **differently**: the plain row is flagged and the corrected row is not.
+        """
+        assert grade(DEFAULT_VARIANT, "amber", None) >= MIN_RATIO, "amber no longer discriminates"
+        assert grade_callout(None, "amber", None) < MIN_RATIO, "amber no longer discriminates"
+
+        plain = [("synthetic", [None], ["amber"], [None], True)]
+        corrected = [("synthetic", [None], ["amber"], [True], True)]
+        assert _callout_offences(plain), "the finder is grading callouts as buttons"
+        assert not _callout_offences(corrected), "the finder flags a correct callout"
 
     def test_high_contrast_is_what_clears_aa_for_every_scheme(self):
         """§11's remedy, asserted as the reason the rule is 'always' rather than 'where needed'."""

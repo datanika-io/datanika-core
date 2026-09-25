@@ -519,6 +519,9 @@ class ConnectionState(BaseState):
     form_login_customer_id: str = ""  # Google Ads manager (MCC) account
     form_account_id: str = ""  # Facebook Ads
     form_base_id: str = ""  # Airtable
+    # core#1574. Scopes which PROJECTS load, and through them which tasks; never sent on /tasks,
+    # where Asana refuses a workspace that is not accompanied by an assignee.
+    form_workspace: str = ""  # Asana
     form_bootstrap_servers: str = ""  # Kafka
     form_topics: str = ""  # Kafka
     form_group_id: str = ""  # Kafka
@@ -795,6 +798,9 @@ class ConnectionState(BaseState):
 
     def set_form_base_id(self, value: str):
         self._set_config_field("form_base_id", value)
+
+    def set_form_workspace(self, value: str):
+        self._set_config_field("form_workspace", value)
 
     def set_form_bootstrap_servers(self, value: str):
         self._set_config_field("form_bootstrap_servers", value)
@@ -1124,9 +1130,18 @@ class ConnectionState(BaseState):
             if self.form_sasl_plain_password:
                 config["sasl_plain_password"] = self.form_sasl_plain_password
 
-        elif t in ("pipedrive", "asana"):
+        elif t == "pipedrive":
             if self.form_api_key:
                 config["api_key"] = self.form_api_key
+
+        # Split from pipedrive by core#1574: asana gained `workspace`, and a shared branch would
+        # have written it for pipedrive too — a key no pipedrive schema declares and no pipedrive
+        # builder reads, which is the core#662 drift this codebase keeps paying for.
+        elif t == "asana":
+            if self.form_api_key:
+                config["api_key"] = self.form_api_key
+            if self.form_workspace:
+                config["workspace"] = self.form_workspace
 
         elif t == "freshdesk":
             if self.form_api_key:
@@ -1240,6 +1255,7 @@ class ConnectionState(BaseState):
         self.form_customer_id = ""
         self.form_account_id = ""
         self.form_base_id = ""
+        self.form_workspace = ""
         self.form_bootstrap_servers = ""
         self.form_topics = ""
         self.form_group_id = ""
@@ -1313,6 +1329,7 @@ class ConnectionState(BaseState):
         self.form_customer_id = ""
         self.form_account_id = ""
         self.form_base_id = ""
+        self.form_workspace = ""
         self.form_bootstrap_servers = ""
         self.form_topics = ""
         self.form_group_id = ""
@@ -1433,8 +1450,13 @@ class ConnectionState(BaseState):
             self.form_sasl_mechanism = config.get("sasl_mechanism", "")
             self.form_sasl_plain_username = config.get("sasl_plain_username", "")
             self.form_sasl_plain_password = config.get("sasl_plain_password", "")
-        elif conn_type in ("pipedrive", "asana"):
+        elif conn_type == "pipedrive":
             self.form_api_key = config.get("api_key", "")
+        elif conn_type == "asana":
+            self.form_api_key = config.get("api_key", "")
+            # core#638's pairing: a key written by `_build_config` and not read back here is
+            # silently dropped the next time the connection is opened in the form and saved.
+            self.form_workspace = config.get("workspace", "")
         elif conn_type == "freshdesk":
             self.form_api_key = config.get("api_key", "")
             self.form_domain = config.get("domain", "")

@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from decimal import Decimal
 from pathlib import PurePosixPath
 
@@ -944,6 +945,79 @@ REST_FALLBACK_SAAS_TYPES: frozenset[str] = frozenset(
         "asana",
     }
 )
+
+
+#: Asana's `tasks` is scoped by resolving a project gid from the `projects` resource.
+#:
+#: 🚨 **The braces are load-bearing and their absence is silent.** dlt finds parent references with
+#: ``string.Formatter().parse``, so ``"resources.projects.gid"`` carries no field name: the source
+#: builds, all five resources are present, and ``tasks.is_transformer`` is ``False`` — dlt then
+#: sends the literal text as Asana's ``project`` param, answered ``400 project: Not a Long``.
+#: Measured against dlt 2026-09-25, and guarded by
+#: ``tests/test_services/test_asana_tasks_are_scoped.py::TestTheParentReferenceActuallyBinds``.
+#:
+#: ⚠️ The ``{"type": "resolve", "resource": …, "field": …}`` dict form is for **path** params. In
+#: ``params`` dlt raises *"defines resolve params ['project'] that are not bound in path `tasks`"*.
+ASANA_TASK_PROJECT_REF = "{resources.projects.gid}"
+
+
+def asana_default_resources(workspace: str | None = None) -> list[dict]:
+    """Asana's default resource list, with `tasks` scoped so Asana will answer it (core#1574).
+
+    **`GET /tasks` is invalid without a scope.** Measured against the live API 2026-09-25 with
+    `secrets/asana.env`, controls in both directions (no auth header → 401, garbage bearer → 401):
+
+    ===========================================  ======================================
+    ``GET /tasks``                               400 *"You should specify one of workspace,
+                                                 project, tag, section, user_task_list"*
+    ``GET /tasks?workspace=<gid>``               400 *"Must specify exactly one of project, tag,
+                                                 section, user task list, or assignee + workspace"*
+    ``GET /tasks?workspace=<gid>&assignee=me``   200
+    ``GET /tasks?project=<a gid not ours>``      403 *"You do not have access to this project."*
+    ``GET /tasks?project=`` (empty)              400 *"project: Not a Long"*
+    ===========================================  ======================================
+
+    🔑 **`workspace` alone is NOT a scope**, which is the one thing core#1574's acceptance criteria
+    did not know: they asked for *"a workspace (and ideally project) field"*, and a workspace
+    field on its own trades one 400 for another. The 403 on a foreign project gid is the
+    discriminator that settles it — 400 means Asana refused the request for having no scope, 403
+    means the scope was accepted and only authorization failed.
+
+    So `tasks` is iterated **per project**, which is also what ``SPEC_WAVE1_CONNECTOR_FIELDS`` §4
+    said in July: *"there is no 'all tasks in a workspace' endpoint — tasks must be iterated per
+    project (or per assignee+workspace). The extractor must fetch `projects` first, then loop
+    them."*
+
+    ⚠️ **`workspace + assignee` was rejected as the default deliberately.** It returns 200, and it
+    loads only the connecting user's tasks — a silently partial table, which is the failure mode
+    this whole issue is an instance of. ``tasks`` in no project stay unreachable; that is Asana's
+    limitation, and the connector guide says so.
+
+    ``workspace`` scopes ``projects`` and is **never** put on ``tasks``. A blank value is omitted
+    rather than sent: ``GET /projects`` with no workspace is a measured 200, while a blank scope
+    param is its own 400.
+    """
+    scope = str(workspace or "").strip()
+    projects: dict = {"path": "projects"}
+    if scope:
+        projects["params"] = {"workspace": scope}
+    return [
+        {"name": "workspaces", "endpoint": {"path": "workspaces"}},
+        {"name": "projects", "endpoint": projects},
+        {
+            "name": "tasks",
+            "endpoint": {"path": "tasks", "params": {"project": ASANA_TASK_PROJECT_REF}},
+        },
+        {"name": "users", "endpoint": {"path": "users"}},
+        {"name": "tags", "endpoint": {"path": "tags"}},
+    ]
+
+
+#: Connector -> a callable returning its default resource list, for the connectors whose list has
+#: been extracted from ``_build_saas_source``.
+SAAS_DEFAULT_RESOURCE_BUILDERS: dict[str, Callable[..., list[dict]]] = {
+    "asana": asana_default_resources,
+}
 
 
 #: The paginator ``type`` values dlt accepts, derived from dlt rather than
@@ -2749,18 +2823,22 @@ class DltRunnerService:
             return self._rest_api_fallback(
                 "https://app.asana.com/api/1.0/",
                 {"type": "bearer", "token": access_token},
-                dlt_config.get("resources")
-                or [
-                    {"name": "workspaces", "endpoint": {"path": "workspaces"}},
-                    {"name": "projects", "endpoint": {"path": "projects"}},
-                    {"name": "tasks", "endpoint": {"path": "tasks"}},
-                    {"name": "users", "endpoint": {"path": "users"}},
-                    {"name": "tags", "endpoint": {"path": "tags"}},
-                ],
+                dlt_config.get("resources") or self._asana_resources_for(config),
                 paginator=paginator,
             )
 
         raise DltRunnerError(f"Unsupported SaaS source type: {connection_type}")
+
+    @staticmethod
+    def _asana_resources_for(config: dict) -> list[dict]:
+        """Asana's default resource list for this connection's config (core#1574).
+
+        Split out of the branch above so the list is reachable without building a source, which is
+        what lets the AC4 ledger in ``tests/test_services/
+        test_saas_default_resources_are_requests_the_vendor_accepts.py`` check it against a
+        recorded vendor measurement with no credential and no network.
+        """
+        return asana_default_resources(config.get("workspace"))
 
     def _build_ga4_source(self, property_id, service_account_json, dlt_config: dict):
         """Google Analytics 4 via the Data API's `runReport` (core#543).

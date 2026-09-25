@@ -9,7 +9,8 @@ The first slice was ``connections.base_url`` + ``connections.name`` (AC3). ``nam
 and always required; ``base_url`` is rendered by two connectors and required by only one of them.
 So the pair exercises a derived marker in BOTH directions — a mechanism that only ever renders
 ``*`` would pass a ``name``-only test. Slice 2 added ``connections.port``; slice 3 adds
-``account``, ``bucket_url``, ``database``, ``dataset`` and ``gcp_project`` — see ``_SLICE``.
+``account``, ``bucket_url``, ``database``, ``dataset`` and ``gcp_project``; **slice 4 adds the last
+four — ``host``, ``db_path``, ``http_path``, ``token``** — see ``_SLICE``.
 
 ⚠️ Slice 3's seven sites were NOT self-contradictory before the change: the marker was baked into
 the translation and the input already carried ``required=True``, so AC5's marker-equals-attribute
@@ -17,7 +18,10 @@ assertion was already satisfied at every one of them. What was wrong is §2.2 �
 inside a string that cannot vary by connector and is tied to nothing. So the test that goes red
 against the unfixed tree is :class:`TestTheTranslatedLabelsCarryNoMarker`, and AC5's value is that
 it goes red if the string is stripped WITHOUT the call site being converted. The two halves are
-coupled, and each is the other's guard.
+coupled, and each is the other's guard. **Slice 4's seven sites are the same shape**, and with it
+``BAKED_MARKER_KEYS`` in ``tests/test_i18n/test_required_marker_matches_label.py`` reaches empty —
+so that module's §2.9 guard had to be repointed at the invariant rather than driven off today's
+population (``WORKFLOW_RULES`` §5a).
 
 ⚠️ No assertion here is "the string omits an asterisk" on its own. That is satisfied by deleting the
 label (the spec's AC2 warning), so every such check is paired with the presence of what should be
@@ -35,13 +39,17 @@ from datanika.i18n import SUPPORTED_LOCALES, get_translations
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.ui.components.connection_config_fields import (
+    asana_fields,
     bigquery_fields,
+    databricks_fields,
     db_fields,
+    duckdb_fields,
     mongodb_fields,
     openapi_fields,
     rest_api_fields,
     s3_fields,
     snowflake_fields,
+    sqlite_fields,
 )
 from datanika.ui.pages.connections import connection_form
 
@@ -59,19 +67,42 @@ _KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
 #: Slice 3 adds the five keys whose EVERY render site is gated by ``_validate_connection_form``:
 #: ``account`` (:328), ``bucket_url`` (:335), ``database`` (:317/:332/:343), ``dataset`` (:325),
 #: ``gcp_project`` (:323). Seven sites, every one required, so §2.7's question has a single answer
-#: per key and no per-connector Product ruling is needed. The remaining four keys (``host``,
-#: ``db_path``, ``http_path``, ``token``) each touch a site the validator has NO branch for, and
-#: are deliberately not here — see core#1547.
+#: per key and no per-connector Product ruling is needed.
 #:
-#: ⚠️ **TWO members carry ``(False, False)``** — ``(openapi_fields, "base_url")`` and
-#: ``(mongodb_fields, "port")``. Slice 3 adds seven ``(True, True)`` members, so AC3's
-#: both-directions property rests on exactly those two.
+#: Slice 4 adds the last four keys — ``host``, ``db_path``, ``http_path``, ``token`` — at seven
+#: sites, which empties the baked-marker population (AC1).
 #:
-#: 🔑 Measured by mutation, because the obvious reading is wrong in a way that matters: dropping
-#: EITHER one leaves ``test_the_slice_exercises_both_directions`` **green**, and is caught only by
-#: :class:`TestTheSliceCoversEveryDerivedSite`. Only dropping both reds it. So neither member is
-#: redundant and neither is sufficient: **either deletion on its own is invisible to AC3's test**,
-#: and it is the pair that stands between this slice and an all-required population — which is
+#: 🔑 **Three of those seven are un-gated, and that is why the slice waited rather than why it was
+#: wrong.** ``_validate_connection_form`` has a branch for ``_DB_TYPES`` (host, :312) and ``sqlite``
+#: (path, :318) and ``mongodb`` (host, :341); it has **none** for ``duckdb`` or ``databricks``, so
+#: ``duckdb_fields``'s Path and ``databricks_fields``'s Host / HTTP Path / Token render
+#: ``required=True`` against a gate that refuses nothing. SPEC_FIELD_REQUIREDNESS §2.8 and §4's
+#: second ruling settle the direction: **the marker is right and the gate is missing**, so slice 4
+#: keeps ``required=True`` and core#1547 adds the branches. AC6, pointed at a new instance — the
+#: wrong discharge is deleting the attribute, which would agree the signals on "optional" and ship
+#: a connector whose every connection fails at connect time instead of at save time.
+#:
+#: ⚠️ So ``_pair(...).required`` here reads the rendered **HTML attribute**, never the gate. A
+#: ``(True, True)`` verdict on a databricks field is a statement about the two *display* signals
+#: agreeing, and says nothing about whether the save refuses. Do not read this file as covering
+#: core#1547.
+#:
+#: ⚠️ **THREE members carry ``(False, False)``** — ``(openapi_fields, "base_url")``,
+#: ``(mongodb_fields, "port")`` and 🆕 ``(asana_fields, "workspace")``. Everything else is
+#: ``(True, True)``, so AC3's both-directions property rests on exactly those three.
+#:
+#: 🔴 **This said TWO until 2026-09-25 and the count is load-bearing, not decoration.** core#1574
+#: added the third the same day slice 4 landed, and the two changes crossed in a rebase. A count
+#: that quietly goes stale in a comment is how the a11y ratchet came to stand for 80 fields while
+#: reporting 2 (``WORKFLOW_RULES`` §5a).
+#:
+#: 🔑 Measured by mutation while there were two: dropping EITHER one left
+#: ``test_the_slice_exercises_both_directions`` **green**, caught only by
+#: :class:`TestTheSliceCoversEveryDerivedSite`; only dropping both redded it. **With three, the
+#: generalisation is derived rather than re-measured** — the assertion is
+#: ``(False, False) in states``, so *any proper subset* can be deleted with the test still green,
+#: and it reds only when the last one goes. So no member is redundant and none is sufficient, and
+#: what they collectively stand between is this file and an all-required population — which is
 #: precisely the population a marker-always mechanism passes.
 _SLICE = [
     (openapi_fields, "base_url"),
@@ -88,6 +119,25 @@ _SLICE = [
     # guard matches on the input's name, so the two must not be conflated here.
     (bigquery_fields, "project"),
     (bigquery_fields, "dataset"),
+    # Slice 4. ``connections.db_path`` is the i18n key at both ``path`` sites; the input is named
+    # for the field, so the two must not be conflated here either.
+    (db_fields, "host"),
+    (mongodb_fields, "host"),
+    (databricks_fields, "host"),
+    (databricks_fields, "http_path"),
+    (databricks_fields, "token"),
+    (sqlite_fields, "path"),
+    (duckdb_fields, "path"),
+    # core#1574's new renderer. It is not a core#1311 slice — asana was moved off the shared
+    # `saas_api_key_fields()` because it needed a second field — but a NEW call site uses the
+    # derived helper rather than hand-writing a label, so it joins this population by construction.
+    #
+    # 🔑 The pair is the cleanest both-directions witness in the file: `api_key` is required in the
+    # form AND the schema, `workspace` is optional in both. Measured against the live API —
+    # `GET /projects` with no workspace returns 200, so a blank workspace is a working
+    # configuration, not a field somebody forgot to gate.
+    (asana_fields, "api_key"),
+    (asana_fields, "workspace"),
 ]
 
 
@@ -316,6 +366,17 @@ _SAME_WORD_AS_ENGLISH = {
     ("connections.dataset", "de"),
     ("connections.dataset", "es"),
     ("connections.dataset", "fr"),
+    # Slice 4. ``Host`` is the word German and Spanish both use for a network host, and it is what
+    # Postgres', MongoDB's and Databricks' own localised consoles show.
+    #
+    # ⚠️ Stated differently from the ``dataset`` entries above on purpose, because the measurement
+    # is different: ``de`` and ``es`` read ``"Host *"`` before this change — identical to English
+    # INCLUDING the marker, not merely apart from it. So here the marker is not "the only thing
+    # removed"; the strings were already the same word, and stripping the marker leaves them the
+    # same word. The conclusion matches the ``dataset`` case; the evidence for it does not, and
+    # writing them as if it did would make the next reader trust a reading nobody took.
+    ("connections.host", "de"),
+    ("connections.host", "es"),
 }
 
 
@@ -332,6 +393,13 @@ class TestTheTranslatedLabelsCarryNoMarker:
             "connections.database",
             "connections.dataset",
             "connections.gcp_project",
+            # Slice 4 — the last four. With these the population this parametrize walks is all
+            # twelve keys core#1311 measured, and `BAKED_MARKER_KEYS` in
+            # tests/test_i18n/test_required_marker_matches_label.py reaches empty.
+            "connections.host",
+            "connections.db_path",
+            "connections.http_path",
+            "connections.token",
         ],
     )
     def test_the_label_is_a_name_not_a_sentence_about_the_form(self, locale, key):
@@ -397,6 +465,27 @@ class TestTheFormAndTheSchema:
         ("mongodb", mongodb_fields, "database"),
         ("bigquery", bigquery_fields, "project"),
         ("bigquery", bigquery_fields, "dataset"),
+        # Slice 4. All seven sites, and every one of them agrees with its schema — which is worth
+        # asserting precisely because AC6's wrong discharge (deleting `required=True` so the
+        # signals "agree" on optional) would show up here as a NEW difference in three places.
+        #
+        # ⚠️ `databricks` **Catalog** is deliberately absent, and it is the field this population
+        # cannot see: schema-required, no attribute, no marker. Adding it here would report a real
+        # difference that belongs to core#1547 AC3, so it lands with that fix rather than as a
+        # recorded exemption here. Named because an instrument that silently omits part of its
+        # population reports the rest as clean (SPEC_FIELD_REQUIREDNESS §4).
+        ("postgres", db_fields, "host"),
+        ("mongodb", mongodb_fields, "host"),
+        ("databricks", databricks_fields, "host"),
+        ("databricks", databricks_fields, "http_path"),
+        ("databricks", databricks_fields, "token"),
+        ("sqlite", sqlite_fields, "path"),
+        ("duckdb", duckdb_fields, "path"),
+        # core#1574. `workspace` is optional on BOTH sides, so this is the ratchet's only pair
+        # agreeing on *optional* — every other agreeing member agrees on required. Without one, a
+        # ratchet that silently read every field as required would still show agreement.
+        ("asana", asana_fields, "api_key"),
+        ("asana", asana_fields, "workspace"),
     )
 
     #: Connection types the ratchet CANNOT compare, because they have no ``CONFIG_SCHEMAS`` entry.

@@ -16,8 +16,9 @@ stdout straight into the keys file, so every diagnostic here must go to stderr.
 
     req/s_ceiling = keys * rate_limit_rpm / 60
 
-161 keys on a free-plan org is 80.5 req/s, which is what Run 9 used and why its 60 req/s top
-stage was not limiter-bound. Raising the plan's rpm and using one key is **not** equivalent —
+161 keys on a free-plan org is 80.5 req/s, which is what Run 9 used and why its top rung was not
+limiter-bound. (The ``/ 60`` above is seconds per minute; it is not the retired floor figure.)
+Raising the plan's rpm and using one key is **not** equivalent —
 161 keys is 161 Redis buckets — and would make the result non-comparable to Run 9.
 
 ⚠️ ``create_api_key`` emits ``api_key.before_create``, which cloud's ``check_api_key_quota``

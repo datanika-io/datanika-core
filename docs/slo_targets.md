@@ -68,12 +68,30 @@ investigate, not an auto-page.
 > cleared.** Until a run happens on the current host, treat every rps number here as
 > provenance, not evidence.
 >
+> 🔴 **And for three months the callout above asserted a universality the table did not
+> implement.** It says *"every load figure in this document"*, while **4 of the 7 latency
+> rows and 1 of the 5 throughput rows carried no per-row marker** — so a reader who lands
+> on `## Throughput SLOs` by anchor or by search never sees this box. Marked 2026-09-25;
+> `tests/test_deploy/test_slo_load_rows_are_marked.py` now asserts it per row, because a
+> universality claim in prose is not a guard over the rows it claims to cover.
+>
+> 🆕 **THE ONE CURRENT-HOST FIGURE, measured 2026-09-24 on `pointer.gr` (run 10, core#778):**
+> **a floor of ~50 req/s under neighbour load, with no knee observed up to 60 instantaneous.**
+> 5,991 requests in 120 s at a mean 49.92/s, `http_req_failed` 0.00%, zero 429s, p95 26.57 ms.
+> ⚠️ **Three req/s numbers are therefore in circulation and they are not interchangeable:**
+> **~48** (Run 5/6, 2026-04-18, the *terminated* CPX31 — the "newest conclusive datum" named
+> above, which is conclusive about a machine we no longer own); **~50** (run 10, current host,
+> the only figure to quote); and **60**, which is **retired as a citation** — not wrong, since
+> no knee was found below it, but **unmeasured**, because the ladder that produced it never held
+> a rate (core#1560). Founder ruling 2026-09-25: publish the ~50, stop citing 60.
+>
 > Two further facts, measured 2026-09-11, that bear on when that run can happen:
 >
-> * **There is no k6 script in this repository**, and k6 is **not installed** on the
->   box — so the 2026-04-21 baseline is **not reproducible even in principle**,
->   independently of the hardware being gone. A tracked profile
->   (`tests/load/`) is the prerequisite, not the run.
+> * ~~**There is no k6 script in this repository**~~ — **retired 2026-09-25: there is.**
+>   `scripts/loadtest/` holds the generator, the ladder, the seeder and both preflights, and
+>   run 10 executed against staging on the current host. The sentence was true when written and
+>   is the reason the harness was landed; left struck through rather than deleted so nobody
+>   re-derives a solved prerequisite. k6 runs from a container, so nothing is installed on the box.
 > * **Staging and production are the same machine** (`s538673`, 4 vCPU, 24
 >   containers, load average 2.16/2.98/3.18, 2 GiB available, shared with
 >   co-tenants). A load test against staging **is** load on production's hardware,
@@ -85,9 +103,9 @@ investigate, not an auto-page.
 | Category | Indicator | Target (p95) | Target (p99) | Measurement |
 |---|---|---|---|---|
 | **REST API — read** | `/api/v1/meta/*`, `/api/v1/connections`, `/api/v1/pipelines` GET | **200 ms** | 500 ms | k6 against staging at 50 rps sustained ⚠️ inherited, see callout |
-| **REST API — write** | `POST /api/v1/connections`, `POST /api/v1/pipelines` | **500 ms** | 1500 ms | k6 at 10 rps sustained |
-| **Auth** | `/api/v1/auth/signup`, `/api/v1/auth/login` | **800 ms** | 2000 ms | k6 at 5 rps sustained (bcrypt is the floor) |
-| **Agent API** | `/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/meta/agent-tiers` | **150 ms** | 400 ms | k6 at 20 rps sustained |
+| **REST API — write** | `POST /api/v1/connections`, `POST /api/v1/pipelines` | **500 ms** | 1500 ms | k6 at 10 rps sustained ⚠️ inherited, see callout |
+| **Auth** | `/api/v1/auth/signup`, `/api/v1/auth/login` | **800 ms** | 2000 ms | k6 at 5 rps sustained (bcrypt is the floor) ⚠️ inherited, see callout |
+| **Agent API** | `/llms.txt`, `/api/v1/agent-guide.md`, `/api/v1/meta/agent-tiers` | **150 ms** | 400 ms | k6 at 20 rps sustained ⚠️ inherited, see callout |
 | **Health probes** | `/healthz`, `/readyz` | **50 ms** | 150 ms | blackbox_exporter every 15 s |
 | **Landing** | `/`, `/pricing`, `/docs` (static) | **300 ms TTFB** | 800 ms TTFB | k6 against `datanika.io` |
 | **WebSocket event** | Reflex event round-trip for a state update | **250 ms** | 700 ms | custom Playwright probe, not k6 |
@@ -98,7 +116,7 @@ investigate, not an auto-page.
 |---|---|---|
 | **REST API** | Sustained throughput before p95 regression | **≥ 100 rps** on `/api/v1/meta/*` ⚠️ inherited, see callout |
 | **Celery worker** | Simple pipeline runs (DuckDB → DuckDB, ~1k rows) | **≥ 60 runs/min** ⚠️ inherited — "the prod box (8 GB RAM)" named here is the **terminated** Hetzner CPX31, not `s538673` |
-| **Celery worker** | Upload → staging runs (~10k rows, local CSV) | **≥ 20 runs/min** |
+| **Celery worker** | Upload → staging runs (~10k rows, local CSV) | **≥ 20 runs/min** ⚠️ inherited, see callout |
 | **Scheduler** | Schedule dispatch latency (fire time → task enqueue) | **p95 < 500 ms** |
 | **Signup → first event** | user hits submit → first Reflex event round-trip | **p95 < 1500 ms** |
 

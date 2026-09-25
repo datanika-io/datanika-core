@@ -1,11 +1,25 @@
 // Datanika load-test generator (core#778).
 //
+// ── THE PUBLISHED FIGURE ──────────────────────────────────────────────────────────────────
+// **A floor of ~50 req/s under neighbour load, measured 2026-09-24 (run 10), with no knee
+// observed up to 60 instantaneous.** That is the whole claim, and "under neighbour load" is part
+// of it: prod, staging, the co-tenants and this generator share one 4 vCPU box, so it is a lower
+// bound observed on a busy machine and NOT a capacity figure. Never quote it as "Datanika handles
+// N req/s".
+//
+// 🔴 `>= 60 authed req/s` is RETIRED as a citation (founder, 2026-09-25). It is not *wrong* —
+// run 10 found no knee below 60 — it is **unmeasured**, because the ladder that produced it never
+// held a rate (core#1560). Unmeasured is the only claim we may publish. The stage defaults below
+// still climb past 50 on purpose: retiring the citation does not retire the knee hunt.
+//
 // ── WHY THIS FILE EXISTS IN THE REPOSITORY ────────────────────────────────────────────────
-// Run 9 (2026-09-17) established the published floor of **>= 60 authed req/s** on the current
-// hardware. Its harness lived in `.scratch/`, which is swept without warning, so by 2026-09-20
-// the number was being cited and the instrument that produced it was gone. A floor whose
-// instrument cannot be re-run is not a measurement, it is a memory. This is the coordinator's
-// rule 9: if a measurement will become a floor, the instrument ships in the same PR.
+// Run 9 (2026-09-17) produced the figure that was published for weeks. Its harness lived in
+// `.scratch/`, which is swept without warning, so by 2026-09-20 the number was being cited and
+// the instrument that produced it was gone. A floor whose instrument cannot be re-run is not a
+// measurement, it is a memory. This is the coordinator's rule 9: if a measurement will become a
+// floor, the instrument ships in the same PR. ⚠️ Rule 34 is the other half, learned here: the
+// instrument shipping is necessary and not sufficient — it must measure the thing the number
+// claims, and this one did not.
 //
 // ── THE MODEL, AND WHY IT IS OPEN ─────────────────────────────────────────────────────────
 // `constant-arrival-rate`, NOT a VU loop. A closed-loop generator slows down when the target
@@ -19,8 +33,10 @@
 //
 //     req/s_ceiling = keys * rate_limit_rpm / 60
 //
-// Run 9 used **161 keys** on a free-plan org: 161 * 30 / 60 = 80.5 req/s, comfortably above its
-// 60 req/s top stage. To go higher you need more keys, not a bigger machine:
+// Run 9 used **161 keys** on a free-plan org: 161 * 30 / 60 = 80.5 req/s, comfortably above the
+// top rung it requested. (The `/ 60` there is seconds per minute, not the retired floor — they
+// are unrelated 60s that sit two lines apart, which is worth knowing before grepping this file.)
+// To go higher you need more keys, not a bigger machine:
 //
 //     50 req/s sustain  -> >= 100 keys        80 req/s -> >= 160        120 req/s -> >= 240
 //

@@ -636,7 +636,10 @@ def no_verdict_breakdown(verdicts: list[Verdict]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, not __doc__ — see core#1585.
+    ap = argparse.ArgumentParser(
+        description="Read docs/slo_targets.md and produce a per-SLO verdict against Prometheus."
+    )
     ap.add_argument("--prometheus", default="http://127.0.0.1:9090")
     ap.add_argument("--offline", action="store_true", help="audit the registry, query nothing")
     ap.add_argument("--report-only", action="store_true", help="always exit 0 (humans only)")

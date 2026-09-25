@@ -1,10 +1,26 @@
 # Load-test harness (`core#778`)
 
-🔴 **There is currently NO validated sustained-throughput floor. Do not cite `>= 60 req/s`.**
-That figure was carried for weeks; run 10 (2026-09-24) showed the ladder that produced it never
-*held* any rate, so the number was never measured in the form it was quoted ([core#1560], now
-fixed here — but fixed means *the next run can measure it*, not that it has been measured).
-What is currently defensible is a **~50 req/s sustain** — see *Status of this harness* below.
+## 📌 The published figure — quote this sentence, and no other
+
+> **A floor of ~50 req/s under neighbour load, measured 2026-09-24, with no knee observed up to
+> 60 instantaneous.**
+
+**Founder decision, 2026-09-25: publish the measured ~50 and stop citing 60.** The `>= 60 req/s`
+figure was carried for weeks and is **retired from every citation**.
+
+🔑 **60 is not *wrong* — it is UNMEASURED, and that is a different claim.** Run 10 found no knee
+anywhere below 60 instantaneous, so nothing here says the box cannot do 60. What run 10 showed is
+that the ladder which produced the 60 figure never *held* any rate, so the number was never
+measured in the form it was quoted ([core#1560]). **Unmeasured is the only claim we may publish.**
+
+🚨 **"A floor under neighbour load" is the whole label and it is not a capacity figure.** Production,
+staging, the co-tenants **and the generator** share one 4 vCPU box, so this number is a lower bound
+observed while the machine was also doing everything else it normally does. **Never publish it as
+*"Datanika handles N req/s."*** That is the founder's original label and it still governs.
+
+⚠️ **A third number is in circulation and is not this one:** `docs/slo_targets.md`'s callout cites
+**~48 req/s** from Run 5/6 (2026-04-18) as its newest conclusive datum. That was measured on the
+**terminated** Hetzner CPX31, not on `pointer.gr`. The ~50 above is the current-host figure.
 
 This directory is the instrument. It exists because the instrument that produced the original
 number did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning, and by
@@ -198,17 +214,23 @@ and not the fixture. Structure still guarded by `tests/test_deploy/test_loadtest
 *(The 2026-09-21 first execution found eight defects in the harness itself — core#1492, core#1503 —
 and both runs it produced aborted in stage 1 on the latency threshold, which is gap 1 above.)*
 
-🔴 **Run 10 did NOT validate the `>= 60 req/s` floor, and the reason was the stage spec, not the
-box — [core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation of
-the day repeated a target, so **that ladder never held any rate.** Every per-stage achieved rate
-was the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`, and
-the run touched 60 only at the final instant of the last ramp.
+🔴 **Run 10 did not validate a 60 req/s floor, and the reason was the stage spec, not the box —
+[core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation of the
+day repeated a target, so **that ladder never held any rate.** Every per-stage achieved rate was
+the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`, and the
+run touched 60 only at the final instant of the last ramp.
 
 ✅ **The spec defect is fixed** (hold stages, per-rung achieved thresholds, and the limiter-ceiling
-gate of [core#1556]). ⚠️ **A fix is not a measurement.** Until a ladder that holds a rate has
-actually run against staging, the `>= 60 req/s` floor stays **unvalidated** and must not be cited.
+gate of [core#1556]). ⚠️ **A fix is not a measurement** — it means the *next* run can measure a
+held rate, not that one has been measured.
 
-✅ **What Run 10 does establish, and what may be quoted:**
+➡️ **And as of 2026-09-25 we are no longer chasing that number.** The founder ruled: publish the
+measured ~50, stop citing 60. So the sentence at the top of this file is the published figure, and
+a rung above it is a *knee hunt*, not a floor to be validated. The ladder still climbs past 50
+deliberately — **stopping the citation is not the same as stopping the probe**, and the knee is
+still unlocated.
+
+✅ **What Run 10 establishes, and what may be quoted:**
 
 - a **real ~50 req/s sustain** — 5,991 requests in 120 s at a mean 49.92/s, **zero errors, zero
   429s**, p95 **26.57 ms**, p99 85.21 ms. That closes the *"a real sustain at 50 req/s"* gap.
@@ -225,9 +247,11 @@ produced. The per-rung `http_reqs{rung:N}` thresholds exist to close that: they 
 implies. A red rung line means **that rung was not delivered** — a finding about the target or the
 fixture, not a broken harness — so it is deliberately not `abortOnFail`.
 
-**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps: a run on the fixed
-spec that actually **holds** 60 and above, `/meta` at >= 100, production's 4-worker shape, and
-query cost on real data volume.
+**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps, now framed as a knee
+hunt rather than as validating a retired figure: a run on the fixed spec that actually **holds** a
+rung above 50, `/meta` at >= 100, production's 4-worker shape, and query cost on real data volume.
+⚠️ **None of these is a precondition for the published ~50** — that figure is measured and stands
+on run 10 alone.
 
 ⚠️ **Operational, learned in Run 10: do not drive the ladder from a foreground SSH session.** The
 control channel dropped ~10 minutes in. The remote processes survived and the run finished

@@ -760,3 +760,47 @@ and they will reasonably read it as satisfied once the rendering code exists. Na
 how the spec keeps that question.
 
 [core#1081]: https://github.com/datanika-io/datanika-core/issues/1081
+
+## 17. A status code is an edition-neutral surface: never encode a paid-tier concept in one
+
+🚦 **Ruling, [core#1569](https://github.com/datanika-io/datanika-core/issues/1569), 2026-09-25: a
+plan-cap refusal is `400` on every door of the v1 API. Not `402 Payment Required`.** The reasoning
+lives beside the code, in `api_middleware._refusal`'s docstring — this section is the general rule
+the ruling instantiates, because the next occurrence will not be about quotas.
+
+**The rule.** `datanika/hooks.py` is the open-core boundary: core emits, cloud subscribes, and core
+does not import `datanika_cloud`. Anything core *renders* — a status line, a route, a default error
+body — is therefore seen by an AGPL self-hoster who has no billing, no plans and nobody to pay. So a
+response shape may only express what **core** can know. `402` says *"pay us"*, which core cannot
+know and half our deployments cannot act on.
+
+**Two failure modes, and the second is the subtle one:**
+
+1. **Reaching across the boundary to get the fact.** Importing the cloud exception taxonomy into the
+   core request path so the handler can recognise a quota refusal. On an OSS image that is a
+   `ModuleNotFoundError` — `celery_app.py:92` is the measured shape of it.
+2. 🔑 **Laundering it through an edition-neutral marker and thinking the problem is solved.** A
+   core-side `LimitExceededError(UserFacingError)` really would let core discriminate without
+   importing cloud — and `402` would *still* be wrong, because core cannot tell a **plan** cap from
+   a self-hoster's own configured limit. **The marker fixes the import, not the meaning.** Ask what
+   the code asserts to the operator who is not our customer.
+
+**Where the distinction belongs instead.** A caller's real need is to branch on *"out of quota"*
+versus *"bad request"*, and the status line serves that badly in either scheme — a client still has
+to sort quota refusals from malformed bodies among the other `400`s. The answer is a stable,
+edition-neutral reason **in the body**, populated by whichever edition knows the reason, through the
+hook that already carries it. **Do not add that field before something consumes it:** `error.code`
+today merely mirrors the HTTP status and carries no information, and a second unread field is not an
+improvement.
+
+⚠️ **Write the refusal down at the decision site, not only on the issue.** `402` is the reading a
+careful implementer arrives at on their own — it is the *semantically* nicer code, and cloud's own UI
+callout uses that framing — so an unexplained `400` reads as an oversight and invites a well-meant
+"fix". This is §12 (*an argued absence of a control is a decision; an unargued one is an oversight*)
+pointed at a value rather than at a control.
+
+**Flip condition, with a reader rather than a watcher:** the first integrator or paying user who asks
+to branch on a quota refusal programmatically. Raise it on [core#1569]; the reader is whoever owns the
+v1 API surface. Absent that, this stays `400`.
+
+[core#1569]: https://github.com/datanika-io/datanika-core/issues/1569

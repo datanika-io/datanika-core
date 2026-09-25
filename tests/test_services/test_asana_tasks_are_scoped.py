@@ -144,7 +144,28 @@ class TestTheParentReferenceActuallyBinds:
     An unbraced reference builds a source with all five resources and no dependency at all, so
     every name-based assertion above passes while the request carries a literal string. Only the
     dependency graph separates the two.
+
+    ⚠️ Scoped opt-in, not module-wide: this is the only class here that BUILDS. The others read
+    the static resource list and the schema, so a module-wide fixture would protect nothing
+    (a fixture with no hot path reads exactly like a working one).
     """
+
+    @pytest.fixture(autouse=True)
+    def _stub_dns(self, no_live_dns):
+        """Building a source resolves `app.asana.com`, so this class did live DNS (core#1597).
+
+        🔑 **This class is the SIXTH module core#1597 turned up, and it was caught by CI rather
+        than by my own sweep — because the sweep's module pattern grepped for `build_source`,
+        which is NOT a substring of `_build_saas_source`.** The entry point here is the private
+        one, so the module never entered the population and was never run with the resolver
+        refused. `app.asana.com` resolves on a dev machine and in CI, so it passed both.
+
+        That is the same instrument error core#1597 is *about*, committed while fixing it: the
+        population was derived from a pattern nobody had seen fail. The directory-wide refusal in
+        `conftest.py` is what made the gap visible at all — a census keyed on the public entry
+        point would have missed it again.
+        """
+        return no_live_dns
 
     @staticmethod
     def _source(config):

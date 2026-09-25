@@ -97,6 +97,35 @@ def _refusal(status: int, message: str) -> JSONResponse:
     defect survives.
 
     Not imported from `api_v1_routes`: that module imports `api_endpoint` from this one.
+
+    🚦 **A plan-cap refusal is `400`, not `402`. Ruled by Product 2026-09-25 on core#1569,
+    and this paragraph exists so nobody "improves" it.**
+
+    `402 Payment Required` looks like the obviously better code for a quota refusal, and
+    cloud's own UI callout uses that framing. It is wrong *here*, for two structural reasons
+    that do not expire:
+
+    1. **The call site cannot know the refusal is about a plan.** `datanika/hooks.py` is the
+       open-core boundary — core emits, cloud subscribes, and core does not import
+       `datanika_cloud`. An OSS image has no such module; `celery_app.py:92` is the measured
+       shape of getting that wrong (`ModuleNotFoundError`, exit 1). Answering 402 would mean
+       telling cloud's `QuotaExceededError` from any other `UserFacingError`, i.e. importing
+       the cloud taxonomy into the core request path.
+    2. **An edition-neutral marker would not rescue it.** Give core a
+       `LimitExceededError(UserFacingError)` so it can discriminate without knowing about
+       cloud, and it still cannot tell a *plan* cap from a self-hoster's own configured
+       limit — so `402 Payment Required` would tell an AGPL operator with no billing to go
+       and pay someone. A status that is correct in exactly one edition is not a status.
+
+    What a caller legitimately wants is to branch on *"out of quota"* versus *"bad request"*,
+    and the status line answers that badly either way: a client must still sort quota
+    refusals from malformed bodies among the other 400s. If that need becomes real it is
+    answered in the **body**, with a stable edition-neutral reason string that cloud
+    populates through the hook already carrying `metric`, `limit` and `usage` — not by moving
+    the status. **Flip condition, with a reader rather than a watcher:** the first integrator
+    or paying user who asks to branch on it, raised on core#1569 and read by whoever owns the
+    v1 API surface. Until then an unconsumed field is a second copy of `error.code`, which
+    mirrors the status and therefore carries no information.
     """
     return JSONResponse({"error": {"code": status, "message": message}}, status_code=status)
 
@@ -422,6 +451,10 @@ async def _run_async_handler(
             # answered. Driven through both endpoints in
             # `tests/test_services/test_quota_refusal_is_the_same_on_both_doors.py`, because
             # reading the `except` order is what missed it the first time.
+            #
+            # 🚦 The `400` below is a ruling, not a default — 402 was considered and refused
+            # on core#1569. The reasoning is in `_refusal`'s docstring; read it before
+            # changing this number.
             session.rollback()
             logger.info("API refusal: %s", type(exc).__name__)
             return _refusal(400, str(exc))
@@ -532,6 +565,10 @@ def _run_sync_handler(
             # answered. Driven through both endpoints in
             # `tests/test_services/test_quota_refusal_is_the_same_on_both_doors.py`, because
             # reading the `except` order is what missed it the first time.
+            #
+            # 🚦 The `400` below is a ruling, not a default — 402 was considered and refused
+            # on core#1569. The reasoning is in `_refusal`'s docstring; read it before
+            # changing this number.
             session.rollback()
             logger.info("API refusal: %s", type(exc).__name__)
             return _refusal(400, str(exc))

@@ -72,6 +72,77 @@ done
 
 say() { printf '%s %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 
+# ── G4's READING, as pure functions (core#1580) ────────────────────────────────────────────
+#
+# 🔑 The defect these close, and why moving this boundary IS the fix:
+#
+#   G4 used to read `.workflow_runs[0].updated_at` from a listing the API sorts by
+#   `created_at` descending. Those orders are different, so `[0]` answers "the most recently
+#   STARTED completed run" while the gate asks "when did a dev run last FINISH". `[0]`'s
+#   `updated_at` is never later than the true maximum, so the computed age was never smaller
+#   than the real one: **the error was always in the permissive direction and this gate failed
+#   open.** Measured 2026-09-25: 12 of 12 samples disagreed with the honest maximum, and on the
+#   live invocation the honest age was 7 minutes against a 10-minute cooldown — G4 should have
+#   refused and did not. It went unnoticed only because G1 refused for an unrelated reason,
+#   which is the shape where a broken gate stays invisible: another gate covers for it.
+#
+#   ⚠️ Changing `[0]` to a maximum is the SYMPTOM fix. `verdict()` takes `cooled` as an
+#   ARGUMENT, so the whole computation sat outside the only self-checked part of this script —
+#   fixing the sort without moving that boundary leaves the class open for the next reading.
+#   So the reading now lives in functions that take a STREAM, and `--self-check` drives them
+#   with populations the repository does not currently contain.
+#
+#   ⚠️ It is also no longer possible to reintroduce `[0]` in the query: the API call projects
+#   ONE ROW PER RUN and selects nothing, so the choice of element is made here, under test.
+#
+# `newest_finish` — stdin: "<status> <updated_at>" rows, in whatever order the API returned
+# them. Echoes the LATEST updated_at among the *completed* rows, or nothing.
+# ISO-8601 UTC at fixed width, so a lexicographic maximum IS the chronological one.
+newest_finish() {
+  local st ts _rest best=""
+  while read -r st ts _rest; do
+    case "$st" in (completed) ;; (*) continue ;; esac
+    [ -n "$ts" ] || continue
+    if [ -z "$best" ] || [ "$ts" \> "$best" ]; then best="$ts"; fi
+  done
+  [ -n "$best" ] && printf '%s\n' "$best"
+  return 0
+}
+
+# `first_finish` — the OLD, WRONG reading, kept on purpose. `--self-check` uses it as the
+# anti-vacuity control: a population where the two readings AGREE proves nothing, so the fix
+# is demonstrated only by a population where they must DIFFER. If `newest_finish` is ever
+# simplified back to first-row semantics, the self-check case that requires them to differ
+# goes red. A guard never seen failing is not evidence.
+first_finish() {
+  local st ts _rest
+  while read -r st ts _rest; do
+    case "$st" in (completed) ;; (*) continue ;; esac
+    [ -n "$ts" ] || continue
+    printf '%s\n' "$ts"
+    return 0
+  done
+  return 0
+}
+
+# `cooldown_state` — args: <newest-finish ISO or empty> <now epoch> <cooldown minutes>
+# echoes: "<cooled> <age_min>"  |  "ERR:<reason>"
+# An unreadable or absent reading is an ERROR, never a zero: the whole point of this gate is
+# that "cannot tell" and "cooled" must not produce the same answer. A negative age (clock skew,
+# or a timestamp in the future) yields cooled=0 and therefore a refusal, which is the safe
+# direction and needs no special case.
+cooldown_state() {
+  local iso="$1" now="$2" cd="$3" epoch age cooled
+  [ -n "$iso" ] || { echo "ERR:no completed dev run readable, so 'recently' cannot be evaluated"; return 0; }
+  case "$now" in (*[!0-9]*|"") echo "ERR:unreadable clock: '$now'"; return 0 ;; esac
+  case "$cd"  in (*[!0-9]*|"") echo "ERR:unreadable cooldown: '$cd'"; return 0 ;; esac
+  epoch="$(date -u -d "$iso" +%s 2>/dev/null || echo "")"
+  case "$epoch" in (*[!0-9]*|"") echo "ERR:could not parse '$iso' as a time"; return 0 ;; esac
+  age=$(( (now - epoch) / 60 ))
+  cooled=0; [ "$age" -ge "$cd" ] && cooled=1
+  echo "$cooled $age"
+}
+
 # ── the decision, as a pure function ──────────────────────────────────────────────────────
 # Kept separate from the measuring so that `--self-check` can drive it with populations the
 # repository does not currently contain. Coordinator rule 10's inverse: a guard that refuses
@@ -118,8 +189,74 @@ if [ "$SELF_CHECK" = "1" ]; then
   check "REFUSE:G2"  0 "" 0 1
   check "REFUSE:G3"  0 0 "-1" 1
   check "REFUSE:G4"  0 0 0 2
+  # ── part 2: the READING behind `cooled` (core#1580) ─────────────────────────────────────
+  # Part 1 drives the decision. It cannot see G4's defect, because `cooled` arrives as an
+  # argument already computed. These cases drive the computation itself.
+  echoq() { printf '%s\n' "$1"; }   # a synthetic listing, one "<status> <updated_at>" row per line
+
+  # The population measured on 2026-09-25: sorted by `created_at` descending, `updated_at`
+  # NON-monotonic down the list. The long `CI` run started earliest of the four and finished
+  # last, which is the normal shape on this repo (CI ~17m, the sibling workflows under 5m),
+  # not an edge case.
+  P_REAL='completed 2026-09-25T08:19:43Z
+completed 2026-09-25T08:13:47Z
+completed 2026-09-25T08:08:44Z
+completed 2026-09-25T08:25:32Z'
+  # A population where the first row IS the newest finish — the two readings agree here, which
+  # is exactly why this case alone would prove nothing.
+  P_AGREE='completed 2026-09-25T08:30:00Z
+completed 2026-09-25T08:20:00Z
+completed 2026-09-25T08:10:00Z'
+  # A still-running run whose `updated_at` is newer than every completed one. It must be
+  # ignored: "a run touched recently" is not "a run finished recently".
+  P_RUNNING='in_progress 2026-09-25T09:00:00Z
+queued 2026-09-25T08:59:00Z
+completed 2026-09-25T08:25:32Z'
+  # A population that exists but contains no completed run at all. This must REFUSE, not read
+  # as cooled — an instrument with nothing to measure has not measured quiet.
+  P_NONE='in_progress 2026-09-25T09:00:00Z'
+
+  checkr() { # label, expected, actual
+    if [ "$3" = "$2" ]; then echo "  ok    $1 -> $3"
+    else echo "  FAIL  $1  want='$2' got='$3'"; fails=$((fails+1)); fi
+  }
+
+  echo "self-check: the cooldown READING must pick the latest finish, not the first row"
+  checkr "newest_finish(real listing)"    "2026-09-25T08:25:32Z" "$(echoq "$P_REAL"    | newest_finish)"
+  checkr "newest_finish(first-is-newest)" "2026-09-25T08:30:00Z" "$(echoq "$P_AGREE"   | newest_finish)"
+  checkr "newest_finish(ignores running)" "2026-09-25T08:25:32Z" "$(echoq "$P_RUNNING" | newest_finish)"
+  checkr "newest_finish(no completed run)" ""                    "$(echoq "$P_NONE"    | newest_finish)"
+  checkr "newest_finish(empty listing)"   ""                     "$(printf '' | newest_finish)"
+
+  # 🚨 THE ANTI-VACUITY CASE, and the one that reproduces the live failure. The two readings
+  # must DISAGREE on the real listing, and at the measured instant they must land on OPPOSITE
+  # SIDES of the cooldown: the old reading permits the run, the honest one refuses it. A
+  # `newest_finish` reverted to first-row semantics turns both of these red.
+  NOW_MEASURED="$(date -u -d '2026-09-25T08:32:50Z' +%s 2>/dev/null || echo "")"
+  case "$NOW_MEASURED" in (*[!0-9]*|"") echo "  FAIL  cannot parse the measured instant — date -u -d is unavailable"; fails=$((fails+1)) ;; esac
+  OLD_PICK="$(echoq "$P_REAL" | first_finish)"
+  NEW_PICK="$(echoq "$P_REAL" | newest_finish)"
+  if [ "$OLD_PICK" = "$NEW_PICK" ]; then
+    echo "  FAIL  the two readings agree on the listing built to separate them ('$NEW_PICK') — this case is measuring nothing"
+    fails=$((fails+1))
+  else
+    echo "  ok    the readings differ as they must: old='$OLD_PICK' honest='$NEW_PICK'"
+  fi
+  if [ -n "$NOW_MEASURED" ]; then
+    checkr "old reading at the measured instant (PERMITS - the bug)" "1 13" "$(cooldown_state "$OLD_PICK" "$NOW_MEASURED" 10)"
+    checkr "honest reading at the same instant (REFUSES - the fix)"  "0 7"  "$(cooldown_state "$NEW_PICK" "$NOW_MEASURED" 10)"
+  fi
+
+  echo "self-check: an unreadable reading must ERROR rather than count as cooled"
+  checkr "cooldown_state(absent)"      "ERR:no completed dev run readable, so 'recently' cannot be evaluated" "$(cooldown_state "" 1790000000 10)"
+  checkr "cooldown_state(unparseable)" "ERR:could not parse 'not-a-time' as a time"                           "$(cooldown_state "not-a-time" 1790000000 10)"
+  checkr "cooldown_state(bad clock)"   "ERR:unreadable clock: 'x'"                                            "$(cooldown_state "2026-09-25T08:25:32Z" x 10)"
+
   if [ "$fails" -gt 0 ]; then echo "self-check: $fails case(s) wrong"; exit 25; fi
   echo "self-check: all 10 cases correct — it passes a clear board and refuses each gate on its own"
+  echo "self-check: and the G4 reading is covered too — it picks the latest finish, ignores"
+  echo "            running runs, refuses an unreadable one, and DISAGREES with the old"
+  echo "            first-row reading on the listing measured in core#1580."
   exit 0
 fi
 
@@ -165,18 +302,37 @@ printf '%s' "$PRS_RAW" | grep -o '"number":[0-9]*' | sed 's/^/      open PR /' |
 # This one is about MEASUREMENT QUALITY, not collision: a staging stack recreated four minutes
 # ago has cold caches and an empty connection pool, and a ladder against it describes the cold
 # start rather than the box. Stated as its own gate so it is not mistaken for a safety check.
-LAST="$("$GH" api "repos/$OWNER/$REPO/actions/runs?branch=dev&status=completed&per_page=1" \
-        --jq '.workflow_runs[0].updated_at // empty' 2>/dev/null || echo "")"
-if [ -z "$LAST" ]; then
-  say "REFUSING: G4 control failed — no completed dev run readable, so 'recently' cannot be evaluated."
-  exit 24
-fi
-LAST_EPOCH="$(date -u -d "$LAST" +%s 2>/dev/null || echo "")"
+#
+# core#1580: this call projects ONE ROW PER RUN and selects nothing — `per_page=100`, not 1,
+# and no `[0]`. The choice of which run to believe is made by `newest_finish` above, which
+# `--self-check` drives. A `per_page=1` here would silently reinstate the defect by starving
+# the maximum of anything to maximise over, so the row count is asserted below as G4's control.
+# The 100-run window only has to be wider than the longest possible run; GitHub's own job
+# ceiling guarantees that, and page 1 at 100 currently spans about three days.
+RUNROWS="$("$GH" api "repos/$OWNER/$REPO/actions/runs?branch=dev&status=completed&per_page=100" \
+           --jq '.workflow_runs[]|"\(.status) \(.updated_at)"' 2>/dev/null || echo "")"
+ROWS="$(printf '%s\n' "$RUNROWS" | grep -c '^completed ' || true)"
+LAST="$(printf '%s\n' "$RUNROWS" | newest_finish)"
+say "G4  completed dev runs readable = $ROWS   (control: a maximum over one row is not a maximum)"
+case "$ROWS" in (*[!0-9]*|""|0) say "REFUSING: G4 control failed — no completed dev run readable, so 'recently' cannot be evaluated."; exit 24 ;; esac
+[ "$ROWS" -ge 2 ] || { say "REFUSING: G4 control failed — only $ROWS completed run(s) in the listing. The newest-finish reading needs a population to choose from; one row cannot distinguish the fixed reading from the defect it replaced."; exit 24; }
+
 NOW_EPOCH="$(date -u +%s)"
-case "$LAST_EPOCH" in (*[!0-9]*|"") say "REFUSING: G4 — could not parse '$LAST' as a time."; exit 24 ;; esac
-AGE_MIN=$(( (NOW_EPOCH - LAST_EPOCH) / 60 ))
-COOLED=0; [ "$AGE_MIN" -ge "$COOLDOWN_MIN" ] && COOLED=1
-say "G4  newest completed dev run finished ${AGE_MIN}m ago (need >= ${COOLDOWN_MIN}m) -> cooled=$COOLED"
+CD_STATE="$(cooldown_state "$LAST" "$NOW_EPOCH" "$COOLDOWN_MIN")"
+case "$CD_STATE" in
+  ERR:*) say "REFUSING: G4 control failed — ${CD_STATE#ERR:}."; exit 24 ;;
+esac
+COOLED="${CD_STATE% *}"
+AGE_MIN="${CD_STATE#* }"
+say "G4  newest completed dev run finished ${AGE_MIN}m ago at $LAST (need >= ${COOLDOWN_MIN}m) -> cooled=$COOLED"
+# Print what the OLD reading would have said whenever the two differ. The defect was invisible
+# for as long as it was because nothing ever showed the two side by side, and on this repo they
+# differ routinely — the run that finishes last is normally the one that started first.
+OLD_READ="$(printf '%s\n' "$RUNROWS" | first_finish)"
+if [ -n "$OLD_READ" ] && [ "$OLD_READ" != "$LAST" ]; then
+  say "    (the pre-core#1580 reading would have picked $OLD_READ — EARLIER than the truth, so a"
+  say "     larger age and a more permissive answer. That is the direction the defect always erred.)"
+fi
 
 # ── decide ────────────────────────────────────────────────────────────────────────────────
 V="$(verdict "$RUNS" "${QUEUE:-ERR}" "$PRS" "$COOLED")"

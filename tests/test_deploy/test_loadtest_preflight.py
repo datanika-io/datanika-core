@@ -123,6 +123,145 @@ def test_breaking_a_gate_turns_the_self_check_red(tmp_path, old, new, label):
     )
 
 
+# ── G4's READING, not just its comparison (core#1580) ─────────────────────────────────────
+#
+# 🔑 Why these exist as a separate block. The mutation test above flips `[ "$cooled" -eq 0 ]`
+# and proves the *decision* discriminates. It could never have found core#1580, because
+# ``verdict()`` takes ``cooled`` as an **argument** — the reading that produces it sat entirely
+# outside the only self-checked part of the script.
+#
+# The defect: G4 read ``.workflow_runs[0].updated_at`` from a listing the API sorts by
+# ``created_at`` descending. ``[0]`` is the most recently *started* completed run; the gate asks
+# when one last *finished*. ``[0]``'s ``updated_at`` is never later than the true maximum, so the
+# age was never smaller than the real one — **it failed open.** Measured 2026-09-25: 12 of 12
+# samples disagreed with the honest maximum, and on the live invocation the honest age was 7
+# minutes against a 10-minute cooldown. It went unnoticed only because G1 refused for an
+# unrelated reason, which is the shape where one gate covers for another.
+#
+# ⚠️ So these assertions drive the **reading**, and the load-bearing one is the *divergence*
+# case: the fixed reading and the old one must answer the measured listing DIFFERENTLY. A
+# population where they agree proves nothing, which is why the script keeps ``first_finish``
+# rather than deleting it.
+
+
+@needs_bash
+def test_the_self_check_covers_the_reading_and_not_only_the_decision():
+    """The boundary move is the fix. Assert it is actually inside the self-check."""
+    out = _self_check(PREFLIGHT).stdout
+    assert "the cooldown READING must pick the latest finish, not the first row" in out, (
+        "the self-check does not drive the reading at all, so core#1580's class is still "
+        "outside the self-checked part — which is the whole defect, not the sort order"
+    )
+    assert "the readings differ as they must" in out, (
+        "nothing compares the fixed reading against the old one, so a revert to first-row "
+        "semantics would be caught by no assertion that states the relationship"
+    )
+    # the two sides of the measured instant, both printed so a reader can see the direction
+    assert "PERMITS - the bug" in out and "REFUSES - the fix" in out, out
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    "old,new,label",
+    [
+        (
+            r'if [ -z "$best" ] || [ "$ts" \> "$best" ]; then best="$ts"; fi',
+            r'if [ -z "$best" ]; then best="$ts"; fi',
+            "newest_finish reverted to first-row semantics — core#1580 itself",
+        ),
+        (
+            r'if [ -z "$best" ] || [ "$ts" \> "$best" ]; then best="$ts"; fi',
+            r'if [ -z "$best" ] || [ "$ts" \< "$best" ]; then best="$ts"; fi',
+            "newest_finish picks the earliest finish instead of the latest",
+        ),
+        (
+            '    case "$st" in (completed) ;; (*) continue ;; esac\n'
+            '    [ -n "$ts" ] || continue\n'
+            '    if [ -z "$best" ]',
+            '    [ -n "$ts" ] || continue\n    if [ -z "$best" ]',
+            "newest_finish stops filtering on status, so a running run counts as a finish",
+        ),
+        (
+            'cooled=0; [ "$age" -ge "$cd" ] && cooled=1',
+            'cooled=1; [ "$age" -ge "$cd" ] && cooled=0',
+            "the cooldown comparison inverted",
+        ),
+        (
+            '[ -n "$iso" ] || { echo "ERR:no completed dev run readable',
+            '[ -n "$iso" ] || { echo "1 9999"; :; } || { echo "ERR:no completed dev run readable',
+            "an absent reading counted as cooled instead of refusing",
+        ),
+    ],
+)
+def test_breaking_the_cooldown_reading_turns_the_self_check_red(tmp_path, old, new, label):
+    """Anti-vacuity for the reading. Every one of these was seen red before shipping.
+
+    ⚠️ The anchor is asserted present first. *"The test did not catch it"* and *"the mutation
+    never reached the file"* produce identical output, and only one of them is a finding — this
+    bit while writing these very cases: a multi-line anchor missed, and the first reading of
+    that was a guess about line endings that measurement refuted (the file is LF).
+    """
+    src = PREFLIGHT.read_text(encoding="utf-8")
+    assert old in src, f"mutation anchor {old!r} not found — this case is measuring nothing"
+
+    mutant = tmp_path / "preflight.sh"
+    mutant.write_text(src.replace(old, new, 1), encoding="utf-8")
+    assert mutant.read_text(encoding="utf-8") != src, "the mutation changed nothing"
+
+    r = _self_check(mutant)
+    assert r.returncode == 25, (
+        f"{label}: the self-check still passed. This is the class core#1580 was, and it stayed "
+        f"invisible for exactly this reason.\n{r.stdout}"
+    )
+
+
+@needs_bash
+def test_a_population_where_the_readings_agree_is_reported_as_measuring_nothing(tmp_path):
+    """Drive the divergence assertion with the population it exists to catch.
+
+    Rule 10's inverse: a control that cannot fail is not a control. If ``first_finish`` is made
+    identical to ``newest_finish`` the two readings agree, and the self-check must say so rather
+    than reporting a comparison that compared a value with itself.
+    """
+    lines = PREFLIGHT.read_text(encoding="utf-8").splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.startswith("first_finish() {")), None)
+    assert start is not None, (
+        "first_finish is gone — the divergence control has no old reading to compare against"
+    )
+    end = next(i for i in range(start, len(lines)) if lines[i].rstrip("\n") == "}")
+
+    stub = ["first_finish() {\n", "  newest_finish\n", "}\n"]
+    mutant = tmp_path / "preflight.sh"
+    mutant.write_text("".join(lines[:start] + stub + lines[end + 1 :]), encoding="utf-8")
+    r = _self_check(mutant)
+    assert r.returncode == 25, (
+        "the two readings were made identical and the self-check still passed, so the "
+        "divergence case is satisfied by comparing a value with itself\n" + r.stdout
+    )
+    assert "measuring nothing" in r.stdout, r.stdout
+
+
+def test_the_live_g4_query_does_not_select_a_single_element():
+    """Assert the PRESENCE of the right shape, per WORKFLOW_RULES §4.
+
+    A ban on ``[0]`` would be satisfied by a comment explaining why ``[0]`` is wrong, and by
+    deleting the gate. What must hold is positive: the call asks for a population, and the
+    choice of element is made by the function the self-check drives.
+    """
+    src = PREFLIGHT.read_text(encoding="utf-8")
+    g4 = src.split("── G4:")[1]
+    assert "per_page=100" in g4, (
+        "G4's query no longer asks for a population. `per_page=1` starves the maximum of "
+        "anything to maximise over, which reinstates core#1580 while every line below it "
+        "still reads as fixed"
+    )
+    assert "| newest_finish" in g4, (
+        "the live path no longer routes its reading through newest_finish, so the reading the "
+        "self-check drives and the reading the operator gets are different code"
+    )
+    assert "G4 control failed" in g4, "G4 lost its control-failure path"
+
+
 @needs_bash
 def test_deleting_a_gate_outright_turns_the_self_check_red(tmp_path):
     """The simplification that a comparison-flip test would miss: removing the line."""

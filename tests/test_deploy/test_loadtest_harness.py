@@ -1,10 +1,14 @@
 """The load-test harness must exist in the repository, with its safety properties (core#778).
 
-Run 9 (2026-09-17) established the published floor of **>= 60 authed req/s** on the current
-hardware. Its harness lived in ``.scratch/``, which is swept without warning, so by 2026-09-20
-the floor was being cited on the issue and **nothing could re-run it**. That is coordinator
-rule 9 — *if a measurement will become a floor, the instrument ships in the same PR, not the
-number* — and this file is what stops it recurring.
+**The published figure is a floor of ~50 req/s under neighbour load, measured 2026-09-24, with
+no knee observed up to 60 instantaneous.** `>= 60 req/s` is retired as a citation (founder,
+2026-09-25): not wrong, but **unmeasured**, because the ladder that produced it never held a rate
+(core#1560). Run 9 (2026-09-17) produced that retired figure, and its harness lived in
+``.scratch/``, which is swept without warning — so by 2026-09-20 the floor was being cited on the
+issue and **nothing could re-run it**. That is coordinator rule 9 — *if a measurement will become
+a floor, the instrument ships in the same PR, not the number* — and this file is what stops it
+recurring. ⚠️ Rule 34 is the half this harness itself taught: shipping the instrument is necessary
+and not sufficient, because it must measure the thing the number claims.
 
 🔑 **What is asserted here is STRUCTURE, not results.** These tests cannot run a load test and
 must never pretend to. They assert that the instrument is present and still carries the
@@ -35,8 +39,8 @@ README = LOADTEST / "README.md"
 def test_the_instrument_is_in_the_repository(path):
     """The whole point. `.scratch/` is swept; a floor's instrument cannot live there."""
     assert path.is_file(), (
-        f"{path.relative_to(ROOT)} is missing. core#778's published floor (>= 60 req/s) would "
-        f"again be a number whose instrument cannot be re-run."
+        f"{path.relative_to(ROOT)} is missing. core#778's published floor (~50 req/s under "
+        f"neighbour load) would again be a number whose instrument cannot be re-run."
     )
     assert path.stat().st_size > 400, f"{path.name} is too small to be the real thing"
 

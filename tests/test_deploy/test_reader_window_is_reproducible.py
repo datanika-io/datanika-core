@@ -84,10 +84,20 @@ def _pair(rid: int, created: str, *, ci_first: bool) -> list[dict]:
     ``ci_first`` is the tie-break, and it is the fact the listing does not pin: on the measured
     response the pair order flips from one group to the next inside a single page.
     """
-    ci = {"id": rid, "path": CI, "status": "completed", "created_at": created,
-          "head_sha": f"{rid:08x}".ljust(40, "0")}
-    img = {"id": rid + 1, "path": IMG, "status": "completed", "created_at": created,
-           "head_sha": f"{rid:08x}".ljust(40, "0")}
+    ci = {
+        "id": rid,
+        "path": CI,
+        "status": "completed",
+        "created_at": created,
+        "head_sha": f"{rid:08x}".ljust(40, "0"),
+    }
+    img = {
+        "id": rid + 1,
+        "path": IMG,
+        "status": "completed",
+        "created_at": created,
+        "head_sha": f"{rid:08x}".ljust(40, "0"),
+    }
     return [ci, img] if ci_first else [img, ci]
 
 
@@ -122,8 +132,12 @@ class FakeActions:
             rid = int(url.path.split("/")[-2])
             return {
                 "jobs": [
-                    {"id": rid * 10, "name": self.job_name, "status": "completed",
-                     "conclusion": "success"}
+                    {
+                        "id": rid * 10,
+                        "name": self.job_name,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
                 ]
             }
         if url.path.endswith("/actions/runs"):
@@ -181,7 +195,7 @@ class TestTheWindowMustBeReproducible:
         assert len(fps) == 2, "both looks must print a fingerprint, or they cannot be compared"
         assert fps[0] != fps[1]
 
-    def test_a_disagreement_INSIDE_a_shared_stretch_is_refused_too(
+    def test_a_disagreement_inside_a_shared_stretch_is_refused_too(
         self, monkeypatch, capsys
     ) -> None:
         """The malignant case need not be disjoint: same days, one run swapped for another.
@@ -300,7 +314,7 @@ class TestTheBoundaryTieGroupIsNotAnArgument:
         empty = Look((), ())
         assert WindowAgreement("count", empty, empty).state is None
 
-    def test_one_empty_look_and_one_populated_one_IS_instability(self) -> None:
+    def test_one_empty_look_and_one_populated_one_is_instability(self) -> None:
         """The asymmetric case is a real signal and must not be folded into the one above."""
         empty = Look((), ())
         seen = Look((2, 1), ("T2", "T1"))

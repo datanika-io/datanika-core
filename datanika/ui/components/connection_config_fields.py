@@ -14,6 +14,7 @@ an ``autocomplete`` value by hand.
 
 import reflex as rx
 
+from datanika.services.file_formats import upload_accept_map
 from datanika.ui.components.file_upload import named_upload
 from datanika.ui.components.secure_input import (
     config_input,
@@ -289,11 +290,12 @@ def file_upload_fields() -> rx.Component:
             accessible_name=_t["connections.upload_file"],
             id="file_upload",
             max_size=20 * 1024 * 1024,
-            accept={
-                "text/csv": [".csv"],
-                "application/json": [".json"],
-                "application/octet-stream": [".parquet"],
-            },
+            # core#1604. This used to be a literal dict of `.csv`/`.json`/`.parquet`, one of
+            # three independent copies of our supported-extension list, and the narrowest.
+            # A browse dialog filters by `accept`, so the five extensions our own guides tell
+            # readers to select — `.tsv`, `.txt`, `.jsonl`, `.ndjson`, `.parq` — simply were
+            # not listed. No error and nothing to search for, which is worse than a refusal.
+            accept=upload_accept_map(),
             on_drop=ConnectionState.handle_file_upload(rx.upload_files(upload_id="file_upload")),
             no_drag=True,
             width="100%",

@@ -12,8 +12,15 @@ from sqlalchemy.orm import Session
 
 from datanika.errors import UserFacingError
 from datanika.models.uploaded_file import UploadedFile
+from datanika.services.file_formats import UPLOAD_ALLOWED_EXTENSIONS
 
-ALLOWED_EXTENSIONS = {"csv", "json", "parquet"}
+# core#1604. This is the gate a user actually *meets*: the file picker's `accept`
+# filter only decides what a browse dialog lists, while this one produces
+# "Unsupported file type '.jsonl'". Both were hand-written copies of a list that
+# also lives in `dlt_runner`, and all three had drifted — so our own `json` guide
+# told readers to upload a `.jsonl` file that this function refused. Derived now,
+# from the one declaration every consumer reads.
+ALLOWED_EXTENSIONS = UPLOAD_ALLOWED_EXTENSIONS
 
 
 def resolve_archive_path(archive_path: str, uploads_dir: str) -> str:

@@ -203,6 +203,72 @@ Three checks, cheapest first — and the first one usually makes the other two a
    name and any signed-in account's email appear **0** times. Autofill and a shared browser profile
    put these on screen without anybody typing them — which is exactly how #618 happened.
 
+### 🚨 4a-i. When the account is not ours, the account holder's identity is a COLUMN, not a container
+
+**Ruling, 2026-09-25 (Product, on `cloud#259` — private repo, the ruling and its full measurement are
+there): a provisioned dataset inside a non-provisioned account does NOT satisfy §4a, and no amount of
+seeding or emptying makes it satisfy §4a.** The second conjunct — *"into an account I provisioned"* —
+does not waive.
+
+The question arrived in its most sympathetic form. A real personal account had been **emptied** with the
+founder's authorisation: 0 projects, 0 tasks, verified by a fresh re-read. So anything in a screenshot
+would be a fixture we put there, and check 1's *"provenance holds by construction"* looked satisfiable
+without provisioning anything.
+
+**It is not, and the refutation is structural rather than a matter of degree.** Measured on the emptied
+workspace, through the five endpoints the Asana connector actually requests — controls first, so the
+positives mean something:
+
+```
+CONTROL  no Authorization header       -> 401
+CONTROL  obvious garbage bearer token  -> 401
+
+workspaces  200   1 row   -> the workspace's own name
+projects    200   0 rows
+users       200   1 row   -> THE ACCOUNT HOLDER'S DISPLAY NAME
+tags        200   0 rows
+```
+
+`users` is one of the resources the connector loads, so it becomes a table in the destination — the
+destination a data-proving screenshot photographs. **You cannot delete yourself out of your own
+account.** The holder is a *member*, not content: emptying reaches content and cannot reach them, and
+seeding has nothing to seed them *with*. So **check 3 fails on a completely empty account, with zero
+rows of our own and no assignee set anywhere.**
+
+> 🔑 **An API stamps the authenticated principal onto what it returns** — as a membership table, as
+> `assignee`, as `created_by` or `followers`, as the tenant's own name. **You cannot seed your way out
+> of a field the server writes.** *Authenticating as a user is what puts that user in the data.*
+
+That is why *"our dataset in their account"* is not a state that exists: the rows would be ours, the
+identity fields on and beside them would not.
+
+**Two mitigations look obvious and both are refused:**
+
+- ❌ **"Seed with `assignee` unset."** Does not reach it — the identity is present with **no rows at
+  all**.
+- ❌ **"Exclude the offending column."** This is a PII detector wearing different clothes, and §4a
+  already refuses it on its own grounds: a column allow/deny list is **a claim that you found every
+  instance**, which is the exact claim this rule exists to say you cannot make. `assignee` was the path
+  someone noticed; `users`, the tenant name, `created_by` and `followers` are four more, and the next
+  connector has a different set.
+
+✅ **What to do instead: the account, or no shot.** Provision the tenant, or photograph a step whose
+subject is **controls** rather than records — §4 governs those and this section does not.
+
+⚠️ **Do not read this as "the whole walk is blocked."** §4a governs one frame: the shot whose subject is
+records. Ruling it unavailable blocks that frame and nothing else, and treating it as a walk-level
+blocker is how a guide sits un-illustrated for rounds over a single screenshot.
+
+**Flip condition, with a reader** (so this clause does not outlive its own truth): the ruling turns on
+the connector having **no way to scope a load to a dataset we created** — for Asana that is
+[#1574](https://github.com/datanika-io/datanika-core/issues/1574), whose AC2 adds the missing field.
+When a connector gains a scoping field — a workspace, project or dataset selector — *"only the rows I
+seeded"* becomes expressible for the first time and **the §4a question must be asked again for that
+connector**, not inherited from here. ⚠️ Asking it again is not the same as answering it *yes*: a scoping field still would not exclude
+a separately-loaded membership resource such as `users`. **The criterion is whether every loaded
+resource is scopable, not whether the main one is.** Whoever ships that field re-runs the check-3
+assertion above and records the reading on the connector's issue.
+
 ### 🚨 Arm it, and arm it in the direction that matters
 
 **Plant a value that MUST trip the gate, and confirm it trips, in the same run.** A control proving

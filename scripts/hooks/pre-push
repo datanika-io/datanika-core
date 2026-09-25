@@ -160,10 +160,12 @@ elif [ "$ATRC" -ne 0 ]; then
   exit 1
 fi
 
+# The path list must stay byte-identical to ci.yml's (core#1237: a local green has to predict
+# a CI green). core#1558 added `.github/scripts` and `rxconfig.py` to both in one change.
 echo "pre-push: ruff check"
-"$PY" -m ruff check datanika tests scripts e2e/scripts
+"$PY" -m ruff check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 echo "pre-push: ruff format --check"
-"$PY" -m ruff format --check datanika tests scripts e2e/scripts
+"$PY" -m ruff format --check datanika tests scripts e2e/scripts .github/scripts rxconfig.py
 # --- is this venv stale against uv.lock? (#557) ----------------------------------------
 # A venv that predates a dependency added on dev fails in a way that points at the wrong
 # thing entirely: adding duckdb-engine (#494) produced

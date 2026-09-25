@@ -204,6 +204,17 @@ def test_the_seeder_refuses_anywhere_that_is_not_staging():
     )
 
 
+# The INVARIANT, not today's instance (WORKFLOW_RULES §5a). The README must state, in a form a
+# machine can find, WHETHER this harness has been run end to end — and an "executed" claim has to
+# carry the date of the run that backs it, or it cannot be checked against anything.
+EXECUTION_STATUS = re.compile(
+    r"^\*\*Execution status:\*\*[ \t]+"
+    r"(?:NOT yet executed\b"
+    r"|executed end to end\b[^\n]*?\b\d{4}-\d{2}-\d{2}\b)",
+    re.MULTILINE,
+)
+
+
 def test_the_readme_states_the_key_ceiling_and_the_founders_label():
     """Two facts a future session would otherwise re-derive the expensive way."""
     src = README.read_text(encoding="utf-8")
@@ -212,9 +223,40 @@ def test_the_readme_states_the_key_ceiling_and_the_founders_label():
         "the founder's label on any result is missing; without it a number from this harness "
         "gets published as a capacity figure"
     )
-    assert "NOT yet executed" in src or "not yet executed" in src.lower(), (
-        "the README must say plainly whether this harness has been run end to end; an "
-        "unexecuted instrument quoted as if proven is the defect one level up"
+    assert EXECUTION_STATUS.search(src), (
+        "the README carries no machine-findable execution-status line. It must say either "
+        "'**Execution status:** NOT yet executed ...' or '**Execution status:** executed end "
+        "to end ... <YYYY-MM-DD>'. An unexecuted instrument quoted as if proven is the defect "
+        "one level up — and an 'executed' claim with no date is unverifiable."
+    )
+
+
+def test_the_execution_status_guard_answers_its_populations_differently():
+    """🔴 WORKFLOW_RULES §5a, on this very assertion.
+
+    It used to read ``assert "NOT yet executed" in src``. That is a snapshot wearing a test's
+    clothes: it was **red on the correct change**, because the moment run 10 actually executed,
+    recording that fact broke the build — which is exactly what blocked core PR #1561.
+
+    Its *message* always stated the invariant correctly ("must say plainly WHETHER this harness
+    has been run"); only its *assertion* pinned one instance. Repointed at the invariant and
+    driven with both populations, plus the two shapes it must still refuse — because a guard
+    satisfied by every branch is not a guard.
+    """
+    never = "**Execution status:** NOT yet executed end to end.\n"
+    done = "**Execution status:** executed end to end — run 10, 2026-09-24.\n"
+    undated = "**Execution status:** executed end to end, at some point.\n"
+    prose = "This harness is excellent and has definitely been run end to end by someone.\n"
+
+    assert EXECUTION_STATUS.search(never), "the never-run README must still pass"
+    assert EXECUTION_STATUS.search(done), "the executed README must pass — this is the §5a half"
+    assert not EXECUTION_STATUS.search(undated), (
+        "an 'executed' claim carrying no date must be refused: there is no run to check it "
+        "against, which is the same unfalsifiable shape as the claim it replaced"
+    )
+    assert not EXECUTION_STATUS.search(prose), (
+        "prose asserting execution must not satisfy the guard — that is the "
+        "comment-satisfies-the-guard trap (WORKFLOW_RULES §4)"
     )
 
 
@@ -405,3 +447,240 @@ def test_the_gap1_guards_can_fail() -> None:
     assert _threshold_entry(delayed, "http_req_failed{scenario:api}") != (
         "'http_req_failed{scenario:api}': [{ threshold: 'rate<0.01', abortOnFail: true }]"
     )
+
+
+# ======================================================================================
+# core#1560 — the ladder must HOLD a rate, not merely touch it
+# core#1556 — the limiter ceiling must be a GATE, not a caption
+# ======================================================================================
+#
+# One family: **the harness stated a property it did not check.**
+#
+# #1560: `ramping-arrival-rate` interpolates, and no stage spec repeated a target, so no rate
+# was ever sustained — the `60:120s` stage delivered 49.92 = (40+60)/2 — and k6's console prints
+# the stage TARGET, so the gap was invisible in every artefact the run produced.
+#
+# #1556: run.sh computed the limiter ceiling, printed "top stage must be under it", and never
+# checked — while its own defaults violated it.
+#
+# Both fixes are driven as SHELL, against both populations, because each issue says in its own
+# words that the fix is not evidence until the check is seen answering the two shapes
+# differently. A guard that refuses everything would satisfy a test fed only the bad case.
+
+
+def _shell_function(name: str) -> str:
+    """One function out of run.sh, from its header to its ``# end <name>`` marker."""
+    text = RUNNER.read_text(encoding="utf-8")
+    start = text.index(f"{name}() {{")
+    end = text.index(f"# end {name}", start)
+    return text[start : text.index("\n", end) + 1]
+
+
+def _drive_sh(script: str):
+    import shutil
+    import subprocess
+
+    if shutil.which("sh") is None:
+        pytest.skip("POSIX sh unavailable")
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=60)
+
+
+def _targets(spec: str) -> list[int]:
+    return [int(p.split(":")[0]) for p in spec.strip().split(",") if p]
+
+
+def _held_rates(targets: list[int]) -> set[int]:
+    """Which rates are actually SUSTAINED: the flat opening, plus any repeated neighbour.
+
+    `startRate` is the first target, so segment 1 is flat by construction. Every other rate is
+    held only if some consecutive pair shares it — otherwise the executor is still interpolating
+    and the achieved rate is the mean of the ramp.
+    """
+    if not targets:
+        return set()
+    # strict=False is deliberate: the two sequences differ in length by one by construction.
+    return {targets[0]} | {b for a, b in zip(targets, targets[1:], strict=False) if a == b}
+
+
+_EXPANDER = None
+
+
+def _expander() -> str:
+    global _EXPANDER
+    if _EXPANDER is None:
+        _EXPANDER = (
+            "say() { :; }\n" + _shell_function("already_holds") + _shell_function("expand_stages")
+        )
+    return _EXPANDER
+
+
+def test_expand_stages_answers_the_two_shapes_differently():
+    """core#1560's own stated bar: a ramp-only spec and a ramp+hold spec must not get the same
+    answer, or the 'fix' is the defect wearing a fix."""
+    ramp_only = "5:120s,10:120s,20:120s"
+    held = "5:120s,10:30s,10:120s,20:30s,20:120s"
+
+    got = _drive_sh(_expander() + f'\nexpand_stages "{ramp_only}" 30s\n')
+    assert got.returncode == 0, got.stderr
+    assert got.stdout.strip() == held, got.stdout
+    assert got.stdout.strip() != ramp_only, "the expansion changed nothing"
+
+    # Idempotent: a spec that already holds is passed through, never double-ramped.
+    again = _drive_sh(_expander() + f'\nexpand_stages "{held}" 30s\n')
+    assert again.stdout.strip() == held, again.stdout
+
+
+def test_the_default_ladder_holds_every_rate_it_names():
+    """The property, not the string — and with the pre-fix spec as the anti-vacuity control."""
+    src = RUNNER.read_text(encoding="utf-8")
+    spec = re.search(r'^STAGES="([^"]+)"', src, re.M).group(1)
+    ramp = re.search(r'^RAMP="([^"]+)"', src, re.M).group(1)
+
+    got = _drive_sh(_expander() + f'\nexpand_stages "{spec}" {ramp}\n')
+    effective = _targets(got.stdout)
+    missing = sorted(set(effective) - _held_rates(effective))
+    assert not missing, (
+        f"these rates are ramped through but never held: {missing}. ramping-arrival-rate "
+        f"interpolates, so their achieved rate is the mean of the ramp, not the label."
+    )
+
+    # 🔑 Anti-vacuity: the UNEXPANDED spec must FAIL the same property, or this test would pass
+    # against the pre-fix harness and prove nothing.
+    raw = _targets(spec)
+    assert set(raw) != _held_rates(raw), (
+        "control is broken: the pre-fix stage spec must NOT satisfy the hold property"
+    )
+
+
+def _k6_default_spec() -> str:
+    src = K6.read_text(encoding="utf-8")
+    start = src.index("const STAGE_SPEC")
+    return "".join(re.findall(r"'([^']*)'", src[start : src.index(";", start)]))
+
+
+def test_the_generators_own_default_spec_also_holds():
+    """k6 may be read on its own, so its default must be honest without run.sh in the picture."""
+    targets = _targets(_k6_default_spec())
+    assert len(targets) > 2, f"the default spec did not parse: {_k6_default_spec()!r}"
+    missing = sorted(set(targets) - _held_rates(targets))
+    assert not missing, f"k6_baseline.js's own default never holds: {missing}"
+
+
+def test_the_limiter_ceiling_is_a_gate_not_a_caption():
+    """core#1556, driven with the issue's own passing pair (161/60) and failing pair (161/100)."""
+    gate = 'say() { printf "%s\\n" "$*"; }\n' + _shell_function("ceiling_gate")
+
+    ok = _drive_sh(gate + '\nceiling_gate 161 "5:120s,60:120s"\n')
+    bad = _drive_sh(gate + '\nceiling_gate 161 "5:120s,100:120s"\n')
+
+    assert ok.returncode == 0, f"the gate refuses the README's documented invocation:\n{ok.stdout}"
+    assert bad.returncode == 17, f"the gate PERMITTED a limiter-bound ladder:\n{bad.stdout}"
+    assert ok.returncode != bad.returncode, "the gate does not discriminate between the two"
+
+    # A refusal that does not name both numbers cannot be acted on.
+    assert "100" in bad.stdout and "80" in bad.stdout, bad.stdout
+
+
+def test_the_refusals_own_remedy_satisfies_the_gate():
+    """The advice a guard prints is part of the guard.
+
+    This one is arithmetic over a truncating division, and the obvious form is off by one:
+    201 keys yields a ceiling of exactly 100 for a top stage of 100, which is AT the ceiling,
+    not under it. A remedy that does not work is worse than none — it sends the operator round
+    the loop a second time believing they followed it.
+    """
+    gate = 'say() { printf "%s\\n" "$*"; }\n' + _shell_function("ceiling_gate")
+    bad = _drive_sh(gate + '\nceiling_gate 161 "5:120s,100:120s"\n')
+    assert bad.returncode == 17
+
+    m = re.search(r"--keys (\d+)", bad.stdout)
+    assert m, f"the refusal prints no actionable remedy:\n{bad.stdout}"
+    need = int(m.group(1))
+
+    fixed = _drive_sh(gate + f'\nceiling_gate {need} "5:120s,100:120s"\n')
+    assert fixed.returncode == 0, (
+        f"the gate refuses the very key count its own refusal recommends ({need}):\n{fixed.stdout}"
+    )
+    # ...and one fewer must still be refused, or the recommendation is not the real boundary.
+    tight = _drive_sh(gate + f'\nceiling_gate {need - 1} "5:120s,100:120s"\n')
+    assert tight.returncode == 17, (
+        f"{need - 1} keys was permitted, so {need} is not the boundary the remedy claims"
+    )
+
+
+def test_the_scripts_own_defaults_satisfy_its_own_gate():
+    """core#1556's second half, verbatim: *its own defaults violate it*."""
+    src = RUNNER.read_text(encoding="utf-8")
+    keys = int(re.search(r"^KEYS=(\d+)", src, re.M).group(1))
+    spec = re.search(r'^STAGES="([^"]+)"', src, re.M).group(1)
+    ramp = re.search(r'^RAMP="([^"]+)"', src, re.M).group(1)
+
+    harness = (
+        'say() { printf "%s\\n" "$*"; }\n'
+        + _shell_function("already_holds")
+        + _shell_function("expand_stages")
+        + _shell_function("ceiling_gate")
+    )
+    got = _drive_sh(harness + f'\nceiling_gate {keys} "$(expand_stages "{spec}" {ramp})"\n')
+    assert got.returncode == 0, (
+        f"a bare `bash scripts/loadtest/run.sh` is refused by its own gate "
+        f"(keys={keys}):\n{got.stdout}"
+    )
+
+    # Anti-vacuity: the pre-fix default key count must be refused against the same stages.
+    old = _drive_sh(harness + f'\nceiling_gate 161 "$(expand_stages "{spec}" {ramp})"\n')
+    assert old.returncode == 17, (
+        "control is broken: 161 keys against this stage spec is the exact pair core#1556 "
+        "reported, and it must still be refused"
+    )
+
+
+def test_the_neighbour_is_sampled_for_the_whole_ladder():
+    """A literal was right only by coincidence: '16m' equalled the old 8 x 120s exactly, so any
+    change to STAGES silently stopped watching production before the ladder ended — and the
+    founder's condition is that production is sampled THROUGHOUT."""
+    src = K6.read_text(encoding="utf-8")
+    m = re.search(r"duration: __ENV\.NEIGHBOUR_DURATION \|\| ([^,]+),", src)
+    assert m, "the neighbour duration is not resolvable"
+    assert "LADDER_SECONDS" in m.group(1), (
+        f"the neighbour duration is not derived from the ladder's own length: {m.group(1)!r}"
+    )
+
+
+def test_each_held_rungs_achieved_rate_reaches_the_runs_own_artefact():
+    """core#1560's other half. The console prints the TARGET, so the gap was invisible in every
+    artefact the run produced. Grading `http_reqs{rung:N}` is what makes k6 print each rung's
+    achieved count in the summary — a checked property rather than a stated one."""
+    src = K6.read_text(encoding="utf-8")
+    assert "http_reqs{rung:${target}}" in src, "no per-rung sub-metric threshold is generated"
+    assert "Object.assign(rungThresholds" in src, "the rung thresholds never reach options"
+    assert "rung: rung" in src, "api() does not tag its samples with the rung they belong to"
+    assert "phase === 'hold'" in src, "ramp samples are not distinguished from hold samples"
+
+
+def test_the_core1560_and_core1556_guards_can_fail():
+    """Each assertion above, shown red on the mutation a well-meaning simplification would make."""
+    k6 = K6.read_text(encoding="utf-8")
+    runner = RUNNER.read_text(encoding="utf-8")
+
+    untagged = k6.replace("rung: rung", "")
+    assert untagged != k6 and "rung: rung" not in untagged
+
+    unmerged = k6.replace("Object.assign(rungThresholds, {", "{")
+    assert unmerged != k6 and "Object.assign(rungThresholds" not in unmerged
+
+    relit = re.sub(
+        r"duration: __ENV\.NEIGHBOUR_DURATION \|\| [^,]+,",
+        "duration: __ENV.NEIGHBOUR_DURATION || '16m',",
+        k6,
+    )
+    assert relit != k6
+    back = re.search(r"duration: __ENV\.NEIGHBOUR_DURATION \|\| ([^,]+),", relit)
+    assert "LADDER_SECONDS" not in back.group(1)
+
+    # The gate, reverted to the caption it used to be.
+    assert "ceiling_gate" in runner
+    assert "ceiling_gate" not in runner.replace("ceiling_gate", "")
+
+    # And the fixture is reading the real files, or every assertion above is vacuous.
+    assert len(k6) > 2000 and len(runner) > 2000

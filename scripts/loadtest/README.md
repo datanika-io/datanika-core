@@ -1,8 +1,13 @@
 # Load-test harness (`core#778`)
 
-**The published floor is `>= 60 authed req/s` on the current hardware.** This directory is the
-instrument that produced it. It exists because the instrument that produced it the *first* time
-did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning, and by
+🔴 **There is currently NO validated sustained-throughput floor. Do not cite `>= 60 req/s`.**
+That figure was carried for weeks; run 10 (2026-09-24) showed the ladder that produced it never
+*held* any rate, so the number was never measured in the form it was quoted ([core#1560], now
+fixed here — but fixed means *the next run can measure it*, not that it has been measured).
+What is currently defensible is a **~50 req/s sustain** — see *Status of this harness* below.
+
+This directory is the instrument. It exists because the instrument that produced the original
+number did not: Run 9 (2026-09-17) lived in `.scratch/`, which is swept without warning, and by
 2026-09-20 the number was being cited while nothing could re-run it.
 
 > 🔑 **A floor whose instrument cannot be re-run is not a measurement, it is a memory.**
@@ -22,8 +27,31 @@ bash scripts/loadtest/preflight.sh --duration-min 25     # exit 0 = go; anything
 **2. Only then, on the production box.** Targets staging. Never run this against production.
 
 ```bash
-bash scripts/loadtest/run.sh --keys 161 --stages "5:120s,10:120s,20:120s,30:120s,40:120s,60:120s"
+bash scripts/loadtest/run.sh          # defaults: --keys 300, a ladder to 100 req/s, --ramp 30s
 ```
+
+🔑 **A rate is measured only where it is HELD.** `ramping-arrival-rate` *interpolates*, so a
+segment whose target differs from the current rate is travel, not a measurement — its achieved
+rate is the mean of the ramp. Run 10's `60:120s` therefore delivered **49.92 = (40+60)/2** while
+k6's console printed `60.00 iters/s` beside it ([core#1560]).
+
+`run.sh` now expands each requested rung into **ramp, then hold**, and prints the effective spec:
+
+```
+--stages "5:120s,10:120s"   ->   5:120s,10:30s,10:120s
+                                 ^^^^^^ flat: startRate == the first target
+                                        ^^^^^^^ ramp    ^^^^^^^^ HOLD — the measured window
+```
+
+The expansion is idempotent, so a spec you wrote out with holds yourself is passed through
+untouched. **Attribute every figure to a hold**: each held rung now carries its own
+`http_reqs{rung:N}` threshold, so the summary states the *achieved* count against the count the
+requested rate implies — the gap can no longer hide behind the label.
+
+🚨 **`--keys` is a gate, not a suggestion.** The top stage must be strictly below the limiter
+ceiling (`keys x rpm / 60`) or the upper rungs measure the rate limiter and report it as
+throughput. `run.sh` **refuses** and prints the key count that would satisfy it ([core#1556]).
+There is deliberately no override: mint more keys, or lower the top stage.
 
 > 🔑 **Why the gate is on the other machine, and why `run.sh`'s own preflight is not enough.**
 > `run.sh` asks *"is an E2E suite running right now"*. A 25-minute ladder needs *"will one
@@ -157,15 +185,55 @@ effect is how a test fixture ends up in a production-shaped database.
 
 ## Status of this harness — read before quoting a number from it
 
-🔴 **Executed end to end on 2026-09-21, and NOT yet executed to a result.** Its structure is
-guarded by `tests/test_deploy/test_loadtest_harness.py`. The first execution did what a first
-run should: it found **eight defects in the harness itself** (core#1492, core#1503), and both runs
-it produced aborted in stage 1 at 5 req/s on the latency threshold — gap 1 above. Since
-2026-09-22 that abort waits for the first full stage, and the rehearsal shows it still aborts a
-failing target. **Until a run completes the ladder with this code, no number from it validates
-the ≥ 60 req/s floor.**
+**Execution status:** executed end to end — run 10, 2026-09-24. ⚠️ **That run used the PRE-FIX
+stage spec**, so it validates the harness's safety and plumbing but not a sustained figure above
+~50 req/s; the hold stages below have not yet been exercised against staging.
 
-**Do not attach Run 9's numbers to this code.** The five gaps on `core#778` — the knee above 60,
-a real sustain at 50 req/s, `/meta` at >= 100, production's 4-worker shape, and query cost on
-real data volume — remain open, and the first credible run against this harness is what starts
-closing them.
+🟢 **Run 10 (2026-09-24) completed the ladder with this code — the first run that did.** k6 exit 0;
+**16,980 requests, `http_req_failed` 0.00%**, `http_req_duration` p95 **33.12 ms**, production
+sampled throughout with **`datanika_neighbour_non_200` = 0**. Both validity controls clean:
+`dropped_iterations` **0** (17 of 202 VUs used, so the generator never bottlenecked) and
+`datanika_rate_limited` **0** with every response a `200` — so the result describes the application
+and not the fixture. Structure still guarded by `tests/test_deploy/test_loadtest_harness.py`.
+*(The 2026-09-21 first execution found eight defects in the harness itself — core#1492, core#1503 —
+and both runs it produced aborted in stage 1 on the latency threshold, which is gap 1 above.)*
+
+🔴 **Run 10 did NOT validate the `>= 60 req/s` floor, and the reason was the stage spec, not the
+box — [core#1560].** `ramping-arrival-rate` **interpolates**, and no stage in either invocation of
+the day repeated a target, so **that ladder never held any rate.** Every per-stage achieved rate
+was the *mean of the ramp*: the `60:120s` stage delivered **49.92 req/s**, i.e. `(40+60)/2`, and
+the run touched 60 only at the final instant of the last ramp.
+
+✅ **The spec defect is fixed** (hold stages, per-rung achieved thresholds, and the limiter-ceiling
+gate of [core#1556]). ⚠️ **A fix is not a measurement.** Until a ladder that holds a rate has
+actually run against staging, the `>= 60 req/s` floor stays **unvalidated** and must not be cited.
+
+✅ **What Run 10 does establish, and what may be quoted:**
+
+- a **real ~50 req/s sustain** — 5,991 requests in 120 s at a mean 49.92/s, **zero errors, zero
+  429s**, p95 **26.57 ms**, p99 85.21 ms. That closes the *"a real sustain at 50 req/s"* gap.
+- **no knee anywhere up to 60 instantaneous**: p95 *improved* 126.75 → 26.57 ms and p99 727 → 85 ms
+  as load rose. (Early-stage figures are cold-start over few samples — a statement about warm-up,
+  not about load.)
+- **production was not harmed**: 0 non-200s across 481 neighbour samples, healthz p99 2.55 ms.
+
+⚠️ **The top stage's NAME and the load it applies are different numbers, and the name is the one
+that gets published.** k6's console prints the stage *target* (`60.00 iters/s`) beside the
+scenario's completion, which is exactly what made the gap invisible in every artefact run 10
+produced. The per-rung `http_reqs{rung:N}` thresholds exist to close that: they put the
+**achieved** count for each held rung into the summary, graded against what the requested rate
+implies. A red rung line means **that rung was not delivered** — a finding about the target or the
+fixture, not a broken harness — so it is deliberately not `abortOnFail`.
+
+**Do not attach Run 9's numbers to this code.** Remaining `core#778` gaps: a run on the fixed
+spec that actually **holds** 60 and above, `/meta` at >= 100, production's 4-worker shape, and
+query cost on real data volume.
+
+⚠️ **Operational, learned in Run 10: do not drive the ladder from a foreground SSH session.** The
+control channel dropped ~10 minutes in. The remote processes survived and the run finished
+correctly — but `say()` pipes through `tee` to stdout, so **every later log line died of SIGPIPE
+and `run.log` freezes at `generator start`, missing the drain and cleanup sections, while the run
+itself completed.** A truncated log there means a dead console, not a dead run; and the wrapper
+reported **exit 0** describing its own last call rather than the ladder. Verify cleanup **by
+effect** — keys revoked, keys file gone, image removed — which is what this harness asks for
+anyway.

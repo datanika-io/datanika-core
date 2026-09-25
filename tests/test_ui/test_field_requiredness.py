@@ -5,27 +5,43 @@ the asterisk baked into the translated string — while passing no ``required`` 
 form told a sighted user the field was mandatory and told a screen reader it was not (§1c). That
 is the root defect, and AC5 is what closes it: the marker and the HTML attribute are one value.
 
-The slice is ``connections.base_url`` + ``connections.name`` (AC3). ``name`` is single-site and
-always required; ``base_url`` is rendered by two connectors and required by only one of them. So
-the pair exercises a derived marker in BOTH directions — a mechanism that only ever renders ``*``
-would pass a ``name``-only test.
+The first slice was ``connections.base_url`` + ``connections.name`` (AC3). ``name`` is single-site
+and always required; ``base_url`` is rendered by two connectors and required by only one of them.
+So the pair exercises a derived marker in BOTH directions — a mechanism that only ever renders
+``*`` would pass a ``name``-only test. Slice 2 added ``connections.port``; slice 3 adds
+``account``, ``bucket_url``, ``database``, ``dataset`` and ``gcp_project`` — see ``_SLICE``.
+
+⚠️ Slice 3's seven sites were NOT self-contradictory before the change: the marker was baked into
+the translation and the input already carried ``required=True``, so AC5's marker-equals-attribute
+assertion was already satisfied at every one of them. What was wrong is §2.2 — the marker lived
+inside a string that cannot vary by connector and is tied to nothing. So the test that goes red
+against the unfixed tree is :class:`TestTheTranslatedLabelsCarryNoMarker`, and AC5's value is that
+it goes red if the string is stripped WITHOUT the call site being converted. The two halves are
+coupled, and each is the other's guard.
 
 ⚠️ No assertion here is "the string omits an asterisk" on its own. That is satisfied by deleting the
 label (the spec's AC2 warning), so every such check is paired with the presence of what should be
 there.
 """
 
+import ast
+import inspect
 import re
+from pathlib import Path
 
 import pytest
 
 from datanika.i18n import SUPPORTED_LOCALES, get_translations
+from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.ui.components.connection_config_fields import (
+    bigquery_fields,
     db_fields,
     mongodb_fields,
     openapi_fields,
     rest_api_fields,
+    s3_fields,
+    snowflake_fields,
 )
 from datanika.ui.pages.connections import connection_form
 
@@ -39,12 +55,39 @@ _KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
 #: ``_DB_TYPES`` connectors are refused a blank port by ``_validate_connection_form``, MongoDB is
 #: not — its branch checks host and database and deliberately omits port, because MongoDB has a
 #: real default port and the connector works without one.
+#:
+#: Slice 3 adds the five keys whose EVERY render site is gated by ``_validate_connection_form``:
+#: ``account`` (:328), ``bucket_url`` (:335), ``database`` (:317/:332/:343), ``dataset`` (:325),
+#: ``gcp_project`` (:323). Seven sites, every one required, so §2.7's question has a single answer
+#: per key and no per-connector Product ruling is needed. The remaining four keys (``host``,
+#: ``db_path``, ``http_path``, ``token``) each touch a site the validator has NO branch for, and
+#: are deliberately not here — see core#1547.
+#:
+#: ⚠️ **TWO members carry ``(False, False)``** — ``(openapi_fields, "base_url")`` and
+#: ``(mongodb_fields, "port")``. Slice 3 adds seven ``(True, True)`` members, so AC3's
+#: both-directions property rests on exactly those two.
+#:
+#: 🔑 Measured by mutation, because the obvious reading is wrong in a way that matters: dropping
+#: EITHER one leaves ``test_the_slice_exercises_both_directions`` **green**, and is caught only by
+#: :class:`TestTheSliceCoversEveryDerivedSite`. Only dropping both reds it. So neither member is
+#: redundant and neither is sufficient: **either deletion on its own is invisible to AC3's test**,
+#: and it is the pair that stands between this slice and an all-required population — which is
+#: precisely the population a marker-always mechanism passes.
 _SLICE = [
     (openapi_fields, "base_url"),
     (rest_api_fields, "base_url"),
     (connection_form, "name"),
     (db_fields, "port"),
     (mongodb_fields, "port"),
+    (snowflake_fields, "account"),
+    (s3_fields, "bucket_url"),
+    (db_fields, "database"),
+    (snowflake_fields, "database"),
+    (mongodb_fields, "database"),
+    # ``gcp_project`` is the i18n key; ``project`` is the field the input is named for. The
+    # guard matches on the input's name, so the two must not be conflated here.
+    (bigquery_fields, "project"),
+    (bigquery_fields, "dataset"),
 ]
 
 
@@ -186,6 +229,70 @@ class TestTheMarkerAndTheAttributeAreOneValue:
         assert (False, False) in states, f"no unmarked, optional field in the slice: {states}"
 
 
+def _derived_sites() -> set[tuple[str, str]]:
+    """``(builder name, field)`` for every ``labelled_config_input`` call on the connection form.
+
+    Read from the SOURCE of the modules the slice's builders live in, never from ``_SLICE`` — an
+    expectation computed by the thing under test is satisfied by that thing doing nothing.
+    """
+    sites: set[tuple[str, str]] = set()
+    for module in {inspect.getmodule(builder) for builder, _ in _SLICE}:
+        tree = ast.parse(Path(inspect.getfile(module)).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            for node in ast.walk(fn):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "labelled_config_input"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                ):
+                    sites.add((fn.name, node.args[1].value))
+    return sites
+
+
+class TestTheSliceCoversEveryDerivedSite:
+    """🚨 A scanning guard that stops seeing a site does not fail.
+
+    Every assertion in this file is parametrized over ``_SLICE``, so a migrated field that is
+    never added — or one quietly dropped — is simply not asserted, and the file stays green while
+    covering less. Nothing else in the suite would say so: the marker is derived, so the site
+    cannot contradict itself, and the AC2 ratchet only walks ``COMPARED``.
+
+    The population is therefore derived from the source and required to EQUAL ``_SLICE``, which
+    makes the next slice's author add their sites here rather than discover the gap later.
+    """
+
+    def test_the_slice_is_exactly_the_set_of_derived_sites(self):
+        derived = _derived_sites()
+        declared = {(builder.__name__, field) for builder, field in _SLICE}
+        assert declared == derived, (
+            f"_SLICE and the call sites disagree.\n"
+            f"  rendered but not asserted: {sorted(derived - declared)}\n"
+            f"  asserted but not rendered: {sorted(declared - derived)}\n"
+            "A field migrated to labelled_config_input must be added to _SLICE; one removed from "
+            "the form must be dropped from it."
+        )
+
+    def test_the_scanner_can_see_a_site(self):
+        """Anti-vacuity: an empty scan makes the equality above assert ``set() == set()``.
+
+        ``_SLICE`` could then be emptied and every test in this file would pass, having graded
+        nothing — the shape that let a locale test pass while reading zero locales (core#1551).
+        """
+        derived = _derived_sites()
+        assert len(derived) >= len(_SLICE) >= 5, (
+            f"the AST scan found {len(derived)} call sites for a slice of {len(_SLICE)}; it has "
+            "stopped matching the call shape and the equality above proves nothing"
+        )
+        assert ("connection_form", "name") in derived, (
+            "the scan cannot see the first migrated site, which is in a different module from "
+            "the rest — so it is reading only one of the two files it must read"
+        )
+
+
 #: (key, locale) pairs whose translation legitimately EQUALS the English string, because the word
 #: is the same in that language. Each entry is a claim about the language, not a licence.
 #:
@@ -201,13 +308,31 @@ class TestTheMarkerAndTheAttributeAreOneValue:
 _SAME_WORD_AS_ENGLISH = {
     ("connections.port", "de"),
     ("connections.port", "fr"),
+    # ``Dataset`` is the term the de/fr/es translators chose, and it is what Google's own
+    # BigQuery console shows in those locales. Measured before this change: all three read
+    # ``"Dataset *"``, i.e. they already matched English apart from the marker, so the marker is
+    # the only thing this slice removed from them. No translation is edited here — changing a
+    # translated WORD is a content decision, not part of deriving a marker.
+    ("connections.dataset", "de"),
+    ("connections.dataset", "es"),
+    ("connections.dataset", "fr"),
 }
 
 
 class TestTheTranslatedLabelsCarryNoMarker:
     @pytest.mark.parametrize("locale", sorted(SUPPORTED_LOCALES))
     @pytest.mark.parametrize(
-        "key", ["connections.base_url", "connections.name", "connections.port"]
+        "key",
+        [
+            "connections.base_url",
+            "connections.name",
+            "connections.port",
+            "connections.account",
+            "connections.bucket_url",
+            "connections.database",
+            "connections.dataset",
+            "connections.gcp_project",
+        ],
     )
     def test_the_label_is_a_name_not_a_sentence_about_the_form(self, locale, key):
         """AC1 for this slice (§2.2) — paired with presence, so deleting the label cannot pass."""
@@ -264,7 +389,27 @@ class TestTheFormAndTheSchema:
         ("openapi", openapi_fields, "base_url"),
         ("postgres", db_fields, "port"),
         ("mongodb", mongodb_fields, "port"),
+        # Slice 3. Six of its seven sites; `s3`'s Bucket URL is the seventh and is UNCOMPARABLE
+        # below, because `s3` has no schema at all.
+        ("snowflake", snowflake_fields, "account"),
+        ("postgres", db_fields, "database"),
+        ("snowflake", snowflake_fields, "database"),
+        ("mongodb", mongodb_fields, "database"),
+        ("bigquery", bigquery_fields, "project"),
+        ("bigquery", bigquery_fields, "dataset"),
     )
+
+    #: Connection types the ratchet CANNOT compare, because they have no ``CONFIG_SCHEMAS`` entry.
+    #:
+    #: 🚨 ``s3`` is the one member of 37 in ``ConnectionType`` with no schema — measured with the
+    #: enum as the control, 36 of 37 present. Its Bucket URL is form-required
+    #: (``_validate_connection_form:335``) and has no schema side to compare against, so adding it
+    #: to ``COMPARED`` raises ``KeyError`` rather than reporting a difference.
+    #:
+    #: It is named here rather than quietly left out: an instrument that cannot see part of its
+    #: population otherwise reports that part as clean, and a site missing from ``COMPARED`` looks
+    #: identical to a site that agrees.
+    UNCOMPARABLE = {"s3"}
 
     def test_the_form_follows_the_schema_except_where_recorded(self):
         observed = set()
@@ -295,6 +440,30 @@ class TestTheFormAndTheSchema:
             f"the ratchet's population yields only {verdicts}; it cannot tell agreement from "
             "disagreement and its verdict says nothing"
         )
+
+    def test_the_types_it_cannot_compare_are_named_and_still_uncomparable(self):
+        """A site the ratchet cannot see must be named, not omitted.
+
+        Two-way, like ``KNOWN_DIFFERENCES``: if ``s3`` gains a ``CONFIG_SCHEMAS`` entry this
+        fails, and the correct repair is to move the site into ``COMPARED`` — not to widen this
+        set. If it is still absent, the site stays visibly out of scope instead of being
+        indistinguishable from one that agrees.
+        """
+        unknown = self.UNCOMPARABLE - {m.value for m in ConnectionType}
+        assert not unknown, (
+            f"{sorted(unknown)} is not a ConnectionType: this set names connectors, and a typo "
+            "here silently excuses nothing at all"
+        )
+        absent = {t for t in self.UNCOMPARABLE if t not in CONFIG_SCHEMAS}
+        assert absent == self.UNCOMPARABLE, (
+            f"{sorted(self.UNCOMPARABLE - absent)} now has a CONFIG_SCHEMAS entry — compare its "
+            "form requiredness against that schema in COMPARED and drop it from UNCOMPARABLE"
+        )
+        # Control: the membership test above proves nothing unless it can also answer True.
+        compared_types = {t for t, _, _ in self.COMPARED}
+        assert compared_types, "COMPARED is empty, so the control below cannot fire"
+        schemaless = compared_types - set(CONFIG_SCHEMAS)
+        assert not schemaless, f"COMPARED names types with no schema: {sorted(schemaless)}"
 
 
 class TestTheFormExplainsTheMarkerOnce:

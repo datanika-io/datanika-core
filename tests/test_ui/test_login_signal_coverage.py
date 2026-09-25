@@ -22,7 +22,10 @@ import pytest
 
 from datanika.services.auth_redirects import AUTH_ERROR_KEYS, login_error_path
 
-SRC = Path("datanika")
+#: Anchored to this file, never to the cwd (core#1551). ⚠️ This one had no ``/`` in
+#: the literal, which is why the census that produced #1551 listed eleven sites and
+#: not twelve — and it is the root of all five paths below it.
+SRC = Path(__file__).resolve().parents[2] / "datanika"
 I18N = SRC / "i18n"
 AUTH_STATE = SRC / "ui" / "state" / "auth_state.py"
 ROUTE_FILES = [

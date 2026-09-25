@@ -103,6 +103,34 @@ class InAppNotificationService:
     def mark_read(
         session: Session, notification_id: int, org_id: int, user_id: int
     ) -> Notification | None:
+        """The notification, or ``None`` if the caller may not act on it.
+
+        This return type is deliberately NOT widened to carry the transition flag --
+        :meth:`mark_read_status` carries that. Five tests spell this contract as ``is None`` /
+        ``is not None``, three of them positive, and two of those three are the positive control
+        beside each refusal in ``TestAMembersInboxIsTheirOwn``. A tuple or NamedTuple is never
+        ``None``, so widening this return would turn those three assertions green permanently --
+        including if member-inbox isolation broke.
+        """
+        notif, _ = InAppNotificationService.mark_read_status(
+            session, notification_id, org_id, user_id
+        )
+        return notif
+
+    @staticmethod
+    def mark_read_status(
+        session: Session, notification_id: int, org_id: int, user_id: int
+    ) -> tuple[Notification | None, bool]:
+        """``(notification, transitioned)`` -- ``transitioned`` is true only when THIS call moved
+        the row from unread to read, so a caller can tell a real transition from a no-op the same
+        way ``mark_all_read``'s count does.
+
+        ``read_at`` is written only on that transition (#1548). It is the only record of when the
+        user FIRST saw the notification, and an unconditional write meant re-marking an already
+        read notification silently overwrote it and still answered 200. ``mark_all_read`` and
+        ``dismiss`` already exclude already-acted rows in their own queries; this is the same
+        property, enforced at the write because this method is addressed by id.
+        """
         stmt = select(Notification).where(
             Notification.id == notification_id,
             Notification.org_id == org_id,
@@ -111,15 +139,18 @@ class InAppNotificationService:
         )
         notif = session.execute(stmt).scalar_one_or_none()
         if notif is None:
-            return None
+            return None, False
         was_unread = notif.read_at is None
-        notif.read_at = datetime.now(UTC)
+        if was_unread:
+            notif.read_at = datetime.now(UTC)
+        # Unconditional, as before: the caller's other pending work flushed here too, and
+        # narrowing that would be a second behaviour change riding this one.
         session.flush()
         if was_unread:
             # The row may be user-specific or org-wide; either way, the
             # unread count for at least one user dropped. Invalidate org.
             notification_unread_cache.invalidate_org(org_id)
-        return notif
+        return notif, was_unread
 
     @staticmethod
     def mark_all_read(session: Session, org_id: int, user_id: int) -> int:

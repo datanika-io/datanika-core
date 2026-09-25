@@ -27,6 +27,7 @@ assertions below count memberships and organizations.
 """
 
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -39,6 +40,9 @@ from datanika.services.auth import AuthService
 from datanika.services.invitation_service import InvitationService
 from datanika.services.user_service import UserService
 from datanika.ui.state.auth_state import AuthState
+
+#: Anchored to this file, never to the cwd (core#1551).
+I18N = Path(__file__).resolve().parents[2] / "datanika/i18n"
 
 INVITEE_EMAIL = "invitee@example.com"
 INVITEE_PASSWORD = "correct-horse-battery-staple"
@@ -470,10 +474,9 @@ class TestTheSentencesExistInEveryLocale:
         """Parity is enforced elsewhere; this checks the values are not English
         copies pasted into nine files, which parity cannot see."""
         import json
-        from pathlib import Path
 
-        data = json.loads((Path("datanika/i18n") / f"{locale}.json").read_text(encoding="utf-8"))
-        en = json.loads((Path("datanika/i18n") / "en.json").read_text(encoding="utf-8"))
+        data = json.loads((I18N / f"{locale}.json").read_text(encoding="utf-8"))
+        en = json.loads((I18N / "en.json").read_text(encoding="utf-8"))
         for key in self.KEYS:
             assert key in data, f"{locale}.json is missing {key}"
             assert data[key].strip(), f"{locale}.json has an empty {key}"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ import datanika.models.notification  # noqa: F401
 import datanika.models.notification_channel  # noqa: F401
 import datanika.models.sso_config  # noqa: F401
 from datanika.models.base import Base
-from datanika.models.notification import NotificationType
+from datanika.models.notification import Notification, NotificationType
 from datanika.models.user import Organization
 from datanika.services.api_v1_routes import api_v1_routes
 from datanika.services.in_app_notification_service import InAppNotificationService
@@ -196,6 +197,79 @@ class TestInAppNotificationService:
         )
         db_session.flush()
         assert svc.mark_read(db_session, n.id, org_id=999, user_id=1) is None
+
+    def test_re_marking_read_preserves_the_original_read_at(self, db_session, org, svc):
+        """#1548 AC1/AC2. ``read_at`` is the only record of when the user FIRST saw the
+        notification, so a second mark must not overwrite it.
+
+        The original ``read_at`` is a fixed past instant rather than the product of a first
+        ``mark_read`` call, and that is load-bearing: two ``datetime.now(UTC)`` calls can land in
+        the same tick, so an equality assertion between them would pass against the bug as often
+        as against the fix. A sentinel cannot. For the same reason this asserts EQUALITY to a known
+        value -- AC2's warning is that ``read_at is not None`` after the second call is satisfied
+        by the bug.
+        """
+        n = svc.create(
+            db_session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            title="T",
+            resource_type="run",
+            resource_id=1,
+        )
+        db_session.flush()
+        first_read = datetime(2020, 1, 1, 12, 0, tzinfo=UTC)
+        n.read_at = first_read
+        db_session.flush()
+
+        svc.mark_read(db_session, n.id, org.id, user_id=1)
+
+        assert n.read_at == first_read
+
+    def test_mark_read_status_reports_the_transition_then_the_no_op(self, db_session, org, svc):
+        """#1548 AC3. A caller can tell a real unread->read transition from a no-op, the way
+        ``mark_all_read`` does with its count."""
+        n = svc.create(
+            db_session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            title="T",
+            resource_type="run",
+            resource_id=1,
+        )
+        db_session.flush()
+
+        notif, transitioned = svc.mark_read_status(db_session, n.id, org.id, user_id=1)
+        assert notif is not None
+        assert transitioned is True
+
+        notif_again, transitioned_again = svc.mark_read_status(db_session, n.id, org.id, user_id=1)
+        assert notif_again is not None
+        assert transitioned_again is False
+
+    def test_mark_read_still_returns_a_notification_or_none(self, db_session, org, svc):
+        """#1548 AC3, and the constraint that decided its shape.
+
+        The richer return lives on ``mark_read_status``; ``mark_read`` keeps returning
+        ``Notification | None``. That is a safety property, not a style choice. Five existing
+        assertions spell this contract as ``is None`` / ``is not None``, and THREE of them are
+        positive -- including the two in ``TestAMembersInboxIsTheirOwn`` that are the positive
+        control beside each isolation refusal. A tuple or NamedTuple is never ``None``, so widening
+        ``mark_read``'s return would turn those three green permanently, including if member-inbox
+        isolation broke. This pins the contract those tests depend on.
+        """
+        n = svc.create(
+            db_session,
+            org.id,
+            NotificationType.RUN_FAILED,
+            title="T",
+            resource_type="run",
+            resource_id=1,
+        )
+        db_session.flush()
+
+        assert isinstance(svc.mark_read(db_session, n.id, org.id, user_id=1), Notification)
+        assert svc.mark_read(db_session, 999_999, org.id, user_id=1) is None
 
     def test_mark_all_read(self, db_session, org, svc):
         svc.create(

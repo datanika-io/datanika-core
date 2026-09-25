@@ -9,7 +9,11 @@ from starlette.testclient import TestClient
 import datanika.models.invitation  # noqa: F401
 import datanika.models.notification_channel  # noqa: F401
 import datanika.models.sso_config  # noqa: F401
-from datanika.services.api_v1_routes import api_v1_routes
+from datanika.services.api_v1_routes import (
+    MAX_IMPORT_OBJECTS,
+    _validate_import_payload,
+    api_v1_routes,
+)
 from datanika.services.rate_limit_service import RateLimitResult
 
 
@@ -531,3 +535,150 @@ class TestImportScopes:
             )
 
         assert resp.status_code == 201, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Per-call object cap (#1549)
+# ---------------------------------------------------------------------------
+
+
+class TestImportObjectCap:
+    """One call used to create an unbounded number of objects across four sequential phases.
+
+    The cap is checked in ``_validate_import_payload`` -- i.e. before phase 1 creates anything --
+    because the phases are sequential and a refusal in phase 3 would leave phases 1 and 2 already
+    applied.
+    """
+
+    @staticmethod
+    def _n(section: str, n: int) -> dict:
+        """``n`` structurally empty items. Empty on purpose: each one is missing several required
+        fields, so without the short-circuit the response would carry thousands of per-item errors
+        rather than one."""
+        return {"version": 2, section: [{} for _ in range(n)]}
+
+    def test_an_oversized_payload_is_refused_and_creates_nothing(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        """AC1/AC2, end to end: refused whole, nothing part-applied."""
+        over = MAX_IMPORT_OBJECTS + 1
+        payload = {
+            "version": 2,
+            "connections": [{**_PG_CONN, "name": f"conn {i}"} for i in range(over)],
+        }
+        with _patch_auth(fake_api_key, rate_limit_ok):
+            resp = client.post("/api/v1/import", json=payload, headers=_auth_headers())
+            assert resp.status_code == 400, resp.text
+            assert any(e["code"] == "IMPORT_TOO_LARGE" for e in resp.json()["errors"])
+
+            listed = client.get("/api/v1/connections", headers=_auth_headers())
+            assert listed.status_code == 200
+            assert listed.json()["items"] == []
+
+    def test_the_cap_is_the_documented_number(self):
+        """Pinned to a LITERAL, because every other test here cannot see this.
+
+        Measured, not feared: mutating `MAX_IMPORT_OBJECTS` to 10_000_000 was caught by NONE of
+        the other five tests in this class. They each build their payload as
+        `MAX_IMPORT_OBJECTS + 1`, so raising the constant moves their input in lockstep and the
+        refusal still fires -- an assertion that computes its expected value with the thing under
+        test is satisfied by that thing being wrong. The cap is a product decision
+        (`SPEC_AUDIT_TRAIL` §9.8 leans on its magnitude), so changing it should require changing a
+        test that says so.
+        """
+        assert MAX_IMPORT_OBJECTS == 1000
+
+    def test_a_payload_of_1001_objects_is_refused(self):
+        """The same guard from the behaviour side, with a fixed count rather than a derived one.
+
+        1001 is written out deliberately: `MAX_IMPORT_OBJECTS + 1` would follow the constant
+        upward and stay green, which is precisely what the mutation showed.
+        """
+        errors = _validate_import_payload(self._n("connections", 1001), {})
+        assert errors[0]["code"] == "IMPORT_TOO_LARGE"
+
+    def test_the_refusal_names_the_limit_and_the_count_received(self):
+        """AC3. 'Too large' without the two numbers does not tell the caller how to split."""
+        over = MAX_IMPORT_OBJECTS + 1
+        errors = _validate_import_payload(self._n("connections", over), {})
+        message = errors[0]["message"]
+        assert str(MAX_IMPORT_OBJECTS) in message
+        assert str(over) in message
+
+    def test_the_cap_short_circuits_so_the_error_response_stays_bounded(self):
+        """The refusal replaces per-item validation rather than joining it.
+
+        Each item here is missing name, connection_type and config, so per-item validation would
+        answer with thousands of errors -- an unbounded response to an unbounded request, which is
+        the same defect one layer up.
+        """
+        errors = _validate_import_payload(self._n("connections", MAX_IMPORT_OBJECTS + 1), {})
+        assert len(errors) == 1
+        assert errors[0]["code"] == "IMPORT_TOO_LARGE"
+
+    def test_the_cap_counts_every_section_not_only_connections(self):
+        """A payload can exceed the cap with no single section exceeding it.
+
+        Counting connections alone would leave the three unquota'd sections unbounded -- and
+        connections are the one section datanika-cloud already caps by plan.
+        """
+        per = MAX_IMPORT_OBJECTS // 4 + 1
+        data = {
+            "version": 2,
+            "connections": [{} for _ in range(per)],
+            "uploads": [{} for _ in range(per)],
+            "pipelines": [{} for _ in range(per)],
+            "transformations": [{} for _ in range(per)],
+        }
+        errors = _validate_import_payload(data, {})
+        assert errors[0]["code"] == "IMPORT_TOO_LARGE"
+        assert str(per * 4) in errors[0]["message"]
+
+    def test_a_payload_at_the_limit_is_not_refused_by_the_cap(self):
+        """The control, and it is the point of the test class.
+
+        A guard that refuses everything is not discriminating, and the obvious repair for 'it
+        refuses everything' is to loosen it. Drive it with both populations and require different
+        answers. Asserts only that the CAP is silent -- other validation errors are another test's
+        subject.
+        """
+        data = {
+            "version": 2,
+            "connections": [{**_PG_CONN, "name": f"conn {i}"} for i in range(MAX_IMPORT_OBJECTS)],
+        }
+        errors = _validate_import_payload(data, {})
+        assert not any(e["code"] == "IMPORT_TOO_LARGE" for e in errors)
+
+    def test_phase_1_emits_the_connection_quota_hook_once_per_connection(
+        self, client, fake_api_key, rate_limit_ok
+    ):
+        """AC4, measured on the real dispatch rather than read off the source.
+
+        datanika-cloud enforces ``max_connections`` by subscribing to ``connection.before_create``
+        and raising. This establishes that bulk import reaches that hook AND that it fires once per
+        connection -- so a plan cap can refuse partway through phase 1, which is what makes the
+        partial-application question real rather than hypothetical. It is recorded here because the
+        cloud tree is not installed in this suite, so the assertion is about the emit, not about the
+        refusal.
+        """
+        from datanika import hooks
+
+        seen: list[dict] = []
+
+        def _spy(**kwargs):
+            seen.append(kwargs)
+
+        hooks.on("connection.before_create", _spy)
+        try:
+            payload = {
+                "version": 2,
+                "connections": [{**_PG_CONN, "name": f"conn {i}"} for i in range(3)],
+            }
+            with _patch_auth(fake_api_key, rate_limit_ok):
+                resp = client.post("/api/v1/import", json=payload, headers=_auth_headers())
+                assert resp.status_code == 201, resp.text
+        finally:
+            hooks.off("connection.before_create", _spy)
+
+        assert len(seen) == 3
+        assert all(kw.get("org_id") == fake_api_key.org_id for kw in seen)

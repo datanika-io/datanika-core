@@ -107,7 +107,10 @@ FIELD_SEP = "\x1f"
 
 
 def run(*args: str) -> str:
-    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")
+    # S603: fixed argv, no shell -- every caller passes literal `gh`/`git` subcommands.
+    # Annotated at the line rather than exempted in pyproject, so a genuine `shell=True` on a
+    # variable elsewhere in this file is still caught (core#1558).
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8")  # noqa: S603
     if result.returncode != 0:
         print(f"  ! command failed: {' '.join(args[:4])}...\n    {(result.stderr or '')[:300]}")
         return ""

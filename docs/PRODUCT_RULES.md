@@ -804,3 +804,66 @@ to branch on a quota refusal programmatically. Raise it on [core#1569]; the read
 v1 API surface. Absent that, this stays `400`.
 
 [core#1569]: https://github.com/datanika-io/datanika-core/issues/1569
+
+---
+
+## 18. "Is this field required?" is a question about the credential, not about our code
+
+🚦 **Ruling, [core#1547] finding 2 → [core#1606], 2026-09-26: all three fields that are optional on
+the connection form and required by `CONFIG_SCHEMAS` are REQUIRED — and each for a different
+reason.** The criterion lives beside the contract, in `docs/specs/SPEC_FIELD_REQUIREDNESS.md` §2.10;
+this section is the general rule, because the next occurrence will not be about connection forms.
+
+**The rule.**
+
+> **A field is required when the credential the product asks the user to create cannot authenticate
+> without it.**
+
+Two things in this codebase look like the answer and are not.
+
+1. **A declared schema is not the answer.** `CONFIG_SCHEMAS[t]["required"]` describes *a complete
+   stored config*, nothing validates against it, and its own docstring lists the validation reader as
+   `(future)`. A contract nothing enforces records an intention, and intentions drift: **9 of 36
+   types require a key the form cannot even produce.**
+2. 🔑 **What our own code reads is not the answer, and it is the one that will mislead you.** It is
+   an inventory of current behaviour being read as a statement about a third party. **The case where
+   it is wrong is exactly the case that matters** — a field the code ignores *and needs*. That is
+   [core#860]: `jira`'s probe left `email` out, sent `Basic :token`, took a 401 and *"reported a
+   credential failure for a token that was fine."* Any *"fields the loader reads"* audit would have
+   called `email` optional right up to that 401.
+
+⚠️ **The most dangerous form of #2 is a well-written comment.** `_LOADER_FIELDS_NO_PROBE_COVERS`
+carries `"zendesk": {"email"}` with real reasoning — read only on a dead branch, the live path
+authenticates with `Bearer`, *"listed so its absence from the probe is a recorded fact rather than an
+oversight."* **Every word of that is true about our code, and it is read as "Zendesk does not need an
+email".** Two different claims; the reader acts on the second. §11 is the same shape over source text
+(*prose about the code satisfies a substring check*); this is prose about the code satisfying a
+**product decision**.
+
+**What counts as evidence**, strongest first: a dated measurement against the vendor with controls
+both ways; then the vendor's auth model as **our own published guide** states it, because the guide is
+what the user follows to create the credential; then the shape of the credential the form asks for
+(`ph_zendesk_token` = *"Zendesk API token"* is a claim about the auth model).
+
+🔑 **Where no measurement exists, rule on cost asymmetry — and say so.** Requiring a field the guide
+already tells the user to fill costs one field. Leaving a needed one optional costs a 401 blamed on a
+good credential. **Require it; that is the reversible direction.** Then **name the discriminating
+measurement** so whoever obtains a credential can settle it, and never let the cost argument read as
+a finding (§15: a correction is a claim and needs the same control).
+
+⚠️ **Rule the fields separately even when the answer is the same.** These three landed on "required"
+by three different routes — a false label, an answer we already had, and a cost argument — and the
+same disagreement **resolves the other way for 19 fields on the eight SQL types**, where the form is
+right and the schema is over-strict because passwordless auth is a real configuration. A single
+verdict for the class would have been wrong for most of it. This is §13 pointed at a *decision*: a
+population you did not derive is a number you invented.
+
+**Flip condition, with a reader rather than a watcher:** a live Zendesk credential reaching
+`secrets/`. Whoever adds it runs one request twice — `GET /api/v2/users/me.json` with
+`Authorization: Bearer <api token>` and with `Basic base64("<email>/token:<api token>")` — and
+records the pair on [core#1606]. **If `Bearer` authenticates an API token, ruling 3 was wrong and the
+email is optional.** Nothing else in this section depends on it.
+
+[core#860]: https://github.com/datanika-io/datanika-core/issues/860
+[core#1547]: https://github.com/datanika-io/datanika-core/issues/1547
+[core#1606]: https://github.com/datanika-io/datanika-core/issues/1606

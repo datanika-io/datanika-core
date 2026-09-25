@@ -27,6 +27,7 @@ from starlette.responses import JSONResponse
 
 from datanika.config import settings
 from datanika.db import get_sync_session
+from datanika.errors import UserFacingError
 from datanika.services.api_key_service import ApiKeyService
 from datanika.services.authorization import InsufficientRoleError
 from datanika.services.client_ip import resolve_client_ip
@@ -82,6 +83,22 @@ def _error(status: int, message: str, headers: dict[str, str] | None = None) -> 
         for k, v in headers.items():
             resp.headers[k] = v
     return resp
+
+
+def _refusal(status: int, message: str) -> JSONResponse:
+    """A refusal whose text we authored, in the body shape the v1 *route handlers* use.
+
+    ⚠️ **Deliberately not `_error` above, and the difference is the whole of core#1569's AC2.**
+    `_error` emits the flat `{"error": "..."}` this module has always used for 401/403/429/500,
+    while `api_v1_routes._error` nests `{"error": {"code", "message"}}`. A refusal that falls
+    through to here is answering *for* a v1 route, so it has to read like that route's own
+    refusals — otherwise the two doors still disagree and an integrator reading `error.message`
+    gets `undefined` from one of them. "A 400 carrying the message" is satisfiable while the
+    defect survives.
+
+    Not imported from `api_v1_routes`: that module imports `api_endpoint` from this one.
+    """
+    return JSONResponse({"error": {"code": status, "message": message}}, status_code=status)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +408,23 @@ async def _run_async_handler(
                 extra={"operation": exc.operation, "required_role": exc.required_role},
             )
             return _insufficient_role(exc)
+        except UserFacingError as exc:
+            # core#1569. A refusal whose text WE authored is an answer, not an outage. Without
+            # this branch it falls to `except Exception` below and becomes a 500 -- which is what
+            # told an integrator who hit their connection cap through `POST /api/v1/import` that
+            # the service was broken. `bulk_import` wraps nothing, so this is the only layer that
+            # sees it. The branch above argues exactly this for one class; here it is generalised
+            # to the marker that exists to carry the distinction (`datanika/errors.py`).
+            #
+            # 🚨 **MUST stay AFTER `InsufficientRoleError`.** That class IS a `UserFacingError`,
+            # so putting this first collapses the 403 carrying `required_role` into a plain 400 --
+            # core#896's shape, a gate that cannot fire because something upstream already
+            # answered. Driven through both endpoints in
+            # `tests/test_services/test_quota_refusal_is_the_same_on_both_doors.py`, because
+            # reading the `except` order is what missed it the first time.
+            session.rollback()
+            logger.info("API refusal: %s", type(exc).__name__)
+            return _refusal(400, str(exc))
         except Exception:
             logger.exception("API handler error")
             session.rollback()
@@ -484,6 +518,23 @@ def _run_sync_handler(
                 extra={"operation": exc.operation, "required_role": exc.required_role},
             )
             return _insufficient_role(exc)
+        except UserFacingError as exc:
+            # core#1569. A refusal whose text WE authored is an answer, not an outage. Without
+            # this branch it falls to `except Exception` below and becomes a 500 -- which is what
+            # told an integrator who hit their connection cap through `POST /api/v1/import` that
+            # the service was broken. `bulk_import` wraps nothing, so this is the only layer that
+            # sees it. The branch above argues exactly this for one class; here it is generalised
+            # to the marker that exists to carry the distinction (`datanika/errors.py`).
+            #
+            # 🚨 **MUST stay AFTER `InsufficientRoleError`.** That class IS a `UserFacingError`,
+            # so putting this first collapses the 403 carrying `required_role` into a plain 400 --
+            # core#896's shape, a gate that cannot fire because something upstream already
+            # answered. Driven through both endpoints in
+            # `tests/test_services/test_quota_refusal_is_the_same_on_both_doors.py`, because
+            # reading the `except` order is what missed it the first time.
+            session.rollback()
+            logger.info("API refusal: %s", type(exc).__name__)
+            return _refusal(400, str(exc))
         except Exception:
             logger.exception("API handler error")
             session.rollback()

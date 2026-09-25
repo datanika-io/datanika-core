@@ -103,10 +103,40 @@ It is a signal on the PR the promoter is about to read, and that is worth having
 write-up claiming this is *"now gated"* would be false, and the next reader would rely on
 it.
 
-Three states, three exit codes
-------------------------------
+🚨 The oracle is STALE for a body the previous step just wrote (core#1575)
+--------------------------------------------------------------------------
 
-``0`` the sets agree · ``1`` they differ · ``2`` **nothing could be compared**.
+``promotion-pr-refs.yml`` writes the generated block with ``gh pr edit`` in the step
+**immediately before** this one, and GitHub recomputes ``closingIssuesReferences``
+asynchronously. So the first look returns ``(nothing)`` while the block declares six issues,
+and this script scored that as ``DECLARED BUT WILL NOT CLOSE`` -- a FAIL -- on **2 of 2**
+promotions after the step shipped. On the measured instance GitHub later named **exactly the
+six** the block declared: *the block was right the whole time; the check was early.*
+
+⚠️ **The run history hid it, and that is the part worth keeping.** The workflow tallied
+``98 success / 2 failure``, which reads as a fresh regression in a long-green generator --
+but **all 98 greens predate the step's existence**. A workflow's conclusion history spans
+versions of the workflow, so a tally taken without dating the step gives exactly the wrong
+answer, and it is the reading anyone takes first.
+
+``await_reparse`` re-reads while the oracle names nothing the block declares. Two things it
+deliberately does **not** do: it does not poll until the sets *agree* (that is a check which
+stops the moment it gets the answer it wants -- the real core#1541 defect,
+``will_close - declared``, is left out of the loop entirely and evaluated afterwards); and it
+does not report a pass on exhaustion. An exhausted wait is ``NO_VERDICT`` with reason
+``oracle-silent-after-wait``, because *"GitHub named nothing"* and *"the block is wrong"* are
+different claims and only the second is a finding.
+
+Every run prints ``oracle reparse: N look(s) over Xs``. A check that waits and then agrees is
+indistinguishable, from a green alone, from one that stopped looking -- and those numbers are
+how ``REPARSE_WAIT_SECONDS`` gets tuned from data rather than from the guess it currently is.
+
+Four states, three exit codes
+-----------------------------
+
+``0`` the sets agree · ``1`` they differ **and GitHub has answered** · ``2`` **nothing could
+be compared** (not the default branch · no generated block · the oracle stayed silent for the
+whole wait).
 
 Exit ``2`` is not a pass and not a failure. With no generated block there is no declaration
 to compare against: measured over 309 merged PRs, **184 carry no block at all**, because
@@ -126,7 +156,24 @@ import argparse
 import json
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
+
+#: How long to keep re-reading the oracle, and how often (core#1575).
+#:
+#: `promotion-pr-refs.yml` writes the generated block with `gh pr edit` in the step
+#: IMMEDIATELY before this one, and GitHub has not recomputed `closingIssuesReferences` for
+#: the new body by the time this runs. So the first look returns `(nothing)` while the block
+#: declares six issues -- which this script scored as `DECLARED BUT WILL NOT CLOSE`, i.e. a
+#: FAIL, on **2 of 2** promotions since the step shipped.
+#:
+#: ⚠️ The defaults are a starting point, not a measurement. The observed reparse had
+#: completed by the time anyone looked again (~12 minutes later), but that is when a human
+#: happened to re-read, not the latency. So `await_reparse` PRINTS how long it waited and on
+#: which look the answer arrived: the next promotion measures the real latency for us, and
+#: these numbers get tuned from data instead of from this guess.
+REPARSE_WAIT_SECONDS = 300
+REPARSE_POLL_SECONDS = 15
 
 #: The generated block's fences. Duplicated from `.github/scripts/promotion_refs.py` by
 #: value rather than by import: this script runs from `scripts/`, is type-checked, and must
@@ -180,6 +227,15 @@ class Report:
     will_close: frozenset[int] = field(default_factory=frozenset)
     declared: frozenset[int] = field(default_factory=frozenset)
 
+    #: Did a reparse wait run to exhaustion without the oracle ever answering (core#1575)?
+    #:
+    #: This is deliberately NOT the same thing as `oracle_silent`. A caller that waited the
+    #: full window and still got nothing has established that it *cannot measure* this PR.
+    #: A caller that never waited (`--wait-seconds 0`) has established nothing of the kind,
+    #: and must keep the old FAIL -- otherwise opting out of the wait would silently convert
+    #: every real mangled-block finding into an unmeasurable.
+    reparse_exhausted: bool = False
+
     @property
     def oracle_applies(self) -> bool:
         """Can ``closingIssuesReferences`` say anything at all about this PR?
@@ -201,6 +257,17 @@ class Report:
         return frozenset(self.declared - self.will_close)
 
     @property
+    def oracle_silent(self) -> bool:
+        """The block declares closures and GitHub links NOTHING AT ALL (core#1575).
+
+        Distinguished from a partial disagreement on purpose. *"GitHub named a different
+        set"* means it has answered and we disagree -- a finding. *"GitHub named nothing"*
+        one second after the body was rewritten means it has not answered yet, which is not
+        the same claim and must not be reported as one.
+        """
+        return bool(self.declared) and not self.will_close
+
+    @property
     def verdict(self) -> str:
         # The population check comes FIRST and outranks everything below it. Without it this
         # returns PASS for every feature PR in the repository -- measured on core#1552.
@@ -210,6 +277,11 @@ class Report:
             # Nothing closes and nothing is declared: consistent, and there is nothing this
             # check could have got wrong. Anything else with no block is unmeasurable here.
             return "PASS" if not self.will_close else "NO_VERDICT"
+        # core#1575. We waited the whole window and GitHub never named a single issue, so we
+        # do not know whether the block is wrong or the reparse simply never landed. Saying
+        # FAIL here asserts the first, which was wrong on 2 of 2 promotions.
+        if self.oracle_silent and self.reparse_exhausted:
+            return "NO_VERDICT"
         return "FAIL" if (self.undeclared or self.unfired) else "PASS"
 
     @property
@@ -218,7 +290,11 @@ class Report:
         one it picks is the one nobody acts on (``QA_RULES`` §31 rule 2)."""
         if self.verdict != "NO_VERDICT":
             return None
-        return "not-default-base" if not self.oracle_applies else "no-generated-block"
+        if not self.oracle_applies:
+            return "not-default-base"
+        if self.oracle_silent and self.reparse_exhausted:
+            return "oracle-silent-after-wait"
+        return "no-generated-block"
 
     @property
     def exit_code(self) -> int:
@@ -291,6 +367,80 @@ def fetch_pr_facts(repo: str, pr: int) -> tuple[str, str, str, frozenset[int]] |
     return default_branch, base_ref, body, frozenset(int(n["number"]) for n in nodes)
 
 
+@dataclass(frozen=True)
+class Wait:
+    """What the reparse poll actually did — printed, never inferred (core#1575).
+
+    A check that waits and then agrees is indistinguishable, from a green alone, from one
+    that stopped looking. So the number of looks and the elapsed seconds go in the output of
+    every run, and the promotion after this one measures the real latency for us.
+    """
+
+    looks: int
+    elapsed: float
+    answered_on_look: int | None
+
+    @property
+    def exhausted(self) -> bool:
+        return self.answered_on_look is None
+
+
+def await_reparse(
+    repo: str,
+    pr: int,
+    *,
+    wait_seconds: float = REPARSE_WAIT_SECONDS,
+    poll_seconds: float = REPARSE_POLL_SECONDS,
+    fetch=None,
+    sleep=time.sleep,
+    now=time.monotonic,
+) -> tuple[tuple[str, str, str, frozenset[int]] | None, Wait]:
+    """Re-read the PR until every DECLARED issue is linked, or the window expires.
+
+    🔑 **The stopping condition is the oracle's AVAILABILITY, not its agreement, and the
+    difference is the whole design.** Polling "until the sets match" is a check that stops
+    the moment it gets the answer it wants. This polls only while something the block
+    declares is **not yet linked** -- the one state that is either a pending reparse or a
+    mangled block -- and it leaves the actual core#1541 defect, `will_close - declared`
+    (*GitHub will close something the block does not mention*), **out of the loop
+    entirely.** That axis is evaluated once, afterwards, and no amount of waiting can
+    suppress it.
+
+    Two consequences worth stating because they are easy to get wrong:
+
+    * When the oracle is **already current** -- a re-run on a body nobody just rewrote, or
+      the post-merge invocation -- `declared <= will_close` holds on the first look and this
+      returns immediately having waited **zero** seconds. The wait costs nothing in the case
+      that does not need it.
+    * When the block genuinely declares an issue GitHub will never link, this polls for the
+      full window and then reports it. Slower, and still a finding.
+    """
+    # 🚨 Resolved HERE and not in the signature, and this is a correctness property of the
+    # TESTS rather than of the check (core#1593). `fetch=fetch_pr_facts` as a default binds
+    # the function OBJECT at definition time, while `monkeypatch.setattr(module,
+    # "fetch_pr_facts", ...)` rebinds the module ATTRIBUTE -- so the patch never reached this
+    # call and all four CLI-boundary tests drove the real `gh`. In a token-less CI job two of
+    # them went red and two stayed GREEN asserting exit 2 for a reason that was not theirs.
+    # A default argument is not an injection seam; a call-time lookup is.
+    fetch = fetch_pr_facts if fetch is None else fetch
+    deadline = now() + wait_seconds
+    looks = 0
+    started = now()
+    facts = None
+    while True:
+        looks += 1
+        facts = fetch(repo, pr)
+        if facts is None:
+            # An unreadable subject is not a pending reparse. Stop; `main` reports it.
+            return None, Wait(looks, now() - started, None)
+        _default, _base, body, will_close = facts
+        if declared_refs(body) <= will_close:
+            return facts, Wait(looks, now() - started, looks)
+        if now() >= deadline:
+            return facts, Wait(looks, now() - started, None)
+        sleep(min(poll_seconds, max(0.0, deadline - now())))
+
+
 def compare(
     repo: str,
     pr: int,
@@ -298,6 +448,7 @@ def compare(
     will_close: frozenset[int],
     base_ref: str,
     default_branch: str,
+    reparse_exhausted: bool = False,
 ) -> Report:
     return Report(
         repo=repo,
@@ -307,6 +458,7 @@ def compare(
         block_present=block_of(body) is not None,
         will_close=will_close,
         declared=declared_refs(body),
+        reparse_exhausted=reparse_exhausted,
     )
 
 
@@ -343,6 +495,33 @@ def render(report: Report) -> str:
             f"  Point it at a PR based on {report.default_branch!r} (a promotion). For a",
             "  feature PR the commit-message gate is the one that applies:",
             "  scripts/check_closing_keyword_intent.py.",
+            "",
+        ]
+        return "\n".join(out)
+    if report.reason == "oracle-silent-after-wait":
+        out += [
+            "  GITHUB NEVER ANSWERED, so nothing could be compared — and this is NOT a",
+            "  finding about the body. The block declares",
+            f"  {sorted(report.declared)} and `closingIssuesReferences` named NOTHING for the",
+            "  whole wait.",
+            "",
+            "  The mechanism (core#1575): `promotion-pr-refs.yml` writes this block with",
+            "  `gh pr edit` in the step immediately before this one, and GitHub recomputes",
+            "  the closing set asynchronously. Asking it straight away reliably gets an empty",
+            "  answer — which this check used to score as DECLARED BUT WILL NOT CLOSE, on 2 of",
+            "  2 promotions after the step shipped.",
+            "",
+            "  ⚠️ Do NOT re-run the generator on the strength of this. It was almost",
+            "  certainly right: on the measured instance GitHub later named exactly the six",
+            "  the block declared. What to do instead:",
+            "",
+            "    * re-run THIS check on the same PR in a few minutes (the generator is",
+            "      idempotent, so nothing is rewritten and the oracle will have caught up), or",
+            "    * read `closingIssuesReferences` by hand before merging:",
+            "      gh pr view <n> --json closingIssuesReferences",
+            "",
+            "  If it stays silent for much longer than the wait above, THAT is worth a look —",
+            "  raise the wait rather than believing the empty set.",
             "",
         ]
         return "\n".join(out)
@@ -383,9 +562,14 @@ def render(report: Report) -> str:
         out += [
             f"  DECLARED BUT WILL NOT CLOSE: {sorted(report.unfired)}",
             "",
-            "    The generated block says this promotion closes these and GitHub disagrees.",
-            "    The block no longer describes the merge — usually a body edited by hand after",
-            "    the generator ran, or a reference that was mangled. Re-run the generator.",
+            "    The generated block says this promotion closes these and GitHub named a",
+            f"    DIFFERENT set: {sorted(report.will_close)}. So GitHub has answered — this is",
+            "    not the core#1575 timing case, which shows up as an answer of NOTHING AT ALL",
+            "    and is reported separately above.",
+            "",
+            "    Likeliest causes: a body edited by hand after the generator ran, or a",
+            "    reference that was mangled. Re-running the generator is reasonable HERE,",
+            "    because its output demonstrably no longer matches GitHub's reading.",
             "",
         ]
     return "\n".join(out)
@@ -395,9 +579,37 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="core#1541 promotion closing-reference check")
     parser.add_argument("--repo", required=True, help="owner/name")
     parser.add_argument("--pr", required=True, type=int)
+    parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=REPARSE_WAIT_SECONDS,
+        help=(
+            "how long to keep re-reading while the oracle names nothing the block declares "
+            "(core#1575: the generator rewrites the body in the previous step and GitHub "
+            "reparses asynchronously). 0 disables the wait and restores the old behaviour"
+        ),
+    )
+    parser.add_argument(
+        "--poll-seconds", type=float, default=REPARSE_POLL_SECONDS, help="gap between looks"
+    )
     args = parser.parse_args(argv)
 
-    facts = fetch_pr_facts(args.repo, args.pr)
+    facts, waited = await_reparse(
+        args.repo,
+        args.pr,
+        wait_seconds=args.wait_seconds,
+        poll_seconds=args.poll_seconds,
+    )
+    # Printed on every run, pass or fail: a wait that is never reported cannot be told apart
+    # from no wait at all, and the numbers are how the defaults get tuned from data.
+    print(
+        f"\n  oracle reparse: {waited.looks} look(s) over {waited.elapsed:.1f}s; "
+        + (
+            f"answered on look {waited.answered_on_look}"
+            if waited.answered_on_look
+            else "never answered within the wait"
+        )
+    )
     if facts is None:
         # An unreadable subject measures nothing, and reporting it as clean is the failure
         # this whole file is about. Exit 2, loudly.
@@ -408,7 +620,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     default_branch, base_ref, body, will_close = facts
-    report = compare(args.repo, args.pr, body, will_close, base_ref, default_branch)
+    report = compare(
+        args.repo,
+        args.pr,
+        body,
+        will_close,
+        base_ref,
+        default_branch,
+        reparse_exhausted=waited.exhausted and args.wait_seconds > 0,
+    )
     print(render(report))
     return report.exit_code
 

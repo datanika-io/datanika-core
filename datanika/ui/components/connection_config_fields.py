@@ -593,11 +593,21 @@ def databricks_fields() -> rx.Component:
             value=ConnectionState.form_token,
             on_change=ConnectionState.set_form_token,
         ),
-        rx.el.label(
-            rx.text(_t["connections.catalog"], size="2", weight="bold"), html_for="cfg-catalog"
-        ),
-        config_input(
+        # core#1547 AC2/AC3. Catalog is schema-required (`connection_schemas.py`: `required`
+        # carries host, http_path, token AND catalog) and showed **neither** a marker nor the
+        # attribute — so it was absent from the "carries `required=True`" sweep *and* from the
+        # "shows a `*`" sweep, while the four fields needing nothing were present in both.
+        #
+        # Derived via `labelled_config_input`, not hand-written, so the marker and the attribute
+        # come from one value and cannot disagree. Safe from the double-marker trap that sank AC2's
+        # first wording: `connections.catalog` is plain in all nine locales — it is the four keys
+        # ABOVE that carry a baked ` *`, which is why they keep `rx.el.label` until core#1311's
+        # de-asterisking lands (SPEC_FIELD_REQUIREDNESS §2.9: a key is de-asterisked once, and the
+        # two halves are one change).
+        labelled_config_input(
+            _t["connections.catalog"],
             "catalog",
+            required=True,
             placeholder=_t["connections.ph_catalog"],
             value=ConnectionState.form_catalog,
             on_change=ConnectionState.set_form_catalog,

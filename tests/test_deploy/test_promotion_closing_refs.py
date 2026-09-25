@@ -417,7 +417,73 @@ class TestItIsWiredWhereItClaimsToBe:
         assert "--admin" in text
 
 
+class _NoSubprocess:
+    """Stands in for the `subprocess` module inside the checker, and refuses.
+
+    Installed on `check` itself rather than on the real `subprocess` module, so nothing
+    outside this file's own subject is affected.
+    """
+
+    @staticmethod
+    def run(*_args, **_kwargs):
+        raise AssertionError(
+            "the checker shelled out to the real `gh`. Every test in this class patches "
+            "`check.fetch_pr_facts`; if the real one still runs, the patch is not reaching "
+            "the code under test (core#1593) and the test is measuring the live API."
+        )
+
+
 class TestTheOracleIsAskedRatherThanModelled:
+    @pytest.fixture(autouse=True)
+    def _no_network(self, monkeypatch) -> None:
+        """🚨 The invariant this class had no way to state, and four of its five CLI-boundary
+        tests violated it silently (core#1593).
+
+        `await_reparse` took `fetch=fetch_pr_facts` as a DEFAULT ARGUMENT, which binds the
+        function object at definition time. `monkeypatch.setattr(check, "fetch_pr_facts", …)`
+        rebinds the module ATTRIBUTE, so it never reached the call, and `main` went to the
+        network on every one of these tests.
+
+        What that cost, measured on run 36137656373: in a CI job with no `GH_TOKEN` the real
+        lookup failed, `main` correctly returned 2, and
+
+        * `exits_1_on_a_real_disagreement` and `exits_0_on_the_false_positive_control` went
+          **red** -- the visible half;
+        * `a_failed_lookup_is_not_a_pass` and `exits_2_on_a_pr_the_oracle_cannot_see` stayed
+          **green while asserting exit 2 for a reason that was not theirs** -- the half that
+          would never have been noticed. The second of those is the CLI-boundary test for the
+          population check, so the population check had no CLI coverage at all.
+
+        Locally the same four passed *because* the live call succeeded, which is a green
+        attached to the wrong mechanism.
+
+        A unit test's verdict must not depend on a token, and this fixture is what makes that
+        structural instead of remembered.
+        """
+        monkeypatch.setattr(check, "subprocess", _NoSubprocess)
+
+    def test_a_patch_of_the_module_attribute_reaches_the_cli(self, monkeypatch) -> None:
+        """The seam must be resolved at CALL time. Asserts the PRESENCE of the right thing --
+        that the patched fetch was actually *called* -- rather than the absence of a network
+        call, which `_no_network` covers from the other side.
+
+        Red against the unfixed checker: the default-argument binding sends `main` to the real
+        `fetch_pr_facts`, `_NoSubprocess.run` fires, and `calls` stays empty.
+        """
+        calls: list[int] = []
+
+        def _fetch(repo: str, n: int):
+            calls.append(n)
+            return ("master", "master", "", frozenset())
+
+        monkeypatch.setattr(check, "fetch_pr_facts", _fetch)
+        assert check.main(["--repo", "datanika-io/datanika-core", "--pr", "1519"]) == 0
+        assert calls == [1519], (
+            "main() did not call the patched `check.fetch_pr_facts`. The injection point is a "
+            "default argument on `await_reparse`, bound at definition time; resolve it inside "
+            "the function body instead."
+        )
+
     def test_the_checker_contains_no_closing_keyword_grammar(self) -> None:
         """The point of the corrected design. A keyword list here would be a model of
         GitHub's parser, and a model is the one thing it cannot be used to check."""
@@ -576,3 +642,183 @@ def test_every_named_control_is_actually_exercised(number: str) -> None:
     report = _report(number)
     assert report.block_present
     assert report.will_close, f"#{number} contributed no oracle answer to any assertion"
+
+
+class TestTheOracleIsStaleForABodyTheStepJustWrote:
+    """core#1575 - the check asked GitHub about a body it had not reparsed, and FAILED on
+    every promotion.
+
+    `promotion-pr-refs.yml` writes the generated block with `gh pr edit` in the step
+    immediately before this one. GitHub recomputes `closingIssuesReferences` asynchronously,
+    so the first look returns nothing while the block declares six issues - which the script
+    scored as `DECLARED BUT WILL NOT CLOSE`. Measured 2 of 2 failures on the runs that
+    actually contained the step; all 98 greens in the workflow's tally predate it.
+
+    The controls here drive the SAME subject with the wait on and off. A version that merely
+    waits and then agrees is indistinguishable, from a green alone, from one that stopped
+    looking, so every test below pairs the fixed behaviour against the pre-fix behaviour
+    rather than asserting the fixed one alone.
+    """
+
+    BLOCK = f"narrative\n{check.START}\n- Closes #1548 - a\n- Closes #1549 - b\n{check.END}\n"
+
+    def _fetch_sequence(self, answers):
+        """A fetcher returning a different closing set on each successive look."""
+        seq = list(answers)
+        calls = {"n": 0}
+
+        def fetch(_repo, _pr):
+            i = min(calls["n"], len(seq) - 1)
+            calls["n"] += 1
+            return ("master", "master", self.BLOCK, frozenset(seq[i]))
+
+        return fetch, calls
+
+    def test_the_stale_first_look_is_what_produced_the_failure(self) -> None:
+        """PRE-FIX BEHAVIOUR, pinned: one look at an empty oracle is a FAIL.
+
+        This is the control for everything below. If it ever stops being a FAIL, the tests
+        that follow are comparing the fix against nothing.
+        """
+        report = _cmp(self.BLOCK, set(), base="master", default="master")
+        assert report.verdict == "FAIL"
+        assert report.unfired == frozenset({1548, 1549})
+
+    def test_the_wait_returns_as_soon_as_the_oracle_answers(self) -> None:
+        """Empty on look 1, correct on look 2 - the measured shape. No FAIL, one gap slept."""
+        fetch, calls = self._fetch_sequence([set(), {1548, 1549}])
+        slept: list[float] = []
+        facts, waited = check.await_reparse(
+            "o/n", 1, wait_seconds=300, poll_seconds=15, fetch=fetch, sleep=slept.append
+        )
+        assert calls["n"] == 2, "it must look again, not give up on the first empty answer"
+        assert waited.answered_on_look == 2
+        assert not waited.exhausted
+        assert slept == [15], "exactly one gap between two looks"
+
+        _d, _b, body, will_close = facts
+        report = check.compare(
+            "o/n", 1, body, will_close, "master", "master", reparse_exhausted=waited.exhausted
+        )
+        assert report.verdict == "PASS", "the block was right; the check was early"
+
+    def test_an_already_current_oracle_costs_zero_seconds(self) -> None:
+        """A re-run, or the post-merge invocation: the wait must not tax the case that does
+        not need it."""
+        fetch, calls = self._fetch_sequence([{1548, 1549}])
+        slept: list[float] = []
+        _facts, waited = check.await_reparse(
+            "o/n", 1, wait_seconds=300, poll_seconds=15, fetch=fetch, sleep=slept.append
+        )
+        assert calls["n"] == 1
+        assert waited.answered_on_look == 1
+        assert slept == [], "it slept on a body nobody had just rewritten"
+
+    def test_an_exhausted_wait_is_no_verdict_and_not_a_pass(self) -> None:
+        """The failure direction that matters: exhaustion must not become a green.
+
+        A check that waits and then reports success is worse than the bug it replaced.
+        """
+        fetch, _calls = self._fetch_sequence([set()])
+        facts, waited = check.await_reparse(
+            "o/n", 1, wait_seconds=30, poll_seconds=10, fetch=fetch, sleep=lambda _s: None
+        )
+        assert waited.exhausted
+        _d, _b, body, will_close = facts
+        report = check.compare(
+            "o/n", 1, body, will_close, "master", "master", reparse_exhausted=True
+        )
+        assert report.verdict == "NO_VERDICT"
+        assert report.reason == "oracle-silent-after-wait"
+        assert report.exit_code == 2, "2 is 'nothing could be compared', never 0"
+
+    def test_a_mangled_block_is_still_a_finding_after_the_wait(self) -> None:
+        """THE CONTROL core#1575 ASKS FOR BY NAME: seen failing on a deliberately mangled
+        block, not merely passing once the timing is fixed.
+
+        GitHub has answered here - it names a DIFFERENT set - so this is not the timing case,
+        and the wait must not launder it into an unmeasurable.
+        """
+        report = check.compare(
+            "o/n",
+            1,
+            self.BLOCK,
+            frozenset({1548, 9999}),
+            "master",
+            "master",
+            reparse_exhausted=True,
+        )
+        assert report.verdict == "FAIL", (
+            "a block declaring an issue GitHub will not close is the core#1541 defect, and "
+            "reparse_exhausted must not suppress it"
+        )
+        assert report.unfired == frozenset({1549})
+        assert report.undeclared == frozenset({9999})
+
+    def test_the_real_defect_axis_is_not_in_the_stopping_condition(self) -> None:
+        """`will_close - declared` - GitHub closes something the block never mentions - is
+        the defect core#1541 exists to catch. No amount of waiting may hide it.
+
+        Driven with the oracle naming an UNDECLARED issue from the first look: the poll stops
+        immediately (every declared ref is linked) and the finding survives.
+        """
+        fetch, calls = self._fetch_sequence([{1548, 1549, 4242}])
+        facts, waited = check.await_reparse(
+            "o/n", 1, wait_seconds=300, poll_seconds=15, fetch=fetch, sleep=lambda _s: None
+        )
+        assert calls["n"] == 1, "declared is fully linked, so there is nothing to wait for"
+        _d, _b, body, will_close = facts
+        report = check.compare(
+            "o/n", 1, body, will_close, "master", "master", reparse_exhausted=waited.exhausted
+        )
+        assert report.verdict == "FAIL"
+        assert report.undeclared == frozenset({4242})
+
+    def test_disabling_the_wait_restores_the_old_fail(self) -> None:
+        """`--wait-seconds 0` must not convert a real finding into an unmeasurable.
+
+        `reparse_exhausted` means *I waited and learned nothing*. A caller that never waited
+        has established nothing of the kind, so the old verdict stands - otherwise opting out
+        of the wait would silently downgrade every mangled block to exit 2.
+        """
+        report = check.compare(
+            "o/n", 1, self.BLOCK, frozenset(), "master", "master", reparse_exhausted=False
+        )
+        assert report.verdict == "FAIL"
+
+    def test_an_unreadable_subject_stops_the_poll_rather_than_retrying_it(self) -> None:
+        """A failed lookup is not a pending reparse. Folding the two would spend the whole
+        window re-asking a question that already errored."""
+        facts, waited = check.await_reparse(
+            "o/n",
+            1,
+            wait_seconds=300,
+            poll_seconds=15,
+            fetch=lambda _r, _p: None,
+            sleep=lambda _s: None,
+        )
+        assert facts is None
+        assert waited.looks == 1
+
+    def test_the_refusal_names_the_mechanism_and_refuses_the_wrong_remedy(self) -> None:
+        """The pre-fix message told the promoter to re-run the generator - which had been
+        right all along. A diagnosis that sends you to repair the wrong thing is worse than
+        none, at the one moment somebody is deciding whether to trust the closure set.
+        """
+        text = check.render(
+            check.compare(
+                "o/n", 1, self.BLOCK, frozenset(), "master", "master", reparse_exhausted=True
+            )
+        )
+        assert "NEVER ANSWERED" in text
+        assert "Do NOT re-run the generator" in text
+        assert "closingIssuesReferences" in text
+
+    def test_the_workflow_actually_passes_a_wait(self) -> None:
+        """A fix nothing invokes is this bug one level up and looks identical to a fix."""
+        runs = " ".join(str(s.get("run", "")) for s in job_steps("refs"))
+        assert "check_promotion_closing_refs.py" in runs
+        assert "--wait-seconds" in runs, (
+            "the script grew a wait and the workflow still calls it without one, so "
+            "production keeps the pre-fix behaviour while the tests stay green"
+        )

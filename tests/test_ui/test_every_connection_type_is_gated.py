@@ -4,26 +4,35 @@ core#1547 AC5. `_validate_connection_form` (`ui/state/connection_state.py`) is t
 the connection save path: `save_connection` calls it and returns on its message, with nothing else
 between the form and `ConnectionService`. It is a flat `if / elif` chain over `conn_type` with **no
 `else`**, and its last statement is `return ""` — *valid*. So a type with no branch is saved with
-every type-specific field blank, and **17 of 37 members have a branch**.
+every type-specific field blank, and **17 of 37 members had one** when this was filed.
 
 That is a user-visible defect rather than a tidiness one: 14 of the 20 ungated types already print a
 `*` and announce `required` to assistive technology, and then save the field empty. The failure
 surfaces at connect time — `connection_service.py` builds `databricks://token:{token}@{host}` and
 `duckdb:///{path}` — by which point the user has left the form that caused it.
 
-## Why this ships as a ratchet rather than a green
+## It shipped as a ratchet first, and the ledger is now empty
 
-Adding the 20 branches is not a one-line change per type: `_validate_form` passes **13** named
+Adding the 20 branches was not a one-line change per type: `_validate_form` passed **13** named
 kwargs, and `api_key`, `token`, `http_path`, `catalog`, `owner`, `repo`, `bootstrap_servers`,
-`topics` and the rest **are not parameters of the gate at all**, so each field has to reach the
-validator first. Holding a guard back until that is done leaves the *mechanism* unwatched for
-however long it takes, and the mechanism is what keeps producing new instances — a connector
-added next year joins the ungated population in silence.
+`topics` and the rest **were not parameters of the gate at all**, so each field had to reach the
+validator first. Holding a guard back until that was done would have left the *mechanism* unwatched
+for however long it took, and the mechanism is what keeps producing new instances — a connector
+added next year joins the ungated population in silence. So AC5 shipped first, as a ratchet.
 
-So :data:`UNGATED_TODAY` records the population and the check forbids it from **growing**;
-:meth:`TestTheLedgerDoesNotOutliveTheDefect.test_a_gated_type_is_not_listed_as_ungated` forbids it
-from rotting, so an entry must be deleted the moment its branch lands. Same shape as
-`tests/test_ui/test_connection_config_roundtrip.py`'s `_DROPPED_ON_SAVE`, deliberately.
+🟢 **AC1 landed 2026-09-25**: `_REQUIRED_FORM_FIELDS` in `connection_state.py` gives the 19 a
+table-driven tail after the existing chain, and the gate gained the 19 missing parameters.
+:data:`UNGATED_TODAY` is now **empty** and :data:`GATED_ELSEWHERE_BY_DESIGN` holds the one member
+(`openapi`) that is refused elsewhere on purpose.
+
+⚠️ **The counts above are the figures AS FILED and are deliberately past-tense.** A live count in a
+comment goes stale inside a day — measured twice on this codebase — so the numbers that must be
+current are asserted, not written: see `TestTheExtractorCanSee` and
+`test_the_debt_ledger_is_empty`.
+
+⚠️ **The extractor resolves BOTH `_DB_TYPES` and `_REQUIRED_FORM_FIELDS` by importing them**, so
+neither the seven-member set nor the 19-row table can drift out of this test's view. A walker that
+only read literals would report all 19 as still ungated — red on the change that fixes the defect.
 
 ## How the population is derived, because the obvious method cannot see this
 
@@ -35,8 +44,6 @@ first and concluded *"databricks and duckdb"*, using `stripe` as a control when 
 instance; the set difference returned 20. A reading of a list is not an enumeration of it, and
 the error ran in the flattering direction.
 
-⚠️ The extractor resolves `_DB_TYPES` by *importing* it rather than by parsing its literal, so the
-seven-member set cannot drift out of this test's view.
 """
 
 from __future__ import annotations
@@ -49,45 +56,35 @@ from datanika.ui.state import connection_state as cs
 
 #: Connection types `_validate_connection_form` does not gate, measured 2026-09-25 by set
 #: difference.
-#: **A debt ledger with an issue number, not a parking space** — every entry is a form that prints
+#: **A debt ledger with an issue number, not a parking space** — every entry was a form that prints
 #: `*`, announces `required`, and saves the field empty (core#1547).
-UNGATED_TODAY = frozenset(
-    {
-        "airtable",
-        "asana",
-        "databricks",
-        "duckdb",
-        "facebook_ads",
-        "freshdesk",
-        "github",
-        "google_ads",
-        "google_analytics",
-        "hubspot",
-        "jira",
-        "kafka",
-        "notion",
-        "openapi",
-        "pipedrive",
-        "salesforce",
-        "shopify",
-        "slack",
-        "stripe",
-        "zendesk",
-    }
-)
+#:
+#: 🟢 **EMPTY since 2026-09-25 (core#1547 AC1).** All 19 gained a branch via the table-driven tail
+#: `_REQUIRED_FORM_FIELDS`; the twentieth, `openapi`, was never debt and moved to
+#: :data:`GATED_ELSEWHERE_BY_DESIGN` below.
+#:
+#: ⚠️ **Keep this set and keep it empty — do not delete the mechanism with the debt.** Its job was
+#: never the list: `test_no_new_connection_type_is_left_ungated` is what stops a connector added
+#: next year from rejoining the population in silence, and an empty ledger makes that check
+#: *stricter*, not redundant (`WORKFLOW_RULES` §5a — repoint a guard at the invariant, never delete
+#: it because today's instance is gone).
+UNGATED_TODAY: frozenset[str] = frozenset()
 
-#: ⚠️ `openapi` is in the ledger above and is the one member whose correct end state may be *no*
-#: branch at all. Its Base URL is filled from the spec's `servers` entry and is honestly unmarked
+#: Types that legitimately have no branch in `_validate_connection_form`, with the refusal that
+#: covers them instead. **Not an exemption list to grow** — an entry needs a named alternative gate.
+#:
+#: `openapi`'s Base URL is filled from the spec's `servers` entry and is honestly unmarked
 #: (SPEC_FIELD_REQUIREDNESS §2.7), and `_build_config` **already refuses** a spec that yields no
 #: usable base URL — measured 2026-09-25: no `servers` + blank Base URL raises
 #: `UserFacingError("No base URL found in the spec — set the Base URL field")`, while a spec WITH
 #: `servers` and a blank Base URL saves and is filled. `UserFacingError` subclasses `ValueError`, so
-#: `save_connection`'s handler renders it.
+#: `save_connection`'s handler renders it. It also refuses an empty spec, a relative server URL, and
+#: a spec yielding no loadable endpoint.
 #:
-#: 🚨 So do **not** discharge `openapi` by adding `base_url` to the gate: that breaks the
-#: fill-from-the-spec path §2.7 ruled correct. It is listed here because its *other* fields are
-#: ungated, not because its Base URL needs gating. Recorded on core#1547.
-OPENAPI_IS_A_SPECIAL_CASE = "openapi"
+#: 🚨 So do **not** discharge `openapi` by adding `base_url` to `_REQUIRED_FORM_FIELDS`: that breaks
+#: the fill-from-the-spec path §2.7 ruled correct (core#1547 AC4, measured and recorded on the
+#: issue). It is here because it has no *other* required field, not because its Base URL is ungated.
+GATED_ELSEWHERE_BY_DESIGN = frozenset({"openapi"})
 
 
 def _gated_types() -> set[str]:
@@ -114,6 +111,14 @@ def _gated_types() -> set[str]:
         elif isinstance(node, ast.Name) and node.id == "_DB_TYPES":
             # Imported rather than parsed, so the seven-member set cannot drift out of view.
             out |= set(cs._DB_TYPES)
+        elif isinstance(node, ast.Name) and node.id == "_REQUIRED_FORM_FIELDS":
+            # core#1547 AC1's table-driven tail, resolved by IMPORT for the same reason as
+            # `_DB_TYPES` above. 🚨 Without this the extractor reads the tail's `elif conn_type in
+            # _REQUIRED_FORM_FIELDS` as a comparison against an opaque Name, finds no literals, and
+            # reports all 19 of those types as still ungated — a guard that would go red on the
+            # change that fixes the defect it watches (`WORKFLOW_RULES` §5a, and the reason the
+            # extractor resolves names at all).
+            out |= set(cs._REQUIRED_FORM_FIELDS)
         return out
 
     def walk(body) -> None:
@@ -153,25 +158,59 @@ class TestTheExtractorCanSee:
         )
 
 
+#: Every member that is allowed to have no branch, for either reason.
+EXCUSED = UNGATED_TODAY | GATED_ELSEWHERE_BY_DESIGN
+
+
 class TestTheUngatedPopulationCannotGrow:
     def test_no_new_connection_type_is_left_ungated(self):
-        """A type added without a branch joins the defect silently. This is where it stops."""
+        """A type added without a branch joins the defect silently. This is where it stops.
+
+        🔑 With `UNGATED_TODAY` now empty this is the whole guard rather than a ratchet: any type
+        without a branch, other than `openapi`, fails here.
+        """
         ungated = MEMBERS - GATED
-        new = ungated - UNGATED_TODAY
+        new = ungated - EXCUSED
         assert not new, (
             f"{sorted(new)} have no branch in `_validate_connection_form`, so the form saves them "
             "with every type-specific field blank — while most of them print `*` and announce "
-            "`required`. Add a branch (and add the fields it checks as PARAMETERS of the gate; "
-            "`_validate_form` passes only 13 today). Do not add them to UNGATED_TODAY instead: "
-            "that ledger is core#1547's debt, not a place to park new debt."
+            "`required`. Add a row to `_REQUIRED_FORM_FIELDS` (and add any field it names as a "
+            "PARAMETER of the gate, passed by `_validate_form`). Do not add them to UNGATED_TODAY "
+            "instead: that ledger is core#1547's debt, it is empty, and it is not a place to park "
+            "new debt."
         )
 
     def test_the_ledger_is_exactly_the_ungated_set(self):
         """Two-way. Listing a type that IS gated would excuse a defect that no longer exists, and
         `test_a_gated_type_is_not_listed_as_ungated` below names which."""
-        assert MEMBERS - GATED == UNGATED_TODAY, (
-            f"ungated but unlisted: {sorted((MEMBERS - GATED) - UNGATED_TODAY)}\n"
-            f"listed but gated:    {sorted(UNGATED_TODAY - (MEMBERS - GATED))}"
+        assert MEMBERS - GATED == EXCUSED, (
+            f"ungated but unlisted: {sorted((MEMBERS - GATED) - EXCUSED)}\n"
+            f"listed but gated:    {sorted(EXCUSED - (MEMBERS - GATED))}"
+        )
+
+    def test_the_debt_ledger_is_empty(self):
+        """core#1547 AC1 is discharged, and this is what says so in one line.
+
+        ⚠️ If a future change needs to re-open the ledger, that is a decision to record on an
+        issue — not a quiet re-population. The message here is the place it will be noticed.
+        """
+        assert not UNGATED_TODAY, (
+            f"{sorted(UNGATED_TODAY)} are parked as ungated debt again. Every connection type "
+            "except `openapi` has had a gate since core#1547; re-opening this ledger needs an "
+            "issue, not an entry."
+        )
+
+    def test_the_by_design_exemption_has_not_grown(self):
+        """The exemption set is the one remaining way to be ungated and stay green.
+
+        An entry must name an alternative refusal, which is a thing a reviewer has to check by
+        hand — so the set is pinned to exactly what was ruled, and adding to it goes red here.
+        """
+        assert sorted(GATED_ELSEWHERE_BY_DESIGN) == ["openapi"], (
+            f"{sorted(GATED_ELSEWHERE_BY_DESIGN)} claim to be gated somewhere other than "
+            "`_validate_connection_form`. Only `openapi` has been ruled so (AC4, §2.7). Adding a "
+            "type here exempts it from the only gate on the save path — name the refusal that "
+            "covers it, on an issue, first."
         )
 
 
@@ -190,7 +229,7 @@ class TestTheLedgerDoesNotOutliveTheDefect:
         """A typo here silently excuses nothing at all, which is worse than excusing the wrong
         thing: the misspelt entry never matches, so the type it was meant to cover stays unlisted
         and `test_no_new_connection_type_is_left_ungated` fails for a reason nobody can find."""
-        unknown = sorted(UNGATED_TODAY - MEMBERS)
+        unknown = sorted(EXCUSED - MEMBERS)
         assert not unknown, f"{unknown} are not ConnectionType members"
 
     def test_the_chain_still_has_no_final_else(self):

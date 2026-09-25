@@ -276,6 +276,79 @@ def _fill_openapi_auth(scheme: dict, token: str) -> dict:
     return {"type": "bearer", "token": token}
 
 
+#: ``conn_type`` -> ((gate parameter, the label the FORM shows for that field), ...)
+#:
+#: core#1547 AC1. The 17 types with a hand-written branch below are deliberately **absent**: this
+#: table is consulted only when no branch matched, so nothing about them changes.
+#:
+#: 🔑 **The invariant is "the gate refuses exactly what the form marks required."** The rows were
+#: not read off the schemas or hand-listed — they were **rendered**: each connector's fields
+#: component was built and every ``cfg-*`` input carrying ``required:true`` enumerated, with the
+#: label key it is drawn under. ``tests/test_ui/test_the_gate_refuses_what_the_form_marks.py``
+#: re-derives that population and requires it to equal this table, in both directions, so a field
+#: that gains or loses its marker cannot drift away from the gate.
+#:
+#: ⚠️ **The label is stored per (type, field), not per field name, because the same field is drawn
+#: under different labels.** ``api_key`` is "API Key" for eight connectors and **"Access Token"**
+#: for ``facebook_ads``, ``github`` and ``salesforce`` — a gate that said "API Key is required"
+#: there would name a field the user cannot find.
+#:
+#: 🚨 **``openapi`` is absent on purpose and must stay absent** (AC4, SPEC_FIELD_REQUIREDNESS
+#: §2.7). Its Base URL is filled from the spec's ``servers`` entry, so it is honestly unmarked, and
+#: ``_build_config`` **already refuses** a spec that yields no usable base URL. Adding ``base_url``
+#: here would break the spec-with-``servers``-and-blank-field row that §2.7 rules correct.
+#:
+#: ⚠️ **``CONFIG_SCHEMAS[...]["required"]`` is NOT the oracle for this table and disagrees with it
+#: for four types** (measured 2026-09-25): it requires ``jira.server_url``, ``shopify.shop_url``,
+#: ``slack.token`` and salesforce's five-field OAuth set — key names this form never collects. It
+#: is a separate, older contract consumed by ``openapi_inline`` and the credential-key derivation,
+#: and reconciling the two is not this issue. Gate on the **form** field.
+_REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
+    "airtable": (("api_key", "API Key"), ("base_id", "Base ID")),
+    "asana": (("api_key", "API Key"),),
+    # `catalog` is the one field of the five that had neither a marker nor an attribute, so it was
+    # invisible to both obvious sweeps (AC3). It is schema-required, and core#1547 AC2 gives it the
+    # visible marker in the same change as this gate.
+    "databricks": (
+        ("host", "Host"),
+        ("http_path", "HTTP Path"),
+        ("token", "Access Token"),
+        ("catalog", "Catalog"),
+    ),
+    "duckdb": (("path", "Database Path"),),
+    "facebook_ads": (("api_key", "Access Token"), ("account_id", "Ad Account ID")),
+    "freshdesk": (("domain", "Freshdesk Domain"), ("api_key", "API Key")),
+    "github": (
+        ("api_key", "Access Token"),
+        ("owner", "Owner / Organization"),
+        ("repo", "Repository"),
+    ),
+    "google_ads": (
+        ("customer_id", "Customer ID"),
+        ("developer_token", "Developer token"),
+        ("client_id", "OAuth client ID"),
+        ("client_secret", "OAuth client secret"),
+        ("refresh_token", "OAuth refresh token"),
+    ),
+    # ⚠️ `property_id` only. The form marks the service-account JSON **optional** while
+    # `CONFIG_SCHEMAS` requires it — a real disagreement, recorded on core#1547, and NOT resolved
+    # by gating a field the user is shown no marker for. That would be §1c's contradiction pointed
+    # the other way: refused on save, with nothing on screen saying so.
+    "google_analytics": (("property_id", "Property ID"),),
+    "hubspot": (("api_key", "API Key"),),
+    # Same shape as google_analytics: `email` is marked optional here and required by the schema.
+    "jira": (("domain", "Jira Domain"), ("api_key", "API Key")),
+    "kafka": (("bootstrap_servers", "Bootstrap Servers"), ("topics", "Topics")),
+    "notion": (("api_key", "API Key"),),
+    "pipedrive": (("api_key", "API Key"),),
+    "salesforce": (("api_key", "Access Token"), ("instance_url", "Instance URL")),
+    "shopify": (("api_key", "API Key"), ("store", "Store Name")),
+    "slack": (("api_key", "API Key"),),
+    "stripe": (("api_key", "API Key"),),
+    "zendesk": (("domain", "Subdomain"), ("api_key", "API Key")),
+}
+
+
 def _validate_connection_form(
     name: str,
     conn_type: str,
@@ -294,6 +367,27 @@ def _validate_connection_form(
     uploaded_file_id: int = 0,
     spreadsheet_url: str = "",
     service_account_json: str = "",
+    # core#1547 AC1. These 19 were not parameters of the gate at all, which is why "add a branch"
+    # was never a one-line change: the field could not reach the validator.
+    api_key: str = "",
+    token: str = "",
+    http_path: str = "",
+    catalog: str = "",
+    owner: str = "",
+    repo: str = "",
+    instance_url: str = "",
+    store: str = "",
+    domain: str = "",
+    property_id: str = "",
+    customer_id: str = "",
+    developer_token: str = "",
+    client_id: str = "",
+    client_secret: str = "",
+    refresh_token: str = "",
+    account_id: str = "",
+    base_id: str = "",
+    bootstrap_servers: str = "",
+    topics: str = "",
 ) -> str:
     """Return an error message if required fields are missing, or '' if valid."""
     if not name.strip():
@@ -350,6 +444,40 @@ def _validate_connection_form(
     elif conn_type == "rest_api":
         if not base_url.strip():
             return "Base URL is required"
+    elif conn_type in _REQUIRED_FORM_FIELDS:
+        # core#1547 AC1 — the table-driven tail. It runs only when no branch above matched, so the
+        # 17 hand-written branches are untouched by construction.
+        #
+        # ⚠️ Still an `elif`, deliberately: the chain must keep having **no final `else`**. An
+        # `else` that refused unknown types would close this defect class by a different route and
+        # invalidate the premise `tests/test_ui/test_every_connection_type_is_gated.py` rests on,
+        # so that file asserts the absence and would go red here rather than quietly passing.
+        values = {
+            "api_key": api_key,
+            "token": token,
+            "http_path": http_path,
+            "catalog": catalog,
+            "owner": owner,
+            "repo": repo,
+            "instance_url": instance_url,
+            "store": store,
+            "domain": domain,
+            "property_id": property_id,
+            "customer_id": customer_id,
+            "developer_token": developer_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "account_id": account_id,
+            "base_id": base_id,
+            "bootstrap_servers": bootstrap_servers,
+            "topics": topics,
+            "host": host,
+            "path": path,
+        }
+        for field, label in _REQUIRED_FORM_FIELDS[conn_type]:
+            if not values[field].strip():
+                return f"{label} is required"
     return ""
 
 
@@ -887,6 +1015,29 @@ class ConnectionState(BaseState):
             uploaded_file_id=self.form_uploaded_file_id,
             spreadsheet_url=self.form_spreadsheet_url,
             service_account_json=self.form_service_account_json,
+            # core#1547 AC1. A field absent here reaches the gate as "" and the type is refused on
+            # every save — so `test_the_gate_refuses_what_the_form_marks` drives the REAL state
+            # object rather than calling the pure function with hand-built kwargs, which would pass
+            # while this list was short.
+            api_key=self.form_api_key,
+            token=self.form_token,
+            http_path=self.form_http_path,
+            catalog=self.form_catalog,
+            owner=self.form_owner,
+            repo=self.form_repo,
+            instance_url=self.form_instance_url,
+            store=self.form_store,
+            domain=self.form_domain,
+            property_id=self.form_property_id,
+            customer_id=self.form_customer_id,
+            developer_token=self.form_developer_token,
+            client_id=self.form_client_id,
+            client_secret=self.form_client_secret,
+            refresh_token=self.form_refresh_token,
+            account_id=self.form_account_id,
+            base_id=self.form_base_id,
+            bootstrap_servers=self.form_bootstrap_servers,
+            topics=self.form_topics,
         )
 
     def _build_config(self) -> dict:

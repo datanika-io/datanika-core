@@ -126,6 +126,11 @@ _SLICE = [
     (databricks_fields, "host"),
     (databricks_fields, "http_path"),
     (databricks_fields, "token"),
+    # core#1547 AC2/AC3. Catalog is schema-required and showed neither a marker nor the attribute,
+    # so it was absent from BOTH obvious sweeps while the four that needed nothing were in both. It
+    # joins this population by construction: the fix is a `labelled_config_input`, and
+    # `TestTheSliceCoversEveryDerivedSite` requires every derived site to appear here.
+    (databricks_fields, "catalog"),
     (sqlite_fields, "path"),
     (duckdb_fields, "path"),
     # core#1574's new renderer. It is not a core#1311 slice — asana was moved off the shared

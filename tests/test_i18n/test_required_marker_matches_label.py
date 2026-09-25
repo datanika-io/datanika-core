@@ -204,6 +204,13 @@ class TestTheApiKeySplit:
         "zendesk_fields",
         "airtable_fields",
         "freshdesk_fields",
+        # core#1574 moved asana off `saas_api_key_fields` (it needed a workspace field). This guard
+        # caught the new builder immediately and demanded the decision, which is the whole point of
+        # it — so here is the decision rather than an inherited string: **required.**
+        # `CONFIG_SCHEMAS["asana"]["required"] == ["api_key"]` and `DltRunnerService` raises
+        # "Asana source requires 'api_key'", so there is no unauthenticated Asana use case the way
+        # there is for `rest_api`/`openapi`.
+        "asana_fields",
     }
     OPTIONAL_BUILDERS = {"rest_api_fields", "openapi_fields"}
 

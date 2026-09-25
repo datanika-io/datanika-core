@@ -197,6 +197,8 @@
   "connections.endpoint_url": "رابط نقطة النهاية (اختياري)",
   "connections.base_url": "الرابط الأساسي",
   "connections.api_key": "مفتاح API",
+  "connections.workspace": "معرّف مساحة العمل",
+  "connections.ph_asana_workspace": "1210548032693177",
   "connections.api_key_optional": "مفتاح API (اختياري)",
   "connections.extra_headers": "ترويسات إضافية (اختياري، JSON)",
   "connections.ph_name": "اسم الاتصال",

@@ -39,6 +39,7 @@ from datanika.i18n import SUPPORTED_LOCALES, get_translations
 from datanika.models.connection import ConnectionType
 from datanika.services.connection_schemas import CONFIG_SCHEMAS
 from datanika.ui.components.connection_config_fields import (
+    asana_fields,
     bigquery_fields,
     databricks_fields,
     db_fields,
@@ -86,15 +87,22 @@ _KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
 #: agreeing, and says nothing about whether the save refuses. Do not read this file as covering
 #: core#1547.
 #:
-#: ⚠️ **TWO members carry ``(False, False)``** — ``(openapi_fields, "base_url")`` and
-#: ``(mongodb_fields, "port")``. Slice 3 adds seven ``(True, True)`` members, so AC3's
-#: both-directions property rests on exactly those two.
+#: ⚠️ **THREE members carry ``(False, False)``** — ``(openapi_fields, "base_url")``,
+#: ``(mongodb_fields, "port")`` and 🆕 ``(asana_fields, "workspace")``. Everything else is
+#: ``(True, True)``, so AC3's both-directions property rests on exactly those three.
 #:
-#: 🔑 Measured by mutation, because the obvious reading is wrong in a way that matters: dropping
-#: EITHER one leaves ``test_the_slice_exercises_both_directions`` **green**, and is caught only by
-#: :class:`TestTheSliceCoversEveryDerivedSite`. Only dropping both reds it. So neither member is
-#: redundant and neither is sufficient: **either deletion on its own is invisible to AC3's test**,
-#: and it is the pair that stands between this slice and an all-required population — which is
+#: 🔴 **This said TWO until 2026-09-25 and the count is load-bearing, not decoration.** core#1574
+#: added the third the same day slice 4 landed, and the two changes crossed in a rebase. A count
+#: that quietly goes stale in a comment is how the a11y ratchet came to stand for 80 fields while
+#: reporting 2 (``WORKFLOW_RULES`` §5a).
+#:
+#: 🔑 Measured by mutation while there were two: dropping EITHER one left
+#: ``test_the_slice_exercises_both_directions`` **green**, caught only by
+#: :class:`TestTheSliceCoversEveryDerivedSite`; only dropping both redded it. **With three, the
+#: generalisation is derived rather than re-measured** — the assertion is
+#: ``(False, False) in states``, so *any proper subset* can be deleted with the test still green,
+#: and it reds only when the last one goes. So no member is redundant and none is sufficient, and
+#: what they collectively stand between is this file and an all-required population — which is
 #: precisely the population a marker-always mechanism passes.
 _SLICE = [
     (openapi_fields, "base_url"),
@@ -120,6 +128,16 @@ _SLICE = [
     (databricks_fields, "token"),
     (sqlite_fields, "path"),
     (duckdb_fields, "path"),
+    # core#1574's new renderer. It is not a core#1311 slice — asana was moved off the shared
+    # `saas_api_key_fields()` because it needed a second field — but a NEW call site uses the
+    # derived helper rather than hand-writing a label, so it joins this population by construction.
+    #
+    # 🔑 The pair is the cleanest both-directions witness in the file: `api_key` is required in the
+    # form AND the schema, `workspace` is optional in both. Measured against the live API —
+    # `GET /projects` with no workspace returns 200, so a blank workspace is a working
+    # configuration, not a field somebody forgot to gate.
+    (asana_fields, "api_key"),
+    (asana_fields, "workspace"),
 ]
 
 
@@ -463,6 +481,11 @@ class TestTheFormAndTheSchema:
         ("databricks", databricks_fields, "token"),
         ("sqlite", sqlite_fields, "path"),
         ("duckdb", duckdb_fields, "path"),
+        # core#1574. `workspace` is optional on BOTH sides, so this is the ratchet's only pair
+        # agreeing on *optional* — every other agreeing member agrees on required. Without one, a
+        # ratchet that silently read every field as required would still show agreement.
+        ("asana", asana_fields, "api_key"),
+        ("asana", asana_fields, "workspace"),
     )
 
     #: Connection types the ratchet CANNOT compare, because they have no ``CONFIG_SCHEMAS`` entry.

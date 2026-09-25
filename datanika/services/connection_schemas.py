@@ -260,8 +260,17 @@ CONFIG_SCHEMAS: dict[str, dict] = {
         },
         required=["domain", "api_key"],
     ),
+    # `workspace` narrows which projects load, and through them which tasks (core#1574). Optional:
+    # `GET /projects` with no workspace is a measured 200, so the form must not refuse a blank for a
+    # value it does not need. ⚠️ It is NOT a `/tasks` parameter — `GET /tasks?workspace=<gid>` is a
+    # 400 unless `assignee` accompanies it; see `asana_default_resources`.
     "asana": _schema(
-        {"api_key": _str("Asana personal access token", sensitive=True)},
+        {
+            "api_key": _str("Asana personal access token", sensitive=True),
+            "workspace": _str(
+                "Workspace GID — optional. Blank loads every project the token can reach."
+            ),
+        },
         required=["api_key"],
     ),
     "google_analytics": _schema(

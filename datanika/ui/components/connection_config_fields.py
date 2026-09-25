@@ -519,6 +519,42 @@ def github_fields() -> rx.Component:
     )
 
 
+def asana_fields() -> rx.Component:
+    """Fields for asana — the access token, plus the workspace that scopes what loads (core#1574).
+
+    Split out of the shared ``saas_api_key_fields()`` because Asana needs a second field and the
+    others sharing that renderer do not. The reason it needs one is measured, not stylistic: Asana's
+    ``GET /tasks`` is invalid without a scope, so the connector's own headline table could not load,
+    and the only scope a user can supply from a form is which workspace's projects to walk.
+
+    ⚠️ **Workspace is OPTIONAL and carries no marker** (`SPEC_FIELD_REQUIREDNESS` §2.3 — mark
+    required, never optional). ``GET /projects`` with no workspace is a measured 200, so a blank
+    value is a working configuration: every project the token can reach. That is also why
+    ``_validate_connection_form`` is not asked to refuse a blank here.
+    """
+    return rx.vstack(
+        labelled_config_input(
+            _t["connections.api_key"],
+            "api_key",
+            required=True,
+            secret=True,
+            placeholder=_t["connections.ph_api_key"],
+            value=ConnectionState.form_api_key,
+            on_change=ConnectionState.set_form_api_key,
+        ),
+        labelled_config_input(
+            _t["connections.workspace"],
+            "workspace",
+            required=False,
+            placeholder=_t["connections.ph_asana_workspace"],
+            value=ConnectionState.form_workspace,
+            on_change=ConnectionState.set_form_workspace,
+        ),
+        spacing="2",
+        width="100%",
+    )
+
+
 def databricks_fields() -> rx.Component:
     """Fields for databricks."""
     return rx.vstack(
@@ -1278,10 +1314,12 @@ def type_fields() -> rx.Component:
         rx.cond(
             (ConnectionState.form_type == "hubspot")
             | (ConnectionState.form_type == "slack")
-            | (ConnectionState.form_type == "pipedrive")
-            | (ConnectionState.form_type == "asana"),
+            | (ConnectionState.form_type == "pipedrive"),
             saas_api_key_fields(),
         ),
+        # core#1574 moved asana off the shared renderer: it needs a workspace field, and the other
+        # three sharing `saas_api_key_fields()` do not.
+        rx.cond(ConnectionState.form_type == "asana", asana_fields()),
         rx.cond(ConnectionState.form_type == "salesforce", salesforce_fields()),
         rx.cond(ConnectionState.form_type == "shopify", shopify_fields()),
         rx.cond(ConnectionState.form_type == "jira", jira_fields()),

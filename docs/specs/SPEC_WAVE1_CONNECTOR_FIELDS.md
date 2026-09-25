@@ -15,7 +15,32 @@
 | **Oracle** | `Connection Name`, `Host *`, `Port *` (auto-`1521`), `User`, `Password`, `Database *` | Routed through the generic `db_fields()` (grouped with postgres/mysql). **No `service_name` field** — the **`Database`** field is used as the Oracle **SID**. | ⚠️ Real limitation — service-name DBs (PDB/RAC/Autonomous) can't connect (`ORA-12505`). Already tracked as **core#329**. |
 | **Pipedrive** | `Connection Name`, `API Key (optional) *` | Routed through shared `saas_api_key_fields()`. **No `company_domain` field**; label is `API Key`, not `API token`. | ✅ Acceptable — personal token works on the global `api.pipedrive.com` host; company domain not required. |
 | **Freshdesk** | `Connection Name`, `Freshdesk Domain *`, `API Key (optional) *` | Dedicated `freshdesk_fields()`. Label is **`Freshdesk Domain`** (not "subdomain"); `api_key` label is `API Key`. | ✅ Matches intent (domain + key). |
-| **Asana** | `Connection Name`, `API Key (optional) *` | Routed through shared `saas_api_key_fields()`. **No `workspace` field**; label is `API Key`, not `Access token`. | ✅ Acceptable — omitting workspace means "sync all accessible workspaces" (the field was optional anyway). |
+| **Asana** | 🆕 `Connection Name`, `API Key *`, `Workspace GID` | 🆕 **Dedicated `asana_fields()` since [core#1574]** (2026-09-25); it was routed through shared `saas_api_key_fields()` with no `workspace` field. Label is `API Key`, not `Access token`. | ✅ Now matches §4's field contract. |
+
+> 🔴 **THE ASANA VERDICT IN THIS TABLE WAS WRONG FOR TEN WEEKS, AND §4 BELOW ALREADY SAID WHY.**
+> It read: *"✅ Acceptable — omitting workspace means 'sync all accessible workspaces' (the field was
+> optional anyway)."* **Omitting it did not mean that.** With no scope, `GET /tasks` is a **400** —
+> measured against the live API 2026-09-25 — so the `tasks` resource **could never load at all**, on
+> a connector whose docs say *"sync Asana projects and tasks into your warehouse"*. Four of the five
+> resources returned 200, so a load either failed naming one table or **completed with four tables**,
+> and four tables arriving is not obviously wrong. Found by Product on the guide walk; fixed in
+> [core#1574].
+>
+> 🔑 **The defect was not a missing field, and this is the part worth carrying.** §4's *"Extraction
+> gotcha for Eng"* — two paragraphs down, written the same day as this table — states it exactly:
+> *"there is no 'all tasks in a workspace' endpoint … the extractor must fetch `projects` first, then
+> loop them."* **The spec named the mechanism; the shipped code took the minimal path; and the table
+> at the top of the spec then blessed the result.** A reader who trusted the verdict never reached
+> the paragraph that refuted it.
+>
+> ⚠️ **And the obvious repair would have shipped a second 400.** `GET /tasks?workspace=<gid>` is
+> *also* refused — *"Must specify exactly one of project, tag, section, user task list, or assignee +
+> workspace"*. So adding the `workspace` field this row calls missing, and putting it on `/tasks`,
+> fixes nothing. `workspace` scopes **`/projects`**; `tasks` resolves a project gid from that
+> resource. The discriminator, for anyone re-deriving it: **400 = Asana refused the request for
+> having no scope; 403 = the scope was accepted and only authorization failed.**
+>
+> [core#1574]: https://github.com/datanika-io/datanika-core/issues/1574
 
 **Other shipped facts** (verified in UI, corrected in the guides):
 - The **Test Connection** button renders for **every** connector type (it lives in the form action row, outside the type-specific fields). For the three HTTP-API sources it returns *"Test not applicable for this type."* — so the guides' original "no Test-connection button" claim was wrong; the *intent* (validated on first run) was right.
@@ -24,7 +49,15 @@
 - Submit button is **`Create Connection`**; a **`Use raw JSON config`** escape-hatch checkbox is available for advanced config.
 - Live code paths: `datanika/ui/components/connection_config_fields.py` (`type_fields()` routing) + `datanika/i18n/en.json` (`connections.*` labels), both on `origin/master`.
 
-**Follow-ups for Engineering to consider** (not blocking the docs): Oracle service-name support (core#329, open). Pipedrive `company_domain` and Asana `workspace` were intentionally dropped and are fine as-is; re-add only if a user needs host pinning / workspace scoping.
+**Follow-ups for Engineering to consider** (not blocking the docs): Oracle service-name support (core#329, open). Pipedrive `company_domain` was intentionally dropped and is fine as-is; re-add only if a user needs host pinning.
+
+> 🔴 **This sentence used to end *"and Asana `workspace` were intentionally dropped and are fine
+> as-is; re-add only if a user needs workspace scoping"*.** Nobody needed workspace *scoping* — the
+> connector needed a **scope**, which is a different thing wearing the same word, and without one its
+> headline table did not load. Shipped in [core#1574] 2026-09-25 as an **optional** field: a blank
+> workspace loads every project the token can reach (`GET /projects` unscoped is a measured 200), so
+> the field narrows rather than enables. The thing that enables `tasks` is the per-project
+> iteration, which needs no field at all.
 
 ## Conventions
 

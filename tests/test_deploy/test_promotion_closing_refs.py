@@ -417,7 +417,73 @@ class TestItIsWiredWhereItClaimsToBe:
         assert "--admin" in text
 
 
+class _NoSubprocess:
+    """Stands in for the `subprocess` module inside the checker, and refuses.
+
+    Installed on `check` itself rather than on the real `subprocess` module, so nothing
+    outside this file's own subject is affected.
+    """
+
+    @staticmethod
+    def run(*_args, **_kwargs):
+        raise AssertionError(
+            "the checker shelled out to the real `gh`. Every test in this class patches "
+            "`check.fetch_pr_facts`; if the real one still runs, the patch is not reaching "
+            "the code under test (core#1593) and the test is measuring the live API."
+        )
+
+
 class TestTheOracleIsAskedRatherThanModelled:
+    @pytest.fixture(autouse=True)
+    def _no_network(self, monkeypatch) -> None:
+        """🚨 The invariant this class had no way to state, and four of its five CLI-boundary
+        tests violated it silently (core#1593).
+
+        `await_reparse` took `fetch=fetch_pr_facts` as a DEFAULT ARGUMENT, which binds the
+        function object at definition time. `monkeypatch.setattr(check, "fetch_pr_facts", …)`
+        rebinds the module ATTRIBUTE, so it never reached the call, and `main` went to the
+        network on every one of these tests.
+
+        What that cost, measured on run 36137656373: in a CI job with no `GH_TOKEN` the real
+        lookup failed, `main` correctly returned 2, and
+
+        * `exits_1_on_a_real_disagreement` and `exits_0_on_the_false_positive_control` went
+          **red** -- the visible half;
+        * `a_failed_lookup_is_not_a_pass` and `exits_2_on_a_pr_the_oracle_cannot_see` stayed
+          **green while asserting exit 2 for a reason that was not theirs** -- the half that
+          would never have been noticed. The second of those is the CLI-boundary test for the
+          population check, so the population check had no CLI coverage at all.
+
+        Locally the same four passed *because* the live call succeeded, which is a green
+        attached to the wrong mechanism.
+
+        A unit test's verdict must not depend on a token, and this fixture is what makes that
+        structural instead of remembered.
+        """
+        monkeypatch.setattr(check, "subprocess", _NoSubprocess)
+
+    def test_a_patch_of_the_module_attribute_reaches_the_cli(self, monkeypatch) -> None:
+        """The seam must be resolved at CALL time. Asserts the PRESENCE of the right thing --
+        that the patched fetch was actually *called* -- rather than the absence of a network
+        call, which `_no_network` covers from the other side.
+
+        Red against the unfixed checker: the default-argument binding sends `main` to the real
+        `fetch_pr_facts`, `_NoSubprocess.run` fires, and `calls` stays empty.
+        """
+        calls: list[int] = []
+
+        def _fetch(repo: str, n: int):
+            calls.append(n)
+            return ("master", "master", "", frozenset())
+
+        monkeypatch.setattr(check, "fetch_pr_facts", _fetch)
+        assert check.main(["--repo", "datanika-io/datanika-core", "--pr", "1519"]) == 0
+        assert calls == [1519], (
+            "main() did not call the patched `check.fetch_pr_facts`. The injection point is a "
+            "default argument on `await_reparse`, bound at definition time; resolve it inside "
+            "the function body instead."
+        )
+
     def test_the_checker_contains_no_closing_keyword_grammar(self) -> None:
         """The point of the corrected design. A keyword list here would be a model of
         GitHub's parser, and a model is the one thing it cannot be used to check."""

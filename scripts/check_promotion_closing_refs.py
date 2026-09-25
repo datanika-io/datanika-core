@@ -391,7 +391,7 @@ def await_reparse(
     *,
     wait_seconds: float = REPARSE_WAIT_SECONDS,
     poll_seconds: float = REPARSE_POLL_SECONDS,
-    fetch=fetch_pr_facts,
+    fetch=None,
     sleep=time.sleep,
     now=time.monotonic,
 ) -> tuple[tuple[str, str, str, frozenset[int]] | None, Wait]:
@@ -415,6 +415,14 @@ def await_reparse(
     * When the block genuinely declares an issue GitHub will never link, this polls for the
       full window and then reports it. Slower, and still a finding.
     """
+    # 🚨 Resolved HERE and not in the signature, and this is a correctness property of the
+    # TESTS rather than of the check (core#1593). `fetch=fetch_pr_facts` as a default binds
+    # the function OBJECT at definition time, while `monkeypatch.setattr(module,
+    # "fetch_pr_facts", ...)` rebinds the module ATTRIBUTE -- so the patch never reached this
+    # call and all four CLI-boundary tests drove the real `gh`. In a token-less CI job two of
+    # them went red and two stayed GREEN asserting exit 2 for a reason that was not theirs.
+    # A default argument is not an injection seam; a call-time lookup is.
+    fetch = fetch_pr_facts if fetch is None else fetch
     deadline = now() + wait_seconds
     looks = 0
     started = now()

@@ -197,6 +197,8 @@
   "connections.endpoint_url": "URL del endpoint (opcional)",
   "connections.base_url": "URL base",
   "connections.api_key": "Clave API",
+  "connections.workspace": "GID del espacio de trabajo",
+  "connections.ph_asana_workspace": "1210548032693177",
   "connections.api_key_optional": "Clave API (opcional)",
   "connections.extra_headers": "Encabezados adicionales (opcional, JSON)",
   "connections.ph_name": "Nombre de conexión",

@@ -197,6 +197,8 @@
   "connections.endpoint_url": "URL эндпоинта (необязательно)",
   "connections.base_url": "Базовый URL",
   "connections.api_key": "API-ключ",
+  "connections.workspace": "GID рабочей области",
+  "connections.ph_asana_workspace": "1210548032693177",
   "connections.api_key_optional": "API-ключ (необязательно)",
   "connections.extra_headers": "Доп. заголовки (необязательно, JSON)",
   "connections.ph_name": "Название подключения",

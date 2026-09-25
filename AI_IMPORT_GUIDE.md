@@ -149,18 +149,34 @@ A file Datanika exports writes `"__REDACTED__"` instead; both are recognised. An
 
 **salesforce**
 ```json
-{"connection_type": "salesforce", "config": {"client_id": "CHANGE_ME", "client_secret": "CHANGE_ME", "username": "user@example.com", "password": "CHANGE_ME", "security_token": "CHANGE_ME"}}
+{"connection_type": "salesforce", "config": {"access_token": "CHANGE_ME", "instance_url": "https://yourorg.my.salesforce.com"}}
 ```
+<!-- Do NOT "correct" this back toward CONFIG_SCHEMAS["salesforce"], which declares client_id /
+     client_secret / username / password / security_token. Those five are read by nothing: the form
+     renders Access Token + Instance URL, and the runner requires exactly `access_token` (or `api_key`)
+     and `instance_url`, raising otherwise. Schema correction tracked on core#662 item 3. -->
 
 **shopify**
 ```json
-{"connection_type": "shopify", "config": {"shop_url": "my-store.myshopify.com", "access_token": "CHANGE_ME"}}
+{"connection_type": "shopify", "config": {"access_token": "CHANGE_ME", "store": "my-store"}}
 ```
+<!-- `store` is the SUBDOMAIN ONLY — both consumers interpolate it, as
+     `https://{store}.myshopify.com/`. The schema's `shop_url` ("my-store.myshopify.com") is read by
+     nothing, and pasting that value here yields `my-store.myshopify.com.myshopify.com`. -->
 
 **jira**
 ```json
-{"connection_type": "jira", "config": {"server_url": "https://mycompany.atlassian.net", "email": "user@example.com", "api_token": "CHANGE_ME"}}
+{"connection_type": "jira", "config": {"domain": "mycompany", "email": "user@example.com", "api_token": "CHANGE_ME"}}
 ```
+<!-- `domain` is the Atlassian SUBDOMAIN and is required; the schema's `server_url` is read by nothing.
+     `api_token` works because that runner accepts `api_key` or `api_token`. -->
+
+> ⚠️ **These payloads are verified against what `dlt_runner.py` reads per connector branch, not against
+> `CONFIG_SCHEMAS`.** The two disagree for 13 of 37 types (core#662), and the schema is the surface
+> `/api/v1/meta/connection-types` publishes — so a payload that matches the discovery document can still
+> build a connection that cannot run. **Only the four SaaS entries above plus `github` have been checked
+> this way** (`github` needed no change: its runner reads `access_token` *or* `api_key`). The rest of
+> this file's entries are unverified against vocabulary 3.
 
 **slack**
 ```json

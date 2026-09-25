@@ -212,9 +212,23 @@ class TestTheLookBackReachesThePreviousLook:
     def test_control_a_count_page_leaves_a_busy_days_earliest_pushes_unread(
         self, monkeypatch, capsys
     ) -> None:
-        """What the watchdog used to ask for, kept as the documented shape of the defect."""
+        """What the watchdog used to ask for, kept as the documented shape of the defect.
+
+        🔴 **Repointed 2026-09-25 (core#1567), WORKFLOW_RULES §5a.** This pinned the literal
+        ``20`` and went red on a correct change: count mode now drops the boundary tie group of a
+        FULL page, because which member of that group falls inside a ``per_page`` cut is not a
+        function of the reader's arguments. So a 40-run page over this 46-run day reads **19**
+        pushes rather than 20.
+        The **invariant** is what this control has always been for and it is unchanged: a count
+        page reads strictly fewer pushes than the day produced, while ``--since`` reads them all.
+        Asserting that first means the guard survives the next honest change to the arithmetic;
+        the exact figure is kept after it, because a silent jump to 23 would mean the page had
+        quietly stopped truncating.
+        """
         _code, out = _main(monkeypatch, capsys, FakeActions(BUSY_DAY), "--runs", "40")
-        assert "runs read      : 20 " in out, out
+        read = int(re.search(r"^runs read      : (\d+) ", out, re.M).group(1))
+        assert read < 23, f"a 40-run page cannot cover a 23-push day, yet it read {read}:\n{out}"
+        assert read == 19, f"40 runs = 20 pushes, less the cut boundary tie group; got {read}"
 
     def test_since_reads_every_push_since_the_previous_look(self, monkeypatch, capsys) -> None:
         _code, out = _main(monkeypatch, capsys, FakeActions(BUSY_DAY), "--since", _iso(T0))

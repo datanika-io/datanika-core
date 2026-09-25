@@ -85,6 +85,23 @@ class _DeadSession(requests.Session):
 
 
 class TestTheReportedDefect:
+    """⚠️ Scoped opt-in, not module-wide: only this class probes with the egress guard
+    live. The local-vendor classes below relax the guard on purpose, and a module-wide
+    stub would race that relaxation for who owns ``validate_egress_host``."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_dns(self, no_live_dns):
+        """Probing a SaaS type resolves its host, so this class did live DNS (core#1597).
+
+        It resolved twenty vendor hostnames per sweep. That made
+        ``test_a_probeable_type_actually_issues_a_request`` fail wherever a name did not
+        resolve — the probe returned a verdict without reaching the session, which is
+        the thing it asserts against — so the test's subject was the local resolver
+        rather than the probe. Stubbing resolution keeps the guard classifying and
+        leaves ``_DeadSession`` as the only thing that fails, which is the intent.
+        """
+        return no_live_dns
+
     def test_the_verdict_is_never_success_when_no_request_can_succeed(self):
         """The invariant: no green without evidence.
 

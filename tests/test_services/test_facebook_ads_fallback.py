@@ -32,6 +32,19 @@ import pytest
 from datanika.services.dlt_runner import DEFAULT_FACEBOOK_API_VERSION, DltRunnerService
 
 
+@pytest.fixture(autouse=True)
+def _stub_dns(no_live_dns):
+    """Every test here builds a source, and building one RESOLVES THE HOST (core#1597).
+
+    ``graph.facebook.com`` is the one host a dev machine here cannot resolve, so these
+    twelve tests were **permanently red locally and green in CI** — a stale green
+    pointed the other way. The fixture comes from ``conftest.py`` rather than being
+    copied into this module: a per-module copy is how core#1280's fix came to cover one
+    module out of four.
+    """
+    return no_live_dns
+
+
 @pytest.fixture
 def svc(tmp_path):
     return DltRunnerService(pipelines_dir=str(tmp_path))

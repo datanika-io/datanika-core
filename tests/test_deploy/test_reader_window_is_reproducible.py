@@ -165,9 +165,17 @@ class TestTheWindowMustBeReproducible:
     def test_the_refusal_names_both_windows_so_it_attributes_itself(
         self, monkeypatch, capsys
     ) -> None:
-        """The cause is NOT isolated, so the output has to carry the evidence for next time."""
+        """The cause is NOT isolated, so the output has to carry the evidence for next time.
+
+        🔑 **The first line of this test was added because MUTATION found it missing.** Without
+        it the assertions below pass against a comparator that always agrees: both looks' lines
+        and both fingerprints are printed either way, so the test named for *attributing a
+        refusal* was green when there was no refusal. A reader would not have found that; only
+        the always-agree mutant did. (`QA_RULES` §2, WORKFLOW_RULES §4's third door.)
+        """
         fake = FakeActions([_window(24, 6), _window(17, 6)])
         _, out = _run(monkeypatch, capsys, fake)
+        assert f"verdict        : {WINDOW_UNSTABLE}" in out, "no refusal to attribute"
         assert "2026-09-24" in out and "2026-09-17" in out
         fps = re.findall(r"fp=([0-9a-f]{12})", out)
         assert len(fps) == 2, "both looks must print a fingerprint, or they cannot be compared"

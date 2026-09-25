@@ -307,7 +307,11 @@ def create_connection(request, api_key, session):
         # core#896's shape again: a gate that cannot fire because something upstream
         # already answered.
         raise
-    except (ValueError, Exception) as exc:
+    # core#1569 AC3. Was `except (ValueError, Exception)`, which rendered `str(exc)` of ANY
+    # exception to the caller -- so a KeyError in a service became a 400 carrying text nobody
+    # wrote for a user. `UserFacingError` is the marker that exists for exactly this decision
+    # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
+    except UserFacingError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_connection(conn), status_code=201)
 
@@ -576,7 +580,11 @@ def create_upload(request, api_key, session):
         # into a 400 and the 403 carrying `required_role` would never be produced.
         # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
         raise
-    except (ValueError, Exception) as exc:
+    # core#1569 AC3. Was `except (ValueError, Exception)`, which rendered `str(exc)` of ANY
+    # exception to the caller -- so a KeyError in a service became a 400 carrying text nobody
+    # wrote for a user. `UserFacingError` is the marker that exists for exactly this decision
+    # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
+    except UserFacingError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_upload(upload), status_code=201)
 
@@ -743,7 +751,11 @@ def create_pipeline(request, api_key, session):
         # into a 400 and the 403 carrying `required_role` would never be produced.
         # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
         raise
-    except (ValueError, Exception) as exc:
+    # core#1569 AC3. Was `except (ValueError, Exception)`, which rendered `str(exc)` of ANY
+    # exception to the caller -- so a KeyError in a service became a 400 carrying text nobody
+    # wrote for a user. `UserFacingError` is the marker that exists for exactly this decision
+    # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
+    except UserFacingError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_pipeline(pipeline), status_code=201)
 
@@ -858,7 +870,11 @@ def create_transformation(request, api_key, session):
         )
     except InsufficientRoleError:
         raise  # §7.1 belongs to api_middleware -- see create_connection
-    except (ValueError, Exception) as exc:
+    # core#1569 AC3. Was `except (ValueError, Exception)`, which rendered `str(exc)` of ANY
+    # exception to the caller -- so a KeyError in a service became a 400 carrying text nobody
+    # wrote for a user. `UserFacingError` is the marker that exists for exactly this decision
+    # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
+    except UserFacingError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_transformation(t), status_code=201)
 
@@ -1063,7 +1079,11 @@ def create_schedule(request, api_key, session):
         # into a 400 and the 403 carrying `required_role` would never be produced.
         # Found by AC6 driving the endpoint, not by reading excepts (ENGINEERING_RULES §57).
         raise
-    except (ValueError, Exception) as exc:
+    # core#1569 AC3. Was `except (ValueError, Exception)`, which rendered `str(exc)` of ANY
+    # exception to the caller -- so a KeyError in a service became a 400 carrying text nobody
+    # wrote for a user. `UserFacingError` is the marker that exists for exactly this decision
+    # (`datanika/errors.py`); anything outside it now reaches `api_middleware` and stays a 500.
+    except UserFacingError as exc:
         return _error(400, str(exc))
     return JSONResponse(_ser_schedule(s), status_code=201)
 

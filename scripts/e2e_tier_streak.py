@@ -1305,8 +1305,8 @@ def _push_runs(
         # Grade from the FIRST look, trimmed: the tie-group at the page boundary may have been
         # cut, so those runs are not ones the page can prove it saw whole (see `Look.trimmed`).
         keep = frozenset(first.trimmed().ids)
-        listed: list[dict] = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
-        return [r for r in listed if int(r["id"]) in keep], window
+        page_runs: list[dict] = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
+        return [r for r in page_runs if int(r["id"]) in keep], window
     created = quote(f">={since}", safe="")
     listed: list[dict] = []
     for page in range(1, _MAX_PAGES + 1):

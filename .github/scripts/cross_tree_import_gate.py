@@ -250,7 +250,13 @@ def resolve(core_root: Path, ref: Ref) -> str | None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, not __doc__ — see core#1585.
+    ap = argparse.ArgumentParser(
+        description=(
+            "core#1140: refuse to build an image whose cloud tree imports a core "
+            "symbol that is not there."
+        )
+    )
     ap.add_argument("--core", required=True, help="path to the core tree (contains datanika/)")
     ap.add_argument(
         "--cloud", required=True, help="path to the cloud tree (contains datanika_cloud/)"

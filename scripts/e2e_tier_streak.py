@@ -1497,7 +1497,14 @@ def collect(
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, deliberately NOT __doc__ (core#1585): argparse encodes `description`
+    # to the console codec, and this module's docstring carries emoji. On a cp1251
+    # console that raised UnicodeEncodeError mid-help, so `--help` exited 1 having
+    # printed the prologue and never reached --since. The docstring is for a reader
+    # of the file; this string is for a terminal whose codec we do not control.
+    ap = argparse.ArgumentParser(
+        description="Compute the E2E tier graduation streak from run history (core#1130)."
+    )
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--branch", default="dev")
     ap.add_argument("--job", default="e2e-sso", help="job name substring (e2e-sso, e2e-staging)")

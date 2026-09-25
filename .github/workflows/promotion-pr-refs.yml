@@ -81,4 +81,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python3 scripts/check_promotion_closing_refs.py --repo "$REPO" --pr "$PR_NUMBER"
+        # `--wait-seconds` is load-bearing, not a timeout for tidiness (core#1575). The step
+        # above rewrites the body with `gh pr edit`, and GitHub recomputes
+        # `closingIssuesReferences` asynchronously -- so asking immediately gets an empty
+        # answer, which this check scored as a FAIL on 2 of 2 promotions after it shipped.
+        # The wait re-reads only while something the block declares is not yet linked, so a
+        # body nobody just rewrote costs zero seconds.
+        run: >
+          python3 scripts/check_promotion_closing_refs.py
+          --repo "$REPO" --pr "$PR_NUMBER"
+          --wait-seconds 300 --poll-seconds 15

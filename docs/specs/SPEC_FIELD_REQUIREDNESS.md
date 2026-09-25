@@ -15,6 +15,11 @@ markers at the **call site** and reported them as what the user **sees**. §2.8'
 AC4's settled note and §4's second ruling all inverted with it, and §4's *"the marker is added too"*
 would have shipped **`Host * *`**. Corrected below; §2.9 states the ordering constraint on
 [core#1311] as an invariant rather than a schedule, and a guard now enforces it.
+**Amended 2026-09-26** — **§2.10 added**, and §4 records the **third** per-connector ruling. §2.7
+settled *which surface the marker describes*; §2.10 settles the question that arrives next and looks
+identical — *when the form and `CONFIG_SCHEMAS` disagree about whether a field is required at all,
+which one is wrong.* ⚠️ **The answer is neither of them: the credential decides.** Ruled on
+[core#1547] finding 2, implemented as [core#1606].
 
 [core#1311]: https://github.com/datanika-io/datanika-core/issues/1311
 [landing#572]: https://github.com/datanika-io/datanika-landing/issues/572
@@ -297,6 +302,44 @@ and a third instrument is the fix rather than a change to either — `TestNoFiel
 in `test_required_marker_matches_label.py`, which intersects the two populations and is driven with a
 synthetic double-marked site so that its zero is a reading.
 
+**2.10 · 🆕 WHICH fields are required: the credential decides, and neither contract is evidence**
+*(added 2026-09-26, ruling on [core#1547] finding 2 → [core#1606])*.
+
+§2.7 settled *which surface the marker describes*. It did not settle the question that arrives next
+and looks identical: **when the form and `CONFIG_SCHEMAS` disagree about whether a field is required
+at all, which one is wrong?**
+
+> **A field is required on the form when the credential the product asks the user to create cannot
+> authenticate without it.**
+
+Three things that look like evidence and are not:
+
+1. 🚨 **`CONFIG_SCHEMAS[t]["required"]` is not evidence.** It answers §2.7's different question —
+   *what does a complete stored config look like* — and nothing validates against it. Its own module
+   docstring lists the validation reader as `(future)`, and a measured grep finds no `jsonschema`
+   import and no `validate(` call on the save path or in `api_v1_routes.py`.
+2. 🚨 **What our own code currently READS is not evidence either, and this is the one that misleads.**
+   Code that ignores a field it needs is the defect, not the measurement. [core#860] is the measured
+   instance: `jira`'s probe omitted `email`, sent `Basic :token`, got a 401 and *"reported a
+   credential failure for a token that was fine."* An inventory of *"fields the loader reads"* would
+   have called that field optional right up to the 401.
+3. ⚠️ **A marker's absence is not evidence.** It is the thing under question. Refusing to gate a
+   field because it carries no marker (§1c pointed the other way) is correct as a *constraint on the
+   fix* — marker and gate move together — and is not an argument about requiredness.
+
+**What IS evidence, in order of strength:** a dated measurement against the vendor, with a control
+in both directions (the discipline
+`tests/test_services/test_saas_default_resources_are_requests_the_vendor_accepts.py` already
+enforces for resource lists — an unmeasured claim is *listed*, never passed); then the vendor's
+documented auth model as our own published guide states it, since the guide is what the user follows
+to create the credential; then the shape of the credential the form asks for.
+
+🔑 **Where no measurement exists, rule on the asymmetry of cost, and say that is what you did.**
+Requiring a field the user was already told to supply costs one field. Leaving a needed one optional
+costs a 401 blamed on a good credential — [core#860]'s bill, paid once already. **The reversible
+direction is to require it.** ⚠️ **Name the discriminating measurement in the ruling** so whoever
+obtains a credential can settle it, and do not dress the cost argument up as a finding.
+
 ## 3. Acceptance criteria
 
 **AC1 — One source of truth.** A field's requiredness is stated once at its call site. Assert that no
@@ -411,6 +454,69 @@ and `rest_api`'s Base URL.
   🔴 *Corrected 2026-09-24 (later): this read "the two that need a decision are the two with no
   marker (`databricks`, `duckdb`)". Both show markers — 3 and 1 — so neither connector needed a
   decision; one field inside one of them did.*
+
+  🆕 **Third instance, ruled 2026-09-26 — [core#1547] finding 2, implemented as [core#1606].** Three
+  fields are **optional on the form and required by `CONFIG_SCHEMAS`**: `google_analytics`
+  `service_account_json`, `jira` `email`, `zendesk` `email`. §2.10 is the criterion this ruling
+  established; the rulings themselves, **all three "required" and each for a different reason**, are
+  on [core#1606] with the per-surface table.
+
+  - **`google_analytics` `service_account_json` — the FORM is wrong, and loudly.** Its label is
+    literally `Service Account JSON (optional)` — one of §1a's four optional-marked labels — while the
+    only live loader path raises `Google Analytics source requires 'service_account_json'`. **This
+    connector has no `SAAS_PROBES` entry**, so Test Connection returns the neutral *not tested*
+    verdict and the form is the only surface that can refuse it. The label becomes the existing
+    `connections.service_account_json` key plus a derived marker: **no new i18n string.**
+  - **`jira` `email` — the form is the only surface that says otherwise.** `SAAS_PROBES["jira"]`,
+    `CONFIG_SCHEMAS`, the loader's `Basic {email}:{token}` and the published guide all say required,
+    and [core#860] measured the 401. Nothing needed measuring; the ruling is to stop the form
+    disagreeing with an answer we already had.
+  - **`zendesk` `email` — required, on §2.10's cost asymmetry rather than on a measurement.** Five
+    code surfaces agree the shipped path sends `Bearer` and discards the email; the form asks for a
+    *Zendesk API token* and the published guide states that model authenticates *"via email +
+    token"*. 🔴 **Those cannot both be right, and no Zendesk credential exists in `secrets/` or in
+    `nightly-connector-smoke.yml`, so this connector has never authenticated against its vendor.**
+
+  🔑 **The sharpest thing this ruling turned up, and it generalises past these three.**
+  `test_saas_connection_probe.py`'s `_LOADER_FIELDS_NO_PROBE_COVERS` carries `"zendesk": {"email"}`
+  with reasoning, *"listed so its absence from the probe is a recorded fact rather than an
+  oversight."* **That comment is factually correct about our code and is read as a statement about
+  the vendor's auth model.** The two are different claims, and the second one is the one a reader
+  acts on. It is §2.10's point 2 wearing a well-written comment: **a correct inventory of what our
+  code reads is the least reliable possible answer to "is this field needed", because the case where
+  it is wrong is exactly the case that matters.**
+
+  ⚠️ **Gate `zendesk` `email` BEFORE any change to its auth composition, not after.** The field is
+  stored today and read by nothing, so gating first means every connection created afterwards carries
+  what an auth fix needs. Reversed, the auth change meets stored configs with no email and cannot be
+  repaired server-side — `SPEC_EXPAND_CONTRACT_MIGRATIONS` reasoning applied to config rather than to
+  columns.
+
+  🚨 **And the class is bigger than these three: 22 fields, derived.** Taking
+  `CONFIG_SCHEMAS[t]["required"]`, intersecting with the keys `_build_config` can write for `t`, and
+  subtracting what the gate refuses yields **22 resolved members plus 3 the instrument could not
+  resolve** (`kafka` `topics`, `openapi` `base_url`/`resources` — written from comprehensions and
+  parsed objects, so their source attribute is unreadable from the AST; `topics` **is** gated, so
+  listing them as members would be a false positive). **19 of the 22 are `user`/`password` and
+  friends on the eight SQL types, and they rule the OTHER way** — the `_DB_TYPES` branch gates host,
+  port and database only, and passwordless auth (trust, peer, IAM, `.pgpass`) is a real
+  configuration, so there `CONFIG_SCHEMAS` is the over-strict side. 🔑 **That is what makes §2.10 a
+  criterion rather than a rule of thumb: the same disagreement resolves in opposite directions
+  depending on the credential**, and the three fields above are only the members where it resolves
+  towards the schema. The residual is filed separately, with the instrument. ⚠️ **Do not re-use the
+  number without re-deriving it** (`WORKFLOW_RULES` §5b.5) — this one is dated 2026-09-26 against
+  `dev` @ `437d5854`.
+
+  ⚠️ **A separate reading, recorded because it is why `CONFIG_SCHEMAS` cannot be an oracle for
+  anything here:** the population of types whose schema requires a key the form cannot produce at all
+  is **nine**, not the four [core#1603] names — `csv`, `google_sheets`, `json`, `parquet` and
+  `zendesk` are the unnamed five, all of them already entries in `_DROPPED_ON_SAVE`. Posted on
+  [core#1603]; it is that issue's population, not this spec's.
+
+[core#860]: https://github.com/datanika-io/datanika-core/issues/860
+[core#1547]: https://github.com/datanika-io/datanika-core/issues/1547
+[core#1603]: https://github.com/datanika-io/datanika-core/issues/1603
+[core#1606]: https://github.com/datanika-io/datanika-core/issues/1606
 
   **The test that separates this from the `openapi` ruling, and it is the only one that matters:
   does the form FILL the field when it is blank?** `openapi` does — from the spec's `servers` entry —

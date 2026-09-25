@@ -19,15 +19,43 @@
  * * **landing** — home, pricing, docs index, scanned at the landing site rather than at this
  *   suite's baseURL, which is the app.
  *
- * ── Tier: INFORMATIONAL ──────────────────────────────────────────────────────
- * New spec, so it enters the informational tier and graduates on three consecutive
- * greens on `dev` (`docs/QA_RULES.md` §10) — read from the printed
- * `INFORMATIONAL_RESULT=` line and never from the step's tick, which is masked by
- * `continue-on-error`. Every test here inherits the tier from the outer describe's title.
+ * ── Tier: GATING (graduated 2026-09-25 — core#720, under core#521's policy) ──
+ * This spec now holds the promotion. It was @informational from 2026-09-17, while it had
+ * no track record: a brand-new a11y sweep on an app that has never had one surfaces a long
+ * tail, and a legitimately-red gating test makes "loosen the assertion" the cheapest route
+ * to a merge. core#720 says this in as many words, and that reasoning is why it entered the
+ * tier rather than the gate — not paperwork.
  *
- * 🚨 That is not paperwork here. A brand-new a11y sweep on an app that has never had one
- * surfaces a long tail, and a legitimately-red gating test makes "loosen the assertion"
- * the cheapest route to a merge. core#720 says this in as many words.
+ * It graduated on RUNS, not on reasoning — five consecutive `INFORMATIONAL_RESULT=success`
+ * on `dev` in the `e2e-staging` job's own log, read with the window PINNED by `--since`
+ * (`scripts/e2e_tier_streak.py --job e2e-staging --spec a11y-sweep.spec.ts
+ * --since 2026-09-25T00:00:00Z`, verdict `graduate`, streak 5/3), never from the step's
+ * tick, which `continue-on-error` masks:
+ *
+ *   2026-09-25  09:34:32Z  bcf6538e   <- first run on a tree carrying core#1568's fix
+ *               11:53:52Z  0586b918
+ *               13:08:08Z  2ccdafac
+ *               13:29:08Z  a9b2af7f
+ *               14:13:56Z  d5840c8e
+ *
+ * 🔑 **5 of the 12 runs in that window were SUPERSEDED** (core#975: a newer push had taken
+ * `dev`'s head, so the tier ran nothing). A supersession is in neither tier and counts
+ * toward nothing — which is why greens accumulate at roughly half the push rate here, and
+ * why the streak read 1/3 earlier the same day. `unmeasured: 0 of 12`.
+ *
+ * The two FAILs below the streak (`f121d2ab`, `cab2e557`) PREDATE core#1568's fix — the
+ * backup-restore file input on `/settings` had no accessible name, which was the last
+ * blocking node. Read the config at the commit a failing run used, never at HEAD.
+ *
+ * The line, and it is load-bearing: a spec that USED TO PASS must stay gating — demoting
+ * one hides a regression. The informational tier is for specs that have not yet earned in,
+ * never a bolt-hole for ones that broke. **This spec has now passed. It does not go back.**
+ * Policy and procedure: `docs/QA_RULES.md` §10.
+ *
+ * ⚠️ The greens are Critical + Serious only, which is what this spec gates on. The
+ * **moderate** group is real and unfixed — no `main` landmark (6 nodes), `landmark-unique`
+ * (4), and `region` (177) — tracked as core#1587. A green here is not "the app is
+ * accessible"; it is "nothing critical or serious on nine surfaces, 89 rules each".
  *
  * ── Severity policy ──────────────────────────────────────────────────────────
  * **Fail on Critical and Serious. Report Moderate and Minor.** Deliberately not
@@ -196,7 +224,10 @@ function expectNoBlocking(name: string, result: AxeResult): void {
   ).toHaveLength(0);
 }
 
-test.describe("Accessibility sweep @informational", () => {
+// The `@informational` marker is GONE (graduated — see the Tier block at the top of this
+// file). Every test here inherits the tier from this describe title, so removing it from the
+// one place moves all of them into the gate at once.
+test.describe("Accessibility sweep", () => {
   test.setTimeout(120_000);
 
   for (const surface of PUBLIC_SURFACES) {

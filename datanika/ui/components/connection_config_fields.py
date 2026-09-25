@@ -29,13 +29,19 @@ _t = I18nState.translations
 def db_fields() -> rx.Component:
     """Fields for postgres / mysql / mssql / redshift."""
     return rx.vstack(
-        rx.el.label(rx.text(_t["connections.host"], size="2", weight="bold"), html_for="cfg-host"),
-        config_input(
+        # core#1311 slice 4. `_validate_connection_form` refuses a blank host for every `_DB_TYPES`
+        # connector (:313) — the seven types this builder renders for — so by
+        # SPEC_FIELD_REQUIREDNESS §2.7 the field is required on THIS form and one value now sets
+        # both the marker and the attribute. The marker previously lived inside
+        # `connections.host`, a string mongodb and databricks also render, so it could not vary by
+        # connector and was tied to nothing (§2.2).
+        labelled_config_input(
+            _t["connections.host"],
             "host",
+            required=True,
             placeholder=_t["connections.ph_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
-            required=True,
         ),
         # core#1311 slice 2. `_validate_connection_form` refuses a blank port for every
         # `_DB_TYPES` connector, so by SPEC_FIELD_REQUIREDNESS §2.7 the field is required on
@@ -84,15 +90,15 @@ def db_fields() -> rx.Component:
 def sqlite_fields() -> rx.Component:
     """Fields for sqlite."""
     return rx.vstack(
-        rx.el.label(
-            rx.text(_t["connections.db_path"], size="2", weight="bold"), html_for="cfg-path"
-        ),
-        config_input(
+        # core#1311 slice 4. `_validate_connection_form`'s sqlite branch refuses a blank path
+        # (:319), so the field is required on this form (§2.7) and one value sets both signals.
+        labelled_config_input(
+            _t["connections.db_path"],
             "path",
+            required=True,
             placeholder=_t["connections.ph_db_path"],
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
-            required=True,
         ),
         spacing="2",
         width="100%",
@@ -433,15 +439,20 @@ def clickhouse_fields() -> rx.Component:
 def duckdb_fields() -> rx.Component:
     """Fields for duckdb — path to database file."""
     return rx.vstack(
-        rx.el.label(
-            rx.text(_t["connections.db_path"], size="2", weight="bold"), html_for="cfg-path"
-        ),
-        config_input(
+        # core#1311 slice 4, and 🚨 this site is UN-GATED: `_validate_connection_form` has no
+        # `duckdb` branch at all (SPEC_FIELD_REQUIREDNESS §2.8 — 20 of 37 types have none), so the
+        # form prints the marker, announces `required`, and saves the field blank. The ruling in §4
+        # is that the marker is right and the GATE is missing: keep `required=True` here and add the
+        # branch on core#1547. Deleting the attribute to "make the signals agree" agrees them on
+        # the wrong value — `connection_service.py:1119` builds `duckdb:///{path}`, so a blank path
+        # only moves the failure to connect time, where the user has lost the field that caused it.
+        labelled_config_input(
+            _t["connections.db_path"],
             "path",
+            required=True,
             placeholder=_t["connections.ph_duckdb_path"],
             value=ConnectionState.form_path,
             on_change=ConnectionState.set_form_path,
-            required=True,
         ),
         spacing="2",
         width="100%",
@@ -511,34 +522,40 @@ def github_fields() -> rx.Component:
 def databricks_fields() -> rx.Component:
     """Fields for databricks."""
     return rx.vstack(
-        rx.el.label(rx.text(_t["connections.host"], size="2", weight="bold"), html_for="cfg-host"),
-        config_input(
+        # core#1311 slice 4, and 🚨 all three of these are UN-GATED: `_validate_connection_form`
+        # has no `databricks` branch (SPEC_FIELD_REQUIREDNESS §2.8), and `http_path` and `token`
+        # are not even parameters of it. Same ruling as duckdb above: the marker is right, the gate
+        # is missing, and `required=True` stays here while core#1547 adds the branch — including
+        # handing the two missing fields to the validator, which is why that is not a one-liner.
+        # `connection_service.py:1104` builds `databricks://token:{token}@{host}`.
+        #
+        # ⚠️ Catalog, two fields below, is the opposite case and is NOT part of this slice: it is
+        # schema-required (`connection_schemas.py:162-170`) and shows no marker and no attribute, so
+        # it is the one field of the five that gains a marker. core#1547 AC3.
+        labelled_config_input(
+            _t["connections.host"],
             "host",
+            required=True,
             placeholder=_t["connections.ph_databricks_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
-            required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.http_path"], size="2", weight="bold"), html_for="cfg-http-path"
-        ),
-        config_input(
+        labelled_config_input(
+            _t["connections.http_path"],
             "http_path",
+            required=True,
             placeholder=_t["connections.ph_http_path"],
             value=ConnectionState.form_http_path,
             on_change=ConnectionState.set_form_http_path,
-            required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.token"], size="2", weight="bold"), html_for="cfg-token"
-        ),
-        config_input(
+        labelled_config_input(
+            _t["connections.token"],
             "token",
+            required=True,
             secret=True,
             placeholder=_t["connections.ph_token"],
             value=ConnectionState.form_token,
             on_change=ConnectionState.set_form_token,
-            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.catalog"], size="2", weight="bold"), html_for="cfg-catalog"
@@ -1038,13 +1055,18 @@ def mongodb_fields() -> rx.Component:
     against a server without TLS, a connection failure with no visible cause.
     """
     return rx.vstack(
-        rx.el.label(rx.text(_t["connections.host"], size="2", weight="bold"), html_for="cfg-host"),
-        config_input(
+        # core#1311 slice 4. `_validate_connection_form`'s mongodb branch refuses a blank host
+        # (:341), so this site is gated and the field is required on the form (§2.7). Note the
+        # contrast with the Port field immediately below, which renders the SAME builder's other
+        # shared key and is correctly optional — that pair is why `connections.host` could not keep
+        # carrying the marker inside its string.
+        labelled_config_input(
+            _t["connections.host"],
             "host",
+            required=True,
             placeholder=_t["connections.ph_host"],
             value=ConnectionState.form_host,
             on_change=ConnectionState.set_form_host,
-            required=True,
         ),
         # A DNS seed list connection takes no port, so the field is not merely
         # ignored — it is not collected. `_build_config` drops it too; a hidden

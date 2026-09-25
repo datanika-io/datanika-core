@@ -38,9 +38,9 @@ import datanika.ui
 
 UI_ROOT = Path(datanika.ui.__file__).parent
 
-# Every ``rx.upload`` site we know about. A scan that silently finds nothing
-# would pass this file without asserting anything, so the count is pinned: add
-# an upload surface and this number moves with it, deliberately.
+# Every upload site we know about -- ``named_upload`` in the product, or a bare ``rx.upload``.
+# A scan that silently finds nothing would pass this file without asserting anything, so the
+# count is pinned: add an upload surface and this number moves with it, deliberately.
 EXPECTED_UPLOAD_SITES = 3
 
 
@@ -69,12 +69,23 @@ def _discover_upload_sites() -> list[tuple[str, str, str, int]]:
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
+            # An upload surface is spelled either way since core#1568: `named_upload` is the
+            # accessible wrapper in `datanika/ui/components/file_upload.py`, and it is the only
+            # caller of `rx.upload` in the product (asserted in
+            # `tests/test_ui/test_input_accessible_names.py`). Matching both keeps this guard
+            # pointed at its INVARIANT -- *every upload surface's `on_drop` is discoverable* --
+            # rather than at the spelling the surfaces happened to have. Matching `rx.upload`
+            # alone made it go red on a correct rename, which is a guard asserting today's
+            # instance (`WORKFLOW_RULES` §5a): repointed, not deleted.
+            #
+            # The helper's own `rx.upload(*children, **props)` adds no site, because it passes no
+            # literal `on_drop=` keyword -- which is why the count below stays 3 rather than 4.
             is_upload = (
                 isinstance(func, ast.Attribute)
                 and func.attr == "upload"
                 and isinstance(func.value, ast.Name)
                 and func.value.id == "rx"
-            )
+            ) or (isinstance(func, ast.Name) and func.id == "named_upload")
             if not is_upload:
                 continue
 

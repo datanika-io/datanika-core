@@ -45,6 +45,23 @@ LEGACY_STRIPE_SELECTION = [
 STRIPE_CONFIG = {"api_key": "sk_test_1"}
 
 
+@pytest.fixture(autouse=True)
+def _stub_dns(no_live_dns):
+    """This module builds a source, and building one RESOLVES THE HOST (core#1597).
+
+    🔑 **A FIFTH module, which core#1597's own census did not name.** It was found by the
+    directory-wide refusal in ``conftest.py`` on the day that shipped, not by a sweep — and it
+    would not have been found by one, because ``api.stripe.com`` resolves fine on the machine
+    where the other four were measured. So these seven tests were quietly doing a live lookup
+    per build and passing, which is the state core#1280's per-module fixture leaves behind
+    everywhere it was not applied.
+
+    That is the whole argument for a guard over the *mechanism* rather than a list of instances
+    (``WORKFLOW_RULES`` §5a): the population was wrong, and the guard did not need it to be right.
+    """
+    return no_live_dns
+
+
 @pytest.fixture
 def svc(tmp_path):
     return DltRunnerService(pipelines_dir=str(tmp_path))

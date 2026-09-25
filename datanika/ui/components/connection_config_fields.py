@@ -14,6 +14,7 @@ an ``autocomplete`` value by hand.
 
 import reflex as rx
 
+from datanika.ui.components.file_upload import named_upload
 from datanika.ui.components.secure_input import (
     config_input,
     config_text_area,
@@ -269,13 +270,17 @@ def file_upload_fields() -> rx.Component:
     """File upload widget + fallback path for csv/json/parquet connections."""
     return rx.vstack(
         rx.text(_t["connections.upload_file"], size="2", weight="bold"),
-        rx.upload(
+        named_upload(
             rx.button(
                 rx.icon("upload", size=16),
                 _t["connections.upload_file"],
                 variant="outline",
                 cursor="pointer",
             ),
+            # core#1568. This one is rendered only for csv/json/parquet, so the a11y sweep — which
+            # loads the connection form with PostgreSQL fields — never scored it. It was never
+            # clean, only unmeasured.
+            accessible_name=_t["connections.upload_file"],
             id="file_upload",
             max_size=20 * 1024 * 1024,
             accept={

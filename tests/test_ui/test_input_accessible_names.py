@@ -82,7 +82,27 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 UI_ROOT = REPO_ROOT / "datanika" / "ui"
 
 #: Calls that render a text-entry control the user types into.
+#:
+#: 🚨 ``("rx", "upload")`` is deliberately **NOT** here, and the reason is the whole of core#1568.
+#: ``rx.upload`` hides an ``<input type="file">`` that this module's naming rule cannot judge: the
+#: name is attached to the built component, not passed as a kwarg, so adding it here would report
+#: all three upload sites unnamed **after they were correctly fixed** — a guard red on the correct
+#: change (WORKFLOW_RULES §5a). The invariant it *can* express is below
+#: (``test_every_file_upload_is_built_through_the_helper_that_names_it``); the name itself is
+#: asserted against the component tree in ``test_controls_have_accessible_names.py``.
 _INPUT_CALLS = {("rx", "input"), ("rx", "text_area"), ("rx", "el", "input")}
+
+#: The one module allowed to call ``rx.upload`` directly: it is what attaches the accessible name.
+_UPLOAD_HELPER = "datanika/ui/components/file_upload.py"
+
+#: Where a file-upload control is built. Kept as a literal set so that *adding* one is a visible
+#: diff in this file rather than a silent widening — and so that a scan which stops seeing call
+#: sites empties this comparison and goes red instead of passing.
+_EXPECTED_UPLOAD_SITES = {
+    "datanika/ui/components/connection_config_fields.py",
+    "datanika/ui/pages/settings.py",
+    "datanika/ui/pages/transformations.py",
+}
 
 #: Props that carry an accessible name on their own, without a paired ``<label>``.
 _ARIA_NAME_PROPS = {"aria_label", "aria_labelledby"}
@@ -719,6 +739,67 @@ def test_no_form_gains_an_input_without_an_accessible_name(walk: _Analysis):
         "Inputs were given accessible names -- thank you. Lower KNOWN_UNLABELLED in "
         "this file to lock the improvement in, or the next regression will be "
         "measured against a stale ceiling:\n" + "\n".join(improvements)
+    )
+
+
+def _upload_calls() -> tuple[dict[str, int], dict[str, list[ast.Call]]]:
+    """``(modules calling rx.upload, modules calling named_upload)`` across the UI tree."""
+    direct: dict[str, int] = {}
+    helper: dict[str, list[ast.Call]] = {}
+    for path in sorted(UI_ROOT.rglob("*.py")):
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        # A SyntaxError must not be swallowed: an unparsed file is one whose uploads are invisible.
+        for node in ast.walk(ast.parse(path.read_bytes(), filename=rel)):
+            if not isinstance(node, ast.Call):
+                continue
+            if _dotted(node.func) == ("rx", "upload"):
+                direct[rel] = direct.get(rel, 0) + 1
+            elif isinstance(node.func, ast.Name) and node.func.id == "named_upload":
+                helper.setdefault(rel, []).append(node)
+    return direct, helper
+
+
+def test_every_file_upload_is_built_through_the_helper_that_names_it():
+    """core#1568. ``rx.upload``'s file input is a real form control with no accessible name.
+
+    Stated as the presence of the right thing rather than the absence of a wrong word: the helper
+    is the **only** caller of ``rx.upload``, and every upload in the product is one of its call
+    sites. Both halves are needed — the first alone is satisfied by deleting every upload, and the
+    second alone is satisfied by a scan that has stopped matching anything.
+
+    This is what the component-tree census in ``test_controls_have_accessible_names.py`` cannot do:
+    that one walks the pages in ``FACTORIES``, so an upload in a component no page factory reaches
+    would be invisible to it. This sees the source, so it covers arrival everywhere.
+    """
+    direct, helper = _upload_calls()
+
+    assert set(direct) == {_UPLOAD_HELPER}, (
+        "rx.upload must only be called from "
+        f"{_UPLOAD_HELPER}, which names the <input type='file'> it hides. Found it in: "
+        + ", ".join(f"{rel} ({n})" for rel, n in sorted(direct.items()))
+        + ".\nUse named_upload(..., accessible_name=_t['some.key']) instead. Passing aria_label= "
+        "or id= to rx.upload does NOT work: both land on the wrapper <div> and the input stays "
+        "anonymous, which is core#1568 returning in the shape that looks like a fix."
+    )
+    assert direct[_UPLOAD_HELPER] >= 1, (
+        f"{_UPLOAD_HELPER} no longer calls rx.upload, so the check above is vacuous."
+    )
+
+    assert set(helper) == _EXPECTED_UPLOAD_SITES, (
+        "The set of file-upload call sites moved. Update _EXPECTED_UPLOAD_SITES in the same commit "
+        "and check the new one's accessible name is real copy:\n"
+        f"  expected: {sorted(_EXPECTED_UPLOAD_SITES)}\n  found:    {sorted(helper)}"
+    )
+
+    unnamed = [
+        f"{rel}:{call.lineno}"
+        for rel, calls in sorted(helper.items())
+        for call in calls
+        if not any(kw.arg == "accessible_name" for kw in call.keywords)
+    ]
+    assert not unnamed, (
+        "These named_upload() calls pass no accessible_name=, so the file input they build has no "
+        "accessible name: " + ", ".join(unnamed)
     )
 
 

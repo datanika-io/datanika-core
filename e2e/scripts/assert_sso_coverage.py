@@ -119,7 +119,10 @@ def render(summary: dict) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, not __doc__ — see core#1585.
+    ap = argparse.ArgumentParser(
+        description="Report how many IdP specs the SSO tier actually executed (core#1130)."
+    )
     ap.add_argument("report", type=Path)
     args = ap.parse_args(argv)
 

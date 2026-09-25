@@ -99,7 +99,10 @@ def render(results: dict[str, str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, not __doc__ — see core#1585.
+    ap = argparse.ArgumentParser(
+        description="Emit one graduation verdict per spec, not one for the whole tier (core#1221)."
+    )
     ap.add_argument("report", type=Path)
     args = ap.parse_args(argv)
 

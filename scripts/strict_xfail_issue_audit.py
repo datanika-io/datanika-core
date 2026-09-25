@@ -207,7 +207,10 @@ def audit(markers: list, read: Reader) -> list[Finding]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
+    # Plain ASCII, not __doc__ — see core#1585.
+    ap = argparse.ArgumentParser(
+        description="A strict xfail must not outlive the issue it pins (core#1025)."
+    )
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
 

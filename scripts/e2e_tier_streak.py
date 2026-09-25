@@ -75,6 +75,7 @@ the SHAs in the spec's tier header when a spec graduates, as `golden-path.spec.t
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -852,6 +853,204 @@ class JobCoverage:
         return lines
 
 
+#: Two looks at the same count-mode window described different populations, so the window is
+#: not a function of the arguments and no verdict drawn from it is reproducible (core#1567).
+WINDOW_UNSTABLE = "window-unstable"
+
+
+@dataclass(frozen=True)
+class Look:
+    """The identity of ONE listing response: which runs it held, in page order.
+
+    core#1567. The reader used to print only ``oldest run read``, and that one line was the
+    *entire* reason the defect was catchable at all: two invocations with identical arguments
+    described populations six days apart, both answered ``not-yet``, and nothing in the output
+    could be compared. **The window is part of the verdict's identity**, so it gets a name, a
+    fingerprint and both ends.
+    """
+
+    ids: tuple[int, ...]
+    created: tuple[str, ...]
+    total_count: int | None = None
+    #: The ``per_page`` this look asked for, when known. A page that came back SHORT of it is
+    #: the complete set and cut nothing, so it needs no trimming — trimming it anyway would
+    #: throw away a real run for a hazard that is not present. ``None`` means "not known", and
+    #: is treated as at-risk, which is the fail-safe direction.
+    page_size: int | None = None
+
+    @property
+    def newest(self) -> str | None:
+        return self.created[0] if self.created else None
+
+    @property
+    def oldest(self) -> str | None:
+        return self.created[-1] if self.created else None
+
+    @property
+    def fingerprint(self) -> str:
+        """12 hex chars over the ORDERED id list.
+
+        The ids themselves are not printed: 25 of them is a wall nobody reads, and the
+        question a reader actually has is *"is this the same population as last time?"* — which
+        an equality-shaped token answers in one glance. Both ends are printed beside it, so a
+        difference is also *attributable* rather than merely visible.
+        """
+        joined = ",".join(str(i) for i in self.ids).encode()
+        return hashlib.sha256(joined).hexdigest()[:12]
+
+    def trimmed(self) -> Look:
+        """This look with its trailing ``created_at`` tie-group dropped.
+
+        🚨 **Measured, 2026-09-25: the listing is NOT totally ordered.** Every push to `dev`
+        starts **two** push workflows (`ci.yml` and `build-push-image.yml`) whose runs share a
+        ``created_at`` to the second, so the listing is full of tie groups — ``created_at``
+        descends, ``id`` does **not**, and the pair order flips from one tie group to the next
+        inside a single response. A ``per_page=N`` page therefore cuts some tie group, and
+        **which member of that group falls inside the page is not a function of the reader's
+        arguments.** That alone moves the count of `ci.yml` runs read by one, which is exactly
+        the ``13`` vs ``12`` in core#1567's reproduction.
+
+        So the page can only prove it saw the tie groups *above* its last one completely.
+        Dropping the last one costs at most one run at the oldest end of a trailing-streak
+        window, and buys a population that is a function of the data. If every entry shares one
+        timestamp there is nothing to trim and the look is returned unchanged — trimming to
+        empty would trade a reproducibility defect for a coverage one.
+
+        ⚠️ **A SHORT page is not trimmed at all**, and getting this wrong reddened 15 existing
+        tests: a response holding fewer runs than it asked for IS the complete set, so no group
+        was cut and dropping one would be a coverage loss bought for nothing. Note the *in-page*
+        size of the boundary group does **not** decide this — a lone run at the oldest timestamp
+        of a FULL page may have a partner one position outside it, and that is exactly the fact
+        a page cannot report about itself.
+        """
+        if self.page_size is not None and len(self.ids) < self.page_size:
+            return self
+        if not self.created or len(set(self.created)) == 1:
+            return self
+        keep = len(self.created)
+        while keep and self.created[keep - 1] == self.oldest:
+            keep -= 1
+        return Look(self.ids[:keep], self.created[:keep], self.total_count, self.page_size)
+
+    def between(self, lo: str, hi: str) -> frozenset[int]:
+        """The ids whose ``created_at`` lies in ``[lo, hi]`` — ISO-8601 Z sorts lexically."""
+        return frozenset(i for i, c in zip(self.ids, self.created, strict=True) if lo <= c <= hi)
+
+
+@dataclass(frozen=True)
+class WindowAgreement:
+    """Whether two looks at the same window described the same population (core#1567).
+
+    ⚠️ **This is a self-check on the WINDOW axis, and that axis had no control anywhere.** The
+    reader's existing control set varies the *subject* — a real spec, a spec of another job, a
+    fabricated name (core#1480, `QA_RULES` §31) — and all three still discriminate correctly
+    while being structurally unable to see this. A control set is itself a population claim.
+
+    The rule is deliberately **not** "the two looks must be identical": on a busy `dev` a new
+    push arrives between them, which changes the head and is benign. What must hold is that the
+    two looks agree about every run in the stretch of time they **both** cover. A look that
+    shares no time at all with the other one is the malignant shape — core#1567's second branch
+    described 09-17/09-18 while the first described 09-23/09-24, and that window predates every
+    fix the graduation was waiting on, so it could not have contained a green whatever the app
+    did.
+
+    🔑 **The cause of that second branch is NOT isolated**, and this class does not claim to fix
+    it. What it does is refuse to grade from a window it cannot vouch for, and print both looks'
+    fingerprints and bounds so the next occurrence attributes itself instead of needing another
+    session. An unattributed fix would have been a guess; an unattributed *refusal* is the
+    honest half of one.
+    """
+
+    mode: str
+    first: Look | None = None
+    second: Look | None = None
+
+    @classmethod
+    def pinned(cls) -> WindowAgreement:
+        """``--since`` mode: the window's older end is pinned by the argument, not by a page.
+
+        Measured deterministic over two passes (core#1567). Only the head can differ between
+        two looks, and a run that arrived after the first look is not a disagreement about the
+        past. Nothing is re-fetched — the pinned mode pages up to ten times.
+        """
+        return cls("since")
+
+    @property
+    def overlap(self) -> tuple[str, str] | None:
+        """The ``[lo, hi]`` stretch of time both looks covered, or ``None`` if they share none."""
+        if self.first is None or self.second is None:
+            return None
+        a, b = self.first.trimmed(), self.second.trimmed()
+        if not a.created or not b.created:
+            return None
+        lo = max(a.oldest or "", b.oldest or "")
+        hi = min(a.newest or "", b.newest or "")
+        return (lo, hi) if lo <= hi else None
+
+    @property
+    def state(self) -> str | None:
+        """``None`` when the window is reproducible; otherwise why it is not."""
+        if self.mode != "count" or self.first is None or self.second is None:
+            return None
+        a, b = self.first.trimmed(), self.second.trimmed()
+        # ⚠️ Two EMPTY looks agree — there is nothing for them to disagree about — and
+        # `no-data` already says "there was nothing here to read", which is the same call
+        # `JobCoverage` makes at `runs_considered == 0`. Grading emptiness as instability would
+        # refuse a brand-new branch and every quiet weekend, which is the coordinator's rule-10
+        # inverse: *a guard that refuses everything is one careless repair away from permitting
+        # everything.* Caught by this fix's own test, not by review.
+        if not a.created and not b.created:
+            return None
+        # One empty and one not is NOT that case: a look that saw runs and a look that saw none
+        # cannot both be right about the same branch at the same minute.
+        span = self.overlap
+        if span is None:
+            return WINDOW_UNSTABLE
+        return None if a.between(*span) == b.between(*span) else WINDOW_UNSTABLE
+
+    def render(self) -> list[str]:
+        if self.mode != "count" or self.first is None:
+            return ["window         : pinned by --since; the older end is an argument, not a page"]
+        a = self.first.trimmed()
+        lines = [
+            f"window         : {len(a.ids)} runs listed  fp={a.fingerprint}  "
+            f"newest {a.newest}  oldest {a.oldest}"
+        ]
+        if self.second is None:
+            return lines
+        b = self.second.trimmed()
+        lines.append(
+            f"second look    : {len(b.ids)} runs listed  fp={b.fingerprint}  "
+            f"newest {b.newest}  oldest {b.oldest}"
+        )
+        if self.state is None:
+            span = self.overlap
+            lines.append(
+                f"  -> the two looks agree on every run between {span[0]} and {span[1]}, "
+                "so the window is reproducible"
+                if span
+                else "  -> agreed"
+            )
+            return lines
+        if self.overlap is None:
+            lines += [
+                "  -> THE TWO LOOKS SHARE NO TIME AT ALL. One of them is describing a stretch of",
+                "     history the other never saw, so nothing below is a reproducible reading of",
+                "     anything. This is core#1567: the verdict stays stable while the evidence",
+                "     under it moves, which is why it went unnoticed. Re-run with an explicit",
+                "     --since to pin the window, and put BOTH fingerprints above on the issue.",
+            ]
+        else:
+            span = self.overlap
+            lines += [
+                f"  -> the two looks DISAGREE about which runs lie between {span[0]} and",
+                f"     {span[1]} — a stretch both of them cover. A page whose contents are not a",
+                "     function of the arguments cannot produce a reproducible verdict. Re-run",
+                "     with an explicit --since, and put BOTH fingerprints above on core#1567.",
+            ]
+        return lines
+
+
 #: A spec question the window cannot answer, because no run in it graded specs at all.
 MEMBERSHIP_UNKNOWN = "membership-unknown"
 #: A spec question the window CAN answer, and the answer is that this spec is not in the tier.
@@ -1061,21 +1260,53 @@ def _gh_log_or_none(repo: str, job_id: int) -> tuple[str | None, str]:
 _MAX_PAGES = 10
 
 
-def _push_runs(repo: str, branch: str, runs: int, since: str | None) -> list[dict]:
-    """The push runs on ``branch`` the reader will look at, newest first.
+def _look(payload: object, page_size: int) -> Look:
+    """The identity of one listing response (core#1567)."""
+    listed: list[dict] = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
+    return Look(
+        tuple(int(r["id"]) for r in listed),
+        tuple(str(r["created_at"]) for r in listed),
+        payload.get("total_count"),  # type: ignore[attr-defined]
+        page_size,
+    )
+
+
+def _push_runs(
+    repo: str, branch: str, runs: int, since: str | None
+) -> tuple[list[dict], WindowAgreement]:
+    """The push runs on ``branch`` the reader will look at, newest first, and the window's identity.
 
     🚨 core#1448. A COUNT (``per_page=runs``) was the only mode, and the watchdog asked for 40 once
     a day. A push to `dev` starts two push workflows, so 40 is about 20 pushes, and on 2026-09-17
     there were 23 since the previous look: three `CI` runs were read by no detector run, ever, and
     the output could not say so. ``since`` pages by TIME instead, so every push run created since
     then is read.
+
+    🚨 core#1567. Count mode looks **twice** and returns the window only if the two looks agree
+    about the stretch of time they both cover — see :class:`WindowAgreement`. Two invocations with
+    identical arguments were measured describing populations **six days apart**, both reporting
+    ``not-yet`` with full confidence. The second look costs one API call against the ~25 this
+    reader already makes per invocation, and it is the only thing in the tool that varies the
+    *window* rather than the *subject*.
+
+    ⚠️ **Deliberately NOT fixed by making ``--since`` mandatory** (core#1567 AC3): that moves the
+    correctness onto every caller's choice of date, and a caller who picks a window predating the
+    fixes reproduces the defect by hand. A kept default has to be reproducible, or say it is not.
     """
     if since is None:
-        payload = _gh(f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}")
+        url = f"repos/{repo}/actions/runs?branch={branch}&event=push&per_page={runs}"
         # core#1288: `_gh` returns `object` (it is `json.loads` output), so `.get` is
         # `attr-defined`, not `union-attr`. This comment named `union-attr` and therefore
         # suppressed NOTHING — harmless only because no type checker ran here until now.
-        return list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
+        payload = _gh(url)
+        first = _look(payload, runs)
+        second = _look(_gh(url), runs)
+        window = WindowAgreement("count", first, second)
+        # Grade from the FIRST look, trimmed: the tie-group at the page boundary may have been
+        # cut, so those runs are not ones the page can prove it saw whole (see `Look.trimmed`).
+        keep = frozenset(first.trimmed().ids)
+        listed: list[dict] = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
+        return [r for r in listed if int(r["id"]) in keep], window
     created = quote(f">={since}", safe="")
     listed: list[dict] = []
     for page in range(1, _MAX_PAGES + 1):
@@ -1086,7 +1317,7 @@ def _push_runs(repo: str, branch: str, runs: int, since: str | None) -> list[dic
         batch = list(payload.get("workflow_runs", []))  # type: ignore[attr-defined]
         listed.extend(batch)
         if len(batch) < 100:
-            return listed
+            return listed, WindowAgreement.pinned()
     raise SystemExit(
         f"more than {_MAX_PAGES * 100} push runs on {branch} since {since}: GitHub's filtered "
         "listing stops at 1000, so this look-back would be silently truncated. Narrow --since."
@@ -1100,14 +1331,14 @@ def collect(
     runs: int,
     spec: str | None = None,
     since: str | None = None,
-) -> tuple[list[RunReading], SpecCoverage, JobCoverage]:
-    """One :class:`RunReading` per completed run, oldest first, and both subjects' coverage.
+) -> tuple[list[RunReading], SpecCoverage, JobCoverage, WindowAgreement]:
+    """One :class:`RunReading` per completed run, oldest first, both subjects' coverage, the window.
 
-    ⚠️ **The return arity changed with core#1507** (it gained :class:`JobCoverage`). That is the
-    shape of contract change [core#1288] is about, so the caller set was **measured** before it
-    was changed rather than indexed: ``git grep`` on this tree finds exactly one caller,
-    :func:`main` — the tests all drive ``main()``, and ``verify_e2e_attribution.py`` has a
-    ``collect()`` of its own that is a different function.
+    ⚠️ **The return arity changed with core#1507** (it gained :class:`JobCoverage`) **and again
+    with core#1567** (:class:`WindowAgreement`). That is the shape of contract change [core#1288]
+    is about, so the caller set was **measured** before each change rather than indexed: ``git
+    grep`` on this tree finds exactly one caller, :func:`main` — the tests all drive ``main()``,
+    and ``verify_e2e_attribution.py`` has a ``collect()`` of its own that is a different function.
 
     ``event=push`` is not optional. A `dev` head carries a `merge_group` run too, whose staging
     jobs are `skipped` **by design** — byte-identical to the condition that holds a promotion,
@@ -1120,7 +1351,8 @@ def collect(
     fetched = failed = 0
     considered = with_job = superseded_runs = 0  # core#1507: the job subject's own population
     reasons: list[str] = []  # core#1273: why each fetch failed, so the guard can say
-    for run in _push_runs(repo, branch, runs, since):
+    listing, window = _push_runs(repo, branch, runs, since)
+    for run in listing:
         if run.get("path") != WORKFLOW or run.get("status") != "completed":
             continue
         considered += 1
@@ -1260,6 +1492,7 @@ def collect(
         list(reversed(out)),
         coverage,
         JobCoverage(job_name, considered, with_job, superseded_runs),
+        window,
     )
 
 
@@ -1310,7 +1543,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    history, coverage, job_coverage = collect(
+    history, coverage, job_coverage, window = collect(
         args.repo, args.branch, args.job, args.runs, spec=args.spec, since=args.since
     )
     for run in history:
@@ -1329,7 +1562,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"look-back      : every push run created since {args.since}")
     else:
         print(f"look-back      : the {args.runs} newest push runs, of every workflow")
+    # core#1567: BOTH ends, always. One end cannot be compared against anything — two readings
+    # six days apart agreed on their verdict and on the only line that could have told them
+    # apart, there was a single number and no way to know it should have been questioned.
     print(f"oldest run read: {history[0].created if history else 'none'}")
+    print(f"newest run read: {history[-1].created if history else 'none'}")
+    for line in window.render():
+        print(line)
     # core#1468. `(measured: N)` counted UNREADABLE runs as measured — correct for the streak,
     # which they block, and wrong at a reader, for whom "measured" is the opposite of what an
     # unreadable run is. Name the classes instead of grouping them under the reassuring word.
@@ -1354,7 +1593,10 @@ def main(argv: list[str] | None = None) -> int:
         f"trailing streak: {r.streak} / {r.required}   spanning {r.span} calendar run(s), "
         f"{r.gaps} of which measured nothing"
     )
-    print(f"verdict        : {job_coverage.state or coverage.state or r.state}")
+    # core#1567 goes FIRST. A verdict drawn from a window the reader cannot reproduce is not a
+    # weaker verdict, it is a different question (§31 rule 3) — and unlike the two coverage
+    # states it invalidates every number above it rather than one subject's placement.
+    print(f"verdict        : {window.state or job_coverage.state or coverage.state or r.state}")
     if r.state == "sparse":
         print(
             f"  -> {r.gaps} of the {r.span} runs this streak reaches back through carried no\n"
@@ -1433,7 +1675,9 @@ def main(argv: list[str] | None = None) -> int:
     # 1 would put it in the same bucket as "not yet three greens" — which reads as *keep waiting*.
     # core#1507 rides the same convention: a job the window never carried is not "not yet three
     # greens", it is a question this window cannot answer.
-    if job_coverage.state is not None or coverage.state is not None:
+    # core#1567 rides the same convention: a window two looks disagree about is not "not yet
+    # three greens", it is a population this reader cannot vouch for.
+    if window.state is not None or job_coverage.state is not None or coverage.state is not None:
         return 2
     return 0 if r.graduated else 1
 

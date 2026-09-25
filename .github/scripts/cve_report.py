@@ -55,6 +55,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from email.message import Message
 
 API = "https://api.github.com"
 MARKER = "<!-- cve-watch -->"
@@ -97,7 +98,13 @@ def _request(
 def _req(url: str, token: str, method: str = "GET", body: dict | None = None) -> object:
     status, _headers, decoded = _request(url, token, method, body)
     if status >= 400:
-        raise urllib.error.HTTPError(url, status, f"HTTP {status}: {decoded}", None, None)
+        # core#1571: `hdrs` was `None`, which CPython accepts and the stub types as
+        # `Message[str, str]`. An empty `Message()` rather than a `# type: ignore[arg-type]`,
+        # deliberately: the suppression list is supposed to be able to shrink by itself
+        # (core#1288), and a behaviour-identical value that type-checks removes an entry from
+        # it rather than adding one. `dict(Message())` is `{}`, which is exactly what the
+        # `exc.headers or {}` read above already produced from `None`.
+        raise urllib.error.HTTPError(url, status, f"HTTP {status}: {decoded}", Message(), None)
     return decoded
 
 

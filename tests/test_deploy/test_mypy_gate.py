@@ -177,13 +177,47 @@ def test_neither_mypy_step_can_be_masked() -> None:
 def test_the_scope_is_declared_in_pyproject_and_excludes_the_app() -> None:
     """The other half of the single declaration — and the boundary the issue drew.
 
-    `datanika/` is 248 files that have never been type-checked. Bundling it sinks the
-    proposal, which is why core#1288 puts it under *Not in scope*. If someone widens this,
-    it should be a decision with its own issue, not a quiet edit to a `files` list.
+    `datanika/` is 266 files that have never been type-checked, and `tests/` is 514. Bundling
+    either sinks the proposal, which is why core#1288 puts them under *Not in scope*. If someone
+    widens this to them, it should be a decision with its own issue, not a quiet edit.
+
+    🔴 **Repointed 2026-09-25 (core#1571), WORKFLOW_RULES §5a.** This asserted
+    ``files == ["scripts"]`` and went red on the correct change: `.github/scripts` held five
+    programs and had never been type-checked, and adding it is the thing #1571 asks for. **The
+    literal was not the invariant.** What core#1288 actually decided is a *boundary* — the gate
+    covers the tooling directories and stops before the application and its test suite — so that
+    is what is asserted now, in both directions:
+
+    * every entry must be a **tooling** directory, so widening to `datanika/` or `tests/` still
+      reds and still has to be a decision;
+    * the declaration must live here rather than on the command line (AC4 of #1288).
+
+    ⚠️ The forbidden set is named rather than derived on purpose. Deriving *"is this the
+    application"* would need a predicate, and a predicate that answers wrongly in the permissive
+    direction is how a boundary quietly stops being one — cf. `QA_RULES` §31 rule 4.
     """
-    assert MYPY_CFG.get("files") == ["scripts"], (
-        f"[tool.mypy] files is {MYPY_CFG.get('files')!r}; core#1288 scopes this gate to "
-        "`scripts/` and says so. Widening it is a decision, not a detail."
+    files = MYPY_CFG.get("files")
+    assert isinstance(files, list) and files, (
+        f"[tool.mypy] files is {files!r}. The scope must be declared here and non-empty: "
+        "core#1288 AC4 requires that a bare `mypy` and CI cannot disagree about what is checked."
+    )
+    forbidden = {"datanika", "tests", "datanika-mcp", "e2e", "."}
+    crossed = sorted(f for f in files if f.strip("./") in forbidden)
+    assert not crossed, (
+        f"[tool.mypy] files names {crossed}, which crosses the boundary core#1288 drew: "
+        "`datanika/` is 266 files and `tests/` is 514, none ever type-checked, and bundling "
+        "them sinks the gate rather than widening it. That is a decision with its own issue."
+    )
+    assert "scripts" in files, (
+        f"[tool.mypy] files is {files!r} and does not name `scripts`. That directory holds "
+        "verify_e2e_attribution.py and e2e_tier_streak.py — the tools that decide whether a "
+        "promotion may proceed — and is the original subject of core#1288."
+    )
+    assert ".github/scripts" in files, (
+        f"[tool.mypy] files is {files!r} and does not name `.github/scripts`. core#1571: it "
+        "holds cloud_pairing_gate.py, which decides whether a promotion may proceed, and "
+        "promotion_refs.py, which decides what it closes. A directory outside this list gets "
+        "no `warn_unused_ignores`, so it accumulates suppressions nobody can validate."
     )
 
 

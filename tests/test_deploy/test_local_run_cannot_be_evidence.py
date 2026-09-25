@@ -127,6 +127,17 @@ MARKER_ALLOWLIST = frozenset(
         # `tests/test_deploy` run went 1945 passed / exit 0 with the offender sitting in the
         # tree. **A pre-commit green is not evidence about the file you are adding.**
         "tests/test_deploy/test_superseded_run_is_transparent.py",
+        # tests: fakes TWO DIFFERENT run listings, one per look at the window, to drive the
+        # reader across the population change core#1567 is about. Like the three entries above
+        # it builds markers into fake log strings and prints none, so
+        # `test_nothing_outside_the_ci_workflows_prints_a_verdict_marker` stays green over it.
+        #
+        # 🔑 And it was caught exactly as the note above predicts, by the same guard, at the same
+        # place: the file was committed, `ruff`, `mypy` and 295 tests across ten reader files were
+        # green, and this one — which was not in that selection — reddened in the pre-push hook.
+        # The note said a local green is not evidence about a file you are ADDING. It is also not
+        # evidence about a SELECTION you did not run. Two rounds, same guard, same lesson.
+        "tests/test_deploy/test_reader_window_is_reproducible.py",
     }
 )
 

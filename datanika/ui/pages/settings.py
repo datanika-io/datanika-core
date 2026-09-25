@@ -5,6 +5,7 @@ import reflex as rx
 from datanika.config import settings
 from datanika.ui.components.api_key_row import api_key_create_controls, api_key_row
 from datanika.ui.components.billing_preview_modal import billing_preview_modal
+from datanika.ui.components.file_upload import named_upload
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.quota_callout import error_or_quota_callout
 from datanika.ui.state.account_state import AccountState
@@ -1026,8 +1027,12 @@ def backup_restore_card() -> rx.Component:
             rx.text(_t["settings.export_backup_hint"], size="1", color_scheme="gray"),
             rx.separator(),
             rx.text(_t["settings.restore_backup"], size="2", weight="medium"),
-            rx.upload(
+            named_upload(
                 rx.button(_t["settings.restore_backup"], size="2", variant="outline"),
+                # The button is a SIBLING of the file input, not its label, so the input needs
+                # its own name (core#1568). Same key as the button: the accessible name then
+                # matches the visible one.
+                accessible_name=_t["settings.restore_backup"],
                 accept={".json": ["application/json"]},
                 max_files=1,
                 on_drop=BackupState.handle_restore_upload(rx.upload_files()),  # type: ignore

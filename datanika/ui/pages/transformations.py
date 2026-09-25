@@ -2,6 +2,7 @@
 
 import reflex as rx
 
+from datanika.ui.components.file_upload import named_upload
 from datanika.ui.components.info_tooltip import info_tooltip
 from datanika.ui.components.layout import page_layout
 from datanika.ui.components.searchable_select import searchable_select
@@ -116,13 +117,16 @@ def preview_display() -> rx.Component:
 def _sql_action_buttons() -> rx.Component:
     """Upload SQL, SQL Editor, Preview SQL, Preview Result buttons below the textarea."""
     return rx.hstack(
-        rx.upload(
+        named_upload(
             rx.button(
                 _t["transformations.upload_sql"],
                 size="1",
                 variant="outline",
                 type="button",
             ),
+            # core#1568. /transformations is not in the a11y sweep's page list at all, so this one
+            # was invisible to it in both directions.
+            accessible_name=_t["transformations.upload_sql"],
             accept={".sql": ["text/plain", "application/sql"]},
             max_files=1,
             on_drop=TransformationState.handle_sql_file_upload(rx.upload_files()),  # type: ignore

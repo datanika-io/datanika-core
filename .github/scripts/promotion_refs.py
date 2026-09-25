@@ -353,6 +353,28 @@ def gh_api(path: str) -> object:
 ISSUE_MISSING = object()
 
 
+def as_issue(issue: object) -> dict:
+    """`gh_issue`'s dict outcome, narrowed once the caller has ruled the other two out.
+
+    core#1571. `gh_issue` returns `object` on purpose -- the three outcomes are a dict,
+    `ISSUE_MISSING` and `None`, and conflating them is landing#493. Four `.get()` calls
+    downstream of `_unresolvable()` therefore did not type-check.
+
+    🔑 **A narrowing function rather than `# type: ignore[attr-defined]`, and the difference is
+    the point of core#1288**: an ignore is a suppression nobody can validate, while this raises
+    if `_unresolvable`'s contract ever drifts -- in the program that decides what a promotion
+    closes, where being wrong is silent. `warn_unused_ignores` can tell you an ignore's *code*
+    is wrong; only a check can tell you its *premise* is.
+    """
+    if not isinstance(issue, dict):
+        raise TypeError(
+            f"as_issue() got {type(issue).__name__}; _unresolvable() should have taken this "
+            "branch already. Either it stopped screening ISSUE_MISSING/None, or a caller "
+            "skipped it -- both are bugs in the caller, not here."
+        )
+    return issue
+
+
 def run_capture(*args: str) -> tuple[int, str, str]:
     """`run()` but keeping stdout on a non-zero exit.
 
@@ -539,9 +561,10 @@ def main() -> int:
 
     lines = []
     for num in sorted(refs):
-        issue = gh_issue(repo, num)
-        if _unresolvable(num, issue, refs[num]):
+        looked_up = gh_issue(repo, num)
+        if _unresolvable(num, looked_up, refs[num]):
             continue
+        issue = as_issue(looked_up)
         state = issue.get("state")
         title = (issue.get("title") or "").strip()
         via = ", ".join(sorted(refs[num]))
@@ -560,9 +583,10 @@ def main() -> int:
     candidate_lines = []
     suppressed_closed = 0
     for num in sorted(tracking):
-        issue = gh_issue(repo, num)
-        if _unresolvable(num, issue, tracking[num]):
+        looked_up = gh_issue(repo, num)
+        if _unresolvable(num, looked_up, tracking[num]):
             continue
+        issue = as_issue(looked_up)
         if issue.get("state") == "closed":
             # Already reconciled; re-listing it is noise. But it DID account for a
             # commit, so it is counted -- otherwise the coverage number below has no
@@ -693,8 +717,11 @@ def main() -> int:
     # the commit message is already on `dev` and the promoter cannot fix it, and
     # core#1040's stated design is that a partially-unaccounted batch is reported
     # rather than blocked. A red here would only teach people to merge past it.
-    for num, (why, via) in sorted(unresolved.items()):
-        print(f"::warning::promotion body: #{num} {why} (via {', '.join(sorted(via))})")
+    # core#1571: `via_refs` rather than `via`, which is bound to a `str` twice earlier in this
+    # function. Reusing a name at two types is legal and it makes "which type is this now" a
+    # question the reader has to hold — in the program that decides what a promotion closes.
+    for num, (why, via_refs) in sorted(unresolved.items()):
+        print(f"::warning::promotion body: #{num} {why} (via {', '.join(sorted(via_refs))})")
 
     # Rehearsal path. The promoter can see the exact block a promotion would generate
     # BEFORE opening the PR -- the only moment at which noticing an empty derivation is

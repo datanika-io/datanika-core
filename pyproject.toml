@@ -408,7 +408,18 @@ testpaths = ["tests"]
 # `datanika/` is deliberately out of scope: 248 files that have never been checked is a
 # different proposal with a different cost, and bundling it sinks this one.
 [tool.mypy]
-files = ["scripts"]
+# core#1571. `.github/scripts` joined `scripts` here, and the argument is the one below about
+# `warn_unused_ignores`: a directory outside this list gets none of it, so it accumulates
+# `# type: ignore` comments nobody can validate. It holds five programs, two of which decide
+# whether a promotion may proceed (`cloud_pairing_gate.py`) and what it closes
+# (`promotion_refs.py`), and it had never been type-checked.
+#
+# ⚠️ `e2e/scripts` is deliberately NOT here and that is a recorded decision, not an oversight:
+# it holds 5 files with **8 errors in 2** measured 2026-09-25 (`detect_flaky_gating.py`,
+# `seed-sso-configs.py`), which is a separate body of work — core#1571 AC4 asks that a second
+# tree be named rather than folded in. `datanika-mcp/` is checked by no workflow at all and is
+# a third gap. Both are tracked; neither is silent.
+files = ["scripts", ".github/scripts"]
 python_version = "3.12"
 
 # Raises the bar rather than lowering it, and it is the reason this section is not just a

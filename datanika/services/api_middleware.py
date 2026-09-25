@@ -10,6 +10,22 @@ sync SQLAlchemy session.execute()/commit(), serializing all requests on
 a Granian async worker. k6 Run 4 (2026-04-18) measured 60 req/s at 100
 VUs with 4 workers — theoretical max was 97. Wrapping sync handlers in
 ``to_thread`` unlocks threadpool-level concurrency (~40 threads/worker).
+
+🚨 **That 60 is a PRE-FIX reading on the terminated Hetzner CPX31, and it is
+NOT a capacity figure** (core#1592). Its whole job here is the *gap* — 60
+against a theoretical 97 is the evidence that requests were serializing, which
+is what the paragraph above claims and what E12 fixed. Read as throughput it is
+wrong twice over: the machine was terminated 2026-07-14 (production moved to
+pointer.gr on 07-17 — different host, different network path, Apache instead of
+nginx), and the number describes the code *before* this module's fix.
+
+⚠️ **Do not "refresh" it to the current figure.** Substituting ~50 req/s (run
+10, 2026-09-24, the one current-host measurement) would replace a pre-fix datum
+with a post-fix one and destroy the comparison the sentence rests on. Current
+capacity lives in ``docs/slo_targets.md``, which is also where the three
+non-interchangeable req/s numbers are told apart; the founder's 2026-09-25
+ruling — publish the ~50, stop citing 60 — is about *capacity citations*, and
+this is a historical one.
 """
 
 from __future__ import annotations

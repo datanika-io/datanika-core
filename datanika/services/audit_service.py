@@ -37,10 +37,33 @@ def _derive_pii_payload_keys() -> frozenset[str]:
     choice between them.
 
     ⚠️ ``SECRET_CONFIG_KEYS`` was proposed as the source and is the wrong object. It is a
-    **connector-credential** set derived from ``CONFIG_SCHEMAS`` — 17 keys, ``password``,
-    ``api_key``, ``keyfile_json`` and so on — describing a universe with no email
-    addresses in it. **Not one of them is a PII key.** A redactor built on it would be
-    derived, superset-tested, green, and would redact exactly zero personal data.
+    **connector-credential** set — ``password``, ``api_key``, ``keyfile_json`` and so on —
+    describing a universe with no email addresses in it. **Not one of them is a PII key.**
+    A redactor built on it would be derived, superset-tested, green, and would redact
+    exactly zero personal data.
+
+    🔴 **This paragraph used to call that set "derived from ``CONFIG_SCHEMAS``" and to state a
+    key count, and both halves were wrong (core#1603 AC5).** It is a hand-written ``frozenset``
+    literal in ``connection_service``, kept a *superset* of every ``format: password`` schema
+    field by ``tests/test_services/test_secret_key_coverage.py`` — **coupled by a test, not
+    derived by code** — and the count was one short.
+
+    ⚠️ **The stale number is deliberately not quoted here, and that is not squeamishness.**
+    ``test_any_count_it_states_is_the_real_one`` pins every count in this docstring against
+    ``len(SECRET_CONFIG_KEYS)``, and a correction that reproduces the wrong figure in order to
+    disown it trips that pin — measured, on the first attempt at this very paragraph. Nothing
+    distinguishes a quoted count from a live one to a reader skimming or to a regex, which is
+    the whole reason the pin exists.
+
+    🔑 **Why the distinction was worth correcting rather than leaving as loose wording.** An
+    acceptance criterion on core#1603 was built on this sentence instead of on the code, and
+    it asserted a credential-disclosure path that does not exist: if the set really were
+    derived from ``CONFIG_SCHEMAS``, then a credential key absent from the schemas would be
+    absent from the redaction set, and four connector types write exactly such keys. Because
+    it is hand-written and deliberately wider than the schemas, they are covered. The premise
+    reached a public issue before anyone read the ``frozenset``. The count is now left out
+    entirely: the argument this paragraph makes needs no number, and a number beside the data
+    it describes is the shape that keeps going stale.
     """
     return frozenset(
         col.name

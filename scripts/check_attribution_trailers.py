@@ -315,9 +315,21 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  attribution-trailer check COULD NOT READ {args.rng}: {exc}", file=sys.stderr)
             return 2
 
-    # A single artifact that arrived blank measured nothing, exactly as an empty range does.
-    # Distinguishing the two is the difference between "the body is clean" and "the step was
-    # never handed the body", and those call for opposite responses.
+    # Nothing scanned is its own outcome, on BOTH inputs.
+    #
+    # 🚨 An empty RANGE used to print "this measured NOTHING" and return 0. That was
+    # survivable while the only caller was the hook -- a human reads the message, and the
+    # hook has an `-eq 2` warning branch that was simply never reached. It is not survivable
+    # in a workflow, where the exit code is the only consumer, so the step went green on a
+    # scan of nothing. Found by RUNNING the merge_group branch's command shape rather than
+    # asserting its text; the pre-existing test compared the two messages and passed either
+    # way, because nothing asserted the code.
+    if not items:
+        print(summarise(scanned=0, found=0, context=args.context, noun=noun))
+        return 2
+    # And a single artifact that arrived blank. Distinguishing the two is the difference
+    # between "the body is clean" and "the step was never handed the body", which call for
+    # opposite responses.
     if len(items) == 1 and not items[0][1].strip():
         print(summarise_blank(label=items[0][0], context=args.context))
         return 2

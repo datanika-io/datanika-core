@@ -220,6 +220,31 @@ class TestItRunsAndIsWired:
         p = self._run(msg("[Infra] x", "Nothing to see."), tmp_path)
         assert p.returncode == 0, p.stdout.decode("utf-8", "replace")
 
+    def test_an_empty_but_readable_range_exits_2_and_is_not_a_pass(self) -> None:
+        """🚨 The message said "this measured NOTHING" and the exit code said "clean".
+
+        Found by RUNNING the `merge_group` branch's command shape rather than asserting its
+        text: `--range <sha>..<sha>` printed *"read 0 commits -- this measured NOTHING"* and
+        returned **0**. In the hook that is survivable, because a human reads the message and
+        the hook has a `-eq 2` warning branch waiting for it. **In a workflow the exit code
+        is the only consumer**, so the step went green on a scan of nothing — which is the
+        exact defect this whole file is about, shipped inside the fix for it.
+
+        ``test_a_zero_population_says_so_rather_than_reading_as_clean`` above compares the
+        two *messages* and passes either way. Nothing asserted the code. That is the gap.
+        """
+        p = subprocess.run(  # noqa: S603
+            [sys.executable, str(SCRIPT), "--range", "HEAD..HEAD"],
+            capture_output=True,
+            check=False,
+            cwd=str(REPO_ROOT),
+        )
+        assert b"NOTHING" in p.stdout, p.stdout
+        assert p.returncode == 2, (
+            "an empty range scanned nothing and said so, then exited 0 -- so every consumer "
+            "that reads the code rather than the text scores it as clean"
+        )
+
     def test_an_unreadable_range_exits_2_and_is_not_a_pass(self) -> None:
         p = subprocess.run(  # noqa: S603
             [sys.executable, str(SCRIPT), "--range", "no-such-ref..also-not-real"],

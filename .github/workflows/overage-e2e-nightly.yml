@@ -35,7 +35,9 @@ on:
 
 jobs:
   overage-e2e:
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 cannot provision Chromium on Ubuntu 26.04. Pin this
+    # staging gate until the bundled Playwright version supports that image.
+    runs-on: ubuntu-24.04
     # Infra wiring: the sandbox + CF-Access secrets live on the `production`
     # environment (not repo-level), so the job must select it or every
     # `${{ secrets.* }}` resolves empty → the spec's skip-gates trip and the
@@ -166,12 +168,7 @@ jobs:
           # Say WHICH half failed. A filer that reports one word for two different events
           # teaches people to stop reading it — the specs going red and the run having
           # executed nothing need opposite responses.
-          case "$SOAK_OUTCOME:$COVERAGE_OUTCOME" in
-            success:*) WHAT="the specs passed but the COVERAGE ASSERTION refused — the run may have executed nothing" ;;
-            *:success) WHAT="the specs themselves failed" ;;
-            :*)        WHAT="the soak step never ran (setup failed before it) — nothing about the charge cycle is claimed here" ;;
-            *)         WHAT="both the specs and the coverage assertion are non-green" ;;
-          esac
+          WHAT=$(python3 e2e/scripts/classify_overage_failure.py "$SOAK_OUTCOME" "$COVERAGE_OUTCOME")
           if [ -n "$existing" ]; then
             gh issue comment "$existing" --repo ${{ github.repository }} \
               --body "Another overage-charge E2E soak failure ($WHAT): $RUN_URL"

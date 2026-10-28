@@ -46,6 +46,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 E2E = REPO_ROOT / "e2e"
 SPEC = E2E / "tests" / "overage-charge-cycle.spec.ts"
 SCRIPT = E2E / "scripts" / "assert_overage_coverage.py"
+FAILURE_CLASSIFIER = E2E / "scripts" / "classify_overage_failure.py"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "overage-e2e-nightly.yml"
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "overage_coverage"
 
@@ -380,6 +381,43 @@ def test_the_workflow_invokes_the_guard() -> None:
         "nothing downstream reads this run, so a swallowed red here is the defect the guard "
         "was built to catch"
     )
+
+
+def test_the_soak_uses_a_playwright_supported_ubuntu_runner() -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    assert workflow["jobs"]["overage-e2e"]["runs-on"] == "ubuntu-24.04", (
+        "ubuntu-latest advanced to 26.04, which Playwright 1.59.1 cannot provision; "
+        "pin this staging gate to the supported 24.04 runner"
+    )
+
+
+@pytest.mark.parametrize(
+    ("soak", "coverage", "expected"),
+    [
+        ("skipped", "failure", "the soak step never ran"),
+        ("success", "failure", "the specs passed but the coverage assertion refused"),
+        ("failure", "success", "the specs themselves failed"),
+        ("failure", "failure", "both the specs and the coverage assertion are non-green"),
+    ],
+)
+def test_the_filer_describes_the_actual_soak_and_coverage_outcomes(
+    soak: str, coverage: str, expected: str
+) -> None:
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    filer = next(
+        step
+        for step in workflow["jobs"]["overage-e2e"]["steps"]
+        if "gh issue create" in str(step.get("run", ""))
+    )
+    assert FAILURE_CLASSIFIER.name in filer["run"]
+    spec = importlib.util.spec_from_file_location("classify_overage_failure", FAILURE_CLASSIFIER)
+    assert spec and spec.loader
+    classifier = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(classifier)
+    result = classifier.describe_outcome(soak, coverage)
+    assert expected in result
+    if soak == "skipped":
+        assert "specs themselves failed" not in result
 
 
 def test_the_failure_filer_is_keyed_on_the_coverage_step_too() -> None:

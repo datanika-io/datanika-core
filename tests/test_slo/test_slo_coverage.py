@@ -88,7 +88,6 @@ UNMEASURED_BASELINE = {
     "pipeline-level-slos-task-enqueued-dlt-extract-started",
     "pipeline-level-slos-dlt-extract-complete-dbt-transformation-started",
     "pipeline-level-slos-end-to-end-small-pipeline-no-scheduling-delay",
-    "saturation-slos-postgres-connections-in-use",  # wrong denominator available
 }
 
 # Wired to an instrument we have measured to be defective ([core#895]). These
@@ -155,6 +154,30 @@ def test_parser_reads_known_targets_correctly(rows):
     celery = by_id["error-rate-slos-celery-task-failure-rate-excluding-user-error-exceptions"]
     assert celery.targets["target"].value == pytest.approx(0.01)
     assert celery.targets["target"].bound == MAX
+
+
+def test_postgres_connections_are_scored_against_max_connections(rows, registry):
+    """cloud#155 decision 2: < 70% of pg_settings_max_connections, not the pool.
+
+    The old cell said 'pool default: 10'. postgres-exporter does not publish
+    that pool. Scoring pg_stat_activity_count against 10 reports a different
+    commitment from scoring it against pg_settings_max_connections.
+    """
+    row = next(r for r in rows if r.slo_id == "saturation-slos-postgres-connections-in-use")
+    target = row.targets["target"]
+    assert target.value == pytest.approx(0.70)
+    assert target.unit == "fraction"
+    assert target.bound == MAX
+    assert "pool" not in target.raw.lower()
+    assert "pg_settings_max_connections" in target.raw
+
+    entry = registry[row.slo_id]
+    assert entry.get("status") == "measured"
+    query = entry.get("query") or ""
+    assert "pg_stat_activity_count" in query
+    assert "pg_settings_max_connections" in query
+    assert "/" in query
+    assert entry.get("source") == "postgres"
 
 
 def test_quantile_prefix_is_not_mistaken_for_the_number():

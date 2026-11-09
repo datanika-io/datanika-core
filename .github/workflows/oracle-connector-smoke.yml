@@ -75,8 +75,16 @@ jobs:
           # different libxml2 and mismatch at import. Pinning to the locked
           # pair surfaced this — CI had only worked by resolving a different one.
           sudo apt-get update
+          # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
+          # there (replacement: libxmlsec1-openssl1). The image is Debian and
+          # still installs the old name; this line only runs on the runner.
+          if apt-cache policy libxmlsec1-openssl | grep -q 'Candidate: (none)'; then
+            xmlsec_openssl_pkg=libxmlsec1-openssl1
+          else
+            xmlsec_openssl_pkg=libxmlsec1-openssl
+          fi
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev libxmlsec1-dev libxmlsec1-openssl \
+            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl_pkg" \
             pkg-config zlib1g-dev libssl-dev
           uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec

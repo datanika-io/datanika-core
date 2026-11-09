@@ -411,24 +411,18 @@ slos:
     min_samples: 1
 
   saturation-slos-postgres-connections-in-use:
-    status: unmeasured
-    reason: >-
-      The SLO's denominator is the application's SQLAlchemy pool ('pool default:
-      10'), and nothing exports that pool's occupancy. postgres-exporter offers
-      pg_stat_activity_count, which counts server-side backends from every
-      client - app, celery, beat, the exporter itself - against max_connections
-      (100). Scoring one against the other would compare 11 observed backends
-      with a pool of 10 and report 110%, or with 100 and report 11%: a 10x
-      spread depending on which number you pick. Wiring a wrong denominator
-      would produce a confident, machine-readable assertion of something untrue,
-      which is worse than the honest gap.
-    needs: >-
-      EITHER the app exports its own pool occupancy (SQLAlchemy pool
-      checkedout()/size(); Engineering), which makes the SLO mean what it says,
-      OR the document restates the target against a denominator that IS
-      exported - pg_settings_max_connections is present and reads 100. The
-      second is a change to the commitment, so it is core#897's call and not an
-      instrument decision.
+    status: measured
+    source: postgres
+    query: >-
+      sum(pg_stat_activity_count)
+        / max(pg_settings_max_connections)
+    samples_query: 'count(pg_settings_max_connections)'
+    min_samples: 1
+    notes:
+      - "pg_stat_activity_count is one series per datname and state, plus a
+         finer series for the live backends. sum() is that backend count.
+         pg_settings_max_connections is the exported setting and is one series;
+         max() keeps a duplicated setting from being added to itself."
 
   saturation-slos-disk-free-on-opt-datanika:
     status: measured

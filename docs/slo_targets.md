@@ -145,7 +145,7 @@ investigate, not an auto-page.
 | App container CPU | **< 70 %** |
 | Celery worker CPU | **< 80 %** |
 | Postgres CPU | **< 60 %** |
-| Postgres connections in use | **< 70 %** of pool size (pool default: 10) |
+| Postgres connections in use | **< 70 %** of `pg_settings_max_connections` |
 | Disk free on `/opt/datanika` | **> 20 %** |
 
 ## k6 scenarios QA should build first

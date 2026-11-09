@@ -1,6 +1,6 @@
 # SLO instrument registry — which instrument, if any, reads each SLO.
 #
-# `docs/slo_targets.md` names 26 commitments. This file names, for each one, the
+# `docs/slo_targets.md` names 25 rows. This file names, for each one, the
 # thing in production that measures it. It exists because from 2026-04-14 to
 # 2026-09-01 nothing did, and a target no instrument reads is indistinguishable
 # from a target being met: it can be neither violated nor achieved.
@@ -32,7 +32,7 @@
 #    number that means nothing; scored as a pass it is this codebase's signature
 #    defect. Below the floor the verdict is NO_VERDICT, never PASS.
 #
-# Baseline measured against production 2026-09-01: docs/slo_baseline.md
+# Baseline measured against production 2026-11-09: docs/slo_baseline.md
 # Tracking issue: core#721.
 
 slos:
@@ -429,27 +429,6 @@ slos:
       exported - pg_settings_max_connections is present and reads 100. The
       second is a change to the commitment, so it is core#897's call and not an
       instrument decision.
-
-  saturation-slos-redis-memory:
-    status: unmeasured
-    reason: >-
-      Undefined THREE independent ways, all measured 2026-09-02. (1) No redis
-      exporter in the production compose stack: zero of Prometheus's 1,048
-      metric names match 'redis'. (2) Prod runs maxmemory 0 - deliberately,
-      because evicting Reflex session keys would recreate core#646 in a
-      harder-to-find form - and 60% of unlimited is not a number. (3) The
-      container has no memory limit either:
-      container_spec_memory_limit_bytes{name="datanika-redis"} = 0. cadvisor
-      DOES export the numerator
-      (container_memory_usage_bytes{name="datanika-redis"} = 5.35 MB), so this
-      is not a missing measurement - there is no denominator anywhere in the
-      system.
-    needs: >-
-      A denominator, which is a decision rather than an instrument. Per core#897
-      a commitment that cannot be defined should be REMOVED from the document
-      rather than wired to the nearest available number: instrumenting it
-      against host memory or a container limit would answer a question nobody
-      committed to.
 
   saturation-slos-disk-free-on-opt-datanika:
     status: measured

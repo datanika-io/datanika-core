@@ -77,9 +77,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SLO_DOC = REPO_ROOT / "docs" / "slo_targets.md"
 SLO_REGISTRY = REPO_ROOT / "docs" / "slo_instruments.yml"
 
-# A parse that finds nothing must never read as "nothing is wrong". The doc has
-# carried 26 SLOs since April; if the parser returns fewer, either the document
-# was gutted or the parser broke, and both are failures.
+# A parse that finds nothing must never read as "nothing is wrong". The floor is
+# the current document: 25, after the Redis memory row was removed (founder
+# decision 1, cloud#155, 2026-11-09). If the parser returns fewer, either the
+# document was gutted or the parser broke, and both are failures.
 #
 # ⚠️ The floor alone is not enough, and this was caught the hard way while
 # writing it: the first version of the column lookup silently dropped all six
@@ -87,7 +88,7 @@ SLO_REGISTRY = REPO_ROOT / "docs" / "slo_instruments.yml"
 # whole section can vanish inside a total. `tests/test_slo/test_slo_coverage.py`
 # therefore asserts the count **per section**, which is the assertion that
 # actually discriminates.
-MIN_EXPECTED_SLOS = 26
+MIN_EXPECTED_SLOS = 25
 
 # section heading -> how many SLO rows it must yield.
 EXPECTED_SECTION_COUNTS = {
@@ -95,7 +96,7 @@ EXPECTED_SECTION_COUNTS = {
     "Throughput SLOs": 5,
     "Pipeline-level SLOs (out of k6 scope but documented here)": 4,
     "Error-rate SLOs": 4,
-    "Saturation SLOs": 6,
+    "Saturation SLOs": 5,
 }
 
 PASS, FAIL, NO_VERDICT = "PASS", "FAIL", "NO_VERDICT"

@@ -1,272 +1,90 @@
-# SLO Baseline — 2026-09-01
+# SLO Baseline — 2026-11-09
 
-First measurement of `docs/slo_targets.md` against production, ever. The document
-shipped **2026-04-14** and until today no instrument read any of it ([core#721]).
-
-Reproduce with `scripts/slo_report.py`; the instrument decisions are in
-`docs/slo_instruments.yml`; `tests/test_slo/test_slo_coverage.py` keeps the two in
-sync and fails the build if the document gains a commitment nothing measures.
-
-## Topology — every number below is bound to this
-
-| | |
-|---|---|
-| host | pointer.gr, Athens (`185.25.22.188`), 4 vCPU / 8 GB. **Not the Hetzner box the document still names** |
-| serving colour | **blue** (`datanika-app`) — `datanika-prod-active.conf` = 8000/3000 |
-| prod branch | `master d1e41060` |
-| `GRANIAN_WORKERS` | **4** (staging runs 2; the document's numbers were derived on neither) |
-| Prometheus retention | 30 d, and it holds a full 30 d — 172,787 of a possible 172,800 `up` samples |
-| Celery | single worker, `-E`, scraped via `celery-exporter` 0.12.2 as `job=celery` |
-
-## Result
+Rescored on pointer.gr (`185.25.22.188`) against Prometheus at `127.0.0.1:9090`.
+The block below is the stdout of `scripts/slo_report.py`, run on that box with
+this tree's `docs/slo_targets.md` and `docs/slo_instruments.yml`. The Redis
+memory row is not in the document. The run exited 1 because a measured
+commitment is outside its target.
 
 ```
-Commitments in document: 33   PASS 8   FAIL 2   NO_VERDICT 23
-```
+=== FAIL  (2) ===
+  service-level-indicators-health-probes-healthz-readyz#p95                                       OUT OF target (105.0 ms vs max 50.0 ms), n=40320
+                                                                                                  ^ Single-process exporter, 15s interval, ~40,300 samples per 7d. This is the most trustworthy instrument in the file.
+                                                                                                  ^ MISMATCH between target and instrument: the document derived 50 ms from a LOCAL probe ('/healthz in ~5 ms'), but the instrument it names probes https://app.datanika.io/healthz — through Cloudflare, then Apache, then the app. The two measure different paths. See core#897.
+                                                                                                  ^ /readyz is in the SLI's name and is probed by nothing. Only /healthz is a blackbox target.
+  service-level-indicators-health-probes-healthz-readyz#p99                                       OUT OF target (153.3 ms vs max 150.0 ms), n=40320
+                                                                                                  ^ Single-process exporter, 15s interval, ~40,300 samples per 7d. This is the most trustworthy instrument in the file.
+                                                                                                  ^ MISMATCH between target and instrument: the document derived 50 ms from a LOCAL probe ('/healthz in ~5 ms'), but the instrument it names probes https://app.datanika.io/healthz — through Cloudflare, then Apache, then the app. The two measure different paths. See core#897.
+                                                                                                  ^ /readyz is in the SLI's name and is probed by nothing. Only /healthz is a blackbox target.
 
-33, not 26: seven SLIs commit to **both** a p95 and a p99, and each is a separate
-promise. **NO_VERDICT is not a pass** — 23 of 33 commitments cannot presently be
-violated or met by anything production measures.
+=== NO_VERDICT  (18) ===
+  service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines#p95       only 0 samples, need >= 50 before a quantile or ratio means anything
+  service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines#p99       only 0 samples, need >= 50 before a quantile or ratio means anything
+  service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login#p95                          only 0 samples, need >= 20 before a quantile or ratio means anything
+  service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login#p99                          only 0 samples, need >= 20 before a quantile or ratio means anything
+  service-level-indicators-websocket-event-reflex-event-round-trip-for-a-state-update#p95         declared unmeasured: Nothing times a Reflex event round-trip. e2e/tests/reflex-wire.spec.ts proves the /_event socket carries a frame and that readiness is not a quiet-period heuristic, but it asserts correctness, not latency, and does not record a duration. The ASGI metrics middleware returns early for non-HTTP scopes, so WebSocket traffic is invisible to it by construction.
+                                                                                                  ^ NEEDS: A duration observed inside the Reflex event path (Engineering, core app). No exporter can supply this: the round-trip begins and ends inside a WebSocket frame, which the ASGI HTTP middleware never sees. Two commitments hang on this one instrument - p95 and p99.
+  service-level-indicators-websocket-event-reflex-event-round-trip-for-a-state-update#p99         declared unmeasured: Nothing times a Reflex event round-trip. e2e/tests/reflex-wire.spec.ts proves the /_event socket carries a frame and that readiness is not a quiet-period heuristic, but it asserts correctness, not latency, and does not record a duration. The ASGI metrics middleware returns early for non-HTTP scopes, so WebSocket traffic is invisible to it by construction.
+                                                                                                  ^ NEEDS: A duration observed inside the Reflex event path (Engineering, core app). No exporter can supply this: the round-trip begins and ends inside a WebSocket frame, which the ASGI HTTP middleware never sees. Two commitments hang on this one instrument - p95 and p99.
+  throughput-slos-rest-api-sustained-throughput-before-p95-regression                             declared unmeasured: Requires a load generator applying sustained rps and observing where p95 breaks. There is no k6 (or any load harness) in the repository, and production traffic is roughly 400 legitimate requests per 30 days, so the figure cannot be inferred from organic load either.
+                                                                                                  ^ NEEDS: A load generator (k6, core#721) run against STAGING. Not production: core#895 and core#896 mean prod would mismeasure itself and every synthetic path would add permanent time series. This is a CAPACITY target - 'throughput before p95 regression' - answerable only by applying load until p95 moves. Scoring it against organic traffic would answer a different question, and answer it wrongly.
+  throughput-slos-celery-worker-simple-pipeline-runs-duckdb-duckdb-1k-rows                        declared unmeasured: celery-exporter labels by task NAME, which is a usable proxy for run kind - but the pipeline task has never run in production at all. Measured 2026-09-02, celery_task_received_total names exactly four tasks: datanika.run_maintenance (51), datanika.billing_tick (45), datanika.run_upload (9), datanika.send_quota_warning_email (1). There is no datanika.run_pipeline series to aggregate.
+                                                                                                  ^ NEEDS: Sustained load on the pipeline path (core#721's harness), and a row-count dimension for the '~1k rows' qualifier. This is a CAPACITY claim, not an observed rate: scoring runs/min against organic traffic yields ~0 and a confident FAIL meaning 'nobody used the product' rather than 'the system is too slow' - a red naming the wrong layer, which is worse than NO_VERDICT.
+  throughput-slos-celery-worker-upload-staging-runs-10k-rows-local-csv                            declared unmeasured: Unlike the simple-run SLO the kind dimension DOES exist here: celery_task_runtime{name="datanika.run_upload"} carries 9 observations over 30 days. What is missing is sustained load - 9 runs in a month is not a rate - and the '~10k rows, local CSV' qualifier has no dimension at all. (This entry previously read 'no run-kind label'. That was true of the pipeline SLO above and not of this one.)
+                                                                                                  ^ NEEDS: Sustained load, and a row-count dimension. Same capacity-versus-observed caveat as the simple-run SLO: an organic rate is not this number.
+  throughput-slos-scheduler-schedule-dispatch-latency-fire-time-task-enqueue                      declared unmeasured: No metric records scheduled fire time or enqueue time. Confirmed empty in production: there is no datanika_schedule_dispatch_latency_seconds series, and celery-exporter observes task receipt, not the gap between the schedule's due time and the enqueue.
+                                                                                                  ^ NEEDS: TWO things, and the second is the one that gets forgotten. (1) A histogram observed where a schedule fires, recording due-time -> enqueue-time (Engineering). (2) An armed schedule: production has schedules_armed=0 and apscheduler_jobs=0 (core#648), so even a correct instrument would report NO_VERDICT for want of samples.
+  throughput-slos-signup-first-event-user-hits-submit-first-reflex-event-round-trip               declared unmeasured: Spans the HTTP submit and the first WebSocket round-trip. Neither half is instrumented, and the second half is invisible to the ASGI middleware.
+                                                                                                  ^ NEEDS: The WebSocket instrument above, plus a span joining the two halves. Blocked on the same missing thing; do not count it as independent work.
+  pipeline-level-slos-pipeline-trigger-task-enqueued-in-celery                                    declared unmeasured: No metric records the trigger-to-enqueue interval, and - measured against datanika/models/run.py - no COLUMN does either. Run carries created_at (TimestampMixin), started_at and finished_at; there is no enqueue timestamp anywhere, so this interval is not derivable at any layer today. The document files these four as 'out of k6 scope but documented here', which is how they came to be written down and wired to nothing.
+                                                                                                  ^ NEEDS: A schema change BEFORE any instrument is possible (Engineering): a column or a metric recording the moment the task is handed to the broker. An exporter alone cannot supply this - there is nothing to export.
+  pipeline-level-slos-task-enqueued-dlt-extract-started                                           declared unmeasured: No metric records the enqueue-to-extract-start interval, and the enqueue moment is not recorded either (see the trigger SLO above). created_at -> started_at is the nearest available pair and it CONFLATES this SLO with that one, so wiring it would produce a confident number for a different interval.
+                                                                                                  ^ NEEDS: The same missing enqueue timestamp. Once it exists, this and the trigger SLO become two halves of one recorded span instead of one blurred figure.
+  pipeline-level-slos-dlt-extract-complete-dbt-transformation-started                             declared unmeasured: No metric records the extract-to-transform handoff, and the two sides are separate runs rows: Run is keyed by (target_type, target_id) with no parent-run link, so an extract row and the transform row that followed it cannot be identified as a pair.
+                                                                                                  ^ NEEDS: A link between related runs (Engineering, schema), then a derived series. Without the link a query would be pairing rows by guesswork.
+  pipeline-level-slos-end-to-end-small-pipeline-no-scheduling-delay                               declared unmeasured: No end-to-end pipeline duration series exists. celery_task_runtime covers one task, not a pipeline spanning several. Unlike the three SLOs above the SCHEMA is already sufficient: Run.created_at -> Run.finished_at is the end-to-end duration; what is missing is a series and the samples.
+                                                                                                  ^ NEEDS: An exported series derived from Run.created_at -> finished_at (a postgres-exporter custom query would do it; Infra owns that config), AND traffic - production has 17 runs in its entire history, below any sufficiency floor worth setting. The cheapest of the four pipeline SLOs.
+  error-rate-slos-any-5xx-on-rest-api                                                             only 0 samples, need >= 200 before a quantile or ratio means anything
+  error-rate-slos-webhook-handler-paddle-http-5xx                                                 only 0 samples, need >= 1 before a quantile or ratio means anything
+  saturation-slos-postgres-connections-in-use                                                     declared unmeasured: The SLO's denominator is the application's SQLAlchemy pool ('pool default: 10'), and nothing exports that pool's occupancy. postgres-exporter offers pg_stat_activity_count, which counts server-side backends from every client - app, celery, beat, the exporter itself - against max_connections (100). Scoring one against the other would compare 11 observed backends with a pool of 10 and report 110%, or with 100 and report 11%: a 10x spread depending on which number you pick. Wiring a wrong denominator would produce a confident, machine-readable assertion of something untrue, which is worse than the honest gap.
+                                                                                                  ^ NEEDS: EITHER the app exports its own pool occupancy (SQLAlchemy pool checkedout()/size(); Engineering), which makes the SLO mean what it says, OR the document restates the target against a denominator that IS exported - pg_settings_max_connections is present and reads 100. The second is a change to the commitment, so it is core#897's call and not an instrument decision.
 
-### FAIL — 2
+=== PASS  (12) ===
+  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p95  within target (9.5 ms vs max 200.0 ms), n=823
+                                                                                                  ^ Restricted to 2xx on purpose. Unrestricted, this SLI is dominated by 401s and 404s from vulnerability scanners, which are fast and would flatter the quantile.
+                                                                                                  ^ /api/v1/connections and /api/v1/pipelines have received no authenticated GET in the 30d window — every hit is an unauthenticated 401 probe.
+                                                                                                  ^ 🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9). /api/v1/meta/agent-tiers matches this selector AND that one, carries 316 of the 30d requests, and is scored here against 200 ms p95 while the Agent API row scores the same endpoint against 150 ms. Since the two named non-meta endpoints have no authenticated 2xx at all, this SLI is today measured almost entirely on an endpoint belonging to another SLI. Harmless while both are blocked on core#895; the moment that lands, one endpoint's regression appears as two, against two budgets, and neither number means what its row says.
+  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p99  within target (9.9 ms vs max 500.0 ms), n=823
+                                                                                                  ^ Restricted to 2xx on purpose. Unrestricted, this SLI is dominated by 401s and 404s from vulnerability scanners, which are fast and would flatter the quantile.
+                                                                                                  ^ /api/v1/connections and /api/v1/pipelines have received no authenticated GET in the 30d window — every hit is an unauthenticated 401 probe.
+                                                                                                  ^ 🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9). /api/v1/meta/agent-tiers matches this selector AND that one, carries 316 of the 30d requests, and is scored here against 200 ms p95 while the Agent API row scores the same endpoint against 150 ms. Since the two named non-meta endpoints have no authenticated 2xx at all, this SLI is today measured almost entirely on an endpoint belonging to another SLI. Harmless while both are blocked on core#895; the moment that lands, one endpoint's regression appears as two, against two budgets, and neither number means what its row says.
+  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p95   within target (9.5 ms vs max 150.0 ms), n=846
+                                                                                                  ^ The only latency SLI with real 2xx traffic today (~331 requests/30d), and it sits entirely in the histogram's bottom bucket (le=0.01). The honest reading is 'under 10 ms', not the interpolated figure.
+  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p99   within target (9.9 ms vs max 400.0 ms), n=846
+                                                                                                  ^ The only latency SLI with real 2xx traffic today (~331 requests/30d), and it sits entirely in the histogram's bottom bucket (le=0.01). The honest reading is 'under 10 ms', not the interpolated figure.
+  service-level-indicators-landing-pricing-docs-static#p95                                        within target (78.0 ms vs max 300.0 ms), n=40320
+                                                                                                  ^ probe_duration_seconds is TOTAL probe time, which is an over-estimate of TTFB (it includes the transfer phase). A PASS is therefore sound; a FAIL would need re-checking against the resolve+connect+tls+processing phases before being believed.
+                                                                                                  ^ Only `/` is probed. /pricing and /docs are named in the SLI and are blackbox targets of nothing.
+  service-level-indicators-landing-pricing-docs-static#p99                                        within target (107.9 ms vs max 800.0 ms), n=40320
+                                                                                                  ^ probe_duration_seconds is TOTAL probe time, which is an over-estimate of TTFB (it includes the transfer phase). A PASS is therefore sound; a FAIL would need re-checking against the resolve+connect+tls+processing phases before being believed.
+                                                                                                  ^ Only `/` is probed. /pricing and /docs are named in the SLI and are blackbox targets of nothing.
+  error-rate-slos-celery-task-failure-rate-excluding-user-error-exceptions                        within target (0.000 % vs max 1.000 %), n=336
+                                                                                                  ^ celery-exporter reads the broker event stream from a single process, so these counters do not have the per-process defect that core#895 describes for the app's HTTP metrics. Verified: resets() over 30d is 0 here and 121 on http_requests_total.
+                                                                                                  ^ Aggregated BEFORE increase() (core#1356). The exporter labels a failure by exception class and every series by worker hostname, so the first failure of a kind, and each new worker's first receipt, is a series born at a non-zero value, which increase() on the raw counter never counts. Production, 7 days to 2026-09-15 22:53Z: receipts read 337.03 aggregated and 318.02 in the raw form.
+                                                                                                  ^ 'Excluding user-error exceptions' is approximated by excluding RunFailedError, the class a run task raises when its run ended FAILED (core#1352). That removes every failed run, whoever caused it, and no other exception, so this is a task-exception rate and not a run-failure rate. The runs table is the reading for failed runs.
+  error-rate-slos-landing-blackbox-probe-success-rate                                             within target (100.000 % vs min 99.500 %), n=5760
+  saturation-slos-app-container-cpu                                                               within target (1.360 % vs max 70.000 %), n=1
+                                                                                                  ^ The (-b)? is load-bearing. core#622 was an alert rule whose selector omitted it, so it watched nothing for the 719 of 720 hours that green was serving.
+                                                                                                  ^ AMBIGUOUS DENOMINATOR: rate() yields cores-used, so this is a fraction of ONE core, while the box has 4 vCPU. Both readings pass by two orders of magnitude today, so the ambiguity is recorded rather than resolved. See core#897.
+  saturation-slos-celery-worker-cpu                                                               within target (0.817 % vs max 80.000 %), n=1
+  saturation-slos-postgres-cpu                                                                    within target (1.852 % vs max 60.000 %), n=1
+  saturation-slos-disk-free-on-opt-datanika                                                       within target (60.935 % vs min 20.000 %), n=1
+                                                                                                  ^ /opt/datanika is not its own filesystem; it lives on /. The mountpoint selector reflects that.
 
-| commitment | target | measured | |
-|---|---|---|---|
-| Health probes p95 | 50 ms | **139.2 ms** | **2.8x over** |
-| Health probes p99 | 150 ms | **416.5 ms** | **2.8x over** |
+Commitments in document: 32   PASS 12   FAIL 2   NO_VERDICT 18
+NO_VERDICT is not a pass. 18 of 32 SLOs cannot currently be violated or met by anything production measures.
 
-40,301 samples over 7 days from a single-process exporter at a 15 s interval —
-the most trustworthy instrument in the file. This SLO has been missed every day
-since it was written, and nothing has ever said so.
-
-🚨 **Do not close this by raising the number to 140 ms**, and note that this is
-not a case of production being slow. Decomposing the probe settles it.
-
-The obvious alternative explanation was tested first and **refuted**: blackbox
-re-resolves DNS on every probe where a real client would cache it, but DNS is
-**1.8 %** of the p95.
-
-| phase | p50 | p95 |
-|---|---|---|
-| resolve | 1.5 ms | 2.5 ms |
-| connect | 7.4 ms | 18.1 ms |
-| tls | 18.8 ms | 30.9 ms |
-| **processing** | 28.6 ms | **86.8 ms** |
-| transfer | 0.3 ms | 0.4 ms |
-| sum of phases | | 138.4 ms (reconciles with the 139.2 ms total) |
-
-**`connect` + `tls` alone is 49.0 ms at p95 — the entire budget, spent before the
-request is written and before the app is reached.** blackbox opens a fresh
-connection every 15 s, so it pays full TCP + TLS setup to a Cloudflare edge each
-time. **No value of application performance brings this SLI under 50 ms.** The
-target is not missed; it is unachievable on the path its own `Measurement` column
-names.
-
-The same path at three layers, measured directly on the box:
-
-| measured at | latency |
-|---|---|
-| app directly, `127.0.0.1:8000/healthz`, 10 samples | **1.9 – 2.6 ms** |
-| through Apache + TLS on the box, no Cloudflare | **11.8 – 16.1 ms**, plus one 33.6 ms first sample (cold TLS session cache) |
-| through Cloudflare — what blackbox scores | **60.4 ms p50 / 139.2 ms p95** |
-
-The document's derivation — *"`/healthz` in ~5 ms"* — matches the first row (2 ms
-today), so 50 ms was a sane ~10x headroom **on the local path**. The
-`Measurement` column then named an instrument on a different one. The two halves
-of that row have never described the same thing, which is why **editing only the
-number would hide the defect rather than fix it — the `Measurement` column has to
-change too.** Options are on [core#897].
-
-### PASS — 8
-
-| commitment | target | measured | n |
-|---|---|---|---|
-| Landing p95 TTFB | 300 ms | 105.9 ms | 40,302 / 7 d |
-| Landing p99 TTFB | 800 ms | 246.2 ms | 40,302 / 7 d |
-| Celery task failure rate | < 1 % | 0.000 % | 39 tasks / 7 d |
-| Landing probe success | ≥ 99.5 % | 100.000 % | 5,755 / 24 h |
-| App container CPU | < 70 % | 0.921 % | — |
-| Celery worker CPU | < 80 % | 0.222 % | — |
-| Postgres CPU | < 60 % | 1.795 % | — |
-| Disk free on `/` | > 20 % | 61.502 % | — |
-
-⚠️ Read the CPU and disk rows as *"passes at zero load"*. The saturation targets
-say "sustained 5 min" without saying of what; nothing has ever applied sustained
-load to this box. They are true and they are close to uninformative.
-
-⚠️ The landing figures use `probe_duration_seconds`, which is **total** probe time
-and therefore an over-estimate of TTFB. A pass is sound; a fail would need
-re-checking against the phase breakdown before being believed.
-
-### NO_VERDICT — 23
-
-🚨 **Corrected 2026-09-02. This table previously read 14 / 6 / 3 and every one of
-the three cells was wrong.** The numbers had been tallied from *registry entries*
-— 12 with `status: unmeasured`, 6 carrying `blocked_by` — and then published as a
-breakdown of the 33 *commitments*, which is a different population. Nothing in
-the report ever said 14, 6 or 3; the figures were arithmetic performed on a count
-of the wrong objects, and they read exactly like a measurement.
-
-`scripts/slo_report.py` now classifies its own verdicts and prints the breakdown,
-so this table is **copied from output** rather than counted by hand:
-
-```
---- why the 23 NO_VERDICTs have no verdict ---
-   13  no instrument exists at all
-    4  wired to an instrument measured to be defective
+--- why the 18 NO_VERDICTs have no verdict ---
+   12  no instrument exists at all
     6  instrument exists, not enough samples yet
 ```
-
-| why | count | was published as |
-|---|---|---|
-| no instrument exists at all | **13** | 14 |
-| wired to an instrument measured to be **defective** ([core#895]) | **4** | 6 |
-| instrument exists, **insufficient samples** | **6** | 3 |
-
-Cross-checked independently by counting the report's own detail strings
-(`declared unmeasured` 13 · `instrument known defective` 4 · `only N samples` 6).
-
-**Why the two errors happened, since the mechanism is the reusable part:**
-
-- **13, not 14.** Twelve registry entries are `unmeasured`, but the WebSocket SLI
-  is one entry carrying **two** commitments (p95 and p99). Rows are not
-  commitments. The document has 26 rows and 33 commitments, and this table is
-  about the 33.
-- **4, not 6.** Six entries carry `blocked_by`, but `scripts/slo_report.py`
-  checks **sample sufficiency first** — so four of the six (REST-API write p95
-  and p99, Auth p95 and p99, plus the any-5xx and Paddle-webhook error-rate SLOs)
-  never reach the blocked branch at all. They have zero samples. Only REST-API
-  read and Agent API have enough traffic to produce a number worth refusing to
-  score.
-
-🔑 **The buckets are not interchangeable, which is why this mattered rather than
-being a rounding quibble.** "No instrument" is engineering work. "Defective
-instrument" is unblocked by fixing one named defect ([core#895]). "Not enough
-samples" is a **traffic** problem that no amount of engineering resolves — at 0
-paying users it resolves itself on the first real customer and not before. Being
-told that six were blocked on core#895 when four are, and that three were waiting
-on traffic when six are, sends the work to the wrong place. The waiting-on-traffic
-bucket is **twice the size** it was reported as.
-
-⚠️ And two of those six are not really waiting for traffic either. The Auth SLI
-(`/api/v1/auth/signup`, `/api/v1/auth/login`) is **structurally unreachable**: the
-product's own signup and login run over the Reflex `/_event` WebSocket, and the
-ASGI metrics middleware returns early for non-HTTP scopes. No amount of real
-customers puts a sample in that bucket. It is a [core#897] document defect wearing
-an insufficient-samples costume.
-
-The 13 with no instrument: the Reflex event round-trip (p95 **and** p99 — two
-commitments, one missing instrument), all four pipeline-level SLOs, all five
-throughput SLOs, Postgres pool occupancy, and Redis memory. Each now carries a
-`needs:` in `docs/slo_instruments.yml` naming the specific missing thing, and
-`tests/test_slo/test_slo_coverage.py` fails if one is added without it.
-
-**None of the 13 is instrumentable from what production exports today** — checked
-against the full metric inventory on 2026-09-02, 1,048 names, not assumed:
-
-| SLO | what it actually needs |
-|---|---|
-| WebSocket round-trip (×2), signup→first event | a duration observed **inside the Reflex event path**. No exporter can reach it; the round-trip lives entirely in a WebSocket frame |
-| REST sustained throughput, both Celery throughput SLOs | **load**, not an instrument. These are capacity claims; scoring them against organic traffic yields ~0 and a confident FAIL meaning *"nobody used the product"* |
-| Scheduler dispatch latency | a metric **and** an armed schedule — prod has `schedules_armed=0` ([core#648]) |
-| Pipeline trigger→enqueue, enqueue→extract, extract→transform | a **schema change** first. `Run` carries `created_at`, `started_at`, `finished_at` — no enqueue timestamp and no parent-run link, so three of these four intervals are not derivable at any layer |
-| Pipeline end-to-end | the cheapest of the four: `Run.created_at → finished_at` already suffices. Needs an exported series and traffic (17 runs, ever) |
-| Postgres pool occupancy | the app to export its own pool, or a [core#897] decision to restate against `pg_settings_max_connections` (present, reads 100) |
-| Redis memory | **a denominator, which does not exist anywhere.** See below |
-
-🚨 **Redis memory is undefined three independent ways, one of them new.**
-(1) No redis exporter — zero of the 1,048 metric names match `redis`.
-(2) Prod runs `maxmemory 0`, deliberately, and 60 % of unlimited is not a number.
-(3) **The container has no memory limit either**:
-`container_spec_memory_limit_bytes{name="datanika-redis"}` = **0**. cadvisor does
-export the numerator (`container_memory_usage_bytes{name="datanika-redis"}` =
-5.35 MB), so this is not a missing measurement — there is nothing to divide by.
-Per [core#897], a commitment that cannot be defined should be **removed** from the
-document, not wired to the nearest available number.
-
-**One registry reason was also wrong and is corrected.** The upload-throughput SLO
-said *"no run-kind label"*; celery-exporter labels by task **name**, and
-`celery_task_runtime{name="datanika.run_upload"}` carries 9 observations over 30
-days. The kind dimension exists for that SLO — sustained load is what is missing.
-It does not exist for the *pipeline* SLO, and for a stronger reason than a missing
-label: `celery_task_received_total` names exactly four tasks in production —
-`datanika.run_maintenance` (51), `datanika.billing_tick` (45),
-`datanika.run_upload` (9), `datanika.send_quota_warning_email` (1). There is no
-`datanika.run_pipeline` series at all.
-
-[core#648]: https://github.com/datanika-io/datanika-core/issues/648
-
-## What the traffic actually is
-
-The reason most latency SLIs have no verdict is not a missing metric. It is that
-**production has almost no traffic, and most of what it has is hostile.** Over 30
-days, `http_requests_total`:
-
-| | |
-|---|---|
-| total requests (nominal — see the caveat below) | 1,836 |
-| `status="200"` | **423** |
-| `status="404"` | 663 |
-| `status="401"` | 289 |
-| distinct `path` label values ever seen | **298** |
-| of those, seen only as 404 | **290** |
-
-The 290 are vulnerability scanners: `/api/.env/wp-includes/wso112233`,
-`/api/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php`,
-`/api/config/.env.sendgrid.backup`, and 287 more. Filed as [core#896] — the
-`path` label is unbounded and driven by unauthenticated internet input; those
-paths account for 3,520 histogram series, 31 % of the TSDB.
-
-The SLI queries filter to `status=~"2.."` **because of this**. Unfiltered, the
-quantiles are dominated by fast 404s and *flatter* every number.
-
-Of the named SLI endpoints: `/api/v1/connections` and `/api/v1/pipelines` have
-received no authenticated GET at all, `/api/v1/auth/*` has received nothing, and
-no Paddle webhook has ever been delivered successfully.
-
-## The instrument defect, measured
-
-Six reads of the same counter on the serving container over **fresh TCP
-connections**, with no other traffic arriving and `/metrics` excluded from its own
-metering:
-
-```
-read 1: sum(http_requests_total)=3   distinct_series=5
-read 2: sum(http_requests_total)=7   distinct_series=5
-read 3: sum(http_requests_total)=6   distinct_series=5
-read 4: sum(http_requests_total)=7   distinct_series=5
-read 5: sum(http_requests_total)=7   distinct_series=5
-read 6: sum(http_requests_total)=6   distinct_series=3
-```
-
-`prometheus_client`'s default registry is process-local and `GRANIAN_WORKERS=4`,
-with `PROMETHEUS_MULTIPROC_DIR` unset. The discriminating control, over the same
-30 days:
-
-| counter | `resets()` / 30 d | processes |
-|---|---|---|
-| `http_requests_total` | **121** | 4 |
-| `celery_task_received_total` | **0** | 1 |
-
-121 counter decreases on a process that never restarted. Every windowed figure
-from these metrics is inflated by phantom resets; every instantaneous one is
-roughly one worker's share. Six commitments are marked `blocked_by` for this
-reason — their numbers are printed and **deliberately not scored**, because a
-broken meter emitting confident greens is worse than no meter. [core#895].
-
-## Revision policy — one trigger has already fired
-
-The document says to revise when *"prod hardware changes (we are on a single 8 GB
-Hetzner box today)"*. The Hetzner box was terminated **2026-07-14** and production
-moved to pointer.gr on **2026-07-17** — six and a half weeks before this baseline.
-The trigger fired and nothing revised, because nothing was watching. That is the
-same defect as the targets themselves, one level up.
-
-🚨 **When these numbers are next revised, revise them against a measurement, not
-against this table.** A target quietly moved to match observed behaviour is the
-same defect as a guard that passes because it looks at nothing.
-
-[core#721]: https://github.com/datanika-io/datanika-core/issues/721
-[core#895]: https://github.com/datanika-io/datanika-core/issues/895
-[core#896]: https://github.com/datanika-io/datanika-core/issues/896
-[core#897]: https://github.com/datanika-io/datanika-core/issues/897

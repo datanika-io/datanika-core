@@ -29,6 +29,7 @@ from datanika.services.execution_service import (
     hold_run_secrets,
     release_run_secrets,
 )
+from datanika.services.file_formats import FILE_EXTENSIONS_BY_TYPE
 from datanika.services.incremental_identity import (
     has_resumable_cursor,
     incremental_pipeline_name,
@@ -39,6 +40,34 @@ from datanika.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 execution_service = ExecutionService()
+
+# dlt's local lister is Python's ``glob``. These three are syntax there, so an
+# uploaded name is not a pattern for itself: ``events[a].jsonl`` matches
+# ``eventsa.jsonl`` and not the file that was uploaded (core#1615).
+_GLOB_LITERAL = str.maketrans({"*": "[*]", "?": "[?]", "[": "[[]"})
+
+
+def _literal_file_glob(filename: str) -> str:
+    """A glob that matches this filename and no other name."""
+    return PurePosixPath(filename).name.translate(_GLOB_LITERAL)
+
+
+def file_glob_for_uploaded_file(
+    original_name: str, source_type: str, configured_glob: str | None
+) -> str | None:
+    """Pattern for one extracted upload, or None to leave the runner default.
+
+    An explicit pattern is the user's and wins. Otherwise the pattern is this
+    file's own name when its extension is one this connection reads. A single
+    glob cannot be built from ``FILE_EXTENSIONS_BY_TYPE``: a glob is one pattern
+    and a type has several extensions.
+    """
+    if configured_glob:
+        return configured_glob
+    extension = PurePosixPath(original_name).suffix.lower()
+    if extension not in FILE_EXTENSIONS_BY_TYPE.get(source_type, ()):
+        return None
+    return _literal_file_glob(original_name)
 
 
 def _extract_bytes_from_load_info(load_info) -> int | None:
@@ -257,6 +286,16 @@ def run_upload(
                 if uploaded_file:
                     extracted_dir = file_svc.extract_for_dlt(uploaded_file)
                     dlt_config["bucket_url"] = extracted_dir
+                    # The connector default (``*.json``) does not match ``.jsonl``.
+                    # The extract dir is keyed by content hash and is not cleared,
+                    # so the pattern is this file's name, not ``*`` (core#1615).
+                    chosen = file_glob_for_uploaded_file(
+                        uploaded_file.original_name,
+                        src_conn.connection_type.value,
+                        dlt_config.get("file_glob"),
+                    )
+                    if chosen:
+                        dlt_config["file_glob"] = chosen
                     # Name the table after the file the user uploaded. This is
                     # the only layer that knows the original name — the runner
                     # sees a hash-named extract dir and a `*.csv` glob, so

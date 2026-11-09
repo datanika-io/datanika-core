@@ -83,11 +83,16 @@ jobs:
           # different libxml2 and mismatch at import. Pinning to the locked
           # pair surfaced this — CI had only worked by resolving a different one.
           sudo apt-get update
-          # Ubuntu 26.04 has no libxmlsec1-openssl candidate (run 40660378168).
-          # Ask apt; 24.04 and Debian still resolve the historical name.
-          xmlsec_openssl="$(python scripts/apt_xmlsec_openssl_package.py)"
+          # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
+          # there (replacement: libxmlsec1-openssl1). The image is Debian and
+          # still installs the old name; this line only runs on the runner.
+          if apt-cache policy libxmlsec1-openssl | grep -q 'Candidate: (none)'; then
+            xmlsec_openssl_pkg=libxmlsec1-openssl1
+          else
+            xmlsec_openssl_pkg=libxmlsec1-openssl
+          fi
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl" \
+            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl_pkg" \
             pkg-config zlib1g-dev libssl-dev
           uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
@@ -235,11 +240,16 @@ jobs:
           # different libxml2 and mismatch at import. Pinning to the locked
           # pair surfaced this — CI had only worked by resolving a different one.
           sudo apt-get update
-          # Ubuntu 26.04 has no libxmlsec1-openssl candidate (run 40660378168).
-          # Ask apt; 24.04 and Debian still resolve the historical name.
-          xmlsec_openssl="$(python scripts/apt_xmlsec_openssl_package.py)"
+          # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
+          # there (replacement: libxmlsec1-openssl1). The image is Debian and
+          # still installs the old name; this line only runs on the runner.
+          if apt-cache policy libxmlsec1-openssl | grep -q 'Candidate: (none)'; then
+            xmlsec_openssl_pkg=libxmlsec1-openssl1
+          else
+            xmlsec_openssl_pkg=libxmlsec1-openssl
+          fi
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl" \
+            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl_pkg" \
             pkg-config zlib1g-dev libssl-dev
           uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
@@ -314,11 +324,16 @@ jobs:
           # different libxml2 and mismatch at import. Pinning to the locked
           # pair surfaced this — CI had only worked by resolving a different one.
           sudo apt-get update
-          # Ubuntu 26.04 has no libxmlsec1-openssl candidate (run 40660378168).
-          # Ask apt; 24.04 and Debian still resolve the historical name.
-          xmlsec_openssl="$(python scripts/apt_xmlsec_openssl_package.py)"
+          # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
+          # there (replacement: libxmlsec1-openssl1). The image is Debian and
+          # still installs the old name; this line only runs on the runner.
+          if apt-cache policy libxmlsec1-openssl | grep -q 'Candidate: (none)'; then
+            xmlsec_openssl_pkg=libxmlsec1-openssl1
+          else
+            xmlsec_openssl_pkg=libxmlsec1-openssl
+          fi
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl" \
+            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl_pkg" \
             pkg-config zlib1g-dev libssl-dev
           uv export --frozen --extra dev --no-emit-project --no-hashes -o ci-requirements.txt
           uv pip install --system -r ci-requirements.txt --no-binary lxml --no-binary xmlsec
@@ -884,12 +899,16 @@ jobs:
         if: steps.token.outputs.available == 'true'
         run: |
           sudo apt-get update
-          # Ubuntu 26.04 has no libxmlsec1-openssl candidate (run 40660378168).
-          # Ask apt; 24.04 and Debian still resolve the historical name.
-          # core is checked out at path: core, so the selector is not at ./scripts.
-          xmlsec_openssl="$(python core/scripts/apt_xmlsec_openssl_package.py)"
+          # ubuntu-latest is 26.04 and libxmlsec1-openssl has no candidate
+          # there (replacement: libxmlsec1-openssl1). The image is Debian and
+          # still installs the old name; this line only runs on the runner.
+          if apt-cache policy libxmlsec1-openssl | grep -q 'Candidate: (none)'; then
+            xmlsec_openssl_pkg=libxmlsec1-openssl1
+          else
+            xmlsec_openssl_pkg=libxmlsec1-openssl
+          fi
           sudo apt-get install -y --no-install-recommends \
-            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl" \
+            libxml2-dev libxslt1-dev libxmlsec1-dev "$xmlsec_openssl_pkg" \
             pkg-config zlib1g-dev libssl-dev
           cd core
           # Same locked install as the `test` job: prod builds from uv.lock, so a CI

@@ -34,6 +34,29 @@ ROOT = Path(__file__).resolve().parents[2]
 MODULE = ROOT / "scripts" / "worktree_stack.py"
 SHELL = ROOT / "scripts" / "worktree-stack.sh"
 
+
+def _bash_executable() -> str | None:
+    """A bash that can run the shell script.
+
+    `shutil.which("bash")` on this Windows machine returns System32\\bash.exe,
+    the WSL launcher. Measured 2026-11-09: that launcher exits 1 with a proxy
+    error before the script starts, so the pre-push hook cannot go green.
+    Git Bash is the shell the rest of the repo drives scripts with.
+    """
+    found = shutil.which("bash")
+    if found is None:
+        return None
+    path = Path(found)
+    if path.name.lower() == "bash.exe" and path.parent.name.lower() in {"system32", "sysnative"}:
+        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
+        if git_bash.is_file():
+            return str(git_bash)
+        return None
+    return found
+
+
+BASH = _bash_executable()
+
 _spec = importlib.util.spec_from_file_location("worktree_stack", MODULE)
 assert _spec and _spec.loader, f"cannot load {MODULE}"
 ws = importlib.util.module_from_spec(_spec)
@@ -302,7 +325,7 @@ class TestRealCompose:
         assert any("outside" in p for p in problems), problems
         assert any("REFLEX_API_URL" in p for p in problems), problems
 
-    @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash to drive the script")
+    @pytest.mark.skipif(BASH is None, reason="needs bash to drive the script")
     def test_the_script_renders_a_fake_worktree_as_isolated(self, tmp_path: Path) -> None:
         core = tmp_path / "datanika-core-fake"
         (core / "scripts").mkdir(parents=True)
@@ -314,13 +337,7 @@ class TestRealCompose:
         (core / "test.env").write_text("".join(lines), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k != "MSYS_NO_PATHCONV"}
         env["PYTHON"] = sys.executable.replace("\\", "/")
-        # CreateProcess finds System32\bash.exe (WSL) before Git Bash. WSL then
-        # exits on the localhost-proxy warning and the script never runs.
-        # shutil.which follows PATH, which the pre-push hook puts Git Bash on
-        # first. Same resolution as test_promotion_gate.py.
-        bash = shutil.which("bash")
-        assert bash, "bash disappeared after collection"
-        command = [bash, f"scripts/{SHELL.name}", "--port-offset", "30000"]
+        command = [BASH, f"scripts/{SHELL.name}", "--port-offset", "30000"]
         result = subprocess.run(
             [*command, "--env-file", "test.env", "config"],
             cwd=core,

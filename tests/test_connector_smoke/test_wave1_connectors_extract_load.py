@@ -17,8 +17,9 @@ Each test overrides ``dlt_config["resources"]`` to ONE low-volume, no-params
 endpoint so the load is fast and deterministic (``write_disposition="replace"``
 makes reruns idempotent). Endpoints are chosen to always return >= 1 row for the
 QA account (its own user / agent / workspace) and to need no query params — e.g.
-Asana's default ``tasks`` resource 400s without a project/assignee, so we use
-``workspaces``.
+a bare Asana ``tasks`` path 400s, so that override uses ``workspaces``. The
+default resource list, which resolves tasks per project, is covered by
+``test_asana_tasks_load_is_non_empty``.
 
 Env vars (identical to the smoke; in CI materialized from ``QA_WAVE1_CREDENTIALS``
 + the Oracle XE service container — see ``.github/workflows/nightly-connector-smoke.yml``):
@@ -103,7 +104,11 @@ def _read_back(db_path: str, dataset: str, table: str) -> tuple[int, set[str]]:
 
 
 def test_pipedrive_extract_load_assert(require_env, tmp_path):
-    """Extract Pipedrive ``users`` → DuckDB → assert rows + ``id`` column landed."""
+    """Extract Pipedrive ``users`` → DuckDB → assert rows + ``id`` column landed.
+
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    """
     env = require_env("PIPEDRIVE_API_TOKEN")
     db_path, dataset, rows = _saas_extract_load(
         "pipedrive", {"api_key": env["PIPEDRIVE_API_TOKEN"]}, "users", tmp_path
@@ -137,6 +142,10 @@ def test_freshdesk_extract_load_assert(require_env, tmp_path):
     the account had been dead, because ``agents`` is the one endpoint Freshdesk
     keeps serving to a suspended tenant. Its sibling ``test_freshdesk_auth_and_
     current_agent`` was red the whole time, on the same credential.
+
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    Do not provision a new trial.
 
     A probe must *observe* the thing it certifies. Extracting a resource that
     survives suspension certifies nothing about the account, so the liveness
@@ -182,8 +191,9 @@ def test_freshdesk_extract_load_assert(require_env, tmp_path):
 def test_asana_extract_load_assert(require_env, tmp_path):
     """Extract Asana ``workspaces`` → DuckDB → assert rows + ``gid`` column landed.
 
-    ``workspaces`` (not the default ``tasks``, which 400s without a project/assignee)
-    always returns >= 1 for a valid PAT.
+    ``workspaces`` (not a bare ``tasks`` path, which 400s without a project)
+    always returns >= 1 for a valid PAT. The tasks load is
+    ``test_asana_tasks_load_is_non_empty``.
     """
     env = require_env("ASANA_ACCESS_TOKEN")
     db_path, dataset, rows = _saas_extract_load(
@@ -194,6 +204,67 @@ def test_asana_extract_load_assert(require_env, tmp_path):
     _log(f"asana: workspaces rows={n} cols={len(cols)}")
     assert n >= 1, f"Asana workspaces: {n} rows in DuckDB {dataset}.workspaces"
     assert "gid" in cols, f"Asana workspaces: no 'gid' column; got {sorted(cols)}"
+
+
+def _asana_workspace_gid(token: str) -> str:
+    """The single workspace this token can see.
+
+    ``ASANA_WORKSPACE`` in ``secrets/asana.env`` is a display name, and the
+    nightly only receives ``ASANA_ACCESS_TOKEN``. Asking the API keeps the
+    smoke from needing a second secret. More than one workspace is a refusal,
+    not a guess.
+    """
+    response = httpx.get(
+        "https://app.asana.com/api/1.0/workspaces",
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=20.0,
+    )
+    assert response.status_code == 200, (
+        f"Asana /workspaces returned {response.status_code}: {response.text[:200]}"
+    )
+    workspaces = response.json().get("data") or []
+    names = [row.get("name") for row in workspaces]
+    assert len(workspaces) == 1, f"Asana token sees {len(workspaces)} workspaces: {names}"
+    gid = workspaces[0].get("gid")
+    assert gid, f"Asana workspace has no gid: {names}"
+    return str(gid)
+
+
+def test_asana_tasks_load_is_non_empty(require_env, tmp_path):
+    """A ``tasks`` load through the connector's default resource list is non-empty.
+
+    ``_saas_extract_load`` replaces the resource list with a bare path, and a
+    bare ``GET /tasks`` is a 400. This call leaves ``resources`` unset so
+    ``DltRunnerService`` uses ``asana_default_resources``: ``tasks`` resolves
+    ``{resources.projects.gid}``. cloud#267. An empty workspace makes the
+    count assertion vacuous, which is why the project has to exist first.
+    """
+    env = require_env("ASANA_ACCESS_TOKEN")
+    workspace_gid = _asana_workspace_gid(env["ASANA_ACCESS_TOKEN"])
+    db_path = str(tmp_path / "scratch.duckdb")
+    dataset = "asana_tasks_e2e"
+    runner = DltRunnerService(pipelines_dir=str(tmp_path / "dlt"))
+    runner.execute(
+        pipeline_id=1,
+        source_type="asana",
+        source_config={"api_key": env["ASANA_ACCESS_TOKEN"], "workspace": workspace_gid},
+        destination_type="duckdb",
+        destination_config={"path": db_path},
+        dlt_config={"write_disposition": "replace"},
+        dataset_name=dataset,
+        run_id=1,
+    )
+    try:
+        n, cols = _read_back(db_path, dataset, "tasks")
+    except duckdb.CatalogException as exc:
+        # An empty project list never creates the table. That is zero rows,
+        # which is the failure this assertion exists to catch.
+        if "does not exist" not in str(exc):
+            raise
+        n, cols = 0, set()
+    _log(f"asana: tasks rows={n} cols={len(cols)} workspace={workspace_gid}")
+    assert n >= 1, f"Asana tasks: {n} rows in DuckDB {dataset}.tasks"
+    assert "gid" in cols, f"Asana tasks: no 'gid' column; got {sorted(cols)}"
 
 
 # --------------------------------------------------------------------------- #

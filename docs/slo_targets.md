@@ -14,7 +14,7 @@
 > |---|---|
 > | who measures it | [`scripts/slo_report.py`](../scripts/slo_report.py) — one verdict per commitment, against Prometheus |
 > | which instrument, per SLO | [`docs/slo_instruments.yml`](slo_instruments.yml) |
-> | last measurement | [`docs/slo_baseline.md`](slo_baseline.md) — **8 pass, 2 fail, 23 no verdict** |
+> | last measurement | [`docs/slo_baseline.md`](slo_baseline.md) — **12 pass, 2 fail, 18 no verdict** |
 > | what stops a target going unread again | `tests/test_slo/test_slo_coverage.py`, gating |
 >
 > **Adding a row below without a matching entry in `slo_instruments.yml` fails
@@ -146,7 +146,6 @@ investigate, not an auto-page.
 | Celery worker CPU | **< 80 %** |
 | Postgres CPU | **< 60 %** |
 | Postgres connections in use | **< 70 %** of pool size (pool default: 10) |
-| Redis memory | **< 60 %** of maxmemory |
 | Disk free on `/opt/datanika` | **> 20 %** |
 
 ## k6 scenarios QA should build first

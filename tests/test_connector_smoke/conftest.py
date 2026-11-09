@@ -59,7 +59,9 @@ _LENIENT_ENV = "DATANIKA_CONNECTOR_SMOKE_LENIENT"
 
 
 # --------------------------------------------------------------------------- #
-# Awaiting-provisioning tier (core#944)
+# Unmeasured-account pin (core#944). The dict name AWAITING_PROVISIONING is
+# the mechanism the nightly already reads. The accounts are accepted as
+# unmeasured (cloud#160, 2026-11-09); the strict pin stays.
 # --------------------------------------------------------------------------- #
 #
 # ## Why a tier exists at all
@@ -124,9 +126,15 @@ class AwaitingProvisioning:
     raises: type[BaseException] | None
 
 
+_UNMEASURED = (
+    " Accepted as unmeasured 2026-11-09 (founder, cloud#160). "
+    "The nightly does not watch this account. Do not provision a new trial."
+)
 _PIPEDRIVE = {
     "vendor": "Pipedrive",
-    "evidence": "GET /v1/users/me -> HTTP 401 'unauthorized access'; free trial lapsed",
+    "evidence": (
+        "GET /v1/users/me -> HTTP 401 'unauthorized access'; free trial lapsed." + _UNMEASURED
+    ),
     "measured_on": "2026-09-03",
     "tracking": "cloud#160",
 }
@@ -135,14 +143,16 @@ _FRESHDESK = {
     "evidence": (
         "GET /api/v2/agents/me and /api/v2/tickets -> HTTP 403 account_suspended "
         "(while /api/v2/agents still returns 200 — which is why this account is "
-        "pinned by account and not by test colour)"
+        "pinned by account and not by test colour)." + _UNMEASURED
     ),
     "measured_on": "2026-09-03",
     "tracking": "cloud#160",
 }
 _KAFKA = {
     "vendor": "Redpanda Serverless",
-    "evidence": "KafkaTimeoutError: unable to bootstrap; trial org reclaimed ~2026-08-20",
+    "evidence": (
+        "KafkaTimeoutError: unable to bootstrap; trial org reclaimed ~2026-08-20." + _UNMEASURED
+    ),
     "measured_on": "2026-09-03",
     "tracking": "cloud#160",
 }
@@ -291,13 +301,12 @@ UNOBSERVABLE_STATES: dict[str, Unobservable] = {
 
 def _awaiting_provisioning_reason(pin: AwaitingProvisioning) -> str:
     return (
-        f"{pin.vendor} account is not provisioned: {pin.evidence} "
+        f"{pin.vendor} is accepted as unmeasured: {pin.evidence} "
         f"(measured {pin.measured_on}, tracked in {pin.tracking}). "
-        f"This probe is in the AWAITING-PROVISIONING tier — it is no longer testing our "
-        f"software, so it does not fail the nightly. strict=True: if it PASSES, the "
-        f"account is back and this pin is STALE — delete its entry from "
+        f"The nightly does not watch this account. strict=True stays: if this probe "
+        f"PASSES, the pin is STALE and the job goes red — delete its entry from "
         f"AWAITING_PROVISIONING in tests/test_connector_smoke/conftest.py. Do not "
-        f"re-pin it to make the job green."
+        f"re-pin it to make the job green, and do not provision a new trial."
     )
 
 
@@ -417,8 +426,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
     for name in stale:
         pin = AWAITING_PROVISIONING[name]
         w(
-            f"[tier] STALE PIN: {name} PASSED while pinned as awaiting-provisioning. "
-            f"The {pin.vendor} account is alive again — delete its entry from "
+            f"[tier] STALE PIN: {name} PASSED while pinned as unmeasured. "
+            f"The {pin.vendor} account answered — delete its entry from "
             f"AWAITING_PROVISIONING and close the matching item on {pin.tracking}."
         )
     for name in unexpected:

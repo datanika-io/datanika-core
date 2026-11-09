@@ -19,6 +19,9 @@ from sqlalchemy.exc import InvalidRequestError
 from datanika.errors import UserFacingError
 from datanika.services.dlt_mssql_freetds import FREETDS_DESTINATIONS, freetds_credentials
 from datanika.services.egress_guard import build_guarded_session, validate_egress_host
+from datanika.services.file_formats import (
+    FILE_FORMAT_BY_EXTENSION as _FILE_FORMAT_BY_EXTENSION,
+)
 from datanika.services.local_file_database import (
     DUCKDB_READ_ONLY_QUERY,
     IN_MEMORY_PATHS,
@@ -48,16 +51,14 @@ FILE_FORMAT_BY_TYPE = {"csv": "csv", "json": "json", "parquet": "parquet"}
 # `s3` (and any glob-driven source) carries no format in its type, so it is
 # inferred from the pattern's extension. Deliberately not defaulted: guessing
 # wrong here reproduces exactly the failure this fixes, just one layer along.
-FILE_FORMAT_BY_EXTENSION = {
-    ".csv": "csv",
-    ".tsv": "csv",
-    ".txt": "csv",
-    ".json": "json",
-    ".jsonl": "json",
-    ".ndjson": "json",
-    ".parquet": "parquet",
-    ".pq": "parquet",
-}
+#
+# core#1604: this used to be a literal here, and it was the *widest* of three
+# independent copies of "which extensions do we support" — the file picker and
+# `FileUploadService.ALLOWED_EXTENSIONS` each had their own, narrower one. It now
+# derives from `datanika.services.file_formats`, which all three read, so the
+# reader and the two gates in front of it cannot disagree again. Re-exported here
+# because this is where every existing importer looks for it.
+FILE_FORMAT_BY_EXTENSION = _FILE_FORMAT_BY_EXTENSION
 
 _GLOB_WILDCARDS = "*?["
 

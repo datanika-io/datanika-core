@@ -303,6 +303,17 @@ def _fill_openapi_auth(scheme: dict, token: str) -> dict:
 #: ``slack.token`` and salesforce's five-field OAuth set — key names this form never collects. It
 #: is a separate, older contract consumed by ``openapi_inline`` and the credential-key derivation,
 #: and reconciling the two is not this issue. Gate on the **form** field.
+#: 🔑 *Derived structurally 2026-09-26, that key-drift population is NINE, not four* — ``csv``,
+#: ``google_sheets``, ``json``, ``parquet`` and ``zendesk`` are the unnamed five (core#1603).
+#:
+#: 🚦 **But "not the oracle" does not mean "wrong", and reading it that way is the trap**
+#: (core#1606, ``SPEC_FIELD_REQUIREDNESS`` §2.10). Where the schema and this table disagree about
+#: whether a field is required **at all**, neither one decides: **the credential does** — a field
+#: is required when the credential the product asks the user to create cannot authenticate without
+#: it. That resolves *towards the schema* for the three fields named below, and *towards this
+#: table* for the eight SQL types, whose ``_DB_TYPES`` branch deliberately gates host/port/database
+#: only while the schema also requires ``user`` and ``password`` (passwordless auth — trust, peer,
+#: IAM, ``.pgpass`` — is real).
 _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "airtable": (("api_key", "API Key"), ("base_id", "Base ID")),
     "asana": (("api_key", "API Key"),),
@@ -330,13 +341,23 @@ _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("client_secret", "OAuth client secret"),
         ("refresh_token", "OAuth refresh token"),
     ),
-    # ⚠️ `property_id` only. The form marks the service-account JSON **optional** while
-    # `CONFIG_SCHEMAS` requires it — a real disagreement, recorded on core#1547, and NOT resolved
-    # by gating a field the user is shown no marker for. That would be §1c's contradiction pointed
-    # the other way: refused on save, with nothing on screen saying so.
+    # 🚦 RULED REQUIRED, core#1606 — `api_key` here is the **Service Account JSON** textarea (it is
+    # bound to `form_api_key`; `_build_config` writes it out under the schema's name). The row is
+    # `("api_key", "Service Account JSON")` and it is missing only because the marker and the gate
+    # move in ONE change: `test_the_gate_refuses_what_the_form_marks` derives `marked` from the
+    # RENDERED component, so a row added without `required=True` on the textarea reds it as "gated
+    # but unmarked". The label also stops saying "(optional)" in that change
+    # (SPEC_FIELD_REQUIREDNESS §2.2 — the key `connections.service_account_json` already exists in
+    # all nine locales). Why required: the only live loader path raises "Google Analytics source
+    # requires 'service_account_json'", and this type has NO `SAAS_PROBES` entry, so Test Connection
+    # returns the neutral "not tested" verdict and this gate is the only surface that can refuse it.
     "google_analytics": (("property_id", "Property ID"),),
     "hubspot": (("api_key", "API Key"),),
-    # Same shape as google_analytics: `email` is marked optional here and required by the schema.
+    # 🚦 RULED REQUIRED, core#1606 — `("email", "Email")` belongs here, on the same one-change
+    # condition as google_analytics above. `SAAS_PROBES["jira"]` already declares `("email",)` on a
+    # measured 401 (core#860: `Basic :token` reported as a bad token), and the loader composes
+    # `base64(f"{email}:{api_token}")` against `*.atlassian.net`. This table is the only reader of
+    # the four that still calls it optional.
     "jira": (("domain", "Jira Domain"), ("api_key", "API Key")),
     "kafka": (("bootstrap_servers", "Bootstrap Servers"), ("topics", "Topics")),
     "notion": (("api_key", "API Key"),),
@@ -345,6 +366,22 @@ _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "shopify": (("api_key", "API Key"), ("store", "Store Name")),
     "slack": (("api_key", "API Key"),),
     "stripe": (("api_key", "API Key"),),
+    # 🚦 RULED REQUIRED, core#1606 — `("email", "Email")` belongs here too, and this one was ruled
+    # on COST rather than on a measurement, so the reasoning matters more than usual.
+    #
+    # Five code surfaces agree the shipped path sends `Authorization: Bearer <api_token>` and reads
+    # no email, and `test_saas_connection_probe.py`'s `_LOADER_FIELDS_NO_PROBE_COVERS` records that
+    # with reasoning. ⚠️ **That record is correct about our code and is read as a claim about
+    # Zendesk.** The form asks for a *Zendesk API token* (`connections.ph_zendesk_token`) and our
+    # own published guide states that model authenticates "via email + token" — so the Bearer
+    # composition and the credential we ask for cannot both be right, and there is no Zendesk
+    # credential in `secrets/` or in `nightly-connector-smoke.yml` to settle it. Requiring the email
+    # costs one field the guide already tells the user to fill; leaving it optional costs
+    # core#860's 401-on-a-good-token again.
+    #
+    # ⚠️ Gate it BEFORE any change to the auth composition, never after: the field is stored today
+    # and read by nothing, so gating first means later connections carry what an auth fix needs, and
+    # the fix does not land against stored configs that lack it. SPEC_FIELD_REQUIREDNESS §2.10, §4.
     "zendesk": (("domain", "Subdomain"), ("api_key", "API Key")),
 }
 

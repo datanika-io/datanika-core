@@ -198,6 +198,46 @@ class TestTheImageDoesNotShipUvsDownloadCache:
             "directory than the one that ships."
         )
 
+    @staticmethod
+    def _cache_directory_is_removed_after_clean(text: str) -> bool:
+        """True only when the lock file ``uv cache clean`` keeps is then removed.
+
+        The path is captured with ``uv cache dir`` before the clean, because a
+        hardcoded ``/root/.cache/uv`` exits 0 having cleaned nothing when
+        ``UV_CACHE_DIR`` points elsewhere. ``uv cache dir`` is not a substring
+        of ``uv cache clean``. The existence check after ``rm`` is what makes a
+        leftover directory fail the build instead of falling through.
+        """
+        captured = 'cache_dir="$(uv cache dir)"'
+        removal = 'rm -rf "$cache_dir"'
+        still_there = 'if [ -e "$cache_dir" ]'
+        if not all(piece in text for piece in ("uv cache clean", captured, removal, still_there)):
+            return False
+        clean_at = text.index("uv cache clean")
+        dir_at = text.index(captured)
+        removal_at = text.index(removal)
+        still_at = text.index(still_there)
+        return dir_at < clean_at < removal_at < still_at
+
+    def test_the_clean_removes_the_directory_and_lock_it_leaves(self):
+        """image-probe run 40660378168 counted exactly 1 path under the cache.
+
+        ``uv cache clean`` removes entries and leaves the directory plus its lock
+        file. ``rglob`` does not count the directory, so that one path is the lock.
+        The order matches PR 1622: capture the directory, clean, remove, then
+        refuse to continue if the directory is still there.
+        """
+        assert self._cache_directory_is_removed_after_clean(self._dockerfile()), (
+            "the image build still stops at 'uv cache still in the image: 1 paths "
+            "under /root/.cache/uv'. Capture $(uv cache dir), clean, then remove it."
+        )
+
+    def test_uv_cache_clean_alone_does_not_satisfy_the_lock_check(self):
+        """The predicate above has to be able to fail. This snippet is the
+        Dockerfile instruction that image-probe rejected on 2026-10-28."""
+        snippet = "RUN uv cache clean && echo done"
+        assert not self._cache_directory_is_removed_after_clean(snippet)
+
     def test_the_venv_import_assertion_still_runs_after_the_clean(self):
         """The control for the clean, and the reason it is safe.
 

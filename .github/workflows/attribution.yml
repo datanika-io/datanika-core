@@ -1,0 +1,107 @@
+# Attribution trailers — the half of the founder's ruling that had no mechanism at all
+#
+# Why this exists
+# ---------------
+# The ruling (plans/WORKFLOW_RULES.md, top block) is that no commit message and no PR body
+# carries a `Co-Authored-By` or `Claude-Session` line. `scripts/hooks/pre-push` enforces the
+# commit half: it runs `check_attribution_trailers.py --range origin/dev..HEAD` before the push.
+#
+# 🚨 A pre-push hook is handed a COMMIT RANGE, and a PR body is not in one. Measured on `dev` @
+# 437d5854 (QA, 2026-09-26): the checker was invoked by exactly one thing in the whole tree --
+# that hook line -- and by NO workflow, while its own `--stdin` mode sat unused and its docstring
+# claimed to cover "no commit message and no PR body". So on PR bodies, every agent's manual
+# sweep was not defence in depth; it was the only defence. In the same round an agent typed the
+# trailer into a PR body by reflex and caught it on that sweep, which is the measurement that
+# says the reflex is real and the sweep is load-bearing.
+#
+# Why the body comes from the event payload and not from `gh pr view`
+# ------------------------------------------------------------------
+# `github.event.pull_request.body` is already in the payload, so there is no API call, no token
+# and no rate limit -- and it works identically on a fork PR, where `GITHUB_TOKEN` is read-only
+# and `gh` may not be authenticated at all. It is passed through `env:` rather than interpolated
+# into `run:`: a PR body is attacker-controlled text on a public repo, and `${{ }}` inside a shell
+# script is a command-injection sink.
+#
+# Why it also runs on `merge_group`, and scans something DIFFERENT there
+# ---------------------------------------------------------------------
+# `tests/test_deploy/test_merge_queue_triggers.py` invariant 1: any workflow that can report a
+# check on a PR into `dev`, with no `paths:` filter, must trigger on `merge_group` -- otherwise a
+# required version of it would produce no run for a queue entry, and the entry is ejected after
+# `check_response_timeout_minutes` (30) with nothing red anywhere.
+#
+# A `merge_group` payload carries no pull request, so there is no body on that event. The honest
+# move is not a no-op green: it is to scan the artifact that DOES exist there -- the commit
+# messages in the entry, `base_sha..head_sha`. That is genuinely the last gate before those
+# commits reach `dev`, and it is the only one that sees a push made with `--no-verify`, from a
+# worktree with no `core.hooksPath`, or through the GitHub web editor. So each event scans the
+# artifact it actually has, and neither reports on the other's.
+#
+# ⚠️ **If this is ever made a required check, say precisely what it gates.** Required, it would
+# block a trailer in a COMMIT reaching `dev`; it cannot block one in a PR *body*, because the
+# event that governs the merge cannot see a body. Its value on the PR event is that it sits red on
+# the PR the author is about to read, before the body becomes part of a public history GitHub
+# keeps even after an edit.
+#
+# `types: [edited]` is load-bearing: the reflex trailer is typed when the body is written, and a
+# body is routinely rewritten after opening. Without `edited`, the first save is the only one
+# checked. It cannot loop -- this workflow never writes, so it raises no events at all.
+name: Attribution
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: attribution-${{ github.event.pull_request.number || github.ref }}
+  # A PR verdict is recomputable, so cancelling a superseded one is right. A MERGE-GROUP verdict
+  # is not: nothing recomputes it, the queue waits out its timeout and ejects the entry with
+  # nothing red (core#514). Hence the guarding conjunct rather than a bare `true` -- and it must
+  # be `!=`; `== 'merge_group'` reads plausibly and cancels exactly the runs that must not be.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+jobs:
+  attribution:
+    name: attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # 0, not 1: the merge_group branch below reads a commit RANGE.
+          fetch-depth: 0
+
+      # Piped rather than passed as an argument: a PR body is multi-line and arbitrary, and
+      # `--stdin` is the mode that takes it without quoting. `printf '%s'` rather than `echo`
+      # -- `echo` mangles a body that begins with `-n` or contains backslashes.
+      #
+      # A blank body exits 2 ("this measured NOTHING") rather than 0. That is deliberate: if the
+      # env var ever fails to arrive, an empty read is indistinguishable from a clean body, and
+      # exit 0 there would be a check that passes precisely when it is broken.
+      - name: Refuse an attribution trailer in the PR body
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf '%s' "$PR_BODY" | python3 scripts/check_attribution_trailers.py \
+            --stdin \
+            --artifact pr-body \
+            --label "PR #${PR_NUMBER} body" \
+            --context "attribution.yml"
+
+      # The queue entry's own commits. An empty range exits 2 rather than 0, so a wrong ref pair
+      # reports "this measured NOTHING" instead of a pass -- the same rule the hook already uses.
+      - name: Refuse an attribution trailer in the queued commits
+        if: github.event_name == 'merge_group'
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          python3 scripts/check_attribution_trailers.py \
+            --range "${BASE_SHA}..${HEAD_SHA}" \
+            --artifact commit \
+            --context "attribution.yml (merge_group)"

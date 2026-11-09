@@ -766,6 +766,13 @@ def _saas_probe_url(connection_type, config: dict) -> str:
 #: Config keys whose values must never appear in a message shown to a user.
 #: Superset of what any one connector stores — a key absent from a config costs
 #: nothing here, and a key missing from this set is a credential disclosure.
+#:
+#: ⚠️ **Hand-written, and coupled to ``CONFIG_SCHEMAS`` by a test rather than derived from
+#: it** — ``tests/test_services/test_secret_key_coverage.py``. The difference is not
+#: pedantry: a *derived* set could not contain a key no schema declares, and this one
+#: deliberately does (see ``aws_secret_access_key`` below). Describing it as derived is what
+#: produced a false credential-disclosure premise on core#1603, and the same wrong sentence
+#: is corrected in ``audit_service._derive_pii_payload_keys``'s docstring.
 SECRET_CONFIG_KEYS = frozenset(
     {
         "password",
@@ -778,10 +785,18 @@ SECRET_CONFIG_KEYS = frozenset(
         # ⚠️ Keep, even though `s3` left CONFIG_SCHEMAS in core#863. This set is
         # documented as a *superset* of schema password fields, so an entry with
         # no schema behind it now reads like tidyable dead weight. It is not:
-        # connections already stored still hold one, and only ONE direction is
-        # asserted (schema field -> this set), so removing it breaks nothing in
-        # CI while making `BackupService.export_backup` write a live AWS secret
-        # into a backup in clear text.
+        # connections already stored still hold one, and `BackupService.export_backup`
+        # would write a live AWS secret into a backup in clear text without it.
+        #
+        # 🆕 core#1603 AC3: removing it now DOES break CI, and that is new. The claim
+        # here used to be "only ONE direction is asserted (schema field -> this set),
+        # so removing it breaks nothing in CI" — true when written, and it named the
+        # gap rather than closing it. The second direction exists now: the connection
+        # form marks this field `secret=True`, and
+        # tests/test_services/test_secret_key_coverage.py plants a sentinel where
+        # `_build_config` writes it and requires the real redactors to remove it. So a
+        # schema-less credential key is covered by the FORM's declaration instead.
+        # Measured by deleting this entry and watching that suite go red.
         "aws_secret_access_key",
         "keyfile_json",
         "service_account_json",

@@ -103,7 +103,11 @@ def _read_back(db_path: str, dataset: str, table: str) -> tuple[int, set[str]]:
 
 
 def test_pipedrive_extract_load_assert(require_env, tmp_path):
-    """Extract Pipedrive ``users`` → DuckDB → assert rows + ``id`` column landed."""
+    """Extract Pipedrive ``users`` → DuckDB → assert rows + ``id`` column landed.
+
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    """
     env = require_env("PIPEDRIVE_API_TOKEN")
     db_path, dataset, rows = _saas_extract_load(
         "pipedrive", {"api_key": env["PIPEDRIVE_API_TOKEN"]}, "users", tmp_path
@@ -137,6 +141,10 @@ def test_freshdesk_extract_load_assert(require_env, tmp_path):
     the account had been dead, because ``agents`` is the one endpoint Freshdesk
     keeps serving to a suspended tenant. Its sibling ``test_freshdesk_auth_and_
     current_agent`` was red the whole time, on the same credential.
+
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    Do not provision a new trial.
 
     A probe must *observe* the thing it certifies. Extracting a resource that
     survives suspension certifies nothing about the account, so the liveness

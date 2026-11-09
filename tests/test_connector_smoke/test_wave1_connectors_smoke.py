@@ -1,16 +1,26 @@
 """Nightly live-connector smoke — Wave-1 drop (core#309 / core#312).
 
-One probe per Wave-1 connector. Same contract as ``test_paid_connectors.py``:
-the lightest auth + metadata call that catches (1) our credentials being
-revoked / rotated / expired, (2) the vendor API shape changing in a way our
-connector code cares about, (3) regional/network issues.
+One probe per Wave-1 connector. The status table says which of them the
+nightly watches. A verified probe is the lightest auth + metadata call that
+catches (1) our credentials being revoked / rotated / expired, (2) the vendor
+API shape changing in a way our connector code cares about, (3) regional/network
+issues.
 
 Coverage split (deliberate):
 - **Correctness** of the connector code (URL building, auth-dict shape, IR
   membership) is covered offline by ``tests/test_services/test_wave1_connectors.py``.
-- **This suite** is the *live* layer — it hits the real vendor endpoints /
-  a real Oracle server, so a silent cred/driver/API breakage fails loud
-  (Telegram) from the nightly workflow.
+- **This suite** hits real vendor endpoints. Oracle and Asana are the ones
+  the nightly watches. Pipedrive and Freshdesk are unverified: their probes
+  stay pinned, and a pass is a stale pin rather than coverage (cloud#160).
+
+## Status
+
+| Connector | Nightly watches it? | Reason |
+|-----------|---------------------|--------|
+| Oracle    | yes                 | XE container in the oracle-smoke job |
+| Asana     | yes                 | live PAT |
+| Pipedrive | unverified | unmeasured (cloud#160). The account is not revived. |
+| Freshdesk | unverified | unmeasured (cloud#160). Do not provision a trial. |
 
 Env vars each probe needs (materialized in CI from the ``QA_WAVE1_CREDENTIALS``
 secret + the Oracle service container; see ``.github/workflows/nightly-connector-smoke.yml``):
@@ -108,11 +118,16 @@ def test_oracle_live_driver_and_connector(require_env):
 def test_pipedrive_auth_and_current_user(require_env):
     """API-token auth + ``/users/me`` — the connector's exact auth shape.
 
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    Do not provision a new trial.
+
     The Pipedrive connector authenticates with the token as an ``api_token``
     query param against ``https://api.pipedrive.com/v1/``. This probe mirrors
     that shape.
 
-    Catches: token revoked/rotated, account suspended, API base moved.
+    Catches, on an account that existed: token revoked/rotated, account
+    suspended, API base moved.
     """
     env = require_env("PIPEDRIVE_API_TOKEN")
 
@@ -140,12 +155,16 @@ def test_pipedrive_auth_and_current_user(require_env):
 def test_freshdesk_auth_and_current_agent(require_env):
     """HTTP-basic auth (api_key:X) + ``/agents/me`` — the connector's auth shape.
 
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    Do not provision a new trial.
+
     The connector builds ``https://{domain}.freshdesk.com/api/v2/`` where
     ``domain`` is the *subdomain*. The provisioned secret may store either the
     bare subdomain or the full ``<sub>.freshdesk.com`` host — normalize both.
 
-    Catches: API key revoked / API-key-access toggled off, account/trial
-    expiry (Freshdesk free program lapses), subdomain change.
+    Catches, on an account that existed: API key revoked, API-key-access
+    toggled off, account suspended, subdomain change.
     """
     env = require_env("FRESHDESK_API_KEY", "FRESHDESK_DOMAIN")
     subdomain = env["FRESHDESK_DOMAIN"].strip().removesuffix(".freshdesk.com")
@@ -159,8 +178,7 @@ def test_freshdesk_auth_and_current_agent(require_env):
     elapsed = int((time.monotonic() - t0) * 1000)
     assert r.status_code == 200, (
         f"Freshdesk /agents/me returned {r.status_code}: {r.text[:200]}. "
-        "Likely the API key rotated, API-key access was disabled on the agent, "
-        "or the free account lapsed (re-provision per secrets/freshdesk.env)."
+        "Accepted as unmeasured (cloud#160). Do not provision a new trial."
     )
     agent = r.json()
     contact = agent.get("contact", {})

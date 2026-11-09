@@ -69,12 +69,17 @@ def _locked_versions() -> dict[str, str]:
 #: derivation is in the PR body so the next reader can re-run it rather than
 #: trust the table.
 SECURITY_FLOORS: dict[str, tuple[str, str]] = {
-    "aiohttp": ("3.14.3", "CVE-2026-69244 out-of-bounds heap read in the C response parser"),
+    "aiohttp": (
+        "3.14.4",
+        "CVE-2026-69244 out-of-bounds heap read, then CVE-2026-111064 (3.14.4) missing "
+        "initial request timeout and CVE-2026-111066 multipart descriptor exhaustion. "
+        "image-cve run 42700808834.",
+    ),
     "gitpython": (
-        "3.1.58",
-        "19 CRITICAL/HIGH records against 3.1.46, nine of them bypasses of an earlier "
-        "fix (CVE-2026-44244 bypasses CVE-2026-42215, CVE-2026-67325 bypasses that, ...). "
-        "Reached via dbt-core.",
+        "3.2.1",
+        "CVE-2026-114145 (3.2.1) submodule path validation. The earlier chain through "
+        "3.1.58 stays cleared; GHSA-23mf-xhv8-69c2 is fixed in 3.2.0, below this floor. "
+        "Reached via dbt-core. image-cve run 42700808834.",
     ),
     "granian": ("2.7.4", "CVE-2026-42544 unauthenticated DoS via a WebSocket subprotocol header"),
     "lxml": ("6.1.0", "CVE-2026-41066 iterparse()/ETCompatXMLParser() default config allows XXE"),
@@ -83,14 +88,11 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "CVE-2026-41205 (1.3.11) and CVE-2026-44307 (1.3.12) TemplateLookup path traversal",
     ),
     "msgpack": (
-        "1.2.1",
-        "GHSA-6v7p-g79w-8964 out-of-bounds read / crash on Unpacker reuse. Surfaced by "
-        "image-cve on the built image (core#835 triage), reached via mashumaro under dbt. "
-        "mashumaro asks for msgpack>=0.5.6 with no ceiling, so the floor resolved in one "
-        "pass and moved nothing else -- worth recording, because kombu declares "
-        "msgpack==1.1.2 and it LOOKS like a blocking pin. It is not: that pin lives under "
-        "kombu's optional `msgpack` extra, which this tree does not enable, so it never "
-        "enters the resolution. Check whether a pin is behind an extra before believing it.",
+        "1.2.3",
+        "GHSA-6v7p-g79w-8964 out-of-bounds read on Unpacker reuse, then CVE-2026-114613 "
+        "(1.2.3) memory leak during map deserialization. Reached via mashumaro under dbt. "
+        "kombu declares msgpack==1.1.2 under its optional `msgpack` extra, which this tree "
+        "does not enable, so that pin never enters the resolution.",
     ),
     "starlette": (
         "1.3.1",
@@ -98,13 +100,15 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "measured on core#1347; these were the two image-cve waivers, retired with this floor.",
     ),
     "pyasn1": (
-        "0.6.4",
-        "CVE-2026-30922 (0.6.3) unbounded recursion, then three more DoS records fixed in 0.6.4",
+        "0.6.5",
+        "CVE-2026-30922 was fixed in 0.6.4. CVE-2026-119194 (0.6.5), CVE-2026-119195, "
+        "CVE-2026-119196 and CVE-2026-119197 are fixed in that same release.",
     ),
     "pyjwt": (
-        "2.13.0",
-        "CVE-2026-48526 — a public-key JWK accepted as an HMAC secret enables forged HS256 "
-        "tokens. 2.12.0 fixes only CVE-2026-32597; the auth-bypass needs 2.13.0.",
+        "2.14.0",
+        "CVE-2026-102268 (2.14.0) public-key validation bypass. The same release fixes "
+        "CVE-2026-102266, CVE-2026-102267, CVE-2026-102271, CVE-2026-102272, "
+        "CVE-2026-102273 and GHSA-pxh4-856f-4h89. 2.13.0 fixed only CVE-2026-48526.",
     ),
     "pyarrow": ("23.0.1", "CVE-2026-25087 use-after-free reading an IPC file with pre-buffering"),
     "python-engineio": (
@@ -182,14 +186,42 @@ SECURITY_FLOORS: dict[str, tuple[str, str]] = {
         "dbt-core 1.11.14 is the first release to admit 0.6.0.",
     ),
     "urllib3": (
-        "2.7.0",
+        "2.8.0",
         "CVE-2025-66418 (2.6.0) unbounded decompression chain, CVE-2025-66471 (2.6.0) "
         "streaming-API handling of highly compressed data, CVE-2026-21441 (2.6.3) "
         "decompression-bomb safeguards bypassed on redirects, CVE-2026-44431 (2.7.0) "
-        "sensitive headers forwarded across origins in proxied low-level redirects. "
-        "dbt-core 1.7 declared urllib3~=1.0, holding us on a major upstream has ended, "
-        "so there was no patch-level escape. This is the HTTP client the whole product "
+        "sensitive headers forwarded across origins in proxied low-level redirects, "
+        "CVE-2026-97687 (2.8.0) HTTPS proxy TLS configuration override and CVE-2026-97689 "
+        "unbounded chunk-parser allocation. This is the HTTP client the whole product "
         "uses to reach customer sources -- not a build-time dependency.",
+    ),
+    "certifi": (
+        "2026.10.18",
+        "GHSA-6q48-6c7w-9gw2 (2026.10.18) emSign root CAs with compromised intermediate "
+        "keys. Transitive via requests and snowflake-connector-python.",
+    ),
+    "dnspython": (
+        "2.9.0",
+        "CVE-2026-114605 (2.9.0) DoS via excessive DNS compression pointer traversal. "
+        "pymongo 4.18.3 allows dnspython<3,>=2.7.0.",
+    ),
+    "filelock": (
+        "4.2.1",
+        "CVE-2026-112940 (4.2.1) arbitrary file overwrite via insecure database file "
+        "reopening. No 3.x fix. snowflake-connector-python 4.7.2 requires filelock<4; "
+        "4.8.1 allows filelock<5, so that connector moves to 4.8.1 with this floor.",
+    ),
+    "oauthlib": (
+        "4.0.1",
+        "CVE-2026-118669 (4.0.0) client-identity confusion and CVE-2026-49272 (4.0.1) "
+        "missing device-code validation. databricks-sql-connector 4.5.0 requires "
+        "oauthlib<4; 4.7.0 allows oauthlib<5, so that connector moves with this floor.",
+    ),
+    "pymongo": (
+        "4.18.3",
+        "CVE-2026-106435 (4.18.3) out-of-bounds read on malformed BSON. CVE-2026-96748 "
+        "and CVE-2026-96749 are fixed in 4.18.2, below this floor. Direct dependency: "
+        "the pin in [project.dependencies] is what moves the resolver.",
     ),
     # ---- A lock refresh to the first patched release of each (2026-09-17) ---------------------
     # Each moved to exactly the version its advisory names, and nothing else in the lock moved.

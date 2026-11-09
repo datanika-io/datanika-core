@@ -89,7 +89,6 @@ UNMEASURED_BASELINE = {
     "pipeline-level-slos-dlt-extract-complete-dbt-transformation-started",
     "pipeline-level-slos-end-to-end-small-pipeline-no-scheduling-delay",
     "saturation-slos-postgres-connections-in-use",  # wrong denominator available
-    "saturation-slos-redis-memory",  # no exporter, and 60% of unlimited is not a number
 }
 
 # Wired to an instrument we have measured to be defective ([core#895]). These
@@ -549,11 +548,11 @@ def test_control_a_deleted_slo_is_caught(real_copies):
     """
     doc, _ = real_copies
     text = doc.read_text(encoding="utf-8")
-    marker = "| Redis memory | **< 60 %** of maxmemory |"
+    marker = "| Disk free on `/opt/datanika` | **> 20 %** |"
     assert marker in text, "the anchor row moved; this control is testing nothing"
     doc.write_text(text.replace(marker + "\n", ""), encoding="utf-8")
 
-    with pytest.raises(RuntimeError, match="parsed only 25 SLOs"):
+    with pytest.raises(RuntimeError, match="parsed only 24 SLOs"):
         parse_slo_doc(doc)
 
 
@@ -581,7 +580,7 @@ def test_render_names_every_state(rows, registry, capsys):
     text = render(evaluate(rows, registry, None))
     assert "NO_VERDICT" in text
     assert "is not a pass" in text, "the report must say plainly that NO_VERDICT is not a pass"
-    assert "Commitments in document: 33" in text, (
+    assert "Commitments in document: 32" in text, (
         "the report must print the total; got:\n" + text[-400:]
     )
 

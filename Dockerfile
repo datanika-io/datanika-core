@@ -375,9 +375,19 @@ RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
 # the lock, so a clean placed earlier is undone and the build goes cold for
 # nothing. `test_image_cve_signal.py` asserts the ordering, not just the line.
 #
-# ⚠️ `uv cache clean`, not `rm -rf`: uv honours UV_CACHE_DIR, and a hardcoded
-# path silently stops cleaning anything the day that is set -- a command that
-# exits 0 having cleaned the wrong directory.
+# ⚠️ Keep `uv cache clean`, then remove the directory `uv cache dir` reports.
+# `uv cache clean` deletes cache entries and leaves the directory and its lock
+# file so other uv processes can share the cache. Measured on image-probe for
+# PR 1620 (Actions run 40660378168, 2026-10-28): the assertion below counted
+# exactly 1 path under /root/.cache/uv. rglob does not count the directory, so
+# that path is the lock the clean keeps. `uv:latest` is copied unpinned, so the
+# leftover arrived with the tool, not with the runner image.
+#
+# The removal asks `uv cache dir`, which honours UV_CACHE_DIR. A hardcoded
+# `rm -rf /root/.cache/uv` instead of that question exits 0 having cleaned
+# nothing the day the variable points elsewhere. Empty and `/` are refused
+# before rm. The python assertion stays on /root/.cache/uv: that is the path
+# this single-stage image ships, which is a different fact from rm's exit code.
 #
 # The venv is unaffected: `uv sync` hardlinks into it, so removing the cache's
 # link leaves the data alive under the venv's. That is a claim, and the /mcp
@@ -385,6 +395,9 @@ RUN uv pip install --constraint /tmp/lock-constraints.txt ./datanika-mcp
 # goes ABOVE it. If cleaning ever did gut the venv, the BUILD fails, before
 # anything reaches a registry.
 RUN uv cache clean && \
+    cache_dir="$(uv cache dir)" && \
+    [ -n "$cache_dir" ] && [ "$cache_dir" != "/" ] && \
+    rm -rf "$cache_dir" && \
     /app/.venv/bin/python -c "import pathlib, sys; p = pathlib.Path('/root/.cache/uv'); n = sum(1 for _ in p.rglob('*')) if p.exists() else 0; sys.exit(f'uv cache still in the image: {n} paths under {p}') if n else print('uv cache absent from the image')"
 
 # Assert the artifact works, in the artifact (core#602).

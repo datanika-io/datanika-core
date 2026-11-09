@@ -1307,7 +1307,11 @@ jobs:
       && github.event_name == 'push' && github.ref == 'refs/heads/dev'
       && needs.supersession.outputs.is_head == 'true'
     continue-on-error: true
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 cannot provision Chromium on Ubuntu 26.04. Pin this
+    # job until the bundled Playwright version supports that image. Cleanup
+    # Authentik is `if: always()`. Configure SSH is skipped when the install
+    # fails, so that cleanup SSHes with no known_hosts and exits 255.
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       contents: read

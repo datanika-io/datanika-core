@@ -358,7 +358,9 @@ jobs:
     # pending slot, it only changed which of the two was sacrificed. That reason is now spent;
     # the first one is not.)
     needs: [deploy-staging]
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 cannot provision Chromium on Ubuntu 26.04. Pin this
+    # staging gate until the bundled Playwright version supports that image.
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       contents: read

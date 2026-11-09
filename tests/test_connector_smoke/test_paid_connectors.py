@@ -1,14 +1,17 @@
 """Nightly live-connector smoke matrix.
 
-One test per verified paid-connector sandbox. Each probe is the
+One test per paid-connector sandbox. The status table says which of them
+are verified. Each verified probe is the
 lightest auth + metadata call that catches:
 
 1. Our credentials being revoked / rotated / expired
 2. The vendor's API shape changing in a way our code cares about
 3. Regional/network issues (DNS, TLS, firewall)
 
-Failure → Telegram alert from the nightly workflow. Not wired into
-PR CI (gated by ``DATANIKA_CONNECTOR_SMOKE=1``; see conftest.py).
+A verified probe's failure raises a Telegram alert from the nightly workflow.
+An unverified row stays pinned: that expected failure raises no alert, and a
+pass does, because ``strict=True`` turns the pass into a job failure.
+Not wired into PR CI (gated by ``DATANIKA_CONNECTOR_SMOKE=1``; see conftest.py).
 
 ## Status of the 9 paid connectors
 
@@ -17,7 +20,7 @@ PR CI (gated by ``DATANIKA_CONNECTOR_SMOKE=1``; see conftest.py).
 | BigQuery       | ✅ |   |
 | Databricks     | ✅ | control plane only — see the warehouses probe |
 | Stripe         | ✅ |   |
-| Kafka/Redpanda | ⚠️ | pinned awaiting-provisioning — trial org reclaimed (cloud#160) |
+| Kafka/Redpanda | unverified | unmeasured (cloud#160). The nightly does not watch it. |
 | HubSpot        | ✅ |   |
 | Shopify        | ✅ | provisioned 2026-07-21 |
 | GA4            | ✅ | provisioned 2026-07-21 |
@@ -273,13 +276,16 @@ def test_stripe_list_charges_read_scope(require_env):
 def test_kafka_auth_and_list_topics(require_env, require_import):
     """SASL/SCRAM-SHA-256 handshake + admin list_topics on Redpanda Serverless.
 
-    Catches: credentials rotated, cluster paused, network block,
-    SASL mechanism change (Redpanda occasionally tightens defaults).
+    Unverified (cloud#160, founder 2026-11-09). The nightly does not watch
+    this account. The strict pin stays: a pass is a stale pin, not coverage.
+    Do not provision a new trial.
 
-    Runs fine from GHA Ubuntu runners. Will **fail from networks that
-    block outbound 9092** (some ISPs do — see PLAN_HUMAN_LOCKERS.md
-    Kafka entry). If you see ENOTFOUND or timeout locally, that's an
-    ISP issue, not a credential issue.
+    Catches, on an account that existed: credentials rotated, cluster paused,
+    network block, SASL mechanism change.
+
+    Will **fail from networks that block outbound 9092** (some ISPs do).
+    If you see ENOTFOUND or timeout locally, that's an ISP issue, not a
+    credential issue.
     """
     env = require_env(
         "KAFKA_BOOTSTRAP_SERVERS",

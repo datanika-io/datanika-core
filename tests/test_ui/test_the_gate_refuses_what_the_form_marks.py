@@ -30,7 +30,8 @@ fails here until the gate catches up, and one whose marker is removed fails unti
 
 ## Why it drives the STATE rather than calling the pure function
 
-`_validate_connection_form` takes 35 parameters and `_validate_form` has to pass all of them. A
+`_validate_connection_form` takes one parameter per form field the table can name, and
+`_validate_form` has to pass all of them. A
 field added to the signature but forgotten at the call site arrives as `""` on every save, so the
 type is refused permanently — and a test that called the pure function with hand-built kwargs would
 be **green throughout**, because it would supply the value the real caller drops. So every
@@ -220,3 +221,84 @@ class TestOpenapiKeepsItsSpecialCase:
             "`openapi_fields` now marks a field required, so it needs a row in "
             "`_REQUIRED_FORM_FIELDS` after all — and `base_url` is still not the one to add."
         )
+
+
+#: core#1606. The form field, the refusal text, and the i18n key the label is drawn from.
+#: `google_analytics` binds the JSON textarea to `api_key`, not `service_account_json`.
+#: Zendesk reuses `connections.jira_email` — correct as displayed text; not renamed here.
+_RULED = (
+    ("google_analytics", "api_key", "Service Account JSON", "connections.service_account_json"),
+    ("jira", "email", "Email", "connections.jira_email"),
+    ("zendesk", "email", "Email", "connections.jira_email"),
+)
+
+_LABEL_KEY = re.compile(r'\["(connections\.[a-z0-9_]+)"\]')
+
+
+def _bound_label(conn_type: str, field: str):
+    """The `<label htmlFor="cfg-…">` the renderer draws for `field`, or None."""
+    fn = _renderer(conn_type)
+    if fn is None:
+        return None
+    bound = f'htmlFor:"cfg-{field.replace("_", "-")}"'
+    for node in _walk(fn().render()):
+        if isinstance(node, dict) and bound in (node.get("props") or []):
+            return node
+    return None
+
+
+def _label_shows_a_marker(label) -> bool:
+    """True when a sighted user sees `*`, from either authoring surface.
+
+    The derived marker is a `contents` of `'"*"'` inside an aria-hidden span. A hand-written
+    `" *"` argument renders as a contents string that contains the glyph. Reading only one of
+    those is how a sweep reported every derived site as unmarked (core#1610).
+    """
+    for node in _walk(label):
+        if not isinstance(node, dict):
+            continue
+        contents = node.get("contents")
+        if isinstance(contents, str) and "*" in contents and "translations" not in contents:
+            return True
+    return False
+
+
+class TestTheThreeRuledFieldsAreRequired:
+    """core#1606. Marker and gate move together: either alone is the contradiction above."""
+
+    @pytest.mark.parametrize(
+        "conn_type, field, label, key",
+        [pytest.param(*row, id=f"{row[0]}-{row[1]}") for row in _RULED],
+    )
+    def test_the_form_marks_the_field_the_gate_names(self, conn_type, field, label, key):
+        gated = dict(_REQUIRED_FORM_FIELDS[conn_type])
+        assert gated.get(field) == label, (
+            f"{conn_type}.{field} is gated as {gated.get(field)!r}; the user reads {label!r}"
+        )
+        assert field in (_marked_required(conn_type) or set()), (
+            f"{conn_type}.{field} is refused on save but the input carries no required attribute"
+        )
+        bound = _bound_label(conn_type, field)
+        assert bound is not None, f"{conn_type} draws no label for {field}"
+        assert _label_shows_a_marker(bound), (
+            f"{conn_type}.{field} is required and its label draws no marker"
+        )
+        keys = _LABEL_KEY.findall(str(bound))
+        assert key in keys, f"{conn_type}.{field} label keys {keys}; expected {key}"
+        assert "connections.service_account_json_optional" not in keys, (
+            f"{conn_type}.{field} still says (optional) — core#1606 AC3"
+        )
+
+    @pytest.mark.parametrize(
+        "conn_type, field, label, key",
+        [pytest.param(*row, id=f"{row[0]}-{row[1]}") for row in _RULED],
+    )
+    def test_a_blank_ruled_field_is_refused_through_the_state(self, conn_type, field, label, key):
+        state = ConnectionState()
+        state.form_name = "n"
+        state.form_type = conn_type
+        state.form_use_raw_json = False
+        for gated_field, _gated_label in _REQUIRED_FORM_FIELDS[conn_type]:
+            setattr(state, f"form_{gated_field}", _FILLED)
+        setattr(state, f"form_{field}", "")
+        assert state._validate_form() == f"{label} is required"

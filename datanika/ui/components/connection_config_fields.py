@@ -19,6 +19,7 @@ from datanika.ui.components.file_upload import named_upload
 from datanika.ui.components.secure_input import (
     config_input,
     config_text_area,
+    field_label,
     labelled_config_input,
 )
 from datanika.ui.state.connection_state import ConnectionState
@@ -724,14 +725,15 @@ def jira_fields() -> rx.Component:
             on_change=ConnectionState.set_form_domain,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.jira_email"], size="2", weight="bold"), html_for="cfg-email"
-        ),
+        # core#1606. Derived marker, not a hand-written " *": the key is "Email" in every locale,
+        # so a baked glyph would double (SPEC_FIELD_REQUIREDNESS §2.9).
+        field_label(_t["connections.jira_email"], required=True, field="email"),
         config_input(
             "email",
             placeholder=_t["connections.ph_jira_email"],
             value=ConnectionState.form_email,
             on_change=ConnectionState.set_form_email,
+            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),
@@ -764,15 +766,19 @@ def google_analytics_fields() -> rx.Component:
             on_change=ConnectionState.set_form_property_id,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.service_account_json_optional"], size="2", weight="bold"),
-            html_for="cfg-api-key",
+        # core#1606. The plain key, plus a derived marker — not `service_account_json_optional`,
+        # which stated a falsehood. `config_text_area` forwards `required` to the textarea.
+        field_label(
+            _t["connections.service_account_json"],
+            required=True,
+            field="api_key",
         ),
         config_text_area(
             "api_key",
             placeholder=_t["connections.ph_service_account_json"],
             value=ConnectionState.form_api_key,
             on_change=ConnectionState.set_form_api_key,
+            required=True,
         ),
         spacing="2",
         width="100%",
@@ -912,14 +918,15 @@ def zendesk_fields() -> rx.Component:
             on_change=ConnectionState.set_form_domain,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.jira_email"], size="2", weight="bold"), html_for="cfg-email"
-        ),
+        # core#1606. Same derived marker as Jira. The key stays `connections.jira_email`: renaming
+        # it touches nine locales and two renderers, and the displayed word is already "Email".
+        field_label(_t["connections.jira_email"], required=True, field="email"),
         config_input(
             "email",
             placeholder=_t["connections.ph_jira_email"],
             value=ConnectionState.form_email,
             on_change=ConnectionState.set_form_email,
+            required=True,
         ),
         rx.el.label(
             rx.text(_t["connections.api_key"], " *", size="2", weight="bold"),

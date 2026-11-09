@@ -20,22 +20,41 @@ def searchable_select(
     Implemented as a pure-frontend component using rx.el and rx.script to avoid
     needing per-instance backend state for the filter text.
     """
-    # Unique ID per instance based on placeholder (good enough for our use case)
-    uid = f"ss_{hash(str(placeholder)) % 100000}"
+    # Placeholder alone collides: two selects with the same placeholder share
+    # one input id and one listener. The handler name separates them. A
+    # per-render counter would change the id on every server render and the
+    # listener would bind to a node the browser had already dropped.
+    fn = getattr(on_change, "fn", on_change)
+    handler = getattr(fn, "__name__", "") or ""
+    uid = f"ss_{hash(f'{placeholder}|{search_placeholder}|{handler}') % 100000}"
     input_id = f"{uid}_input"
     list_id = f"{uid}_list"
 
+    # The popover content is not in the DOM at page load. Binding here used to
+    # return before either node existed, so the Search box never filtered.
+    # The guard stays. apply() runs again when that input is focused, which is
+    # how an autofocused field becomes bound before the first input event.
     js_filter = f"""
     (function() {{
-        const input = document.getElementById('{input_id}');
-        const list = document.getElementById('{list_id}');
-        if (!input || !list) return;
-        input.addEventListener('input', function() {{
-            const q = this.value.toLowerCase();
-            for (const item of list.children) {{
-                const text = item.textContent.toLowerCase();
-                item.style.display = text.includes(q) ? '' : 'none';
-            }}
+        const inputId = '{input_id}';
+        const listId = '{list_id}';
+        function apply() {{
+            const input = document.getElementById(inputId);
+            const list = document.getElementById(listId);
+            if (!input || !list) return;
+            if (input.dataset.ssBound === listId) return;
+            input.dataset.ssBound = listId;
+            input.addEventListener('input', function() {{
+                const q = this.value.toLowerCase();
+                for (const item of list.children) {{
+                    const text = item.textContent.toLowerCase();
+                    item.style.display = text.includes(q) ? '' : 'none';
+                }}
+            }});
+        }}
+        apply();
+        document.addEventListener('focusin', function(event) {{
+            if (event.target && event.target.id === inputId) apply();
         }});
     }})();
     """

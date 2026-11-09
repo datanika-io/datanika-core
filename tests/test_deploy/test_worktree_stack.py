@@ -314,7 +314,13 @@ class TestRealCompose:
         (core / "test.env").write_text("".join(lines), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k != "MSYS_NO_PATHCONV"}
         env["PYTHON"] = sys.executable.replace("\\", "/")
-        command = ["bash", f"scripts/{SHELL.name}", "--port-offset", "30000"]
+        # CreateProcess finds System32\bash.exe (WSL) before Git Bash. WSL then
+        # exits on the localhost-proxy warning and the script never runs.
+        # shutil.which follows PATH, which the pre-push hook puts Git Bash on
+        # first. Same resolution as test_promotion_gate.py.
+        bash = shutil.which("bash")
+        assert bash, "bash disappeared after collection"
+        command = [bash, f"scripts/{SHELL.name}", "--port-offset", "30000"]
         result = subprocess.run(
             [*command, "--env-file", "test.env", "config"],
             cwd=core,

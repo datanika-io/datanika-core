@@ -16,6 +16,14 @@
 # Install: git config core.hooksPath scripts/hooks
 set -e
 
+# core#1293. This is the proof the file started. Later exits already say why
+# they stopped. A push that exits 0 without this line did not run the hook,
+# and that used to read as a clean push. The id is the caller's when set
+# (scripts/hooks/assert-pre-push-ran.sh requires that exact line); otherwise
+# it is this process, so the line is still unique.
+PREPUSH_RUN_ID="${DATANIKA_PREPUSH_RUN_ID:-$$}"
+echo "pre-push: ran id=${PREPUSH_RUN_ID}"
+
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 

@@ -167,7 +167,7 @@ class TestOracleConnector:
         schema = CONFIG_SCHEMAS["oracle"]
         props = schema["properties"]
         assert {"host", "port", "database", "user", "password"} <= set(props)
-        assert schema["required"] == ["host", "database", "user", "password"]
+        assert schema["required"] == ["host", "database", "user"]
         assert props["password"].get("format") == "password"
         # #329: optional legacy-SID toggle (default = service name)
         assert props["use_sid"]["type"] == "boolean"

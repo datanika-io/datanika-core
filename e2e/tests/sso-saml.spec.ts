@@ -22,6 +22,45 @@ const SSO_USER_EMAIL = "sso-user@datanika.test";
 const SSO_USER_PASSWORD = "SsoTestPassword-2026";
 const SAML_ORG_SLUG = process.env.DATANIKA_E2E_SAML_ORG_SLUG ?? "e2e-fixture-saml";
 
+/** SP entity id bootstrap-authentik.sh configures. A matching audience is accepted. */
+const SP_AUDIENCE = "datanika";
+/** Not the SP. Authentik will sign an assertion that carries this audience. */
+const WRONG_AUDIENCE = "https://wrong-audience.example/not-this-sp";
+const AUTHENTIK_URL = process.env.DATANIKA_E2E_AUTHENTIK_URL ?? "http://e2e-authentik-server:9000";
+/** The token `e2e/scripts/bootstrap-authentik.sh` inserts. Not a production credential. */
+const AUTHENTIK_TOKEN = "e2e-bootstrap-token";
+
+async function authentikSamlProvider(): Promise<{ pk: number; audience: string }> {
+  const response = await fetch(`${AUTHENTIK_URL}/api/v3/providers/saml/?page_size=100`, {
+    headers: { Authorization: `Bearer ${AUTHENTIK_TOKEN}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Authentik provider list returned ${response.status}`);
+  }
+  const body = (await response.json()) as {
+    results: { pk: number; name: string; audience: string }[];
+  };
+  const provider = body.results.find((item) => item.name === "datanika-saml-e2e");
+  if (!provider) {
+    throw new Error("Authentik has no datanika-saml-e2e SAML provider");
+  }
+  return { pk: provider.pk, audience: provider.audience };
+}
+
+async function setSamlAudience(pk: number, audience: string): Promise<void> {
+  const response = await fetch(`${AUTHENTIK_URL}/api/v3/providers/saml/${pk}/`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${AUTHENTIK_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ audience }),
+  });
+  if (!response.ok) {
+    throw new Error(`Authentik audience patch returned ${response.status}`);
+  }
+}
+
 test.describe("SSO SAML: Authentik @slow", () => {
   test.skip(() => SSO_GATE, "Requires DATANIKA_E2E_SSO_AUTHENTIK=1 + Authentik container");
 
@@ -78,18 +117,87 @@ test.describe("SSO SAML: Authentik @slow", () => {
     await api.dispose();
   });
 
-  test("SAML assertion with wrong audience is rejected", async ({ playwright }) => {
-    // maxRedirects: 0 — we want to observe the 302 error redirect, not follow it
+  test("SAML assertion with wrong audience is rejected", async ({ page }) => {
+    // Authentik signs the assertion. Changing the audience in a captured response
+    // would break that signature, and dropping the audience check would stay green.
+    const provider = await authentikSamlProvider();
+    expect(
+      provider.audience,
+      "IdP audience is not the SP entity id, so this assertion would not be the wrong one",
+    ).toBe(SP_AUDIENCE);
+
+    let postedXml = "";
+    let callbackStatus = 0;
+    let callbackBody = "";
+    const posted = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("IdP never posted a SAMLResponse to the callback")),
+        20_000,
+      );
+      page.on("response", async (response) => {
+        const request = response.request();
+        if (!request.url().includes("/api/auth/sso/callback") || request.method() !== "POST") {
+          return;
+        }
+        const params = new URLSearchParams(request.postData() ?? "");
+        postedXml = Buffer.from(params.get("SAMLResponse") ?? "", "base64").toString("utf8");
+        callbackStatus = response.status();
+        callbackBody = await response.text();
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+
+    try {
+      await setSamlAudience(provider.pk, WRONG_AUDIENCE);
+      await page.goto(`${BACKEND_URL}/api/auth/sso/login/${SAML_ORG_SLUG}`);
+      await page.waitForURL(/\/if\/flow\/default-authentication-flow\//);
+      await page.getByRole("textbox", { name: /email|username/i }).fill(SSO_USER_EMAIL);
+      await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+      await page.getByRole("textbox", { name: /password/i }).fill(SSO_USER_PASSWORD);
+      await page.getByRole("button", { name: /log in|sign in|continue/i }).click();
+      await posted;
+    } finally {
+      await setSamlAudience(provider.pk, provider.audience);
+    }
+
+    expect(postedXml, "no signed assertion was posted, so a 401 would prove nothing").toContain(
+      WRONG_AUDIENCE,
+    );
+    expect(postedXml).not.toContain(`>${SP_AUDIENCE}<`);
+    expect(callbackStatus, "the endpoint accepted a wrong-audience assertion").toBe(401);
+    expect(callbackBody).toBe("Unauthorized: SAML assertion failed validation.");
+  });
+
+  test("a state cookie that does not verify never reaches SAML validation", async ({
+    playwright,
+  }) => {
     const api = await playwright.request.newContext(backendContextOptions({ maxRedirects: 0 }));
-    const response = await api.post("/api/auth/sso/callback", {
+    const login = await api.get(`/api/auth/sso/login/${SAML_ORG_SLUG}`);
+    expect(login.status()).toBe(302);
+    const stored = await api.storageState();
+    expect(
+      stored.cookies.some((c) => c.name === "sso_state"),
+      "no sso_state cookie: the callback bails before SAML validation and a 401 would prove nothing",
+    ).toBe(true);
+    await api.dispose();
+
+    // 64 hex chars: hmac.compare_digest raises on a shorter signature, which is a 500.
+    const broken = await playwright.request.newContext(
+      backendContextOptions({
+        maxRedirects: 0,
+        extraHTTPHeaders: {
+          cookie: `sso_state=${SAML_ORG_SLUG}:${"a".repeat(32)}:${"0".repeat(64)}`,
+        },
+      }),
+    );
+    const response = await broken.post("/api/auth/sso/callback", {
       form: {
-        SAMLResponse: Buffer.from("<invalid-xml>").toString("base64"),
-        RelayState: `${SAML_ORG_SLUG}:fakestate:invalidsig`,
+        SAMLResponse: Buffer.from(`<Audience>${WRONG_AUDIENCE}</Audience>`).toString("base64"),
       },
     });
-    const status = response.status();
-    expect(status === 302 || status >= 400, `Expected 302 or 400+, got ${status}`).toBe(true);
-    expect(status).toBeLessThan(500);
-    await api.dispose();
+    expect(response.status()).toBe(302);
+    expect(response.headers().location ?? "").toContain("sso_invalid_state");
+    await broken.dispose();
   });
 });

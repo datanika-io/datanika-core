@@ -56,9 +56,13 @@ def db_fields() -> rx.Component:
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
         ),
-        rx.el.label(rx.text(_t["connections.user"], size="2", weight="bold"), html_for="cfg-user"),
-        config_input(
+        # core#1607. The `_DB_TYPES` branch refuses a blank user. Password stays
+        # unmarked below: a blank password is a real login, and this builder is
+        # shared, so the two cannot differ per type.
+        labelled_config_input(
+            _t["connections.user"],
             "user",
+            required=True,
             placeholder=_t["connections.ph_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
@@ -166,11 +170,12 @@ def snowflake_fields() -> rx.Component:
             on_change=ConnectionState.set_form_user,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.password"], size="2", weight="bold"), html_for="cfg-password"
-        ),
-        config_input(
+        # core#1607. The snowflake branch refuses a blank password. Warehouse
+        # and schema stay unmarked: the guide fills both when they are empty.
+        labelled_config_input(
+            _t["connections.password"],
             "password",
+            required=True,
             secret=True,
             placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,
@@ -384,9 +389,12 @@ def google_sheets_fields() -> rx.Component:
             on_change=ConnectionState.set_form_spreadsheet_url,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.service_account_json"], " *", size="2", weight="bold"),
-            html_for="cfg-service-account-json",
+        # core#1610. The hand-written star had no HTML required, so a screen reader
+        # announced the field as optional and the save still refused a blank.
+        field_label(
+            _t["connections.service_account_json"],
+            required=True,
+            field="service_account_json",
         ),
         config_text_area(
             "service_account_json",
@@ -394,6 +402,7 @@ def google_sheets_fields() -> rx.Component:
             value=ConnectionState.form_service_account_json,
             on_change=ConnectionState.set_form_service_account_json,
             min_height="120px",
+            required=True,
         ),
         rx.callout(
             _t["connections.share_spreadsheet"],
@@ -1253,9 +1262,12 @@ def openapi_fields() -> rx.Component:
     """Fields for the OpenAPI connector — paste a spec; endpoints auto-discovered on save."""
     return rx.vstack(
         rx.callout(_t["connections.openapi_hint"], icon="info", size="1"),
-        rx.el.label(
-            rx.text(_t["connections.openapi_spec"], " *", size="2", weight="bold"),
-            html_for="cfg-openapi-spec",
+        # core#1610. Same shape as the Sheets JSON field: derived marker, and
+        # required on the textarea. base_url below stays optional.
+        field_label(
+            _t["connections.openapi_spec"],
+            required=True,
+            field="openapi_spec",
         ),
         config_text_area(
             "openapi_spec",
@@ -1263,6 +1275,7 @@ def openapi_fields() -> rx.Component:
             value=ConnectionState.form_openapi_spec,
             on_change=ConnectionState.set_form_openapi_spec,
             min_height="160px",
+            required=True,
         ),
         # NOT required here, and the difference from rest_api is real: a blank Base URL saves, and
         # connection_state.py backfills it from the spec's `servers` entry. The stored-config schema

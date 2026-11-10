@@ -14,7 +14,9 @@ POSTed to ``/api/auth/sso/callback`` -> **401**.
 
 import base64
 import datetime as dt
+import logging
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -236,3 +238,99 @@ class TestSamlCallbackForgedReturns401:
             )
 
         assert resp.status_code == 401
+
+    @patch("datanika.services.sso_routes._get_session")
+    @patch("datanika.services.sso_routes._sso_service")
+    def test_signed_wrong_audience_returns_401(self, mock_svc, mock_session, caplog):
+        """core#1182. A signature-valid assertion for another audience is refused.
+
+        The unfixed request (no state cookie, malformed XML) is a 302 and never
+        reaches ``_saml_parse``. An assertion this SP would accept is not a 401
+        either — that is the run that has to fail, or this test rejects nothing
+        in particular.
+        """
+        org_slug = f"acme-{uuid.uuid4().hex[:6]}"
+        state = "state123"
+        cookie = f"{org_slug}:{state}:{_sign_state(state)}"
+        forged = _response_b64(_assertion_xml(audience="some-other-sp"))
+
+        client = self._client(mock_svc, mock_session)
+        client.cookies.set(_SSO_STATE_COOKIE, cookie)
+        with (
+            caplog.at_level(logging.WARNING, logger="datanika.services.sso_routes"),
+            patch(
+                "datanika.services.sso_routes._consume_saml_request_id",
+                return_value=_REQUEST_ID,
+            ),
+        ):
+            resp = client.post(
+                "/api/auth/sso/callback",
+                data={"SAMLResponse": forged},
+                follow_redirects=False,
+            )
+
+        assert resp.status_code == 401, resp.text
+        assert resp.text == "Unauthorized: SAML assertion failed validation."
+        assert "token=" not in resp.headers.get("location", "")
+        assert any("is not a valid audience" in record.getMessage() for record in caplog.records)
+
+    @patch("datanika.services.sso_routes._get_session")
+    @patch("datanika.services.sso_routes._sso_service")
+    def test_signed_assertion_for_this_sp_is_not_refused(self, mock_svc, mock_session):
+        """The 401 above is the audience check. The same assertion for this SP is not a 401.
+
+        With the session mocked, the success path errors after validation (no rows).
+        That status is not the refusal. If it were 401, the wrong-audience test would
+        pass by rejecting every signed assertion.
+        """
+        org_slug = f"acme-{uuid.uuid4().hex[:6]}"
+        state = "state123"
+        cookie = f"{org_slug}:{state}:{_sign_state(state)}"
+        accepted = _response_b64(_assertion_xml(audience=_SP_ENTITY))
+
+        client = self._client(mock_svc, mock_session)
+        client.cookies.set(_SSO_STATE_COOKIE, cookie)
+        with patch(
+            "datanika.services.sso_routes._consume_saml_request_id",
+            return_value=_REQUEST_ID,
+        ):
+            resp = client.post(
+                "/api/auth/sso/callback",
+                data={"SAMLResponse": accepted},
+                follow_redirects=False,
+            )
+
+        assert resp.status_code != 401, resp.text
+
+    def test_a_bad_state_signature_redirects_before_saml_validation(self):
+        """A cookie that does not verify is a 302, before the assertion is read.
+
+        ``hmac.compare_digest`` raises on unequal lengths, which would be a 500
+        rather than this redirect. The fake signature is 64 hex chars for that
+        reason.
+        """
+        forged = _response_b64(_assertion_xml(audience="some-other-sp"))
+        client = TestClient(Starlette(routes=sso_routes), raise_server_exceptions=False)
+        client.cookies.set(_SSO_STATE_COOKIE, f"acme:state123:{'0' * 64}")
+        resp = client.post(
+            "/api/auth/sso/callback",
+            data={"SAMLResponse": forged},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 302, resp.text
+        assert "sso_invalid_state" in resp.headers.get("location", "")
+
+
+def test_the_e2e_spec_posts_a_wrong_audience_assertion():
+    """The Playwright control is the one e2e-sso runs. It must name a real audience.
+
+    core#1182. ``<invalid-xml>`` with no state cookie is a 302 the old assertion
+    accepted, and the required ``test`` job does not run the spec.
+    """
+    spec = Path(__file__).resolve().parents[2] / "e2e" / "tests" / "sso-saml.spec.ts"
+    text = spec.read_text(encoding="utf-8")
+    assert "<invalid-xml>" not in text
+    assert "https://wrong-audience.example/not-this-sp" in text
+    assert "toBe(401)" in text
+    assert 'c.name === "sso_state"' in text

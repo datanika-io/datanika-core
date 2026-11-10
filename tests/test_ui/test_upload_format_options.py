@@ -164,3 +164,96 @@ class TestTheFormWritesTheKeysTheRunnerReads:
 
         config = _build(form_file_format="parquet")
         assert _resolve_file_format("s3", "*", config) == "parquet"
+
+
+class _EditProbe:
+    """Stand-in for the edit read-back. `_populate_form_from_upload` writes the flag."""
+
+    _extract_conn_type = staticmethod(UploadState._extract_conn_type)
+
+    def _restore_raw_json_fallback(self, config):
+        return None
+
+
+def _open_upload(conn_type: str):
+    from types import SimpleNamespace
+
+    state = _EditProbe()
+    upload = SimpleNamespace(
+        name="Lake",
+        description=None,
+        source_connection_id=7,
+        destination_connection_id=8,
+        dlt_config={"delimiter": ",", "encoding": "utf-8"},
+    )
+    UploadState._populate_form_from_upload(
+        state,
+        upload,
+        [f"7 — lake ({conn_type})"],
+        ["8 — wh (duckdb)"],
+    )
+    return state
+
+
+class TestDelimiterFollowsTheReader:
+    """core#1614. Delimiter and Encoding were inside `form_is_file_source`, so a
+    Parquet source offered both. The reader forwards them only for csv
+    (`_build_format_reader`). The form flag is that decision, not a second list
+    of type names.
+    """
+
+    @pytest.mark.parametrize(
+        ("conn_type", "offered"),
+        [("csv", True), ("parquet", False), ("json", False), ("s3", True)],
+    )
+    def test_selecting_a_source_offers_delimiter_only_where_the_reader_has_one(
+        self, conn_type, offered
+    ):
+        assert _select_source(conn_type).form_offers_delimiter is offered
+
+    @pytest.mark.parametrize(
+        ("conn_type", "offered"),
+        [("csv", True), ("parquet", False), ("json", False), ("s3", True)],
+    )
+    def test_editing_an_upload_uses_the_same_flag(self, conn_type, offered):
+        state = _open_upload(conn_type)
+        assert state.form_is_file_source is True
+        assert state.form_offers_delimiter is offered
+
+    def test_the_flag_is_the_readers_set_not_a_list_of_types(self):
+        import inspect
+
+        from datanika.services.dlt_runner import (
+            FILE_FORMAT_BY_TYPE,
+            FORMATS_WITH_DELIMITER,
+            SUPPORTED_FILE_TYPES,
+            _build_format_reader,
+            connection_offers_delimiter,
+        )
+
+        for conn_type, fmt in FILE_FORMAT_BY_TYPE.items():
+            assert connection_offers_delimiter(conn_type) is (fmt in FORMATS_WITH_DELIMITER)
+        # A file source that is not itself a format can still be csv.
+        for conn_type in SUPPORTED_FILE_TYPES - set(FILE_FORMAT_BY_TYPE):
+            assert connection_offers_delimiter(conn_type) is True
+        for conn_type in ("csv", "json", "parquet", "s3"):
+            assert _select_source(conn_type).form_offers_delimiter is connection_offers_delimiter(
+                conn_type
+            )
+        assert "file_format in FORMATS_WITH_DELIMITER" in inspect.getsource(_build_format_reader)
+
+    def test_the_page_gates_delimiter_and_encoding_on_that_flag(self):
+        from pathlib import Path
+
+        page = (
+            Path(__file__).resolve().parents[2] / "datanika" / "ui" / "pages" / "uploads.py"
+        ).read_text(encoding="utf-8")
+        offer_at = page.index("UploadState.form_offers_delimiter")
+        format_at = page.index('["uploads.file_format"]')
+        assert format_at < offer_at
+        window = page[offer_at : offer_at + 900]
+        assert "uploads.delimiter" in window
+        assert "uploads.encoding" in window
+        assert "form_delimiter" in window
+        assert "form_encoding" in window
+        assert "uploads.file_format" not in window

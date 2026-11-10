@@ -111,6 +111,9 @@ _SLICE = [
     (db_fields, "port"),
     (mongodb_fields, "port"),
     (snowflake_fields, "account"),
+    # core#1607. Password is required on this form. Warehouse and schema stay
+    # hand-written labels, so they are outside this population.
+    (snowflake_fields, "password"),
     (s3_fields, "bucket_url"),
     (db_fields, "database"),
     (snowflake_fields, "database"),
@@ -122,6 +125,9 @@ _SLICE = [
     # Slice 4. ``connections.db_path`` is the i18n key at both ``path`` sites; the input is named
     # for the field, so the two must not be conflated here either.
     (db_fields, "host"),
+    # core#1607. User is required on the shared SQL form; password stays a bare
+    # label, so it is not a derived site and must not be added here.
+    (db_fields, "user"),
     (mongodb_fields, "host"),
     (databricks_fields, "host"),
     (databricks_fields, "http_path"),

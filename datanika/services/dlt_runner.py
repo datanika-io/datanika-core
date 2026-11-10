@@ -1241,9 +1241,30 @@ def _resolve_file_format(connection_type: str, file_glob: str, dlt_config: dict)
     )
 
 
+#: Formats whose reader accepts a delimiter and an encoding (core#1614).
+#:
+#: `_build_format_reader` forwards both only for a member of this set. The upload
+#: form asks `connection_offers_delimiter` instead of naming parquet, so the form
+#: and the reader stay the same decision.
+FORMATS_WITH_DELIMITER: frozenset[str] = frozenset({"csv"})
+
+
+def connection_offers_delimiter(connection_type: str) -> bool:
+    """Whether Delimiter and Encoding apply to this source.
+
+    A connection whose type declares a format offers them only when that
+    format's reader accepts them. A file source with no format of its own
+    (``s3``) can still be csv, so the controls stay.
+    """
+    declared = FILE_FORMAT_BY_TYPE.get(connection_type)
+    if declared is not None:
+        return declared in FORMATS_WITH_DELIMITER
+    return connection_type in SUPPORTED_FILE_TYPES
+
+
 def _build_format_reader(file_format: str, dlt_config: dict):
     """Build the transformer for a resolved format, with its format options."""
-    if file_format == "csv":
+    if file_format in FORMATS_WITH_DELIMITER:
         # `read_csv` forwards **pandas_kwargs, so the CSV knobs are pandas'.
         # Only forwarded when set — pandas already infers the header row and
         # column types, and an unrequested override is a silent wrong answer.
@@ -1308,10 +1329,11 @@ def _bigquery_credentials(creds: dict) -> dict:
     connection form was filled in correctly (core#565).
 
     **Both key names are accepted on purpose.** The connection form writes
-    `keyfile_json`; `CONFIG_SCHEMAS` declares `service_account_json`. Connections
-    already stored carry the former, so reading only the schema's name would fix
-    nothing for anyone who has a BigQuery connection today. The schema is
-    corrected to match reality in the same change; this keeps working either way.
+    `keyfile_json`. A connection already stored may still carry the old name
+    `service_account_json` (core#565); reading only one name would drop the
+    other. `CONFIG_SCHEMAS` declares `keyfile_json` and does not require it
+    (core#1607). An empty blob leaves `creds` unchanged, so application-default
+    credentials may succeed.
     """
     raw = creds.pop("keyfile_json", None) or creds.pop("service_account_json", None)
 
@@ -2449,12 +2471,21 @@ class DltRunnerService:
                             "name": "issues",
                             "endpoint": {
                                 "path": f"repos/{owner}/{repo}/issues",
+                                # core#1403: GitHub's `state` defaults to `open`, so without
+                                # this a run loads only the issues open at run time. `replace`
+                                # then drops an issue that has closed. The header-link
+                                # paginator does not re-send these params; GitHub's next URL
+                                # keeps `state`.
+                                "params": {"state": "all"},
                             },
                         },
                         {
                             "name": "pulls",
                             "endpoint": {
                                 "path": f"repos/{owner}/{repo}/pulls",
+                                # core#1403: same default. `state=all` returns a closed pull
+                                # request, including one that has been merged.
+                                "params": {"state": "all"},
                             },
                         },
                         {
@@ -3008,9 +3039,10 @@ class DltRunnerService:
         drains what is there and finishes. Configurable, because "quiet" means
         something different on a busy topic than on an hourly one.
 
-        **Offsets.** The connection *requires* a ``group_id``, which is a
-        promise that successive runs resume rather than re-read, so offsets are
-        committed (``enable_auto_commit``). The honest cost: a crash between
+        **Offsets.** A blank ``group_id`` uses ``datanika-consumer`` (core#1607).
+        That default is the offset promise — successive runs resume rather than
+        re-read — so offsets are committed (``enable_auto_commit``). The form
+        does not refuse a blank. The honest cost: a crash between
         commit and load loses that window. Every message therefore carries its
         ``_kafka_partition``/``_kafka_offset``, declared as the resource primary
         key — with a ``merge`` write disposition that makes re-reads idempotent,

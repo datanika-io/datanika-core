@@ -2896,7 +2896,14 @@ class DltRunnerService:
         end_date = dlt_config.get("end_date") or DEFAULT_GA4_END_DATE
         url = f"https://analyticsdata.googleapis.com/v1beta/properties/{property_id}:runReport"
 
-        @dlt.resource(name="report", primary_key=tuple(dimensions))
+        # merge, not replace: the report is a rolling window, and replace would
+        # delete days the new window no longer covers. The key is the dimensions
+        # this resource already declares.
+        @dlt.resource(
+            name="report",
+            primary_key=tuple(dimensions),
+            write_disposition="merge",
+        )
         def _report():
             # Minted here, not in the builder: `build_source` must stay offline
             # so a source can be constructed and inspected without credentials.
@@ -2958,10 +2965,14 @@ class DltRunnerService:
         and neither a developer token nor a usable OAuth credential. Both are
         now collected, so the connector can authenticate.
 
-        No `primary_key` is declared, deliberately: the query is user-overridable
-        via `dlt_config["query"]`, so any key named here would be a guess about
-        columns a custom GAQL query need not select — and a primary key naming
-        an absent column fails the load rather than degrading it.
+        A custom `dlt_config["query"]` still declares no primary key. The query
+        is user-overridable, so a key named for every query would be a guess
+        about columns that query need not select — and a primary key naming an
+        absent column fails the load rather than degrading it. The default
+        query selects `campaign.id` and `segments.date` (flattened to
+        `campaign_id` and `segments_date`). That resource merges on the pair:
+        a later window updates those days and leaves older days in place.
+        `replace` would delete the days the new window no longer covers.
         """
         missing = [
             field
@@ -2982,12 +2993,17 @@ class DltRunnerService:
             )
 
         query = str(dlt_config.get("query") or DEFAULT_GOOGLE_ADS_QUERY).strip()
+        default_query = query == DEFAULT_GOOGLE_ADS_QUERY.strip()
         version = str(dlt_config.get("api_version") or GOOGLE_ADS_API_VERSION).strip()
         developer_token = config["developer_token"]
         login_customer_id = _google_ads_digits(config.get("login_customer_id", ""))
         url = f"{GOOGLE_ADS_API_HOST}/{version}/customers/{customer_id}/googleAds:searchStream"
+        report_hints: dict = {"name": "report"}
+        if default_query:
+            report_hints["primary_key"] = ("campaign_id", "segments_date")
+            report_hints["write_disposition"] = "merge"
 
-        @dlt.resource(name="report")
+        @dlt.resource(**report_hints)
         def _report():
             # Minted inside the resource, never in the builder: `build_source`
             # stays offline so a source can be constructed without credentials.

@@ -2449,12 +2449,21 @@ class DltRunnerService:
                             "name": "issues",
                             "endpoint": {
                                 "path": f"repos/{owner}/{repo}/issues",
+                                # core#1403: GitHub's `state` defaults to `open`, so without
+                                # this a run loads only the issues open at run time. `replace`
+                                # then drops an issue that has closed. The header-link
+                                # paginator does not re-send these params; GitHub's next URL
+                                # keeps `state`.
+                                "params": {"state": "all"},
                             },
                         },
                         {
                             "name": "pulls",
                             "endpoint": {
                                 "path": f"repos/{owner}/{repo}/pulls",
+                                # core#1403: same default. `state=all` returns a closed pull
+                                # request, including one that has been merged.
+                                "params": {"state": "all"},
                             },
                         },
                         {

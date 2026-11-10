@@ -56,9 +56,13 @@ def db_fields() -> rx.Component:
             value=ConnectionState.form_port,
             on_change=ConnectionState.set_form_port,
         ),
-        rx.el.label(rx.text(_t["connections.user"], size="2", weight="bold"), html_for="cfg-user"),
-        config_input(
+        # core#1607. The `_DB_TYPES` branch refuses a blank user. Password stays
+        # unmarked below: a blank password is a real login, and this builder is
+        # shared, so the two cannot differ per type.
+        labelled_config_input(
+            _t["connections.user"],
             "user",
+            required=True,
             placeholder=_t["connections.ph_user"],
             value=ConnectionState.form_user,
             on_change=ConnectionState.set_form_user,
@@ -166,11 +170,12 @@ def snowflake_fields() -> rx.Component:
             on_change=ConnectionState.set_form_user,
             required=True,
         ),
-        rx.el.label(
-            rx.text(_t["connections.password"], size="2", weight="bold"), html_for="cfg-password"
-        ),
-        config_input(
+        # core#1607. The snowflake branch refuses a blank password. Warehouse
+        # and schema stay unmarked: the guide fills both when they are empty.
+        labelled_config_input(
+            _t["connections.password"],
             "password",
+            required=True,
             secret=True,
             placeholder=_t["connections.ph_password"],
             value=ConnectionState.form_password,

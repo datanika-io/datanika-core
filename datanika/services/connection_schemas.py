@@ -49,6 +49,12 @@ def _schema(properties: dict, required: list[str]) -> dict:
 # JSON Schemas for each connection type's `config` field
 CONFIG_SCHEMAS: dict[str, dict] = {
     # ---- Databases ----
+    # core#1607. `password` is not required on postgres or on mysql, mssql,
+    # oracle, redshift, clickhouse and synapse. A blank password is a login
+    # the driver can open. `user` stays required: a blank user falls back to
+    # the OS user. `db_fields()` is one control, so the marker cannot differ
+    # per type. The mssql guide rejects Windows auth; an empty SQL password
+    # is still a real login, and this list does not claim Kerberos works.
     "postgres": _schema(
         {
             "host": _str("Database hostname"),
@@ -57,7 +63,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "mysql": _schema(
         {
@@ -67,7 +73,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "mssql": _schema(
         {
@@ -77,7 +83,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "oracle": _schema(
         {
@@ -93,7 +99,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
                 "Connect by SID instead of service name (legacy single-instance Oracle)"
             ),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "sqlite": _schema(
         {
@@ -111,7 +117,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "secure": _bool("Use HTTPS (enable for ClickHouse Cloud and TLS instances)"),
             "cluster_replication": _bool("Enable cluster replication (ReplicatedMergeTree)"),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "duckdb": _schema(
         {
@@ -130,12 +136,15 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             # (core#565). Corrected to match reality rather than renaming the
             # form and stranding every BigQuery connection already saved. The
             # runner accepts both, so neither name breaks.
+            # core#1607. Not required: a blank falls back to application-default
+            # credentials. The property stays. The key name is already
+            # `keyfile_json` (core#565); this does not rename it again.
             "keyfile_json": _str(
                 "Service account JSON (paste the full key file)",
                 sensitive=True,
             ),
         },
-        required=["project", "dataset", "keyfile_json"],
+        required=["project", "dataset"],
     ),
     "snowflake": _schema(
         {
@@ -147,7 +156,11 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "schema": _str("Schema name"),
             "role": _str("Role (optional)"),
         },
-        required=["account", "user", "password", "database", "warehouse", "schema"],
+        # core#1607. Warehouse and schema are optional in the published guide
+        # (the user's default warehouse; schema is one most users leave empty).
+        # Password stays required: this form has no key-pair or SSO field, and
+        # the guide does not call that password optional.
+        required=["account", "user", "password", "database"],
     ),
     "redshift": _schema(
         {
@@ -157,7 +170,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     "databricks": _schema(
         {
@@ -176,7 +189,7 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "user": _str("Username"),
             "password": _str("Password", sensitive=True),
         },
-        required=["host", "database", "user", "password"],
+        required=["host", "database", "user"],
     ),
     # ---- SaaS APIs (source only) ----
     "stripe": _schema(
@@ -444,7 +457,9 @@ CONFIG_SCHEMAS: dict[str, dict] = {
             "sasl_plain_username": _str("SASL username"),
             "sasl_plain_password": _str("SASL password", sensitive=True),
         },
-        required=["bootstrap_servers", "topics", "group_id"],
+        # core#1607. A blank `group_id` uses `datanika-consumer`. The property
+        # stays; the form does not refuse a blank.
+        required=["bootstrap_servers", "topics"],
     ),
 }
 

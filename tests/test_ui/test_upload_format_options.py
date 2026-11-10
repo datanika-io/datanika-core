@@ -245,7 +245,9 @@ class TestDelimiterFollowsTheReader:
     def test_the_page_gates_delimiter_and_encoding_on_that_flag(self):
         from pathlib import Path
 
-        page = Path("datanika/ui/pages/uploads.py").read_text(encoding="utf-8")
+        page = (
+            Path(__file__).resolve().parents[2] / "datanika" / "ui" / "pages" / "uploads.py"
+        ).read_text(encoding="utf-8")
         offer_at = page.index("UploadState.form_offers_delimiter")
         format_at = page.index('["uploads.file_format"]')
         assert format_at < offer_at

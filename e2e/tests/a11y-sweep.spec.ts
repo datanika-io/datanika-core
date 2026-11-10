@@ -53,9 +53,11 @@
  * Policy and procedure: `docs/QA_RULES.md` §10.
  *
  * ⚠️ The greens are Critical + Serious only, which is what this spec gates on. The
- * **moderate** group is real and unfixed — no `main` landmark (6 nodes), `landmark-unique`
- * (4), and `region` (177) — tracked as core#1587. A green here is not "the app is
- * accessible"; it is "nothing critical or serious on nine surfaces, 89 rules each".
+ * **moderate** group — `landmark-one-main`, `landmark-unique`, `region` — is core#1587.
+ * Each of those three is printed on its own tracked line on every surface, including a
+ * pass (`violation_nodes=0` only then). A missing tracked line is an unevaluated rule,
+ * not a zero. They stay moderate: this spec does not fail on them. A green here is not
+ * "the app is accessible"; it is "nothing critical or serious on nine surfaces".
  *
  * ── Severity policy ──────────────────────────────────────────────────────────
  * **Fail on Critical and Serious. Report Moderate and Minor.** Deliberately not
@@ -109,7 +111,11 @@ const LANDING_SURFACES = [
 
 const BLOCKING_IMPACTS = new Set(["critical", "serious"]);
 
-type NodeResult = { target: unknown[] };
+type NodeResult = {
+  target: unknown[];
+  html?: string;
+  relatedNodes?: { target: unknown[]; html?: string }[];
+};
 
 type Violation = {
   id: string;
@@ -155,8 +161,11 @@ type AxeResult = {
   violations: Violation[];
   passes: { id: string; nodes: NodeResult[] }[];
   incomplete: { id: string; nodes: NodeResult[] }[];
-  inapplicable: { id: string }[];
+  inapplicable: { id: string; nodes?: NodeResult[] }[];
 };
+
+/** core#1587. Printed on every surface, pass included, so a zero is not a missing line. */
+const TRACKED_RULES = ["landmark-one-main", "landmark-unique", "region"] as const;
 
 async function scanFull(page: Page): Promise<AxeResult> {
   const result = await new AxeBuilder({ page }).withTags(TAGS).analyze();
@@ -212,6 +221,68 @@ function report(name: string, result: AxeResult): void {
       `[a11y]   ${v.impact ?? "unknown"}  ${v.id}  (${v.nodes.length} node(s))  ${v.help}` +
         (sample ? `  e.g. ${sample}` : ""),
     );
+  }
+  const trackedLines: string[] = [];
+  for (const id of TRACKED_RULES) {
+    const { line, details } = tracked(name, result, id);
+    trackedLines.push(line, ...details);
+  }
+  for (const line of trackedLines) console.log(line);
+  // The assertion reads the lines that were just logged. A rule with no line fails here,
+  // whether or not that rule's own result is moderate.
+  expectTrackedReported(name, trackedLines);
+}
+
+/**
+ * One line per tracked rule, always. `violation_nodes=0` is printed only for a pass.
+ * Anything else is the node count (violation, incomplete) or `n/a` (inapplicable, absent).
+ * `landmark-unique` also prints the rendered html and the related-node targets: axe keeps
+ * the duplicate off `nodes` and in `relatedNodes`, so the target line alone hides it.
+ */
+function tracked(name: string, result: AxeResult, id: string): { line: string; details: string[] } {
+  const buckets: [keyof AxeResult, string][] = [
+    ["violations", "violation"],
+    ["passes", "pass"],
+    ["incomplete", "incomplete"],
+    ["inapplicable", "inapplicable"],
+  ];
+  let bucket = "absent";
+  let nodes: NodeResult[] = [];
+  for (const [key, label] of buckets) {
+    const rules = result[key] as { id: string; nodes?: NodeResult[] }[];
+    const hit = rules.find((rule) => rule.id === id);
+    if (hit) {
+      bucket = label;
+      nodes = hit.nodes ?? [];
+      break;
+    }
+  }
+  // 0 is a pass. A violation or an incomplete result prints its node count, and only
+  // when that count is positive — a zero anywhere else would read as a pass.
+  const counted = bucket === "violation" || bucket === "incomplete";
+  const count = bucket === "pass" ? "0" : counted && nodes.length > 0 ? String(nodes.length) : "n/a";
+  const line = `[a11y]   tracked  ${name}  ${id}  bucket=${bucket}  violation_nodes=${count}`;
+  const details: string[] = [];
+  if (id === "landmark-unique" && counted) {
+    for (const node of nodes) {
+      const html = (node.html ?? "").replace(/\s+/g, " ").slice(0, 180);
+      const related = (node.relatedNodes ?? [])
+        .map((item) => item.target.map(String).join(" "))
+        .join(" | ");
+      details.push(`[a11y]   tracked  ${name}  landmark-unique  html=${html}  related=${related}`);
+    }
+  }
+  return { line, details };
+}
+
+/** A missing tracked line fails the sweep. The rule's own moderate result does not. */
+function expectTrackedReported(name: string, lines: string[]): void {
+  for (const id of TRACKED_RULES) {
+    const line = lines.find((item) => item.includes(`tracked  ${name}  ${id}  bucket=`));
+    expect(line, `${name}: ${id} printed no tracked line`).toBeTruthy();
+    // violation_nodes=0 is evidence of a pass only. Any other bucket printing it is silence
+    // in a different costume, and a pass printing anything else is not a zero.
+    expect(line?.includes("violation_nodes=0"), line).toBe(line?.includes("bucket=pass "));
   }
 }
 
@@ -426,5 +497,74 @@ test.describe("Accessibility sweep", () => {
         "input still has an accessible name by a route this arming does not remove. Check the " +
         "second first: the other violations reported above are evidence the scan DID reach it.",
     ).toBeGreaterThan(beforeLabelIssues);
+  });
+
+  // The moderate rules stay non-blocking. What fails is a reporter that stays quiet:
+  // a pass, a violation and an absent rule each have to print, and only the pass
+  // may say violation_nodes=0. No page — this is the reporter, not a surface.
+  test("tracked lines distinguish a pass from a missing rule", () => {
+    const result: AxeResult = {
+      violations: [
+        {
+          id: "region",
+          impact: "moderate",
+          help: "regions",
+          nodes: [{ target: [".x"], html: "<div>" }],
+        },
+        {
+          id: "landmark-unique",
+          impact: "moderate",
+          help: "unique",
+          nodes: [
+            {
+              target: ["body > section"],
+              html: '<section aria-label="Notifications alt+T">',
+              relatedNodes: [{ target: ["nav"] }],
+            },
+          ],
+        },
+      ],
+      passes: [{ id: "landmark-one-main", nodes: [{ target: ["main"] }] }],
+      incomplete: [],
+      inapplicable: [],
+    };
+    const logs: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    };
+    try {
+      report("probe", result);
+    } finally {
+      console.log = original;
+    }
+    const main = logs.find((line) => line.includes("probe  landmark-one-main  bucket="));
+    const region = logs.find((line) => line.includes("probe  region  bucket="));
+    const unique = logs.find((line) => line.includes("probe  landmark-unique  bucket="));
+    const html = logs.find((line) => line.includes("landmark-unique  html="));
+    expect(main).toContain("bucket=pass");
+    expect(main).toContain("violation_nodes=0");
+    expect(region).toContain("bucket=violation");
+    expect(region).toContain("violation_nodes=1");
+    expect(unique).toContain("bucket=violation");
+    expect(unique).not.toContain("violation_nodes=0");
+    expect(html).toContain("Notifications");
+    expect(html).toContain("related=nav");
+
+    const quiet: string[] = [];
+    console.log = (...args: unknown[]) => {
+      quiet.push(args.map(String).join(" "));
+    };
+    try {
+      report("quiet", { violations: [], passes: [], incomplete: [], inapplicable: [] });
+    } finally {
+      console.log = original;
+    }
+    for (const id of TRACKED_RULES) {
+      const line = quiet.find((item) => item.includes(`quiet  ${id}  bucket=`));
+      expect(line, id).toContain("bucket=absent");
+      expect(line, id).toContain("violation_nodes=n/a");
+      expect(line, id).not.toContain("violation_nodes=0");
+    }
   });
 });

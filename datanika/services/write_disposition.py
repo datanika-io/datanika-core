@@ -36,3 +36,16 @@ def is_serialized_form_default(dlt_config: Mapping) -> bool:
     """
     stored = dlt_config.get("write_disposition")
     return stored == FORM_DEFAULT_WRITE_DISPOSITION and "mode" in dlt_config
+
+
+def is_explicit_raw_disposition(dlt_config: Mapping) -> bool:
+    """``append`` or ``replace`` sent without ``mode`` — the raw-JSON choice (core#1336).
+
+    A disposition stored together with ``mode`` is the form's untouched default, including
+    ``replace``. That pair is not a choice. Only meaningful for a source whose form hides the
+    control.
+    """
+    return "mode" not in dlt_config and dlt_config.get("write_disposition") in (
+        "append",
+        "replace",
+    )

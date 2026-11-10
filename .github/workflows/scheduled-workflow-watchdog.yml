@@ -309,9 +309,10 @@ jobs:
           {
             printf 'One or more E2E tiers produced **no reading** for 3+ consecutive runs on '
             printf '`dev`.\n\n'
-            printf 'Nothing is red, and that is the point: this is the ABSENCE of a '
-            printf 'measurement, which reads exactly like a pass. WHY each run carried no '
-            printf 'reading is printed below, from the classifier token of that run (core#1447): '
+            printf 'Each run of the tier can still look like a pass: that check is not '
+            printf 'required. This job is red because the absence accumulated. WHY each '
+            printf 'run carried no reading is printed below, from the classifier token of '
+            printf 'that run (core#1447): '
             printf 'a verifier refusing to grade another commit (core#876) and a harness that '
             printf 'produced no verdict at all need opposite responses.\n\n'
             printf '```\n'
@@ -325,3 +326,12 @@ jobs:
             gh issue create --title "[QA] An E2E tier went unmeasured for 3+ consecutive runs" \
               --body-file blind.md
           fi
+          # core#1634. continue-on-error swallows the reader's exit 2 so this step can
+          # file. Falling off the end is exit 0, the same colour as a clean window
+          # (run 42728091358 filed core#1634 and concluded success). A superseded run
+          # never writes blind.txt, so it never reaches here. The next day the stretch
+          # is already in the issue and the reader does not return 2, so this step does
+          # not run: one red run, not two, and the watchdog's own failure streak stays
+          # a statement about breakage rather than about a report that was filed.
+          echo "::error::An E2E tier produced no reading for 3+ consecutive runs."
+          exit 2

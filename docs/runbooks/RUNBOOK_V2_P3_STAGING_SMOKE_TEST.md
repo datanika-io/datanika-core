@@ -137,6 +137,9 @@ metrics surface below.
   grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
   # Labels render SORTED ({mode="…",org_id="…"}): match org_id anywhere inside the braces.
   grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\} [0-9]' m.txt
+  # Quota rejections. Labels render sorted ({org_id="…",reason="…"}).
+  # A zero count emits no sample line, so tick the box only when this prints one.
+  grep -E '^datanika_cloud_bytes_quota_rejected_total\{org_id="[0-9]+",reason="[a-z_]+"\} [0-9]' m.txt
   ```
 
   🚨 `prometheus_client` emits `# HELP`/`# TYPE` for a labelled metric with zero children, so a
@@ -171,7 +174,7 @@ Verification:
 - [ ] App container logs contain `"bytes quota dry-run"` (cloud#33's dry-run log line)
 - [ ] The run is NOT blocked (dry-run mode allows it through)
 - [ ] The log line includes the predicted bytes and the plan cap
-- [ ] `datanika_cloud_bytes_quota_rejected_total` — ⚠️ **cannot be asserted from `/metrics`**: it is labelled, so a healthy zero state emits no sample line, identical to the collector being broken. Confirm dry-run rejections from the app log line and `usage_ledger` instead.
+- [ ] `datanika_cloud_bytes_quota_rejected_total{org_id="…",reason="…"}` has at least one sample line, value > 0. The grep is in section 4. An empty `quota_decisions` table emits no sample line, so a zero-rejection state stays unticked.
 
 ## 6. Verify V2 P3 UI surfaces (from VA2)
 

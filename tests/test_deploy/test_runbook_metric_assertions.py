@@ -61,6 +61,48 @@ def _grep_patterns(block: str) -> list[str]:
     return out
 
 
+_QUOTA_RUNBOOKS = (
+    "RUNBOOK_V2_P3_STAGING_SMOKE_TEST.md",
+    "RUNBOOK_V2_P4_FLAG_FLIP.md",
+)
+# The line cloud's route test serves for one seeded QuotaDecision (org 23).
+_SERVED_QUOTA_SAMPLE = (
+    'datanika_cloud_bytes_quota_rejected_total{org_id="23",reason="predicted_over_limit"} 1.0'
+)
+_QUOTA_TYPE_LINE = "# TYPE datanika_cloud_bytes_quota_rejected_total counter"
+_QUOTA_CHECKBOX = re.compile(
+    r"^- \[ \] `datanika_cloud_bytes_quota_rejected_total"
+    r"\{org_id=\"…\",reason=\"…\"\}` has at least one sample line, value > 0",
+    re.MULTILINE,
+)
+_KEPT_GREP_LINES = (
+    "grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt",
+    "grep -E '^datanika_cloud_bytes_processed_total"
+    '\\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\\} [0-9]\' m.txt',
+)
+_QUOTA_GOOD = (
+    "```bash\n"
+    "curl -sf http://127.0.0.1:8000/metrics > m.txt\n"
+    "grep -E '^datanika_cloud_bytes_quota_rejected_total"
+    '\\{org_id="[0-9]+",reason="[a-z_]+"\\} [0-9]\' m.txt\n'
+    "```\n"
+    '- [ ] `datanika_cloud_bytes_quota_rejected_total{org_id="…",reason="…"}` '
+    "has at least one sample line, value > 0\n"
+)
+
+
+def _quota_sample_patterns(text: str) -> list[str]:
+    """Fenced /metrics greps that anchor the quota counter and a value class."""
+    found = []
+    for block in _metrics_blocks(text):
+        for pat in _grep_patterns(block):
+            if not pat.startswith("^datanika_cloud_bytes_quota_rejected_total"):
+                continue
+            if _ANCHORED.search(pat) and _VALUE.search(pat):
+                found.append(pat)
+    return found
+
+
 def unanchored_metric_greps(text: str) -> list[str]:
     """Greps on /metrics output that name a metric without anchoring a sample line."""
     bad = []
@@ -147,6 +189,26 @@ def test_control_ignores_greps_unrelated_to_metrics():
     assert unanchored_metric_greps(UNRELATED_GREP) == []
 
 
+def test_control_accepts_a_quota_rejection_sample_line():
+    """A labelled rejection line is the shape the collector serves, not a header."""
+    patterns = _quota_sample_patterns(_QUOTA_GOOD)
+    assert patterns == [
+        '^datanika_cloud_bytes_quota_rejected_total\\{org_id="[0-9]+",reason="[a-z_]+"\\} [0-9]'
+    ]
+    assert re.search(patterns[0], _SERVED_QUOTA_SAMPLE)
+    assert re.search(patterns[0], _QUOTA_TYPE_LINE) is None
+    assert _QUOTA_CHECKBOX.search(_QUOTA_GOOD)
+
+
+def test_control_a_bare_quota_name_is_not_a_sample_line():
+    """Naming the counter, outside a /metrics fence, is the pre-fix checkbox."""
+    named = (
+        "- [ ] `datanika_cloud_bytes_quota_rejected_total` — cannot be asserted from `/metrics`\n"
+    )
+    assert _quota_sample_patterns(named) == []
+    assert _QUOTA_CHECKBOX.search(named) is None
+
+
 # --------------------------------------------------------------------------
 # The real assertions.
 # --------------------------------------------------------------------------
@@ -173,3 +235,42 @@ def test_every_metric_grep_asserts_a_sample_line(rb: Path):
         f"HELP/TYPE for a labelled metric with zero children, so these cannot fail. "
         f"Offending: {offenders}"
     )
+
+
+def _runbook(name: str) -> str:
+    return next(p for p in RUNBOOKS if p.name == name).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("name", _QUOTA_RUNBOOKS)
+def test_quota_rejection_checkbox_asserts_a_served_sample_line(name: str):
+    """cloud#146 acceptance 4. The grep has to match the line the collector serves."""
+    text = _runbook(name)
+    patterns = _quota_sample_patterns(text)
+    assert len(patterns) == 1, patterns
+    assert re.search(patterns[0], _SERVED_QUOTA_SAMPLE)
+    assert re.search(patterns[0], _QUOTA_TYPE_LINE) is None
+    assert _QUOTA_CHECKBOX.search(text)
+
+
+@pytest.mark.parametrize("name", _QUOTA_RUNBOOKS)
+def test_existing_bytes_greps_stay(name: str):
+    text = _runbook(name)
+    for line in _KEPT_GREP_LINES:
+        assert line in text, line
+
+
+@pytest.mark.parametrize("name", _QUOTA_RUNBOOKS)
+def test_quota_runbooks_do_not_grep_a_paddle_series(name: str):
+    text = _runbook(name)
+    for block in _metrics_blocks(text):
+        for pat in _grep_patterns(block):
+            assert "paddle" not in pat, pat
+
+
+def test_engineering_rules_keeps_a_single_bytes_grep():
+    rules = Path(__file__).resolve().parents[2] / "docs" / "ENGINEERING_RULES.md"
+    text = rules.read_text(encoding="utf-8")
+    found = re.findall(r"grep -E '(\^datanika_cloud_bytes_[^']*)'", text)
+    assert found == [
+        '^datanika_cloud_bytes_processed_total\\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\\} [0-9]'
+    ]

@@ -112,6 +112,18 @@ def _ts(n: int) -> str:
     return (_BASE + timedelta(days=n, minutes=n, seconds=n)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _quote_ident(name: str) -> str:
+    """Double-quote one identifier. ``limit`` is reserved in PostgreSQL.
+
+    The check is the allowlist: letters, digits and underscores, not starting
+    with a digit. A name that fails it is refused rather than interpolated.
+    """
+    body = name.replace("_", "")
+    if not name.isascii() or not body.isalnum() or name[:1].isdigit():
+        raise ValueError(f"refusing to interpolate {name!r} into SQL")
+    return '"' + name + '"'
+
+
 def _insert(conn, table: str, *, _pk: str = "id", **cols: Any) -> int:
     """Insert one row and return its primary key.
 
@@ -119,12 +131,17 @@ def _insert(conn, table: str, *, _pk: str = "id", **cols: Any) -> int:
     (``user_pii.user_id``, not ``user_pii.id``) — a shared PK/FK is what makes the 1:1
     relationship unforgeable, so there is no surrogate ``id`` to return. Underscored so it
     cannot collide with a real column name in ``**cols``.
+
+    Identifiers are quoted. ``quota_decisions.limit`` is a reserved word, and an
+    unquoted insert fails on PostgreSQL before the row exists to be compared.
+    Bind names stay ``:limit``; quoting is only the identifier.
     """
-    keys = ", ".join(cols)
+    keys = ", ".join(_quote_ident(k) for k in cols)
     binds = ", ".join(f":{k}" for k in cols)
-    return conn.execute(
-        text(f"INSERT INTO {table} ({keys}) VALUES ({binds}) RETURNING {_pk}"), cols
-    ).scalar_one()
+    statement = (
+        f"INSERT INTO {_quote_ident(table)} ({keys}) VALUES ({binds}) RETURNING {_quote_ident(_pk)}"
+    )
+    return conn.execute(text(statement), cols).scalar_one()
 
 
 def _seed_identifiable_rows(conn) -> dict[str, int]:
@@ -238,6 +255,20 @@ def _seed_identifiable_rows(conn) -> dict[str, int]:
         metric="bytes_processed",
         overage_quantity=53_687_091_200,
         amount_cents=4200,
+        created_at=_ts(next(n)),
+        updated_at=_ts(next(n)),
+    )
+    ids["quota_decisions"] = _insert(
+        conn,
+        "quota_decisions",
+        org_id=org,
+        metric="bytes_processed",
+        decision="dry_run",
+        reason="predicted_over_limit",
+        predicted=2_147_483_648,
+        usage=9_663_676_416,
+        limit=10_737_418_240,
+        plan_name="Free V2",
         created_at=_ts(next(n)),
         updated_at=_ts(next(n)),
     )
@@ -626,6 +657,44 @@ def _diff_data(before: Snapshot, after: Snapshot) -> list[str]:
     return findings
 
 
+def _losses_except_a_table_the_head_recreates(
+    findings: list[str],
+    *,
+    mid_tables: set[str],
+    after: Snapshot,
+) -> list[str]:
+    """Drop a LOST line only for a table the head itself creates.
+
+    ``downgrade -1`` drops that table, so its name is absent from ``mid_tables``,
+    and the re-upgrade creates it empty, so the name is present in ``after``.
+    A pre-existing table a bad downgrade drops and the head does not recreate
+    stays absent from ``after``, and its LOST line remains. APPEARED and
+    CHANGED lines are never dropped.
+    """
+    kept: list[str] = []
+    for finding in findings:
+        table = finding.split(":", 1)[0]
+        lost_with_the_new_table = (
+            finding.endswith(" was LOST by the round trip")
+            and table not in mid_tables
+            and table in after
+        )
+        if not lost_with_the_new_table:
+            kept.append(finding)
+    return kept
+
+
+def _public_table_names(db_url: str) -> set[str]:
+    """Public tables present right now, without ``alembic_version``."""
+    engine = create_engine(db_url)
+    try:
+        names = set(inspect(engine).get_table_names(schema="public"))
+        names.discard("alembic_version")
+        return names
+    finally:
+        engine.dispose()
+
+
 def _reset_db(db_url: str) -> None:
     engine = create_engine(db_url)
     with engine.begin() as conn:
@@ -679,11 +748,20 @@ def _roundtrip_findings(
         f"stdout:\n{r.stdout}\nstderr:\n{r.stderr}"
     )
 
+    # Names after the downgrade, before the head runs again. A table only the
+    # head creates is missing here and present (empty) after the re-upgrade.
+    mid_tables = _public_table_names(db_url)
+
     r = _run_alembic(["upgrade", "head"], db_url, config_path)
     assert r.returncode == 0, f"re-upgrade failed:\n{r.stdout}\n{r.stderr}"
 
     after = _snapshot_data(db_url)
-    return _diff_data(before, after), before, after
+    findings = _losses_except_a_table_the_head_recreates(
+        _diff_data(before, after),
+        mid_tables=mid_tables,
+        after=after,
+    )
+    return findings, before, after
 
 
 # ---------------------------------------------------------------------------
@@ -756,6 +834,52 @@ class TestTheDifferCanActuallyFail:
         before: Snapshot = {"users": {(1,): {"email": "a@b.c", "gone": "x"}}}
         after: Snapshot = {"users": {(1,): {"email": "a@b.c"}}}
         assert _diff_data(before, after) == []
+
+
+class TestATableTheHeadCreatesIsNotDataLoss:
+    """``quota_decisions`` is created by the head and dropped by its downgrade.
+
+    The seeded row is absent at ``downgrade -1`` and absent again after the
+    empty re-upgrade. That LOST line is the table arriving, not a value the
+    head rewrote. A pre-existing table the downgrade drops must still fail,
+    and a row the re-upgrade inserts must still fail.
+    """
+
+    def test_a_lost_users_row_is_still_a_finding(self):
+        findings = ["users: row (1,) was LOST by the round trip"]
+        kept = _losses_except_a_table_the_head_recreates(
+            findings,
+            mid_tables={"users"},
+            after={"users": {}},
+        )
+        assert kept == findings
+
+    def test_a_lost_row_in_a_recreated_table_is_not_a_finding(self):
+        findings = ["quota_decisions: row (1,) was LOST by the round trip"]
+        kept = _losses_except_a_table_the_head_recreates(
+            findings,
+            mid_tables={"users"},
+            after={"quota_decisions": {}, "users": {(1,): {"id": "int:1"}}},
+        )
+        assert kept == []
+
+    def test_a_table_the_head_does_not_recreate_is_still_lost(self):
+        findings = ["users: row (1,) was LOST by the round trip"]
+        kept = _losses_except_a_table_the_head_recreates(
+            findings,
+            mid_tables=set(),
+            after={},
+        )
+        assert kept == findings
+
+    def test_an_appeared_row_in_the_new_table_is_still_a_finding(self):
+        findings = ["quota_decisions: row (1,) APPEARED during the round trip"]
+        kept = _losses_except_a_table_the_head_recreates(
+            findings,
+            mid_tables={"users"},
+            after={"quota_decisions": {(1,): {"id": "int:1"}}},
+        )
+        assert kept == findings
 
 
 # ---------------------------------------------------------------------------

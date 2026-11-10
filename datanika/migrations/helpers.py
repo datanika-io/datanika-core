@@ -30,6 +30,7 @@ PUBLIC_TABLES: set[str] = {
     "subscriptions",
     "usage_ledger",
     "charges",
+    "quota_decisions",
     "oauth_clients",
     "oauth_grants",
     "oauth_tokens",

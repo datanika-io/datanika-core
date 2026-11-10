@@ -66,10 +66,6 @@ NOT_INSTALLED: dict[str, str] = {
         "revert it, so this trades automation for a rollback that always works "
         "(`rm -rf /etc/systemd/network/10-netplan-eth0.network.d && networkctl reload`)."
     ),
-    "staging-docker-compose.yml": (
-        "Installed by the staging deploy in ci.yml to /opt/datanika-staging/, not by the "
-        "prod deploy, and not into /opt/datanika/scripts/."
-    ),
     "apache-prod-active-ports.conf": (
         "A snapshot of a value that ALTERNATES. deploy-bluegreen.sh rewrites the live file "
         "on every swap; this copy is here for its shape, never as a statement about which "
@@ -268,6 +264,89 @@ def test_no_exemption_names_a_file_that_is_gone(server_files):
     assert not stale, (
         "NOT_INSTALLED names files deploy/server/ no longer holds: "
         f"{stale}. Delete the entries rather than carrying a stale excuse."
+    )
+
+
+# A reason names an installer when it says this file is installed (or deployed, shipped,
+# copied) by a workflow or script. The words have to be that shape: exemptions also mention
+# sync-vhosts.sh and deploy-bluegreen.sh precisely because those scripts install a different
+# path, and treating every filename in a reason as an installer claim flags the ones that
+# are telling the truth.
+_CLAIMED_INSTALLER = re.compile(r"(?i)\b(?:installed|deployed|shipped|copied)\s+by\b(.{0,160})")
+_INSTALLER_TOKEN = re.compile(r"(?<![\w./-])([\w.-]+\.(?:yml|yaml|sh))")
+
+
+def _installer_files(token: str) -> list[Path]:
+    found: list[Path] = []
+    for base in (ROOT / ".github" / "workflows", ROOT / "scripts"):
+        if not base.is_dir():
+            continue
+        for path in base.rglob(token):
+            if path.is_file() and path.name == token:
+                found.append(path)
+    return found
+
+
+def claimed_installers_omitting(filename: str, reason: str) -> list[str]:
+    """Installer names a reason says install `filename`, whose text does not contain it."""
+    missing: list[str] = []
+    for claim in _CLAIMED_INSTALLER.finditer(reason):
+        for token in _INSTALLER_TOKEN.findall(claim.group(1)):
+            if token == filename:
+                continue
+            paths = _installer_files(token)
+            if not paths or any(filename not in path.read_text(encoding="utf-8") for path in paths):
+                missing.append(token)
+    return missing
+
+
+def test_an_exemption_reason_that_names_an_installer_references_the_file():
+    """core#1304: an exemption that names an installer is checked against that file.
+
+    The orphan staging manifest was exempt because its reason said ci.yml installed it.
+    ci.yml does not mention that filename. staging.yml installs
+    deploy/staging/docker-compose.yml. A reason can keep the claim and this suite stays
+    green unless the named installer is read.
+    """
+    missed = claimed_installers_omitting(
+        "not-a-real-server-file.yml",
+        "Installed by the staging deploy in ci.yml to /opt/datanika-staging/.",
+    )
+    assert missed == ["ci.yml"], (
+        "the control reason names ci.yml as the installer of a file ci.yml does not "
+        f"mention, and the helper returned {missed}"
+    )
+
+    referenced = claimed_installers_omitting(
+        "install-server-scripts.sh",
+        "Installed by deploy-pointer.yml after the source transfer.",
+    )
+    assert referenced == [], (
+        "deploy-pointer.yml invokes install-server-scripts.sh; the helper reported "
+        f"it does not: {referenced}"
+    )
+
+    contrast = claimed_installers_omitting(
+        "apache-prod-active-ports.conf",
+        NOT_INSTALLED["apache-prod-active-ports.conf"],
+    )
+    assert contrast == [], (
+        "mentioning deploy-bluegreen.sh as the writer of a different live file is not "
+        f"a claim that it installs this copy; the helper returned {contrast}"
+    )
+
+    assert len(NOT_INSTALLED) >= 4, (
+        "NOT_INSTALLED is too small to be the map this test reads. Skipping the dict "
+        "would make the assertion below pass on nothing."
+    )
+    problems = [
+        f"{name} -> {token}"
+        for name, reason in sorted(NOT_INSTALLED.items())
+        for token in claimed_installers_omitting(name, reason)
+    ]
+    assert not problems, (
+        "an exemption reason says these installers install the file, and the "
+        "installer's text does not name it:\n" + "".join(f"    {p}\n" for p in problems)
     )
 
 

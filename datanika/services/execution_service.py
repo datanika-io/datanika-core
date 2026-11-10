@@ -56,6 +56,59 @@ def _storable(text: str | None) -> str | None:
     return redact_run_text(text, configs)
 
 
+#: UTF-8 bytes stored on ``runs.logs`` (core#1196). The issue names the marker
+#: and that the tail survives; it does not name this number. 256 KiB leaves a
+#: normal dbt or dlt log whole and stops a retry loop from growing the row.
+RUN_LOG_MAX_BYTES = 256 * 1024
+
+
+def bound_run_logs(text: str | None) -> str | None:
+    """Return ``text`` at or under the cap; otherwise drop the middle.
+
+    The tail is the error. ``N`` in ``… [truncated, N further bytes]`` is the
+    number of UTF-8 bytes omitted, not the original size. A fitting value is
+    returned unchanged, so a normal run stays byte-identical.
+    """
+    if not text:
+        return text
+    raw = text.encode("utf-8")
+    if len(raw) <= RUN_LOG_MAX_BYTES:
+        return text
+    widest = f"… [truncated, {len(raw)} further bytes]".encode()
+    budget = RUN_LOG_MAX_BYTES - len(widest)
+    head = _utf8_prefix(raw, budget // 2)
+    tail = _utf8_suffix(raw, budget - len(head))
+    omitted = len(raw) - len(head) - len(tail)
+    marker = f"… [truncated, {omitted} further bytes]".encode()
+    return (head + marker + tail).decode()
+
+
+def _utf8_prefix(raw: bytes, n: int) -> bytes:
+    """At most ``n`` bytes, ending on a codepoint boundary."""
+    if n >= len(raw):
+        return raw
+    if n <= 0:
+        return b""
+    cut = raw[:n]
+    while cut and (cut[-1] & 0xC0) == 0x80:
+        cut = cut[:-1]
+    if cut and (cut[-1] & 0xC0) == 0xC0:
+        cut = cut[:-1]
+    return cut
+
+
+def _utf8_suffix(raw: bytes, n: int) -> bytes:
+    """At most ``n`` bytes, starting on a codepoint boundary."""
+    if n >= len(raw):
+        return raw
+    if n <= 0:
+        return b""
+    cut = raw[-n:]
+    while cut and (cut[0] & 0xC0) == 0x80:
+        cut = cut[1:]
+    return cut
+
+
 def get_org_run(session: Session, org_id: int, run_id: int) -> Run | None:
     """Resolve a run *within* an org — the single definition of ownership.
 
@@ -357,7 +410,7 @@ class ExecutionService:
         # real status read at that point (AC4, `announce_completion`).
         _settle(session, org_id, run, status=RunStatus.SUCCESS, finished_at=datetime.now(UTC))
         run.rows_loaded = rows_loaded
-        run.logs = _storable(logs)
+        run.logs = bound_run_logs(_storable(logs))
         if bytes_processed is not None:
             run.bytes_processed = bytes_processed
         session.flush()
@@ -376,7 +429,8 @@ class ExecutionService:
             return None
         # core#1460: redacted once, here, so the stored row and every notification announced from
         # it below carry the same text.
-        error_message, logs = _storable(error_message), _storable(logs)
+        error_message = _storable(error_message)
+        logs = bound_run_logs(_storable(logs))
         # core#657 AC2, same shape as `complete_run`: the error is recorded, the terminal
         # CANCELLED is not overwritten — decided in the database, and the announce below follows
         # what THIS write did rather than a second read that a cancel could land between.
@@ -499,7 +553,8 @@ class ExecutionService:
         if run is None:
             return None
         text = _storable(text)
-        run.logs = f"{run.logs}\n{text}" if run.logs else text
+        combined = f"{run.logs}\n{text}" if run.logs else text
+        run.logs = bound_run_logs(combined)
         session.flush()
         return run
 

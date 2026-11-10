@@ -117,9 +117,16 @@ test.describe("SSO SAML: Authentik @slow", () => {
     await api.dispose();
   });
 
-  test("SAML assertion with wrong audience is rejected", async ({ page }) => {
-    // Authentik signs the assertion. Changing the audience in a captured response
-    // would break that signature, and dropping the audience check would stay green.
+  test("SAML assertion with wrong audience is rejected", async ({ page, playwright }) => {
+    // Authentik signs the assertion. Editing the captured response would break
+    // that signature, and a redirect from a callback that never saw sso_state
+    // is the invalid-state bail, not the audience check.
+    //
+    // Run 42753941004: Audience was WRONG_AUDIENCE, the POST's only cookie was
+    // CF_Authorization, and the callback answered 302
+    // /login?auth_error=sso_invalid_state. That path returns before _saml_parse,
+    // so the AuthnRequest id is still stored. Resubmit the same signed bytes
+    // with the cookie the login set.
     const provider = await authentikSamlProvider();
     expect(
       provider.audience,
@@ -127,7 +134,9 @@ test.describe("SSO SAML: Authentik @slow", () => {
     ).toBe(SP_AUDIENCE);
 
     let postedXml = "";
+    let samlResponse = "";
     let callbackStatus = 0;
+    let callbackLocation = "";
     let callbackBody = "";
     const posted = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
@@ -140,9 +149,13 @@ test.describe("SSO SAML: Authentik @slow", () => {
           return;
         }
         const params = new URLSearchParams(request.postData() ?? "");
-        postedXml = Buffer.from(params.get("SAMLResponse") ?? "", "base64").toString("utf8");
+        samlResponse = params.get("SAMLResponse") ?? "";
+        postedXml = Buffer.from(samlResponse, "base64").toString("utf8");
         callbackStatus = response.status();
-        callbackBody = await response.text();
+        callbackLocation = response.headers()["location"] ?? "";
+        if (callbackStatus === 401) {
+          callbackBody = Buffer.from(await response.body()).toString("utf8");
+        }
         clearTimeout(timer);
         resolve();
       });
@@ -165,8 +178,36 @@ test.describe("SSO SAML: Authentik @slow", () => {
       WRONG_AUDIENCE,
     );
     expect(postedXml).not.toContain(`>${SP_AUDIENCE}<`);
-    expect(callbackStatus, "the endpoint accepted a wrong-audience assertion").toBe(401);
-    expect(callbackBody).toBe("Unauthorized: SAML assertion failed validation.");
+    expect(postedXml, "the posted assertion was not signed").toContain("Signature");
+
+    let verdictStatus = callbackStatus;
+    let verdictBody = callbackBody;
+    if (callbackStatus !== 401) {
+      expect(
+        callbackLocation,
+        `browser callback was ${callbackStatus} ${callbackLocation}, so the audience check did not run`,
+      ).toContain("sso_invalid_state");
+      const state = (await page.context().cookies()).find((cookie) => cookie.name === "sso_state");
+      expect(
+        state?.value,
+        "no sso_state cookie: the callback bails before SAML validation and a 401 would prove nothing",
+      ).toBeTruthy();
+      const api = await playwright.request.newContext(
+        backendContextOptions({
+          maxRedirects: 0,
+          extraHTTPHeaders: { cookie: `sso_state=${state?.value ?? ""}` },
+        }),
+      );
+      const replayed = await api.post("/api/auth/sso/callback", {
+        form: { SAMLResponse: samlResponse },
+      });
+      verdictStatus = replayed.status();
+      verdictBody = await replayed.text();
+      await api.dispose();
+    }
+
+    expect(verdictStatus, "the endpoint accepted a wrong-audience assertion").toBe(401);
+    expect(verdictBody).toBe("Unauthorized: SAML assertion failed validation.");
   });
 
   test("a state cookie that does not verify never reaches SAML validation", async ({

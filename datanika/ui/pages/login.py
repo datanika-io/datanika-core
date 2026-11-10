@@ -54,247 +54,249 @@ def _help_key():
 
 def login_page() -> rx.Component:
     return rx.center(
-        rx.vstack(
-            rx.hstack(
-                rx.image(src="/logo.png", alt="Datanika", width="48px", height="48px"),
-                rx.heading(_t["app.name"], size="7"),
-                spacing="3",
-                align="center",
-            ),
-            rx.text(_t["auth.sign_in_heading"], size="3", color="var(--gray-11)"),
-            rx.cond(
-                AuthState.show_reset_done,
-                rx.callout(
-                    _t["auth.password_reset_done"],
-                    icon="circle_check",
-                    color_scheme="green",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_session_expired,
-                rx.callout(
-                    _t["auth.session_expired"],
-                    icon="clock",
-                    color_scheme="amber",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_link_blocked,
-                rx.callout(
-                    rx.vstack(
-                        rx.text(_t["auth.social_link_blocked"], weight="medium"),
-                        rx.text(_help_key(), size="2"),
-                        spacing="1",
-                        align="start",
-                    ),
-                    icon="shield_alert",
-                    color_scheme="amber",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_email_verified,
-                rx.callout(
-                    _t["auth.email_verified"],
-                    icon="circle_check",
-                    color_scheme="green",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_invite_accepted,
-                rx.callout(
-                    _t["auth.invite_accepted"],
-                    icon="circle_check",
-                    color_scheme="green",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_verify_error,
-                rx.callout(
-                    _t["auth.email_verify_error"],
-                    icon="triangle_alert",
-                    color_scheme="amber",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.show_invite_error,
-                rx.callout(
-                    rx.vstack(
-                        rx.text(_t["auth.invite_error"], weight="medium"),
-                        rx.text(_t["auth.invite_error_help"], size="2"),
-                        spacing="1",
-                        align="start",
-                    ),
-                    icon="mail_x",
-                    color_scheme="amber",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            # A closed set (#686): the slug picks the sentence, and an unrecognised slug
-            # picks nothing at all. Several slugs share a sentence on purpose - an end
-            # user cannot act differently on "SAML IdP not configured" than on "Invalid
-            # OIDC configuration", but an operator reading the URL can.
-            #
-            # The keys are written out rather than generated from the whitelist so the
-            # project's i18n scanner, which greps datanika/ui/ for bracketed literal keys, can
-            # see them - generated arms make every key here look orphaned. The test file
-            # test_login_signal_coverage.py links the two mechanically instead.
-            rx.cond(
-                AuthState.auth_error_reason != "",
-                rx.callout(
-                    rx.match(
-                        AuthState.auth_error_reason,
-                        ("invalid_state", _t["auth.error.retry"]),
-                        ("missing_code", _t["auth.error.retry"]),
-                        ("oauth_failed", _t["auth.error.provider_failed"]),
-                        ("saml_idp_not_configured", _t["auth.error.sso_not_configured"]),
-                        ("saml_request_failed", _t["auth.error.provider_failed"]),
-                        ("sso_failed", _t["auth.error.provider_failed"]),
-                        ("sso_invalid_state", _t["auth.error.retry"]),
-                        ("sso_misconfigured", _t["auth.error.sso_not_configured"]),
-                        ("sso_no_email", _t["auth.error.sso_no_email"]),
-                        ("sso_not_configured", _t["auth.error.sso_not_configured"]),
-                        ("sso_unreachable", _t["auth.error.sso_unreachable"]),
-                        ("sso_unsupported_protocol", _t["auth.error.sso_not_configured"]),
-                        ("superseded_flow", _t["auth.error.superseded"]),
-                        ("unknown_provider", _t["auth.error.unknown_provider"]),
-                        "",
-                    ),
-                    icon="triangle_alert",
-                    color_scheme="red",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.cond(
-                AuthState.auth_error != "",
-                rx.callout(
-                    AuthState.auth_error,
-                    icon="triangle_alert",
-                    color_scheme="red",
-                    high_contrast=True,
-                    width="100%",
-                ),
-            ),
-            rx.form(
-                rx.vstack(
-                    rx.el.label(
-                        rx.text(_t["auth.email"], size="2", weight="medium"),
-                        html_for="login-email",
-                    ),
-                    rx.input(
-                        id="login-email",
-                        placeholder=_t["auth.ph_email"],
-                        name="email",
-                        # username + current-password is one credential to a
-                        # password manager. Declared rather than suppressed:
-                        # autofill is the *wanted* behaviour here, so this is the
-                        # opposite repair from core#618's (core#672).
-                        custom_attrs=autofill_attrs("username"),
-                        width="100%",
-                    ),
-                    rx.el.label(
-                        rx.text(_t["auth.password"], size="2", weight="medium"),
-                        html_for="login-password",
-                    ),
-                    rx.input(
-                        id="login-password",
-                        placeholder=_t["auth.ph_password"],
-                        name="password",
-                        type="password",
-                        custom_attrs=autofill_attrs("current-password"),
-                        width="100%",
-                    ),
-                    rx.button(
-                        _t["auth.sign_in"],
-                        type="submit",
-                        width="100%",
-                        size="3",
-                    ),
-                    captcha_script("login"),
-                    spacing="3",
-                    width="100%",
-                ),
-                on_submit=AuthState.login,
-            ),
-            _forgot_password_link(),
-            # core#624: the divider, "or continue with" and both provider buttons are one shared
-            # component, rendered identically on /signup. #418 and #605 live in social_auth.py.
-            social_login_row(),
-            # core#1081 AC2b / SPEC_PAGE_ENTRY §3. "or continue with" is true for
-            # a returning user and SILENT for a new one — and these two controls
-            # start `/api/auth/login/<provider>`, which lands in
-            # `UserService.find_or_create_oauth_user`, whose own docstring is
-            # "Find existing user by OAuth identity or email, ELSE CREATE". It
-            # returns `is_new` because creating an account is a normal outcome of
-            # this path, so the page has to say so.
-            #
-            # Deliberately provider-agnostic and count-agnostic: naming Google and
-            # GitHub, or saying "both options", makes the sentence wrong in nine
-            # locales the day core#624 adds a third.
-            rx.text(
-                _t["auth.social_creates_account"],
-                size="1",
-                color="var(--gray-11)",
-                text_align="center",
-                width="100%",
-            ),
-            # core#1081 AC2a / SPEC_PAGE_ENTRY §3. This was a 50x20 px link inside
-            # a `color="gray"` paragraph, beneath two 141x40 px buttons that will
-            # create an account without saying so. **The inversion was the defect**:
-            # /login is the product's fastest signup path and said it was not.
-            #
-            # ⚠️ Not a colour change. The link already rendered Radix accent blue
-            # (`rgba(0, 109, 203, 0.95)`) — the `gray` belonged to the wrapper, and
-            # a darker link would measure as done and fix nothing (§0c).
-            #
-            # `size="3"` matches the social buttons and `Sign In`, so the control
-            # is of the same ORDER rather than merely styled; `variant="soft"`
-            # keeps it below the solid primary and distinct from the outline pair.
-            # Both keys already exist in all nine locales — no new strings here.
+        rx.el.main(
             rx.vstack(
-                rx.text(_t["auth.no_account"], size="2", color="var(--gray-11)"),
-                rx.link(
-                    rx.button(
-                        _t["auth.sign_up"],
-                        variant="soft",
-                        size="3",
+                rx.hstack(
+                    rx.image(src="/logo.png", alt="Datanika", width="48px", height="48px"),
+                    rx.heading(_t["app.name"], size="7"),
+                    spacing="3",
+                    align="center",
+                ),
+                rx.text(_t["auth.sign_in_heading"], size="3", color="var(--gray-11)"),
+                rx.cond(
+                    AuthState.show_reset_done,
+                    rx.callout(
+                        _t["auth.password_reset_done"],
+                        icon="circle_check",
+                        color_scheme="green",
+                        high_contrast=True,
                         width="100%",
-                        type="button",
                     ),
-                    href="/signup",
-                    on_click=AuthState.clear_auth_error,
-                    underline="none",
+                ),
+                rx.cond(
+                    AuthState.show_session_expired,
+                    rx.callout(
+                        _t["auth.session_expired"],
+                        icon="clock",
+                        color_scheme="amber",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.show_link_blocked,
+                    rx.callout(
+                        rx.vstack(
+                            rx.text(_t["auth.social_link_blocked"], weight="medium"),
+                            rx.text(_help_key(), size="2"),
+                            spacing="1",
+                            align="start",
+                        ),
+                        icon="shield_alert",
+                        color_scheme="amber",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.show_email_verified,
+                    rx.callout(
+                        _t["auth.email_verified"],
+                        icon="circle_check",
+                        color_scheme="green",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.show_invite_accepted,
+                    rx.callout(
+                        _t["auth.invite_accepted"],
+                        icon="circle_check",
+                        color_scheme="green",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.show_verify_error,
+                    rx.callout(
+                        _t["auth.email_verify_error"],
+                        icon="triangle_alert",
+                        color_scheme="amber",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.show_invite_error,
+                    rx.callout(
+                        rx.vstack(
+                            rx.text(_t["auth.invite_error"], weight="medium"),
+                            rx.text(_t["auth.invite_error_help"], size="2"),
+                            spacing="1",
+                            align="start",
+                        ),
+                        icon="mail_x",
+                        color_scheme="amber",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                # A closed set (#686): the slug picks the sentence, and an unrecognised slug
+                # picks nothing at all. Several slugs share a sentence on purpose - an end
+                # user cannot act differently on "SAML IdP not configured" than on "Invalid
+                # OIDC configuration", but an operator reading the URL can.
+                #
+                # The keys are written out rather than generated from the whitelist so the
+                # project's i18n scanner, which greps datanika/ui/ for bracketed literal keys, can
+                # see them - generated arms make every key here look orphaned. The test file
+                # test_login_signal_coverage.py links the two mechanically instead.
+                rx.cond(
+                    AuthState.auth_error_reason != "",
+                    rx.callout(
+                        rx.match(
+                            AuthState.auth_error_reason,
+                            ("invalid_state", _t["auth.error.retry"]),
+                            ("missing_code", _t["auth.error.retry"]),
+                            ("oauth_failed", _t["auth.error.provider_failed"]),
+                            ("saml_idp_not_configured", _t["auth.error.sso_not_configured"]),
+                            ("saml_request_failed", _t["auth.error.provider_failed"]),
+                            ("sso_failed", _t["auth.error.provider_failed"]),
+                            ("sso_invalid_state", _t["auth.error.retry"]),
+                            ("sso_misconfigured", _t["auth.error.sso_not_configured"]),
+                            ("sso_no_email", _t["auth.error.sso_no_email"]),
+                            ("sso_not_configured", _t["auth.error.sso_not_configured"]),
+                            ("sso_unreachable", _t["auth.error.sso_unreachable"]),
+                            ("sso_unsupported_protocol", _t["auth.error.sso_not_configured"]),
+                            ("superseded_flow", _t["auth.error.superseded"]),
+                            ("unknown_provider", _t["auth.error.unknown_provider"]),
+                            "",
+                        ),
+                        icon="triangle_alert",
+                        color_scheme="red",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.cond(
+                    AuthState.auth_error != "",
+                    rx.callout(
+                        AuthState.auth_error,
+                        icon="triangle_alert",
+                        color_scheme="red",
+                        high_contrast=True,
+                        width="100%",
+                    ),
+                ),
+                rx.form(
+                    rx.vstack(
+                        rx.el.label(
+                            rx.text(_t["auth.email"], size="2", weight="medium"),
+                            html_for="login-email",
+                        ),
+                        rx.input(
+                            id="login-email",
+                            placeholder=_t["auth.ph_email"],
+                            name="email",
+                            # username + current-password is one credential to a
+                            # password manager. Declared rather than suppressed:
+                            # autofill is the *wanted* behaviour here, so this is the
+                            # opposite repair from core#618's (core#672).
+                            custom_attrs=autofill_attrs("username"),
+                            width="100%",
+                        ),
+                        rx.el.label(
+                            rx.text(_t["auth.password"], size="2", weight="medium"),
+                            html_for="login-password",
+                        ),
+                        rx.input(
+                            id="login-password",
+                            placeholder=_t["auth.ph_password"],
+                            name="password",
+                            type="password",
+                            custom_attrs=autofill_attrs("current-password"),
+                            width="100%",
+                        ),
+                        rx.button(
+                            _t["auth.sign_in"],
+                            type="submit",
+                            width="100%",
+                            size="3",
+                        ),
+                        captcha_script("login"),
+                        spacing="3",
+                        width="100%",
+                    ),
+                    on_submit=AuthState.login,
+                ),
+                _forgot_password_link(),
+                # core#624: the divider, "or continue with" and both provider buttons are one shared
+                # component, rendered identically on /signup. #418 and #605 live in social_auth.py.
+                social_login_row(),
+                # core#1081 AC2b / SPEC_PAGE_ENTRY §3. "or continue with" is true for
+                # a returning user and SILENT for a new one — and these two controls
+                # start `/api/auth/login/<provider>`, which lands in
+                # `UserService.find_or_create_oauth_user`, whose own docstring is
+                # "Find existing user by OAuth identity or email, ELSE CREATE". It
+                # returns `is_new` because creating an account is a normal outcome of
+                # this path, so the page has to say so.
+                #
+                # Deliberately provider-agnostic and count-agnostic: naming Google and
+                # GitHub, or saying "both options", makes the sentence wrong in nine
+                # locales the day core#624 adds a third.
+                rx.text(
+                    _t["auth.social_creates_account"],
+                    size="1",
+                    color="var(--gray-11)",
+                    text_align="center",
                     width="100%",
                 ),
-                spacing="2",
-                align="center",
-                width="100%",
+                # core#1081 AC2a / SPEC_PAGE_ENTRY §3. This was a 50x20 px link inside
+                # a `color="gray"` paragraph, beneath two 141x40 px buttons that will
+                # create an account without saying so. **The inversion was the defect**:
+                # /login is the product's fastest signup path and said it was not.
+                #
+                # ⚠️ Not a colour change. The link already rendered Radix accent blue
+                # (`rgba(0, 109, 203, 0.95)`) — the `gray` belonged to the wrapper, and
+                # a darker link would measure as done and fix nothing (§0c).
+                #
+                # `size="3"` matches the social buttons and `Sign In`, so the control
+                # is of the same ORDER rather than merely styled; `variant="soft"`
+                # keeps it below the solid primary and distinct from the outline pair.
+                # Both keys already exist in all nine locales — no new strings here.
+                rx.vstack(
+                    rx.text(_t["auth.no_account"], size="2", color="var(--gray-11)"),
+                    rx.link(
+                        rx.button(
+                            _t["auth.sign_up"],
+                            variant="soft",
+                            size="3",
+                            width="100%",
+                            type="button",
+                        ),
+                        href="/signup",
+                        on_click=AuthState.clear_auth_error,
+                        underline="none",
+                        width="100%",
+                    ),
+                    spacing="2",
+                    align="center",
+                    width="100%",
+                ),
+                # #656. Rendered from the shared component rather than written
+                # here, so the `is_external` (= new tab) that these off-site links
+                # need stays out of this module — the AST guard in
+                # test_external_links.py is about the *social* buttons, and a
+                # module-wide ban is easier to keep true than to keep meaningful.
+                legal_links(),
+                spacing="4",
+                width="360px",
+                padding="32px",
+                border="1px solid var(--gray-a5)",
+                border_radius="12px",
+                bg="var(--color-background)",
             ),
-            # #656. Rendered from the shared component rather than written
-            # here, so the `is_external` (= new tab) that these off-site links
-            # need stays out of this module — the AST guard in
-            # test_external_links.py is about the *social* buttons, and a
-            # module-wide ban is easier to keep true than to keep meaningful.
-            legal_links(),
-            spacing="4",
-            width="360px",
-            padding="32px",
-            border="1px solid var(--gray-a5)",
-            border_radius="12px",
-            bg="var(--color-background)",
         ),
         height="100vh",
     )

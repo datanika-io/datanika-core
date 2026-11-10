@@ -87,6 +87,9 @@ def _run(tmp: Path, *, tag: str, view_rc: int, with_notes: bool) -> tuple[int, l
         b'echo "unexpected gh: $*" >&2\n'
         b"exit 2\n"
     )
+    # ubuntu-latest has a real gh later on PATH. A recorder without the
+    # executable bit is skipped, that gh exits 1, and GH_LOG stays empty.
+    fake.chmod(0o755)
     if with_notes:
         notes = tree / "docs" / "release-notes"
         notes.mkdir(parents=True)

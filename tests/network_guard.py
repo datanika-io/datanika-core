@@ -8,6 +8,9 @@ to exit with the code the test expected.
 IP-literal resolution stays open. ``egress_guard`` classifies a literal itself,
 and the DNS stub under ``tests/test_services`` forwards literals to the real
 resolver on purpose. A public hostname is a packet, and it is refused.
+The RFC 2606 ``.invalid`` TLD is the exception: it is defined not to resolve,
+and the unguarded pinning control has to observe that resolver failure.
+A connect to any address that comes back is still refused.
 
 ``OPT_IN`` is the whole allow-list. Each row names the real service that test
 talks to. Connector smoke is skipped unless ``DATANIKA_CONNECTOR_SMOKE=1``;
@@ -17,9 +20,11 @@ these rows are what lets that run reach the services it exists to reach.
 from __future__ import annotations
 
 import ipaddress
+import os
 import shlex
 import socket
 import subprocess
+import sys
 import threading
 
 REFUSAL = "unit suite refuses the network"
@@ -112,9 +117,15 @@ def _create(address, *args, **kwargs):
     return _real_create(address, *args, **kwargs)
 
 
+def _reserved_invalid(host: str) -> bool:
+    """RFC 2606. ``rebind.invalid`` has to reach the real resolver so the failure is an OSError."""
+    name = host.strip().rstrip(".").lower()
+    return name == "invalid" or name.endswith(".invalid")
+
+
 def _gai(host, *args, **kwargs):
     text = _host_text(host)
-    if _loopback_endpoint(text) or _ip_literal(text) is not None:
+    if _loopback_endpoint(text) or _ip_literal(text) is not None or _reserved_invalid(text):
         return _real_gai(host, *args, **kwargs)
     _refuse(f"getaddrinfo {host!r}")
     return _real_gai(host, *args, **kwargs)
@@ -156,8 +167,27 @@ def _run(args, *args_, **kwargs):
     return _real_run(args, *args_, **kwargs)
 
 
+def _stop_incidental_probes() -> None:
+    """The libraries read these before they open a socket.
+
+    ``NO_GCE_CHECK`` is cached at import of ``google.auth.compute_engine._metadata``,
+    so an environment set after that import does nothing until the cached flag
+    moves. botocore reads ``AWS_EC2_METADATA_DISABLED`` when it builds the
+    fetcher, and dbt forces anonymous stats off when ``DO_NOT_TRACK`` is set.
+    The connect guard still refuses 169.254.169.254, and the lookup guard still
+    refuses the telemetry host.
+    """
+    os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
+    os.environ["NO_GCE_CHECK"] = "true"
+    os.environ["DO_NOT_TRACK"] = "1"
+    meta = sys.modules.get("google.auth.compute_engine._metadata")
+    if meta is not None:
+        meta._NO_GCE_CHECK = True
+
+
 def install() -> None:
     global _installed
+    _stop_incidental_probes()
     if _installed:
         return
     _installed = True

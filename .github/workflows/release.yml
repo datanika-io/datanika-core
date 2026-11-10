@@ -13,6 +13,9 @@ name: Release
 # `mcp-v*` and publishes the datanika-mcp sub-package to PyPI. Glob patterns anchor
 # at the start, so `v*` does NOT match `mcp-v0.1.0` — the two workflows never collide.
 # Never tag the platform with `mcp-v*`.
+#
+# A tag runs the workflow as of the tagged commit, so this only affects tags
+# cut after the change reaches master.
 
 on:
   push:
@@ -42,9 +45,16 @@ jobs:
         run: |
           set -euo pipefail
           echo "Publishing release for tag: ${TAG}"
-          gh release create "${TAG}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --title "${TAG}" \
-            --generate-notes \
-            --verify-tag
+          notes_file=()
+          if [ -f "docs/release-notes/${TAG}.md" ]; then
+            notes_file=(--notes-file "docs/release-notes/${TAG}.md")
+          fi
+          # An existing release is a no-op. A second run must not fail.
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TAG}" \
+              "${notes_file[@]}" \
+              --generate-notes \
+              --verify-tag
           echo "Release published: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"

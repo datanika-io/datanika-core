@@ -14,6 +14,45 @@ from datanika.errors import UserFacingError
 logger = logging.getLogger(__name__)
 
 
+def _release_dbt_duckdb_connection() -> None:
+    """Close the DuckDB connection an in-process dbt run leaves behind.
+
+    ``DuckDBCredentials.keep_open`` defaults to true, and the adapter stores the
+    connection on ``DuckDBConnectionManager._ENV`` for the life of the process.
+    Catalog introspection then opens the same file through ``duckdb_engine``,
+    which sets ``custom_user_agent``. DuckDB refuses a second connection whose
+    configuration differs, the task logs that as non-fatal, and the catalog
+    entry is stored with ``columns=[]`` (core#1375).
+
+    Called only after ``dbtRunner.invoke`` has returned its result. Closing
+    does not change that result; it lets the next opener of the file be the
+    only one.
+    """
+    try:
+        from dbt.adapters.duckdb.connections import DuckDBConnectionManager
+    except Exception:
+        logger.debug("dbt-duckdb is not installed; nothing to release")
+        return
+    with DuckDBConnectionManager._LOCK:
+        env = DuckDBConnectionManager._ENV
+        DuckDBConnectionManager._ENV = None
+    if env is None:
+        return
+    try:
+        env.close()
+    except Exception:
+        logger.debug("closing the dbt-duckdb connection failed", exc_info=True)
+
+
+def _invoke_dbt(args: list[str]):
+    """Run one dbt invocation and release the DuckDB file it held."""
+    runner = dbtRunner()
+    try:
+        return runner.invoke(args)
+    finally:
+        _release_dbt_duckdb_connection()
+
+
 def _to_plain(obj):
     """Convert nested data to plain Python types safe for yaml.safe_dump."""
     return json.loads(json.dumps(obj))
@@ -446,8 +485,7 @@ class DbtProjectService:
         if full_refresh and command in self.FULL_REFRESH_COMMANDS:
             args.append("--full-refresh")
 
-        runner = dbtRunner()
-        result = runner.invoke(args)
+        result = _invoke_dbt(args)
 
         rows_affected = _sum_rows_affected(result)
 
@@ -472,8 +510,7 @@ class DbtProjectService:
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
 
-        runner = dbtRunner()
-        result = runner.invoke(
+        result = _invoke_dbt(
             [
                 "run",
                 "--select",
@@ -565,8 +602,7 @@ class DbtProjectService:
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
 
-        runner = dbtRunner()
-        result = runner.invoke(
+        result = _invoke_dbt(
             [
                 "test",
                 "--select",
@@ -596,8 +632,7 @@ class DbtProjectService:
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
 
-        runner = dbtRunner()
-        result = runner.invoke(
+        result = _invoke_dbt(
             [
                 "compile",
                 "--select",
@@ -668,8 +703,7 @@ class DbtProjectService:
         if not packages_path.exists():
             raise DbtProjectError(f"packages.yml not found for org {org_id}")
 
-        runner = dbtRunner()
-        result = runner.invoke(
+        result = _invoke_dbt(
             ["deps", "--project-dir", str(project_path), "--profiles-dir", str(project_path)]
         )
 
@@ -738,8 +772,7 @@ class DbtProjectService:
         if not project_path.exists():
             raise DbtProjectError(f"dbt project not found for org {org_id}")
 
-        runner = dbtRunner()
-        result = runner.invoke(
+        result = _invoke_dbt(
             [
                 "snapshot",
                 "--select",
@@ -917,8 +950,7 @@ class DbtProjectService:
         if source_name:
             cmd.extend(["--select", f"source:{source_name}"])
 
-        runner = dbtRunner()
-        result = runner.invoke(cmd)
+        result = _invoke_dbt(cmd)
 
         logs = _format_dbt_logs(result)
         return {"success": result.success, "logs": logs}

@@ -214,12 +214,14 @@ class TestOpenapiKeepsItsSpecialCase:
             "field row that §2.7 rules correct — measured on core#1547 AC4."
         )
 
-    def test_openapi_marks_nothing_required_so_the_absence_is_consistent(self):
-        """Anti-vacuity for the test above: the absence is only correct because the form marks
-        nothing required here. If `openapi_fields` ever marks a field, the row must appear."""
-        assert _marked_required("openapi") == set(), (
-            "`openapi_fields` now marks a field required, so it needs a row in "
-            "`_REQUIRED_FORM_FIELDS` after all — and `base_url` is still not the one to add."
+    def test_openapi_marks_the_spec_and_leaves_base_url_unmarked(self):
+        """The spec textarea is required. Base URL stays unmarked: a blank saves and
+        `_build_config` fills it from the spec's `servers` entry. The blank spec is
+        refused there too, which is why this type still has no table row."""
+        marked = _marked_required("openapi")
+        assert marked == {"openapi_spec"}, (
+            f"openapi marks {sorted(marked or [])}. The required field is openapi_spec. "
+            "base_url stays unmarked."
         )
 
 

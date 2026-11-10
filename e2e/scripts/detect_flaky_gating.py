@@ -52,8 +52,20 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 INFORMATIONAL_MARKER = "@informational"
+
+
+class _FlakyReport(TypedDict):
+    """The dict both branches of ``main`` build. A bare ``dict`` joins to ``dict[str, object]``."""
+
+    status: str
+    total_specs: int
+    gating_specs: int
+    informational_specs: int
+    flaky_gating: list[str]
+    flaky_informational: list[str]
 
 
 def iter_specs(node: dict, ancestry: tuple[str, ...] = ()) -> list[tuple[str, dict]]:
@@ -86,7 +98,7 @@ def spec_is_flaky(spec: dict) -> bool:
     return any(test.get("status") == "flaky" for test in spec.get("tests", []) or [])
 
 
-def analyse(report: dict) -> dict:
+def analyse(report: dict) -> _FlakyReport:
     """Classify a Playwright JSON report into one of the three states."""
     specs: list[tuple[str, dict]] = []
     for suite in report.get("suites", []) or []:
@@ -133,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     report = load(args.report)
+    result: _FlakyReport
     if report is None:
         result = {
             "status": "no-evidence",

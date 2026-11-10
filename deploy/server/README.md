@@ -34,7 +34,6 @@ and **fails closed** if its own list is truncated.
 | `apache-staging-app.datanika.io.conf` | ⚠️ nowhere — see [core#745] | **nothing** — duplicate of `deploy/apache/staging-app.datanika.io.conf` | n/a |
 | `apache-prod-active-ports.conf` | `/etc/apache2/conf-enabled/datanika-prod-active.conf` | rewritten on every blue/green swap by `deploy-bluegreen.sh` | Apache |
 | `networkd-99-datanika-dns.conf` | `/etc/systemd/network/10-netplan-eth0.network.d/99-datanika-dns.conf` | **by hand, deliberately** (see below) | `systemd-networkd` |
-| `staging-docker-compose.yml` | `/opt/datanika-staging/docker-compose.yml` | staging deploy (`ci.yml`) | compose |
 | `deploy-pointer.sh` | dev-machine fallback | n/a — never installed | by hand, only if CD is broken |
 
 ⚠️ **`export-prod-settings.sh` was absent from this table entirely** until 2026-09-04, while running

@@ -117,7 +117,9 @@ def legal_links() -> rx.Component:
 
 
 def sidebar() -> rx.Component:
-    return rx.box(
+    # A nav, not a box: the sidebar links were the region nodes on every
+    # authenticated surface (core#1587). One nav is unique by role.
+    return rx.el.nav(
         rx.vstack(
             rx.hstack(
                 rx.image(src="/logo.png", alt="Datanika", width="32px", height="32px"),
@@ -465,7 +467,7 @@ def page_layout(*children, title: rx.Var[str] | str = "") -> rx.Component:
             AuthState.is_authenticated,
             rx.box(
                 sidebar(),
-                rx.box(
+                rx.el.main(
                     rx.vstack(
                         verification_mail_notice(),
                         invite_notice(),

@@ -39,6 +39,7 @@
 #   bash scripts/build-from-worktree.sh --edition core      # no cloud tree
 #   bash scripts/build-from-worktree.sh --tag foo:bar
 #   bash scripts/build-from-worktree.sh --target variant-cloud
+#   bash scripts/build-from-worktree.sh --build-arg http_proxy=http://host.docker.internal:9
 #   bash scripts/build-from-worktree.sh --list-context      # print members, build nothing
 #   bash scripts/build-from-worktree.sh --print-tag         # print the tag, build nothing
 #
@@ -55,15 +56,27 @@ EDITION="cloud"
 TARGET=""
 LIST_ONLY=0
 PRINT_TAG=0
+# core#1511. Caller args follow the edition arg. An empty value is allowed.
+BUILD_ARG_FLAGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --tag)     TAG="${2:?--tag needs a value}"; shift 2 ;;
     --edition) EDITION="${2:?--edition needs a value}"; shift 2 ;;
     --target)  TARGET="${2:?--target needs a value}"; shift 2 ;;
+    --build-arg)
+      spec="${2:?--build-arg needs K=V}"
+      key="${spec%%=*}"
+      if [ -z "$key" ] || [ "$key" = "$spec" ]; then
+        echo "--build-arg needs K=V, got: $spec" >&2
+        exit 2
+      fi
+      BUILD_ARG_FLAGS+=(--build-arg "$spec")
+      shift 2
+      ;;
     --list-context) LIST_ONLY=1; shift ;;
     --print-tag) PRINT_TAG=1; shift ;;
-    -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,51p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -157,6 +170,9 @@ echo "build-from-worktree: edition=$EDITION tag=$TAG${TARGET:+ target=$TARGET}"
 
 BUILD_ARGS=(build -f datanika/Dockerfile -t "$TAG" --build-arg "DATANIKA_IMAGE_EDITION=$EDITION")
 [ -n "$TARGET" ] && BUILD_ARGS+=(--target "$TARGET")
+if [ "${#BUILD_ARG_FLAGS[@]}" -gt 0 ]; then
+  BUILD_ARGS+=("${BUILD_ARG_FLAGS[@]}")
+fi
 
 tar_stream | docker "${BUILD_ARGS[@]}" -
 

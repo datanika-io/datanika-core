@@ -256,3 +256,101 @@ def test_the_build_tag_is_the_tag_the_stack_runs(tmp_path: Path) -> None:
     spec.loader.exec_module(module)
     core = _make_tree(tmp_path, agent="qa")
     assert _run(core, "--print-tag").stdout.strip() == module.identity(core)["tag"]
+
+
+def _bash_exe() -> str:
+    """The bash that can run this script.
+
+    On this Windows host a bare ``bash`` is the WSL launcher. It does not receive
+    the environment Python sets, and a ``docker`` it finds is Docker Desktop.
+    Git Bash is the one the rest of the worktree uses. Linux CI has neither path.
+    """
+    git_bash = Path(r"C:\Program Files\Git\usr\bin\bash.exe")
+    if os.name == "nt" and git_bash.is_file():
+        return str(git_bash)
+    return "bash"
+
+
+def _run_with_fake_docker(
+    core: Path, tmp_path: Path, *args: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """A `docker` that records its argv and drains stdin, so the build is not a real one."""
+    bindir = tmp_path / "fake-bin"
+    bindir.mkdir()
+    args_file = tmp_path / "docker-args.txt"
+    (bindir / "docker").write_text(
+        '#!/usr/bin/env bash\ncat >/dev/null\nprintf \'%s\\n\' "$@" > "$DOCKER_ARGS_FILE"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    wrapper = core / "run-with-fake-docker.sh"
+    wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "WIN_BINDIR=$1\n"
+        "WIN_ARGS_FILE=$2\n"
+        "shift 2\n"
+        "if command -v cygpath >/dev/null 2>&1; then\n"
+        '  BIN=$(cygpath -u "$WIN_BINDIR")\n'
+        '  ARGS=$(cygpath -u "$WIN_ARGS_FILE")\n'
+        "else\n"
+        "  BIN=$WIN_BINDIR\n"
+        "  ARGS=$WIN_ARGS_FILE\n"
+        "fi\n"
+        'chmod +x "$BIN/docker"\n'
+        'export PATH="$BIN:$PATH"\n'
+        'export DOCKER_ARGS_FILE="$ARGS"\n'
+        'exec bash scripts/build-from-worktree.sh "$@"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    env = {k: v for k, v in os.environ.items() if k != "MSYS_NO_PATHCONV"}
+    env["MSYS_NO_PATHCONV"] = "1"
+    res = subprocess.run(
+        [
+            _bash_exe(),
+            wrapper.name,
+            str(bindir).replace("\\", "/"),
+            str(args_file).replace("\\", "/"),
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+        cwd=str(core),
+        env=env,
+    )
+    recorded = args_file.read_text(encoding="utf-8").splitlines() if args_file.is_file() else []
+    return res, recorded
+
+
+@requires_gnu_tar
+def test_build_arg_is_forwarded_and_repeatable(tmp_path: Path) -> None:
+    """core#1511. The script had no way to pass the build arg a cold apt layer needs."""
+    core = _make_tree(tmp_path / "tree")
+    res, recorded = _run_with_fake_docker(
+        core,
+        tmp_path,
+        "--build-arg",
+        "http_proxy=http://host.docker.internal:9",
+        "--build-arg",
+        "https_proxy=http://host.docker.internal:9",
+    )
+    assert res.returncode == 0, res.stderr + res.stdout
+    assert "DATANIKA_IMAGE_EDITION=cloud" in recorded
+    assert recorded.index("DATANIKA_IMAGE_EDITION=cloud") < recorded.index(
+        "http_proxy=http://host.docker.internal:9"
+    )
+    assert recorded.index("http_proxy=http://host.docker.internal:9") < recorded.index(
+        "https_proxy=http://host.docker.internal:9"
+    )
+
+
+def test_build_arg_requires_key_equals_value(tmp_path: Path) -> None:
+    missing = _run(_make_tree(tmp_path / "a"), "--build-arg")
+    assert missing.returncode != 0
+    assert "K=V" in missing.stderr
+    bare = _run(_make_tree(tmp_path / "b"), "--build-arg", "http_proxy")
+    assert bare.returncode != 0
+    assert "K=V" in bare.stderr

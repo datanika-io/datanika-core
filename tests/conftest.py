@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from datanika.models.base import Base
+from tests.network_guard import allow_network, install, mark_opt_ins, service_for
 
 
 @pytest.fixture
@@ -175,3 +176,27 @@ def production_session_factory(tmp_path):
         yield sessionmaker(bind=engine, class_=session_class, **options)
     finally:
         engine.dispose()
+
+
+def pytest_configure(config):
+    """Refuse outbound sockets and network CLIs for the whole unit suite (core#1599)."""
+    install()
+    config.addinivalue_line(
+        "markers",
+        "needs_network(service): this test opens a connection to the named real service",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    mark_opt_ins(items)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Before fixtures, so an opted-in fixture may connect and every other test may not.
+    allow_network(service_for(item) is not None)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    allow_network(False)

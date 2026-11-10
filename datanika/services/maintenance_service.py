@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from datanika.models.run import NON_TERMINAL_RUN_STATUSES, Run, RunStatus
 from datanika.models.uploaded_file import UploadedFile
+from datanika.services.execution_service import bound_run_logs
 from datanika.services.file_upload_service import resolve_archive_path
 
 logger = logging.getLogger(__name__)
@@ -129,7 +130,8 @@ def reap_stuck_cancelling_runs(session: Session, after_minutes: int | None = Non
             "so the run was closed by the maintenance sweep. Any rows already written to the "
             "destination are still there."
         )
-        run.logs = "\n".join([run.logs, note]) if run.logs else note
+        combined = "\n".join([run.logs, note]) if run.logs else note
+        run.logs = bound_run_logs(combined)
     session.flush()
     return len(stuck)
 

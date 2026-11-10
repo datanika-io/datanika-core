@@ -33,7 +33,7 @@ from datanika.migrations.helpers import PUBLIC_TABLES
 # Tables owned by the cloud plugin's own models. `env.py` imports them under a
 # suppressed ImportError, so they are present in the cloud edition and absent in
 # a core-only checkout. Excluded here because their absence is intended.
-CLOUD_TABLES = {"plans", "subscriptions", "usage_ledger", "charges"}
+CLOUD_TABLES = {"plans", "subscriptions", "usage_ledger", "charges", "quota_decisions"}
 
 
 def _env_target_metadata_tables() -> set[str]:

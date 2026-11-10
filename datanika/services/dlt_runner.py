@@ -31,6 +31,7 @@ from datanika.services.local_file_database import (
 from datanika.services.mongodb_source import DEFAULT_AUTH_SOURCE as _MONGO_DEFAULT_AUTH_SOURCE
 from datanika.services.write_disposition import (
     FULL_FETCH_WRITE_DISPOSITION,
+    is_explicit_raw_disposition,
     is_serialized_form_default,
 )
 
@@ -1507,6 +1508,89 @@ def _google_ads_rows(payload) -> list[dict]:
     return rows
 
 
+def _google_ads_query_text(dlt_config: dict) -> str:
+    """GAQL this run sends. A missing or empty query is the default report."""
+    return str(dlt_config.get("query") or DEFAULT_GOOGLE_ADS_QUERY).strip()
+
+
+def _is_custom_google_ads_query(dlt_config: dict) -> bool:
+    """The sent text is not exactly the default. This is not a parse of GAQL."""
+    return _google_ads_query_text(dlt_config) != DEFAULT_GOOGLE_ADS_QUERY
+
+
+def _google_ads_report_key(dlt_config: dict):
+    """``merge_config.report.primary_key`` when it is a non-blank string or list of them.
+
+    The caller's object is returned unchanged. A top-level ``primary_key`` is not read.
+    """
+    merge_config = dlt_config.get("merge_config")
+    if not isinstance(merge_config, dict):
+        return None
+    report = merge_config.get("report")
+    if not isinstance(report, dict):
+        return None
+    primary_key = report.get("primary_key")
+    if isinstance(primary_key, str):
+        return primary_key if primary_key.strip() else None
+    if (
+        isinstance(primary_key, list)
+        and primary_key
+        and all(isinstance(part, str) and part.strip() for part in primary_key)
+    ):
+        return primary_key
+    return None
+
+
+def _google_ads_key_columns(primary_key) -> tuple[str, ...]:
+    if isinstance(primary_key, str):
+        return (primary_key,)
+    return tuple(primary_key)
+
+
+def _custom_google_ads_key_columns(dlt_config: dict) -> tuple[str, ...]:
+    """Columns a custom-query load must carry, or empty when that contract is not in force."""
+    if not _is_custom_google_ads_query(dlt_config) or is_explicit_raw_disposition(dlt_config):
+        return ()
+    key = _google_ads_report_key(dlt_config)
+    if key is None:
+        return ()
+    return _google_ads_key_columns(key)
+
+
+def _refuse_a_google_ads_row_missing_its_key(rows: list[dict], columns: tuple[str, ...]) -> None:
+    """Do not yield a batch whose merge key is absent, null, or empty."""
+    if not columns:
+        return
+    for row in rows:
+        for column in columns:
+            value = row.get(column)
+            if value is None or value == "":
+                raise DltRunnerError(
+                    f"Google Ads report row has no value for {column}. "
+                    "merge_config.report.primary_key names flattened columns, and a row "
+                    "missing one is not loaded."
+                )
+
+
+def _enforced_google_ads_report_key(source_type: str, dlt_config: dict):
+    """The custom-query merge key, or None when this run is not under that contract.
+
+    Raises before ``pipeline.run``, so neither the token exchange nor the report request runs.
+    """
+    if source_type != "google_ads" or not _is_custom_google_ads_query(dlt_config):
+        return None
+    if is_explicit_raw_disposition(dlt_config):
+        return None
+    key = _google_ads_report_key(dlt_config)
+    if key is None:
+        raise DltRunnerError(
+            "A custom Google Ads query needs merge_config.report.primary_key "
+            "set to a flattened column name or a list of them "
+            "(campaign_id, segments_date). Nothing was loaded."
+        )
+    return key
+
+
 def _ga4_rows(payload: dict) -> list[dict]:
     """Flatten one `runReport` response into named columns.
 
@@ -2968,9 +3052,11 @@ class DltRunnerService:
         A custom `dlt_config["query"]` still declares no primary key. The query
         is user-overridable, so a key named for every query would be a guess
         about columns that query need not select — and a primary key naming an
-        absent column fails the load rather than degrading it. The default
-        query selects `campaign.id` and `segments.date` (flattened to
-        `campaign_id` and `segments_date`). That resource merges on the pair:
+        absent column fails the load rather than degrading it. That query's key
+        is `merge_config.report.primary_key`, applied in `execute`. A row that
+        omits a named key column is refused below, before the batch is yielded.
+        The default query selects `campaign.id` and `segments.date` (flattened
+        to `campaign_id` and `segments_date`). That resource merges on the pair:
         a later window updates those days and leaves older days in place.
         `replace` would delete the days the new window no longer covers.
         """
@@ -2992,7 +3078,7 @@ class DltRunnerService:
                 "client and refresh token."
             )
 
-        query = str(dlt_config.get("query") or DEFAULT_GOOGLE_ADS_QUERY).strip()
+        query = _google_ads_query_text(dlt_config)
         default_query = query == DEFAULT_GOOGLE_ADS_QUERY.strip()
         version = str(dlt_config.get("api_version") or GOOGLE_ADS_API_VERSION).strip()
         developer_token = config["developer_token"]
@@ -3002,6 +3088,9 @@ class DltRunnerService:
         if default_query:
             report_hints["primary_key"] = ("campaign_id", "segments_date")
             report_hints["write_disposition"] = "merge"
+        # Empty unless execute will merge this custom query. The direct resource
+        # probe still sends a keyless custom query; that failure belongs to execute.
+        key_columns = _custom_google_ads_key_columns(dlt_config)
 
         @dlt.resource(**report_hints)
         def _report():
@@ -3028,6 +3117,7 @@ class DltRunnerService:
                     f"for customer {customer_id} on API {version}: {response.text[:400]}"
                 )
             rows = _google_ads_rows(response.json())
+            _refuse_a_google_ads_row_missing_its_key(rows, key_columns)
             if rows:
                 yield rows
 
@@ -3294,6 +3384,9 @@ class DltRunnerService:
             pipeline_name=pipeline_name,
         )
         source = self.build_source(source_type, source_config, dlt_config, batch_size=batch_size)
+        # core#1400. Before any hint is applied and before pipeline.run, so a custom Google Ads
+        # query with no merge_config.report.primary_key never reaches the token exchange.
+        custom_ads_key = _enforced_google_ads_report_key(source_type, dlt_config)
 
         # Apply row-level filters. SQL sources in single_table mode (E10)
         # have already pushed filters to the DB via query_adapter_callback
@@ -3330,6 +3423,15 @@ class DltRunnerService:
         # form's `mode` key came from raw JSON or the API, and is still forwarded.
         if source_type in FORM_HIDES_WRITE_DISPOSITION and is_serialized_form_default(dlt_config):
             run_kwargs.pop("write_disposition", None)
+        if custom_ads_key is not None:
+            # mode does not waive the key, and a run-level disposition or top-level primary_key
+            # would override the resource hint (core#1336).
+            source.resources["report"].apply_hints(
+                write_disposition="merge",
+                primary_key=custom_ads_key,
+            )
+            run_kwargs.pop("write_disposition", None)
+            run_kwargs.pop("primary_key", None)
         # core#1439. Last, so it sees every hint applied above — a merge_config primary key is set
         # here, not in `build_source`, and it is as much a sorting key as a reflected one.
         refuse_a_nullable_key(source, destination_type)

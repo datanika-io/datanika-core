@@ -259,6 +259,50 @@ class TestItSurfacesSomewhereThatFires:
             "the filing step does not distinguish 'no artifacts at all' from a finding"
         )
 
+    def test_a_blind_finding_fails_the_job_after_it_is_filed(self) -> None:
+        """A filed blind stretch must change the job's colour.
+
+        Run 42728091358 concluded success, and its e2e-measurement-gap job did
+        too, on the run that opened core#1634. The reader had printed BLIND and
+        exited 2. ``continue-on-error`` on the reader is what lets this step
+        run; this step then fell off the end at exit 0, so the job wore the
+        same colour as a window with no blind stretch.
+
+        A graduating trailing streak is not that colour. The same report can
+        print BLIND for a three-run absence and verdict graduate. A superseded
+        run is not the absence: the reader writes blind.txt only when it exits
+        2, and a superseded run does not.
+
+        The no-artifact and broken.txt paths stay exit 1. Those mean the
+        detector did not run. Exit 2 belongs after the issue is created, on
+        the blind path only, and only as its own line — a comment does not
+        count, because ``_strip_comments`` drops it.
+        """
+        gap = next(
+            s
+            for s in _workflow_doc()["jobs"]["e2e-measurement-gap"]["steps"]
+            if s.get("id") == "gap"
+        )
+        assert gap.get("continue-on-error") is True, (
+            "without continue-on-error the reader exiting 2 skips this step, "
+            "and the finding never becomes an issue"
+        )
+        body = _strip_comments(str(_step_by_name("File an issue").get("run", "")))
+        create_at = body.find("gh issue create")
+        assert create_at != -1, "the filing step no longer creates the issue"
+        before = body[:create_at]
+        tail_lines = [line.strip() for line in body[create_at:].splitlines()]
+        assert "exit 2" in tail_lines, (
+            "filing a blind stretch leaves the step at exit 0, so the job stays "
+            "green and a three-run absence looks like a clean window"
+        )
+        assert before.count("exit 1") >= 2, (
+            "the no-artifact path and the broken.txt path must each stay exit 1"
+        )
+        assert "exit 2" not in [line.strip() for line in before.splitlines()], (
+            "exit 2 on the detector-down path would call a crash a blind stretch"
+        )
+
 
 def test_control_the_extractor_rejects_a_comment_only_match() -> None:
     """🔑 The anti-vacuity assertion for the extractor itself.

@@ -327,10 +327,22 @@ def test_the_e2e_spec_posts_a_wrong_audience_assertion():
 
     core#1182. ``<invalid-xml>`` with no state cookie is a 302 the old assertion
     accepted, and the required ``test`` job does not run the spec.
+
+    core#1646. Run 42753941004 posted a signed assertion whose Audience was the
+    wrong URL, and the callback answered 302 ``sso_invalid_state`` because that
+    POST did not carry ``sso_state``. ``response.text()`` threw on the redirect,
+    so the audience was never what the 401 was about. The spec has to resubmit
+    those signed bytes with the cookie.
     """
     spec = Path(__file__).resolve().parents[2] / "e2e" / "tests" / "sso-saml.spec.ts"
     text = spec.read_text(encoding="utf-8")
     assert "<invalid-xml>" not in text
     assert "https://wrong-audience.example/not-this-sp" in text
-    assert "toBe(401)" in text
     assert 'c.name === "sso_state"' in text
+    marker = "SAML assertion with wrong audience is rejected"
+    wrong = text.split(marker, 1)[1].split("\n  test(", 1)[0]
+    assert "toBe(401)" in wrong
+    assert "response.text()" not in wrong
+    assert "sso_invalid_state" in wrong
+    assert "SAMLResponse: samlResponse" in wrong
+    assert "sso_state=" in wrong

@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
 from datanika.models.base import Base
@@ -57,10 +57,28 @@ def _no_signup_marker_store():
         yield
 
 
+def _pysqlite_connection(dbapi_connection, _connection_record):
+    """pysqlite commits the outer transaction when a savepoint is released.
+
+    ``db_session`` uses ``join_transaction_mode="create_savepoint"``, so
+    ``Session.commit`` is that release. The driver's own BEGIN makes the
+    release commit the connection, and the fixture's ``rollback()`` then
+    undoes nothing. ``isolation_level = None`` stops the driver emitting
+    BEGIN; ``_pysqlite_begin`` emits it for SQLAlchemy instead.
+    """
+    dbapi_connection.isolation_level = None
+
+
+def _pysqlite_begin(conn):
+    conn.exec_driver_sql("BEGIN")
+
+
 @pytest.fixture(scope="session")
 def engine():
     """SQLite in-memory engine for fast model tests."""
     eng = create_engine("sqlite:///:memory:")
+    event.listen(eng, "connect", _pysqlite_connection)
+    event.listen(eng, "begin", _pysqlite_begin)
     Base.metadata.create_all(eng)
     return eng
 

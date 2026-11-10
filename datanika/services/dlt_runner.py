@@ -1329,10 +1329,11 @@ def _bigquery_credentials(creds: dict) -> dict:
     connection form was filled in correctly (core#565).
 
     **Both key names are accepted on purpose.** The connection form writes
-    `keyfile_json`; `CONFIG_SCHEMAS` declares `service_account_json`. Connections
-    already stored carry the former, so reading only the schema's name would fix
-    nothing for anyone who has a BigQuery connection today. The schema is
-    corrected to match reality in the same change; this keeps working either way.
+    `keyfile_json`. A connection already stored may still carry the old name
+    `service_account_json` (core#565); reading only one name would drop the
+    other. `CONFIG_SCHEMAS` declares `keyfile_json` and does not require it
+    (core#1607). An empty blob leaves `creds` unchanged, so application-default
+    credentials may succeed.
     """
     raw = creds.pop("keyfile_json", None) or creds.pop("service_account_json", None)
 
@@ -3029,9 +3030,10 @@ class DltRunnerService:
         drains what is there and finishes. Configurable, because "quiet" means
         something different on a busy topic than on an hourly one.
 
-        **Offsets.** The connection *requires* a ``group_id``, which is a
-        promise that successive runs resume rather than re-read, so offsets are
-        committed (``enable_auto_commit``). The honest cost: a crash between
+        **Offsets.** A blank ``group_id`` uses ``datanika-consumer`` (core#1607).
+        That default is the offset promise — successive runs resume rather than
+        re-read — so offsets are committed (``enable_auto_commit``). The form
+        does not refuse a blank. The honest cost: a crash between
         commit and load loses that window. Every message therefore carries its
         ``_kafka_partition``/``_kafka_offset``, declared as the resource primary
         key — with a ``merge`` write disposition that makes re-reads idempotent,

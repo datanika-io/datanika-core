@@ -503,9 +503,9 @@ and `rest_api`'s Base URL.
   configuration, so there `CONFIG_SCHEMAS` is the over-strict side. 🔑 **That is what makes §2.10 a
   criterion rather than a rule of thumb: the same disagreement resolves in opposite directions
   depending on the credential**, and the three fields above are only the members where it resolves
-  towards the schema. The residual is filed separately, with the instrument. ⚠️ **Do not re-use the
-  number without re-deriving it** (`WORKFLOW_RULES` §5b.5) — this one is dated 2026-09-26 against
-  `dev` @ `437d5854`.
+  towards the schema. The residual is the fourth instance below ([core#1607]), with the instrument.
+  ⚠️ **Do not re-use the number without re-deriving it** (`WORKFLOW_RULES` §5b.5) — the 22 is dated
+  2026-09-26 against `dev` @ `437d5854`.
 
   ⚠️ **A separate reading, recorded because it is why `CONFIG_SCHEMAS` cannot be an oracle for
   anything here:** the population of types whose schema requires a key the form cannot produce at all
@@ -513,10 +513,61 @@ and `rest_api`'s Base URL.
   `zendesk` are the unnamed five, all of them already entries in `_DROPPED_ON_SAVE`. Posted on
   [core#1603]; it is that issue's population, not this spec's.
 
+  🆕 **Fourth instance, ruled 2026-11-10 — [core#1607].** The residual above, re-derived the same
+  day on `origin/dev` @ `e1aaf01` by `tests/test_ui/test_schema_required_ungated.py`. That walk
+  steps the `elif` chain instead of `ast.walk`, so a comprehension still names its form attribute.
+  **`kafka` `topics` is resolved and gated**, and it is not a member. The only unresolved pair is
+  `openapi` `base_url` and `openapi` `resources`, assigned from `parsed` rather than from a form
+  attribute. The live schema-required, written, ungated set was exactly the 19 below. There was
+  **no dated vendor probe** this session. Warehouse, schema, `group_id` and `keyfile_json` rest on
+  the published guide. SQL `user` and `password` rest on §2.10's cost asymmetry plus those guides,
+  and they differ on purpose. §2.10's reversible direction ("require it") was written for the third
+  instance. Here the schema is the over-strict side for a blank password, and adding a marker is
+  the regression [core#1607] names. The ledger after the ruling is empty on purpose: empty is the
+  record of these decisions, not one class verdict. Each direction is asserted through
+  `ConnectionState._validate_form`, so dropping the wrong key fails a different test than the ledger.
+
+  - **SQL `password` on `postgres`, `mysql`, `mssql`, `oracle`, `redshift`, `clickhouse` and
+    `synapse` — dropped from `CONFIG_SCHEMAS` `required`.** The form stays unmarked and the
+    `_DB_TYPES` branch does not refuse it. A blank password is a login the driver can open (trust,
+    peer, `.pgpass`, IAM). `db_fields()` is one shared control, so the marker cannot differ per
+    type. The mssql guide says Windows authentication is not supported and pymssql uses SQL auth;
+    oracle's guide is the thin driver with no wallet field; redshift's guide mentions IAM and then
+    says the database-user path is what the guide covers. An empty SQL password is still a real
+    login on those four. This ruling does not claim Kerberos works through pymssql. The shared form
+    still leaves password optional.
+  - **SQL `user` on the same seven — kept in `required`.** The form gains a marker and the
+    `_DB_TYPES` branch refuses a blank. A blank user falls back to the container OS user, which is
+    almost never the remote role. That is the third instance's direction, for user only. The row is
+    not added to `_REQUIRED_FORM_FIELDS`: that table is the tail for types without a hand branch,
+    and `_DB_TYPES` already has one. Marker and gate moved together. No new i18n string; the label
+    stays `connections.user`.
+  - **`snowflake` `warehouse` and `schema` — dropped from `required`.** The form stays unmarked.
+    The published guide says a blank warehouse uses the user's default warehouse, and that schema
+    is optional ("most users leave this empty").
+  - **`snowflake` `password` — kept in `required`.** The form gains a marker and the snowflake
+    branch refuses a blank, after account, user and database. This is not the SQL password ruling.
+    The same guide list that calls warehouse and schema optional calls this field the password from
+    Step 1, and this form has no key-pair, SSO, private-key or authenticator field. Role stays
+    optional and was already absent from `required`. The gate parameter is passed from
+    `_validate_form`; a forgotten call site would default it to `""` and refuse every save. No new
+    i18n string; the label stays `connections.password`.
+  - **`bigquery` `keyfile_json` — dropped from `required`.** The property stays, the form stays on
+    `connections.service_account_json_optional`, and the bigquery branch does not gain a check. The
+    published guide says a blank falls back to Application Default Credentials, and
+    `_bigquery_credentials` leaves the credential dict unchanged when the blob is empty. The key
+    name was already `keyfile_json` ([core#565]). The runner still reads a stored
+    `service_account_json`. The other key renames in [core#1603] stay that issue's population.
+  - **`kafka` `group_id` — dropped from `required`.** The property stays and the form stays
+    unmarked. The published guide and `_build_kafka_source` default a blank to `datanika-consumer`.
+    The security fields stay optional for the reason already written on the schema.
+
+[core#565]: https://github.com/datanika-io/datanika-core/issues/565
 [core#860]: https://github.com/datanika-io/datanika-core/issues/860
 [core#1547]: https://github.com/datanika-io/datanika-core/issues/1547
 [core#1603]: https://github.com/datanika-io/datanika-core/issues/1603
 [core#1606]: https://github.com/datanika-io/datanika-core/issues/1606
+[core#1607]: https://github.com/datanika-io/datanika-core/issues/1607
 
   **The test that separates this from the `openapi` ruling, and it is the only one that matters:
   does the form FILL the field when it is blank?** `openapi` does — from the spec's `servers` entry —

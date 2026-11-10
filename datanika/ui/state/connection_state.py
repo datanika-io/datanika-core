@@ -310,10 +310,13 @@ def _fill_openapi_auth(scheme: dict, token: str) -> dict:
 #: (core#1606, ``SPEC_FIELD_REQUIREDNESS`` §2.10). Where the schema and this table disagree about
 #: whether a field is required **at all**, neither one decides: **the credential does** — a field
 #: is required when the credential the product asks the user to create cannot authenticate without
-#: it. That resolves *towards the schema* for the three fields named below, and *towards this
-#: table* for the eight SQL types, whose ``_DB_TYPES`` branch deliberately gates host/port/database
-#: only while the schema also requires ``user`` and ``password`` (passwordless auth — trust, peer,
-#: IAM, ``.pgpass`` — is real).
+#: it. That resolved *towards the schema* for the three fields named below (core#1606).
+#: core#1607 split the SQL side rather than lumping ``user`` with ``password``. A blank password
+#: stays off this table: the driver can open one (trust, peer, IAM, ``.pgpass``). A blank ``user``
+#: falls back to the OS user, so the ``_DB_TYPES`` branch refuses it. That refusal is a hand
+#: branch, not a row here. Snowflake ``password`` goes the other way: this form has no key-pair
+#: field, so the snowflake branch refuses a blank password, while warehouse and schema stay
+#: optional.
 _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "airtable": (("api_key", "API Key"), ("base_id", "Base ID")),
     "asana": (("api_key", "API Key"),),
@@ -396,6 +399,10 @@ def _validate_connection_form(
     dataset: str = "",
     account: str = "",
     user: str = "",
+    # core#1607. Snowflake's password check. A caller that forgets to pass it
+    # gets "" and refuses every snowflake save, which is why `_validate_form`
+    # passes `form_password` and the behavioural test drives the state object.
+    password: str = "",
     bucket_url: str = "",
     base_url: str = "",
     uploaded_file_id: int = 0,
@@ -445,6 +452,10 @@ def _validate_connection_form(
             return "Port is required"
         if not database.strip():
             return "Database is required"
+        # core#1607. User only. A blank password is a real login on these
+        # drivers, and `db_fields()` is shared, so password is not checked here.
+        if not user.strip():
+            return "User is required"
     elif conn_type == "sqlite":
         if not path.strip():
             return "Database path is required"
@@ -460,6 +471,10 @@ def _validate_connection_form(
             return "User is required"
         if not database.strip():
             return "Database is required"
+        # core#1607. After account, user and database, so a missing one of
+        # those still names itself. Warehouse and schema stay optional.
+        if not password.strip():
+            return "Password is required"
     elif conn_type == "s3":
         if not bucket_url.strip():
             return "Bucket URL is required"
@@ -1046,6 +1061,7 @@ class ConnectionState(BaseState):
             dataset=self.form_dataset,
             account=self.form_account,
             user=self.form_user,
+            password=self.form_password,
             bucket_url=self.form_bucket_url,
             base_url=self.form_base_url,
             uploaded_file_id=self.form_uploaded_file_id,

@@ -110,6 +110,7 @@ class TestConnectionFormValidation:
             host="localhost",
             port="5432",
             database="mydb",
+            user="role",
         )
         assert err == ""
 
@@ -208,6 +209,7 @@ class TestConnectionFormValidation:
             account="acct",
             user="u",
             database="db",
+            password="secret",
         )
         assert err == ""
 

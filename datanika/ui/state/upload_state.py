@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from datanika.config import settings
 from datanika.models.dependency import NodeType
 from datanika.services.connection_service import DESTINATION_TYPES, SOURCE_TYPES, ConnectionService
+from datanika.services.dlt_runner import connection_offers_delimiter
 from datanika.services.encryption import EncryptionService
 from datanika.services.execution_service import ExecutionService
 from datanika.services.upload_service import UploadService
@@ -85,6 +86,9 @@ class UploadState(BaseState):
     # File source specific (csv/json/parquet/s3)
     form_file_glob: str = ""
     form_is_file_source: bool = False
+    # Delimiter and encoding apply only where the reader accepts them (core#1614).
+    # Parquet and JSON are file sources and still have neither.
+    form_offers_delimiter: bool = False
     # Format knobs the runner reads from dlt_config (core#499). Without a UI
     # these were reachable only through raw JSON config, which left a semicolon
     # CSV loading as one fused column and an `s3` connection on the default `*`
@@ -110,6 +114,7 @@ class UploadState(BaseState):
         conn_type = self._extract_conn_type(value)
         self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
         self.form_is_file_source = conn_type in FILE_SOURCE_TYPES
+        self.form_offers_delimiter = connection_offers_delimiter(conn_type)
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])
@@ -497,6 +502,7 @@ class UploadState(BaseState):
         self.form_collection_names = ""
         self.form_file_glob = ""
         self.form_is_file_source = False
+        self.form_offers_delimiter = False
         self.form_file_format = ""
         self.form_delimiter = ""
         self.form_encoding = ""
@@ -542,6 +548,7 @@ class UploadState(BaseState):
         conn_type = self._extract_conn_type(self.form_source_id)
         self.form_is_non_sql_source = conn_type in NON_SQL_SOURCE_TYPES
         self.form_is_file_source = conn_type in FILE_SOURCE_TYPES
+        self.form_offers_delimiter = connection_offers_delimiter(conn_type)
         if conn_type in SAAS_SOURCE_TYPES:
             self.form_is_saas_source = True
             self.form_available_endpoints = SAAS_DEFAULT_ENDPOINTS.get(conn_type, [])

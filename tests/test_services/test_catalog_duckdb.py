@@ -138,3 +138,35 @@ class TestCatalogIntrospectionWorksOnDuckDB:
         tables = CatalogService.introspect_tables(f"duckdb:///{db_path}", schema_name="probe")
 
         assert [t["table_name"] for t in tables] == ["customers"]
+
+    def test_a_double_column_keeps_the_warehouses_own_type_name(self, tmp_path):
+        """core#1614. The columns list labelled a DuckDB DOUBLE as FLOAT.
+
+        FLOAT is 4 bytes and DOUBLE is 8. The expected name is read back from
+        this file's `information_schema.columns`, not from a mapping and not
+        from the literal ``DOUBLE``. A catalog that stringifies the SQLAlchemy
+        type fails here; one that copies the warehouse's name does not.
+        """
+        db_path = tmp_path / "warehouse.duckdb"
+        engine = create_engine(f"duckdb:///{db_path}")
+        try:
+            with engine.begin() as conn:
+                conn.execute(text("CREATE SCHEMA probe"))
+                conn.execute(text("CREATE TABLE probe.amounts (amount DOUBLE, label VARCHAR)"))
+                warehouse = {
+                    str(name): str(data_type)
+                    for name, data_type in conn.execute(
+                        text(
+                            "SELECT column_name, data_type FROM information_schema.columns "
+                            "WHERE table_schema = 'probe' AND table_name = 'amounts'"
+                        )
+                    )
+                }
+        finally:
+            engine.dispose()
+
+        tables = CatalogService.introspect_tables(f"duckdb:///{db_path}", schema_name="probe")
+
+        reported = {c["name"]: c["data_type"] for c in tables[0]["columns"]}
+        assert reported == warehouse
+        assert warehouse["amount"] != "FLOAT"

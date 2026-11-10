@@ -165,35 +165,42 @@ class CatalogService:
             ProgrammingError: Catalog Error: Table with name pg_collation does not exist!
 
         Installing the dialect alone did **not** fix it — that only got as far
-        as `get_table_names`. So a failure here now falls back to
-        `information_schema`, which every destination we support implements,
-        and anything still unreadable is logged instead of vanishing.
-        """
-        try:
-            cols = insp.get_columns(table, schema=schema)
-            return [{"name": c["name"], "data_type": str(c["type"])} for c in cols]
-        except Exception as exc:
-            logger.warning(
-                "get_columns failed for %s.%s (%s) — falling back to information_schema",
-                schema,
-                table,
-                exc.__class__.__name__,
-            )
+        as `get_table_names`. So a failure of either read falls through to the
+        other, and anything still unreadable is logged instead of vanishing.
 
+        The warehouse's own `information_schema.columns.data_type` comes first
+        (core#1614). `get_columns` stringifies through the dialect, and on
+        DuckDB that turns DOUBLE into FLOAT — a 4-byte name for an 8-byte
+        column — while still succeeding, so the old fallback never ran.
+        """
         try:
             with engine.connect() as conn:
                 rows = conn.execute(
                     _INFORMATION_SCHEMA_COLUMNS, {"schema": schema, "table": table}
                 ).fetchall()
         except Exception:
-            logger.exception("information_schema fallback failed for %s.%s", schema, table)
-            return None
+            logger.debug(
+                "information_schema columns unreadable for %s.%s",
+                schema,
+                table,
+                exc_info=True,
+            )
+            rows = None
 
-        if not rows:
-            logger.warning("No column metadata found for %s.%s — skipping", schema, table)
-            return None
+        if rows:
+            return [{"name": str(name), "data_type": str(data_type)} for name, data_type in rows]
 
-        return [{"name": name, "data_type": str(data_type)} for name, data_type in rows]
+        try:
+            cols = insp.get_columns(table, schema=schema)
+            return [{"name": c["name"], "data_type": str(c["type"])} for c in cols]
+        except Exception as exc:
+            logger.warning(
+                "No column metadata for %s.%s (%s) — skipping",
+                schema,
+                table,
+                exc.__class__.__name__,
+            )
+            return None
 
     @staticmethod
     def upsert_entry(

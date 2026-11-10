@@ -83,9 +83,7 @@ def _types_of(test: ast.AST, db_types: set[str], table_types: set[str]) -> set[s
     """The connection types ``test`` selects, or None when it is not a type test."""
     if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
         narrowed = [
-            s
-            for v in test.values
-            if (s := _types_of(v, db_types, table_types)) is not None
+            s for v in test.values if (s := _types_of(v, db_types, table_types)) is not None
         ]
         if len(narrowed) == 1:
             return narrowed[0]
@@ -317,7 +315,7 @@ def live_unresolved() -> set[tuple[str, str]]:
 #: A chain shaped like the two bugs. ``alpha`` is the first type branch and
 #: writes ``user`` and ``password``. ``beta`` writes ``group_id`` in the
 #: ``elif``. ``gamma`` is the table tail. A decoy ``If`` sits above the chain.
-_SYNTHETIC = '''
+_SYNTHETIC = """
 _DB_TYPES = {"alpha"}
 _REQUIRED_FORM_FIELDS = {"gamma": (("token", "Token"),)}
 
@@ -358,7 +356,7 @@ def _validate_connection_form(name, conn_type, use_raw_json, *, host="", user=""
             if not token.strip():
                 return f"{label} is required"
     return ""
-'''
+"""
 
 _SYNTHETIC_SCHEMAS = {
     "alpha": {"required": ["host", "user", "password"]},

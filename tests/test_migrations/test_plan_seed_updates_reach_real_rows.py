@@ -60,36 +60,13 @@ _UNKNOWN = object()
 
 # (slug, column) pairs known to land on the wrong value and NOT corrected here.
 # Each entry is a decision with a reason, not a silence.
-KNOWN_UNCORRECTED: dict[tuple[str, str], str] = {
-    # ── Surfaced by the core#1048 widening. Four columns, one slug, one migration. ──
-    #
-    # These were invisible to the old extractor for one reason only: their defaults are
-    # written as BARE STRINGS in `j9f6g7h8i0c1`'s `create_table`, and it required
-    # `sa.text(...)`. They are not new defects — they are core#928's class, and a fresh
-    # build gives `enterprise-monthly` Free-tier limits at $399/mo.
-    #
-    # Listed rather than corrected, and the reason is not effort: a correction migration
-    # in `f6a7b8c9d0e1`'s shape **does not fix the from-scratch case**. It runs at the
-    # same point in the chain as the original UPDATE and matches zero rows for exactly
-    # the same reason, so it repairs deployments where the rows already exist (production
-    # — already correct on these four) and inherits the defect on a new one. What would
-    # actually fix it is core#928's real answer, and that is a larger decision than this
-    # guard's PR. Tracked with the measurement in **core#1060**.
-    ("enterprise-monthly", "seats_included"): (
-        "core#1060. Fresh build gives 2 where /pricing sells 10. Published value exists, "
-        "so this is correctable — but not by a correction migration; see core#1060."
-    ),
-    ("enterprise-monthly", "max_connections"): (
-        "core#1060. Fresh build gives 5 where /pricing sells 50."
-    ),
-    ("enterprise-monthly", "runs_included"): (
-        "core#1060. Fresh build gives 500 where /pricing sells 50,000."
-    ),
-    ("enterprise-monthly", "extra_seat_price_cents"): (
-        "core#1060. Fresh build gives 1200 ($12) where /pricing sells 2500 ($25) — the one "
-        "of the four that bills in the wrong direction."
-    ),
-}
+#
+# The four enterprise limit pairs (seats, connections, runs, extra-seat price) were
+# the last entries. core#1060 moves them into a correction migration that
+# ``corrected_pairs()`` imports. An empty map is the intended state: a new pair
+# fails ``test_every_silently_wrong_pair_is_corrected_or_explicitly_accepted``
+# until somebody corrects it or writes a reason here.
+KNOWN_UNCORRECTED: dict[tuple[str, str], str] = {}
 
 
 def _sources() -> list[tuple[str, str]]:
@@ -444,6 +421,10 @@ def corrected_pairs() -> set[tuple[str, str]]:
     Read from the correction migration itself rather than restated here, so the
     guard cannot drift from what actually ships.
     """
+    from datanika.migrations.versions.b6c1d7e3f9a4_correct_enterprise_plan_limits import (
+        ENTERPRISE_LIMIT_SLUGS,
+        ENTERPRISE_PLAN_LIMITS,
+    )
     from datanika.migrations.versions.f6a7b8c9d0e1_correct_paid_plan_concurrency import (
         PUBLISHED_MAX_PARALLEL_RUNS,
         SSO_ENABLED_SLUGS,
@@ -456,6 +437,7 @@ def corrected_pairs() -> set[tuple[str, str]]:
         {(slug, "max_parallel_runs") for slug in PUBLISHED_MAX_PARALLEL_RUNS}
         | {(slug, "sso_enabled") for slug in SSO_ENABLED_SLUGS}
         | {(slug, "rate_limit_rpm") for slug in PUBLISHED_RATE_LIMIT_RPM}
+        | {(slug, column) for slug in ENTERPRISE_LIMIT_SLUGS for column in ENTERPRISE_PLAN_LIMITS}
     )
 
 
@@ -648,6 +630,12 @@ def test_the_guard_still_sees_the_defect_it_was_written_for():
         # how many pairs are still outstanding.
         ("pro-monthly", "rate_limit_rpm"),
         ("enterprise-monthly", "rate_limit_rpm"),
+        # core#1060. Same reason: they left KNOWN_UNCORRECTED for a correction, and a
+        # corpus built only from the exemption map would stop mentioning them.
+        ("enterprise-monthly", "seats_included"),
+        ("enterprise-monthly", "max_connections"),
+        ("enterprise-monthly", "runs_included"),
+        ("enterprise-monthly", "extra_seat_price_cents"),
     ]:
         assert pair in found, (
             f"{pair} is no longer detected as silently-wrong. If it was genuinely "
@@ -693,12 +681,14 @@ def test_the_corpus_covers_each_newly_readable_spelling(pair, spelling):
     )
 
 
-@pytest.mark.parametrize("pair", sorted(KNOWN_UNCORRECTED))
-def test_every_accepted_pair_names_an_issue(pair):
-    """An exemption without a tracking reference is a silence with extra steps."""
-    assert re.search(r"core#\d+", KNOWN_UNCORRECTED[pair]), (
-        f"{pair} is exempted without naming an issue"
-    )
+def test_every_accepted_pair_names_an_issue():
+    """An exemption without a tracking reference is a silence with extra steps.
+
+    An empty ``KNOWN_UNCORRECTED`` passes here on purpose. The class guard above is
+    what fails when a new pair appears; this test only checks exemptions that exist.
+    """
+    for pair, reason in KNOWN_UNCORRECTED.items():
+        assert re.search(r"core#\d+", reason), f"{pair} is exempted without naming an issue"
 
 
 def test_the_correction_covers_every_slug_the_product_sells():
@@ -731,6 +721,35 @@ def test_the_correction_covers_every_slug_the_product_sells():
     # The two the April migration got right, and the one it did not.
     assert PUBLISHED_MAX_PARALLEL_RUNS["free"] == 2
     assert PUBLISHED_MAX_PARALLEL_RUNS["enterprise-monthly"] == 20
+
+
+def test_the_enterprise_limit_correction_names_both_cadences():
+    """core#1060. Annual is not in ``o4k1l2m3n5h6``, so the class guard cannot see it.
+
+    A monthly-only correction leaves an existing annual row on the Free defaults.
+    ``seed_annual_plans.py`` copies these columns off the monthly row, which
+    repairs only a row seeded afterwards.
+    """
+    from datanika.migrations.versions.b6c1d7e3f9a4_correct_enterprise_plan_limits import (
+        ENTERPRISE_LIMIT_SLUGS,
+        ENTERPRISE_PLAN_LIMITS,
+        FRESH_ROW_DEFAULTS,
+    )
+
+    assert ENTERPRISE_LIMIT_SLUGS == ("enterprise-monthly", "enterprise-annual")
+    assert ENTERPRISE_PLAN_LIMITS == {
+        "seats_included": 10,
+        "max_connections": 50,
+        "runs_included": 50000,
+        "extra_seat_price_cents": 2500,
+    }
+    defaults = server_defaults()
+    assert {column: defaults[column] for column in ENTERPRISE_PLAN_LIMITS} == {
+        column: str(value) for column, value in FRESH_ROW_DEFAULTS.items()
+    }
+    for slug in ENTERPRISE_LIMIT_SLUGS:
+        for column in ENTERPRISE_PLAN_LIMITS:
+            assert (slug, column) in corrected_pairs()
 
 
 def test_the_core_default_is_not_mistaken_for_an_entitlement():

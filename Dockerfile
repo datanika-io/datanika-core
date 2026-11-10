@@ -74,13 +74,14 @@ ARG DATANIKA_IMAGE_EDITION=cloud
 # ⚠️ Do NOT "simplify" either lever away because a bump felt like friction. The friction is the
 # mechanism.
 #
-# Pinned 2026-09-12 to the 2026-09-01 upstream build — still upstream's newest on 2026-09-15.
-FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1ac9b536e184ea AS base
+# Pinned 2026-11-09 to the 2026-11-05 upstream build, 3.12.16-slim-trixie.
+# The previous pin was 3.12.14-slim-trixie. Both are debian:trixie-slim.
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b AS base
 
 # The package layer's refresh date (see HOW TO REFRESH above). Declared directly before the RUN
 # it invalidates and printed by it, so a reorder cannot quietly detach the two
 # (tests/test_deploy/test_base_image_freshness.py).
-ARG APT_REFRESHED_ON=2026-09-21
+ARG APT_REFRESHED_ON=2026-11-09
 
 # System deps for psycopg2, bcrypt, cryptography, and xmlsec/lxml (SAML).
 # libxml2-dev/libxslt1-dev/libxmlsec1-dev/pkg-config + zlib1g-dev/libssl-dev let

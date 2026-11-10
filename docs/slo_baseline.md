@@ -3,21 +3,22 @@
 Rescored on pointer.gr (`185.25.22.188`) against Prometheus at `127.0.0.1:9090`.
 The block below is the stdout of `scripts/slo_report.py`, run on that box with
 this tree's `docs/slo_targets.md` and `docs/slo_instruments.yml`. The Redis
-memory row is not in the document. The run exited 1 because a measured
-commitment is outside its target.
+memory row is not in the document. Postgres connections in use is
+`sum(pg_stat_activity_count) / max(pg_settings_max_connections)`. The run
+exited 1 because a measured commitment is outside its target.
 
 ```
 === FAIL  (2) ===
-  service-level-indicators-health-probes-healthz-readyz#p95                                       OUT OF target (105.0 ms vs max 50.0 ms), n=40320
+  service-level-indicators-health-probes-healthz-readyz#p95                                       OUT OF target (98.8 ms vs max 50.0 ms), n=40319
                                                                                                   ^ Single-process exporter, 15s interval, ~40,300 samples per 7d. This is the most trustworthy instrument in the file.
                                                                                                   ^ MISMATCH between target and instrument: the document derived 50 ms from a LOCAL probe ('/healthz in ~5 ms'), but the instrument it names probes https://app.datanika.io/healthz — through Cloudflare, then Apache, then the app. The two measure different paths. See core#897.
                                                                                                   ^ /readyz is in the SLI's name and is probed by nothing. Only /healthz is a blackbox target.
-  service-level-indicators-health-probes-healthz-readyz#p99                                       OUT OF target (153.3 ms vs max 150.0 ms), n=40320
+  service-level-indicators-health-probes-healthz-readyz#p99                                       OUT OF target (152.5 ms vs max 150.0 ms), n=40319
                                                                                                   ^ Single-process exporter, 15s interval, ~40,300 samples per 7d. This is the most trustworthy instrument in the file.
                                                                                                   ^ MISMATCH between target and instrument: the document derived 50 ms from a LOCAL probe ('/healthz in ~5 ms'), but the instrument it names probes https://app.datanika.io/healthz — through Cloudflare, then Apache, then the app. The two measure different paths. See core#897.
                                                                                                   ^ /readyz is in the SLI's name and is probed by nothing. Only /healthz is a blackbox target.
 
-=== NO_VERDICT  (18) ===
+=== NO_VERDICT  (17) ===
   service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines#p95       only 0 samples, need >= 50 before a quantile or ratio means anything
   service-level-indicators-rest-api-write-post-api-v1-connections-post-api-v1-pipelines#p99       only 0 samples, need >= 50 before a quantile or ratio means anything
   service-level-indicators-auth-api-v1-auth-signup-api-v1-auth-login#p95                          only 0 samples, need >= 20 before a quantile or ratio means anything
@@ -46,45 +47,45 @@ commitment is outside its target.
                                                                                                   ^ NEEDS: An exported series derived from Run.created_at -> finished_at (a postgres-exporter custom query would do it; Infra owns that config), AND traffic - production has 17 runs in its entire history, below any sufficiency floor worth setting. The cheapest of the four pipeline SLOs.
   error-rate-slos-any-5xx-on-rest-api                                                             only 0 samples, need >= 200 before a quantile or ratio means anything
   error-rate-slos-webhook-handler-paddle-http-5xx                                                 only 0 samples, need >= 1 before a quantile or ratio means anything
-  saturation-slos-postgres-connections-in-use                                                     declared unmeasured: The SLO's denominator is the application's SQLAlchemy pool ('pool default: 10'), and nothing exports that pool's occupancy. postgres-exporter offers pg_stat_activity_count, which counts server-side backends from every client - app, celery, beat, the exporter itself - against max_connections (100). Scoring one against the other would compare 11 observed backends with a pool of 10 and report 110%, or with 100 and report 11%: a 10x spread depending on which number you pick. Wiring a wrong denominator would produce a confident, machine-readable assertion of something untrue, which is worse than the honest gap.
-                                                                                                  ^ NEEDS: EITHER the app exports its own pool occupancy (SQLAlchemy pool checkedout()/size(); Engineering), which makes the SLO mean what it says, OR the document restates the target against a denominator that IS exported - pg_settings_max_connections is present and reads 100. The second is a change to the commitment, so it is core#897's call and not an instrument decision.
 
-=== PASS  (12) ===
-  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p95  within target (9.5 ms vs max 200.0 ms), n=823
+=== PASS  (13) ===
+  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p95  within target (9.5 ms vs max 200.0 ms), n=825
                                                                                                   ^ Restricted to 2xx on purpose. Unrestricted, this SLI is dominated by 401s and 404s from vulnerability scanners, which are fast and would flatter the quantile.
                                                                                                   ^ /api/v1/connections and /api/v1/pipelines have received no authenticated GET in the 30d window — every hit is an unauthenticated 401 probe.
                                                                                                   ^ 🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9). /api/v1/meta/agent-tiers matches this selector AND that one, carries 316 of the 30d requests, and is scored here against 200 ms p95 while the Agent API row scores the same endpoint against 150 ms. Since the two named non-meta endpoints have no authenticated 2xx at all, this SLI is today measured almost entirely on an endpoint belonging to another SLI. Harmless while both are blocked on core#895; the moment that lands, one endpoint's regression appears as two, against two budgets, and neither number means what its row says.
-  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p99  within target (9.9 ms vs max 500.0 ms), n=823
+  service-level-indicators-rest-api-read-api-v1-meta-api-v1-connections-api-v1-pipelines-get#p99  within target (9.9 ms vs max 500.0 ms), n=825
                                                                                                   ^ Restricted to 2xx on purpose. Unrestricted, this SLI is dominated by 401s and 404s from vulnerability scanners, which are fast and would flatter the quantile.
                                                                                                   ^ /api/v1/connections and /api/v1/pipelines have received no authenticated GET in the 30d window — every hit is an unauthenticated 401 probe.
                                                                                                   ^ 🚨 OVERLAPS the Agent API SLI, and not marginally (core#897 defect 9). /api/v1/meta/agent-tiers matches this selector AND that one, carries 316 of the 30d requests, and is scored here against 200 ms p95 while the Agent API row scores the same endpoint against 150 ms. Since the two named non-meta endpoints have no authenticated 2xx at all, this SLI is today measured almost entirely on an endpoint belonging to another SLI. Harmless while both are blocked on core#895; the moment that lands, one endpoint's regression appears as two, against two budgets, and neither number means what its row says.
-  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p95   within target (9.5 ms vs max 150.0 ms), n=846
+  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p95   within target (9.5 ms vs max 150.0 ms), n=849
                                                                                                   ^ The only latency SLI with real 2xx traffic today (~331 requests/30d), and it sits entirely in the histogram's bottom bucket (le=0.01). The honest reading is 'under 10 ms', not the interpolated figure.
-  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p99   within target (9.9 ms vs max 400.0 ms), n=846
+  service-level-indicators-agent-api-llms-txt-api-v1-agent-guide-md-api-v1-meta-agent-tiers#p99   within target (9.9 ms vs max 400.0 ms), n=849
                                                                                                   ^ The only latency SLI with real 2xx traffic today (~331 requests/30d), and it sits entirely in the histogram's bottom bucket (le=0.01). The honest reading is 'under 10 ms', not the interpolated figure.
-  service-level-indicators-landing-pricing-docs-static#p95                                        within target (78.0 ms vs max 300.0 ms), n=40320
+  service-level-indicators-landing-pricing-docs-static#p95                                        within target (74.9 ms vs max 300.0 ms), n=40319
                                                                                                   ^ probe_duration_seconds is TOTAL probe time, which is an over-estimate of TTFB (it includes the transfer phase). A PASS is therefore sound; a FAIL would need re-checking against the resolve+connect+tls+processing phases before being believed.
                                                                                                   ^ Only `/` is probed. /pricing and /docs are named in the SLI and are blackbox targets of nothing.
-  service-level-indicators-landing-pricing-docs-static#p99                                        within target (107.9 ms vs max 800.0 ms), n=40320
+  service-level-indicators-landing-pricing-docs-static#p99                                        within target (103.9 ms vs max 800.0 ms), n=40319
                                                                                                   ^ probe_duration_seconds is TOTAL probe time, which is an over-estimate of TTFB (it includes the transfer phase). A PASS is therefore sound; a FAIL would need re-checking against the resolve+connect+tls+processing phases before being believed.
                                                                                                   ^ Only `/` is probed. /pricing and /docs are named in the SLI and are blackbox targets of nothing.
   error-rate-slos-celery-task-failure-rate-excluding-user-error-exceptions                        within target (0.000 % vs max 1.000 %), n=336
                                                                                                   ^ celery-exporter reads the broker event stream from a single process, so these counters do not have the per-process defect that core#895 describes for the app's HTTP metrics. Verified: resets() over 30d is 0 here and 121 on http_requests_total.
                                                                                                   ^ Aggregated BEFORE increase() (core#1356). The exporter labels a failure by exception class and every series by worker hostname, so the first failure of a kind, and each new worker's first receipt, is a series born at a non-zero value, which increase() on the raw counter never counts. Production, 7 days to 2026-09-15 22:53Z: receipts read 337.03 aggregated and 318.02 in the raw form.
                                                                                                   ^ 'Excluding user-error exceptions' is approximated by excluding RunFailedError, the class a run task raises when its run ended FAILED (core#1352). That removes every failed run, whoever caused it, and no other exception, so this is a task-exception rate and not a run-failure rate. The runs table is the reading for failed runs.
-  error-rate-slos-landing-blackbox-probe-success-rate                                             within target (100.000 % vs min 99.500 %), n=5760
-  saturation-slos-app-container-cpu                                                               within target (1.360 % vs max 70.000 %), n=1
+  error-rate-slos-landing-blackbox-probe-success-rate                                             within target (100.000 % vs min 99.500 %), n=5759
+  saturation-slos-app-container-cpu                                                               within target (1.571 % vs max 70.000 %), n=1
                                                                                                   ^ The (-b)? is load-bearing. core#622 was an alert rule whose selector omitted it, so it watched nothing for the 719 of 720 hours that green was serving.
                                                                                                   ^ AMBIGUOUS DENOMINATOR: rate() yields cores-used, so this is a fraction of ONE core, while the box has 4 vCPU. Both readings pass by two orders of magnitude today, so the ambiguity is recorded rather than resolved. See core#897.
-  saturation-slos-celery-worker-cpu                                                               within target (0.817 % vs max 80.000 %), n=1
-  saturation-slos-postgres-cpu                                                                    within target (1.852 % vs max 60.000 %), n=1
-  saturation-slos-disk-free-on-opt-datanika                                                       within target (60.935 % vs min 20.000 %), n=1
+  saturation-slos-celery-worker-cpu                                                               within target (0.711 % vs max 80.000 %), n=1
+  saturation-slos-postgres-cpu                                                                    within target (1.815 % vs max 60.000 %), n=1
+  saturation-slos-postgres-connections-in-use                                                     within target (11.000 % vs max 70.000 %), n=1
+                                                                                                  ^ pg_stat_activity_count is one series per datname and state, plus a finer series for the live backends. sum() is that backend count. pg_settings_max_connections is the exported setting and is one series; max() keeps a duplicated setting from being added to itself.
+  saturation-slos-disk-free-on-opt-datanika                                                       within target (61.749 % vs min 20.000 %), n=1
                                                                                                   ^ /opt/datanika is not its own filesystem; it lives on /. The mountpoint selector reflects that.
 
-Commitments in document: 32   PASS 12   FAIL 2   NO_VERDICT 18
-NO_VERDICT is not a pass. 18 of 32 SLOs cannot currently be violated or met by anything production measures.
+Commitments in document: 32   PASS 13   FAIL 2   NO_VERDICT 17
+NO_VERDICT is not a pass. 17 of 32 SLOs cannot currently be violated or met by anything production measures.
 
---- why the 18 NO_VERDICTs have no verdict ---
-   12  no instrument exists at all
+--- why the 17 NO_VERDICTs have no verdict ---
+   11  no instrument exists at all
     6  instrument exists, not enough samples yet
 ```

@@ -103,7 +103,9 @@ dependencies = [
     # SQL drivers
     "pymysql>=1.1,<2",
     "pymssql>=2.2,<3",
-    "pymongo>=4.0,<5",
+    # CVE-2026-106435 needs 4.18.3. 4.18.2 clears CVE-2026-96748 and CVE-2026-96749
+    # and is below that. Ceiling stays <5.
+    "pymongo>=4.18.3,<5",
     "clickhouse-connect>=0.11,<0.12",
     # Declared directly since core#825 dropped dlt's `clickhouse` extra, which
     # is where this used to come from. It also arrives via `dbt-clickhouse`
@@ -266,20 +268,20 @@ build-backend = "hatchling.build"
 #
 # lxml is the one place a MAJOR is unavoidable: CVE-2026-41066 has no 5.x fix.
 constraint-dependencies = [
-    "aiohttp>=3.14.3,<4",
+    "aiohttp>=3.14.4,<4",
     # ---- anyio: CVE-2026-63374, TLS certificate spoofing via IDNA 2003 -------
     # Transitive only — starlette, httpx and dlt each pull it and none of them
     # declares a floor above the fix, so without this a re-lock may resolve back
     # below 4.14.2. A patch-level floor with the next-major ceiling, per the
     # rule at the top of this block. Tracked on the private tracker.
     "anyio>=4.14.2,<5",
-    "gitpython>=3.1.58,<4",
+    "gitpython>=3.2.1,<4",
     "granian>=2.7.4,<3",
     "lxml>=6.1.0,<7",
     "mako>=1.3.12,<2",
-    "msgpack>=1.2.1,<2",
-    "pyasn1>=0.6.4,<0.7",
-    "pyjwt>=2.13.0,<3",
+    "msgpack>=1.2.3,<2",
+    "pyasn1>=0.6.5,<0.7",
+    "pyjwt>=2.14.0,<3",
     "pyarrow>=23.0.1,<24",
     "python-engineio>=4.13.2,<5",
     "python-multipart>=0.0.30,<0.1",
@@ -307,7 +309,20 @@ constraint-dependencies = [
     "pyopenssl>=26.0.0,<27",
     "redshift-connector>=2.1.14,<3",
     "sqlparse>=0.6.0,<0.7",
-    "urllib3>=2.7.0,<3",
+    "urllib3>=2.8.0,<3",
+    # ---- image-cve run 42700808834 (Python venv) ---------------------------
+    # certifi's versioning is calendar, so the ceiling is the next year rather
+    # than the next semver major.
+    "certifi>=2026.10.18,<2027",
+    "dnspython>=2.9.0,<3",
+    # filelock 4 is the fix (CVE-2026-112940). snowflake-connector-python 4.7.2
+    # requires filelock<4; 4.8.1 allows filelock<5. Same major of the connector.
+    "filelock>=4.2.1,<5",
+    "snowflake-connector-python>=4.8.1,<5",
+    # oauthlib 4 is the fix (CVE-2026-49272). databricks-sql-connector 4.5.0
+    # requires oauthlib<4; 4.7.0 allows oauthlib<5. Same major of the connector.
+    "oauthlib>=4.0.1,<5",
+    "databricks-sql-connector>=4.7.0,<5",
 ]
 
 [tool.ruff]

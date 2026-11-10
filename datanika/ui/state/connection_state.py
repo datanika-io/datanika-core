@@ -341,24 +341,25 @@ _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
         ("client_secret", "OAuth client secret"),
         ("refresh_token", "OAuth refresh token"),
     ),
-    # 🚦 RULED REQUIRED, core#1606 — `api_key` here is the **Service Account JSON** textarea (it is
-    # bound to `form_api_key`; `_build_config` writes it out under the schema's name). The row is
-    # `("api_key", "Service Account JSON")` and it is missing only because the marker and the gate
-    # move in ONE change: `test_the_gate_refuses_what_the_form_marks` derives `marked` from the
-    # RENDERED component, so a row added without `required=True` on the textarea reds it as "gated
-    # but unmarked". The label also stops saying "(optional)" in that change
-    # (SPEC_FIELD_REQUIREDNESS §2.2 — the key `connections.service_account_json` already exists in
-    # all nine locales). Why required: the only live loader path raises "Google Analytics source
-    # requires 'service_account_json'", and this type has NO `SAAS_PROBES` entry, so Test Connection
-    # returns the neutral "not tested" verdict and this gate is the only surface that can refuse it.
-    "google_analytics": (("property_id", "Property ID"),),
+    # core#1606. `api_key` is the Service Account JSON textarea (bound to `form_api_key`;
+    # `_build_config` stores it under the schema's name). The only live loader path raises without
+    # it, and this type has no probe, so Test Connection returns "not tested" and this gate is the
+    # only surface that can refuse a blank. The marker and this row landed together: the agreement
+    # test derives `marked` from the rendered input.
+    "google_analytics": (
+        ("property_id", "Property ID"),
+        ("api_key", "Service Account JSON"),
+    ),
     "hubspot": (("api_key", "API Key"),),
-    # 🚦 RULED REQUIRED, core#1606 — `("email", "Email")` belongs here, on the same one-change
-    # condition as google_analytics above. `SAAS_PROBES["jira"]` already declares `("email",)` on a
-    # measured 401 (core#860: `Basic :token` reported as a bad token), and the loader composes
-    # `base64(f"{email}:{api_token}")` against `*.atlassian.net`. This table is the only reader of
-    # the four that still calls it optional.
-    "jira": (("domain", "Jira Domain"), ("api_key", "API Key")),
+    # core#1606. Email is required: the probe already declares `("email",)` on a measured 401
+    # (core#860, `Basic :token` reported as a bad token) and the loader composes
+    # `base64(f"{email}:{api_token}")` against `*.atlassian.net`. The form was the only surface
+    # still calling it optional.
+    "jira": (
+        ("domain", "Jira Domain"),
+        ("email", "Email"),
+        ("api_key", "API Key"),
+    ),
     "kafka": (("bootstrap_servers", "Bootstrap Servers"), ("topics", "Topics")),
     "notion": (("api_key", "API Key"),),
     "pipedrive": (("api_key", "API Key"),),
@@ -366,23 +367,19 @@ _REQUIRED_FORM_FIELDS: dict[str, tuple[tuple[str, str], ...]] = {
     "shopify": (("api_key", "API Key"), ("store", "Store Name")),
     "slack": (("api_key", "API Key"),),
     "stripe": (("api_key", "API Key"),),
-    # 🚦 RULED REQUIRED, core#1606 — `("email", "Email")` belongs here too, and this one was ruled
-    # on COST rather than on a measurement, so the reasoning matters more than usual.
-    #
-    # Five code surfaces agree the shipped path sends `Authorization: Bearer <api_token>` and reads
-    # no email, and `test_saas_connection_probe.py`'s `_LOADER_FIELDS_NO_PROBE_COVERS` records that
-    # with reasoning. ⚠️ **That record is correct about our code and is read as a claim about
-    # Zendesk.** The form asks for a *Zendesk API token* (`connections.ph_zendesk_token`) and our
-    # own published guide states that model authenticates "via email + token" — so the Bearer
-    # composition and the credential we ask for cannot both be right, and there is no Zendesk
-    # credential in `secrets/` or in `nightly-connector-smoke.yml` to settle it. Requiring the email
-    # costs one field the guide already tells the user to fill; leaving it optional costs
-    # core#860's 401-on-a-good-token again.
-    #
-    # ⚠️ Gate it BEFORE any change to the auth composition, never after: the field is stored today
-    # and read by nothing, so gating first means later connections carry what an auth fix needs, and
-    # the fix does not land against stored configs that lack it. SPEC_FIELD_REQUIREDNESS §2.10, §4.
-    "zendesk": (("domain", "Subdomain"), ("api_key", "API Key")),
+    # core#1606. Ruled on cost, not on a measurement. The shipped path sends
+    # `Authorization: Bearer <api_token>` and reads no email — a fact about OUR code, recorded in
+    # `_LOADER_FIELDS_NO_PROBE_COVERS`, and not a claim about Zendesk. The form asks for a Zendesk
+    # API token and the published guide says that model authenticates via email + token. There is
+    # no Zendesk credential here to settle which is wrong. Requiring the email costs one field the
+    # guide already asks for; leaving it optional costs core#860's 401-on-a-good-token again.
+    # Gate BEFORE any auth-composition change: the field is stored today and read by nothing, so
+    # later connections carry what a fix needs. SPEC_FIELD_REQUIREDNESS §2.10.
+    "zendesk": (
+        ("domain", "Subdomain"),
+        ("email", "Email"),
+        ("api_key", "API Key"),
+    ),
 }
 
 
@@ -415,6 +412,7 @@ def _validate_connection_form(
     instance_url: str = "",
     store: str = "",
     domain: str = "",
+    email: str = "",
     property_id: str = "",
     customer_id: str = "",
     developer_token: str = "",
@@ -499,6 +497,7 @@ def _validate_connection_form(
             "instance_url": instance_url,
             "store": store,
             "domain": domain,
+            "email": email,
             "property_id": property_id,
             "customer_id": customer_id,
             "developer_token": developer_token,
@@ -1065,6 +1064,7 @@ class ConnectionState(BaseState):
             instance_url=self.form_instance_url,
             store=self.form_store,
             domain=self.form_domain,
+            email=self.form_email,
             property_id=self.form_property_id,
             customer_id=self.form_customer_id,
             developer_token=self.form_developer_token,

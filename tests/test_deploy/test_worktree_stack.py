@@ -36,23 +36,13 @@ SHELL = ROOT / "scripts" / "worktree-stack.sh"
 
 
 def _bash_executable() -> str | None:
-    """A bash that can run the shell script.
+    """The bash on PATH, as a path rather than a bare name.
 
-    `shutil.which("bash")` on this Windows machine returns System32\\bash.exe,
-    the WSL launcher. Measured 2026-11-09: that launcher exits 1 with a proxy
-    error before the script starts, so the pre-push hook cannot go green.
-    Git Bash is the shell the rest of the repo drives scripts with.
+    CreateProcess searches System32 before PATH, so a bare ``bash`` is the WSL
+    launcher even when ``shutil.which`` found another interpreter. Run the path
+    ``which`` returned.
     """
-    found = shutil.which("bash")
-    if found is None:
-        return None
-    path = Path(found)
-    if path.name.lower() == "bash.exe" and path.parent.name.lower() in {"system32", "sysnative"}:
-        git_bash = Path(r"C:\Program Files\Git\bin\bash.exe")
-        if git_bash.is_file():
-            return str(git_bash)
-        return None
-    return found
+    return shutil.which("bash")
 
 
 BASH = _bash_executable()

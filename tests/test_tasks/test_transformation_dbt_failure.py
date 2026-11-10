@@ -217,6 +217,34 @@ def test_control_a_dbt_model_that_succeeds_still_ends_success(
     assert run.rows_loaded == 0
 
 
+def test_a_successful_duckdb_run_catalogues_the_models_columns(real_transformation, db_session):
+    """core#1375. The run succeeds and the catalog entry is written, with no columns.
+
+    Measured on a DuckDB destination after its own in-process dbt run: column
+    introspection raises ``Can't open a connection to same database file with a
+    different configuration than existing connections``, the handler logs it as
+    non-fatal, and ``columns=[]`` is what gets stored.
+    """
+    org, run = real_transformation("select 1 as id, 'named' as label")
+
+    result = run_transformation_task.apply(args=[run.id, org.id])
+
+    db_session.refresh(run)
+    entries = CatalogService.list_entries(db_session, org.id)
+    columns = entries[0].columns if entries else None
+    assert {
+        "row status": run.status.value,
+        "celery state": result.state,
+        "catalog entries": len(entries),
+        "column names": [c["name"] for c in columns] if columns else columns,
+    } == {
+        "row status": "success",
+        "celery state": "SUCCESS",
+        "catalog entries": 1,
+        "column names": ["id", "label"],
+    }, f"logs={(run.logs or '')[:600]!r} columns={columns!r}"
+
+
 def test_a_failure_dbt_gives_no_detail_for_still_names_the_model():
     """The one shape the real cases above do not produce: no node results and no text.
 

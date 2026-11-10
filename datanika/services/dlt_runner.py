@@ -1241,9 +1241,30 @@ def _resolve_file_format(connection_type: str, file_glob: str, dlt_config: dict)
     )
 
 
+#: Formats whose reader accepts a delimiter and an encoding (core#1614).
+#:
+#: `_build_format_reader` forwards both only for a member of this set. The upload
+#: form asks `connection_offers_delimiter` instead of naming parquet, so the form
+#: and the reader stay the same decision.
+FORMATS_WITH_DELIMITER: frozenset[str] = frozenset({"csv"})
+
+
+def connection_offers_delimiter(connection_type: str) -> bool:
+    """Whether Delimiter and Encoding apply to this source.
+
+    A connection whose type declares a format offers them only when that
+    format's reader accepts them. A file source with no format of its own
+    (``s3``) can still be csv, so the controls stay.
+    """
+    declared = FILE_FORMAT_BY_TYPE.get(connection_type)
+    if declared is not None:
+        return declared in FORMATS_WITH_DELIMITER
+    return connection_type in SUPPORTED_FILE_TYPES
+
+
 def _build_format_reader(file_format: str, dlt_config: dict):
     """Build the transformer for a resolved format, with its format options."""
-    if file_format == "csv":
+    if file_format in FORMATS_WITH_DELIMITER:
         # `read_csv` forwards **pandas_kwargs, so the CSV knobs are pandas'.
         # Only forwarded when set — pandas already infers the header row and
         # column types, and an unrequested override is a silent wrong answer.

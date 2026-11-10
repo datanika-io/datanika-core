@@ -39,8 +39,9 @@ from pathlib import Path
 IDP_SPEC_FILES = ("sso-oidc.spec.ts", "sso-saml.spec.ts")
 
 #: How many IdP specs must actually EXECUTE. Checked in on purpose — see the module note.
-#: 9 IdP specs exist (5 OIDC + 4 SAML); one is accounted for below, so 8 must run.
-SSO_IDP_EXECUTED_FLOOR = 8
+#: 10 IdP specs exist (5 OIDC + 5 SAML); one is accounted for below, so 9 must run.
+#: The fifth SAML spec is the signed wrong-audience control (core#1182).
+SSO_IDP_EXECUTED_FLOOR = 9
 
 #: Skips that are ACCOUNTED FOR, with the reason. AC3: a skip is either executed or explicitly
 #: out of the set with the reason recorded — never an unexplained absence inside the count.

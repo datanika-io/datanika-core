@@ -22,7 +22,7 @@ from sqlalchemy import select  # noqa: E402
 
 from datanika.config import settings  # noqa: E402
 from datanika.db import get_sync_session  # noqa: E402
-from datanika.models.sso_config import SSOConfig  # noqa: E402
+from datanika.models.sso_config import SSOConfig, SSOProtocol  # noqa: E402
 from datanika.models.user import Organization  # noqa: E402
 from datanika.services.encryption import EncryptionService  # noqa: E402
 from datanika.services.sso_service import SSOService  # noqa: E402
@@ -78,7 +78,7 @@ def main():
             s,
             svc,
             oidc_org.id,
-            "oidc",
+            SSOProtocol.OIDC,
             "Authentik OIDC",
             {
                 "issuer_url": fixture["oidc"]["issuer_url"],
@@ -90,7 +90,7 @@ def main():
 
         # --- SAML org ---
         saml_org = _ensure_org(s, "E2E Fixture SAML", "e2e-fixture-saml")
-        _ensure_sso(s, svc, saml_org.id, "saml", "Authentik SAML", saml_config(fixture))
+        _ensure_sso(s, svc, saml_org.id, SSOProtocol.SAML, "Authentik SAML", saml_config(fixture))
         print(f"SAML: org_id={saml_org.id} slug=e2e-fixture-saml")
 
         s.commit()
@@ -107,7 +107,11 @@ def _ensure_org(s, name: str, slug: str) -> Organization:
     return org
 
 
-def _ensure_sso(s, svc: SSOService, org_id: int, protocol: str, name: str, config: dict):
+def _ensure_sso(s, svc: SSOService, org_id: int, protocol: SSOProtocol, name: str, config: dict):
+    # create_sso_config does not coerce: it assigns this argument. The column does,
+    # in Enum.bind_processor -> _db_value_for_elem. A StrEnum hashes as its value,
+    # and values_callable is unset, so the stored form is the member name: "oidc"
+    # and SSOProtocol.OIDC both persist "OIDC" (same for SAML). Measured 2026-11-10.
     existing = s.execute(
         select(SSOConfig).where(SSOConfig.org_id == org_id, SSOConfig.deleted_at.is_(None))
     ).scalar_one_or_none()

@@ -219,6 +219,15 @@ def test_the_scope_is_declared_in_pyproject_and_excludes_the_app() -> None:
         "promotion_refs.py, which decides what it closes. A directory outside this list gets "
         "no `warn_unused_ignores`, so it accumulates suppressions nobody can validate."
     )
+    # core#1582. `e2e` itself stays forbidden above: the suite is not tooling. `e2e/scripts`
+    # is the directory that emits the graduation marker, and it was the tree #1571 named and
+    # left out. Membership, not a new literal equality — the same boundary as the line above.
+    assert "e2e/scripts" in files, (
+        f"[tool.mypy] files is {files!r} and does not name `e2e/scripts`. core#1582: "
+        "informational_spec_results.py emits the graduation marker and detect_flaky_gating.py "
+        "decides whether a gating flake is reported. A directory outside this list is checked "
+        "by no `mypy`, so `warn_unused_ignores` cannot go red there."
+    )
 
 
 def test_unused_ignore_warnings_stay_on() -> None:

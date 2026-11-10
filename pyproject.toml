@@ -429,12 +429,11 @@ testpaths = ["tests"]
 # whether a promotion may proceed (`cloud_pairing_gate.py`) and what it closes
 # (`promotion_refs.py`), and it had never been type-checked.
 #
-# ⚠️ `e2e/scripts` is deliberately NOT here and that is a recorded decision, not an oversight:
-# it holds 5 files with **8 errors in 2** measured 2026-09-25 (`detect_flaky_gating.py`,
-# `seed-sso-configs.py`), which is a separate body of work — core#1571 AC4 asks that a second
-# tree be named rather than folded in. `datanika-mcp/` is checked by no workflow at all and is
-# a third gap. Both are tracked; neither is silent.
-files = ["scripts", ".github/scripts"]
+# core#1582. `e2e/scripts` was the tree #1571 measured (8 errors in 2 files, 2026-09-25) and
+# left out on purpose, so a second tree would be its own decision. Re-measured 2026-11-10 on
+# `c8fcb31eb` before this edit: the same 8, now across 6 source files. `informational_spec_results.py`
+# emits the graduation marker. `datanika-mcp/` stays out — that measurement is Engineering's.
+files = ["scripts", ".github/scripts", "e2e/scripts"]
 python_version = "3.12"
 
 # Raises the bar rather than lowering it, and it is the reason this section is not just a

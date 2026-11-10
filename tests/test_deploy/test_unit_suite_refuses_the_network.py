@@ -163,3 +163,85 @@ def test_needs_network_without_a_service_is_refused():
 
     with pytest.raises(BaseException, match=_PHRASE):
         service_for(_Item())
+
+
+def test_an_invalid_tld_reaches_the_resolver():
+    """``rebind.invalid`` is RFC 2606: the resolver fails, and that failure is an Exception.
+
+    The unguarded pinning control uses ``pytest.raises(Exception)``. The suite
+    refusal is a BaseException, so refusing this name makes that control red
+    for the guard rather than for an unresolvable host. A public name stays refused.
+    """
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(5)
+    try:
+        outcome = _outcome(lambda: socket.getaddrinfo("rebind.invalid", 80))
+    finally:
+        socket.setdefaulttimeout(previous)
+    assert outcome != "", "rebind.invalid was refused by the suite instead of the resolver"
+    assert outcome != "the call returned", outcome
+    assert _outcome(lambda: socket.getaddrinfo("example.com", 80)) == ""
+
+
+def test_the_metadata_address_stays_refused():
+    """Link-local metadata is not a name we can hand to the resolver. The connect stays refused."""
+
+    def _call():
+        sock = socket.create_connection(("169.254.169.254", 80), timeout=1)
+        sock.close()
+
+    outcome = _outcome(_call)
+    assert outcome == "", f"the metadata address was not refused ({outcome})"
+
+
+def test_ec2_metadata_is_disabled_before_any_fetch():
+    """botocore reads ``_disabled`` in ``_assert_enabled`` and raises before the HTTP call.
+
+    ``retrieve_iam_role_credentials`` catches that and returns. A fetcher that
+    is not disabled hits 169.254.169.254, and the suite refusal propagates
+    because it is not the retry error botocore catches.
+    """
+    from botocore.utils import InstanceMetadataFetcher
+
+    fetcher = InstanceMetadataFetcher()
+    assert fetcher._disabled is True
+    outcome = _outcome(fetcher.retrieve_iam_role_credentials)
+    assert outcome == "the call returned", outcome
+
+
+def test_gce_residency_check_does_not_probe():
+    """``is_on_gce`` returns before ``ping`` when ``_NO_GCE_CHECK`` is set.
+
+    The flag is cached at import. Setting the environment afterwards and
+    leaving the cached flag false still probes, and the probe is a refusal.
+    """
+    from google.auth.compute_engine import _metadata as meta
+
+    assert meta._NO_GCE_CHECK is True
+    seen: dict[str, bool] = {}
+
+    def _call():
+        seen["on_gce"] = meta.is_on_gce(None)
+
+    outcome = _outcome(_call)
+    assert outcome == "the call returned", outcome
+    assert seen["on_gce"] is False
+
+
+def test_a_dbt_invocation_leaves_anonymous_stats_off(tmp_path):
+    """dbt defaults anonymous stats on, then looks up its collector.
+
+    ``dbtRunner`` catches BaseException, so the refusal comes back as
+    ``result.exception`` and a model run that printed success is stored as
+    failed. ``SEND_ANONYMOUS_USAGE_STATS`` is the flag ``initialize_from_flags``
+    receives. The collector name stays refused either way.
+    """
+    from dbt.cli.main import dbtRunner
+    from dbt.flags import get_flags
+
+    result = dbtRunner().invoke(
+        ["parse", "--project-dir", str(tmp_path), "--profiles-dir", str(tmp_path)]
+    )
+    assert get_flags().SEND_ANONYMOUS_USAGE_STATS is False
+    assert _PHRASE not in str(result.exception)
+    assert _outcome(lambda: socket.getaddrinfo("fishtownanalytics.sinter-collect.com", 443)) == ""

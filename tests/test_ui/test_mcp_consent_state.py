@@ -818,6 +818,32 @@ async def _serve_oauth_api(*, redirect_to: str, seen: list) -> tuple[asyncio.Abs
     return server, server.sockets[0].getsockname()[1]
 
 
+async def _serve_unavailable() -> tuple[asyncio.AbstractServer, int, list]:
+    """A proxy stand-in. It records the request and answers 503.
+
+    httpx trusts ``urllib.request.getproxies()``. On Windows that includes the
+    system proxy, and CI has none, so a 503 from that proxy fails this class
+    locally and stays green in the gate (core#1390).
+    """
+    seen: list = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            seen.append(await reader.readuntil(b"\r\n\r\n"))
+            writer.write(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                b"Connection: close\r\n\r\n"
+            )
+            await writer.drain()
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1], seen
+
+
 class TestRealSocketLoopback:
     """The consent call is a loopback, and loopbacks are how #388 happened.
 
@@ -851,10 +877,21 @@ class TestRealSocketLoopback:
         api, port = await _serve_oauth_api(
             redirect_to=f"{_REDIRECT}?code=dtk_ac_real&state=opaque-client-state", seen=seen
         )
+        proxy, proxy_port, proxy_seen = await _serve_unavailable()
+        # The peer is the socket bound above. httpx would send that hop to an
+        # ambient proxy; this stand-in returns the 503 the Windows run logged.
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy_port}")
+        monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{proxy_port}")
+        for name in ("no_proxy", "NO_PROXY", "all_proxy", "ALL_PROXY"):
+            monkeypatch.delenv(name, raising=False)
         monkeypatch.setattr(
             consent_module,
             "_http_client",
-            lambda: httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=10.0),
+            lambda: httpx.AsyncClient(
+                base_url=f"http://127.0.0.1:{port}",
+                timeout=10.0,
+                trust_env=False,
+            ),
         )
         state = _fake_state(_params(), access_token="jwt-abc")
 
@@ -866,8 +903,11 @@ class TestRealSocketLoopback:
                 target = await _only_redirect(McpConsentState.allow.fn(state))
         finally:
             api.close()
+            proxy.close()
             await api.wait_closed()
+            await proxy.wait_closed()
 
+        assert proxy_seen == []
         assert target == f"{_REDIRECT}?code=dtk_ac_real&state=opaque-client-state"
         assert state.client_name == "Claude.ai"
 

@@ -25,13 +25,23 @@ column has no server_default for the guard to compare.
 seed inherits a corrected monthly row. An annual row that already exists does
 not. core#713 left the annual tiers out of a partial correction; this does not.
 
-A from-scratch build still has no paid row when this runs, so the matched
-count is zero and a row created afterwards still takes the server_default.
-That is the limit ``g7h8i9j0k1l2`` records too. The rows-matched line below is
-what tells a present row from an absent one. Failing the migration when the
-count is zero would break every new deployment.
+A from-scratch build still has no paid row when the UPDATE runs, so the
+matched count is zero. That zero is expected. The paid rows are created
+afterwards, out of band, because their Paddle ids differ per environment.
+Failing the migration on a zero count would break every new deployment.
 
-Expand/contract: **DML only, no DDL.** No column is added, dropped, renamed,
+The same upgrade installs an insert correction for these two slugs only. A
+row inserted afterwards receives the four published values even when the
+INSERT omits the columns. Free's server defaults stay 2, 5, 500 and 1200,
+so a ``free`` row inserted afterwards is unchanged. The correction does not
+insert a plan row.
+
+SQLite corrects the inserted row by primary key from an AFTER INSERT
+trigger. PostgreSQL assigns ``NEW`` in a BEFORE INSERT function. The inner
+update matches ``id``, not ``slug``.
+
+Expand/contract: the data change is DML. The trigger and its function are
+additive. Downgrade drops them. No column is added, dropped, renamed,
 narrowed, or set NOT NULL.
 
 Revision ID: b6c1d7e3f9a4
@@ -101,6 +111,67 @@ def _apply(conn, sql: str, params: dict, label: str) -> None:
     )
 
 
+def _slug_sql_list() -> str:
+    return ", ".join(f"'{slug}'" for slug in ENTERPRISE_LIMIT_SLUGS)
+
+
+def _sqlite_assignments() -> str:
+    return ", ".join(f"{column} = {value}" for column, value in ENTERPRISE_PLAN_LIMITS.items())
+
+
+def _postgres_assignments() -> str:
+    # One PL/pgSQL statement each. A comma-separated ``:=`` list is not an assignment.
+    return " ".join(f"NEW.{column} := {value};" for column, value in ENTERPRISE_PLAN_LIMITS.items())
+
+
+def _install_insert_correction(conn) -> None:
+    """Correct a later insert of the two enterprise slugs. No other slug."""
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        # WHERE id, not WHERE slug: one inserted row, and the class guard
+        # treats `UPDATE plans SET ... WHERE slug` as another seed write.
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS plans_enterprise_limits_insert")
+        conn.exec_driver_sql(
+            "CREATE TRIGGER plans_enterprise_limits_insert "
+            "AFTER INSERT ON plans "
+            f"WHEN NEW.slug IN ({_slug_sql_list()}) BEGIN "
+            f"UPDATE plans SET {_sqlite_assignments()} WHERE id = NEW.id; END"
+        )
+        return
+    if dialect == "postgresql":
+        conn.exec_driver_sql(
+            "CREATE OR REPLACE FUNCTION datanika_enterprise_plan_limits() "
+            "RETURNS trigger LANGUAGE plpgsql AS $fn$ "
+            "BEGIN "
+            f"IF NEW.slug IN ({_slug_sql_list()}) THEN "
+            f"{_postgres_assignments()} "
+            "END IF; "
+            "RETURN NEW; "
+            "END; "
+            "$fn$"
+        )
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS plans_enterprise_limits_insert ON plans")
+        conn.exec_driver_sql(
+            "CREATE TRIGGER plans_enterprise_limits_insert "
+            "BEFORE INSERT ON plans "
+            "FOR EACH ROW EXECUTE FUNCTION datanika_enterprise_plan_limits()"
+        )
+        return
+    raise RuntimeError(f"core#1060 insert correction has no {dialect} trigger")
+
+
+def _drop_insert_correction(conn) -> None:
+    dialect = conn.dialect.name
+    if dialect == "sqlite":
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS plans_enterprise_limits_insert")
+        return
+    if dialect == "postgresql":
+        conn.exec_driver_sql("DROP TRIGGER IF EXISTS plans_enterprise_limits_insert ON plans")
+        conn.exec_driver_sql("DROP FUNCTION IF EXISTS datanika_enterprise_plan_limits()")
+        return
+    raise RuntimeError(f"core#1060 insert correction has no {dialect} trigger")
+
+
 def upgrade() -> None:
     conn = op.get_bind()
     for slug in ENTERPRISE_LIMIT_SLUGS:
@@ -111,11 +182,13 @@ def upgrade() -> None:
                 {"v": value, "s": slug},
                 f"{column}={value} slug={slug}",
             )
+    _install_insert_correction(conn)
 
 
 def downgrade() -> None:
     """Revert only a cell still holding exactly what ``upgrade()`` wrote."""
     conn = op.get_bind()
+    _drop_insert_correction(conn)
     for slug in ENTERPRISE_LIMIT_SLUGS:
         for column, value in ENTERPRISE_PLAN_LIMITS.items():
             conn.execute(

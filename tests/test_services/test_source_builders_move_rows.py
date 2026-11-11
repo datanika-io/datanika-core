@@ -455,12 +455,9 @@ def _s3fs_available() -> bool:
 requires_s3fs = pytest.mark.skipif(
     not _s3fs_available(),
     reason=(
-        "s3fs is not installed (core#825). It is excluded by two constraints on "
-        "either side of a version gap: s3fs<=2025.12.0 needs aiobotocore<3.0.0 "
-        "(vs redshift-connector>=2.1.14's boto3>=1.42.22, the CVE-2026-8838 RCE "
-        "fix), and s3fs>=2026.1.0 needs fsspec>=2026.1 -> gcsfs -> "
-        "google-cloud-storage>=3.7.0 (vs dbt-bigquery's <3.2). The second is the "
-        "live one. See BLOCKED_BY_S3FS_CONFLICT in "
+        "s3fs is not installed (core#825). dbt-bigquery 1.12.0 through 1.12.2 "
+        "declare google-cloud-storage>=2.4,<3.2; published 1.12.3 allows <4.0. "
+        "s3fs is still not declared. See BLOCKED_BY_S3FS_CONFLICT in "
         "tests/test_security/test_dependency_advisories.py."
     ),
 )

@@ -94,12 +94,11 @@ class ConnectionVerdict(NamedTuple):
 # this one. "Use GCS instead" would name a connector that does not exist, which
 # is a worse falsehood than the one being fixed here.
 #
-# ⚠️ TEMPORARY, and nobody has to remember to check. `TestDeferredCapability` in
-# `tests/test_security/test_dependency_advisories.py` goes red the day `uv.lock`
-# carries `google-cloud-storage >= 3.7` — the point at which dbt-bigquery's
-# `google-cloud-storage>=2.4,<3.2` ceiling has moved far enough that s3fs can
-# resolve again. It asserts the EXTERNAL condition on purpose: an assertion that
-# "s3fs is absent" would only fail once somebody had already done the work.
+# The old re-check was `google-cloud-storage < 3.7`, the consequence of
+# dbt-bigquery 1.12.0 through 1.12.2 declaring `google-cloud-storage>=2.4,<3.2`.
+# Published 1.12.3 allows `<4.0`, and this lock is past 3.7. s3 stays withdrawn
+# because s3fs is still not declared. Restoring s3:// is a separate change from
+# the fsspec floor.
 #
 # ⚠️ To restore: put `s3` back into SOURCE_TYPES, CONFIG_SCHEMAS and PICKER_TYPES
 # and re-enable the four `requires_s3fs` tests. Those must pass **unmodified**

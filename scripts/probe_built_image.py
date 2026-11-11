@@ -57,10 +57,22 @@ import sys
 
 # `importlib.metadata` rather than `pip freeze`: a uv-created venv need not have
 # pip in it, and we must not install anything into the image we are inspecting.
+# The interpreter is part of the answer. uv export emits one line per marker
+# fork, and the pin that applies is the one for THIS python, not the last line.
 _INSTALLED_SNIPPET = (
-    "import json,importlib.metadata as m;"
-    "print(json.dumps({d.metadata['Name']: d.version "
-    "for d in m.distributions() if d.metadata['Name']}))"
+    "import json,os,platform,sys,importlib.metadata as m;"
+    "print(json.dumps({"
+    "'python_full_version':'%d.%d.%d'%sys.version_info[:3],"
+    "'python_version':'%d.%d'%sys.version_info[:2],"
+    "'sys_platform':sys.platform,"
+    "'os_name':os.name,"
+    "'platform_machine':platform.machine(),"
+    "'platform_system':platform.system(),"
+    "'platform_python_implementation':platform.python_implementation(),"
+    "'implementation_name':sys.implementation.name,"
+    "'packages':{d.metadata['Name']:d.version "
+    "for d in m.distributions() if d.metadata['Name']}"
+    "}))"
 )
 
 # The exact chain `datanika/datanika.py` imports to mount /mcp.
@@ -93,7 +105,12 @@ _ROUTES_SNIPPET = (
     "print(repr(paths))"
 )
 
-_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)")
+_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)(?:\s*;\s*([^#]*))?")
+_VERSION_MARKERS = frozenset({"python_full_version", "python_version"})
+_MARKER_TOKEN = re.compile(
+    r"\s*(<=|>=|===|==|!=|~=|<|>|\(|\)|and\b|or\b|not\b|in\b|"
+    r"'[^']*'|\"[^\"]*\"|[A-Za-z_][A-Za-z0-9_]*)"
+)
 
 # The edition invariant (core#1014). Facts about the ARTIFACT, not about a setting:
 # `DATANIKA_EDITION` is an env var the box supplies, so reading it here would answer a
@@ -130,22 +147,158 @@ def normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).strip().lower()
 
 
-def parse_pins(text: str) -> dict[str, str]:
+def _tokenize_marker(marker: str) -> list[str]:
+    tokens: list[str] = []
+    pos = 0
+    length = len(marker)
+    while pos < length and marker[pos].isspace():
+        pos += 1
+    while pos < length:
+        match = _MARKER_TOKEN.match(marker, pos)
+        if match is None or match.start() != pos:
+            raise ValueError(f"cannot read marker at {marker[pos:]!r}")
+        tokens.append(match.group(1))
+        pos = match.end()
+        while pos < length and marker[pos].isspace():
+            pos += 1
+    return tokens
+
+
+def _version_tuple(value: str) -> tuple[int, ...]:
+    parts = value.split(".")
+    if not parts or any(not part.isdigit() for part in parts):
+        raise ValueError(f"not a numeric version: {value!r}")
+    return tuple(int(part) for part in parts)
+
+
+def _compare_marker(name: str, op: str, literal: str, environment: dict[str, str]) -> bool:
+    if name not in environment:
+        raise ValueError(f"marker variable {name} is not in the image environment")
+    actual = environment[name]
+    if name in _VERSION_MARKERS:
+        left, right = _version_tuple(actual), _version_tuple(literal)
+        width = max(len(left), len(right))
+        left = left + (0,) * (width - len(left))
+        right = right + (0,) * (width - len(right))
+        compared = {
+            "==": left == right,
+            "!=": left != right,
+            "<": left < right,
+            "<=": left <= right,
+            ">": left > right,
+            ">=": left >= right,
+        }
+        if op not in compared:
+            raise ValueError(f"unsupported version operator {op}")
+        return compared[op]
+    if op == "==":
+        return actual == literal
+    if op == "!=":
+        return actual != literal
+    raise ValueError(f"unsupported marker operator {op} on {name}")
+
+
+def _parse_marker_or(
+    tokens: list[str], index: int, environment: dict[str, str]
+) -> tuple[bool, int]:
+    value, index = _parse_marker_and(tokens, index, environment)
+    while index < len(tokens) and tokens[index] == "or":
+        other, index = _parse_marker_and(tokens, index + 1, environment)
+        value = value or other
+    return value, index
+
+
+def _parse_marker_and(
+    tokens: list[str], index: int, environment: dict[str, str]
+) -> tuple[bool, int]:
+    value, index = _parse_marker_atom(tokens, index, environment)
+    while index < len(tokens) and tokens[index] == "and":
+        other, index = _parse_marker_atom(tokens, index + 1, environment)
+        value = value and other
+    return value, index
+
+
+def _parse_marker_atom(
+    tokens: list[str], index: int, environment: dict[str, str]
+) -> tuple[bool, int]:
+    if index >= len(tokens):
+        raise ValueError("marker ended early")
+    if tokens[index] == "(":
+        value, index = _parse_marker_or(tokens, index + 1, environment)
+        if index >= len(tokens) or tokens[index] != ")":
+            raise ValueError("unclosed marker group")
+        return value, index + 1
+    if index + 2 >= len(tokens):
+        raise ValueError(f"incomplete marker comparison at {tokens[index:]!r}")
+    name, op, raw = tokens[index], tokens[index + 1], tokens[index + 2]
+    if op in {"not", "in"} or name in {"not", "in"}:
+        raise ValueError(f"unsupported marker syntax at {tokens[index:]!r}")
+    quoted = len(raw) >= 2 and raw[0] in "'\"" and raw[-1] == raw[0]
+    if not quoted:
+        raise ValueError(f"marker value is not quoted: {raw!r}")
+    return _compare_marker(name, op, raw[1:-1], environment), index + 3
+
+
+def marker_matches(marker: str, environment: dict[str, str]) -> bool:
+    """PEP 508 subset: comparisons, and/or, parentheses. No `in` / `not`."""
+    tokens = _tokenize_marker(marker)
+    if not tokens:
+        raise ValueError("empty marker")
+    value, index = _parse_marker_or(tokens, 0, environment)
+    if index != len(tokens):
+        raise ValueError(f"unparsed marker tail: {tokens[index:]!r}")
+    return value
+
+
+def parse_pins(text: str, *, environment: dict[str, str] | None = None) -> dict[str, str]:
     """Read `name==version` lines out of `uv export` output.
 
-    Ignores `--index` / `--hash` lines, comments, blanks and environment
-    markers. Deliberately tolerant: a line it cannot read is skipped rather than
-    fataled, because a parser that dies on an unfamiliar flag turns a useful
-    probe into a permanently red one that gets deleted.
+    Ignores `--index` / `--hash` lines, comments and blanks. A name exported
+    once keeps that version. A name exported on several marker forks keeps the
+    fork whose marker matches `environment` — the image's own interpreter.
+    Without `environment` the last line wins, which is the other fork.
+
+    Deliberately tolerant of an unfamiliar flag: that line is skipped rather
+    than fataled, because a parser that dies on one turns a useful probe into
+    a permanently red one that gets deleted. An unreadable marker on a fork
+    is fatal, because guessing the pin is the false drift this check exists
+    to avoid.
     """
-    pins: dict[str, str] = {}
+    rows: list[tuple[str, str, str | None]] = []
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith(("#", "-", "@")):
             continue
         match = _PIN.match(line)
-        if match:
-            pins[normalize(match.group(1))] = match.group(2)
+        if not match:
+            continue
+        marker = (match.group(3) or "").strip() or None
+        rows.append((normalize(match.group(1)), match.group(2), marker))
+
+    if environment is None:
+        pins: dict[str, str] = {}
+        for name, version, _marker in rows:
+            pins[name] = version
+        return pins
+
+    grouped: dict[str, list[tuple[str, str | None]]] = {}
+    for name, version, marker in rows:
+        grouped.setdefault(name, []).append((version, marker))
+
+    pins = {}
+    for name, forks in grouped.items():
+        if len(forks) == 1:
+            pins[name] = forks[0][0]
+            continue
+        chosen = [
+            version
+            for version, marker in forks
+            if marker is None or marker_matches(marker, environment)
+        ]
+        if len(chosen) == 1:
+            pins[name] = chosen[0]
+        elif len(chosen) > 1:
+            raise ValueError(f"lock pin {name} has {len(chosen)} forks matching this interpreter")
     return pins
 
 
@@ -309,39 +462,58 @@ def main() -> int:
     if not args.lock_pins:
         print("    SKIPPED — no --lock-pins supplied")
     else:
-        with open(args.lock_pins, encoding="utf-8") as handle:
-            locked = parse_pins(handle.read())
+        payload = None
         result = run_in_image(args.image, [*py, "-c", _INSTALLED_SNIPPET])
         if result.returncode != 0:
             failures.append(f"C: could not enumerate installed packages: {result.stderr.strip()}")
             print("    FAIL — could not enumerate installed packages")
         else:
-            raw = json.loads(last_line(result.stdout))
-            installed = {normalize(k): v for k, v in raw.items()}
-            drift = pin_drift(locked, installed)
-            compared = len(set(locked) & set(installed))
-            print(f"    lock names {len(locked)}, image has {len(installed)}, compared {compared}")
-            collapsed = comparison_collapsed(locked, installed)
-            if collapsed:
+            payload = json.loads(last_line(result.stdout))
+            if "packages" not in payload or "python_full_version" not in payload:
                 failures.append(
-                    f"C: the drift comparison collapsed and proves nothing — {collapsed}.\n"
-                    "       Reporting this as a failure rather than as a clean image: a "
-                    "drift check over an empty intersection is the same silent green "
-                    "this probe exists to close."
+                    "C: installed-package enumeration did not report the image interpreter"
                 )
-                print(f"    FAIL — comparison collapsed: {collapsed}")
-            elif drift:
-                for name, want, got in drift:
-                    print(f"    DRIFT {name}: lock {want} -> image {got}")
-                failures.append(
-                    f"C: {len(drift)} package(s) in the image differ from uv.lock. "
-                    "The Dockerfile's two unlocked `uv pip install` steps resolve "
-                    "against PyPI, so they can move anything whose tree overlaps "
-                    "the locked one:\n"
-                    + "\n".join(f"       {n}: lock {w} -> image {g}" for n, w, g in drift)
+                print("    FAIL — enumeration did not report the interpreter")
+                payload = None
+        if payload is not None:
+            environment = {key: value for key, value in payload.items() if key != "packages"}
+            print(f"    image python {environment['python_full_version']}")
+            try:
+                with open(args.lock_pins, encoding="utf-8") as handle:
+                    locked = parse_pins(handle.read(), environment=environment)
+            except ValueError as exc:
+                failures.append(f"C: could not read lock pins for this interpreter: {exc}")
+                print(f"    FAIL — {exc}")
+                locked = None
+            if locked is not None:
+                raw = payload["packages"]
+                installed = {normalize(name): version for name, version in raw.items()}
+                drift = pin_drift(locked, installed)
+                compared = len(set(locked) & set(installed))
+                print(
+                    f"    lock names {len(locked)}, image has {len(installed)}, compared {compared}"
                 )
-            else:
-                print(f"    OK — no drift across {compared} shared packages")
+                collapsed = comparison_collapsed(locked, installed)
+                if collapsed:
+                    failures.append(
+                        f"C: the drift comparison collapsed and proves nothing — {collapsed}.\n"
+                        "       Reporting this as a failure rather than as a clean image: a "
+                        "drift check over an empty intersection is the same silent green "
+                        "this probe exists to close."
+                    )
+                    print(f"    FAIL — comparison collapsed: {collapsed}")
+                elif drift:
+                    for name, want, got in drift:
+                        print(f"    DRIFT {name}: lock {want} -> image {got}")
+                    failures.append(
+                        f"C: {len(drift)} package(s) in the image differ from uv.lock. "
+                        "The Dockerfile's two unlocked `uv pip install` steps resolve "
+                        "against PyPI, so they can move anything whose tree overlaps "
+                        "the locked one:\n"
+                        + "\n".join(f"       {n}: lock {w} -> image {g}" for n, w, g in drift)
+                    )
+                else:
+                    print(f"    OK — no drift across {compared} shared packages")
 
     # --- D. the edition invariant (core#1014) -----------------------------
     #

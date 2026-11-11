@@ -187,6 +187,10 @@ grep -E '^datanika_cloud_bytes_ledger_scrape_ok [0-9]' m.txt
 # 2. Per-tenant bytes: a real sample line, not the HELP/TYPE header. Labels render SORTED
 #    ({mode="…",org_id="…"}), so match org_id anywhere inside the braces, never by position.
 grep -E '^datanika_cloud_bytes_processed_total\{([^}]*,)?org_id="[0-9]+"(,[^}]*)?\} [0-9]' m.txt
+
+# 3. Quota rejections. Labels render sorted ({org_id="…",reason="…"}).
+#    A zero count emits no sample line; tick the box only when this prints one.
+grep -E '^datanika_cloud_bytes_quota_rejected_total\{org_id="[0-9]+",reason="[a-z_]+"\} [0-9]' m.txt
 ```
 
 - [ ] `datanika_cloud_bytes_ledger_scrape_ok` emits **`1`**. A `0` means the collector could not read
@@ -201,9 +205,7 @@ required `org_id` directly before `}`, which a two-label line never has. Cloud's
 `test_bytes_metrics_reach_the_metrics_route.py` now runs both greps against the lines the real
 collector serves.
 
-⚠️ **`datanika_cloud_bytes_quota_rejected_total` cannot be verified here — do not tick it.** It is
-labelled, so a healthy zero-rejection state emits **no sample line at all**, which is byte-identical
-to the collector being broken. Verify post-flip rejections from `usage_ledger` in §4.4.
+- [ ] `datanika_cloud_bytes_quota_rejected_total{org_id="…",reason="…"}` has at least one sample line, value > 0. An empty `quota_decisions` table emits no sample line, so a zero-rejection state stays unticked. Post-flip rows are also in `usage_ledger` (§4.4).
 
 ⚠️ **`datanika_bytes_processed_by_run` (core histogram) is not observable on this surface**, and its
 absence here is expected rather than a finding. It is incremented in the **Celery worker** while
